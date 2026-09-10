@@ -1,0 +1,14 @@
+# Copyright (c) 2026 zlrs contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Lets twister build the application itself, not just the unit tests.
+
+sample:
+  description: zlrs application
+  name: zlrs
+common:
+  build_only: true
+  integration_platforms:
+    - qemu_cortex_m3
+tests:
+  app.default: {}

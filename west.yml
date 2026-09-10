@@ -1,0 +1,36 @@
+# Copyright (c) 2026 zlrs contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# West manifest (T2 topology): zlrs is its own manifest repository, Zephyr is
+# pulled in from upstream. Initialise a workspace with:
+#
+#   west init -m <zlrs-remote-url> --mr main zlrs-workspace
+#   west update
+
+manifest:
+  # T2 star topology: zlrs is the manifest repository and holds the
+  # application. The radio stack comes entirely from Semtech's USP.
+  #
+  # Layout follows "Integration in Custom application" from
+  # https://github.com/Lora-net/usp_zephyr#setup
+  #
+  #   west init -l zlrs
+  #   west update
+  #   west build -b xiao_nrf54l15/nrf54l15/cpuapp \
+  #              --shield semtech_wio_lr2021 app
+  projects:
+    - name: zephyr
+      url: https://github.com/zephyrproject-rtos/zephyr
+      revision: v4.2.0
+      import: true
+    - name: usp_zephyr
+      path: usp_zephyr
+      url: https://github.com/Lora-net/usp_zephyr.git
+      revision: v1.0.0
+    - name: usp
+      path: modules/lib/usp
+      url: https://github.com/Lora-net/usp.git
+      revision: v1.0.0
+      submodules: true
+  self:
+    path: zlrs

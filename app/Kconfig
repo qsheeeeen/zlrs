@@ -1,0 +1,12 @@
+# Copyright (c) 2026 zlrs contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Application Kconfig entry point.
+
+menu "Zephyr"
+source "Kconfig.zephyr"
+endmenu
+
+module = APP
+module-str = app
+source "subsys/logging/Kconfig.template.log_config"

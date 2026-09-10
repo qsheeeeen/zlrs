@@ -1,0 +1,7 @@
+# Copyright (c) 2026 zlrs contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Module Kconfig entry point, see zephyr/module.yml. Options show up under
+# Zephyr -> Modules -> zlrs.
+
+rsource "lib/Kconfig"

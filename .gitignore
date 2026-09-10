@@ -53,3 +53,16 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# Zephyr / west workspace
+build/
+twister-out*/
+.west/
+west/
+modules/
+*.pyc
+__pycache__/
+compile_commands.json
+
+# Host test build
+tests/host/build/
