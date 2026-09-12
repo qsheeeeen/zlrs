@@ -7,6 +7,50 @@ menu "Zephyr"
 source "Kconfig.zephyr"
 endmenu
 
+menu "zlrs"
+
+config ZLRS_APP_ROLE_TX
+	bool "构建成 TX 角色"
+	default y
+	help
+	  TX 发控制帧、收遥测，RX 相反。两端是同一份固件，只差这个开关。
+
+config ZLRS_APP_DOMAIN
+	int "控制链路频段（0 = FCC915，1 = EU868）"
+	default 0
+	range 0 1
+
+config ZLRS_APP_TX_POWER_DBM
+	int "发射功率（dBm）"
+	default 10
+	range -10 22
+
+config ZLRS_APP_CONTROL_RATE_BPS
+	int "控制链路速率（bps）"
+	default 1300000
+
+config ZLRS_APP_DATA_RATE_BPS
+	int "数据链路速率（bps）"
+	default 2600000
+
+config ZLRS_APP_DATA_MTU
+	int "数据链路单帧载荷上限（字节）"
+	default 128
+
+config ZLRS_APP_FLRC_PREAMBLE_BITS
+	int "FLRC 前导码长度（bit）"
+	default 32
+
+config ZLRS_APP_ROOT_KEY_HEX
+	string "根密钥（64 个十六进制字符，空 = 从 NVS 读）"
+	default ""
+
+config ZLRS_APP_UNBIND_HOLD_MS
+	int "长按解绑需要按住的时间（ms）"
+	default 2000
+
+endmenu
+
 module = APP
 module-str = app
 source "subsys/logging/Kconfig.template.log_config"

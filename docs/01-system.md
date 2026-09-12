@@ -216,12 +216,13 @@ Zephyr 与 USP。
 运行时的初始化顺序：
 
 1. `main()` 里先 `SMTC_SW_PLATFORM_INIT()` 等待 USP/RAC 线程就绪
-2. `smtc_rac_open_radio(priority)` 分别为控制链路与数据链路开 access id
-3. 用 `smtc_rac_get_context()` 拿上下文，填 `modulation_type`、
+2. 应用调一次 `smtc_rac_init()`
+3. `smtc_rac_open_radio(priority)` 分别为控制链路与数据链路开 access id
+4. 用 `smtc_rac_get_context()` 拿上下文，填 `modulation_type`、
    `radio_params.flrc.*`、收发缓冲、`scheduler_config` 回调
-4. 启动串口线程，进入链路主循环
+5. 初始化串口（中断收发）与持久化，进入超帧主循环
 
-`smtc_rac_init()` 由 USP 线程调用，应用不重复初始化。
+`smtc_rac_init()` 由应用在 `SMTC_SW_PLATFORM_INIT()` 之后调用，USP 线程不代劳。
 
 应用侧注册 usp 的日志模块（`LOG_MODULE_REGISTER(usp, ...)`），见
 `app/src/usp_log.c`。

@@ -74,6 +74,17 @@ cd "$ZLRS_WS"
 west build -b "$ZLRS_BOARD" --shield "$ZLRS_SHIELD" "$ZLRS_APP"
 ```
 
+固件默认没有根密钥，上电后不参与收发。台架测试时可以临时给它一个（正式流程是
+配置工具写进 NVS）：
+
+```shell
+west build -b "$ZLRS_BOARD" --shield "$ZLRS_SHIELD" "$ZLRS_APP" \
+  -- -DCONFIG_ZLRS_APP_ROOT_KEY_HEX=\"000102030405060708090a0b0c0d0e0f\
+101112131415161718191a1b1c1d1e1f\"
+```
+
+TX / RX 是同一份固件，用 `CONFIG_ZLRS_APP_ROLE_TX` 切换角色（默认 TX）。
+
 ### 构建要点
 
 1. **构建必须带 `--shield semtech_wio_lr2021`。** 没有 LR2021 的 devicetree

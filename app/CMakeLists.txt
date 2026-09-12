@@ -8,7 +8,10 @@ project(app LANGUAGES C)
 
 target_sources(app PRIVATE
   src/main.c
+  src/rac_port.c
+  src/serial_port.c
   src/usp_log.c
+  src/store.c
 )
 
 # Make the application version depend on the git index so that APP_VERSION_STRING
