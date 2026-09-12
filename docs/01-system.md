@@ -209,14 +209,21 @@ docs/                 设计文档
 
 ## 7. 初始化顺序
 
-1. `west init -l zlrs && west update`（拉 zephyr v4.2.0 + usp_zephyr + usp）
-2. `main()` 里先 `SMTC_SW_PLATFORM_INIT()` 等待 USP/RAC 线程就绪
-3. `smtc_rac_open_radio(priority)` 分别为控制链路与数据链路开 access id
-4. 用 `smtc_rac_get_context()` 拿上下文，填 `modulation_type`、
+构建环境见 [README](../README.md)：`tools/setup-zephyr.sh` 建工作区，
+`tools/zephyr-env.sh` 进环境，不需要 Zephyr SDK。
+
+运行时的初始化顺序：
+
+1. `main()` 里先 `SMTC_SW_PLATFORM_INIT()` 等待 USP/RAC 线程就绪
+2. `smtc_rac_open_radio(priority)` 分别为控制链路与数据链路开 access id
+3. 用 `smtc_rac_get_context()` 拿上下文，填 `modulation_type`、
    `radio_params.flrc.*`、收发缓冲、`scheduler_config` 回调
-5. 启动串口线程，进入链路主循环
+4. 启动串口线程，进入链路主循环
 
 不要自己调 `smtc_rac_init()`——USP 线程负责。
+
+应用侧还要用 `LOG_MODULE_REGISTER(usp, ...)` 注册 usp 的日志模块，否则链接期
+会缺 `log_const_usp`。本仓库在 `app/src/usp_log.c` 里做这件事。
 
 ## 8. 风险与验证顺序
 
@@ -235,7 +242,7 @@ docs/                 设计文档
 
 | 阶段 | 内容 | 产出 |
 | --- | --- | --- |
-| 0 | 跑通 west 工作区与官方 `packet_error_rate_flrc` 示例 | 确认 Zephyr 4.2 + usp_zephyr 1.0.0 这套能用 |
+| 0 | **已完成**：west 工作区 + 官方 `packet_error_rate_flrc` 示例 | Zephyr 4.2.0 + usp_zephyr 1.0.0 + 系统 `arm-none-eabi-gcc`；官方示例与本仓库 app 均构建通过，脚本见 `tools/` |
 | 1 | **测量**：频段切换开销、每包 MAC 耗时、误包率曲线、RAC 抢占行为 | 填掉 [03-protocol.md](03-protocol.md) 6.1 那张表 |
 | 2 | 协议核心：帧编解码、FHSS 表、分片重组、状态机（配假射频） | 主机上跑通的双节点仿真 |
 | 3 | 单链路打通：控制链路 sub-GHz 固定信道 + 配对 + 会话 + RC/TLM | 能用遥控器控制一个串口输出 |
