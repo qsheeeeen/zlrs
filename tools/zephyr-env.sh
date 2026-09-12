@@ -5,37 +5,58 @@
 #
 #   source tools/zephyr-env.sh
 #
-# 工作区由 tools/setup-zephyr.sh 创建，默认在 /tmp/zws。
+# 工作区由 tools/setup-zephyr.sh 创建，默认是仓库的上一级目录
+# （当前机器上是 /home/qs/zlrs-worksapce）。工具链用 Zephyr SDK，
+# 默认 $HOME/zephyr-sdk-0.17.4。变量都能提前设好覆盖：
+#
+#   ZLRS_WS  ZLRS_VENV  ZLRS_SDK_DIR  ZLRS_BOARD  ZLRS_SHIELD  ZLRS_APP
 
 ZLRS_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-export ZLRS_REPO_ROOT
-
-ZLRS_WS="${ZLRS_WS:-/tmp/zws}"
-export ZLRS_WS
-
-if [ ! -d "${ZLRS_WS}/ws/zephyr" ]; then
-	echo "zlrs: 找不到 Zephyr 工作区 ${ZLRS_WS}/ws" >&2
-	echo "zlrs: 先运行 tools/setup-zephyr.sh" >&2
-	return 1 2>/dev/null || exit 1
-fi
-
-# west 与构建依赖装在独立 venv 里
-export PATH="${ZLRS_WS}/venv/bin:${PATH}"
-
-export ZEPHYR_BASE="${ZLRS_WS}/ws/zephyr"
-
-# 用系统自带的 arm-none-eabi-gcc，不装 Zephyr SDK。
-export ZEPHYR_TOOLCHAIN_VARIANT=gnuarmemb
-export GNUARMEMB_TOOLCHAIN_PATH="${GNUARMEMB_TOOLCHAIN_PATH:-/usr}"
-
-# zlrs 仓库本身是一个 Zephyr 模块。它不在 west 工作区里（仓库在别处），
-# 所以用 ZEPHYR_EXTRA_MODULES 挂进去。
-export ZEPHYR_EXTRA_MODULES="${ZLRS_REPO_ROOT}"
+ZLRS_WS="${ZLRS_WS:-$(dirname "${ZLRS_REPO_ROOT}")}"
+ZLRS_VENV="${ZLRS_VENV:-${ZLRS_WS}/.venv}"
+ZLRS_SDK_DIR="${ZLRS_SDK_DIR:-${HOME}/zephyr-sdk-0.17.4}"
 
 ZLRS_BOARD="${ZLRS_BOARD:-xiao_nrf54l15/nrf54l15/cpuapp}"
-export ZLRS_BOARD
+ZLRS_SHIELD="${ZLRS_SHIELD:-semtech_wio_lr2021}"
+ZLRS_APP="${ZLRS_APP:-${ZLRS_WS}/zlrs/app}"
+
+export ZLRS_REPO_ROOT ZLRS_WS ZLRS_VENV ZLRS_SDK_DIR
+export ZLRS_BOARD ZLRS_SHIELD ZLRS_APP
+
+# west 与构建依赖装在独立 venv 里（重复 source 不重复往 PATH 里塞）
+case ":${PATH}:" in
+	*":${ZLRS_VENV}/bin:"*) ;;
+	*) export PATH="${ZLRS_VENV}/bin:${PATH}" ;;
+esac
+
+export ZEPHYR_BASE="${ZLRS_WS}/zephyr"
+
+# Zephyr SDK：目标工具链和 host tools（dtc、openocd、qemu…）都从这里找。
+export ZEPHYR_TOOLCHAIN_VARIANT=zephyr
+export ZEPHYR_SDK_INSTALL_DIR="${ZLRS_SDK_DIR}"
+
+# 本仓库是 manifest 仓库，同时也是 Zephyr 模块（zephyr/module.yml），
+# 在工作区里会被自动收进去，不用再挂 ZEPHYR_EXTRA_MODULES。
+
+# 便捷构建：zlrs-build [west build 的额外参数]
+zlrs-build() {
+	(cd "${ZLRS_WS}" && west build -b "${ZLRS_BOARD}" --shield "${ZLRS_SHIELD}" "${ZLRS_APP}" "$@")
+}
+
+if [ ! -d "${ZLRS_WS}/.west" ]; then
+	echo "zlrs: 没找到 west 工作区 ${ZLRS_WS}/.west，先跑 \"${ZLRS_REPO_ROOT}/tools/setup-zephyr.sh\"" >&2
+elif [ ! -d "${ZEPHYR_BASE}" ] || [ ! -x "${ZLRS_VENV}/bin/west" ]; then
+	echo "zlrs: 工作区不完整（缺 zephyr/ 或 .venv/bin/west），再跑一遍 \"${ZLRS_REPO_ROOT}/tools/setup-zephyr.sh\"" >&2
+fi
+
+if [ ! -x "${ZLRS_SDK_DIR}/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc" ]; then
+	echo "zlrs: ${ZLRS_SDK_DIR} 里没有 arm-zephyr-eabi 工具链，装一下：
+  cd \"${ZLRS_SDK_DIR}\" && ./setup.sh -t arm-zephyr-eabi -h -c" >&2
+fi
 
 echo "zlrs env:"
+echo "  workspace   = ${ZLRS_WS}"
 echo "  ZEPHYR_BASE = ${ZEPHYR_BASE}"
-echo "  toolchain   = ${ZEPHYR_TOOLCHAIN_VARIANT} (${GNUARMEMB_TOOLCHAIN_PATH})"
-echo "  board       = ${ZLRS_BOARD}"
+echo "  toolchain   = ${ZEPHYR_TOOLCHAIN_VARIANT} (Zephyr SDK $(cat "${ZLRS_SDK_DIR}/sdk_version" 2>/dev/null || echo '?') @ ${ZLRS_SDK_DIR})"
+echo "  board       = ${ZLRS_BOARD} --shield ${ZLRS_SHIELD}"
+echo "  构建        = zlrs-build  ->  ${ZLRS_WS}/build"

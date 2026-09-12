@@ -2,62 +2,134 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# 从零搭一个 Zephyr 工作区，用于编译 zlrs 与官方 USP 示例。
+# 从零搭 zlrs 的 Zephyr 工作区。
 #
-#   tools/setup-zephyr.sh [工作区根目录]      默认 /tmp/zws
+#   tools/setup-zephyr.sh [工作区根目录]     默认是仓库的上一级目录
 #
-# 产物：
-#   $WS/venv     Python 虚拟环境（west 与构建依赖）
-#   $WS/ws       west 工作区（zephyr v4.2.0 + usp_zephyr v1.0.0 + usp）
+# west T2 拓扑：本仓库自己就是 manifest 仓库，清单用仓库根的 west.yml
+# （pin 了 zephyr v4.2.0 + usp_zephyr v1.0.0 + usp v1.0.0），不再拿
+# usp_zephyr 当 manifest。
 #
-# 之后用 `source tools/zephyr-env.sh` 进入环境。
+# 默认布局（当前机器上是 /home/qs/zlrs-worksapce）：
 #
-# 不需要 Zephyr SDK：用系统自带的 arm-none-eabi-gcc。
-# 因此示例的 CONFIG_NEWLIB_LIBC=y 会失败（发行版 newlib 未开
-# retargetable locking），需要改用 Zephyr 自带的 picolibc。
+#   zlrs-worksapce/          <- west 工作区根，下称 $WS
+#   ├── .west/               west 工作区标记
+#   ├── .venv/               west 与构建依赖（Python venv，ZLRS_VENV 可改）
+#   ├── build/               west build 的默认输出目录
+#   ├── zlrs/                本仓库 == manifest 仓库（west.yml 的 self.path）
+#   ├── zephyr/              Zephyr v4.2.0（外加 import 进来的一堆 module）
+#   ├── usp_zephyr/          Semtech usp_zephyr v1.0.0
+#   └── modules/lib/usp/     Semtech usp v1.0.0
+#
+# 工具链走 Zephyr SDK（默认 $HOME/zephyr-sdk-0.17.4，ZLRS_SDK_DIR 可改）：
+# 本脚本只检查，缺了会打印安装命令。有 SDK 就不用再为 libc 绕路
+# （发行版 arm-none-eabi-gcc 的 newlib 没开 retargetable locking 才要绕）。
+#
+# 首次 west update 要把 Zephyr 的 module 全拉下来，约 5 GB。
 
 set -euo pipefail
 
-WS="${1:-/tmp/zws}"
-ZEPHYR_REV="${ZEPHYR_REV:-v4.2.0}"
-USP_ZEPHYR_REV="${USP_ZEPHYR_REV:-v1.0.0}"
+die() {
+	echo "setup-zephyr: $*" >&2
+	exit 1
+}
 
-echo "==> 工作区: ${WS}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ZLRS_REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+MANIFEST="${ZLRS_REPO_ROOT}/west.yml"
+
+# west.yml 里 self.path 必须和仓库在工作区里的目录名一致。
+SELF_PATH="$(awk '/^ *self:/{found=1} found && /^ *path:/{print $2; exit}' "${MANIFEST}")"
+[ -n "${SELF_PATH}" ] || die "在 ${MANIFEST} 里找不到 self: path:"
+
+WS="${1:-${ZLRS_WS:-$(dirname "${ZLRS_REPO_ROOT}")}}"
 mkdir -p "${WS}"
+WS="$(cd "${WS}" && pwd)"
+MANIFEST_REPO="${WS}/${SELF_PATH}"
 
-echo "==> [1/4] Python 虚拟环境 + pip"
-if [ ! -x "${WS}/venv/bin/python" ]; then
-	python3 -m venv --without-pip "${WS}/venv"
-	curl -sSL -o "${WS}/get-pip.py" https://bootstrap.pypa.io/get-pip.py
-	"${WS}/venv/bin/python" "${WS}/get-pip.py" --no-warn-script-location
+if [ "$(readlink -f "${MANIFEST_REPO}")" != "${ZLRS_REPO_ROOT}" ]; then
+	die "工作区里得有本仓库，目录名还要跟 west.yml 的 self.path 对得上：
+  期望: ${MANIFEST_REPO}
+  实际: ${ZLRS_REPO_ROOT}
+把仓库放到期望位置，或者在 ${WS} 里建个软链接：
+  ln -s \"${ZLRS_REPO_ROOT}\" \"${MANIFEST_REPO}\"
+不想挪仓库就直接不带参数跑本脚本——默认工作区就是仓库的上一级目录。"
 fi
 
-echo "==> [2/4] 安装 west、ninja 与构建依赖"
-"${WS}/venv/bin/pip" install --quiet --no-warn-script-location \
-	west ninja pyelftools packaging PyYAML
+VENV_DIR="${ZLRS_VENV:-${WS}/.venv}"
 
-echo "==> [3/4] 拉 usp_zephyr 并初始化 west 工作区"
-if [ ! -d "${WS}/ws/usp_zephyr" ]; then
-	mkdir -p "${WS}/ws"
-	git clone --quiet --depth 1 -b "${USP_ZEPHYR_REV}" \
-		https://github.com/Lora-net/usp_zephyr.git "${WS}/ws/usp_zephyr"
-fi
-if [ ! -d "${WS}/ws/.west" ]; then
-	(cd "${WS}/ws" && "${WS}/venv/bin/west" init -l usp_zephyr)
-fi
+echo "==> 工作区: ${WS}   （manifest: ${SELF_PATH}/west.yml）"
 
-echo "==> [4/4] west update（首次会下载约 5 GB，需要几分钟）"
-if [ ! -d "${WS}/ws/zephyr" ]; then
-	(cd "${WS}/ws" && "${WS}/venv/bin/west" update --narrow -o=--depth=1)
+echo "==> [1/5] Python venv: ${VENV_DIR}"
+if [ ! -x "${VENV_DIR}/bin/python" ]; then
+	python3 -m venv --without-pip "${VENV_DIR}"
+fi
+if ! "${VENV_DIR}/bin/python" -m pip --version > /dev/null 2>&1; then
+	# Ubuntu 的 python3.12 不带 ensurepip，venv 里也就没有 pip，得自己引导。
+	echo "    venv 里没有 pip，用 get-pip.py 引导"
+	curl -fsSL -o "${WS}/.get-pip.py" https://bootstrap.pypa.io/get-pip.py
+	"${VENV_DIR}/bin/python" "${WS}/.get-pip.py" --no-warn-script-location
+	rm -f "${WS}/.get-pip.py"
 fi
 
-ZEPHYR_BASE="${WS}/ws/zephyr" \
-	"${WS}/venv/bin/pip" install --quiet --no-warn-script-location \
-	-r "${WS}/ws/zephyr/scripts/requirements-base.txt"
+echo "==> [2/5] west 与 ninja"
+"${VENV_DIR}/bin/python" -m pip install --quiet --no-warn-script-location west ninja
+WEST="${VENV_DIR}/bin/west"
+
+echo "==> [3/5] west init"
+if [ ! -d "${WS}/.west" ]; then
+	(cd "${WS}" && "${WEST}" init -l "${SELF_PATH}")
+else
+	echo "    ${WS}/.west 已存在，跳过"
+fi
+
+echo "==> [4/5] west update"
+PROJECTS="$(cd "${WS}" && "${WEST}" list -f '{path}')" || die "west list 失败，${WS} 这个工作区可能坏了"
+INCOMPLETE="$(for project in ${PROJECTS}; do
+	[ -e "${WS}/${project}/.git" ] || echo "${project}"
+done)"
+if [ -n "${INCOMPLETE}" ]; then
+	[ -d "${WS}/zephyr" ] || echo "    首次要把 Zephyr 及其 module 拉下来，约 5 GB"
+	echo "    还缺 $(echo "${INCOMPLETE}" | wc -l) 个项目: $(echo "${INCOMPLETE}" | tr '\n' ' ')"
+	(cd "${WS}" && "${WEST}" update --narrow -o=--depth=1)
+else
+	echo "    项目都在了，跳过（要同步就跑 (cd ${WS} && west update)）"
+fi
+
+echo "==> [5/5] Zephyr 的 Python 构建依赖"
+"${VENV_DIR}/bin/python" -m pip install --quiet --no-warn-script-location \
+	-r "${WS}/zephyr/scripts/requirements-base.txt"
+for req in "${WS}"/usp_zephyr/scripts/requirements*.txt; do
+	if [ -e "${req}" ]; then
+		"${VENV_DIR}/bin/python" -m pip install --quiet --no-warn-script-location -r "${req}"
+	fi
+done
+
+SDK_DIR="${ZLRS_SDK_DIR:-${HOME}/zephyr-sdk-0.17.4}"
+SDK_GCC="${SDK_DIR}/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc"
 
 echo
-echo "完成。"
-echo "  Zephyr  : $(sed -n 's/^VERSION_MAJOR = //p' "${WS}/ws/zephyr/VERSION").$(sed -n 's/^VERSION_MINOR = //p' "${WS}/ws/zephyr/VERSION").$(sed -n 's/^PATCHLEVEL = //p' "${WS}/ws/zephyr/VERSION")"
-echo "  usp_zephyr: ${USP_ZEPHYR_REV}"
+echo "工作区就绪: ${WS}"
+echo "  Zephyr     : $(sed -n 's/^VERSION_MAJOR = //p;s/^VERSION_MINOR = //p;s/^PATCHLEVEL = //p' "${WS}/zephyr/VERSION" | paste -sd. -)"
+
+if [ -x "${SDK_GCC}" ]; then
+	echo "  Zephyr SDK : ${SDK_DIR} (arm-zephyr-eabi $("${SDK_GCC}" -dumpversion))"
+else
+	echo "  Zephyr SDK : ${SDK_DIR}  <-- 缺 arm-zephyr-eabi 工具链"
+	echo
+	if [ -x "${SDK_DIR}/setup.sh" ]; then
+		echo "  装工具链（下载约 1 GB）："
+		echo "    cd \"${SDK_DIR}\" && ./setup.sh -t arm-zephyr-eabi -h -c"
+	else
+		echo "  还没有 SDK，先下 minimal 包再装 arm 工具链："
+		echo "    cd \"$(dirname "${SDK_DIR}")\""
+		echo "    curl -LO https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v0.17.4/zephyr-sdk-0.17.4_linux-x86_64_minimal.tar.xz"
+		echo "    tar xf zephyr-sdk-0.17.4_linux-x86_64_minimal.tar.xz"
+		echo "    cd \"${SDK_DIR}\" && ./setup.sh -t arm-zephyr-eabi -h -c"
+	fi
+fi
+
 echo
-echo "下一步:  source tools/zephyr-env.sh"
+echo "下一步:"
+echo "  source \"${ZLRS_REPO_ROOT}/tools/zephyr-env.sh\""
+echo "  zlrs-build     # = cd \$ZLRS_WS && west build -b \$ZLRS_BOARD --shield \$ZLRS_SHIELD \$ZLRS_APP"

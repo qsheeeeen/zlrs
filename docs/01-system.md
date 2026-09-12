@@ -209,8 +209,8 @@ docs/                 设计文档
 
 ## 7. 初始化顺序
 
-构建环境见 [README](../README.md)：`tools/setup-zephyr.sh` 建工作区，
-`tools/zephyr-env.sh` 进环境，不需要 Zephyr SDK。
+构建环境见 [README](../README.md)：`tools/setup-zephyr.sh` 用本仓库的
+`west.yml` 建工作区，`tools/zephyr-env.sh` 进环境并指向 Zephyr SDK。
 
 运行时的初始化顺序：
 
@@ -242,7 +242,7 @@ docs/                 设计文档
 
 | 阶段 | 内容 | 产出 |
 | --- | --- | --- |
-| 0 | **已完成**：west 工作区 + 官方 `packet_error_rate_flrc` 示例 | Zephyr 4.2.0 + usp_zephyr 1.0.0 + 系统 `arm-none-eabi-gcc`；官方示例与本仓库 app 均构建通过，脚本见 `tools/` |
+| 0 | **已完成**：west 工作区 + 官方 `packet_error_rate_flrc` 示例 | Zephyr 4.2.0 + usp_zephyr 1.0.0 + Zephyr SDK 0.17.4；官方示例与本仓库 app 均构建通过，脚本见 `tools/` |
 | 1 | **测量**：频段切换开销、每包 MAC 耗时、误包率曲线、RAC 抢占行为 | 填掉 [03-protocol.md](03-protocol.md) 6.1 那张表 |
 | 2 | 协议核心：帧编解码、FHSS 表、分片重组、状态机（配假射频） | 主机上跑通的双节点仿真 |
 | 3 | 单链路打通：控制链路 sub-GHz 固定信道 + 配对 + 会话 + RC/TLM | 能用遥控器控制一个串口输出 |
