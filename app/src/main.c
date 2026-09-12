@@ -15,7 +15,7 @@ int main(void)
 	LOG_INF("zlrs %s", APP_VERSION_STRING);
 
 	/*
-	 * TODO: 启动顺序按 docs/design.md 第 8 节：
+	 * TODO: 启动顺序按 docs/system.md 第 7 节：
 	 *   1. 射频复位、SetStandby(XOSC)
 	 *   2. Calibrate + CalibFE(LF 频点, HF 频点)
 	 *   3. SetPacketType(FLRC) + SetFlrcModulationParams

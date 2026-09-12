@@ -33,7 +33,7 @@
 
 /*
  * TODO(帧格式)：帧头类型、payload 布局、CRC 位宽、透传每包字节数
- * 都还没定。等 docs/design.md 第 6 节的帧格式定稿后补到本文件。
+ * 都还没定。等 docs/protocol.md 的帧格式定稿后补到本文件。
  */
 
 #endif /* ZLRS_PROTO_CONFIG_H_ */

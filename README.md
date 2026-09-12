@@ -10,11 +10,11 @@
 
 | 文件 | 内容 |
 | --- | --- |
-| [docs/design.md](docs/design.md) | 总体设计与验证计划 |
-| [docs/identity.md](docs/identity.md) | 身份、配对与密钥 |
-| [docs/protocol.md](docs/protocol.md) | 空中格式与链路状态机 |
-| [docs/threading.md](docs/threading.md) | 线程模型与 RAC 用法 |
-| [docs/lr2021.md](docs/lr2021.md) | LR2021 参数摘要 |
+| [docs/01-system.md](docs/01-system.md) | 系统设计、验证计划与待办 |
+| [docs/02-security.md](docs/02-security.md) | 安全模型：身份、配对与密钥 |
+| [docs/03-protocol.md](docs/03-protocol.md) | 空中格式与链路状态机 |
+| [docs/04-threading.md](docs/04-threading.md) | 线程模型与 RAC 用法 |
+| [docs/05-lr2021.md](docs/05-lr2021.md) | LR2021 参数摘要 |
 
 仓库结构沿用 Zephyr
 [example-application](https://github.com/zephyrproject-rtos/example-application)
