@@ -229,8 +229,8 @@ MAC 里同时包含两个 nonce，因此无法重放旧握手。
 
 | 用途 | 算法 | 备注 |
 | --- | --- | --- |
-| 短语 → 根密钥 | PBKDF2-HMAC-SHA256 | 固定 salt + 高迭代；PSA 有 `psa_key_derivation_pbkdf2` |
-| 根密钥 → 派生值 | HKDF-SHA256 | PSA 有 `PSA_ALG_HKDF` |
+| 短语 → 根密钥 | PBKDF2-HMAC-SHA256 | 固定 salt + 高迭代 |
+| 根密钥 → 派生值 | HKDF-SHA256 | info = 标签，需要时再接上下文 |
 | 每包 tag | HMAC-SHA256 截断 4 B | 覆盖 header + seq + payload |
 | 可选加密（P2） | AES-CTR | MAC 覆盖密文（encrypt-then-MAC） |
 

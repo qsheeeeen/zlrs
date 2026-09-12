@@ -191,8 +191,9 @@ QoS 分档按场景切换 profile，而不是散落在代码里。
 
 ```
 include/zlrs/proto/   协议核心头文件
-lib/proto/            协议核心：帧编解码、分片重组、FHSS 跳频表。
-                      纯 C、无 Zephyr 依赖，空口 CRC 由射频硬件负责
+lib/proto/            协议核心：帧编解码、分片重组、FHSS 跳频表、
+                      密钥派生与标签（SHA-256 系列）。纯 C、无 Zephyr 依赖，
+                      空口 CRC 由射频硬件负责
 lib/link/             链路层：会话与配对、PSA 的 HKDF 与 MAC、
                       把帧翻译成 RAC 事务
 app/                  Zephyr 应用：配置（短语 -> PBKDF2）、线程、串口、USB
@@ -200,8 +201,8 @@ tests/host/           主机侧单测（不依赖 Zephyr）
 docs/                 设计文档
 ```
 
-分层原则：协议核心保持纯 C、可在主机上编译测试；`lib/link/` 与 `app/`
-依赖 Zephyr 与 USP，加密操作通过 PSA 走。
+分层原则：协议核心保持纯 C、可在主机上编译测试；`lib/link/` 只依赖射频
+抽象接口，`app/` 才依赖 Zephyr 与 USP。
 
 射频侧的一切——SPI 时序、校准、频段选择、收发调度——都在 `usp_zephyr` 里，
 本仓库不含射频驱动。

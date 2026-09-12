@@ -1,7 +1,7 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# 协议核心是纯 C、不依赖 Zephyr，可以直接在主机上编译运行：
+# 协议核心与链路层的主机侧测试（不含 Zephyr）：
 #
 #   make -C tests/host run
 
@@ -9,14 +9,13 @@ CC      ?= cc
 CFLAGS  ?= -std=c11 -O2 -Wall -Wextra -Werror
 CPPFLAGS += -I../../include
 
-BUILD    := build
-PROTO    := ../../lib/proto
+BUILD := build
+VPATH := .:../../lib/proto:../../lib/link
 
-# 让 make 能在当前目录和协议核心目录里找到源文件，目标文件统一落在 build/
-VPATH    := .:$(PROTO)
-
-OBJS     := $(addprefix $(BUILD)/, test_proto.o crc.o uid.o fhss.o)
-BIN      := $(BUILD)/test_proto
+SRCS := main.c test_proto.c test_link.c \
+        crc.c crypto.c fhss.c frag.c frame.c link.c
+OBJS := $(addprefix $(BUILD)/,$(SRCS:.c=.o))
+BIN  := $(BUILD)/test_zlrs
 
 .PHONY: all run clean
 

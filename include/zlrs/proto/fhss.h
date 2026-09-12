@@ -1,14 +1,10 @@
 /*
- * 跳频序列。
+ * 跳频序列，见 docs/03-protocol.md 第 5 节。
  *
- *   - 伪随机数发生器是固定的一阶 LCG：
- *       seed = (214013 * seed + 2531011) mod 2^31
- *   - 频点表按种子打乱
- *   - 每 freq_count 个时隙的第 0 个固定落在 sync 频道，同一块内不出现重复频点
- *
- * TODO(频段表)：下表沿用参考实现的寄存器单位与频点划分，仅作参考。
- * LR2021 的 SetRfFrequency 直接收 Hz，且覆盖 sub-GHz 与 2.4GHz，
- * 需要重做频段表与频率单位（建议 kHz，避免 freq_spread 的 32 位溢出）。
+ *   - 种子来自 pair_key 的派生值 fhss_seed，两端各自算出同一张表
+ *   - 每块的第 0 个时隙固定落在同步信道，其余位置块内洗牌，
+ *     因此每个频点出现次数相同（法规的等概率使用）
+ *   - 频点以 Hz 表示，直接喂给 LR2021 的 SetRfFrequency
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -25,24 +21,16 @@
 extern "C" {
 #endif
 
-#define ZLRS_RADIO_SX127X 0U
-#define ZLRS_RADIO_SX1280 1U
-#define ZLRS_RADIO_LR2021 2U
-
+/* 地区频段：信道表与功率上限由地区配置层选取 */
 typedef struct {
 	const char *name;
-	uint8_t radio;       /* ZLRS_RADIO_*，决定频率单位 */
-	uint32_t freq_start; /* 频率单位 */
-	uint32_t freq_stop;  /* 频率单位 */
-	uint32_t freq_count; /* 跳频频道数 */
-	uint32_t freq_center;
-	uint32_t hz_start;   /* 仅用于日志打印 */
-	uint32_t hz_stop;
+	uint32_t start_hz;     /* 首个信道中心频率 */
+	uint32_t step_hz;      /* 信道间隔 */
+	uint8_t channel_count; /* 信道数 */
 } zlrs_fhss_domain_t;
 
 enum {
 	ZLRS_DOMAIN_FCC915 = 0,
-	ZLRS_DOMAIN_AU915,
 	ZLRS_DOMAIN_EU868,
 	ZLRS_DOMAIN_ISM2400,
 	ZLRS_DOMAIN_COUNT
@@ -53,35 +41,33 @@ extern const zlrs_fhss_domain_t zlrs_fhss_domains[ZLRS_DOMAIN_COUNT];
 typedef struct {
 	const zlrs_fhss_domain_t *domain;
 	uint8_t sequence[ZLRS_FHSS_SEQUENCE_LEN];
-	uint16_t sequence_count; /* 实际使用的表长，一定是 freq_count 的整数倍 */
-	volatile uint8_t ptr;
-	uint32_t freq_spread; /* 相邻频道间隔，*256 定点 */
+	uint16_t sequence_count;
+	uint16_t index;
 	uint8_t sync_channel;
-	int32_t freq_correction; /* 晶振/温漂校正，频率单位 */
 } zlrs_fhss_t;
 
+/* xorshift32，仅供频点洗牌使用；种子已经过密钥派生 */
 void zlrs_fhss_rng_seed(uint32_t seed);
-uint16_t zlrs_fhss_rng(void);
+uint32_t zlrs_fhss_rng(void);
 uint8_t zlrs_fhss_rng_n(uint8_t max);
 
 /*
- * 按种子生成一张跳频表，返回写入的条目数。
+ * 按种子生成一张表，返回写入的条目数（频点数的整数倍）。
  * sequence 至少要有 ZLRS_FHSS_SEQUENCE_LEN 字节。
  */
-uint16_t zlrs_fhss_build_sequence(uint32_t seed, uint32_t freq_count,
+uint16_t zlrs_fhss_build_sequence(uint32_t seed, uint8_t channel_count,
 				  uint8_t sync_channel, uint8_t *sequence);
 
-/* 用 UID 派生的种子初始化 */
 void zlrs_fhss_init(zlrs_fhss_t *fhss, uint8_t domain_id, uint32_t seed);
 
-uint32_t zlrs_fhss_initial_freq(const zlrs_fhss_t *fhss);
-uint32_t zlrs_fhss_next_freq(zlrs_fhss_t *fhss);
-uint8_t zlrs_fhss_curr_index(const zlrs_fhss_t *fhss);
-void zlrs_fhss_set_index(zlrs_fhss_t *fhss, uint8_t index);
-bool zlrs_fhss_on_sync_channel(const zlrs_fhss_t *fhss);
+/* 信道号 -> 频率，越界回落到同步信道 */
+uint32_t zlrs_fhss_freq_hz(const zlrs_fhss_t *fhss, uint8_t channel);
+uint32_t zlrs_fhss_current_hz(const zlrs_fhss_t *fhss);
+uint32_t zlrs_fhss_next_hz(zlrs_fhss_t *fhss);
 
-/* 频率单位 -> Hz，仅用于日志 */
-uint32_t zlrs_fhss_unit_to_hz(const zlrs_fhss_domain_t *domain, uint32_t value);
+uint16_t zlrs_fhss_index(const zlrs_fhss_t *fhss);
+void zlrs_fhss_set_index(zlrs_fhss_t *fhss, uint16_t index);
+bool zlrs_fhss_on_sync(const zlrs_fhss_t *fhss);
 
 #ifdef __cplusplus
 }

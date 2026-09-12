@@ -4,10 +4,10 @@
 config ZLRS_PROTO
 	bool "zlrs protocol core"
 	help
-	  Pure C protocol core: CRC, FHSS, UID and (to be added) framing,
-	  serial segmentation and the link state machine. It has no Zephyr
-	  dependency so it can also be built and tested on the host, see
-	  tests/host.
+	  Pure C protocol core: frame codec, FHSS sequence, fragmentation
+	  reassembly, CRC utility and the SHA-256 based key derivation and
+	  tagging used on air. No Zephyr dependency, so it also builds and
+	  runs on the host, see tests/host.
 
 module = ZLRS_PROTO
 module-str = zlrs_proto
