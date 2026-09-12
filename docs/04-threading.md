@@ -1,6 +1,6 @@
 # 线程模型与 RAC 使用方式
 
-本文结论来自阅读 `usp_zephyr` v1.0.0 的 `doc/THREAD_MANAGEMENT.md`、
+本文依据 `usp_zephyr` v1.0.0 的 `doc/THREAD_MANAGEMENT.md`、
 `subsys/usp/zephyr_usp_thread.c`、`include/zephyr/usp/smtc_sw_platform_helper.h`，
 以及 `usp` 仓库里的 RAC 示例（`ping_pong`、`packet_error_rate_flrc`）。
 
@@ -78,33 +78,30 @@ RP_HOOK_RAC_MEDIUM_PRIORITY
 
 这就是我们分时双频的仲裁手段，不用自己造调度器。
 
-## 3. 一个必须先说清楚的坑
+## 3. 回调里不做决策
 
 官方示例（`ping_pong`、`packet_error_rate_flrc`）**在 post 回调里直接提交下一个
-事务**。这个写法只在 `SMTC_SW_PLATFORM` 是直调时安全，因为：
+事务**。这个写法只在 `SMTC_SW_PLATFORM` 是直调时安全：
 
 - 抢占式 + 互斥锁模式下，`smtc_rac_run_engine()` 是在持有 `rac_api_mutex`
   的情况下跑的；
 - 回调里再走一遍 `SMTC_SW_PLATFORM(smtc_rac_submit_radio_transaction(...))`，
-  就是对同一把锁再次加锁。
+  就是对同一把锁再次加锁，这条路径不在官方验证范围内。
 
-Zephyr 的 `k_mutex` 对同一线程应该是可重入的（内部有 lock_count），所以大概率
-不会死锁——但这条路径官方示例没覆盖，**要在选定的配置上实测确认**。
-
-结论无论哪种模式都成立：**回调里只做搬运，不做决策**。
+zlrs 的规则：**回调里只做搬运，不做决策，也不提交下一个事务。**
 
 ## 4. zlrs 的选择
 
-### 起步用协作式
+### 协作式多线程
 
 理由：
 
-1. 这是官方示例实际验证过的配置，`prj.conf` 可以直接对齐。
+1. 官方示例验证过的配置，`prj.conf` 直接对齐。
 2. API 直调，没有互斥锁开销，也没有优先级反转这一类问题。
-3. 我们的链路逻辑全是 I/O 驱动、会频繁让出，不长时间占 CPU。
+3. 链路逻辑全是 I/O 驱动、会频繁让出，不长时间占 CPU。
 
 代价是：UART 突发如果处理太久，会推迟射频事件的处理。缓解办法是把串口处理
-切块并及时让出。**这是需要在真板上量化的第一件事**，量出来不够再切抢占式。
+切块并及时让出；需要更强的优先级响应时改用抢占式 + 互斥锁。
 
 ### 线程划分
 
@@ -121,7 +118,7 @@ Zephyr 的 `k_mutex` 对同一线程应该是可重入的（内部有 lock_count
 | 控制链路 | `RAC_HIGH_PRIORITY` | sub-GHz | FLRC（LoRa 兜底档） |
 | 数据链路 | `RAC_MEDIUM_PRIORITY` | 2.4GHz | FLRC |
 
-数据是**单颗半双工射频**，同一时刻只能有一个事务在跑；优先级决定谁先拿到射频，
+但这是**单颗半双工射频**，同一时刻只能有一个事务在跑；优先级决定谁先拿到射频，
 这正好实现"控制链路永远优先，空闲时隙给透传"。
 
 注意 RAC 是在 1.6 GHz 处分流收发通道的
@@ -137,12 +134,3 @@ Zephyr 的 `k_mutex` 对同一线程应该是可重入的（内部有 lock_count
 3. 返回。
 
 不在回调里做 CRC 校验、不在回调里翻协议栈、不在回调里碰 UART。
-
-## 5. 待验证清单
-
-1. 协作式下，串口满载时射频回调的延迟抖动有多大。
-2. 上面那条"回调用 `SMTC_SW_PLATFORM` 提交"在互斥锁模式下是否真的不死锁。
-3. 两个 `radio_access_id` 的实际抢占行为：控制链路提交时，数据链路正在进行
-   的事务是被打断还是被排在后面。
-4. `SMTC_RAC_SCHEDULED_TRANSACTION` 的 delay 单位与精度（示例里是 ms 量级），
-   能否支撑我们需要的时隙精度。
