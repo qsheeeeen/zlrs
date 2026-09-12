@@ -103,7 +103,8 @@ west build -b xiao_nrf54l15/nrf54l15/cpuapp \
 
 ## 测试
 
-协议核心是纯 C、不依赖 Zephyr，可以直接在主机上编译运行：
+协议核心与链路层可以直接在主机上编译运行。密码学原语链接的是工作区里的
+mbedTLS 源码——跟设备侧同一份，所以先跑过 `tools/setup-zephyr.sh`：
 
 ```shell
 make -C tests/host run

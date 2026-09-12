@@ -1,8 +1,13 @@
 /*
- * 协议核心的密码学原语：SHA-256、HMAC-SHA256、HKDF-SHA256、
+ * 协议核心用到的密码学原语：SHA-256、HMAC-SHA256、HKDF-SHA256、
  * PBKDF2-HMAC-SHA256 与 4 字节截断标签。
  *
- * 纯 C、无依赖，主机与设备用同一份实现；算法选型见 docs/02-security.md。
+ * 实现在 lib/proto/crypto.c，底层是 mbedTLS（Zephyr 自带的那份）：
+ *   - 上层（lib/link）不直接接触 mbedTLS 类型
+ *   - 标签长度、域分离标签、KDF 的上下文拼接方式在这里统一
+ * 设备侧与主机侧测试链接同一份 mbedTLS 源码，见 tests/host/Makefile。
+ *
+ * 算法选型见 docs/02-security.md。
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -21,18 +26,7 @@ extern "C" {
 #endif
 
 #define ZLRS_SHA256_LEN 32U
-#define ZLRS_SHA256_BLOCK_LEN 64U
 
-typedef struct {
-	uint32_t state[8];
-	uint64_t bit_len;
-	uint8_t buf[ZLRS_SHA256_BLOCK_LEN];
-	uint16_t buf_len;
-} zlrs_sha256_ctx_t;
-
-void zlrs_sha256_init(zlrs_sha256_ctx_t *ctx);
-void zlrs_sha256_update(zlrs_sha256_ctx_t *ctx, const void *data, size_t len);
-void zlrs_sha256_final(zlrs_sha256_ctx_t *ctx, uint8_t out[ZLRS_SHA256_LEN]);
 void zlrs_sha256(const void *data, size_t len, uint8_t out[ZLRS_SHA256_LEN]);
 
 void zlrs_hmac_sha256(const uint8_t *key, size_t key_len, const uint8_t *msg,
@@ -40,7 +34,7 @@ void zlrs_hmac_sha256(const uint8_t *key, size_t key_len, const uint8_t *msg,
 
 /*
  * HKDF-SHA256。zlrs_kdf() 是协议里 KDF(key, label[, ctx]) 的落地形式：
- * extract 用全零盐，expand 的 info = label || ctx。
+ * extract 用空盐，expand 的 info = label || ctx。
  */
 void zlrs_hkdf_extract(const uint8_t *salt, size_t salt_len, const uint8_t *ikm,
 		       size_t ikm_len, uint8_t prk[ZLRS_SHA256_LEN]);

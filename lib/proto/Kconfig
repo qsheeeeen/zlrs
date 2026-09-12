@@ -3,11 +3,17 @@
 
 config ZLRS_PROTO
 	bool "zlrs protocol core"
+	select MBEDTLS
+	select MBEDTLS_SHA256
+	select MBEDTLS_MD
+	select MBEDTLS_HKDF_C
+	select MBEDTLS_PKCS5_C
 	help
 	  Pure C protocol core: frame codec, FHSS sequence, fragmentation
-	  reassembly, CRC utility and the SHA-256 based key derivation and
-	  tagging used on air. No Zephyr dependency, so it also builds and
-	  runs on the host, see tests/host.
+	  reassembly, CRC utility and the key derivation and tagging used on
+	  air. The crypto primitives come from mbedTLS (Zephyr in-tree); the
+	  rest has no Zephyr dependency, so it also builds and runs on the
+	  host, see tests/host.
 
 module = ZLRS_PROTO
 module-str = zlrs_proto

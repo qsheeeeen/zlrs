@@ -4,5 +4,8 @@
 build:
   kconfig: Kconfig
   cmake: .
+  # lib/proto 的密码学原语用 mbedTLS，必须在它之后处理
+  depends:
+    - mbedtls
   settings:
     board_root: .
