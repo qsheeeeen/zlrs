@@ -14,6 +14,7 @@
 
 范围：本仓库包含协议核心、链路层与固件（射频链路、数据串口透传、配对持久化）。
 串口侧的 CRSF 端口与配置协议不在其中；射频驱动来自 Semtech 的 USP，不在本仓库。
+接下来做什么见 [docs/05-roadmap.md](docs/05-roadmap.md)。
 
 ## 能编什么
 
@@ -103,6 +104,7 @@ docs/         设计文档
 | 身份与密钥从哪来、配对流程、威胁模型与已知弱点 | [docs/02-security.md](docs/02-security.md) |
 | 帧格式与包类型、链路状态机、超帧、跳频与法规约束 | [docs/03-protocol.md](docs/03-protocol.md) |
 | LR2021 的速率、灵敏度、切换时序、SPI 与 IRQ 摘要 | [docs/04-lr2021.md](docs/04-lr2021.md) |
+| 接下来的里程碑与各自的验收标准 | [docs/05-roadmap.md](docs/05-roadmap.md) |
 
 ## 依赖
 
