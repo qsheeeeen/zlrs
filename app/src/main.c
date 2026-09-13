@@ -522,7 +522,7 @@ static void led_tick(uint32_t now_ms)
 	in.link_state = link_control.state;
 	in.lq_percent = link_control.stats.lq_percent;
 	in.uptime_ms = now_ms;
-	in.drop_recent = (uint32_t)(now_ms - led_drop_ms) < 1000U;
+	in.drop_recent = (drops > 0U) && (uint32_t)(now_ms - led_drop_ms) < 1000U;
 	/* TX 没有手台输入时就是在发失控值；RX 未连接时在往飞控输出失控值 */
 	in.failsafe = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX)
 			      ? !rc_input_seen

@@ -6,7 +6,7 @@
 
 #include <string.h>
 
-#include <zephyr/fs/nvs.h>
+#include <zephyr/kvss/nvs.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/storage/flash_map.h>
 
@@ -22,9 +22,9 @@ LOG_MODULE_REGISTER(zlrs_store, CONFIG_APP_LOG_LEVEL);
 #define NVS_SECTOR_SIZE 4096U
 
 static struct nvs_fs fs = {
-	.offset = FIXED_PARTITION_OFFSET(storage_partition),
+	.offset = PARTITION_OFFSET(storage_partition),
 	.sector_size = NVS_SECTOR_SIZE,
-	.sector_count = FIXED_PARTITION_SIZE(storage_partition) / NVS_SECTOR_SIZE,
+	.sector_count = PARTITION_SIZE(storage_partition) / NVS_SECTOR_SIZE,
 };
 
 static bool ready;
@@ -33,7 +33,7 @@ int zlrs_store_init(void)
 {
 	int rc;
 
-	fs.flash_device = FIXED_PARTITION_DEVICE(storage_partition);
+	fs.flash_device = PARTITION_DEVICE(storage_partition);
 	if (fs.flash_device == NULL) {
 		return -1;
 	}
