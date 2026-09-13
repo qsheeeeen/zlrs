@@ -31,6 +31,7 @@
 
 #include "zlrs/crsf/crsf.h"
 #include "zlrs/link/link.h"
+#include "zlrs/link/power.h"
 #include "zlrs/link/rate.h"
 #include "zlrs/region/region.h"
 #include "zlrs/proto/tlm.h"
@@ -82,6 +83,11 @@ static const zlrs_rate_tier_t rate_tiers[] = {
 };
 static zlrs_rate_ctl_t rate_ctl;
 #endif
+
+/* 动态功率：TX 按 RX 回报的 RSSI/LQ 升降自己的发射功率 */
+#if IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)
+static zlrs_power_ctl_t power_ctl;
+#endif
 static struct {
 	uint32_t rc_rx;
 	uint32_t tlm_rx;
@@ -109,6 +115,21 @@ static void on_tlm(void *ctx, const uint8_t *payload, uint16_t len)
 	/* TX 侧：把 RX 的上行质量转成给手台看的链路统计帧 */
 	if (zlrs_tlm_decode(payload, len, &tlm)) {
 		crsf_send_link_stats(&tlm);
+
+#if IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)
+		{
+			int8_t next = 0;
+
+			/* tlm.rssi_neg_dbm 是"dBm 的相反数"，这里换回负值含义的 dBm */
+			if (zlrs_power_update(&power_ctl, true,
+					      -(int16_t)tlm.rssi_neg_dbm, tlm.lq_percent,
+					      zlrs_rac_port_now_ms(), &next)) {
+				zlrs_link_set_power(&link_control, next);
+				LOG_INF("tx power -> %d dBm (rssi -%u dBm, lq %u%%)", next,
+					tlm.rssi_neg_dbm, tlm.lq_percent);
+			}
+		}
+#endif
 	}
 }
 
@@ -220,6 +241,12 @@ static void build_links(void)
 		zlrs_rate_init(&rate_ctl, rate_tiers, (uint8_t)ARRAY_SIZE(rate_tiers), start,
 			       0U);
 	}
+#endif
+
+#if IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)
+	/* 上限取"配置功率与地区上限的较小值"，下限是配置项 */
+	zlrs_power_init(&power_ctl, MIN(CONFIG_ZLRS_APP_TX_POWER_DBM, region->max_tx_power_dbm),
+			CONFIG_ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM, 0U);
 #endif
 }
 
@@ -509,6 +536,18 @@ static void report(uint32_t now_ms)
 	}
 #endif
 
+#if IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)
+	{
+		int8_t next = 0;
+
+		/* 轮询路径：只有这里判"遥测断了没有"，断了就回到上限 */
+		if (zlrs_power_update(&power_ctl, false, 0, 0U, now_ms, &next)) {
+			zlrs_link_set_power(&link_control, next);
+			LOG_WRN("no telemetry: tx power back to %d dBm", next);
+		}
+	}
+#endif
+
 	LOG_INF("%s ctl=%u tlm=%u data=%u serial_drop=%u",
 		IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? "TX" : "RX", counters.rc_rx,
 		counters.tlm_rx, counters.data_rx, zlrs_serial_dropped());
@@ -518,6 +557,11 @@ static void report(uint32_t now_ms)
 	LOG_INF("region %s: max %d dBm, duty denied %u",
 		(region != NULL) ? region->name : "?", region->max_tx_power_dbm,
 		duty.denied);
+#if IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)
+	LOG_INF("tx power %d dBm (up %u / down %u / fallback %u)",
+		zlrs_power_current_dbm(&power_ctl), power_ctl.raises, power_ctl.lowers,
+		power_ctl.fallbacks);
+#endif
 }
 
 /*

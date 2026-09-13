@@ -129,6 +129,9 @@ python3 scripts/zlrs-config.py --port /dev/ttyACM0 exit
   的数据；默认还是 best-effort，缓冲满就丢并计数。
 - `CONFIG_ZLRS_APP_RATE_ADAPT=y`：按链路质量自动升降速率档。阈值要按实测曲线标定，
   所以默认关着，见 [doc/05-roadmap.md](doc/05-roadmap.md) 的 M4。
+- `CONFIG_ZLRS_APP_DYNAMIC_POWER=y`：按对端回报的 RSSI/LQ 自动升降发射功率
+  （遥测断了回到上限），下限用 `CONFIG_ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM`；
+  阈值同样要实测标定，默认关着。
 - 窄带场景（433/868）以后允许换成 LoRa 等调制，见 [doc/05-roadmap.md](doc/05-roadmap.md)
   的 M4 待做项。
 
