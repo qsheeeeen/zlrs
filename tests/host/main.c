@@ -45,6 +45,7 @@ int main(void)
 	printf("zlrs host tests\n");
 	test_proto();
 	test_link();
+	test_crsf();
 	printf("%u checks, %u failure(s)\n", zlrs_test_checks, zlrs_test_failures);
 
 	return zlrs_test_failures == 0U ? 0 : 1;

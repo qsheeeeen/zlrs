@@ -1,0 +1,13 @@
+# Copyright (c) 2026 zlrs contributors
+# SPDX-License-Identifier: Apache-2.0
+
+config ZLRS_CRSF
+	bool "zlrs CRSF port codec"
+	help
+	  CRSF frame codec for the ground-side ports (handset <-> module and
+	  receiver -> flight controller): RC channel packing and the link
+	  statistics frame. Pure C, no Zephyr dependency, see tests/host.
+
+module = ZLRS_CRSF
+module-str = zlrs_crsf
+source "subsys/logging/Kconfig.template.log_config"

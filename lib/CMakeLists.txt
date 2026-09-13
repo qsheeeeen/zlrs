@@ -3,3 +3,4 @@
 
 add_subdirectory_ifdef(CONFIG_ZLRS_PROTO proto)
 add_subdirectory_ifdef(CONFIG_ZLRS_LINK link)
+add_subdirectory_ifdef(CONFIG_ZLRS_CRSF crsf)
