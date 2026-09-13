@@ -18,9 +18,14 @@ int zlrs_store_init(void);
 int zlrs_store_load_root_key(uint8_t out[ZLRS_KEY_LEN]);
 int zlrs_store_load_dev_id(uint8_t out[ZLRS_DEV_ID_LEN]);
 int zlrs_store_load_peer(uint8_t out[ZLRS_DEV_ID_LEN]);
+int zlrs_store_load_failsafe(uint8_t out[ZLRS_CFG_FAILSAFE_LEN]);
+int zlrs_store_load_baud(uint32_t *out);
 
+int zlrs_store_save_root_key(const uint8_t key[ZLRS_KEY_LEN]);
 int zlrs_store_save_dev_id(const uint8_t id[ZLRS_DEV_ID_LEN]);
 int zlrs_store_save_peer(const uint8_t id[ZLRS_DEV_ID_LEN]);
+int zlrs_store_save_failsafe(const uint8_t channels[ZLRS_CFG_FAILSAFE_LEN]);
+int zlrs_store_save_baud(uint32_t baud);
 int zlrs_store_clear_peer(void);
 
 /* 把 64 个十六进制字符解析成根密钥，成功返回 0 */

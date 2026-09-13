@@ -52,4 +52,7 @@
 /* 控制链路 RC 载荷：CRSF 的 22 字节通道数据原样搬运 */
 #define ZLRS_RC_PAYLOAD_LEN 22U
 
+/* 配置协议里的失控值：就是同一份 22 字节 CRSF 通道载荷 */
+#define ZLRS_CFG_FAILSAFE_LEN ZLRS_RC_PAYLOAD_LEN
+
 #endif /* ZLRS_PROTO_CONFIG_H_ */

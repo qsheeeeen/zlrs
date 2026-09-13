@@ -333,6 +333,14 @@ void zlrs_tag(const uint8_t *key, size_t key_len, const uint8_t *data, size_t le
 	memset(mac, 0, sizeof(mac));
 }
 
+void zlrs_root_key_from_phrase(const char *phrase, uint8_t out[ZLRS_KEY_LEN])
+{
+	static const char salt[] = ZLRS_KDF_V1_SALT;
+
+	zlrs_pbkdf2_sha256(phrase, (const uint8_t *)salt, sizeof(salt) - 1U,
+			   ZLRS_KDF_V1_ITERATIONS, out);
+}
+
 bool zlrs_ct_equal(const uint8_t *a, const uint8_t *b, size_t len)
 {
 	uint8_t diff = 0U;

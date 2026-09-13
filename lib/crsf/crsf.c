@@ -8,6 +8,8 @@
 
 #include <string.h>
 
+#include "zlrs/proto/crc.h"
+
 /* 解析阶段认识的地址字节；其它字节在空闲态直接丢掉 */
 static bool valid_address(uint8_t byte)
 {
@@ -31,17 +33,7 @@ void zlrs_crsf_parser_init(zlrs_crsf_parser_t *p)
 
 uint8_t zlrs_crsf_crc8(const uint8_t *data, size_t len)
 {
-	uint8_t crc = 0U;
-
-	for (size_t i = 0U; i < len; i++) {
-		crc ^= data[i];
-		for (uint8_t bit = 0U; bit < 8U; bit++) {
-			crc = (uint8_t)((crc & 0x80U) != 0U ? (uint8_t)((crc << 1) ^ 0xD5U)
-							    : (uint8_t)(crc << 1));
-		}
-	}
-
-	return crc;
+	return zlrs_crc8(data, len);
 }
 
 enum zlrs_crsf_result zlrs_crsf_feed(zlrs_crsf_parser_t *p, uint8_t byte)

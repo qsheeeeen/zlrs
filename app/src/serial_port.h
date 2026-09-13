@@ -11,7 +11,8 @@
 
 #include <stdint.h>
 
-int zlrs_serial_init(void);
+/* baud = 0 表示用板级默认（115200）；非 0 时覆盖（配置工具设过就用它） */
+int zlrs_serial_init(uint32_t baud);
 
 /* 从接收环形缓冲取数据，返回实际取到的字节数 */
 uint16_t zlrs_serial_read(uint8_t *buf, uint16_t len);

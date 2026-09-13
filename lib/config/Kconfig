@@ -1,0 +1,15 @@
+# Copyright (c) 2026 zlrs contributors
+# SPDX-License-Identifier: Apache-2.0
+
+config ZLRS_CONFIG
+	bool "zlrs configuration protocol"
+	select ZLRS_PROTO
+	help
+	  Configuration protocol carried on the data port while the device is in
+	  configuration mode (hold the button at boot). Pure C: the command
+	  dispatch talks to the device through a backend vtable, so the host
+	  tests can exercise every command, see tests/host.
+
+module = ZLRS_CONFIG
+module-str = zlrs_config
+source "subsys/logging/Kconfig.template.log_config"

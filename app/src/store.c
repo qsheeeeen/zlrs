@@ -16,6 +16,8 @@ LOG_MODULE_REGISTER(zlrs_store, CONFIG_APP_LOG_LEVEL);
 #define NVS_ID_ROOT_KEY 1U
 #define NVS_ID_DEV_ID 2U
 #define NVS_ID_PEER_ID 3U
+#define NVS_ID_FAILSAFE 4U
+#define NVS_ID_BAUD 5U
 
 #define NVS_SECTOR_SIZE 4096U
 
@@ -80,6 +82,21 @@ int zlrs_store_load_peer(uint8_t out[ZLRS_DEV_ID_LEN])
 	return read_record(NVS_ID_PEER_ID, out, ZLRS_DEV_ID_LEN);
 }
 
+int zlrs_store_load_failsafe(uint8_t out[ZLRS_CFG_FAILSAFE_LEN])
+{
+	return read_record(NVS_ID_FAILSAFE, out, ZLRS_CFG_FAILSAFE_LEN);
+}
+
+int zlrs_store_load_baud(uint32_t *out)
+{
+	return read_record(NVS_ID_BAUD, out, sizeof(*out));
+}
+
+int zlrs_store_save_root_key(const uint8_t key[ZLRS_KEY_LEN])
+{
+	return write_record(NVS_ID_ROOT_KEY, key, ZLRS_KEY_LEN);
+}
+
 int zlrs_store_save_dev_id(const uint8_t id[ZLRS_DEV_ID_LEN])
 {
 	return write_record(NVS_ID_DEV_ID, id, ZLRS_DEV_ID_LEN);
@@ -88,6 +105,16 @@ int zlrs_store_save_dev_id(const uint8_t id[ZLRS_DEV_ID_LEN])
 int zlrs_store_save_peer(const uint8_t id[ZLRS_DEV_ID_LEN])
 {
 	return write_record(NVS_ID_PEER_ID, id, ZLRS_DEV_ID_LEN);
+}
+
+int zlrs_store_save_failsafe(const uint8_t channels[ZLRS_CFG_FAILSAFE_LEN])
+{
+	return write_record(NVS_ID_FAILSAFE, channels, ZLRS_CFG_FAILSAFE_LEN);
+}
+
+int zlrs_store_save_baud(uint32_t baud)
+{
+	return write_record(NVS_ID_BAUD, &baud, sizeof(baud));
 }
 
 int zlrs_store_clear_peer(void)

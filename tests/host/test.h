@@ -29,5 +29,6 @@ int zlrs_test_hex_eq(const uint8_t *data, size_t len, const char *hex);
 void test_proto(void);
 void test_link(void);
 void test_crsf(void);
+void test_config(void);
 
 #endif /* ZLRS_HOST_TEST_H_ */

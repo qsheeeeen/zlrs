@@ -22,6 +22,7 @@
 #include <smtc_sw_platform_helper.h>
 
 #include "crsf_port.h"
+#include "config_port.h"
 #include "rac_port.h"
 #include "serial_port.h"
 #include "store.h"
@@ -327,8 +328,11 @@ static void failsafe_init(void)
 {
 	uint16_t channels[ZLRS_CRSF_CHANNEL_COUNT];
 
-	zlrs_crsf_channels_default(channels);
-	zlrs_crsf_channels_pack(failsafe_payload, channels);
+	if (zlrs_store_load_failsafe(failsafe_payload) != (int)sizeof(failsafe_payload)) {
+		/* 没配过就用默认值：油门最低、其余中位 */
+		zlrs_crsf_channels_default(channels);
+		zlrs_crsf_channels_pack(failsafe_payload, channels);
+	}
 	memcpy(rc_payload, failsafe_payload, sizeof(rc_payload));
 }
 
@@ -486,8 +490,32 @@ int main(void)
 	(void)zlrs_store_init();
 	build_links();
 	load_identity();
-	(void)zlrs_serial_init();
 	failsafe_init();
+
+	/*
+	 * 配置模式：开机时按键按住就进，见 doc/01-system.md 2.1。
+	 * 跑完直接继续正常启动，不用重启——写进去的密钥与失控值当场就生效。
+	 */
+	if (gpio_is_ready_dt(&button) &&
+	    gpio_pin_configure_dt(&button, GPIO_INPUT) == 0) {
+		k_msleep(20); /* 上电去抖 */
+		if (gpio_pin_get_dt(&button) > 0) {
+			LOG_WRN("开机按键按住：进入配置模式");
+			(void)zlrs_config_mode_run(&link_control, failsafe_payload);
+			memcpy(rc_payload, failsafe_payload, sizeof(rc_payload));
+			zlrs_link_set_rc(&link_control, rc_payload, sizeof(rc_payload));
+		}
+	}
+
+	{
+		uint32_t baud = 0U;
+
+		if (zlrs_store_load_baud(&baud) != (int)sizeof(baud)) {
+			baud = 0U;
+		}
+		(void)zlrs_serial_init(baud);
+	}
+
 	zlrs_link_set_rc(&link_control, rc_payload, sizeof(rc_payload));
 	(void)zlrs_crsf_port_init();
 

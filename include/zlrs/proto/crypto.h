@@ -36,6 +36,20 @@ void zlrs_kdf(const uint8_t *key, size_t key_len, const char *label,
 void zlrs_tag(const uint8_t *key, size_t key_len, const uint8_t *data, size_t len,
 	      uint8_t out[ZLRS_TAG_LEN]);
 
+/*
+ * 短语 → 根密钥：PBKDF2-HMAC-SHA256。
+ * salt 里带 KDF 版本号（见 doc/02-security.md 第 4 节），迭代次数由调用方给，
+ * 派生规则固定在设备侧，配置工具不能改。
+ */
+void zlrs_pbkdf2_sha256(const char *phrase, const uint8_t *salt, size_t salt_len,
+			uint32_t iterations, uint8_t out[ZLRS_KEY_LEN]);
+
+/* 与上面同一个规则，但用发布版的固定 salt 与迭代次数（配置模式用） */
+#define ZLRS_KDF_V1_SALT "zlrs/kdf/v1"
+#define ZLRS_KDF_V1_ITERATIONS 100000U
+
+void zlrs_root_key_from_phrase(const char *phrase, uint8_t out[ZLRS_KEY_LEN]);
+
 /* 定长比较，防时序侧信道 */
 bool zlrs_ct_equal(const uint8_t *a, const uint8_t *b, size_t len);
 

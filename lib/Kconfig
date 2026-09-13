@@ -6,5 +6,6 @@ menu "zlrs libraries"
 rsource "proto/Kconfig"
 rsource "link/Kconfig"
 rsource "crsf/Kconfig"
+rsource "config/Kconfig"
 
 endmenu

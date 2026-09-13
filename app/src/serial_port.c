@@ -52,11 +52,19 @@ static void uart_isr(const struct device *dev, void *user_data)
 	}
 }
 
-int zlrs_serial_init(void)
+int zlrs_serial_init(uint32_t baud)
 {
 	if (!device_is_ready(uart)) {
 		LOG_ERR("数据串口未就绪");
 		return -1;
+	}
+
+	if (baud > 0U) {
+		const int rc = uart_line_ctrl_set(uart, UART_LINE_CTRL_BAUD_RATE, baud);
+
+		if (rc != 0) {
+			LOG_WRN("数据串口波特率改 %u 失败：%d", (unsigned int)baud, rc);
+		}
 	}
 
 	ring_buf_init(&rx_ring, sizeof(rx_ring_mem), rx_ring_mem);

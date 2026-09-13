@@ -56,6 +56,12 @@ config ZLRS_APP_TLM_PERIOD_MS
 	int "RX 上报遥测的周期（ms）"
 	default 100
 
+config ZLRS_APP_CONFIG_TIMEOUT_S
+	int "配置模式无操作超时（秒）"
+	default 300
+	help
+	  开机时按住按键进入配置模式；这么久没有命令就退出，见 doc/01-system.md 2.1。
+
 config ZLRS_APP_DATA_ARQ
 	bool "透传走 ARQ profile（长度前缀 + 序号 + 累计 ACK + 重传）"
 	default n
