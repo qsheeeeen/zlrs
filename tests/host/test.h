@@ -31,5 +31,6 @@ void test_link(void);
 void test_crsf(void);
 void test_config(void);
 void test_region(void);
+void test_led(void);
 
 #endif /* ZLRS_HOST_TEST_H_ */

@@ -8,5 +8,6 @@ rsource "link/Kconfig"
 rsource "crsf/Kconfig"
 rsource "config/Kconfig"
 rsource "region/Kconfig"
+rsource "led/Kconfig"
 
 endmenu

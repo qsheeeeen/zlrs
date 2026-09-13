@@ -14,10 +14,11 @@ CFLAGS  ?= -std=c11 -O2 -Wall -Wextra -Werror -MMD -MP
 CPPFLAGS += -I../../include
 
 BUILD := build
-VPATH := .:../../lib/proto:../../lib/link:../../lib/crsf:../../lib/config:../../lib/region
+VPATH := .:../../lib/proto:../../lib/link:../../lib/crsf:../../lib/config:../../lib/region:../../lib/led
 
 SRCS := main.c test_proto.c test_link.c \
-        test_crsf.c test_config.c test_region.c crsf.c config.c region.c \
+        test_crsf.c test_config.c test_region.c test_led.c \
+        crsf.c config.c region.c led.c \
         crc.c crypto_soft.c fhss.c frag.c frame.c tlm.c link.c rate.c
 OBJS := $(addprefix $(BUILD)/,$(SRCS:.c=.o))
 DEPS := $(OBJS:.o=.d)

@@ -1,0 +1,14 @@
+# Copyright (c) 2026 zlrs contributors
+# SPDX-License-Identifier: Apache-2.0
+
+config ZLRS_LED
+	bool "zlrs status led patterns"
+	select ZLRS_LINK
+	help
+	  Maps the link state (and alerts) to the colour and cadence of a single
+	  status pixel. Pure C, see tests/host; the LED strip driver lives in the
+	  application.
+
+module = ZLRS_LED
+module-str = zlrs_led
+source "subsys/logging/Kconfig.template.log_config"
