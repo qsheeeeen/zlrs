@@ -1,13 +1,17 @@
 /*
- * Waveshare Core2021（LR2021）接到 XIAO nRF54L15 的接线。
+ * Waveshare Core2021（LR2021，双频模块）接到 XIAO nRF54L15 的接线。
+ *
+ * 两个变体都是「2.4 GHz + 一路 sub-GHz」：LF 是 2.4G + 400M，HF 是
+ * 2.4G + 900M。用 868 / 915 地区就选 HF 那颗；433 地区选 LF。
+ * 频段分工与默认设计一致：sub-GHz 跑控制链路，2.4G 跑数据链路。
  *
  * 信号按微雪 STM32 移植文档的等价物映射：
  *   SCK/MISO/MOSI -> xiao_spi（D8/D9/D10）
  *   CS -> D3，BUSY -> D1，NRESET -> D2，DIO8(IRQ) -> D0
  *
  * 模块用晶振（不用 TCXO），PA 标定表取自 Semtech 的 Wio-LR2021 参考值；
- * 换成 Core2021 后应按模块的 PA 网络重新标定 tx-power-cfg-* 与
- * calibration-freqs。
+ * 换成 Core2021 后应按模块的 PA 网络重新标定 tx-power-cfg-*，并把
+ * calibration-freqs 里对应 sub-GHz 变体的频点改成实际使用频段。
  *
  * SPDX-License-Identifier: Apache-2.0
  */

@@ -54,6 +54,12 @@ zlrs-build                   # = west build -b $ZLRS_BOARD --shield $ZLRS_SHIELD
 cd "$ZLRS_WS" && west flash  # 板级默认 pyocd，也可 --runner jlink/nrfutil/openocd
 ```
 
+射频模块换成 Waveshare Core2021 时换掉 shield 即可（两个模块的驱动相同）：
+
+```shell
+ZLRS_SHIELD=waveshare_core2021 zlrs-build
+```
+
 `tools/zephyr-env.sh` 导出这些变量，构建产物落在 `$ZLRS_WS/build/`：
 
 | 变量 | 默认值 |
@@ -61,7 +67,7 @@ cd "$ZLRS_WS" && west flash  # 板级默认 pyocd，也可 --runner jlink/nrfuti
 | `ZLRS_WS` | 仓库的上一级目录（工作区根） |
 | `ZLRS_APP` | `$ZLRS_WS/zlrs/app` |
 | `ZLRS_BOARD` | `xiao_nrf54l15/nrf54l15/cpuapp` |
-| `ZLRS_SHIELD` | `semtech_wio_lr2021` |
+| `ZLRS_SHIELD` | `semtech_wio_lr2021`（Core2021 用 `waveshare_core2021`） |
 | `ZLRS_SDK_DIR` | `~/zephyr-sdk-0.17.4` |
 
 ### 3. 角色、密钥与配对
@@ -114,7 +120,7 @@ docs/         设计文档
 | usp_zephyr / usp | v1.0.0 | Semtech 射频栈（RAC/RALF），射频驱动在这里 |
 | Zephyr SDK | 0.17.4 | 装 `arm-zephyr-eabi` 一个工具链即可 |
 | mbedTLS | Zephyr 自带 | 密码学原语；主机侧链接工作区里的同一份源码 |
-| 参考硬件 | XIAO nRF54L15 + Wio-LR2021 | 换板子只需改 devicetree 与 Kconfig |
+| 参考硬件 | XIAO nRF54L15 + LR2021 模块 | Semtech Wio-LR2021，或 Waveshare Core2021（2.4G + 900M / 400M 两个变体）；换硬件只改 devicetree 与 Kconfig |
 
 ## 构建要点
 

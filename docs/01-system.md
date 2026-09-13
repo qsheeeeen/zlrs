@@ -51,7 +51,7 @@
 | 项目 | 选择 |
 | --- | --- |
 | 射频 | Semtech LR2021（QFN32），SPI + BUSY + DIO |
-| 参考硬件 | XIAO nRF54L15 + Wio-LR2021（Semtech 官方验证组合，无原生 USB） |
+| 参考硬件 | XIAO nRF54L15 + 一颗 LR2021 模块（Semtech Wio-LR2021，或 Waveshare Core2021 的 900M / 400M 变体），无原生 USB |
 | 射频栈 | `usp_zephyr` v1.0.0 + `usp` v1.0.0，使用 RAC/RALF 层 |
 | Zephyr | v4.2.0（与 usp_zephyr 对齐） |
 | 仓库拓扑 | T2，zlrs 自己当 manifest 仓库并存放应用 |
