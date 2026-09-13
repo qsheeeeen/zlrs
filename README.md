@@ -47,7 +47,8 @@ west build -b "$ZLRS_BOARD" usp_zephyr/samples/usp/sdk/packet_error_rate_flrc \
 ### 1. 搭工作区
 
 本仓库在 west 里是 manifest 仓库（T2 拓扑）：清单 [west.yml](west.yml) 固定
-Zephyr v4.4.0、usp_zephyr v1.1.2 与 usp v1.1.2，工作区默认建在仓库的上一级目录。
+Zephyr v4.4.0、usp_zephyr 与 usp v1.1.2-feature-202604，工作区默认建在仓库的
+上一级目录。
 
 ```shell
 scripts/setup-zephyr.sh        # 首次约 5 GB
@@ -123,7 +124,7 @@ zephyr/module.yml     本仓库作为 Zephyr 模块的入口（板级定义也�
 | 依赖 | 版本 | 说明 |
 | --- | --- | --- |
 | Zephyr | v4.4.0 | 由 [west.yml](west.yml) 固定；RP2350 的 TRNG 驱动从 4.4 起在树内 |
-| usp_zephyr / usp | v1.1.2 | Semtech 射频栈（RAC/RALF），射频驱动在这里 |
+| usp_zephyr / usp | v1.1.2-feature-202604 | Semtech 射频栈（RAC/RALF），射频驱动在这里；官方只有 feature tag |
 | Zephyr SDK | 1.0.0 | 装 `arm-zephyr-eabi` 一个工具链即可 |
 | 密码学 | 本仓库自带 | 纯 C 的 SHA-256/HMAC/HKDF/PBKDF2，设备与主机同一份源码 |
 

@@ -7,8 +7,8 @@
 #   scripts/setup-zephyr.sh [工作区根目录]     默认是仓库的上一级目录
 #
 # west T2 拓扑：本仓库自己就是 manifest 仓库，清单用仓库根的 west.yml
-# （pin 了 zephyr v4.4.0 + usp_zephyr/usp v1.1.2），不再拿 usp_zephyr 当
-# manifest。
+# （pin 了 zephyr v4.4.0 + usp_zephyr/usp v1.1.2-feature-202604），不再拿
+# usp_zephyr 当 manifest。
 #
 # 默认布局（当前机器上是 /home/qs/zlrs-worksapce）：
 #
@@ -18,8 +18,8 @@
 #   ├── build/               west build 的默认输出目录
 #   ├── zlrs/                本仓库 == manifest 仓库（west.yml 的 self.path）
 #   ├── zephyr/              Zephyr v4.4.0（外加 import 进来的一堆 module）
-#   ├── usp_zephyr/          Semtech usp_zephyr v1.1.2
-#   └── modules/lib/usp/     Semtech usp v1.1.2
+#   ├── usp_zephyr/          Semtech usp_zephyr v1.1.2-feature-202604
+#   └── modules/lib/usp/     Semtech usp v1.1.2-feature-202604
 #
 # 工具链走 Zephyr SDK（默认 $HOME/zephyr-sdk-1.0.0，ZLRS_SDK_DIR 可改）：
 # 本脚本只检查，缺了会打印安装命令（发行版 arm-none-eabi-gcc 的 newlib 没开
