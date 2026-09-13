@@ -1,6 +1,6 @@
 /*
  * 链路层：一条链路一份实例，跑文档定义的状态机与超帧时隙。
- * 见 docs/03-protocol.md 第 3、4 节与 docs/04-threading.md 第 4 节。
+ * 见 docs/03-protocol.md 第 3、4 节。
  *
  *   控制链路（sub-GHz）：RC 下行 + TLM 上行，另负责 BEACON 与配对
  *   数据链路（2.4G）：DATA_UP / DATA_DOWN，best-effort 透传

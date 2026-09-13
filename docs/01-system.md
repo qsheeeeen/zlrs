@@ -134,7 +134,7 @@ XIAO nRF54L15 没有原生 USB 控制器，所以 USB 只在带原生 USB 的板
 ### 3.3 分时
 
 分时不自己写调度器，而是把两条链路注册成两个 RAC 客户端，用优先级让
-radio planner 仲裁——详见 [04-threading.md](04-threading.md)。
+radio planner 仲裁——线程与回调的做法见第 7 节。
 超帧的具体形状见 [03-protocol.md](03-protocol.md) 第 4 节。
 跳频采用逐包跳频，见 [03-protocol.md](03-protocol.md) 第 5 节；
 法规约束同节 5.2。
@@ -173,7 +173,7 @@ radio planner 仲裁——详见 [04-threading.md](04-threading.md)。
 | 兜底 | 0.325 Mbps | 0.244 Mbps | 控制链路保底 |
 
 粗算：6.67 ms 周期里分 40% 给 2.4G 数据链路 ≈ 650 字节/周期 ≈ **97 kB/s**。
-完整速率与灵敏度表见 [05-lr2021.md](05-lr2021.md)。
+完整速率与灵敏度表见 [04-lr2021.md](04-lr2021.md)。
 
 ## 5. 协议设计
 
@@ -208,7 +208,7 @@ Zephyr 与 USP。
 射频侧的一切——SPI 时序、校准、频段选择、收发调度——都在 `usp_zephyr` 里，
 本仓库不含射频驱动。
 
-## 7. 初始化顺序
+## 7. 线程模型与初始化顺序
 
 构建环境见 [README](../README.md)：`tools/setup-zephyr.sh` 用本仓库的
 `west.yml` 建工作区，`tools/zephyr-env.sh` 进环境并指向 Zephyr SDK。
@@ -226,6 +226,32 @@ Zephyr 与 USP。
 
 应用侧注册 usp 的日志模块（`LOG_MODULE_REGISTER(usp, ...)`），见
 `app/src/usp_log.c`。
+
+### 7.1 线程划分
+
+| 线程 | 优先级 | 职责 |
+| --- | --- | --- |
+| RAC 线程（USP 提供） | `-4` | 跑 radio planner，派发收发回调 |
+| 链路线程（`main`） | `-2` | 链路状态机、组装/提交事务、处理结果 |
+| 串口 | 中断上下文 | 环形缓冲收发，不做射频相关决策 |
+
+采用协作式多线程（`CONFIG_USP_MAIN_THREAD=y`、`CONFIG_USP_THREADS_MUTEXES=n`，
+优先级见 `app/prj.conf`）：RAC API 直调，没有互斥锁开销；链路逻辑全是 I/O 驱动、
+会频繁让出。代价是串口突发处理太久会推迟射频事件，所以串口收发切成小块并及时让出。
+USP 的另外两种线程模式与 `SMTC_SW_PLATFORM()` 的展开见 usp_zephyr 的
+`doc/THREAD_MANAGEMENT.md`。
+
+### 7.2 回调契约
+
+`callback_post_radio_transaction` 在 RAC 线程上下文里执行，只允许：
+
+1. 记录 `rp_status_t` 与收到的长度；
+2. 把结果投递给链路线程（`k_sem` / `k_msgq`）；
+3. 返回。
+
+不在回调里做校验、不在回调里翻协议栈、不在回调里碰串口，**也不在回调里提交下一个
+事务**：抢占式 + 互斥锁模式下那是对 `rac_api_mutex` 重复加锁，属于官方示例未覆盖
+的路径。实现见 `app/src/rac_port.c`。
 
 ## 8. 诊断与可观测性
 

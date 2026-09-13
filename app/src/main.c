@@ -8,7 +8,7 @@
  *   - 串口：数据 UART 透传（app/src/serial_port.c）
  *   - 密钥与配对记录：NVS（app/src/store.c）
  *
- * 初始化顺序见 docs/01-system.md 第 7 节，线程模型见 docs/04-threading.md。
+ * 线程模型与初始化顺序见 docs/01-system.md 第 7 节。
  */
 
 #include <zephyr/app_version.h>

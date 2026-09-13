@@ -15,8 +15,7 @@
 | [docs/01-system.md](docs/01-system.md) | 系统设计：链路、硬件基线、分时与软件分层 |
 | [docs/02-security.md](docs/02-security.md) | 安全模型：身份、配对与密钥 |
 | [docs/03-protocol.md](docs/03-protocol.md) | 空中格式、超帧与链路状态机 |
-| [docs/04-threading.md](docs/04-threading.md) | 线程模型与 RAC 用法 |
-| [docs/05-lr2021.md](docs/05-lr2021.md) | LR2021 参数摘要 |
+| [docs/04-lr2021.md](docs/04-lr2021.md) | LR2021 参数摘要 |
 
 ## 目录
 

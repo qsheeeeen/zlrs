@@ -1,7 +1,7 @@
 # 空中格式与链路状态机
 
 本文定义 zlrs 的空中协议。身份与密钥见 [02-security.md](02-security.md)，
-射频栈见 [04-threading.md](04-threading.md)，系统级取舍见
+线程与射频栈见 [01-system.md](01-system.md) 第 7 节，系统级取舍见
 [01-system.md](01-system.md)。
 
 ## 1. 物理层已经给了什么

@@ -14,7 +14,7 @@
 
 LOG_MODULE_REGISTER(zlrs_rac, CONFIG_APP_LOG_LEVEL);
 
-/* FLRC 速率档：原始速率与 DSB 带宽成对出现，见 docs/05-lr2021.md */
+/* FLRC 速率档：原始速率与 DSB 带宽成对出现，见 docs/04-lr2021.md */
 static const struct {
 	uint32_t br_bps;
 	uint32_t bw_hz;
