@@ -81,11 +81,11 @@ config ZLRS_APP_RATE_ADAPT
 
 config ZLRS_APP_DYNAMIC_POWER
 	bool "按对端回报的信号质量自动升降发射功率"
-	default n
+	default y
 	help
 	  信号富余就降功率（省电、少干扰），信号吃力就升回来；收不到遥测直接回到
-	  上限（那一头多半掉线了）。阈值与滞回见 lib/link/power.c，同样要按实测
-	  曲线标定，所以默认关着。
+	  上限（那一头多半掉线了）。判据每秒评估一次，阈值与滞回见
+	  lib/link/power.c，上板后按实测曲线标定。
 
 config ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM
 	int "动态功率的下限（dBm）"

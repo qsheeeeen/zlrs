@@ -87,6 +87,12 @@ static zlrs_rate_ctl_t rate_ctl;
 /* 动态功率：TX 按 RX 回报的 RSSI/LQ 升降自己的发射功率 */
 #if IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)
 static zlrs_power_ctl_t power_ctl;
+/* 最新一次遥测里的上行质量；判据每秒评估一次，所以先存下来 */
+static struct {
+	int16_t rssi_dbm;
+	uint8_t lq;
+	bool fresh;
+} tlm_latest;
 #endif
 static struct {
 	uint32_t rc_rx;
@@ -117,18 +123,10 @@ static void on_tlm(void *ctx, const uint8_t *payload, uint16_t len)
 		crsf_send_link_stats(&tlm);
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)
-		{
-			int8_t next = 0;
-
-			/* tlm.rssi_neg_dbm 是"dBm 的相反数"，这里换回负值含义的 dBm */
-			if (zlrs_power_update(&power_ctl, true,
-					      -(int16_t)tlm.rssi_neg_dbm, tlm.lq_percent,
-					      zlrs_rac_port_now_ms(), &next)) {
-				zlrs_link_set_power(&link_control, next);
-				LOG_INF("tx power -> %d dBm (rssi -%u dBm, lq %u%%)", next,
-					tlm.rssi_neg_dbm, tlm.lq_percent);
-			}
-		}
+		/* 只存下来：判据在 1 Hz 的 report() 里评估，见 doc/03-protocol.md 4.6 */
+		tlm_latest.rssi_dbm = -(int16_t)tlm.rssi_neg_dbm;
+		tlm_latest.lq = tlm.lq_percent;
+		tlm_latest.fresh = true;
 #endif
 	}
 }
@@ -539,11 +537,19 @@ static void report(uint32_t now_ms)
 #if IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)
 	{
 		int8_t next = 0;
+		const bool fresh = tlm_latest.fresh;
 
-		/* 轮询路径：只有这里判"遥测断了没有"，断了就回到上限 */
-		if (zlrs_power_update(&power_ctl, false, 0, 0U, now_ms, &next)) {
+		tlm_latest.fresh = false;
+
+		/*
+		 * 每秒评估一次：这一秒收到过遥测就用它的 RSSI/LQ 判质量，
+		 * 否则走 valid=false 的超时路径（回到上限）。
+		 */
+		if (zlrs_power_update(&power_ctl, fresh, tlm_latest.rssi_dbm,
+				      tlm_latest.lq, now_ms, &next)) {
 			zlrs_link_set_power(&link_control, next);
-			LOG_WRN("no telemetry: tx power back to %d dBm", next);
+			LOG_INF("tx power -> %d dBm (rssi %d dBm, lq %u%%)", next,
+				tlm_latest.rssi_dbm, tlm_latest.lq);
 		}
 	}
 #endif
