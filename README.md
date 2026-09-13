@@ -171,6 +171,9 @@ zephyr/module.yml     本仓库作为 Zephyr 模块的入口（板级定义也�
 `tests/host` 用假射频与假时钟跑两个节点的仿真：配对与会话、跳频锁步、RC/TLM
 收发的防重放、400 字节跨帧透传与丢包恢复、失联与重连都在里面，不需要硬件。
 
+CI（[.github/workflows/build.yml](.github/workflows/build.yml)）跑同一套 host
+测试，另外按 README 的流程搭工作区构建一次原型板固件。
+
 射频与实时性相关的部分——回调延迟、换频开销、误包率、实际透传吞吐——只能在板上量，
 可以直接用 Semtech 官方示例，也可以用本仓库固件；这一层的取舍见
 [doc/01-system.md](doc/01-system.md)。

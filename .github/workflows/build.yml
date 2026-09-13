@@ -1,0 +1,62 @@
+# Copyright (c) 2026 zlrs contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# 两个作业：
+#   host-tests：协议核心 / 链路层 / CRSF / 配置协议 / 地区层的单元与仿真测试，
+#               不需要 Zephyr，几十秒就能跑完
+#   firmware  ：按 README 的流程把工作区搭起来并构建原型板固件（约 10 分钟）
+
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: host tests
+        run: make -C tests/host run
+
+  firmware:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: zlrs
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build device-tree-compiler
+
+      # 直接用仓库里的脚本搭工作区：CI 顺带验证 README 里写的那条流程
+      - name: workspace
+        run: zlrs/scripts/setup-zephyr.sh "$GITHUB_WORKSPACE"
+
+      - name: zephyr sdk
+        run: |
+          cd "$HOME"
+          curl -fsSLO https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v1.0.0/zephyr-sdk-1.0.0_linux-x86_64_minimal.tar.xz
+          tar xf zephyr-sdk-1.0.0_linux-x86_64_minimal.tar.xz
+          cd zephyr-sdk-1.0.0
+          ./setup.sh -t arm-zephyr-eabi -h -c
+
+      - name: build firmware
+        run: |
+          . zlrs/scripts/zephyr-env.sh
+          zlrs-build
+
+      - name: upload uf2
+        uses: actions/upload-artifact@v4
+        with:
+          name: rp2350_zero_core2021-uf2
+          path: build/zephyr/zephyr.uf2
