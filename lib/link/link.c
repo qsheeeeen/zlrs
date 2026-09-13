@@ -165,6 +165,12 @@ static void start_session(zlrs_link_t *link, uint32_t nonce, uint16_t hop_index)
 	link->lq_last_seq = 0U;
 	link->stats.lq_rx = 0U;
 	link->stats.lq_expected = 0U;
+	/* ARQ 窗口也是会话状态：在飞的帧作废，字节留在队列里重发 */
+	link->arq_used = 0U;
+	link->arq_retries = 0U;
+	link->arq_seq = 0U;
+	link->arq_rx_started = false;
+	link->arq_ack_pending = false;
 	zlrs_fhss_set_index(&link->fhss, hop_index);
 }
 
@@ -310,13 +316,226 @@ static const zlrs_radio_req_t *send_tlm(zlrs_link_t *link)
 			 link->sync_word);
 }
 
-static const zlrs_radio_req_t *send_data(zlrs_link_t *link)
+/* ---- ARQ（数据链路可选档，见 doc/03-protocol.md 4.3） ------------------- */
+
+static uint16_t arq_inflight_bytes(const zlrs_link_t *link)
+{
+	uint16_t sum = 0U;
+
+	for (uint8_t i = 0U; i < link->arq_used; i++) {
+		sum = (uint16_t)(sum + link->arq_len[i]);
+	}
+
+	return sum;
+}
+
+/*
+ * 把队首那帧从窗口里拿掉，同时把它的字节从队列里提交（delivered）或丢掉
+ * （重传用尽）。后面几帧的字节在队列里是紧跟着的，所以队首一前移，
+ * arq_len[] 跟着左移就对得上了。
+ */
+static void arq_release_oldest(zlrs_link_t *link, bool delivered)
+{
+	const uint16_t len = link->arq_len[0];
+
+	link->queue_head = (uint16_t)((link->queue_head + len) % ZLRS_LINK_TX_QUEUE_LEN);
+	link->queue_count = (uint16_t)(link->queue_count - len);
+
+	if (!delivered) {
+		link->stats.data_drop_bytes =
+			(uint32_t)(link->stats.data_drop_bytes + len);
+		link->stats.tx_arq_drop++;
+	}
+
+	for (uint8_t i = 1U; i < link->arq_used; i++) {
+		link->arq_len[i - 1U] = link->arq_len[i];
+	}
+
+	link->arq_used--;
+	link->arq_seq++;
+	link->arq_retries = 0U;
+}
+
+/* 发窗口里的第 index 帧：载荷是 2 字节数据序号 + 数据 */
+static const zlrs_radio_req_t *arq_send_slot(zlrs_link_t *link, uint8_t index,
+					     uint16_t seq, uint16_t len, bool more)
+{
+	uint8_t payload[ZLRS_PAYLOAD_MAX_LEN];
+	const uint8_t type = (link->cfg.role == ZLRS_ROLE_TX) ? ZLRS_PKT_DATA_UP
+							     : ZLRS_PKT_DATA_DOWN;
+	uint16_t offset = 0U;
+	uint16_t frame_len;
+
+	for (uint8_t i = 0U; i < index; i++) {
+		offset = (uint16_t)(offset + link->arq_len[i]);
+	}
+
+	payload[0] = (uint8_t)(seq & 0xFFU);
+	payload[1] = (uint8_t)(seq >> 8);
+	for (uint16_t i = 0U; i < len; i++) {
+		payload[2U + i] = link->tx_queue[(link->queue_head + offset + i) %
+						 ZLRS_LINK_TX_QUEUE_LEN];
+	}
+
+	frame_len = build_frame(link, type, more ? ZLRS_FLAG_MORE : 0U, payload,
+				(uint16_t)(len + 2U), tag_key_for(link, type));
+	if (frame_len == 0U) {
+		return NULL;
+	}
+
+	/* ARQ 的字节要等 ACK 才提交，这里不要让完成回调动队列 */
+	link->pending_data_len = 0U;
+
+	return submit_tx(link, frame_len, zlrs_fhss_current_hz(&link->fhss),
+			 link->cfg.sync_slot, link->sync_word);
+}
+
+static const zlrs_radio_req_t *send_data_arq(zlrs_link_t *link, uint32_t now_ms)
+{
+	const uint16_t inflight = arq_inflight_bytes(link);
+	const bool timeout = (link->arq_used > 0U) &&
+			     (uint32_t)(now_ms - link->arq_sent_ms) >=
+				     ZLRS_ARQ_TIMEOUT_MS;
+
+	if (timeout) {
+		if (link->arq_retries >= ZLRS_ARQ_MAX_RETRIES) {
+			/*
+			 * 重传用尽：这一段放弃（计数），窗口清空、序号回到 0，
+			 * 并发一次重同步，让接收端把半截消息作废、从新的一段开始。
+			 * 不这么做的话，后面的数据会被拼到带洞的流上。
+			 */
+			arq_release_oldest(link, false);
+			link->arq_used = 0U;
+			link->arq_retries = 0U;
+			link->arq_seq = 0U;
+			link->arq_resync = true;
+			return NULL;
+		}
+
+		link->arq_retries++;
+		link->stats.tx_retries++;
+		link->arq_sent_ms = now_ms;
+
+		/* 重传队首那帧：数据序号与长度都不变，MORE 按队列里后面还有没有数据算 */
+		return arq_send_slot(link, 0U, link->arq_seq, link->arq_len[0],
+				     link->queue_count > link->arq_len[0]);
+	}
+
+	if (link->arq_used >= ZLRS_ARQ_WINDOW) {
+		return NULL; /* 窗口满，等 ACK */
+	}
+	if (link->queue_count <= inflight) {
+		return NULL; /* 没有新数据 */
+	}
+
+	{
+		uint16_t take = (uint16_t)(link->queue_count - inflight);
+		const bool more = take > link->cfg.data_mtu;
+		const uint8_t index = link->arq_used;
+		const uint16_t seq = (uint16_t)(link->arq_seq + index);
+
+		if (more) {
+			take = link->cfg.data_mtu;
+		}
+
+		link->arq_len[index] = take;
+		link->arq_used++;
+
+		if (link->arq_used == 1U) {
+			link->arq_retries = 0U;
+			link->arq_sent_ms = now_ms;
+		}
+
+		return arq_send_slot(link, index, seq, take, more);
+	}
+}
+
+/* ACK 帧：2 字节累计序号 + 1 字节标志（bit0 = 重同步） */
+#define ZLRS_ARQ_ACK_RESYNC 0x01U
+
+static const zlrs_radio_req_t *send_arq_ack(zlrs_link_t *link, uint16_t value,
+					    uint8_t flags)
+{
+	uint8_t payload[3];
+	uint16_t frame_len;
+
+	payload[0] = (uint8_t)(value & 0xFFU);
+	payload[1] = (uint8_t)(value >> 8);
+	payload[2] = flags;
+
+	frame_len = build_frame(link, ZLRS_PKT_ACK, 0U, payload, sizeof(payload),
+				tag_key_for(link, ZLRS_PKT_ACK));
+	link->arq_ack_pending = false;
+	link->pending_data_len = 0U;
+
+	if (frame_len == 0U) {
+		return NULL;
+	}
+
+	return submit_tx(link, frame_len, zlrs_fhss_current_hz(&link->fhss),
+			 link->cfg.sync_slot, link->sync_word);
+}
+
+static const zlrs_radio_req_t *send_ack(zlrs_link_t *link)
+{
+	/* 还没按序收下任何帧时回 0xFFFF：发送方看到它不会放掉任何一段 */
+	const uint16_t value = link->arq_rx_started ? link->arq_rx_seq : 0xFFFFU;
+
+	return send_arq_ack(link, value, 0U);
+}
+
+/* 累计 ACK：一次确认可以放掉窗口里连续的好几帧 */
+static void handle_ack(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
+{
+	uint16_t ack;
+	uint8_t flags = 0U;
+
+	if (!link->cfg.arq || frame->payload_len < 2U) {
+		return;
+	}
+
+	ack = (uint16_t)((uint16_t)frame->payload[0] |
+			 ((uint16_t)frame->payload[1] << 8));
+	if (frame->payload_len >= 3U) {
+		flags = frame->payload[2];
+	}
+
+	if ((flags & ZLRS_ARQ_ACK_RESYNC) != 0U) {
+		/* 对端重传用尽、要重开一段：丢掉半截消息，回一次"还没有进度" */
+		zlrs_reasm_init(&link->reasm, link->reasm_buf, sizeof(link->reasm_buf));
+		link->arq_rx_started = false;
+		link->arq_rx_seq = 0U;
+		link->arq_ack_pending = true;
+		return;
+	}
+
+	if (link->arq_resync) {
+		/* 等对端确认它已经复位（0xFFFF = 没有进度）才算同步上 */
+		if (ack == 0xFFFFU) {
+			link->arq_resync = false;
+		}
+		return;
+	}
+
+	while (link->arq_used > 0U && (int16_t)(ack - link->arq_seq) >= 0) {
+		arq_release_oldest(link, true);
+	}
+
+	/* 窗口前移，重传计时从这次确认重新起算 */
+	link->arq_sent_ms = now_ms;
+}
+
+static const zlrs_radio_req_t *send_data(zlrs_link_t *link, uint32_t now_ms)
 {
 	uint8_t payload[ZLRS_PAYLOAD_MAX_LEN];
 	uint16_t take = link->queue_count;
 	uint16_t len;
 	uint8_t flags = 0U;
 	uint8_t type;
+
+	if (link->cfg.arq) {
+		return send_data_arq(link, now_ms);
+	}
 
 	if (take == 0U) {
 		return NULL;
@@ -380,6 +599,66 @@ static const zlrs_radio_req_t *pair_rx(zlrs_link_t *link, uint16_t timeout_ms)
 
 static void handle_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
 {
+	if (link->cfg.arq) {
+		/* ARQ：载荷头 2 字节是数据序号，重组器按这个序号对齐 */
+		uint16_t seq;
+		zlrs_frame_t inner;
+
+		if (frame->payload_len < 3U) {
+			link->stats.rx_bad_frame++;
+			return;
+		}
+
+		seq = (uint16_t)((uint16_t)frame->payload[0] |
+				 ((uint16_t)frame->payload[1] << 8));
+
+		/* 不管新旧都回一次累计 ACK，发送方才能收敛 */
+		link->arq_ack_pending = true;
+
+		if (!link->arq_rx_started) {
+			/*
+			 * 会话里的第一帧必须从序号 0 开始：半截流按错位投递比丢一段
+			 * 更糟（上层拿到的是错位的数据）。不满足就只回 ACK、不投递，
+			 * 让发送方重传。
+			 */
+			if (seq != 0U) {
+				link->stats.rx_out_of_order++;
+				return;
+			}
+			link->arq_rx_started = true;
+		} else if ((int16_t)(seq - link->arq_rx_seq) <= 0) {
+			link->stats.rx_dup++;
+			return; /* 重传导致的重复帧：ACK 已置位，不重复投递 */
+		} else if (seq != (uint16_t)(link->arq_rx_seq + 1U)) {
+			link->stats.rx_out_of_order++;
+			return; /* 缺口：等发送方重传，投递顺序由它保证 */
+		}
+
+		link->arq_rx_seq = seq;
+
+		inner = *frame;
+		inner.seq = seq;
+		inner.payload = &frame->payload[2];
+		inner.payload_len = (uint16_t)(frame->payload_len - 2U);
+		inner.tag = NULL;
+
+		switch (zlrs_reasm_push(&link->reasm, &inner, now_ms)) {
+		case ZLRS_REASM_DONE:
+			if (link->ev.on_data != NULL && link->reasm.len > 0U) {
+				link->ev.on_data(link->ev.ctx, link->reasm.buf,
+						 link->reasm.len);
+			}
+			break;
+		case ZLRS_REASM_DROPPED:
+			link->stats.rx_frag_drop++;
+			break;
+		default:
+			break;
+		}
+
+		return;
+	}
+
 	switch (zlrs_reasm_push(&link->reasm, frame, now_ms)) {
 	case ZLRS_REASM_DONE:
 		if (link->ev.on_data != NULL && link->reasm.len > 0U) {
@@ -588,6 +867,9 @@ static int handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 	case ZLRS_PKT_DATA_DOWN:
 		handle_data(link, &frame, now_ms);
 		break;
+	case ZLRS_PKT_ACK:
+		handle_ack(link, &frame, now_ms);
+		break;
 	default:
 		break;
 	}
@@ -731,7 +1013,25 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot,
 	advance_hop(link);
 
 	if (tx_side == a) {
-		const zlrs_radio_req_t *req = send_data(link);
+		const zlrs_radio_req_t *req;
+
+		/* ARQ 重同步：先让对端把半截消息作废，再发新的一段 */
+		if (link->cfg.arq && link->arq_resync) {
+			req = send_arq_ack(link, 0xFFFFU, ZLRS_ARQ_ACK_RESYNC);
+			if (req != NULL) {
+				return req;
+			}
+		}
+
+		/* ARQ：待发的累计 ACK 优先于数据，越早确认越省重传 */
+		if (link->cfg.arq && link->arq_ack_pending) {
+			req = send_ack(link);
+			if (req != NULL) {
+				return req;
+			}
+		}
+
+		req = send_data(link, now_ms);
 
 		if (req != NULL) {
 			return req;
@@ -780,6 +1080,11 @@ void zlrs_link_set_root_key(zlrs_link_t *link, const uint8_t root_key[ZLRS_KEY_L
 void zlrs_link_set_dev_id(zlrs_link_t *link, const uint8_t dev_id[ZLRS_DEV_ID_LEN])
 {
 	memcpy(link->dev_id, dev_id, ZLRS_DEV_ID_LEN);
+}
+
+void zlrs_link_set_rate(zlrs_link_t *link, uint32_t rate_bps)
+{
+	link->cfg.rate_bps = rate_bps;
 }
 
 void zlrs_link_set_peer(zlrs_link_t *link, const uint8_t peer_id[ZLRS_DEV_ID_LEN],

@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "zlrs/link/link.h"
+#include "zlrs/link/rate.h"
 
 #define SIM_FRAME_MS 6U
 #define SIM_RATE_CTL 1300000U
@@ -54,6 +55,8 @@ typedef struct {
 	uint32_t now_ms;
 	int32_t drop_down; /* 还需丢弃多少次 TX->RX 投递 */
 	int32_t drop_up;   /* 还需丢弃多少次 RX->TX 投递 */
+	int32_t drop_data_down; /* 只丢 TX->RX 的数据帧（ARQ 用例用） */
+	bool replay_data_next;  /* 把下一个数据帧在接收端再投一次（去重用例用） */
 	bool corrupt_next;
 	bool replay_next;
 	uint8_t down[ZLRS_FRAME_MAX_LEN];
@@ -278,7 +281,14 @@ static void sim_slot(sim_t *sim, uint8_t slot)
 	const zlrs_radio_req_t *rb = zlrs_link_slot(b, slot, sim->now_ms);
 
 	if (ra != NULL && ra->is_tx && rb != NULL && !rb->is_tx) {
-		sim_deliver(sim, a, ra, b, rb, &sim->drop_down);
+		if (slot == ZLRS_SLOT_DATA_A && sim->drop_data_down > 0) {
+			int32_t once = 1;
+
+			sim->drop_data_down--;
+			sim_deliver(sim, a, ra, b, rb, &once);
+		} else {
+			sim_deliver(sim, a, ra, b, rb, &sim->drop_down);
+		}
 	} else if (rb != NULL && rb->is_tx && ra != NULL && !ra->is_tx) {
 		sim_deliver(sim, b, rb, a, ra, &sim->drop_up);
 	} else {
@@ -297,6 +307,13 @@ static void sim_run(sim_t *sim, uint32_t frames)
 		sim_slot(sim, ZLRS_SLOT_CTL_DOWN);
 		sim_slot(sim, ZLRS_SLOT_CTL_UP);
 		sim_slot(sim, ZLRS_SLOT_DATA_A);
+		/* 数据帧重放：接收端应该按数据序号去重，不重复投递 */
+		if (sim->replay_data_next && sim->down_len > 0U &&
+		    (sim->down[0] >> 2) == (uint8_t)ZLRS_PKT_DATA_UP) {
+			sim->replay_data_next = false;
+			zlrs_link_rx(&sim->rx.data, sim->down, sim->down_len, -60, 0,
+				     sim->now_ms);
+		}
 		sim_slot(sim, ZLRS_SLOT_DATA_B);
 
 		zlrs_link_tick(&sim->tx.ctl, sim->now_ms);
@@ -754,6 +771,173 @@ static void test_backpressure(void)
 	CHECK(sim.tx.data.stats.data_drop_bytes == 2U * sizeof(chunk));
 }
 
+/* ARQ：丢帧靠重传补齐，接收端按数据序号去重 */
+static void test_arq_retransmit(void)
+{
+	sim_t sim;
+	uint8_t want[512];
+
+	printf("link: arq retransmit\n");
+
+	sim_init(&sim);
+	sim.tx.data.cfg.arq = 1U;
+	sim.rx.data.cfg.arq = 1U;
+	pair_and_connect(&sim);
+	CHECK(sim.tx.data.state == ZLRS_STATE_CONNECTED);
+
+	for (uint16_t i = 0U; i < sizeof(want); i++) {
+		want[i] = (uint8_t)(i * 7U + 3U);
+	}
+	CHECK(zlrs_link_write(&sim.tx.data, want, sizeof(want)) == sizeof(want));
+
+	/* 每 3 个数据帧丢 1 个：重传必须把 512 字节一个不差地补齐 */
+	for (uint8_t round = 0U; round < 10U; round++) {
+		sim.drop_data_down = 1;
+		sim_run(&sim, 8U);
+	}
+	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(want), 4000);
+
+	CHECK(sim.rx.stream_len == sizeof(want));
+	CHECK(memcmp(sim.rx.stream, want, sizeof(want)) == 0);
+	CHECK(sim.tx.data.stats.tx_retries > 0U);
+	CHECK(sim.tx.data.stats.tx_arq_drop == 0U);
+	CHECK(sim.tx.data.stats.data_drop_bytes == 0U);
+	CHECK(sim.rx.data.stats.rx_out_of_order > 0U);
+}
+
+/* ARQ：接收端收到重复的数据帧时只投递一次 */
+static void test_arq_dedup(void)
+{
+	sim_t sim;
+	uint8_t want[96];
+
+	printf("link: arq dedup\n");
+
+	sim_init(&sim);
+	sim.tx.data.cfg.arq = 1U;
+	sim.rx.data.cfg.arq = 1U;
+	pair_and_connect(&sim);
+
+	for (uint16_t i = 0U; i < sizeof(want); i++) {
+		want[i] = (uint8_t)(0xC0U + i);
+	}
+	CHECK(zlrs_link_write(&sim.tx.data, want, sizeof(want)) == sizeof(want));
+
+	sim.replay_data_next = true;
+	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(want), 2000);
+	sim_run(&sim, 20U);
+
+	CHECK(sim.rx.stream_len == sizeof(want));
+	CHECK(memcmp(sim.rx.stream, want, sizeof(want)) == 0);
+	CHECK(sim.rx.data.stats.rx_dup > 0U);
+}
+
+/* ARQ：重传用尽后放弃这一段，并把它计成丢弃（不阻塞后面的数据） */
+static void test_arq_giveup(void)
+{
+	sim_t sim;
+	uint8_t chunk[200];
+
+	printf("link: arq give-up\n");
+
+	sim_init(&sim);
+	sim.tx.data.cfg.arq = 1U;
+	sim.rx.data.cfg.arq = 1U;
+	pair_and_connect(&sim);
+
+	memset(chunk, 0x33U, sizeof(chunk));
+	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
+
+	/* 下行走不了：第一段（128 字节）重传用尽后必须放弃并计数，而不是永远卡住 */
+	sim.drop_data_down = 100000;
+	sim_run(&sim, 400U);
+
+	CHECK(sim.tx.data.stats.tx_retries > 0U);
+	CHECK(sim.tx.data.stats.tx_arq_drop >= 1U);
+	CHECK(sim.tx.data.stats.data_drop_bytes >= 128U);
+	CHECK(sim.tx.data.stats.data_drop_bytes < sizeof(chunk));
+
+	/* 链路恢复：重同步握手之后，剩下的字节要接着送出去 */
+	sim.drop_data_down = 0;
+	SIM_UNTIL(&sim, sim.tx.data.queue_count == 0U, 4000);
+	CHECK(sim.tx.data.queue_count == 0U);
+	CHECK(sim.tx.data.stats.data_drop_bytes < sizeof(chunk));
+	CHECK(sim.rx.stream_len > 0U);
+	CHECK(sim.rx.stream_len <= sizeof(chunk));
+	for (uint16_t i = 0U; i < sim.rx.stream_len; i++) {
+		CHECK(sim.rx.stream[i] == 0x33U);
+	}
+}
+
+/* 速率自适应：连续窗口 + 保持时间 + 滞回，三个条件缺一不可 */
+static void test_rate_adapt(void)
+{
+	static const zlrs_rate_tier_t tiers[] = {
+		{ .rate_bps = 2600000U, .min_lq_to_stay = 85U },
+		{ .rate_bps = 1300000U, .min_lq_to_stay = 60U },
+		{ .rate_bps = 650000U, .min_lq_to_stay = 35U },
+		{ .rate_bps = 325000U, .min_lq_to_stay = 0U },
+	};
+	zlrs_rate_ctl_t ctl;
+	uint8_t next = 0xFFU;
+	uint32_t now = 1000U;
+
+	printf("link: rate adaptation\n");
+
+	zlrs_rate_init(&ctl, tiers, 4U, 1U, now); /* 从 1.3 Mbps 起 */
+	CHECK(zlrs_rate_current_bps(&ctl) == 1300000U);
+
+	/* 保持时间内：窗口计数都不算，直接不动 */
+	CHECK(!zlrs_rate_update(&ctl, 20U, now, &next));
+	CHECK(!zlrs_rate_update(&ctl, 20U, now, &next));
+	CHECK(zlrs_rate_current_bps(&ctl) == 1300000U);
+
+	/* 保持时间过了：连续 3 个"差"窗口才降一档（更慢） */
+	now += 5000U;
+	CHECK(!zlrs_rate_update(&ctl, 20U, now, &next));
+	CHECK(!zlrs_rate_update(&ctl, 20U, now, &next));
+	CHECK(zlrs_rate_update(&ctl, 20U, now, &next));
+	CHECK(next == 2U);
+	CHECK(zlrs_rate_current_bps(&ctl) == 650000U);
+
+	/* 换档后保持时间内不再动 */
+	now += 100U;
+	for (uint8_t i = 0U; i < 5U; i++) {
+		CHECK(!zlrs_rate_update(&ctl, 20U, now, &next));
+	}
+	CHECK(zlrs_rate_current_bps(&ctl) == 650000U);
+
+	/* 保持时间过了，连续三个差窗口继续降 */
+	now += 5000U;
+	CHECK(!zlrs_rate_update(&ctl, 20U, now, &next));
+	CHECK(!zlrs_rate_update(&ctl, 20U, now, &next));
+	CHECK(zlrs_rate_update(&ctl, 20U, now, &next));
+	CHECK(next == 3U);
+	CHECK(zlrs_rate_current_bps(&ctl) == 325000U);
+
+	/* 最慢一档：再差也不动了 */
+	now += 5000U;
+	for (uint8_t i = 0U; i < 5U; i++) {
+		CHECK(!zlrs_rate_update(&ctl, 0U, now, &next));
+	}
+	CHECK(zlrs_rate_current_bps(&ctl) == 325000U);
+
+	/* 升档要留滞回余量：升到 0.65M 档要 35+10=45，40% 不够，也不能降 */
+	now += 5000U;
+	for (uint8_t i = 0U; i < 5U; i++) {
+		CHECK(!zlrs_rate_update(&ctl, 40U, now, &next));
+	}
+	CHECK(zlrs_rate_current_bps(&ctl) == 325000U);
+
+	/* 75% ≥ 当前档-1 的门槛 60 + 滞回 10：连续三个窗口后升档 */
+	now += 5000U;
+	CHECK(!zlrs_rate_update(&ctl, 75U, now, &next));
+	CHECK(!zlrs_rate_update(&ctl, 75U, now, &next));
+	CHECK(zlrs_rate_update(&ctl, 75U, now, &next));
+	CHECK(next == 2U);
+	CHECK(zlrs_rate_current_bps(&ctl) == 650000U);
+}
+
 void test_link(void)
 {
 	test_pairing();
@@ -768,4 +952,8 @@ void test_link(void)
 	test_beacon_rate();
 	test_link_quality();
 	test_backpressure();
+	test_arq_retransmit();
+	test_arq_dedup();
+	test_arq_giveup();
+	test_rate_adapt();
 }

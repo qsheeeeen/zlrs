@@ -72,6 +72,7 @@ typedef struct {
 	uint16_t pair_period_ms;    /* PAIR_REQ 重发周期 */
 	uint16_t pair_window_ms;    /* 配对窗口 */
 	uint16_t data_mtu;          /* 数据帧载荷上限 */
+	uint8_t arq;                /* 1 = 透传走 ARQ profile，0 = best-effort */
 } zlrs_link_cfg_t;
 
 typedef struct {
@@ -90,6 +91,9 @@ typedef struct {
 	uint32_t rx_bad_tag;
 	uint32_t rx_bad_frame;
 	uint32_t rx_dup;
+	uint32_t rx_out_of_order; /* ARQ：序号跳变导致的丢弃 */
+	uint32_t tx_retries;      /* ARQ：重传次数 */
+	uint32_t tx_arq_drop;     /* ARQ：重传用尽后放弃的帧数 */
 	uint32_t rx_frag_drop;
 	uint32_t radio_fail;
 	int16_t last_rssi;
@@ -104,6 +108,15 @@ typedef struct {
 
 #define ZLRS_LINK_TX_QUEUE_LEN 512U
 #define ZLRS_LINK_TLM_MAX_LEN 32U
+
+/*
+ * ARQ profile（数据链路可选档，见 doc/03-protocol.md 4.3）：累计 ACK + 固定窗口
+ * + 超时重传。窗口是"从队首开始连续的若干帧"，只有收到 ACK 才把对应字节从
+ * 队列里提交出去，所以重传不需要额外缓存。
+ */
+#define ZLRS_ARQ_WINDOW 4U
+#define ZLRS_ARQ_TIMEOUT_MS 30U
+#define ZLRS_ARQ_MAX_RETRIES 6U
 
 typedef struct {
 	zlrs_link_cfg_t cfg;
@@ -153,6 +166,19 @@ typedef struct {
 	uint16_t queue_count;
 	uint16_t pending_data_len;
 
+	/* ARQ 发送侧：窗口里在飞的帧长度，队首那帧是 [0] */
+	uint16_t arq_seq;
+	uint16_t arq_len[ZLRS_ARQ_WINDOW];
+	uint8_t arq_used;
+	uint8_t arq_retries;
+	uint32_t arq_sent_ms;
+	/* ARQ 接收侧：已按序收下的最大数据序号 + 待发累计 ACK */
+	uint16_t arq_rx_seq;
+	bool arq_rx_started;
+	bool arq_ack_pending;
+	/* ARQ 重同步：重传用尽后重开一段，等对端确认它已经复位 */
+	bool arq_resync;
+
 	/* 收发缓冲与重组 */
 	uint8_t tx_buf[ZLRS_FRAME_MAX_LEN];
 	uint8_t rx_buf[ZLRS_FRAME_MAX_LEN];
@@ -172,6 +198,9 @@ void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
 void zlrs_link_set_root_key(zlrs_link_t *link, const uint8_t root_key[ZLRS_KEY_LEN],
 			    uint32_t now_ms);
 void zlrs_link_set_dev_id(zlrs_link_t *link, const uint8_t dev_id[ZLRS_DEV_ID_LEN]);
+
+/* 运行中换速率档（速率自适应用），下一个事务生效 */
+void zlrs_link_set_rate(zlrs_link_t *link, uint32_t rate_bps);
 
 /* 从持久化记录恢复配对（两端重启后不必重新配对） */
 void zlrs_link_set_peer(zlrs_link_t *link, const uint8_t peer_id[ZLRS_DEV_ID_LEN],

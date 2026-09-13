@@ -1,0 +1,59 @@
+/*
+ * 速率自适应：按链路质量在速率档之间升降，带滞回与保持时间。
+ *
+ * 这是个**框架**：档位表与阈值由实测曲线标定（见 doc/05-roadmap.md M4），
+ * 这里只定策略——连续多少个窗口满足条件才换档、换档后至少保持多久、
+ * 升档要留多少余量。策略与阈值分开，标定时只改表。
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#ifndef ZLRS_LINK_RATE_H_
+#define ZLRS_LINK_RATE_H_
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct {
+	uint32_t rate_bps;
+	/* 低于这个 LQ 就守不住这一档，该降档（百分比） */
+	uint8_t min_lq_to_stay;
+} zlrs_rate_tier_t;
+
+/*
+ * 档位表**从快到慢**排列：下标 +1 是更慢的一档（降档），-1 是更快的一档（升档）。
+ */
+
+typedef struct {
+	const zlrs_rate_tier_t *tiers;
+	uint8_t count;
+	uint8_t current;      /* 当前档位下标 */
+	uint8_t hysteresis;   /* 升档时要比目标档的 min_lq_to_stay 高出的余量 */
+	uint8_t windows;      /* 连续多少个窗口满足条件才换档 */
+	uint32_t hold_ms;     /* 换档后至少保持这么久 */
+	uint32_t last_ms;     /* 上次换档（或初始化）时刻 */
+	uint8_t good;         /* 连续"够好"的窗口数 */
+	uint8_t bad;          /* 连续"不够好"的窗口数 */
+} zlrs_rate_ctl_t;
+
+void zlrs_rate_init(zlrs_rate_ctl_t *ctl, const zlrs_rate_tier_t *tiers, uint8_t count,
+		    uint8_t start, uint32_t now_ms);
+
+/*
+ * 一个 LQ 窗口结算时调一次。需要换档时返回 true 并把新档位下标写进 *out。
+ * 内部按 windows / hold_ms / hysteresis 三个条件过滤。
+ */
+bool zlrs_rate_update(zlrs_rate_ctl_t *ctl, uint8_t lq_percent, uint32_t now_ms,
+		      uint8_t *out);
+
+uint32_t zlrs_rate_current_bps(const zlrs_rate_ctl_t *ctl);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* ZLRS_LINK_RATE_H_ */

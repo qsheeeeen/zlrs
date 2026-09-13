@@ -22,8 +22,11 @@
 #define ZLRS_PAYLOAD_MAX_LEN \
 	(ZLRS_FRAME_MAX_LEN - ZLRS_FRAME_HDR_LEN - ZLRS_TAG_LEN)
 
-/* 分片重组 */
-#define ZLRS_FRAG_TIMEOUT_MS 20U
+/*
+ * 分片重组超时。ARQ 的重传周期是 30 ms，这里要留足余量，否则重传过程中
+ * 半截分片会被重组器丢掉。
+ */
+#define ZLRS_FRAG_TIMEOUT_MS 100U
 #define ZLRS_REASM_BUF_LEN 512U
 
 /* 同步字：4 字节，槽 1 控制链路、槽 2 数据链路、槽 3 配对 */

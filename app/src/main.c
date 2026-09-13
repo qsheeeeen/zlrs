@@ -28,6 +28,7 @@
 
 #include "zlrs/crsf/crsf.h"
 #include "zlrs/link/link.h"
+#include "zlrs/link/rate.h"
 #include "zlrs/proto/tlm.h"
 
 LOG_MODULE_REGISTER(app, CONFIG_APP_LOG_LEVEL);
@@ -56,6 +57,20 @@ static uint32_t last_tlm_up_ms;
 static bool rc_input_seen;
 static uint32_t crsf_bad_input;
 static uint32_t last_report_ms;
+
+/*
+ * 速率自适应的档位表（从快到慢）。阈值要等实测误包率曲线回来再标定，
+ * 见 doc/05-roadmap.md M4——这里给的是占位值，框架本身与阈值无关。
+ */
+#if IS_ENABLED(CONFIG_ZLRS_APP_RATE_ADAPT)
+static const zlrs_rate_tier_t rate_tiers[] = {
+	{ .rate_bps = 2600000U, .min_lq_to_stay = 85U },
+	{ .rate_bps = 1300000U, .min_lq_to_stay = 60U },
+	{ .rate_bps = 650000U, .min_lq_to_stay = 35U },
+	{ .rate_bps = 325000U, .min_lq_to_stay = 0U },
+};
+static zlrs_rate_ctl_t rate_ctl;
+#endif
 static struct {
 	uint32_t rc_rx;
 	uint32_t tlm_rx;
@@ -157,11 +172,26 @@ static void build_links(void)
 	data_cfg.domain = ZLRS_DOMAIN_ISM2400;
 	data_cfg.sync_slot = ZLRS_SYNC_SLOT_DATA;
 	data_cfg.rate_bps = CONFIG_ZLRS_APP_DATA_RATE_BPS;
+	data_cfg.arq = IS_ENABLED(CONFIG_ZLRS_APP_DATA_ARQ) ? 1U : 0U;
 	data_cfg.peer_timeout_ms = 0U; /* 数据链路不做失联判定 */
 	data_cfg.data_mtu = CONFIG_ZLRS_APP_DATA_MTU;
 
 	zlrs_link_init(&link_control, &ctl_cfg, zlrs_rac_control_ops(), &ctl_ev);
 	zlrs_link_init(&link_data, &data_cfg, zlrs_rac_data_ops(), &data_ev);
+
+#if IS_ENABLED(CONFIG_ZLRS_APP_RATE_ADAPT)
+	{
+		uint8_t start = 0U;
+
+		for (uint8_t i = 0U; i < ARRAY_SIZE(rate_tiers); i++) {
+			if (rate_tiers[i].rate_bps == ctl_cfg.rate_bps) {
+				start = i;
+			}
+		}
+		zlrs_rate_init(&rate_ctl, rate_tiers, (uint8_t)ARRAY_SIZE(rate_tiers), start,
+			       0U);
+	}
+#endif
 }
 
 static void load_identity(void)
@@ -423,6 +453,19 @@ static void report(uint32_t now_ms)
 		return;
 	}
 	last_report_ms = now_ms;
+
+#if IS_ENABLED(CONFIG_ZLRS_APP_RATE_ADAPT)
+	{
+		uint8_t next = 0U;
+
+		if (zlrs_rate_update(&rate_ctl, link_control.stats.lq_percent, now_ms, &next)) {
+			LOG_INF("速率档 -> %u bps（LQ %u%%）",
+				(unsigned int)rate_tiers[next].rate_bps,
+				link_control.stats.lq_percent);
+			zlrs_link_set_rate(&link_control, rate_tiers[next].rate_bps);
+		}
+	}
+#endif
 
 	LOG_INF("%s 控制=%u 遥测=%u 透传=%u 串口丢=%u",
 		IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? "TX" : "RX", counters.rc_rx,

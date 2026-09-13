@@ -56,6 +56,20 @@ config ZLRS_APP_TLM_PERIOD_MS
 	int "RX 上报遥测的周期（ms）"
 	default 100
 
+config ZLRS_APP_DATA_ARQ
+	bool "透传走 ARQ profile（长度前缀 + 序号 + 累计 ACK + 重传）"
+	default n
+	help
+	  默认是 best-effort：缓冲满就丢，只计数。ARQ 适合不能丢的透传数据，
+	  代价是延迟与内存（窗口 4 帧）。见 doc/03-protocol.md 4.3。
+
+config ZLRS_APP_RATE_ADAPT
+	bool "按链路质量自动升降速率档"
+	default n
+	help
+	  阈值要按实测曲线标定（见 doc/05-roadmap.md M4），所以默认关着；
+	  打开后用 app/src/main.c 里的档位表与滞回参数。
+
 config ZLRS_APP_UNBIND_HOLD_MS
 	int "长按解绑需要按住的时间（ms）"
 	default 2000

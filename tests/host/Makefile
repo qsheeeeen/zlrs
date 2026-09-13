@@ -9,7 +9,8 @@
 # 只要一个 C 编译器，不用先搭工作区。
 
 CC      ?= cc
-CFLAGS  ?= -std=c11 -O2 -Wall -Wextra -Werror
+# -MMD -MP：把头文件依赖写进 .d，改头文件后自动重编，避免旧对象混着新布局
+CFLAGS  ?= -std=c11 -O2 -Wall -Wextra -Werror -MMD -MP
 CPPFLAGS += -I../../include
 
 BUILD := build
@@ -17,8 +18,9 @@ VPATH := .:../../lib/proto:../../lib/link:../../lib/crsf
 
 SRCS := main.c test_proto.c test_link.c \
         test_crsf.c crsf.c \
-        crypto_soft.c fhss.c frag.c frame.c tlm.c link.c
+        crypto_soft.c fhss.c frag.c frame.c tlm.c link.c rate.c
 OBJS := $(addprefix $(BUILD)/,$(SRCS:.c=.o))
+DEPS := $(OBJS:.o=.d)
 
 
 BIN := $(BUILD)/test_zlrs
@@ -39,3 +41,5 @@ run: $(BIN)
 
 clean:
 	rm -rf $(BUILD)
+
+-include $(DEPS)
