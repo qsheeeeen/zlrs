@@ -93,6 +93,13 @@ typedef struct {
 	uint32_t rx_frag_drop;
 	uint32_t radio_fail;
 	int16_t last_rssi;
+	int8_t last_snr; /* FLRC 下射频栈给不出，见 doc/04-lr2021.md */
+	/* 上行链路质量：最近一个窗口里实收帧数与按序号算出的应有帧数 */
+	uint8_t lq_percent;
+	uint16_t lq_rx;
+	uint16_t lq_expected;
+	/* 透传背压：因为空口队列满而丢掉的字节 */
+	uint32_t data_drop_bytes;
 } zlrs_link_stats_t;
 
 #define ZLRS_LINK_TX_QUEUE_LEN 512U
@@ -131,6 +138,7 @@ typedef struct {
 	/* 序号与跳频 */
 	uint16_t tx_seq;
 	uint16_t last_rx_seq;
+	uint16_t lq_last_seq;
 	zlrs_fhss_t fhss;
 
 	/* 载荷 */
@@ -178,14 +186,14 @@ const zlrs_radio_req_t *zlrs_link_slot(zlrs_link_t *link, uint8_t slot, uint32_t
 
 /* 射频事务完成 */
 void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t rssi,
-			uint32_t now_ms);
+			int8_t snr, uint32_t now_ms);
 
 /*
  * 直接投递一帧的入口：等价于"射频收到了 len 字节"。
  * zlrs_link_complete() 正常路径上也走这里；旁路收包与主机测试用它。
  */
 void zlrs_link_rx(zlrs_link_t *link, const uint8_t *buf, uint16_t len, int16_t rssi,
-		  uint32_t now_ms);
+		  int8_t snr, uint32_t now_ms);
 
 /* 超时与状态迁移，每个超帧调一次 */
 void zlrs_link_tick(zlrs_link_t *link, uint32_t now_ms);

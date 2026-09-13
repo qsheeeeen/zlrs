@@ -21,11 +21,14 @@
 #include <smtc_rac_api.h>
 #include <smtc_sw_platform_helper.h>
 
+#include "crsf_port.h"
 #include "rac_port.h"
 #include "serial_port.h"
 #include "store.h"
 
+#include "zlrs/crsf/crsf.h"
 #include "zlrs/link/link.h"
+#include "zlrs/proto/tlm.h"
 
 LOG_MODULE_REGISTER(app, CONFIG_APP_LOG_LEVEL);
 
@@ -42,7 +45,16 @@ static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(DT_ALIAS(zlrs_button)
 static bool button_down;
 static uint32_t button_since_ms;
 
+/* CRSF 端口的收发（定义在下面，链路回调里要用） */
+static void crsf_send_rc(const uint8_t *payload, uint8_t len);
+static void crsf_send_link_stats(const zlrs_tlm_t *tlm);
+
 static uint8_t rc_payload[ZLRS_RC_PAYLOAD_LEN];
+static uint8_t failsafe_payload[ZLRS_CRSF_RC_PAYLOAD_LEN];
+static uint32_t last_rc_input_ms;
+static uint32_t last_tlm_up_ms;
+static bool rc_input_seen;
+static uint32_t crsf_bad_input;
 static uint32_t last_report_ms;
 static struct {
 	uint32_t rc_rx;
@@ -55,19 +67,23 @@ static struct {
 static void on_rc(void *ctx, const uint8_t *payload, uint16_t len)
 {
 	(void)ctx;
-	(void)payload;
-	(void)len;
 
 	counters.rc_rx++;
+	/* RX 侧：把空口通道数据重建成 CRSF 帧发给飞控 */
+	crsf_send_rc(payload, (uint8_t)len);
 }
 
 static void on_tlm(void *ctx, const uint8_t *payload, uint16_t len)
 {
+	zlrs_tlm_t tlm;
+
 	(void)ctx;
-	(void)payload;
-	(void)len;
 
 	counters.tlm_rx++;
+	/* TX 侧：把 RX 的上行质量转成给手台看的链路统计帧 */
+	if (zlrs_tlm_decode(payload, len, &tlm)) {
+		crsf_send_link_stats(&tlm);
+	}
 }
 
 static void on_data(void *ctx, const uint8_t *data, uint16_t len)
@@ -209,7 +225,7 @@ static void run_slot(uint8_t slot, uint32_t budget_ms)
 	    zlrs_rac_port_wait(budget_ms) != 0) {
 		/* 射频没在预算内回来：放弃事务并给链路层收尾，免得卡住 */
 		zlrs_rac_port_abort();
-		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, zlrs_rac_port_now_ms());
+		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_rac_port_now_ms());
 		return;
 	}
 
@@ -273,23 +289,131 @@ static void handle_button(uint32_t now_ms)
 	}
 }
 
-static void fill_rc_payload(void)
+/*
+ * 失控值：默认是"油门最低、其余中位"，与 CRSF 端口断开时手台给的值一致。
+ * 后面配置协议可以改写它（见 doc/01-system.md 2.1 的配置模式）。
+ */
+static void failsafe_init(void)
 {
-	/* CRSF 通道数据：16 通道 × 11 位打包，中立值（油门最低、其余中位） */
-	uint32_t acc = 0U;
-	uint8_t bits = 0U;
-	uint8_t *out = rc_payload;
+	uint16_t channels[ZLRS_CRSF_CHANNEL_COUNT];
 
-	for (size_t i = 0; i < 16U; i++) {
-		const uint32_t channel = (i == 0U) ? 172U : 992U; /* 油门最低，其余中位 */
+	zlrs_crsf_channels_default(channels);
+	zlrs_crsf_channels_pack(failsafe_payload, channels);
+	memcpy(rc_payload, failsafe_payload, sizeof(rc_payload));
+}
 
-		acc |= channel << bits;
-		bits = (uint8_t)(bits + 11U);
-		while (bits >= 8U) {
-			*out++ = (uint8_t)(acc & 0xFFU);
-			acc >>= 8;
-			bits = (uint8_t)(bits - 8U);
+/* TX：手台发来的 RC 帧 → 空口 RC 载荷 */
+static void crsf_handle_input(uint8_t type, const uint8_t *payload, uint8_t len)
+{
+	if (type != ZLRS_CRSF_TYPE_RC_CHANNELS) {
+		return; /* 手台/飞控的其它帧本设计不消费 */
+	}
+	if (len != ZLRS_CRSF_RC_PAYLOAD_LEN) {
+		crsf_bad_input++;
+		return;
+	}
+
+	zlrs_link_set_rc(&link_control, payload, len);
+	last_rc_input_ms = zlrs_rac_port_now_ms();
+	rc_input_seen = true;
+}
+
+/*
+ * TX：给手台看的链路统计（0x14）。
+ * 上行数字来自 RX 的遥测回报，下行数字是 TX 自己测的——两边各自只报自己知道的。
+ */
+static void crsf_send_link_stats(const zlrs_tlm_t *tlm)
+{
+	zlrs_crsf_link_stats_t stats;
+	uint8_t payload[ZLRS_CRSF_LINK_STATS_LEN];
+
+	memset(&stats, 0, sizeof(stats));
+	stats.uplink_rssi_ant1 = tlm->rssi_neg_dbm;
+	stats.uplink_rssi_ant2 = tlm->rssi_neg_dbm;
+	stats.uplink_lq = tlm->lq_percent;
+	stats.uplink_snr_db = tlm->snr_db;
+	stats.active_antenna = 0U;
+	stats.rf_mode = tlm->rf_mode;
+	stats.uplink_tx_power = tlm->tx_power;
+	stats.downlink_rssi = zlrs_crsf_rssi_from_dbm(link_control.stats.last_rssi);
+	stats.downlink_lq = link_control.stats.lq_percent;
+	stats.downlink_snr_db = link_control.stats.last_snr;
+
+	zlrs_crsf_link_stats_encode(payload, &stats);
+	(void)zlrs_crsf_port_write(ZLRS_CRSF_TYPE_LINK_STATISTICS, payload,
+				   sizeof(payload));
+}
+
+/* RX：把收到的 RC 载荷重建成 CRSF 帧发给飞控 */
+static void crsf_send_rc(const uint8_t *payload, uint8_t len)
+{
+	if (len != ZLRS_CRSF_RC_PAYLOAD_LEN) {
+		return;
+	}
+
+	(void)zlrs_crsf_port_write(ZLRS_CRSF_TYPE_RC_CHANNELS, payload, len);
+}
+
+/* RX：把本侧测到的上行质量回报给 TX */
+static void crsf_report_tlm(uint32_t now_ms)
+{
+	zlrs_tlm_t tlm;
+	uint8_t payload[ZLRS_TLM_LEN];
+
+	if ((uint32_t)(now_ms - last_tlm_up_ms) < CONFIG_ZLRS_APP_TLM_PERIOD_MS) {
+		return;
+	}
+	last_tlm_up_ms = now_ms;
+
+	memset(&tlm, 0, sizeof(tlm));
+	tlm.lq_percent = link_control.stats.lq_percent;
+	tlm.rssi_neg_dbm = zlrs_crsf_rssi_from_dbm(link_control.stats.last_rssi);
+	tlm.snr_db = link_control.stats.last_snr;
+	tlm.rf_mode = zlrs_crsf_rf_mode(link_control.cfg.rate_bps);
+	tlm.tx_power = zlrs_crsf_tx_power_index(link_control.cfg.tx_power_dbm);
+	tlm.state = link_control.state;
+	if (link_control.paired) {
+		tlm.flags |= ZLRS_TLM_FLAG_PAIRED;
+	}
+	if (link_control.session_valid) {
+		tlm.flags |= ZLRS_TLM_FLAG_SESSION;
+	}
+
+	zlrs_tlm_encode(payload, &tlm);
+	zlrs_link_set_tlm(&link_control, payload, sizeof(payload));
+}
+
+/* 主循环里的 CRSF 任务：收帧、TX 侧超时转失控、RX 侧输出与上报 */
+static void pump_crsf(uint32_t now_ms)
+{
+	uint8_t type = 0U;
+	uint8_t payload[ZLRS_CRSF_PAYLOAD_MAX_LEN];
+	uint8_t len;
+
+	if (!zlrs_crsf_port_ready()) {
+		return;
+	}
+
+	while ((len = zlrs_crsf_port_read(&type, payload, sizeof(payload))) > 0U) {
+		crsf_handle_input(type, payload, len);
+	}
+
+	if (IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX)) {
+		/* 手台拔线/关机：TX 立刻改发预设失控值，不让对端继续跑旧杆量 */
+		if (rc_input_seen &&
+		    (uint32_t)(now_ms - last_rc_input_ms) >
+			    CONFIG_ZLRS_APP_CRSF_TIMEOUT_MS) {
+			rc_input_seen = false;
+			zlrs_link_set_rc(&link_control, failsafe_payload,
+					 sizeof(failsafe_payload));
+			LOG_WRN("CRSF 输入超时：转失控值");
 		}
+	} else {
+		/* RX：链路没连上就持续输出失控值，飞控才不会失控 */
+		if (link_control.state != ZLRS_STATE_CONNECTED) {
+			crsf_send_rc(failsafe_payload, sizeof(failsafe_payload));
+		}
+		crsf_report_tlm(now_ms);
 	}
 }
 
@@ -303,6 +427,9 @@ static void report(uint32_t now_ms)
 	LOG_INF("%s 控制=%u 遥测=%u 透传=%u 串口丢=%u",
 		IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? "TX" : "RX", counters.rc_rx,
 		counters.tlm_rx, counters.data_rx, zlrs_serial_dropped());
+	LOG_INF("CRSF 坏帧=%u 端口丢=%u 空口积压丢=%u LQ=%u%%",
+		crsf_bad_input, zlrs_crsf_port_rx_dropped(),
+		link_data.stats.data_drop_bytes, link_control.stats.lq_percent);
 }
 
 int main(void)
@@ -317,8 +444,9 @@ int main(void)
 	build_links();
 	load_identity();
 	(void)zlrs_serial_init();
-	fill_rc_payload();
+	failsafe_init();
 	zlrs_link_set_rc(&link_control, rc_payload, sizeof(rc_payload));
+	(void)zlrs_crsf_port_init();
 
 	if (zlrs_rac_port_init(&link_control, &link_data) != 0) {
 		LOG_ERR("RAC 初始化失败");
@@ -361,6 +489,7 @@ int main(void)
 
 		adopt_pairing();
 		pump_serial();
+		pump_crsf(now_ms);
 		handle_button(now_ms);
 		report(now_ms);
 

@@ -24,6 +24,7 @@
 	aliases {
 		lora-transceiver = &lora_core2021;
 		zlrs-data-uart = &uart1;
+		zlrs-crsf-uart = &cdc_acm_uart0;
 		zlrs-button = &zlrs_button;
 		/* USP 官方示例（packet_error_rate_flrc 等）认这个别名 */
 		smtc-user-button = &zlrs_button;
@@ -61,6 +62,19 @@
 /* RP2350 硬件 TRNG：给 CSPRNG 供熵（v4.4 起树内有驱动） */
 &rng {
 	status = "okay";
+};
+
+/*
+ * CRSF 端口走 USB CDC ACM：RP2350-Zero 只有两个 UART，UART0 留给控制台、
+ * UART1 是透传口，手台/飞控那一路用原生 USB（见板级 README）。
+ */
+zephyr_udc0: &usbd {
+	status = "okay";
+
+	cdc_acm_uart0: cdc_acm_uart0 {
+		compatible = "zephyr,cdc-acm-uart";
+		label = "zlrs CRSF";
+	};
 };
 
 /* 4 MB QSPI flash：1 MB code + 3 MB storage（NVS 存密钥与配对记录） */

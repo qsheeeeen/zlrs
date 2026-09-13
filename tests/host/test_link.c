@@ -234,11 +234,11 @@ static void sim_deliver(sim_t *sim, zlrs_link_t *src_link, const zlrs_radio_req_
 {
 	uint16_t len = src->size;
 
-	zlrs_link_complete(src_link, ZLRS_RADIO_OK, 0U, 0, sim->now_ms);
+	zlrs_link_complete(src_link, ZLRS_RADIO_OK, 0U, 0, 0, sim->now_ms);
 
 	if (*drop > 0) {
 		(*drop)--;
-		zlrs_link_complete(dst_link, ZLRS_RADIO_OK, 0U, 0, sim->now_ms);
+		zlrs_link_complete(dst_link, ZLRS_RADIO_OK, 0U, 0, 0, sim->now_ms);
 		return;
 	}
 
@@ -262,11 +262,11 @@ static void sim_deliver(sim_t *sim, zlrs_link_t *src_link, const zlrs_radio_req_
 		dst->buf[len - 1U] ^= 0xFFU;
 		sim->corrupt_next = false;
 	}
-	zlrs_link_complete(dst_link, ZLRS_RADIO_OK, len, -60, sim->now_ms);
+	zlrs_link_complete(dst_link, ZLRS_RADIO_OK, len, -60, 0, sim->now_ms);
 
 	if (sim->replay_next) {
 		sim->replay_next = false;
-		zlrs_link_complete(dst_link, ZLRS_RADIO_OK, len, -60, sim->now_ms);
+		zlrs_link_complete(dst_link, ZLRS_RADIO_OK, len, -60, 0, sim->now_ms);
 	}
 }
 
@@ -283,10 +283,10 @@ static void sim_slot(sim_t *sim, uint8_t slot)
 		sim_deliver(sim, b, rb, a, ra, &sim->drop_up);
 	} else {
 		if (ra != NULL) {
-			zlrs_link_complete(a, ZLRS_RADIO_OK, 0U, 0, sim->now_ms);
+			zlrs_link_complete(a, ZLRS_RADIO_OK, 0U, 0, 0, sim->now_ms);
 		}
 		if (rb != NULL) {
-			zlrs_link_complete(b, ZLRS_RADIO_OK, 0U, 0, sim->now_ms);
+			zlrs_link_complete(b, ZLRS_RADIO_OK, 0U, 0, 0, sim->now_ms);
 		}
 	}
 }
@@ -321,7 +321,7 @@ static void sim_run(sim_t *sim, uint32_t frames)
 /* 直接往某个链路的接收缓冲里塞一帧，绕开仿真投递 */
 static void sim_inject(sim_t *sim, zlrs_link_t *link, const uint8_t *frame, uint16_t len)
 {
-	zlrs_link_rx(link, frame, len, -60, sim->now_ms);
+	zlrs_link_rx(link, frame, len, -60, 0, sim->now_ms);
 }
 
 static uint16_t build_data_frame(uint8_t *out, uint8_t type, uint16_t seq, uint8_t flags,
@@ -696,6 +696,64 @@ static void test_beacon_rate(void)
 	CHECK(sent >= 3U && sent <= 5U);
 }
 
+/* 上行 LQ：按序号算应有帧数，丢包后百分比要掉下来 */
+static void test_link_quality(void)
+{
+	sim_t sim;
+
+	printf("link: uplink lq\n");
+
+	sim_init(&sim);
+	pair_and_connect(&sim);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
+
+	/* 一个窗口以上不丢包：LQ 应该是满的 */
+	sim_run(&sim, 200U);
+	CHECK(sim.rx.ctl.stats.lq_percent == 100U);
+
+	/*
+	 * 每 8 个超帧丢 1 个下行投递（连丢 20 个会触发失联重连，那是另一个用例），
+	 * 160 个超帧里够跑满一个 LQ 窗口（128 帧）并结算
+	 */
+	for (uint8_t i = 0U; i < 20U; i++) {
+		sim.drop_down = 1;
+		sim_run(&sim, 8U);
+	}
+	CHECK(sim.rx.ctl.stats.lq_percent < 100U);
+	CHECK(sim.rx.ctl.stats.lq_percent > 50U);
+
+	/* 不再丢包：跑满一个窗口后 LQ 回到满值 */
+	sim_run(&sim, 200U);
+	CHECK(sim.rx.ctl.stats.lq_percent == 100U);
+}
+
+/* 透传背压：空口队列满了以后丢掉的字节要计数 */
+static void test_backpressure(void)
+{
+	sim_t sim;
+	uint8_t chunk[128];
+	uint16_t accepted = 0U;
+
+	printf("link: backpressure\n");
+
+	sim_init(&sim);
+	memset(chunk, 0x5AU, sizeof(chunk));
+
+	/* 队列 512 字节：先填满，再多写的部分应该被计成丢弃 */
+	for (uint8_t i = 0U; i < 4U; i++) {
+		accepted = (uint16_t)(accepted + zlrs_link_write(&sim.tx.data, chunk,
+								 sizeof(chunk)));
+	}
+	CHECK(accepted == ZLRS_LINK_TX_QUEUE_LEN);
+	CHECK(sim.tx.data.stats.data_drop_bytes == 0U);
+
+	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == 0U);
+	CHECK(sim.tx.data.stats.data_drop_bytes == sizeof(chunk));
+
+	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == 0U);
+	CHECK(sim.tx.data.stats.data_drop_bytes == 2U * sizeof(chunk));
+}
+
 void test_link(void)
 {
 	test_pairing();
@@ -708,4 +766,6 @@ void test_link(void)
 	test_hop_lockstep();
 	test_unconfigured();
 	test_beacon_rate();
+	test_link_quality();
+	test_backpressure();
 }

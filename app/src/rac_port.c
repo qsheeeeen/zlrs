@@ -22,6 +22,7 @@ typedef struct {
 	int status;
 	uint16_t rx_len;
 	int16_t rssi;
+	int8_t snr;
 } rac_client_t;
 
 static rac_client_t control_client;
@@ -127,6 +128,7 @@ static void client_complete(rac_client_t *client, rp_status_t status)
 	client->status = ZLRS_RADIO_OK;
 	client->rx_len = 0U;
 	client->rssi = 0;
+	client->snr = 0;
 
 	switch (status) {
 	case RP_STATUS_TX_DONE:
@@ -136,6 +138,8 @@ static void client_complete(rac_client_t *client, rp_status_t status)
 	case RP_STATUS_RX_PACKET:
 		client->rx_len = client->ctx->smtc_rac_data_result.rx_size;
 		client->rssi = client->ctx->smtc_rac_data_result.rssi_result;
+		/* FLRC 下 USP 不填 SNR（只有 LoRa 有效），先原样带上去 */
+		client->snr = client->ctx->smtc_rac_data_result.snr_result;
 		break;
 	default:
 		client->status = ZLRS_RADIO_FAIL;
@@ -256,7 +260,7 @@ static void drain_client(rac_client_t *client, uint32_t now_ms)
 
 	/* 结果可能被下一个事务覆盖，取出后立即交付 */
 	zlrs_link_complete(client->link, client->status, client->rx_len, client->rssi,
-			   now_ms);
+			   client->snr, now_ms);
 }
 
 void zlrs_rac_port_drain(void)

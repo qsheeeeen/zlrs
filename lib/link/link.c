@@ -161,6 +161,10 @@ static void start_session(zlrs_link_t *link, uint32_t nonce, uint16_t hop_index)
 	link->session_valid = true;
 	link->last_rx_seq = 0xFFFFU;
 	link->tx_seq = 0U;
+	/* 新会话的序号从头开始，LQ 窗口不能跨会话累计 */
+	link->lq_last_seq = 0U;
+	link->stats.lq_rx = 0U;
+	link->stats.lq_expected = 0U;
 	zlrs_fhss_set_index(&link->fhss, hop_index);
 }
 
@@ -483,6 +487,34 @@ static bool handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame,
 	}
 }
 
+/*
+ * 上行链路质量：按序号差算这段窗口里"应该收到多少帧"，够一个窗口就更新一次
+ * 百分比。只在会话内、序号严格递增的帧上累计（重复帧与配对帧不算）。
+ */
+#define ZLRS_LQ_WINDOW_FRAMES 128U
+
+static void lq_account(zlrs_link_t *link, uint16_t seq)
+{
+	uint16_t delta = (uint16_t)(seq - link->lq_last_seq);
+
+	if (link->stats.lq_rx == 0U && link->stats.lq_expected == 0U) {
+		/* 第一个样本：不把上次断链留下的空档算成本次丢包 */
+		delta = 1U;
+	}
+
+	link->lq_last_seq = seq;
+	link->stats.lq_rx++;
+	link->stats.lq_expected = (uint16_t)(link->stats.lq_expected + delta);
+
+	if (link->stats.lq_expected >= ZLRS_LQ_WINDOW_FRAMES) {
+		link->stats.lq_percent =
+			(uint8_t)(((uint32_t)link->stats.lq_rx * 100U) /
+				  link->stats.lq_expected);
+		link->stats.lq_rx = 0U;
+		link->stats.lq_expected = 0U;
+	}
+}
+
 static int handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 {
 	const uint8_t tag_len = zlrs_profile_tag_len(link->cfg.profile);
@@ -539,6 +571,7 @@ static int handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 	}
 	link->last_rx_seq = frame.seq;
 	link->last_rx_ms = now_ms;
+	lq_account(link, frame.seq);
 
 	switch (frame.type) {
 	case ZLRS_PKT_RC:
@@ -725,6 +758,7 @@ void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
 
 	zlrs_reasm_init(&link->reasm, link->reasm_buf, sizeof(link->reasm_buf));
 	link->last_rx_seq = 0xFFFFU;
+	link->stats.lq_percent = 100U;
 	link->state = ZLRS_STATE_UNCONFIGURED;
 }
 
@@ -796,12 +830,13 @@ const zlrs_radio_req_t *zlrs_link_slot(zlrs_link_t *link, uint8_t slot, uint32_t
 }
 
 void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t rssi,
-			uint32_t now_ms)
+			int8_t snr, uint32_t now_ms)
 {
 	const bool was_tx = link->req_is_tx;
 
 	link->req_pending = false;
 	link->stats.last_rssi = rssi;
+	link->stats.last_snr = snr;
 
 	if (status != ZLRS_RADIO_OK) {
 		link->stats.radio_fail++;
@@ -830,7 +865,7 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 }
 
 void zlrs_link_rx(zlrs_link_t *link, const uint8_t *buf, uint16_t len, int16_t rssi,
-		  uint32_t now_ms)
+		  int8_t snr, uint32_t now_ms)
 {
 	if (buf == NULL || len == 0U) {
 		return;
@@ -842,6 +877,7 @@ void zlrs_link_rx(zlrs_link_t *link, const uint8_t *buf, uint16_t len, int16_t r
 	memcpy(link->rx_buf, buf, len);
 	link->req_pending = false;
 	link->stats.last_rssi = rssi;
+	link->stats.last_snr = snr;
 	(void)handle_rx(link, len, now_ms);
 }
 
@@ -891,6 +927,11 @@ uint16_t zlrs_link_write(zlrs_link_t *link, const uint8_t *data, uint16_t len)
 		link->tx_queue[tail] = data[written];
 		link->queue_count++;
 		written++;
+	}
+
+	if (written < len) {
+		link->stats.data_drop_bytes =
+			(uint32_t)(link->stats.data_drop_bytes + (len - written));
 	}
 
 	return written;

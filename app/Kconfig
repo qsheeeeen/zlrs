@@ -45,6 +45,17 @@ config ZLRS_APP_ROOT_KEY_HEX
 	string "根密钥（64 个十六进制字符，空 = 从 NVS 读）"
 	default ""
 
+config ZLRS_APP_CRSF_TIMEOUT_MS
+	int "TX 收不到 CRSF 输入后转失控值的超时（ms）"
+	default 100
+	help
+	  手台拔线或关机后，TX 在这段时间内没有收到 RC 帧就把空口载荷换成预设
+	  失控值。见 doc/01-system.md 2.1。
+
+config ZLRS_APP_TLM_PERIOD_MS
+	int "RX 上报遥测的周期（ms）"
+	default 100
+
 config ZLRS_APP_UNBIND_HOLD_MS
 	int "长按解绑需要按住的时间（ms）"
 	default 2000

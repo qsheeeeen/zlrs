@@ -17,7 +17,7 @@ VPATH := .:../../lib/proto:../../lib/link:../../lib/crsf
 
 SRCS := main.c test_proto.c test_link.c \
         test_crsf.c crsf.c \
-        crypto_soft.c fhss.c frag.c frame.c link.c
+        crypto_soft.c fhss.c frag.c frame.c tlm.c link.c
 OBJS := $(addprefix $(BUILD)/,$(SRCS:.c=.o))
 
 
