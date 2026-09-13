@@ -29,19 +29,45 @@ flash 分区都固定在 devicetree 里，应用只认 `zlrs-*` 别名，不写�
 按键除了 `zlrs-button`，还挂了 USP 官方示例要的 `smtc-user-button` 别名，
 所以 `usp_zephyr/samples/usp/**` 可以直接在这个板上编。
 
+## 两个 SKU → 两个变体
+
+Core2021 的 sub-G 是**两个不同的 SKU**，PA 网络与频段都不同，所以板级定义分成
+两个变体（构建目标不同，代码同一份）：
+
+| 变体 | sub-G 硬件 | 支持地区（`CONFIG_ZLRS_APP_REGION`） | 默认 |
+| --- | --- | --- | --- |
+| `.../rp2350a/m33/hf` | HF：850–930 MHz | FCC915(0) / EU868(1) | FCC915 |
+| `.../rp2350a/m33/lf` | LF：410–510 MHz | CN470(2) / CN433(3) | CN470 |
+
+不带变体的 `.../rp2350a/m33` 等于 HF，保留只是方便手滑与旧脚本。
+
+```shell
+west build -b rp2350_zero_core2021/rp2350a/m33/hf app   # 868 / 915
+west build -b rp2350_zero_core2021/rp2350a/m33/lf app   # 470 / 433
+```
+
+板子通过 DT 的 `zlrs,subg-band` 声明自己是哪种 sub-G 硬件；应用启动时校验
+"地区 vs 本机硬件"，不匹配就**红灯告警并且不发射频**（法规相关的错误不凑合）。
+
 ## Core2021
 
 LR2021 分 HF（2.4 GHz + 850–930 MHz）与 LF（2.4 GHz + 410–510 MHz）两个 SKU，
-本板定义按 **HF（900M）** 配置：`calibration-freqs` 与 `tx-power-cfg-lf` 参考
-Wio-LR2021 在 902 MHz 的实测表。换 LF 模块或换 region 时，这两张表要按实际频点
-重标——验收标准见 [doc/05-roadmap.md](../../../doc/05-roadmap.md) 的 M0。
+两个变体各自带自己的 sub-G 标定表：
+
+- HF：`tx-power-cfg-lf` 与 `tx-dbm-to-ua-reg-mode-dcdc-lf-vreg` 用 902 MHz 的
+  参考表（Semtech Wio-LR2021 实测），`calibration-freqs` = 897.5 MHz + 2.44 GHz
+- LF：用 470 MHz 的参考表，`calibration-freqs` = 433.3 / 470.3 / 498.8 MHz + 2.44 GHz
+  （LF 变体要同时覆盖 470 与 433，所以标定点多一个）
+
+两张表都是参考值，上板后要按 Core2021 的 PA 网络重标——验收标准见
+[doc/05-roadmap.md](../../../doc/05-roadmap.md) 的 M0。
 
 模块用晶振（不是 TCXO），所以 `tcxo-*` 保持关断；`reg-mode` 用 DC/DC。
 
 ## 构建
 
 ```shell
-west build -b rp2350_zero_core2021/rp2350a/m33 app
+west build -b rp2350_zero_core2021/rp2350a/m33/hf app   # 或 .../lf
 ```
 
 烧写走 BOOTSEL + UF2（`west flash --runner uf2`）或 SWD（openocd / probe-rs / jlink）。

@@ -64,7 +64,7 @@ typedef struct {
 	uint8_t dev_id[ZLRS_DEV_ID_LEN];
 	uint8_t peer_id[ZLRS_DEV_ID_LEN];
 	uint8_t lq_percent;
-	uint8_t reserved;
+	uint8_t band; /* 本机 sub-G 硬件：0 = LF（470/433），1 = HF（868/915） */
 } zlrs_cfg_status_t;
 
 #define ZLRS_CFG_FLAG_KEY 0x01U

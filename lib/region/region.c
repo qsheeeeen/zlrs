@@ -9,35 +9,65 @@
 #include <stddef.h>
 
 /*
- * 功率上限取该地区常见子频段的保守值：
- *   - FCC 15.247：902–928 MHz 允许 1 W 传导功率，取模块能力上限 22 dBm
- *   - ETSI EN 300 220：868 MHz 多数子频段 25 mW（14 dBm）+ 1% 占空比
- *   - CN 470–510 MHz：取 50 mW（17 dBm），不另设占空比
- *   - 2.4 GHz ISM：无占空比要求，取 20 dBm
+ * 功率与速率上限取该地区常见子频段的保守值（上板前还要按当地法规核对，
+ * 见 doc/05-roadmap.md 的 M6）：
+ *   - FCC 15.247：902–928 MHz 允许 1 W 传导功率，取模块能力上限 22 dBm；
+ *     频带宽，速率不受限
+ *   - ETSI EN 300 220：868 MHz 多数子频段 25 mW（14 dBm）+ 1% 占空比；
+ *     信道 500 kHz 间隔，只放得下 300 kHz 带宽的窄带档
+ *   - CN 470–510 MHz：取 50 mW（17 dBm），不设占空比；300 kHz 间隔 → 窄带档
+ *   - CN 433.05–434.79 MHz：微功率短距离设备，取 10 mW（10 dBm）；1.74 MHz
+ *     宽、5 个信道，只能窄带档
+ *
+ * band 是硬件属性：FCC915/EU868 要 HF SKU，CN470/CN433 要 LF SKU。
  */
 static const zlrs_region_t regions[ZLRS_REGION_COUNT] = {
 	[ZLRS_REGION_FCC915] = { .name = "FCC915",
 				 .domain = ZLRS_DOMAIN_FCC915,
+				 .band = ZLRS_BAND_SUBG_HF,
 				 .low_hz = 902000000U,
 				 .high_hz = 928000000U,
 				 .max_tx_power_dbm = 22,
 				 .duty_percent = 0U,
-				 .duty_window_ms = 0U },
+				 .duty_window_ms = 0U,
+				 .max_rate_bps = 2600000U },
 	[ZLRS_REGION_EU868] = { .name = "EU868",
 				.domain = ZLRS_DOMAIN_EU868,
+				.band = ZLRS_BAND_SUBG_HF,
 				.low_hz = 863000000U,
 				.high_hz = 870000000U,
 				.max_tx_power_dbm = 14,
 				.duty_percent = 1U,
-				.duty_window_ms = 60000U },
+				.duty_window_ms = 60000U,
+				.max_rate_bps = 325000U },
 	[ZLRS_REGION_CN470] = { .name = "CN470",
 				.domain = ZLRS_DOMAIN_CN470,
+				.band = ZLRS_BAND_SUBG_LF,
 				.low_hz = 470000000U,
 				.high_hz = 510000000U,
 				.max_tx_power_dbm = 17,
 				.duty_percent = 0U,
-				.duty_window_ms = 0U },
+				.duty_window_ms = 0U,
+				.max_rate_bps = 325000U },
+	[ZLRS_REGION_CN433] = { .name = "CN433",
+				.domain = ZLRS_DOMAIN_CN433,
+				.band = ZLRS_BAND_SUBG_LF,
+				.low_hz = 433050000U,
+				.high_hz = 434790000U,
+				.max_tx_power_dbm = 10,
+				.duty_percent = 0U,
+				.duty_window_ms = 0U,
+				.max_rate_bps = 325000U },
 };
+
+uint32_t zlrs_region_clamp_rate(const zlrs_region_t *region, uint32_t rate_bps)
+{
+	if (region == NULL || region->max_rate_bps == 0U) {
+		return rate_bps;
+	}
+
+	return (rate_bps > region->max_rate_bps) ? region->max_rate_bps : rate_bps;
+}
 
 const zlrs_region_t *zlrs_region_get(uint8_t id)
 {
@@ -48,7 +78,7 @@ const zlrs_region_t *zlrs_region_get(uint8_t id)
 	return &regions[id];
 }
 
-int zlrs_region_validate(const zlrs_region_t *region, int8_t tx_power_dbm)
+int zlrs_region_validate(const zlrs_region_t *region, uint8_t band, int8_t tx_power_dbm)
 {
 	const zlrs_fhss_domain_t *domain;
 	uint32_t first;
@@ -56,6 +86,10 @@ int zlrs_region_validate(const zlrs_region_t *region, int8_t tx_power_dbm)
 
 	if (region == NULL || region->domain >= ZLRS_DOMAIN_COUNT) {
 		return -1;
+	}
+	/* 地区与本机 sub-G 硬件必须匹配：LF 板跑不了 915，HF 板跑不了 470/433 */
+	if (region->band != band) {
+		return -5;
 	}
 	if (tx_power_dbm > region->max_tx_power_dbm) {
 		return -2;

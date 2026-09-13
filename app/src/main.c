@@ -23,6 +23,7 @@
 
 #include "crsf_port.h"
 #include "config_port.h"
+#include "board.h"
 #include "led_port.h"
 #include "rac_port.h"
 #include "serial_port.h"
@@ -47,6 +48,7 @@ static zlrs_link_t link_data;
 /* 地区：决定频段、功率上限与占空比记账 */
 static const zlrs_region_t *region;
 static zlrs_duty_t duty;
+
 
 static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(DT_ALIAS(zlrs_button), gpios);
 static bool button_down;
@@ -169,8 +171,9 @@ static void build_links(void)
 		.domain = region->domain,
 		.sync_slot = ZLRS_SYNC_SLOT_CONTROL,
 		.profile = ZLRS_PROFILE_P1,
-		.rate_bps = CONFIG_ZLRS_APP_CONTROL_RATE_BPS,
-		.tx_power_dbm = CONFIG_ZLRS_APP_TX_POWER_DBM,
+		/* 窄频段地区（868/470/433）放不下宽带档，按地区上限压下来 */
+		.rate_bps = zlrs_region_clamp_rate(region, CONFIG_ZLRS_APP_CONTROL_RATE_BPS),
+		.tx_power_dbm = MIN(CONFIG_ZLRS_APP_TX_POWER_DBM, region->max_tx_power_dbm),
 		.rx_timeout_ms = 2U,
 		.beacon_period_ms = 1000U,
 		.peer_timeout_ms = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? 250U : 100U,
@@ -521,6 +524,26 @@ static void report(uint32_t now_ms)
  * 状态灯：把链路状态翻译成 lib/led 的输入，见 doc/06-ui.md。
  * 每 20 Hz 刷一次（zlrs_led_port_update 内部限速）。
  */
+/*
+ * 配置不合法（比如地区与本机 SKU 不匹配）时的安全态：不进超帧、不发射频，
+ * 只亮红灯让人看见。法规相关的错误宁可停机，也不能"凑合发"。
+ */
+static void fault_loop(void)
+{
+	zlrs_led_input_t in;
+
+	memset(&in, 0, sizeof(in));
+	in.failsafe = true; /* 红灯快闪 */
+	in.link_state = ZLRS_STATE_SEARCHING;
+	in.role_tx = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX);
+	in.uptime_ms = 60000U; /* 越过开机自检窗口，立刻进告警 */
+
+	for (;;) {
+		zlrs_led_port_update(&in, k_uptime_get_32());
+		k_msleep(50);
+	}
+}
+
 static void led_tick(uint32_t now_ms)
 {
 	zlrs_led_input_t in;
@@ -558,11 +581,21 @@ int main(void)
 		return 0;
 	}
 	{
-		const int rc = zlrs_region_validate(region, CONFIG_ZLRS_APP_TX_POWER_DBM);
+		const int rc = zlrs_region_validate(region, ZLRS_SUBG_BAND,
+						    CONFIG_ZLRS_APP_TX_POWER_DBM);
 
-		if (rc != 0) {
-			LOG_WRN("region check failed (%d): power %d dBm or channel plan out of band",
-				rc, CONFIG_ZLRS_APP_TX_POWER_DBM);
+		/* -5：地区要的 sub-G 硬件跟这块板子不是一回事 → 不发射频 */
+		if (rc == -5) {
+			LOG_ERR("region %s needs another sub-G sku (board band %d)",
+				region->name, ZLRS_SUBG_BAND);
+			fault_loop();
+		}
+		if (rc == -2) {
+			LOG_WRN("region %s caps tx power at %d dBm (configured %d)",
+				region->name, region->max_tx_power_dbm,
+				CONFIG_ZLRS_APP_TX_POWER_DBM);
+		} else if (rc != 0) {
+			LOG_WRN("region check failed (%d): channel plan out of band", rc);
 		}
 	}
 	zlrs_duty_init(&duty, region, 0U);

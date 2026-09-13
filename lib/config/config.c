@@ -145,7 +145,7 @@ void zlrs_cfg_status_encode(uint8_t out[ZLRS_CFG_STATUS_LEN],
 	memcpy(&out[4], status->dev_id, ZLRS_DEV_ID_LEN);
 	memcpy(&out[8], status->peer_id, ZLRS_DEV_ID_LEN);
 	out[12] = status->lq_percent;
-	out[13] = status->reserved;
+	out[13] = status->band;
 	out[14] = 0U;
 	out[15] = 0U;
 }
@@ -163,7 +163,7 @@ bool zlrs_cfg_status_decode(const uint8_t *in, uint8_t len, zlrs_cfg_status_t *s
 	memcpy(status->dev_id, &in[4], ZLRS_DEV_ID_LEN);
 	memcpy(status->peer_id, &in[8], ZLRS_DEV_ID_LEN);
 	status->lq_percent = in[12];
-	status->reserved = in[13];
+	status->band = in[13];
 
 	return true;
 }

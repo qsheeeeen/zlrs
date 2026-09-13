@@ -1,0 +1,20 @@
+identifier: rp2350_zero_core2021/rp2350a/m33/lf
+name: Waveshare RP2350-Zero + Core2021-LF (Cortex-M33)
+type: mcu
+arch: arm
+flash: 4096
+ram: 520
+toolchain:
+  - zephyr
+  - gnuarmemb
+supported:
+  - clock
+  - counter
+  - dma
+  - entropy
+  - gpio
+  - hwinfo
+  - pwm
+  - spi
+  - uart
+  - watchdog

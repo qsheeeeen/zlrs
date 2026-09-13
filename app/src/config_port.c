@@ -16,6 +16,7 @@
 
 #include <string.h>
 
+#include "board.h"
 #include "led_port.h"
 #include "store.h"
 #include "zlrs/config/config.h"
@@ -71,6 +72,7 @@ static int cfg_read_status(void *ctx, zlrs_cfg_status_t *out)
 	}
 	memcpy(out->dev_id, link->dev_id, ZLRS_DEV_ID_LEN);
 	out->lq_percent = link->stats.lq_percent;
+	out->band = ZLRS_SUBG_BAND;
 
 	return ZLRS_CFG_OK;
 }

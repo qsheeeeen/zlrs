@@ -6,12 +6,12 @@
 
 /dts-v1/;
 
-/* 构建系统要求有按 cpucluster 命名的板级 dts，这里按顺序组合：
- * 1. SoC 的公共部分（rp2350a）
- * 2. 核相关的部分（Cortex-M33）
- * 3. 板级部分（RP2350-Zero + Core2021）
+/*
+ * 不带变体的目标：按 HF 构建，等价于 `.../rp2350a/m33/hf`。
+ * 两个 SKU 请显式指定变体（hf / lf），这个文件只是方便手滑与旧脚本。
  */
 #include <raspberrypi/rpi_pico/rp2350a.dtsi>
 #include <raspberrypi/rpi_pico/m33.dtsi>
 
 #include "rp2350_zero_core2021.dtsi"
+#include "rp2350_zero_core2021_hf.dtsi"

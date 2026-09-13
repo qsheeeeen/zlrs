@@ -21,11 +21,23 @@ const zlrs_fhss_domain_t zlrs_fhss_domains[ZLRS_DOMAIN_COUNT] = {
 			       .start_hz = 863250000U,
 			       .step_hz = 500000U,
 			       .channel_count = 13U},
-	/* 470–510 MHz：Core2021 LF 变体用的 sub-GHz 频段，200 kHz 步进 */
+	/*
+	 * 470–510 MHz：Core2021 LF 变体的主力频段。步进 300 kHz 是按 FLRC 带宽
+	 * 定的（0.325 Mbps 的 DSB 带宽 300 kHz）；200 kHz 那套是 LoRa 的信道
+	 * 规划，直接拿来跳频会互相压。
+	 */
 	[ZLRS_DOMAIN_CN470] = {.name = "CN470",
 			       .start_hz = 470300000U,
-			       .step_hz = 200000U,
+			       .step_hz = 300000U,
 			       .channel_count = 96U},
+	/*
+	 * 433.05–434.79 MHz 是国内 433 ISM 段，只有 1.74 MHz 宽：
+	 * 放得下 5 个 300 kHz 间隔的信道，所以这个地区只能用窄带速率档。
+	 */
+	[ZLRS_DOMAIN_CN433] = {.name = "CN433",
+			       .start_hz = 433300000U,
+			       .step_hz = 300000U,
+			       .channel_count = 5U},
 	[ZLRS_DOMAIN_ISM2400] = {.name = "ISM2400",
 				 .start_hz = 2402000000U,
 				 .step_hz = 1000000U,

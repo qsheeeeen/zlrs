@@ -1,0 +1,17 @@
+/*
+ * Copyright (c) 2026 zlrs contributors
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/dts-v1/;
+
+/* 构建系统要求有按 cpucluster 命名的板级 dts，按顺序组合：
+ * 1. SoC 公共部分（rp2350a）  2. 核相关部分（Cortex-M33）
+ * 3. 板级公共部分  4. LF SKU 的 sub-G 标定（470 / 433）
+ */
+#include <raspberrypi/rpi_pico/rp2350a.dtsi>
+#include <raspberrypi/rpi_pico/m33.dtsi>
+
+#include "rp2350_zero_core2021.dtsi"
+#include "rp2350_zero_core2021_lf.dtsi"

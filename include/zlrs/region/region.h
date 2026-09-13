@@ -24,27 +24,40 @@ extern "C" {
 typedef struct {
 	const char *name;
 	uint8_t domain;      /* ZLRS_DOMAIN_* */
+	uint8_t band;        /* ZLRS_BAND_*：这个地区要哪种 sub-G 硬件 */
 	uint32_t low_hz;     /* 频段边界，校验信道表用 */
 	uint32_t high_hz;
 	int8_t max_tx_power_dbm;
 	uint8_t duty_percent;    /* 0 = 不限制 */
 	uint32_t duty_window_ms; /* 占空比统计窗口 */
+	uint32_t max_rate_bps;   /* 频段宽度决定的速率上限 */
 } zlrs_region_t;
+
+/* sub-G 硬件：LF 是 410–510 MHz，HF 是 850–930 MHz（两个 SKU） */
+typedef enum {
+	ZLRS_BAND_SUBG_LF = 0,
+	ZLRS_BAND_SUBG_HF = 1,
+} zlrs_band_t;
 
 enum {
 	ZLRS_REGION_FCC915 = 0,
 	ZLRS_REGION_EU868,
 	ZLRS_REGION_CN470,
+	ZLRS_REGION_CN433,
 	ZLRS_REGION_COUNT
 };
 
 const zlrs_region_t *zlrs_region_get(uint8_t id);
 
 /*
- * 校验"地区 + 信道表 + 发射功率"是否自洽：信道全在边界内、功率不超上限。
+ * 校验"地区 + 本机 sub-G 硬件 + 信道表 + 发射功率"是否自洽：
+ * 地区要的 band 得跟板子一致、信道全在边界内、功率不超上限。
  * 返回 0 表示没问题，负值表示有问题（具体值只用于日志）。
  */
-int zlrs_region_validate(const zlrs_region_t *region, int8_t tx_power_dbm);
+int zlrs_region_validate(const zlrs_region_t *region, uint8_t band, int8_t tx_power_dbm);
+
+/* 地区带宽决定的速率上限：配置超过上限就压下来，返回实际可用的速率 */
+uint32_t zlrs_region_clamp_rate(const zlrs_region_t *region, uint32_t rate_bps);
 
 /* 占空比记账：窗口内累计发射的空中时间，超过上限就不再允许发射 */
 typedef struct {

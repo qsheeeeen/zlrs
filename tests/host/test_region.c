@@ -17,17 +17,59 @@ static void test_tables(void)
 
 		CHECK(region != NULL);
 		CHECK(region->name != NULL);
-		/* 功率上限之内的配置必须通过校验 */
-		CHECK(zlrs_region_validate(region, region->max_tx_power_dbm) == 0);
-		/* 超一点就该被拦 */
+		/* 本机 band 一致、功率在上限内：必须通过 */
+		CHECK(zlrs_region_validate(region, region->band,
+					   region->max_tx_power_dbm) == 0);
+		/* 功率超一点就该被拦 */
 		if (region->max_tx_power_dbm < 22) {
-			CHECK(zlrs_region_validate(region, (int8_t)(region->max_tx_power_dbm + 1)) !=
+			CHECK(zlrs_region_validate(region, region->band,
+						   (int8_t)(region->max_tx_power_dbm + 1)) !=
 			      0);
 		}
+		/* band 不匹配就该被拦：LF 板跑不了 915，HF 板跑不了 470/433 */
+		CHECK(zlrs_region_validate(region,
+					   (region->band == ZLRS_BAND_SUBG_HF)
+						   ? ZLRS_BAND_SUBG_LF
+						   : ZLRS_BAND_SUBG_HF,
+					   region->max_tx_power_dbm) != 0);
 	}
 
 	CHECK(zlrs_region_get(ZLRS_REGION_COUNT) == NULL);
-	CHECK(zlrs_region_validate(NULL, 0) != 0);
+	CHECK(zlrs_region_validate(NULL, ZLRS_BAND_SUBG_HF, 0) != 0);
+
+	/* 具体到原型：HF 板只认 FCC915/EU868，LF 板只认 CN470/CN433 */
+	CHECK(zlrs_region_validate(zlrs_region_get(ZLRS_REGION_FCC915), ZLRS_BAND_SUBG_HF,
+				   10) == 0);
+	CHECK(zlrs_region_validate(zlrs_region_get(ZLRS_REGION_FCC915), ZLRS_BAND_SUBG_LF,
+				   10) == -5);
+	CHECK(zlrs_region_validate(zlrs_region_get(ZLRS_REGION_CN470), ZLRS_BAND_SUBG_LF,
+				   10) == 0);
+	CHECK(zlrs_region_validate(zlrs_region_get(ZLRS_REGION_CN433), ZLRS_BAND_SUBG_LF,
+				   10) == 0);
+	CHECK(zlrs_region_validate(zlrs_region_get(ZLRS_REGION_CN433), ZLRS_BAND_SUBG_HF,
+				   10) == -5);
+}
+
+/* 速率上限：频段窄的地区要把配置的速率压下来 */
+static void test_rate_limit(void)
+{
+	printf("region: rate limit\n");
+
+	CHECK(zlrs_region_clamp_rate(zlrs_region_get(ZLRS_REGION_FCC915), 2600000U) ==
+	      2600000U);
+	CHECK(zlrs_region_clamp_rate(zlrs_region_get(ZLRS_REGION_FCC915), 1300000U) ==
+	      1300000U);
+	/* EU868 / CN470 / CN433 放不下宽带档 */
+	CHECK(zlrs_region_clamp_rate(zlrs_region_get(ZLRS_REGION_EU868), 1300000U) ==
+	      325000U);
+	CHECK(zlrs_region_clamp_rate(zlrs_region_get(ZLRS_REGION_CN470), 2600000U) ==
+	      325000U);
+	CHECK(zlrs_region_clamp_rate(zlrs_region_get(ZLRS_REGION_CN433), 650000U) ==
+	      325000U);
+	/* 本来就低于上限的不动 */
+	CHECK(zlrs_region_clamp_rate(zlrs_region_get(ZLRS_REGION_CN433), 325000U) ==
+	      325000U);
+	CHECK(zlrs_region_clamp_rate(NULL, 1300000U) == 1300000U);
 }
 
 static void test_airtime(void)
@@ -90,6 +132,7 @@ void test_region(void)
 {
 	printf("region: tables\n");
 	test_tables();
+	test_rate_limit();
 	test_airtime();
 	test_duty();
 }

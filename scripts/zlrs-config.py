@@ -112,6 +112,7 @@ def status_text(payload: bytes) -> str:
     peer = payload[8:12].hex()
     return (
         f"role={'TX' if payload[1] == 0 else 'RX'} "
+        f"subg={'HF (868/915)' if payload[13] else 'LF (470/433)'} "
         f"state={payload[2]} "
         f"key={'yes' if flags & 0x01 else 'no'} "
         f"paired={'yes' if flags & 0x02 else 'no'} "

@@ -7,3 +7,10 @@ board:
   vendor: zlrs
   socs:
     - name: rp2350a
+      variants:
+        # sub-G 硬件是两个 SKU：HF（850–930 MHz，跑 868/915）
+        # 与 LF（410–510 MHz，跑 470/433）。2.4G 那一路两者相同。
+        - name: hf
+          cpucluster: m33
+        - name: lf
+          cpucluster: m33
