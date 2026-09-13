@@ -28,7 +28,7 @@ BUILD := build
 VPATH := .:../../lib/proto:../../lib/link
 
 SRCS := main.c test_proto.c test_link.c \
-        crc.c crypto.c fhss.c frag.c frame.c link.c
+        crypto.c fhss.c frag.c frame.c link.c
 OBJS := $(addprefix $(BUILD)/,$(SRCS:.c=.o))
 
 MBEDTLS_SRCS := sha256.c md.c hkdf.c pkcs5.c constant_time.c platform_util.c

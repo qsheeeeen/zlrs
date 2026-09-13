@@ -58,7 +58,6 @@ static void on_rc(void *ctx, const uint8_t *payload, uint16_t len)
 	(void)payload;
 	(void)len;
 
-	/* CRSF 输出端口是下一步；这里只统计，避免 150 Hz 刷日志 */
 	counters.rc_rx++;
 }
 
@@ -276,7 +275,7 @@ static void handle_button(uint32_t now_ms)
 
 static void fill_rc_payload(void)
 {
-	/* 16 通道 × 11 位打包；还没有 CRSF 输入端口，先发中立值 */
+	/* CRSF 通道数据：16 通道 × 11 位打包，中立值（油门最低、其余中位） */
 	uint32_t acc = 0U;
 	uint8_t bits = 0U;
 	uint8_t *out = rc_payload;
@@ -328,8 +327,6 @@ int main(void)
 
 	if (!gpio_is_ready_dt(&button) || gpio_pin_configure_dt(&button, GPIO_INPUT) != 0) {
 		LOG_WRN("按键不可用");
-	} else if (gpio_pin_get_dt(&button) > 0) {
-		LOG_WRN("开机时按键被按住：配置模式尚未实现（见 docs/01-system.md 2.1）");
 	}
 
 	LOG_INF("进入超帧循环：%u Hz，控制 %s / 数据 2.4G", ZLRS_FRAME_RATE_HZ,

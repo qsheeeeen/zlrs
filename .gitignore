@@ -54,15 +54,13 @@ dkms.conf
 # debug information files
 *.dwo
 
-# Zephyr / west workspace
+# Zephyr 构建输出（工作区在仓库的上一级目录，这里只做兜底）
 build/
-twister-out*/
-.west/
-west/
-modules/
-*.pyc
-__pycache__/
 compile_commands.json
 
-# Host test build
+# 主机侧测试
 tests/host/build/
+
+# Python
+*.pyc
+__pycache__/

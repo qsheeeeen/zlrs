@@ -29,7 +29,6 @@ typedef struct {
 	uint8_t access_id;
 	smtc_rac_context_t *ctx;
 	zlrs_link_t *link;
-	bool is_tx;
 	volatile bool done;
 	int status;
 	uint16_t rx_len;
@@ -216,7 +215,6 @@ static int port_submit(void *ctx, const zlrs_radio_req_t *req)
 
 	rac->scheduler_config.start_time_ms = smtc_modem_hal_get_time_in_ms();
 
-	client->is_tx = req->is_tx;
 	client->done = false;
 
 	if (SMTC_SW_PLATFORM(smtc_rac_submit_radio_transaction(client->access_id)) !=

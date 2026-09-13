@@ -46,28 +46,12 @@ typedef struct {
 	uint8_t sync_channel;
 } zlrs_fhss_t;
 
-/* xorshift32，仅供频点洗牌使用；种子已经过密钥派生 */
-void zlrs_fhss_rng_seed(uint32_t seed);
-uint32_t zlrs_fhss_rng(void);
-uint8_t zlrs_fhss_rng_n(uint8_t max);
-
-/*
- * 按种子生成一张表，返回写入的条目数（频点数的整数倍）。
- * sequence 至少要有 ZLRS_FHSS_SEQUENCE_LEN 字节。
- */
-uint16_t zlrs_fhss_build_sequence(uint32_t seed, uint8_t channel_count,
-				  uint8_t sync_channel, uint8_t *sequence);
-
 void zlrs_fhss_init(zlrs_fhss_t *fhss, uint8_t domain_id, uint32_t seed);
 
-/* 信道号 -> 频率，越界回落到同步信道 */
-uint32_t zlrs_fhss_freq_hz(const zlrs_fhss_t *fhss, uint8_t channel);
 uint32_t zlrs_fhss_current_hz(const zlrs_fhss_t *fhss);
 uint32_t zlrs_fhss_next_hz(zlrs_fhss_t *fhss);
 
-uint16_t zlrs_fhss_index(const zlrs_fhss_t *fhss);
 void zlrs_fhss_set_index(zlrs_fhss_t *fhss, uint16_t index);
-bool zlrs_fhss_on_sync(const zlrs_fhss_t *fhss);
 
 #ifdef __cplusplus
 }

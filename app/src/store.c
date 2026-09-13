@@ -12,7 +12,7 @@
 
 LOG_MODULE_REGISTER(zlrs_store, CONFIG_APP_LOG_LEVEL);
 
-/* NVS 记录号，配置工具将来用新的号段 */
+/* NVS 记录号 */
 #define NVS_ID_ROOT_KEY 1U
 #define NVS_ID_DEV_ID 2U
 #define NVS_ID_PEER_ID 3U
@@ -78,11 +78,6 @@ int zlrs_store_load_dev_id(uint8_t out[ZLRS_DEV_ID_LEN])
 int zlrs_store_load_peer(uint8_t out[ZLRS_DEV_ID_LEN])
 {
 	return read_record(NVS_ID_PEER_ID, out, ZLRS_DEV_ID_LEN);
-}
-
-int zlrs_store_save_root_key(const uint8_t key[ZLRS_KEY_LEN])
-{
-	return write_record(NVS_ID_ROOT_KEY, key, ZLRS_KEY_LEN);
 }
 
 int zlrs_store_save_dev_id(const uint8_t id[ZLRS_DEV_ID_LEN])

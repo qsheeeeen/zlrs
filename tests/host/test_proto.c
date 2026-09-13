@@ -7,7 +7,6 @@
 
 #include <string.h>
 
-#include "zlrs/proto/crc.h"
 #include "zlrs/proto/crypto.h"
 #include "zlrs/proto/fhss.h"
 #include "zlrs/proto/frag.h"
@@ -248,79 +247,51 @@ static void test_frag(void)
 
 static void test_fhss(void)
 {
-	uint8_t table[ZLRS_FHSS_SEQUENCE_LEN];
-	uint8_t other[ZLRS_FHSS_SEQUENCE_LEN];
 	uint16_t seen[16];
-	uint16_t count;
 	zlrs_fhss_t fhss;
+	zlrs_fhss_t again;
 	uint32_t first;
 	uint32_t next;
 
 	printf("fhss\n");
 
-	count = zlrs_fhss_build_sequence(0x1234abcdU, 13U, 6U, table);
-	CHECK(count == 247U); /* 256 / 13 = 19 块 */
+	/* EU868：13 个信道，256 / 13 = 19 块 */
+	zlrs_fhss_init(&fhss, ZLRS_DOMAIN_EU868, 0x1234abcdU);
+	CHECK(fhss.domain->channel_count == 13U);
+	CHECK(fhss.sequence_count == 247U);
+	CHECK(fhss.sync_channel == 6U);
 
 	memset(seen, 0, sizeof(seen));
-	for (uint16_t i = 0; i < count; i++) {
-		CHECK(table[i] < 13U);
-		seen[table[i]]++;
+	for (uint16_t i = 0; i < fhss.sequence_count; i++) {
+		CHECK(fhss.sequence[i] < 13U);
+		seen[fhss.sequence[i]]++;
 		if ((i % 13U) == 0U) {
-			CHECK(table[i] == 6U); /* 每块首位是同步信道 */
+			CHECK(fhss.sequence[i] == fhss.sync_channel); /* 每块首位是同步信道 */
 		}
 	}
 	for (uint8_t ch = 0; ch < 13U; ch++) {
 		CHECK(seen[ch] == 19U); /* 等概率使用 */
 	}
 
-	zlrs_fhss_build_sequence(0x1234abcdU, 13U, 6U, other);
-	CHECK(memcmp(table, other, count) == 0); /* 同种子可重复 */
-	zlrs_fhss_build_sequence(0x1234abceU, 13U, 6U, other);
-	CHECK(memcmp(table, other, count) != 0); /* 换种子换表 */
+	/* 同种子两端算出同一张表；换种子换表 */
+	zlrs_fhss_init(&again, ZLRS_DOMAIN_EU868, 0x1234abcdU);
+	CHECK(memcmp(fhss.sequence, again.sequence, fhss.sequence_count) == 0);
+	zlrs_fhss_init(&again, ZLRS_DOMAIN_EU868, 0x1234abceU);
+	CHECK(memcmp(fhss.sequence, again.sequence, fhss.sequence_count) != 0);
 
 	zlrs_fhss_init(&fhss, ZLRS_DOMAIN_ISM2400, 0x1234abcdU);
 	CHECK(fhss.sequence_count == 237U); /* 256 / 79 = 3 块 */
 	CHECK(fhss.domain->channel_count == 79U);
-	CHECK(zlrs_fhss_on_sync(&fhss));
+	CHECK(fhss.sequence[fhss.index] == fhss.sync_channel);
 
 	first = zlrs_fhss_current_hz(&fhss);
 	CHECK(first == fhss.domain->start_hz +
 				(uint32_t)fhss.sync_channel * fhss.domain->step_hz);
 	next = zlrs_fhss_next_hz(&fhss);
 	CHECK(next != first);
-	CHECK(zlrs_fhss_index(&fhss) == 1U);
+	CHECK(fhss.index == 1U);
 	zlrs_fhss_set_index(&fhss, 0U);
 	CHECK(zlrs_fhss_current_hz(&fhss) == first);
-}
-
-/* ---- CRC ----------------------------------------------------------------- */
-
-static void test_crc(void)
-{
-	zlrs_crc_t crc;
-	uint16_t part;
-
-	printf("crc\n");
-
-	zlrs_crc_init(&crc, 16U, 0x3D65U);
-	CHECK(crc.bitmask == 0xFFFFU);
-	CHECK(zlrs_crc_calc(&crc, (const uint8_t *)"123456789", 9U, 0U) == 0x3D48U);
-	CHECK(zlrs_crc_calc(&crc, (const uint8_t *)"abc", 3U, 0U) == 0xA8E3U);
-
-	/* 增量计算等价于一次算完 */
-	part = zlrs_crc_calc(&crc, (const uint8_t *)"ab", 2U, 0U);
-	part = zlrs_crc_calc(&crc, (const uint8_t *)"c", 1U, part);
-	CHECK(part == 0xA8E3U);
-
-	/* CRC-16/CCITT-FALSE */
-	zlrs_crc_init(&crc, 16U, 0x1021U);
-	CHECK(zlrs_crc_calc(&crc, (const uint8_t *)"123456789", 9U, 0xFFFFU) == 0x29B1U);
-
-	zlrs_crc_init(&crc, 14U, 0x2E57U);
-	CHECK(crc.bitmask == 0x3FFFU);
-	part = zlrs_crc_calc(&crc, (const uint8_t *)"abc", 3U, 0U);
-	CHECK(part == 0x3DFDU);
-	CHECK(zlrs_crc_calc(&crc, (const uint8_t *)"abd", 3U, 0U) != part);
 }
 
 void test_proto(void)
@@ -333,5 +304,4 @@ void test_proto(void)
 	test_frame();
 	test_frag();
 	test_fhss();
-	test_crc();
 }

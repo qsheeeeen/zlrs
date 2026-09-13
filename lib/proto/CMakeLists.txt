@@ -3,7 +3,6 @@
 
 zephyr_library()
 zephyr_library_sources(
-  crc.c
   crypto.c
   fhss.c
   frag.c

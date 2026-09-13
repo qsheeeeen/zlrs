@@ -43,9 +43,6 @@ void zlrs_reasm_init(zlrs_reasm_t *reasm, uint8_t *buf, uint16_t cap);
  */
 int zlrs_reasm_push(zlrs_reasm_t *reasm, const zlrs_frame_t *frame, uint32_t now_ms);
 
-/* 丢弃未完成的段 */
-void zlrs_reasm_reset(zlrs_reasm_t *reasm);
-
 #ifdef __cplusplus
 }
 #endif

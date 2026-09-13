@@ -352,18 +352,18 @@ static void pair_and_connect(sim_t *sim)
 	zlrs_link_press(&sim->rx.ctl, sim->now_ms);
 
 	SIM_UNTIL(sim,
-		  zlrs_link_state(&sim->tx.ctl) == ZLRS_STATE_SEARCHING &&
-			  zlrs_link_state(&sim->rx.ctl) == ZLRS_STATE_SEARCHING,
+		  sim->tx.ctl.state == ZLRS_STATE_SEARCHING &&
+			  sim->rx.ctl.state == ZLRS_STATE_SEARCHING,
 		  2000);
 
 	zlrs_link_set_peer(&sim->tx.data, sim->rx.dev_id, sim->now_ms);
 	zlrs_link_set_peer(&sim->rx.data, sim->tx.dev_id, sim->now_ms);
 
 	SIM_UNTIL(sim,
-		  zlrs_link_state(&sim->tx.ctl) == ZLRS_STATE_CONNECTED &&
-			  zlrs_link_state(&sim->rx.ctl) == ZLRS_STATE_CONNECTED &&
-			  zlrs_link_state(&sim->tx.data) == ZLRS_STATE_CONNECTED &&
-			  zlrs_link_state(&sim->rx.data) == ZLRS_STATE_CONNECTED,
+		  sim->tx.ctl.state == ZLRS_STATE_CONNECTED &&
+			  sim->rx.ctl.state == ZLRS_STATE_CONNECTED &&
+			  sim->tx.data.state == ZLRS_STATE_CONNECTED &&
+			  sim->rx.data.state == ZLRS_STATE_CONNECTED,
 		  2000);
 }
 
@@ -382,27 +382,27 @@ static void test_pairing(void)
 
 	/* 没按键时不参与 */
 	sim_run(&sim, 50U);
-	CHECK(zlrs_link_state(&sim.tx.ctl) == ZLRS_STATE_UNPAIRED);
-	CHECK(zlrs_link_state(&sim.rx.ctl) == ZLRS_STATE_UNPAIRED);
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_UNPAIRED);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_UNPAIRED);
 	CHECK(sim.rx.rc_count == 0U);
 
 	zlrs_link_press(&sim.tx.ctl, sim.now_ms);
 	zlrs_link_press(&sim.rx.ctl, sim.now_ms);
 	SIM_UNTIL(&sim,
-		  zlrs_link_state(&sim.tx.ctl) == ZLRS_STATE_SEARCHING &&
-			  zlrs_link_state(&sim.rx.ctl) == ZLRS_STATE_SEARCHING,
+		  sim.tx.ctl.state == ZLRS_STATE_SEARCHING &&
+			  sim.rx.ctl.state == ZLRS_STATE_SEARCHING,
 		  2000);
 
-	CHECK(zlrs_link_state(&sim.tx.ctl) == ZLRS_STATE_SEARCHING);
-	CHECK(zlrs_link_state(&sim.rx.ctl) == ZLRS_STATE_SEARCHING);
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_SEARCHING);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_SEARCHING);
 	CHECK(sim.tx.ctl.paired && sim.rx.ctl.paired);
 	CHECK(memcmp(sim.tx.ctl.peer_id, sim.rx.dev_id, ZLRS_DEV_ID_LEN) == 0);
 	CHECK(memcmp(sim.rx.ctl.peer_id, sim.tx.dev_id, ZLRS_DEV_ID_LEN) == 0);
 
-	zlrs_link_sync_word(&sim.tx.ctl, word_tx);
-	zlrs_link_sync_word(&sim.rx.ctl, word_rx);
-	zlrs_link_sync_word(&sim.tx.data, data_tx);
-	zlrs_link_sync_word(&sim.rx.data, data_rx);
+	memcpy(word_tx, sim.tx.ctl.sync_word, sizeof(word_tx));
+	memcpy(word_rx, sim.rx.ctl.sync_word, sizeof(word_rx));
+	memcpy(data_tx, sim.tx.data.sync_word, sizeof(data_tx));
+	memcpy(data_rx, sim.rx.data.sync_word, sizeof(data_rx));
 	CHECK(memcmp(word_tx, word_rx, sizeof(word_tx)) == 0); /* 两端一致 */
 	CHECK(memcmp(data_tx, data_rx, sizeof(data_tx)) == 0);
 	CHECK(memcmp(word_tx, data_tx, sizeof(word_tx)) != 0); /* 域分离 */
@@ -415,7 +415,7 @@ static void test_pairing(void)
 	sim_init(&sim);
 	zlrs_link_press(&sim.tx.ctl, sim.now_ms);
 	sim_run(&sim, (30000U / SIM_FRAME_MS) + 200U);
-	CHECK(zlrs_link_state(&sim.tx.ctl) == ZLRS_STATE_UNPAIRED);
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_UNPAIRED);
 	CHECK(sim.tx.ctl.stats.tx_frames > 10U); /* 期间一直在发 PAIR_REQ */
 	CHECK(!sim.tx.ctl.paired);
 }
@@ -431,10 +431,10 @@ static void test_session(void)
 	sim_init(&sim);
 	pair_and_connect(&sim);
 
-	CHECK(zlrs_link_state(&sim.tx.ctl) == ZLRS_STATE_CONNECTED);
-	CHECK(zlrs_link_state(&sim.rx.ctl) == ZLRS_STATE_CONNECTED);
-	CHECK(zlrs_link_state(&sim.tx.data) == ZLRS_STATE_CONNECTED);
-	CHECK(zlrs_link_state(&sim.rx.data) == ZLRS_STATE_CONNECTED);
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.tx.data.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.data.state == ZLRS_STATE_CONNECTED);
 
 	CHECK(memcmp(sim.tx.ctl.session_key, sim.rx.ctl.session_key, ZLRS_KEY_LEN) == 0);
 	CHECK(sim.tx.ctl.session_nonce == sim.rx.ctl.session_nonce);
@@ -449,7 +449,7 @@ static void test_session(void)
 	memcpy(saved, sim.beacon, saved_len);
 	sim_inject(&sim, &sim.rx.ctl, saved, saved_len);
 	CHECK(sim.rx.ctl.session_nonce == nonce);
-	CHECK(zlrs_link_state(&sim.rx.ctl) == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
 }
 
 static void test_control_payloads(void)
@@ -461,7 +461,7 @@ static void test_control_payloads(void)
 	printf("link: rc / tlm\n");
 	sim_init(&sim);
 	pair_and_connect(&sim);
-	CHECK(zlrs_link_state(&sim.rx.ctl) == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
 
 	for (uint8_t i = 0; i < sizeof(rc); i++) {
 		rc[i] = (uint8_t)(i * 3U + 1U);
@@ -491,7 +491,7 @@ static void test_data_passthrough(void)
 	printf("link: data passthrough\n");
 	sim_init(&sim);
 	pair_and_connect(&sim);
-	CHECK(zlrs_link_state(&sim.tx.data) == ZLRS_STATE_CONNECTED);
+	CHECK(sim.tx.data.state == ZLRS_STATE_CONNECTED);
 
 	for (uint16_t i = 0; i < sizeof(payload); i++) {
 		payload[i] = (uint8_t)(i * 7U + 5U);
@@ -564,7 +564,7 @@ static void test_frag_drop(void)
 	printf("link: fragmentation recovery\n");
 	sim_init(&sim);
 	pair_and_connect(&sim);
-	CHECK(zlrs_link_state(&sim.rx.data) == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.data.state == ZLRS_STATE_CONNECTED);
 
 	key = sim.rx.data.session_key;
 	seq = (uint16_t)(sim.rx.data.last_rx_seq + 1U);
@@ -608,15 +608,15 @@ static void test_recovery(void)
 	printf("link: loss and recovery\n");
 	sim_init(&sim);
 	pair_and_connect(&sim);
-	CHECK(zlrs_link_state(&sim.rx.ctl) == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
 
 	/* 断掉双向投递：控制链路按各自超时回到 SEARCHING */
 	sim.drop_down = 100000;
 	sim.drop_up = 100000;
 	sim_run(&sim, 100U); /* 600 ms */
 
-	CHECK(zlrs_link_state(&sim.rx.ctl) == ZLRS_STATE_SEARCHING);
-	CHECK(zlrs_link_state(&sim.tx.ctl) == ZLRS_STATE_SEARCHING);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_SEARCHING);
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_SEARCHING);
 	CHECK(sim.rx.ctl_state == ZLRS_STATE_SEARCHING); /* on_state 通知过（失控保护用） */
 	CHECK(sim.tx.ctl.paired && sim.rx.ctl.paired); /* 配对记录还在 */
 
@@ -624,11 +624,11 @@ static void test_recovery(void)
 	sim.drop_down = 0;
 	sim.drop_up = 0;
 	SIM_UNTIL(&sim,
-		  zlrs_link_state(&sim.tx.ctl) == ZLRS_STATE_CONNECTED &&
-			  zlrs_link_state(&sim.rx.ctl) == ZLRS_STATE_CONNECTED,
+		  sim.tx.ctl.state == ZLRS_STATE_CONNECTED &&
+			  sim.rx.ctl.state == ZLRS_STATE_CONNECTED,
 		  2000);
-	CHECK(zlrs_link_state(&sim.tx.ctl) == ZLRS_STATE_CONNECTED);
-	CHECK(zlrs_link_state(&sim.rx.ctl) == ZLRS_STATE_CONNECTED);
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
 	CHECK(sim.tx.ctl.stats.tx_frames > 0U);
 }
 
@@ -641,7 +641,7 @@ static void test_hop_lockstep(void)
 	printf("link: hopping lockstep\n");
 	sim_init(&sim);
 	pair_and_connect(&sim);
-	CHECK(zlrs_link_state(&sim.tx.ctl) == ZLRS_STATE_CONNECTED);
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
 
 	ctl_before = sim.tx.ctl.fhss.index;
 	data_before = sim.tx.data.fhss.index;
@@ -665,14 +665,14 @@ static void test_unconfigured(void)
 	printf("link: unconfigured\n");
 
 	node_init(&node, ZLRS_ROLE_TX, NULL, dev_id, 0x33333333U);
-	CHECK(zlrs_link_state(&node.ctl) == ZLRS_STATE_UNCONFIGURED);
+	CHECK(node.ctl.state == ZLRS_STATE_UNCONFIGURED);
 	CHECK(zlrs_link_slot(&node.ctl, ZLRS_SLOT_CTL_DOWN, 0U) == NULL);
 	CHECK(zlrs_link_slot(&node.ctl, ZLRS_SLOT_CTL_UP, 0U) == NULL);
 	CHECK(zlrs_link_slot(&node.data, ZLRS_SLOT_DATA_A, 0U) == NULL);
 	CHECK(zlrs_link_slot(&node.data, ZLRS_SLOT_DATA_B, 0U) == NULL);
 
 	zlrs_link_press(&node.ctl, 0U);
-	CHECK(zlrs_link_state(&node.ctl) == ZLRS_STATE_UNCONFIGURED);
+	CHECK(node.ctl.state == ZLRS_STATE_UNCONFIGURED);
 }
 
 static void test_beacon_rate(void)
@@ -685,8 +685,8 @@ static void test_beacon_rate(void)
 	sim_init(&sim);
 	zlrs_link_press(&sim.tx.ctl, sim.now_ms);
 	zlrs_link_press(&sim.rx.ctl, sim.now_ms);
-	SIM_UNTIL(&sim, zlrs_link_state(&sim.tx.ctl) == ZLRS_STATE_SEARCHING, 2000);
-	CHECK(zlrs_link_state(&sim.tx.ctl) == ZLRS_STATE_SEARCHING);
+	SIM_UNTIL(&sim, sim.tx.ctl.state == ZLRS_STATE_SEARCHING, 2000);
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_SEARCHING);
 
 	/* 对端收不到：此时 TX 只剩 BEACON 一种发送 */
 	sim.drop_down = 100000;

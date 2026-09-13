@@ -172,7 +172,7 @@ static uint16_t build_frame(zlrs_link_t *link, uint8_t type, uint8_t flags,
 	uint16_t total;
 
 	if (link->cfg.profile == ZLRS_PROFILE_P2) {
-		return 0U; /* 载荷加密未实现，P2 下不发包 */
+		return 0U; /* P2 的载荷加密不在链路层做，配置成 P2 就不发包 */
 	}
 	if (len > ZLRS_PAYLOAD_MAX_LEN) {
 		return 0U;
@@ -197,8 +197,10 @@ static uint16_t build_frame(zlrs_link_t *link, uint8_t type, uint8_t flags,
 	}
 
 	if (tag_len > 0U) {
-		zlrs_tag(tag_key, ZLRS_KEY_LEN, link->tx_buf, ZLRS_FRAME_HDR_LEN + len,
-			 &link->tx_buf[ZLRS_FRAME_HDR_LEN + len]);
+		const uint16_t mac_len = (uint16_t)(ZLRS_FRAME_HDR_LEN + len);
+
+		zlrs_tag(tag_key, ZLRS_KEY_LEN, link->tx_buf, mac_len,
+			 &link->tx_buf[mac_len]);
 	}
 
 	link->tx_seq++;
@@ -388,7 +390,7 @@ static void handle_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 	}
 }
 
-static bool pairing_complete(zlrs_link_t *link, uint32_t now_ms)
+static void pairing_complete(zlrs_link_t *link, uint32_t now_ms)
 {
 	derive_pair(link);
 	link->paired = true;
@@ -396,8 +398,6 @@ static bool pairing_complete(zlrs_link_t *link, uint32_t now_ms)
 	link->pair_wait_cfm = false;
 	set_state(link, ZLRS_STATE_SEARCHING, now_ms);
 	link->last_rx_ms = now_ms;
-
-	return true;
 }
 
 static void handle_beacon(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
@@ -498,8 +498,7 @@ static int handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 	if (tag_len > 0U) {
 		uint8_t expect[ZLRS_TAG_LEN];
 
-		zlrs_tag(key, ZLRS_KEY_LEN, link->rx_buf, ZLRS_FRAME_HDR_LEN + frame.payload_len,
-			 expect);
+		zlrs_tag(key, ZLRS_KEY_LEN, link->rx_buf, zlrs_frame_mac_len(&frame), expect);
 		if (!zlrs_ct_equal(expect, frame.tag, ZLRS_TAG_LEN)) {
 			link->stats.rx_bad_tag++;
 			return -1;
@@ -913,19 +912,4 @@ void zlrs_link_set_tlm(zlrs_link_t *link, const uint8_t *payload, uint16_t len)
 	}
 	memcpy(link->tlm_payload, payload, len);
 	link->tlm_len = len;
-}
-
-uint8_t zlrs_link_state(const zlrs_link_t *link)
-{
-	return link->state;
-}
-
-const zlrs_link_stats_t *zlrs_link_stats(const zlrs_link_t *link)
-{
-	return &link->stats;
-}
-
-void zlrs_link_sync_word(const zlrs_link_t *link, uint8_t out[ZLRS_SYNC_WORD_LEN])
-{
-	memcpy(out, link->sync_word, ZLRS_SYNC_WORD_LEN);
 }

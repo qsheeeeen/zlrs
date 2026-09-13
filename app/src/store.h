@@ -19,7 +19,6 @@ int zlrs_store_load_root_key(uint8_t out[ZLRS_KEY_LEN]);
 int zlrs_store_load_dev_id(uint8_t out[ZLRS_DEV_ID_LEN]);
 int zlrs_store_load_peer(uint8_t out[ZLRS_DEV_ID_LEN]);
 
-int zlrs_store_save_root_key(const uint8_t key[ZLRS_KEY_LEN]);
 int zlrs_store_save_dev_id(const uint8_t id[ZLRS_DEV_ID_LEN]);
 int zlrs_store_save_peer(const uint8_t id[ZLRS_DEV_ID_LEN]);
 int zlrs_store_clear_peer(void);

@@ -29,13 +29,13 @@ const zlrs_fhss_domain_t zlrs_fhss_domains[ZLRS_DOMAIN_COUNT] = {
 
 static uint32_t rng_state = 0x12345678U;
 
-void zlrs_fhss_rng_seed(uint32_t seed)
+static void rng_seed(uint32_t seed)
 {
 	/* xorshift32 的零点是不动点，避开它 */
 	rng_state = (seed != 0U) ? seed : 0x12345678U;
 }
 
-uint32_t zlrs_fhss_rng(void)
+static uint32_t rng_next(void)
 {
 	uint32_t x = rng_state;
 
@@ -47,13 +47,13 @@ uint32_t zlrs_fhss_rng(void)
 	return x;
 }
 
-uint8_t zlrs_fhss_rng_n(uint8_t max)
+static uint8_t rng_n(uint8_t max)
 {
-	return (max == 0U) ? 0U : (uint8_t)(zlrs_fhss_rng() % max);
+	return (max == 0U) ? 0U : (uint8_t)(rng_next() % max);
 }
 
-uint16_t zlrs_fhss_build_sequence(uint32_t seed, uint8_t channel_count,
-				  uint8_t sync_channel, uint8_t *sequence)
+static uint16_t build_sequence(uint32_t seed, uint8_t channel_count,
+			       uint8_t sync_channel, uint8_t *sequence)
 {
 	uint16_t count;
 
@@ -65,7 +65,7 @@ uint16_t zlrs_fhss_build_sequence(uint32_t seed, uint8_t channel_count,
 	}
 
 	count = (uint16_t)((ZLRS_FHSS_SEQUENCE_LEN / channel_count) * channel_count);
-	zlrs_fhss_rng_seed(seed);
+	rng_seed(seed);
 
 	/*
 	 * 每块的第 0 个位置放同步信道，同步信道原本该出现的位置放 0 号信道，
@@ -94,7 +94,7 @@ uint16_t zlrs_fhss_build_sequence(uint32_t seed, uint8_t channel_count,
 		}
 
 		base = (uint16_t)((i / channel_count) * channel_count);
-		pick = (uint8_t)(1U + zlrs_fhss_rng_n((uint8_t)(channel_count - 1U)));
+		pick = (uint8_t)(1U + rng_n((uint8_t)(channel_count - 1U)));
 		tmp = sequence[i];
 		sequence[i] = sequence[base + pick];
 		sequence[base + pick] = tmp;
@@ -114,11 +114,11 @@ void zlrs_fhss_init(zlrs_fhss_t *fhss, uint8_t domain_id, uint32_t seed)
 	fhss->sync_channel = (uint8_t)(fhss->domain->channel_count / 2U);
 	fhss->index = 0U;
 	fhss->sequence_count =
-		zlrs_fhss_build_sequence(seed, fhss->domain->channel_count,
-					 fhss->sync_channel, fhss->sequence);
+		build_sequence(seed, fhss->domain->channel_count, fhss->sync_channel,
+			       fhss->sequence);
 }
 
-uint32_t zlrs_fhss_freq_hz(const zlrs_fhss_t *fhss, uint8_t channel)
+static uint32_t freq_hz(const zlrs_fhss_t *fhss, uint8_t channel)
 {
 	if (fhss->domain == NULL) {
 		return 0U; /* 还没按密钥初始化 */
@@ -133,7 +133,7 @@ uint32_t zlrs_fhss_freq_hz(const zlrs_fhss_t *fhss, uint8_t channel)
 
 uint32_t zlrs_fhss_current_hz(const zlrs_fhss_t *fhss)
 {
-	return zlrs_fhss_freq_hz(fhss, fhss->sequence[fhss->index]);
+	return freq_hz(fhss, fhss->sequence[fhss->index]);
 }
 
 uint32_t zlrs_fhss_next_hz(zlrs_fhss_t *fhss)
@@ -147,20 +147,9 @@ uint32_t zlrs_fhss_next_hz(zlrs_fhss_t *fhss)
 	return zlrs_fhss_current_hz(fhss);
 }
 
-uint16_t zlrs_fhss_index(const zlrs_fhss_t *fhss)
-{
-	return fhss->index;
-}
-
 void zlrs_fhss_set_index(zlrs_fhss_t *fhss, uint16_t index)
 {
 	if (fhss->sequence_count > 0U) {
 		fhss->index = (uint16_t)(index % fhss->sequence_count);
 	}
-}
-
-bool zlrs_fhss_on_sync(const zlrs_fhss_t *fhss)
-{
-	return fhss->sequence_count > 0U &&
-	       fhss->sequence[fhss->index] == fhss->sync_channel;
 }

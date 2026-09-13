@@ -6,18 +6,18 @@
 
 #include <string.h>
 
-static bool reasm_expired(const zlrs_reasm_t *reasm, uint32_t now_ms)
-{
-	return reasm->active &&
-	       (uint32_t)(now_ms - reasm->last_ms) > ZLRS_FRAG_TIMEOUT_MS;
-}
-
-void zlrs_reasm_reset(zlrs_reasm_t *reasm)
+static void reasm_reset(zlrs_reasm_t *reasm)
 {
 	reasm->active = false;
 	reasm->len = 0;
 	reasm->expected_seq = 0;
 	reasm->last_ms = 0;
+}
+
+static bool reasm_expired(const zlrs_reasm_t *reasm, uint32_t now_ms)
+{
+	return reasm->active &&
+	       (uint32_t)(now_ms - reasm->last_ms) > ZLRS_FRAG_TIMEOUT_MS;
 }
 
 void zlrs_reasm_init(zlrs_reasm_t *reasm, uint8_t *buf, uint16_t cap)
@@ -36,7 +36,7 @@ int zlrs_reasm_push(zlrs_reasm_t *reasm, const zlrs_frame_t *frame, uint32_t now
 	}
 
 	if (reasm_expired(reasm, now_ms)) {
-		zlrs_reasm_reset(reasm);
+		reasm_reset(reasm);
 	}
 
 	if (!reasm->active) {
@@ -53,12 +53,12 @@ int zlrs_reasm_push(zlrs_reasm_t *reasm, const zlrs_frame_t *frame, uint32_t now
 		reasm->expected_seq = frame->seq;
 	} else if (frame->seq != reasm->expected_seq) {
 		/* 缺口：整段丢弃 */
-		zlrs_reasm_reset(reasm);
+		reasm_reset(reasm);
 		return ZLRS_REASM_DROPPED;
 	}
 
 	if ((uint32_t)reasm->len + frame->payload_len > reasm->cap) {
-		zlrs_reasm_reset(reasm);
+		reasm_reset(reasm);
 		return ZLRS_REASM_DROPPED;
 	}
 

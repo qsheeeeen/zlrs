@@ -38,7 +38,6 @@
 /* 密钥与设备标识 */
 #define ZLRS_KEY_LEN 32U
 #define ZLRS_DEV_ID_LEN 4U
-#define ZLRS_PHRASE_MIN_LEN 12U
 
 /* 设备角色 */
 #define ZLRS_ROLE_TX 0U

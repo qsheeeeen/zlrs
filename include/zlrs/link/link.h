@@ -197,12 +197,6 @@ uint16_t zlrs_link_write(zlrs_link_t *link, const uint8_t *data, uint16_t len);
 void zlrs_link_set_rc(zlrs_link_t *link, const uint8_t *channels, uint16_t len);
 void zlrs_link_set_tlm(zlrs_link_t *link, const uint8_t *payload, uint16_t len);
 
-uint8_t zlrs_link_state(const zlrs_link_t *link);
-const zlrs_link_stats_t *zlrs_link_stats(const zlrs_link_t *link);
-
-/* 派生值查询（配置工具与自检用） */
-void zlrs_link_sync_word(const zlrs_link_t *link, uint8_t out[ZLRS_SYNC_WORD_LEN]);
-
 #ifdef __cplusplus
 }
 #endif
