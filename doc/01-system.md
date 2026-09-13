@@ -144,6 +144,11 @@ radio planner 仲裁——线程与回调的做法见第 7 节。
 两条链路默认都用 FLRC。改调制类型（FLRC ↔ LoRa）在射频侧比单纯改频率贵得多，
 共用调制能让每次切换只改频率。LoRa 只作远距兜底档。
 
+调制是**按链路各自选**的（已定，待实现）：窄带地区（868 / 470 / 433）放不下宽带
+FLRC 时，控制链路改用 LoRa（默认 SF7 / BW125、10 Hz），数据链路仍在 2.4G 跑
+FLRC；超帧周期由最慢的那条链路决定。见
+[03-protocol.md](03-protocol.md) 4.1.1 与 [05-roadmap.md](05-roadmap.md) 的 M4。
+
 ## 4. 时序预算（背景数据）
 
 取自 LR2021 datasheet Rev 1.1 Table 3-23（typical 值）。这些数是射频栈内部的
