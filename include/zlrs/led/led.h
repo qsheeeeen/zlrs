@@ -34,8 +34,10 @@ typedef struct {
 	bool paired;       /* 有配对记录 */
 	bool failsafe;     /* 正在发/输出失控值（TX 输入超时、RX 未连接） */
 	bool drop_recent;  /* 最近一秒有丢弃（透传积压或 ARQ 放弃） */
+	bool role_tx;      /* 角色，只在开机自检窗口里用 */
 	uint8_t link_state; /* 控制链路状态 ZLRS_STATE_* */
 	uint8_t lq_percent;
+	uint32_t uptime_ms; /* 上电以来的毫秒数：前 1.5 秒亮角色色 */
 } zlrs_led_input_t;
 
 /* 算当前该显示的颜色。now_ms 用毫秒时基，只用于闪烁相位 */

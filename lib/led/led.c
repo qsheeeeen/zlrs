@@ -85,15 +85,20 @@ zlrs_led_rgb_t zlrs_led_frame(const zlrs_led_input_t *in, uint32_t now_ms)
 		return blink(scale(white, 30U), now_ms, 2000U, 200U);
 	}
 
-	/* 2. 失控保护：红，5 Hz 快闪——"没有可用链路"最要紧 */
+	/* 2. 开机自检：前 1.5 秒用角色色（蓝 = TX，绿 = RX），两块板子分得清 */
+	if (in->uptime_ms < 1500U) {
+		return scale(in->role_tx ? blue : green, 30U);
+	}
+
+	/* 3. 失控保护：红，5 Hz 快闪——"没有可用链路"最要紧 */
 	if (in->failsafe && in->link_state != ZLRS_STATE_CONNECTED) {
 		return blink(scale(red, 60U), now_ms, 200U, 60U);
 	}
 
-	/* 3. 链路状态 */
+	/* 4. 链路状态 */
 	frame = link_state_frame(in, now_ms);
 
-	/* 4. 丢弃提示：只在已连接时常亮的基础上每 2 秒单闪一次 */
+	/* 5. 丢弃提示：只在已连接时常亮的基础上每 2 秒单闪一次 */
 	if (in->link_state == ZLRS_STATE_CONNECTED && in->drop_recent &&
 	    single_flash(now_ms, 2000U, 120U)) {
 		frame = scale(orange, 60U);

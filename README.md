@@ -142,6 +142,7 @@ zephyr/module.yml     本仓库作为 Zephyr 模块的入口（板级定义也�
 | 帧格式与包类型、链路状态机、超帧、跳频与法规约束 | [doc/03-protocol.md](doc/03-protocol.md) |
 | LR2021 的速率、灵敏度、切换时序、SPI 与 IRQ 摘要 | [doc/04-lr2021.md](doc/04-lr2021.md) |
 | 接下来的里程碑与各自的验收标准 | [doc/05-roadmap.md](doc/05-roadmap.md) |
+| 按键语义与状态灯的颜色/节奏 | [doc/06-ui.md](doc/06-ui.md) |
 | 原型板的接线与 Core2021 选型 | [boards/zlrs/rp2350_zero_core2021/README.md](boards/zlrs/rp2350_zero_core2021/README.md) |
 
 ## 依赖

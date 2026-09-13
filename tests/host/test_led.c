@@ -24,6 +24,7 @@ static void test_config_mode_wins(void)
 	printf("led: priority\n");
 
 	memset(&in, 0, sizeof(in));
+	in.uptime_ms = 10000U;
 	in.config_mode = true;
 	in.failsafe = true; /* 这两条同时成立时，灯只表现配置模式 */
 	in.link_state = ZLRS_STATE_SEARCHING;
@@ -47,6 +48,7 @@ static void test_link_states(void)
 	printf("led: link states\n");
 
 	memset(&in, 0, sizeof(in));
+	in.uptime_ms = 10000U;
 	in.link_state = ZLRS_STATE_UNCONFIGURED;
 	/* 紫 / 黄都是 1 Hz：t=0 亮，t=500 灭 */
 	CHECK(!is_off(zlrs_led_frame(&in, 0U)));
@@ -80,6 +82,7 @@ static void test_connected_lq(void)
 	printf("led: connected and lq\n");
 
 	memset(&in, 0, sizeof(in));
+	in.uptime_ms = 10000U;
 	in.configured = true;
 	in.paired = true;
 	in.link_state = ZLRS_STATE_CONNECTED;
@@ -116,6 +119,7 @@ static void test_drop_overlay(void)
 	printf("led: drop overlay\n");
 
 	memset(&in, 0, sizeof(in));
+	in.uptime_ms = 10000U;
 	in.configured = true;
 	in.paired = true;
 	in.link_state = ZLRS_STATE_CONNECTED;
@@ -148,8 +152,43 @@ static void test_drop_overlay(void)
 	}
 }
 
+/* 开机自检：前 1.5 秒亮角色色，之后进入状态显示 */
+static void test_boot_role(void)
+{
+	zlrs_led_input_t in;
+
+	printf("led: boot role\n");
+
+	memset(&in, 0, sizeof(in));
+	in.role_tx = true;
+	in.link_state = ZLRS_STATE_UNPAIRED;
+	in.uptime_ms = 0U;
+
+	/* TX：蓝 */
+	{
+		const zlrs_led_rgb_t tx = zlrs_led_frame(&in, 0U);
+
+		CHECK(tx.b > tx.r && tx.b > tx.g);
+	}
+	/* RX：绿 */
+	in.role_tx = false;
+	{
+		const zlrs_led_rgb_t rx = zlrs_led_frame(&in, 0U);
+
+		CHECK(rx.g > rx.r && rx.g > rx.b);
+	}
+	/* 自检窗口结束：回到"未配对"的黄色 1 Hz 慢闪 */
+	in.uptime_ms = 2000U;
+	{
+		const zlrs_led_rgb_t later = zlrs_led_frame(&in, 0U);
+
+		CHECK(later.r > 0U && later.b == 0U);
+	}
+}
+
 void test_led(void)
 {
+	test_boot_role();
 	test_config_mode_wins();
 	test_link_states();
 	test_connected_lq();
