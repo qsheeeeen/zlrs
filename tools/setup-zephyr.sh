@@ -21,7 +21,7 @@
 #   ├── usp_zephyr/          Semtech usp_zephyr v1.0.0
 #   └── modules/lib/usp/     Semtech usp v1.0.0
 #
-# 工具链走 Zephyr SDK（默认 $HOME/zephyr-sdk-0.17.4，ZLRS_SDK_DIR 可改）：
+# 工具链走 Zephyr SDK（默认 $HOME/zephyr-sdk-1.0.0，ZLRS_SDK_DIR 可改）：
 # 本脚本只检查，缺了会打印安装命令。有 SDK 就不用再为 libc 绕路
 # （发行版 arm-none-eabi-gcc 的 newlib 没开 retargetable locking 才要绕）。
 #
@@ -105,8 +105,9 @@ for req in "${WS}"/usp_zephyr/scripts/requirements*.txt; do
 	fi
 done
 
-SDK_DIR="${ZLRS_SDK_DIR:-${HOME}/zephyr-sdk-0.17.4}"
-SDK_GCC="${SDK_DIR}/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc"
+SDK_DIR="${ZLRS_SDK_DIR:-${HOME}/zephyr-sdk-1.0.0}"
+SDK_GCC="${SDK_DIR}/gnu/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc"
+[ -x "${SDK_GCC}" ] || SDK_GCC="${SDK_DIR}/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc"
 
 echo
 echo "工作区就绪: ${WS}"
@@ -123,8 +124,8 @@ else
 	else
 		echo "  还没有 SDK，先下 minimal 包再装 arm 工具链："
 		echo "    cd \"$(dirname "${SDK_DIR}")\""
-		echo "    curl -LO https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v0.17.4/zephyr-sdk-0.17.4_linux-x86_64_minimal.tar.xz"
-		echo "    tar xf zephyr-sdk-0.17.4_linux-x86_64_minimal.tar.xz"
+		echo "    curl -LO https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v1.0.0/zephyr-sdk-1.0.0_linux-x86_64_minimal.tar.xz"
+		echo "    tar xf zephyr-sdk-1.0.0_linux-x86_64_minimal.tar.xz"
 		echo "    cd \"${SDK_DIR}\" && ./setup.sh -t arm-zephyr-eabi -h -c"
 	fi
 fi

@@ -9,14 +9,12 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/ring_buffer.h>
 
-#include <nrfx_power.h>
-
 LOG_MODULE_REGISTER(zlrs_serial, CONFIG_APP_LOG_LEVEL);
 
 #define RX_RING_LEN 1024U
 #define TX_RING_LEN 1024U
 
-static const struct device *const uart = DEVICE_DT_GET(DT_NODELABEL(xiao_serial));
+static const struct device *const uart = DEVICE_DT_GET(DT_ALIAS(zlrs_data_uart));
 
 static uint8_t rx_ring_mem[RX_RING_LEN];
 static uint8_t tx_ring_mem[TX_RING_LEN];
@@ -63,13 +61,6 @@ int zlrs_serial_init(void)
 
 	ring_buf_init(&rx_ring, sizeof(rx_ring_mem), rx_ring_mem);
 	ring_buf_init(&tx_ring, sizeof(tx_ring_mem), tx_ring_mem);
-
-	/*
-	 * XIAO nRF54L15 的用户串口走 P2.07/P2.08（跨电源域），没有调试器时
-	 * RX 收不到数据；按 usp_zephyr 的已知问题说明打开 CONSTLAT 模式。
-	 * 代价是功耗略升。
-	 */
-	nrfx_power_constlat_mode_request();
 
 	uart_irq_callback_user_data_set(uart, uart_isr, NULL);
 	uart_irq_rx_enable(uart);

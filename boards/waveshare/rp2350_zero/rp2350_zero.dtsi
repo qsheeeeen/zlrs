@@ -1,36 +1,93 @@
 /*
- * Waveshare Core2021（LR2021，双频模块）接到 XIAO nRF54L15 的接线。
- *
- * 两个变体都是「2.4 GHz + 一路 sub-GHz」：LF 是 2.4G + 400M，HF 是
- * 2.4G + 900M。用 868 / 915 地区就选 HF 那颗；433 地区选 LF。
- * 频段分工与默认设计一致：sub-GHz 跑控制链路，2.4G 跑数据链路。
- *
- * 信号按微雪 STM32 移植文档的等价物映射：
- *   SCK/MISO/MOSI -> xiao_spi（D8/D9/D10）
- *   CS -> D3，BUSY -> D1，NRESET -> D2，DIO8(IRQ) -> D0
- *
- * 模块用晶振（不用 TCXO），PA 标定表取自 Semtech 的 Wio-LR2021 参考值；
- * 换成 Core2021 后应按模块的 PA 网络重新标定 tx-power-cfg-*，并把
- * calibration-freqs 里对应 sub-GHz 变体的频点改成实际使用频段。
+ * Waveshare RP2350-Zero（RP2350A，4 MB flash）+ Waveshare Core2021（LR2021）的
+ * 板级定义。接线与选型见同目录 README.md。
  *
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <zephyr/dt-bindings/usp/lr20xx.h>
+#include <freq.h>
+
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+#include "rp2350_zero-pinctrl.dtsi"
 
 / {
 	chosen {
+		zephyr,sram = &sram0;
+		zephyr,flash = &flash0;
+		zephyr,flash-controller = &qmi;
+		zephyr,console = &uart0;
+		zephyr,shell-uart = &uart0;
 		zephyr,lorawan-transceiver = &lora_core2021;
 	};
 	aliases {
 		lora-transceiver = &lora_core2021;
+		zlrs-data-uart = &uart1;
+		zlrs-button = &zlrs_button;
+	};
+
+	buttons {
+		compatible = "gpio-keys";
+
+		zlrs_button: zlrs-button {
+			gpios = <&gpio0 12 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+		};
 	};
 };
 
-&xiao_spi {
+&gpio0 {
 	status = "okay";
-	overrun-character = <0>; // Defines state of MOSI when SPI RX
-	cs-gpios = <&xiao_d 3 GPIO_ACTIVE_LOW>;
+};
+
+/* 控制台串口 */
+&uart0 {
+	status = "okay";
+	current-speed = <115200>;
+	pinctrl-0 = <&uart0_default>;
+	pinctrl-names = "default";
+};
+
+/* 数据串口：透传口 */
+&uart1 {
+	status = "okay";
+	current-speed = <115200>;
+	pinctrl-0 = <&zlrs_uart1_default>;
+	pinctrl-names = "default";
+};
+
+/* RP2350 硬件 TRNG：给 CSPRNG 供熵（v4.4 起树内有驱动） */
+&rng {
+	status = "okay";
+};
+
+/* 4 MB QSPI flash：1 MB code + 3 MB storage（NVS 存密钥与配对记录） */
+&flash0 {
+	reg = <0x10000000 DT_SIZE_M(4)>;
+
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		code_partition: partition@0 {
+			label = "code";
+			reg = <0x0 DT_SIZE_M(1)>;
+			read-only;
+		};
+
+		storage_partition: partition@100000 {
+			label = "storage";
+			reg = <0x100000 DT_SIZE_M(3)>;
+		};
+	};
+};
+
+&spi0 {
+	status = "okay";
+	clock-frequency = <DT_FREQ_M(8)>;
+	pinctrl-0 = <&zlrs_spi0_default>;
+	pinctrl-names = "default";
+	cs-gpios = <&gpio0 5 GPIO_ACTIVE_LOW>;
 
 	lora_core2021: lora@0 {
 		reg = <0>;
@@ -43,15 +100,15 @@
 		// RX boost offset, from 0 (no RX boost) to 7 (max RX boost)
 		rx-boost-cfg = <7>;
 
-		reset-gpios = <&xiao_d 2 GPIO_ACTIVE_LOW>; //D2
+		reset-gpios = <&gpio0 21 GPIO_ACTIVE_LOW>; // NRESET
 
-		busy-gpios = <&xiao_d 1 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>; //D1
+		busy-gpios = <&gpio0 20 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>; // BUSY
 
-		reg-mode = <LR20XX_REG_MODE_DCDC>;
+		reg-mode = <0x02 /* LR20XX_REG_MODE_DCDC */>;
 
-		lf-clk = <LR20XX_SYSTEM_LFCLK_RC>;
+		lf-clk = <0x00 /* LR20XX_SYSTEM_LFCLK_RC */>;
 
-		tcxo-voltage = <LR20XX_SYSTEM_TCXO_CTRL_1_8V>;
+		tcxo-voltage = <0x02 /* LR20XX_SYSTEM_TCXO_CTRL_1_8V */>;
 		tcxo-wakeup-time = <0>;
 
 		// Radio output power setting tables
@@ -398,11 +455,10 @@
 			#size-cells = <0>;
 			dio@8 {
 				reg = <8>;
-				function = <LR20XX_SYSTEM_DIO_FUNC_IRQ>;
-				dio-gpios = <&xiao_d 0 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>; //D0
-				irq-mask = <LR20XX_SYSTEM_IRQ_ALL_MASK>;
+				function = <0x01 /* LR20XX_SYSTEM_DIO_FUNC_IRQ */>;
+				dio-gpios = <&gpio0 22 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>; // DIO8
+				irq-mask = <0xffff07ff /* LR20XX_SYSTEM_IRQ_ALL_MASK */>;
 			};
 		};
-
 	};
 };

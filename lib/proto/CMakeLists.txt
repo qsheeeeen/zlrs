@@ -3,11 +3,8 @@
 
 zephyr_library()
 zephyr_library_sources(
-  crypto.c
+  crypto_soft.c
   fhss.c
   frag.c
   frame.c
 )
-
-# 密码学原语来自 mbedTLS（Zephyr 自带），见 zlrs/proto/crypto.h
-zephyr_library_link_libraries_ifdef(CONFIG_MBEDTLS mbedTLS)

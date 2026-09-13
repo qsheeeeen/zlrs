@@ -4,8 +4,8 @@
 build:
   kconfig: Kconfig
   cmake: .
-  # lib/proto 的密码学原语用 mbedTLS，必须在它之后处理
-  depends:
-    - mbedtls
   settings:
+    # 仓库自带板级定义（boards/<vendor>/<board>/）与 dts 绑定，
+    # 见 <board_root>/boards 与 <dts_root>/dts
     board_root: .
+    dts_root: .

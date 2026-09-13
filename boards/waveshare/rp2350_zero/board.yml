@@ -1,0 +1,9 @@
+# Copyright (c) 2026 zlrs contributors
+# SPDX-License-Identifier: Apache-2.0
+
+board:
+  name: rp2350_zero
+  full_name: Waveshare RP2350-Zero
+  vendor: waveshare
+  socs:
+    - name: rp2350a

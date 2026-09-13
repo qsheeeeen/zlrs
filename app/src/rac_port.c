@@ -14,17 +14,6 @@
 
 LOG_MODULE_REGISTER(zlrs_rac, CONFIG_APP_LOG_LEVEL);
 
-/* FLRC 速率档：原始速率与 DSB 带宽成对出现，见 docs/04-lr2021.md */
-static const struct {
-	uint32_t br_bps;
-	uint32_t bw_hz;
-} rate_table[] = {
-	{ 2600000U, 2666000U },
-	{ 1300000U, 1200000U },
-	{ 650000U, 600000U },
-	{ 325000U, 300000U },
-};
-
 typedef struct {
 	uint8_t access_id;
 	smtc_rac_context_t *ctx;
@@ -70,19 +59,43 @@ const zlrs_radio_ops_t *zlrs_rac_data_ops(void)
 	return &data_ops;
 }
 
-static const uint32_t *rate_params(uint32_t rate_bps, uint32_t *bw_hz)
+/* 速率档：v1.1 起原始速率与带宽合成一个枚举，见 docs/04-lr2021.md */
+static ral_flrc_raw_bit_rate_t raw_bit_rate(uint32_t rate_bps)
 {
-	for (size_t i = 0; i < ARRAY_SIZE(rate_table); i++) {
-		if (rate_table[i].br_bps == rate_bps) {
-			*bw_hz = rate_table[i].bw_hz;
-			return &rate_table[i].br_bps;
-		}
+	switch (rate_bps) {
+	case 2600000U:
+		return RAL_FLRC_RAW_BIT_RATE_2_600_MBPS;
+	case 650000U:
+		return RAL_FLRC_RAW_BIT_RATE_0_650_MBPS;
+	case 325000U:
+		return RAL_FLRC_RAW_BIT_RATE_0_325_MBPS;
+	case 1300000U:
+	default:
+		return RAL_FLRC_RAW_BIT_RATE_1_300_MBPS;
 	}
+}
 
-	/* 不认识的档位回落到均衡档 */
-	*bw_hz = rate_table[1].bw_hz;
-
-	return &rate_table[1].br_bps;
+static ral_flrc_preamble_length_t preamble_len(uint16_t bits)
+{
+	switch (bits) {
+	case 4U:
+		return RAL_FLRC_PREAMBLE_LENGTH_4_BITS;
+	case 8U:
+		return RAL_FLRC_PREAMBLE_LENGTH_8_BITS;
+	case 12U:
+		return RAL_FLRC_PREAMBLE_LENGTH_12_BITS;
+	case 16U:
+		return RAL_FLRC_PREAMBLE_LENGTH_16_BITS;
+	case 20U:
+		return RAL_FLRC_PREAMBLE_LENGTH_20_BITS;
+	case 24U:
+		return RAL_FLRC_PREAMBLE_LENGTH_24_BITS;
+	case 28U:
+		return RAL_FLRC_PREAMBLE_LENGTH_28_BITS;
+	case 32U:
+	default:
+		return RAL_FLRC_PREAMBLE_LENGTH_32_BITS;
+	}
 }
 
 static ral_flrc_tx_syncword_t tx_syncword(uint8_t slot)
@@ -166,8 +179,8 @@ static int client_open(rac_client_t *client, uint8_t priority, void (*post)(rp_s
 	client->ctx->radio_params.flrc.crc_seed = 0U;
 	client->ctx->radio_params.flrc.crc_polynomial = 0U;
 	client->ctx->radio_params.flrc.pulse_shape = RAL_FLRC_PULSE_SHAPE_BT_05;
-	client->ctx->radio_params.flrc.preamble_len_in_bits =
-		CONFIG_ZLRS_APP_FLRC_PREAMBLE_BITS;
+	client->ctx->radio_params.flrc.preamble_len =
+		preamble_len(CONFIG_ZLRS_APP_FLRC_PREAMBLE_BITS);
 	client->ctx->radio_params.flrc.sync_word_len = RAL_FLRC_SYNCWORD_LENGTH_4_BYTES;
 
 	return 0;
@@ -192,8 +205,6 @@ static int port_submit(void *ctx, const zlrs_radio_req_t *req)
 {
 	rac_client_t *client = ctx;
 	smtc_rac_context_t *rac = client->ctx;
-	uint32_t bw_hz = 0U;
-	const uint32_t *br = rate_params(req->rate_bps, &bw_hz);
 
 	rac->smtc_rac_data_buffer_setup.tx_payload_buffer = req->buf;
 	rac->smtc_rac_data_buffer_setup.size_of_tx_payload_buffer = req->size;
@@ -205,12 +216,17 @@ static int port_submit(void *ctx, const zlrs_radio_req_t *req)
 	rac->radio_params.flrc.max_rx_size = req->max_rx_size;
 	rac->radio_params.flrc.frequency_in_hz = req->freq_hz;
 	rac->radio_params.flrc.tx_power_in_dbm = req->tx_power_dbm;
-	rac->radio_params.flrc.br_in_bps = *br;
-	rac->radio_params.flrc.bw_dsb_in_hz = bw_hz;
+	rac->radio_params.flrc.raw_bit_rate = raw_bit_rate(req->rate_bps);
 	rac->radio_params.flrc.cr = RAL_FLRC_CR_3_4;
-	rac->radio_params.flrc.tx_syncword = tx_syncword(req->sync_slot);
+	rac->radio_params.flrc.tx_syncword_index = tx_syncword(req->sync_slot);
 	rac->radio_params.flrc.match_sync_word = rx_match_syncword(req->sync_slot);
-	rac->radio_params.flrc.sync_word = req->sync_word;
+	/* 三个同步字槽各一个指针，只填这次事务用到的那个 */
+	for (uint8_t i = 0U; i < 3U; i++) {
+		rac->radio_params.flrc.sync_word[i] = NULL;
+	}
+	if (req->sync_slot >= ZLRS_SYNC_SLOT_CONTROL && req->sync_slot <= ZLRS_SYNC_SLOT_PAIRING) {
+		rac->radio_params.flrc.sync_word[req->sync_slot - 1U] = req->sync_word;
+	}
 	rac->radio_params.flrc.rx_timeout_ms = req->timeout_ms;
 
 	rac->scheduler_config.start_time_ms = smtc_modem_hal_get_time_in_ms();

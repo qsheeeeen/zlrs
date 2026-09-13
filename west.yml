@@ -16,21 +16,22 @@ manifest:
   #
   #   west init -l zlrs
   #   west update
-  #   west build -b xiao_nrf54l15/nrf54l15/cpuapp \
-  #              --shield semtech_wio_lr2021 app
+  #   west build -b rpi_pico2/rp2350a/m33 app
   projects:
     - name: zephyr
       url: https://github.com/zephyrproject-rtos/zephyr
-      revision: v4.2.0
+      # v4.4.0 起才有 RP2350 的 TRNG 驱动（raspberrypi,pico-rng）与
+      # 4M flash 的 storage 分区模板
+      revision: v4.4.0
       import: true
     - name: usp_zephyr
       path: usp_zephyr
       url: https://github.com/Lora-net/usp_zephyr.git
-      revision: v1.0.0
+      revision: v1.1.2-feature-202604
     - name: usp
       path: modules/lib/usp
       url: https://github.com/Lora-net/usp.git
-      revision: v1.0.0
+      revision: v1.1.2-feature-202604
       submodules: true
   self:
     path: zlrs

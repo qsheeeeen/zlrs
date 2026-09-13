@@ -38,7 +38,7 @@ LOG_MODULE_REGISTER(app, CONFIG_APP_LOG_LEVEL);
 static zlrs_link_t link_control;
 static zlrs_link_t link_data;
 
-static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(DT_NODELABEL(usr_btn), gpios);
+static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(DT_ALIAS(zlrs_button), gpios);
 static bool button_down;
 static uint32_t button_since_ms;
 

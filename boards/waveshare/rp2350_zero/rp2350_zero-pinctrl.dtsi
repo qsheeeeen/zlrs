@@ -1,0 +1,44 @@
+/*
+ * Copyright (c) 2026 zlrs contributors
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include <zephyr/dt-bindings/pinctrl/rpi-pico-rp2350a-pinctrl.h>
+
+&pinctrl {
+	/* 控制台：RP2350-Zero 上就是 Pico 的那对默认引脚 */
+	uart0_default: uart0_default {
+		group1 {
+			pinmux = <UART0_TX_P0>;
+		};
+
+		group2 {
+			pinmux = <UART0_RX_P1>;
+			input-enable;
+		};
+	};
+
+	/* 射频 SPI0：避开 GP16（板上 WS2812B 的数据脚） */
+	zlrs_spi0_default: zlrs_spi0_default {
+		group1 {
+			pinmux = <SPI0_SCK_P6>, <SPI0_TX_P7>;
+		};
+
+		group2 {
+			pinmux = <SPI0_RX_P4>;
+			input-enable;
+		};
+	};
+
+	/* 数据串口：透传口 */
+	zlrs_uart1_default: zlrs_uart1_default {
+		group1 {
+			pinmux = <UART1_TX_P10>;
+		};
+
+		group2 {
+			pinmux = <UART1_RX_P11>;
+			input-enable;
+		};
+	};
+};
