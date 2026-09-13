@@ -104,10 +104,10 @@ XIAO nRF54L15 没有原生 USB 控制器，所以 USB 只在带原生 USB 的板
 
 ### 3.1 两条链路
 
-| 链路 | 默认频段 | 调制 | 承载 | RAC 优先级 | 优化目标 |
-| --- | --- | --- | --- | --- | --- |
-| 控制链路 | sub-GHz | FLRC | CRSF（通道下行 + 遥测上行） | `HIGH` | 距离与稳定性 |
-| 数据链路 | 2.4GHz | FLRC | 串口透传字节流 | `MEDIUM` | 帧率与吞吐 |
+| 链路 | 默认频段 | 调制 | 承载 | 优化目标 |
+| --- | --- | --- | --- | --- |
+| 控制链路 | sub-GHz | FLRC | CRSF（通道下行 + 遥测上行） | 距离与稳定性 |
+| 数据链路 | 2.4GHz | FLRC | 串口透传字节流 | 帧率与吞吐 |
 
 两条链路各跑一份相同的状态机，**互相独立**：一条断了不影响另一条。但要注意
 它们共用一颗射频、一个 MCU、一路供电——**这不是真正的冗余链路**，只是在干扰
@@ -194,9 +194,9 @@ include/zlrs/proto/   协议核心头文件
 lib/proto/            协议核心：帧编解码、分片重组、FHSS 跳频表、
                       密钥派生与标签（底层是 Zephyr 自带的 mbedTLS）。
                       空口 CRC 由射频硬件负责
-lib/link/             链路层：会话与配对、PSA 的 HKDF 与 MAC、
+lib/link/             链路层：会话与配对、密钥派生与标签、
                       把帧翻译成 RAC 事务
-app/                  Zephyr 应用：配置（短语 -> PBKDF2）、线程、串口、USB
+app/                  Zephyr 应用：线程与超帧、串口、射频移植、持久化
 tests/host/           主机侧单测（不依赖 Zephyr）
 docs/                 设计文档
 ```
@@ -208,24 +208,10 @@ Zephyr 与 USP。
 射频侧的一切——SPI 时序、校准、频段选择、收发调度——都在 `usp_zephyr` 里，
 本仓库不含射频驱动。
 
-## 7. 线程模型与初始化顺序
+## 7. 线程模型
 
 构建环境见 [README](../README.md)：`tools/setup-zephyr.sh` 用本仓库的
 `west.yml` 建工作区，`tools/zephyr-env.sh` 进环境并指向 Zephyr SDK。
-
-运行时的初始化顺序：
-
-1. `main()` 里先 `SMTC_SW_PLATFORM_INIT()` 等待 USP/RAC 线程就绪
-2. 应用调一次 `smtc_rac_init()`
-3. `smtc_rac_open_radio(priority)` 分别为控制链路与数据链路开 access id
-4. 用 `smtc_rac_get_context()` 拿上下文，填 `modulation_type`、
-   `radio_params.flrc.*`、收发缓冲、`scheduler_config` 回调
-5. 初始化串口（中断收发）与持久化，进入超帧主循环
-
-`smtc_rac_init()` 由应用在 `SMTC_SW_PLATFORM_INIT()` 之后调用，USP 线程不代劳。
-
-应用侧注册 usp 的日志模块（`LOG_MODULE_REGISTER(usp, ...)`），见
-`app/src/usp_log.c`。
 
 ### 7.1 线程划分
 
@@ -251,7 +237,13 @@ USP 的另外两种线程模式与 `SMTC_SW_PLATFORM()` 的展开见 usp_zephyr 
 
 不在回调里做校验、不在回调里翻协议栈、不在回调里碰串口，**也不在回调里提交下一个
 事务**：抢占式 + 互斥锁模式下那是对 `rac_api_mutex` 重复加锁，属于官方示例未覆盖
-的路径。实现见 `app/src/rac_port.c`。
+的路径。
+
+### 7.3 与 USP 的集成约束
+
+RAC 的初始化由应用负责：`SMTC_SW_PLATFORM_INIT()` 只等 USP 线程就绪，它不会调用
+`smtc_rac_init()`——官方示例里是应用自己调，照做即可。`usp` 的日志模块也需要应用
+侧注册，见 [README](../README.md) 的构建要点。
 
 ## 8. 诊断与可观测性
 
