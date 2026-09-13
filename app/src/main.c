@@ -145,6 +145,20 @@ static void on_state(void *ctx, uint8_t state)
 	LOG_INF("%s link -> %s", (kind == ZLRS_LINK_CONTROL) ? "control" : "data", name);
 }
 
+/* RX：配对时从 TX 收到失控值，存 NVS 并立刻用于输出 */
+static void on_failsafe(void *ctx, const uint8_t *payload, uint16_t len)
+{
+	(void)ctx;
+
+	if (len != sizeof(failsafe_payload)) {
+		return;
+	}
+
+	memcpy(failsafe_payload, payload, sizeof(failsafe_payload));
+	(void)zlrs_store_save_failsafe(failsafe_payload);
+	LOG_INF("failsafe values received from TX");
+}
+
 /* ---- 链路搭建 ------------------------------------------------------------ */
 
 static void build_links(void)
@@ -169,6 +183,7 @@ static void build_links(void)
 		.on_rc = on_rc,
 		.on_tlm = on_tlm,
 		.on_state = on_state,
+		.on_failsafe = on_failsafe,
 		.ctx = (void *)(uintptr_t)ZLRS_LINK_CONTROL,
 	};
 	const zlrs_link_events_t data_ev = {
@@ -349,6 +364,9 @@ static void failsafe_init(void)
 		zlrs_crsf_channels_pack(failsafe_payload, channels);
 	}
 	memcpy(rc_payload, failsafe_payload, sizeof(rc_payload));
+
+	/* TX 侧：这份值会随下一次配对下发给 RX */
+	zlrs_link_set_failsafe(&link_control, failsafe_payload, sizeof(failsafe_payload));
 }
 
 /* TX：手台发来的 RC 帧 → 空口 RC 载荷 */

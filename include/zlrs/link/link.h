@@ -80,6 +80,8 @@ typedef struct {
 	void (*on_tlm)(void *ctx, const uint8_t *payload, uint16_t len);
 	void (*on_data)(void *ctx, const uint8_t *data, uint16_t len);
 	void (*on_state)(void *ctx, uint8_t state);
+	/* RX 侧：配对时从 TX 收到失控值（RC 载荷），应用存 NVS 并用于输出 */
+	void (*on_failsafe)(void *ctx, const uint8_t *payload, uint16_t len);
 	void *ctx;
 } zlrs_link_events_t;
 
@@ -159,6 +161,9 @@ typedef struct {
 	uint16_t rc_len;
 	uint8_t tlm_payload[ZLRS_LINK_TLM_MAX_LEN];
 	uint16_t tlm_len;
+	/* 失控值：TX 侧设的要下发给 RX，RX 侧存的是最近一次收到的 */
+	uint8_t failsafe[ZLRS_RC_PAYLOAD_LEN];
+	uint16_t failsafe_len;
 
 	/* 透传队列 */
 	uint8_t tx_queue[ZLRS_LINK_TX_QUEUE_LEN];
@@ -208,6 +213,9 @@ void zlrs_link_set_peer(zlrs_link_t *link, const uint8_t peer_id[ZLRS_DEV_ID_LEN
 
 /* 按键：长按触发配对（换绑也走这里，新记录顶掉旧的） */
 void zlrs_link_press(zlrs_link_t *link, uint32_t now_ms);
+
+/* TX 侧设置配对时下发给 RX 的失控值（RC 载荷，见 doc/03-protocol.md 3.4） */
+void zlrs_link_set_failsafe(zlrs_link_t *link, const uint8_t *payload, uint16_t len);
 
 /* 超帧时隙：返回待提交的事务，没有则返回 NULL */
 const zlrs_radio_req_t *zlrs_link_slot(zlrs_link_t *link, uint8_t slot, uint32_t now_ms);

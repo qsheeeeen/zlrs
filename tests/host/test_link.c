@@ -43,6 +43,9 @@ struct node {
 	uint8_t tlm[ZLRS_LINK_TLM_MAX_LEN];
 	uint16_t tlm_len;
 	uint32_t tlm_count;
+	uint8_t failsafe[ZLRS_RC_PAYLOAD_LEN];
+	uint16_t failsafe_len;
+	uint32_t failsafe_count;
 	uint8_t stream[2048];
 	uint32_t stream_len;
 	uint8_t ctl_state;
@@ -135,6 +138,19 @@ static void on_data(void *ctx, const uint8_t *data, uint16_t len)
 	node->stream_len += len;
 }
 
+static void on_failsafe(void *ctx, const uint8_t *payload, uint16_t len)
+{
+	link_ctx_t *lc = ctx;
+	node_t *node = lc->node;
+
+	if (len > sizeof(node->failsafe)) {
+		len = sizeof(node->failsafe);
+	}
+	memcpy(node->failsafe, payload, len);
+	node->failsafe_len = len;
+	node->failsafe_count++;
+}
+
 static void on_state(void *ctx, uint8_t state)
 {
 	link_ctx_t *lc = ctx;
@@ -175,6 +191,7 @@ static void node_init(node_t *node, uint8_t role, const uint8_t *root_key,
 		.on_rc = on_rc,
 		.on_tlm = on_tlm,
 		.on_state = on_state,
+		.on_failsafe = on_failsafe,
 		.ctx = &node->ctl_ctx,
 	};
 	zlrs_link_events_t data_ev = {
@@ -938,6 +955,41 @@ static void test_rate_adapt(void)
 	CHECK(zlrs_rate_current_bps(&ctl) == 650000U);
 }
 
+/* 失控值由 TX 配置、配对时下发：RX 收到并存下来，用于自己的失控输出 */
+static void test_failsafe_push(void)
+{
+	sim_t sim;
+	uint8_t want[ZLRS_RC_PAYLOAD_LEN];
+
+	printf("link: failsafe push\n");
+
+	sim_init(&sim);
+	for (uint8_t i = 0U; i < sizeof(want); i++) {
+		want[i] = (uint8_t)(0x40U + i);
+	}
+	zlrs_link_set_failsafe(&sim.tx.ctl, want, sizeof(want));
+
+	pair_and_connect(&sim);
+
+	/* 链路层存下来了 */
+	CHECK(sim.rx.ctl.failsafe_len == sizeof(want));
+	CHECK(memcmp(sim.rx.ctl.failsafe, want, sizeof(want)) == 0);
+	/* 应用侧的回调也收到了（RX 要写 NVS 并用于输出） */
+	CHECK(sim.rx.failsafe_count == 1U);
+	CHECK(sim.rx.failsafe_len == sizeof(want));
+	CHECK(memcmp(sim.rx.failsafe, want, sizeof(want)) == 0);
+
+	/* 长度不对的值不接收 */
+	zlrs_link_set_failsafe(&sim.tx.ctl, want, sizeof(want) - 1U);
+	CHECK(sim.tx.ctl.failsafe_len == sizeof(want));
+
+	/* TX 没设过值时 RX 保持自己那份，不会被一串 0 覆盖 */
+	sim_init(&sim);
+	pair_and_connect(&sim);
+	CHECK(sim.rx.ctl.failsafe_len == 0U);
+	CHECK(sim.rx.failsafe_count == 0U);
+}
+
 void test_link(void)
 {
 	test_pairing();
@@ -956,4 +1008,5 @@ void test_link(void)
 	test_arq_dedup();
 	test_arq_giveup();
 	test_rate_adapt();
+	test_failsafe_push();
 }

@@ -85,6 +85,8 @@ static int cfg_save_failsafe(void *ctx, const uint8_t channels[ZLRS_CFG_FAILSAFE
 	if (failsafe_out != NULL) {
 		memcpy(failsafe_out, channels, ZLRS_CFG_FAILSAFE_LEN);
 	}
+	/* 下次配对时把新值下发给对端 */
+	zlrs_link_set_failsafe(link, channels, ZLRS_CFG_FAILSAFE_LEN);
 
 	LOG_INF("failsafe values written");
 

@@ -19,7 +19,15 @@ static const uint8_t pairing_sync_word[ZLRS_SYNC_WORD_LEN] = { 'Z', 'L', 'R', 'S
 #define LABEL_SESSION "zlrs/session"
 
 /* 配对帧载荷长度：dev_a(4) + dev_b(4) + nonce_a(4) + nonce_b(4) */
-#define PAIR_PAYLOAD_LEN 16U
+/*
+ * 配对载荷：两侧 dev_id(8) + 两个 nonce(8) + 标志(1) + 失控值(22)。
+ * 失控值只有发起方（TX）填：设过就置 FLAG_FAILSAFE，响应方照单存下来；
+ * 没设过就不置位，响应方保持自己那份，免得被一串 0 覆盖。
+ */
+#define PAIR_PAYLOAD_LEN (17U + ZLRS_RC_PAYLOAD_LEN)
+#define PAIR_FLAGS_OFFSET 16U
+#define PAIR_FAILSAFE_OFFSET 17U
+#define PAIR_FLAG_FAILSAFE 0x01U
 
 static void start_session(zlrs_link_t *link, uint32_t nonce, uint16_t hop_index);
 static void roll_session(zlrs_link_t *link, uint32_t now_ms);
@@ -568,10 +576,17 @@ static void pair_payload_fill(const zlrs_link_t *link, uint8_t out[PAIR_PAYLOAD_
 	const uint8_t *dev_a = initiator ? link->dev_id : link->peer_id;
 	const uint8_t *dev_b = initiator ? link->peer_id : link->dev_id;
 
+	memset(out, 0, PAIR_PAYLOAD_LEN);
 	memcpy(out, dev_a, ZLRS_DEV_ID_LEN);
 	memcpy(&out[ZLRS_DEV_ID_LEN], dev_b, ZLRS_DEV_ID_LEN);
 	wr32(&out[2U * ZLRS_DEV_ID_LEN], nonce_a);
 	wr32(&out[2U * ZLRS_DEV_ID_LEN + 4U], nonce_b);
+
+	/* 发起方把本地失控值一起带过去，响应方存本地 */
+	if (initiator && link->failsafe_len == ZLRS_RC_PAYLOAD_LEN) {
+		out[PAIR_FLAGS_OFFSET] = PAIR_FLAG_FAILSAFE;
+		memcpy(&out[PAIR_FAILSAFE_OFFSET], link->failsafe, ZLRS_RC_PAYLOAD_LEN);
+	}
 }
 
 static const zlrs_radio_req_t *send_pair(zlrs_link_t *link, uint8_t type,
@@ -731,6 +746,17 @@ static bool handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame,
 		link->pair_nonce = nonce_a;
 		link->session_nonce = link_random(link, now_ms);
 		link->pair_wait_cfm = true;
+
+		/* 失控值由 TX 下发（它设过才带标志），存本地并交给应用 */
+		if ((frame->payload[PAIR_FLAGS_OFFSET] & PAIR_FLAG_FAILSAFE) != 0U) {
+			memcpy(link->failsafe, &frame->payload[PAIR_FAILSAFE_OFFSET],
+			       ZLRS_RC_PAYLOAD_LEN);
+			link->failsafe_len = ZLRS_RC_PAYLOAD_LEN;
+			if (link->ev.on_failsafe != NULL) {
+				link->ev.on_failsafe(link->ev.ctx, link->failsafe,
+						     link->failsafe_len);
+			}
+		}
 		return true;
 
 	case ZLRS_PKT_PAIR_RESP:
@@ -1245,4 +1271,14 @@ void zlrs_link_set_tlm(zlrs_link_t *link, const uint8_t *payload, uint16_t len)
 	}
 	memcpy(link->tlm_payload, payload, len);
 	link->tlm_len = len;
+}
+
+void zlrs_link_set_failsafe(zlrs_link_t *link, const uint8_t *payload, uint16_t len)
+{
+	if (payload == NULL || len != ZLRS_RC_PAYLOAD_LEN) {
+		return;
+	}
+
+	memcpy(link->failsafe, payload, ZLRS_RC_PAYLOAD_LEN);
+	link->failsafe_len = ZLRS_RC_PAYLOAD_LEN;
 }
