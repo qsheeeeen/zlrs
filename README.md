@@ -23,15 +23,22 @@
 射频走 SPI0，BUSY/NRESET/DIO8 各一根 GPIO，透传口是 UART1，按键一根 GPIO，
 4 MB flash 划成 1 MB code + 3 MB storage（NVS 存密钥与配对记录）。
 
-Core2021 按 sub-GHz 频段分两个 SKU：HF 是 2.4 G + 850~930 MHz，LF 是
-2.4 G + 410~510 MHz。按地区选（868 / 915 用 HF，433 用 LF），换 SKU 要重标
-devicetree 里的 PA 与频点表。LR2021 是单颗分时双频，不需要两颗模块。
+Core2021 的 sub-G 是**两个 SKU**（PA 网络不同），所以板级是两个变体，代码同一份：
+
+| 构建目标 | sub-G | 地区（`CONFIG_ZLRS_APP_REGION`） |
+| --- | --- | --- |
+| `rp2350_zero_core2021/rp2350a/m33/hf` | 850–930 MHz | FCC915(0) / EU868(1) |
+| `rp2350_zero_core2021/rp2350a/m33/lf` | 410–510 MHz | CN470(2) / CN433(3) |
+
+两个变体各带自己的 sub-G 标定表与标定频点；地区与本机 SKU 不匹配时固件**红灯
+告警且不发射频**。2.4 GHz 那一路两个 SKU 相同——LR2021 是单颗分时双频，不需要
+两颗模块。
 
 ## 能编什么
 
 | 产物 | 命令 | 说明 |
 | --- | --- | --- |
-| 固件（TX 或 RX） | `zlrs-build` | 目标板 `rp2350_zero_core2021/rp2350a/m33`，板级定义在本仓库 |
+| 固件（TX 或 RX） | `zlrs-build` | 默认目标 `rp2350_zero_core2021/rp2350a/m33/hf`（LF SKU 用 `.../m33/lf`） |
 | 主机侧测试 | `make -C tests/host run` | 协议核心、链路层（含 ARQ 与占空比）、CRSF 与配置协议，不需要硬件与工作区 |
 | 官方示例 | 见下 | Semtech 的 `packet_error_rate_flrc`，用来单独验证工具链与射频栈 |
 
@@ -114,13 +121,16 @@ python3 scripts/zlrs-config.py --port /dev/ttyACM0 exit
 
 ### 5. 地区与速率
 
-- `CONFIG_ZLRS_APP_REGION`：0 = FCC915、1 = EU868、2 = CN470。地区决定控制链路的
-  频段、发射功率上限与占空比上限；EU868 是 1%，超出额度的时隙会被让出去（次数在
-  日志里）。
+- `CONFIG_ZLRS_APP_REGION`：0 = FCC915、1 = EU868（HF SKU），2 = CN470、
+  3 = CN433（LF SKU）。地区决定控制链路的频段、发射功率上限、速率上限与占空比
+  上限（窄频段放不下宽带 FLRC，会被压到 0.325 Mbps；EU868 是 1% 占空比，超出
+  额度的时隙会被让出去并计数）。
 - `CONFIG_ZLRS_APP_DATA_ARQ=y`：透传改走 ARQ（序号 + 累计 ACK + 重传），适合不能丢
   的数据；默认还是 best-effort，缓冲满就丢并计数。
 - `CONFIG_ZLRS_APP_RATE_ADAPT=y`：按链路质量自动升降速率档。阈值要按实测曲线标定，
   所以默认关着，见 [doc/05-roadmap.md](doc/05-roadmap.md) 的 M4。
+- 窄带场景（433/868）以后允许换成 LoRa 等调制，见 [doc/05-roadmap.md](doc/05-roadmap.md)
+  的 M4 待做项。
 
 ## 仓库结构
 

@@ -51,8 +51,8 @@
 | 项目 | 选择 |
 | --- | --- |
 | 射频 | Semtech LR2021（QFN32），SPI + BUSY + DIO |
-| 参考硬件 | 微雪 RP2350-Zero（RP2350A，4 MB flash）+ 微雪 Core2021（LR2021；HF 2.4G+900M / LF 2.4G+400M 两个 SKU） |
-| 板级定义 | 本仓库 `boards/zlrs/rp2350_zero_core2021/`，接线与 flash 分区都在这里 |
+| 参考硬件 | 微雪 RP2350-Zero（RP2350A，4 MB flash）+ 微雪 Core2021（LR2021）。sub-G 是两个 SKU：HF 850–930M（868/915）、LF 410–510M（470/433），板级做成 hf / lf 两个变体 |
+| 板级定义 | 本仓库 `boards/zlrs/rp2350_zero_core2021/`，接线、flash 分区与两个 SKU 的标定表都在这里 |
 | 射频栈 | `usp_zephyr` + `usp` v1.1.2-feature-202604，使用 RAC/RALF 层 |
 | Zephyr | v4.4.0（RP2350 的 TRNG 驱动从这一版起在树内） |
 | 仓库拓扑 | T2，zlrs 自己当 manifest 仓库并存放应用 |

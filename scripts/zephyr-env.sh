@@ -16,8 +16,10 @@ ZLRS_WS="${ZLRS_WS:-$(dirname "${ZLRS_REPO_ROOT}")}"
 ZLRS_VENV="${ZLRS_VENV:-${ZLRS_WS}/.venv}"
 ZLRS_SDK_DIR="${ZLRS_SDK_DIR:-${HOME}/zephyr-sdk-1.0.0}"
 
-# 原型板：微雪 RP2350-Zero + Core2021，板级定义在本仓库的 boards/ 下
-ZLRS_BOARD="${ZLRS_BOARD:-rp2350_zero_core2021/rp2350a/m33}"
+# 原型板：微雪 RP2350-Zero + Core2021，板级定义在本仓库的 boards/ 下。
+# sub-G 是两个 SKU（两个变体）：hf = 850–930 MHz（868/915），
+# lf = 410–510 MHz（470/433）。默认按手头的 HF 模块。
+ZLRS_BOARD="${ZLRS_BOARD:-rp2350_zero_core2021/rp2350a/m33/hf}"
 ZLRS_APP="${ZLRS_APP:-${ZLRS_REPO_ROOT}/app}"
 
 export ZLRS_REPO_ROOT ZLRS_WS ZLRS_VENV ZLRS_SDK_DIR
