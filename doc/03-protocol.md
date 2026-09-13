@@ -181,7 +181,6 @@ tag 的代价约 16%，前导码与同步字是固定开销，速率越高占比
 | `PAIRING` | 超时 30 s | `UNPAIRED` | 恢复功率与同步字 |
 | `SEARCHING` | 周期发 `BEACON`，收到对端遥测即认为已连上 | `CONNECTED` | 进入常态收发 |
 | `CONNECTED` | 250 ms 收不到任何有效包 | `SEARCHING` | 继续发 `BEACON` |
-| 任意 | 长按解绑 | `UNPAIRED` | 清除配对记录、换回配对同步字 |
 
 ### 3.4 RX 侧转移
 
@@ -194,7 +193,6 @@ tag 的代价约 16%，前导码与同步字是固定开销，速率越高占比
 | `PAIRING` | 配对成功 | `SEARCHING` | 记录对端 `dev_id`、切常态同步字 |
 | `SEARCHING` | 收到 `BEACON`、锁定会话 | `CONNECTED` | 按 profile 配好射频，进入常态 |
 | `CONNECTED` | 100 ms 收不到有效包 | `SEARCHING` | 输出失控保护值 |
-| 任意 | 长按解绑 | `UNPAIRED` | 清除配对记录 |
 
 失控保护是 `CONNECTED` 之外的一个**输出行为**，不是链路状态：`SEARCHING` 期间
 RX 必须持续输出预设的失控值给飞控，不能中断。
