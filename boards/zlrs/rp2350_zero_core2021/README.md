@@ -20,11 +20,11 @@ flash 分区都固定在 devicetree 里，应用只认 `zlrs-*` 别名，不写�
 | UART1 TX / RX | GP8 / GP9 | `zlrs-data-uart`，透传口 |
 | 按键 | GP12 | 对地，`zlrs-button`，内部上拉 |
 | UART0 TX / RX | GP0 / GP1 | 控制台 |
-| WS2812B | GP16 | 板上自带，本板定义不使用 |
+| WS2812B（状态灯） | GP16 | 板上自带，走 PIO0，别名 `zlrs-led`，语义见 [doc/06-ui.md](../../../doc/06-ui.md) |
 
 射频总线没用 Pico 默认的 GP16-19：GP16 在 RP2350-Zero 上是板载 WS2812B 的
-数据脚，留给它。片选走 `cs-gpios` 而不是硬件 CSN，与 Semtech 自家 shield 的
-做法一致。
+数据脚，留给它当状态灯（PIO 驱动，接法抄上游 waveshare 板）。片选走 `cs-gpios`
+而不是硬件 CSN，与 Semtech 自家 shield 的做法一致。
 
 按键除了 `zlrs-button`，还挂了 USP 官方示例要的 `smtc-user-button` 别名，
 所以 `usp_zephyr/samples/usp/**` 可以直接在这个板上编。

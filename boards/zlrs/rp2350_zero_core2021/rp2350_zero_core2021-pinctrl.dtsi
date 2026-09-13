@@ -42,4 +42,11 @@
 			input-enable;
 		};
 	};
+
+	/* 板载 WS2812B 的数据脚（GP16）交给 PIO0，接法与上游 waveshare 板一致 */
+	ws2812_pio0_default: ws2812_pio0_default {
+		ws2812 {
+			pinmux = <PIO0_P16>;
+		};
+	};
 };

@@ -23,6 +23,7 @@
 
 #include "crsf_port.h"
 #include "config_port.h"
+#include "led_port.h"
 #include "rac_port.h"
 #include "serial_port.h"
 #include "store.h"
@@ -63,6 +64,8 @@ static uint32_t last_tlm_up_ms;
 static bool rc_input_seen;
 static uint32_t crsf_bad_input;
 static uint32_t last_report_ms;
+static uint32_t led_drop_seen;
+static uint32_t led_drop_ms;
 
 /*
  * 速率自适应的档位表（从快到慢）。阈值要等实测误包率曲线回来再标定，
@@ -498,6 +501,36 @@ static void report(uint32_t now_ms)
 		duty.denied);
 }
 
+/*
+ * 状态灯：把链路状态翻译成 lib/led 的输入，见 doc/06-ui.md。
+ * 每 20 Hz 刷一次（zlrs_led_port_update 内部限速）。
+ */
+static void led_tick(uint32_t now_ms)
+{
+	zlrs_led_input_t in;
+	const uint32_t drops = link_data.stats.data_drop_bytes;
+
+	if (drops != led_drop_seen) {
+		led_drop_seen = drops;
+		led_drop_ms = now_ms;
+	}
+
+	memset(&in, 0, sizeof(in));
+	in.configured = link_control.configured;
+	in.paired = link_control.paired;
+	in.role_tx = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX);
+	in.link_state = link_control.state;
+	in.lq_percent = link_control.stats.lq_percent;
+	in.uptime_ms = now_ms;
+	in.drop_recent = (uint32_t)(now_ms - led_drop_ms) < 1000U;
+	/* TX 没有手台输入时就是在发失控值；RX 未连接时在往飞控输出失控值 */
+	in.failsafe = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX)
+			      ? !rc_input_seen
+			      : (link_control.state != ZLRS_STATE_CONNECTED);
+
+	zlrs_led_port_update(&in, now_ms);
+}
+
 int main(void)
 {
 	LOG_INF("zlrs %s", APP_VERSION_STRING);
@@ -517,6 +550,7 @@ int main(void)
 		}
 	}
 	zlrs_duty_init(&duty, region, 0U);
+	(void)zlrs_led_port_init();
 
 	/* 等 USP/RAC 线程就绪，再初始化 RAC（见 doc/01-system.md 第 7 节） */
 	SMTC_SW_PLATFORM_INIT();
@@ -597,6 +631,7 @@ int main(void)
 		pump_serial();
 		pump_crsf(now_ms);
 		handle_button(now_ms);
+		led_tick(now_ms);
 		report(now_ms);
 
 		const int64_t elapsed_us = k_uptime_get() * 1000 - start_us;

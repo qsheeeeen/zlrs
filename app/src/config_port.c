@@ -16,6 +16,7 @@
 
 #include <string.h>
 
+#include "led_port.h"
 #include "store.h"
 #include "zlrs/config/config.h"
 #include "zlrs/link/link.h"
@@ -163,6 +164,18 @@ int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 	       (uint32_t)(k_uptime_get_32() - last_activity_ms) < timeout_ms) {
 		uint8_t chunk[RX_CHUNK];
 		bool any = false;
+		zlrs_led_input_t led_in;
+
+		/* 配置模式：白灯慢闪，一眼看出"现在不是正常工作状态" */
+		memset(&led_in, 0, sizeof(led_in));
+		led_in.config_mode = true;
+		led_in.configured = link->configured;
+		led_in.paired = link->paired;
+		led_in.role_tx = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX);
+		led_in.link_state = link->state;
+		led_in.lq_percent = link->stats.lq_percent;
+		led_in.uptime_ms = k_uptime_get_32();
+		zlrs_led_port_update(&led_in, led_in.uptime_ms);
 
 		for (size_t i = 0U; i < sizeof(chunk); i++) {
 			if (uart_poll_in(uart, &chunk[i]) != 0) {

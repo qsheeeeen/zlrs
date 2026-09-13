@@ -10,6 +10,7 @@ target_sources(app PRIVATE
   src/main.c
   src/config_port.c
   src/crsf_port.c
+  src/led_port.c
   src/rac_port.c
   src/serial_port.c
   src/store.c

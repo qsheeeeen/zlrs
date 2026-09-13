@@ -8,6 +8,7 @@
 #include <freq.h>
 
 #include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/led/led.h>
 
 #include "rp2350_zero_core2021-pinctrl.dtsi"
 
@@ -26,6 +27,8 @@
 		zlrs-data-uart = &uart1;
 		zlrs-crsf-uart = &cdc_acm_uart0;
 		zlrs-button = &zlrs_button;
+		zlrs-led = &zlrs_led;
+		led-strip = &zlrs_led;
 		/* USP 官方示例（packet_error_rate_flrc 等）认这个别名 */
 		smtc-user-button = &zlrs_button;
 	};
@@ -62,6 +65,33 @@
 /* RP2350 硬件 TRNG：给 CSPRNG 供熵（v4.4 起树内有驱动） */
 &rng {
 	status = "okay";
+};
+
+/*
+ * 板载 WS2812B（GP16，单像素）当状态灯，见 doc/06-ui.md：
+ * 用 PIO0 驱动，接法与上游 waveshare/rp2350_zero 一致。
+ */
+&pio0 {
+	status = "okay";
+
+	pio-ws2812 {
+		compatible = "worldsemi,ws2812-rpi_pico-pio";
+		status = "okay";
+		pinctrl-0 = <&ws2812_pio0_default>;
+		pinctrl-names = "default";
+		bit-waveform = <3>, <3>, <4>;
+
+		zlrs_led: ws2812 {
+			status = "okay";
+			gpios = <&gpio0 16 GPIO_ACTIVE_HIGH>;
+			chain-length = <1>;
+			color-mapping = <LED_COLOR_ID_RED
+					 LED_COLOR_ID_GREEN
+					 LED_COLOR_ID_BLUE>;
+			reset-delay = <280>;
+			frequency = <DT_FREQ_K(800)>;
+		};
+	};
 };
 
 /*

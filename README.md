@@ -122,6 +122,7 @@ lib/link/             链路层（纯 C）：状态机、配对与会话、超�
 lib/crsf/             CRSF 端口编解码（纯 C）：RC 通道帧与链路统计帧
 lib/config/           配置协议（纯 C）：帧格式 + 命令分发（落盘通过回调）
 lib/region/           地区配置层（纯 C）：信道表、功率上限、占空比记账
+lib/led/              状态灯模式引擎（纯 C）：状态 → 颜色与节奏
 include/zlrs/         对外头文件
 tests/host/           主机侧测试与双节点仿真
 scripts/              工作区与环境的脚本
