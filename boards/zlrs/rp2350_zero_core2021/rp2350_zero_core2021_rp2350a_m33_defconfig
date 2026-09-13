@@ -1,7 +1,0 @@
-# Copyright (c) 2026 zlrs contributors
-# SPDX-License-Identifier: Apache-2.0
-#
-# 板级公共配置在 Kconfig.defconfig 里，这里只放"不带变体"这一档的默认值。
-# 不带变体 = HF（见 rp2350_zero_core2021_rp2350a_m33.dts）。
-
-CONFIG_ZLRS_APP_REGION=0

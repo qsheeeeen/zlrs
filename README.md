@@ -79,7 +79,7 @@ cd "$ZLRS_WS" && west flash    # 默认 openocd，也可 --runner uf2/probe-rs/j
 | --- | --- |
 | `ZLRS_WS` | 仓库的上一级目录（west 工作区根） |
 | `ZLRS_APP` | 仓库里的 `app/` |
-| `ZLRS_BOARD` | `rp2350_zero_core2021/rp2350a/m33` |
+| `ZLRS_BOARD` | `rp2350_zero_core2021/rp2350a/m33/hf`（LF SKU 用 `.../lf`） |
 | `ZLRS_SDK_DIR` | `~/zephyr-sdk-1.0.0` |
 
 ### 3. 角色、密钥与配对

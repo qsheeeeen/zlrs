@@ -16,7 +16,7 @@ manifest:
   #
   #   west init -l zlrs
   #   west update
-  #   west build -b rp2350_zero_core2021/rp2350a/m33 app
+  #   west build -b rp2350_zero_core2021/rp2350a/m33/hf app
   projects:
     - name: zephyr
       url: https://github.com/zephyrproject-rtos/zephyr
