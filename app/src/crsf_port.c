@@ -92,12 +92,12 @@ int zlrs_crsf_port_init(void)
 	zlrs_crsf_parser_init(&parser);
 
 	if (!CRSF_PORT_AVAILABLE) {
-		LOG_WRN("板级没有 zlrs-crsf-uart 别名：CRSF 端口不可用");
+		LOG_WRN("no zlrs-crsf-uart alias on this board: CRSF port disabled");
 		return -1;
 	}
 
 	if (!device_is_ready(uart)) {
-		LOG_ERR("CRSF 端口未就绪（%s）", uart->name);
+		LOG_ERR("CRSF port not ready (%s)", uart->name);
 		return -1;
 	}
 
@@ -105,7 +105,7 @@ int zlrs_crsf_port_init(void)
 	uart_irq_rx_enable(uart);
 	ready = true;
 
-	LOG_INF("CRSF 端口就绪（%s）", uart->name);
+	LOG_INF("CRSF port ready (%s)", uart->name);
 
 	return 0;
 }

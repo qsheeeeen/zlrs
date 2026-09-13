@@ -45,7 +45,7 @@ static int cfg_save_root_key(void *ctx, const uint8_t key[ZLRS_KEY_LEN])
 	/* 立刻生效，不必等重启 */
 	zlrs_link_set_root_key(link, key, k_uptime_get_32());
 
-	LOG_INF("写入新的根密钥");
+	LOG_INF("root key written");
 
 	return ZLRS_CFG_OK;
 }
@@ -85,7 +85,7 @@ static int cfg_save_failsafe(void *ctx, const uint8_t channels[ZLRS_CFG_FAILSAFE
 		memcpy(failsafe_out, channels, ZLRS_CFG_FAILSAFE_LEN);
 	}
 
-	LOG_INF("写入失控值");
+	LOG_INF("failsafe values written");
 
 	return ZLRS_CFG_OK;
 }
@@ -101,7 +101,7 @@ static int cfg_save_baud(void *ctx, uint32_t baud)
 		return ZLRS_CFG_E_STORE;
 	}
 
-	LOG_INF("数据口波特率改为 %u（下次启动生效）", (unsigned int)baud);
+	LOG_INF("data port baud set to %u (takes effect on next boot)", (unsigned int)baud);
 
 	return ZLRS_CFG_OK;
 }
@@ -111,7 +111,7 @@ static int cfg_pair(void *ctx)
 	(void)ctx;
 
 	zlrs_link_press(link, k_uptime_get_32());
-	LOG_INF("配置工具触发配对");
+	LOG_INF("pairing triggered by config tool");
 
 	return ZLRS_CFG_OK;
 }
@@ -122,7 +122,7 @@ static int cfg_unbind(void *ctx)
 
 	zlrs_link_unbind(link, k_uptime_get_32());
 	(void)zlrs_store_clear_peer();
-	LOG_INF("配置工具触发解绑");
+	LOG_INF("unbind triggered by config tool");
 
 	return ZLRS_CFG_OK;
 }
@@ -149,14 +149,14 @@ int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 	failsafe_out = failsafe;
 
 	if (!device_is_ready(uart)) {
-		LOG_ERR("数据口不可用，配置模式起不来");
+		LOG_ERR("data port unavailable, cannot enter config mode");
 		return -1;
 	}
 
 	/* 配置模式直接用轮询收发：这里没有超帧要抢时间，逻辑越直白越好 */
 	zlrs_cfg_parser_init(&parser);
 
-	LOG_INF("配置模式：%u 秒无操作超时，收到 EXIT 立即退出",
+	LOG_INF("config mode: %u s idle timeout, exit on EXIT command",
 		(unsigned int)CONFIG_ZLRS_APP_CONFIG_TIMEOUT_S);
 
 	while (!exit_requested &&
@@ -197,7 +197,7 @@ int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 		}
 	}
 
-	LOG_INF("配置模式结束");
+	LOG_INF("config mode finished");
 
 	return exit_requested ? 0 : 1;
 }

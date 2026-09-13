@@ -168,7 +168,7 @@ static int client_open(rac_client_t *client, uint8_t priority, void (*post)(rp_s
 	client->link = link;
 
 	if (client->ctx == NULL) {
-		LOG_ERR("RAC 客户端打开失败（priority %u）", priority);
+		LOG_ERR("RAC client open failed (priority %u)", priority);
 		return -1;
 	}
 
@@ -199,7 +199,7 @@ int zlrs_rac_port_init(zlrs_link_t *control, zlrs_link_t *data)
 		return -1;
 	}
 
-	LOG_INF("RAC 客户端就绪：控制 id=%u，数据 id=%u", control_client.access_id,
+	LOG_INF("RAC clients ready: control id=%u, data id=%u", control_client.access_id,
 		data_client.access_id);
 
 	return 0;

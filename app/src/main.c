@@ -139,7 +139,7 @@ static void on_state(void *ctx, uint8_t state)
 		break;
 	}
 
-	LOG_INF("%s链路 -> %s", (kind == ZLRS_LINK_CONTROL) ? "控制" : "数据", name);
+	LOG_INF("%s link -> %s", (kind == ZLRS_LINK_CONTROL) ? "control" : "data", name);
 }
 
 /* ---- 链路搭建 ------------------------------------------------------------ */
@@ -213,7 +213,7 @@ static void load_identity(void)
 		if (zlrs_store_parse_hex_key(CONFIG_ZLRS_APP_ROOT_KEY_HEX, root_key) == 0) {
 			have_root_key = true;
 		} else {
-			LOG_ERR("CONFIG_ZLRS_APP_ROOT_KEY_HEX 不是 64 个十六进制字符");
+			LOG_ERR("CONFIG_ZLRS_APP_ROOT_KEY_HEX is not 64 hex characters");
 		}
 	}
 	if (!have_root_key && zlrs_store_load_root_key(root_key) == (int)ZLRS_KEY_LEN) {
@@ -231,7 +231,7 @@ static void load_identity(void)
 	zlrs_link_set_dev_id(&link_data, dev_id);
 
 	if (!have_root_key) {
-		LOG_WRN("没有根密钥：不参与收发（等配置工具写入，见 doc/02-security.md）");
+		LOG_WRN("no root key: staying off air until one is written (doc/02-security.md)");
 		return;
 	}
 
@@ -240,7 +240,7 @@ static void load_identity(void)
 
 	if (zlrs_store_load_peer(peer_id) == (int)ZLRS_DEV_ID_LEN) {
 		zlrs_link_set_peer(&link_data, peer_id, now_ms);
-		LOG_INF("已恢复配对记录");
+		LOG_INF("pairing record restored");
 	}
 }
 
@@ -299,7 +299,7 @@ static void adopt_pairing(void)
 	zlrs_link_set_peer(&link_data, link_control.peer_id, zlrs_rac_port_now_ms());
 	(void)zlrs_store_save_peer(link_control.peer_id);
 
-	LOG_INF("配对完成，对端 %02x%02x%02x%02x", link_control.peer_id[0],
+	LOG_INF("paired with %02x%02x%02x%02x", link_control.peer_id[0],
 		link_control.peer_id[1], link_control.peer_id[2], link_control.peer_id[3]);
 }
 
@@ -309,7 +309,7 @@ static void unbind(void)
 	zlrs_link_unbind(&link_data, zlrs_rac_port_now_ms());
 	(void)zlrs_store_clear_peer();
 
-	LOG_INF("已解绑");
+	LOG_INF("unbound");
 }
 
 static void handle_button(uint32_t now_ms)
@@ -330,7 +330,7 @@ static void handle_button(uint32_t now_ms)
 		if (held_ms >= CONFIG_ZLRS_APP_UNBIND_HOLD_MS) {
 			unbind();
 		} else if (held_ms >= PRESS_MIN_MS) {
-			LOG_INF("进入配对（按住 %u ms）", held_ms);
+			LOG_INF("pairing (button held %u ms)", held_ms);
 			zlrs_link_press(&link_control, now_ms);
 		}
 	}
@@ -456,7 +456,7 @@ static void pump_crsf(uint32_t now_ms)
 			rc_input_seen = false;
 			zlrs_link_set_rc(&link_control, failsafe_payload,
 					 sizeof(failsafe_payload));
-			LOG_WRN("CRSF 输入超时：转失控值");
+			LOG_WRN("CRSF input timeout: sending failsafe values");
 		}
 	} else {
 		/* RX：链路没连上就持续输出失控值，飞控才不会失控 */
@@ -479,7 +479,7 @@ static void report(uint32_t now_ms)
 		uint8_t next = 0U;
 
 		if (zlrs_rate_update(&rate_ctl, link_control.stats.lq_percent, now_ms, &next)) {
-			LOG_INF("速率档 -> %u bps（LQ %u%%）",
+			LOG_INF("rate tier -> %u bps (LQ %u%%)",
 				(unsigned int)rate_tiers[next].rate_bps,
 				link_control.stats.lq_percent);
 			zlrs_link_set_rate(&link_control, rate_tiers[next].rate_bps);
@@ -487,13 +487,13 @@ static void report(uint32_t now_ms)
 	}
 #endif
 
-	LOG_INF("%s 控制=%u 遥测=%u 透传=%u 串口丢=%u",
+	LOG_INF("%s ctl=%u tlm=%u data=%u serial_drop=%u",
 		IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? "TX" : "RX", counters.rc_rx,
 		counters.tlm_rx, counters.data_rx, zlrs_serial_dropped());
-	LOG_INF("CRSF 坏帧=%u 端口丢=%u 空口积压丢=%u LQ=%u%%",
+	LOG_INF("crsf_bad=%u crsf_drop=%u air_drop=%u lq=%u%%",
 		crsf_bad_input, zlrs_crsf_port_rx_dropped(),
 		link_data.stats.data_drop_bytes, link_control.stats.lq_percent);
-	LOG_INF("地区 %s：功率上限 %d dBm，占空比拦下 %u 次",
+	LOG_INF("region %s: max %d dBm, duty denied %u",
 		(region != NULL) ? region->name : "?", region->max_tx_power_dbm,
 		duty.denied);
 }
@@ -505,14 +505,14 @@ int main(void)
 	/* 地区配置层：频段、功率上限与占空比都在这里定 */
 	region = zlrs_region_get(CONFIG_ZLRS_APP_REGION);
 	if (region == NULL) {
-		LOG_ERR("地区 %d 不认识", CONFIG_ZLRS_APP_REGION);
+		LOG_ERR("unknown region %d", CONFIG_ZLRS_APP_REGION);
 		return 0;
 	}
 	{
 		const int rc = zlrs_region_validate(region, CONFIG_ZLRS_APP_TX_POWER_DBM);
 
 		if (rc != 0) {
-			LOG_WRN("地区校验不过（%d）：功率 %d dBm 或信道表越界，按上限用",
+			LOG_WRN("region check failed (%d): power %d dBm or channel plan out of band",
 				rc, CONFIG_ZLRS_APP_TX_POWER_DBM);
 		}
 	}
@@ -535,7 +535,7 @@ int main(void)
 	    gpio_pin_configure_dt(&button, GPIO_INPUT) == 0) {
 		k_msleep(20); /* 上电去抖 */
 		if (gpio_pin_get_dt(&button) > 0) {
-			LOG_WRN("开机按键按住：进入配置模式");
+			LOG_WRN("button held at boot: entering config mode");
 			(void)zlrs_config_mode_run(&link_control, failsafe_payload);
 			memcpy(rc_payload, failsafe_payload, sizeof(rc_payload));
 			zlrs_link_set_rc(&link_control, rc_payload, sizeof(rc_payload));
@@ -555,15 +555,15 @@ int main(void)
 	(void)zlrs_crsf_port_init();
 
 	if (zlrs_rac_port_init(&link_control, &link_data) != 0) {
-		LOG_ERR("RAC 初始化失败");
+		LOG_ERR("RAC init failed");
 		return 0;
 	}
 
 	if (!gpio_is_ready_dt(&button) || gpio_pin_configure_dt(&button, GPIO_INPUT) != 0) {
-		LOG_WRN("按键不可用");
+		LOG_WRN("button unavailable");
 	}
 
-	LOG_INF("进入超帧循环：%u Hz，控制 %s / 数据 2.4G", ZLRS_FRAME_RATE_HZ,
+	LOG_INF("entering superframe loop: %u Hz, control %s / data 2.4G", ZLRS_FRAME_RATE_HZ,
 		IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? "TX" : "RX");
 
 	for (;;) {

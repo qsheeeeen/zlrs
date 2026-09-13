@@ -32,7 +32,7 @@ devicetree 里的 PA 与频点表。LR2021 是单颗分时双频，不需要两�
 | 产物 | 命令 | 说明 |
 | --- | --- | --- |
 | 固件（TX 或 RX） | `zlrs-build` | 目标板 `rp2350_zero_core2021/rp2350a/m33`，板级定义在本仓库 |
-| 主机侧测试 | `make -C tests/host run` | 协议核心与链路层的双节点仿真，不需要硬件、不需要工作区 |
+| 主机侧测试 | `make -C tests/host run` | 协议核心、链路层（含 ARQ 与占空比）、CRSF 与配置协议，不需要硬件与工作区 |
 | 官方示例 | 见下 | Semtech 的 `packet_error_rate_flrc`，用来单独验证工具链与射频栈 |
 
 ```shell
@@ -78,7 +78,8 @@ cd "$ZLRS_WS" && west flash    # 默认 openocd，也可 --runner uf2/probe-rs/j
 ### 3. 角色、密钥与配对
 
 - **角色**：默认 TX；RX 用 `-- -DCONFIG_ZLRS_APP_ROLE_TX=n` 关掉。
-- **根密钥**：固件默认没有根密钥，上电后不参与收发。台架测试可以临时给一个：
+- **根密钥**：固件默认没有根密钥，上电后不参与收发。正式做法是配置模式写入
+  （见下）；台架测试也可以临时给一个：
 
   ```shell
   ZLRS_BENCH_KEY=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
@@ -90,13 +91,37 @@ cd "$ZLRS_WS" && west flash    # 默认 openocd，也可 --runner uf2/probe-rs/j
 - **配对**：开机后短按按键进入配对，长按解绑；设备标识与配对记录存在 NVS，
   重启后自动恢复。
 
+### 4. 配置模式
+
+**开机时按住按键**进入配置模式：数据口（UART1）改跑配置协议，无操作 300 秒或
+收到退出命令后回到正常收发。命令包括读状态、触发配对、解绑、写根密钥（十六进制
+或短语，短语的派生固定在设备侧）、写失控值、改数据口波特率。帧格式与命令表见
+[doc/02-security.md](doc/02-security.md)。
+
+配置模式是个**物理动作**：不能远程进入，也不能在运行时透传的同时配置。
+
+### 5. 地区与速率
+
+- `CONFIG_ZLRS_APP_REGION`：0 = FCC915、1 = EU868、2 = CN470。地区决定控制链路的
+  频段、发射功率上限与占空比上限；EU868 是 1%，超出额度的时隙会被让出去（次数在
+  日志里）。
+- `CONFIG_ZLRS_APP_DATA_ARQ=y`：透传改走 ARQ（序号 + 累计 ACK + 重传），适合不能丢
+  的数据；默认还是 best-effort，缓冲满就丢并计数。
+- `CONFIG_ZLRS_APP_RATE_ADAPT=y`：按链路质量自动升降速率档。阈值要按实测曲线标定，
+  所以默认关着，见 [doc/05-roadmap.md](doc/05-roadmap.md) 的 M4。
+
 ## 仓库结构
 
 ```
 app/                  Zephyr 应用：USP/RAC 移植、串口透传、NVS 持久化、超帧主循环
 boards/zlrs/          板级定义（原型板 RP2350-Zero + Core2021）
 lib/proto/            协议核心（纯 C）：帧编解码、分片重组、跳频表、密钥派生与标签
+                      遥测载荷
 lib/link/             链路层（纯 C）：状态机、配对与会话、超帧时隙、射频抽象接口
+                      ARQ profile、速率自适应策略
+lib/crsf/             CRSF 端口编解码（纯 C）：RC 通道帧与链路统计帧
+lib/config/           配置协议（纯 C）：帧格式 + 命令分发（落盘通过回调）
+lib/region/           地区配置层（纯 C）：信道表、功率上限、占空比记账
 include/zlrs/         对外头文件
 tests/host/           主机侧测试与双节点仿真
 scripts/              工作区与环境的脚本
@@ -133,7 +158,8 @@ zephyr/module.yml     本仓库作为 Zephyr 模块的入口（板级定义也�
 1. **板子在本仓库里**：`zephyr/module.yml` 把仓库根同时作为 `board_root` 与
    `dts_root`，所以不需要 `--shield`，也没有板级 overlay 要维护。
 2. **换硬件只改 devicetree**：应用认的是 `lora-transceiver`、`zlrs-data-uart`、
-   `zlrs-button` 这些别名，引脚号不落到 C 代码里。
+   `zlrs-crsf-uart`、`zlrs-button` 这些别名，引脚号不落到 C 代码里（CRSF 端口
+   在原型板上是 USB CDC ACM，自定义板指到 UART 即可）。
 3. **工具链固定用 Zephyr SDK**：发行版那份 `arm-none-eabi-gcc` 的 newlib 没开
    retargetable locking，会撞静态断言。
 4. **镜像不许越过 1 MB**：链接区间取的是 flash 里的 code 分区，越界是编译错误，

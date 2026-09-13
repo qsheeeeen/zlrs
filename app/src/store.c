@@ -40,7 +40,7 @@ int zlrs_store_init(void)
 
 	rc = nvs_mount(&fs);
 	if (rc != 0) {
-		LOG_ERR("NVS 挂载失败（%d）", rc);
+		LOG_ERR("NVS mount failed (%d)", rc);
 		return rc;
 	}
 

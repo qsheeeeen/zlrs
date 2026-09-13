@@ -55,7 +55,7 @@ static void uart_isr(const struct device *dev, void *user_data)
 int zlrs_serial_init(uint32_t baud)
 {
 	if (!device_is_ready(uart)) {
-		LOG_ERR("数据串口未就绪");
+		LOG_ERR("data uart not ready");
 		return -1;
 	}
 
@@ -63,7 +63,7 @@ int zlrs_serial_init(uint32_t baud)
 		const int rc = uart_line_ctrl_set(uart, UART_LINE_CTRL_BAUD_RATE, baud);
 
 		if (rc != 0) {
-			LOG_WRN("数据串口波特率改 %u 失败：%d", (unsigned int)baud, rc);
+			LOG_WRN("data uart baud %u rejected: %d", (unsigned int)baud, rc);
 		}
 	}
 
@@ -73,7 +73,7 @@ int zlrs_serial_init(uint32_t baud)
 	uart_irq_callback_user_data_set(uart, uart_isr, NULL);
 	uart_irq_rx_enable(uart);
 
-	LOG_INF("数据串口就绪（%s）", uart->name);
+	LOG_INF("data uart ready (%s)", uart->name);
 
 	return 0;
 }
