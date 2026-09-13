@@ -11,6 +11,5 @@
 #define MBEDTLS_SHA256_C
 #define MBEDTLS_MD_C
 #define MBEDTLS_HKDF_C
-#define MBEDTLS_PKCS5_C
 
 #endif /* MBEDTLS_CONFIG_HOST_H_ */

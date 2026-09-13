@@ -31,7 +31,7 @@ SRCS := main.c test_proto.c test_link.c \
         crypto.c fhss.c frag.c frame.c link.c
 OBJS := $(addprefix $(BUILD)/,$(SRCS:.c=.o))
 
-MBEDTLS_SRCS := sha256.c md.c hkdf.c pkcs5.c constant_time.c platform_util.c
+MBEDTLS_SRCS := sha256.c md.c hkdf.c constant_time.c platform_util.c
 MBEDTLS_OBJS := $(addprefix $(BUILD)/mbedtls/,$(MBEDTLS_SRCS:.c=.o))
 
 BIN := $(BUILD)/test_zlrs

@@ -1,6 +1,5 @@
 /*
- * 协议核心用到的密码学原语：SHA-256、HMAC-SHA256、HKDF-SHA256、
- * PBKDF2-HMAC-SHA256 与 4 字节截断标签。
+ * 协议核心用到的密码学原语：HKDF-SHA256 派生与每包 4 字节截断标签。
  *
  * 实现在 lib/proto/crypto.c，底层是 mbedTLS（Zephyr 自带的那份）：
  *   - 上层（lib/link）不直接接触 mbedTLS 类型
@@ -25,27 +24,12 @@
 extern "C" {
 #endif
 
-#define ZLRS_SHA256_LEN 32U
-
-void zlrs_sha256(const void *data, size_t len, uint8_t out[ZLRS_SHA256_LEN]);
-
-void zlrs_hmac_sha256(const uint8_t *key, size_t key_len, const uint8_t *msg,
-		      size_t msg_len, uint8_t out[ZLRS_SHA256_LEN]);
-
 /*
- * HKDF-SHA256。zlrs_kdf() 是协议里 KDF(key, label[, ctx]) 的落地形式：
- * extract 用空盐，expand 的 info = label || ctx。
+ * KDF(key, label[, ctx])：HKDF-SHA256，空盐 extract，info = label || ctx。
+ * 派生值与 docs/02-security.md 第 3 节的派生树一一对应。
  */
-void zlrs_hkdf_extract(const uint8_t *salt, size_t salt_len, const uint8_t *ikm,
-		       size_t ikm_len, uint8_t prk[ZLRS_SHA256_LEN]);
-void zlrs_hkdf_expand(const uint8_t prk[ZLRS_SHA256_LEN], const uint8_t *info,
-		      size_t info_len, uint8_t *out, size_t out_len);
 void zlrs_kdf(const uint8_t *key, size_t key_len, const char *label,
 	      const uint8_t *ctx, size_t ctx_len, uint8_t *out, size_t out_len);
-
-/* 短语 -> 根密钥 */
-void zlrs_pbkdf2_sha256(const char *phrase, const uint8_t *salt, size_t salt_len,
-			uint32_t iterations, uint8_t out[ZLRS_KEY_LEN]);
 
 /* 每包 tag：HMAC-SHA256 截断到 ZLRS_TAG_LEN 字节 */
 void zlrs_tag(const uint8_t *key, size_t key_len, const uint8_t *data, size_t len,

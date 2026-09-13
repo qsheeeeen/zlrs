@@ -7,7 +7,6 @@ config ZLRS_PROTO
 	select MBEDTLS_SHA256
 	select MBEDTLS_MD
 	select MBEDTLS_HKDF_C
-	select MBEDTLS_PKCS5_C
 	help
 	  Pure C protocol core: frame codec, FHSS sequence, fragmentation
 	  reassembly, CRC utility and the key derivation and tagging used on

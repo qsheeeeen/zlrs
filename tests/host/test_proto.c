@@ -12,122 +12,38 @@
 #include "zlrs/proto/frag.h"
 #include "zlrs/proto/frame.h"
 
-/* ---- SHA-256 / HMAC / HKDF / PBKDF2 -------------------------------------- */
-
-static void test_sha256(void)
-{
-	static const struct {
-		const char *input;
-		const char *digest;
-	} vectors[] = {
-		{"", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
-		{"abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"},
-		{"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
-		 "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"},
-	};
-
-	printf("sha256\n");
-
-	for (size_t i = 0; i < sizeof(vectors) / sizeof(vectors[0]); i++) {
-		uint8_t digest[ZLRS_SHA256_LEN];
-
-		zlrs_sha256(vectors[i].input, strlen(vectors[i].input), digest);
-		CHECK(zlrs_test_hex_eq(digest, sizeof(digest), vectors[i].digest));
-	}
-}
-
-static void test_hmac_sha256(void)
-{
-	uint8_t key[20];
-	uint8_t out[ZLRS_SHA256_LEN];
-
-	printf("hmac-sha256\n");
-
-	/* RFC 4231 用例 1 与 2 */
-	memset(key, 0x0b, sizeof(key));
-	zlrs_hmac_sha256(key, sizeof(key), (const uint8_t *)"Hi There", 8U, out);
-	CHECK(zlrs_test_hex_eq(out, sizeof(out),
-			       "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"));
-
-	zlrs_hmac_sha256((const uint8_t *)"Jefe", 4U,
-			 (const uint8_t *)"what do ya want for nothing?", 28U, out);
-	CHECK(zlrs_test_hex_eq(out, sizeof(out),
-			       "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"));
-}
-
-static void test_hkdf_sha256(void)
-{
-	uint8_t ikm[22];
-	uint8_t salt[13];
-	uint8_t info[10];
-	uint8_t prk[ZLRS_SHA256_LEN];
-	uint8_t okm[42];
-
-	printf("hkdf-sha256\n");
-
-	/* RFC 5869 用例 1 */
-	memset(ikm, 0x0b, sizeof(ikm));
-	for (uint8_t i = 0; i < sizeof(salt); i++) {
-		salt[i] = i;
-	}
-	for (uint8_t i = 0; i < sizeof(info); i++) {
-		info[i] = (uint8_t)(0xf0U + i);
-	}
-
-	zlrs_hkdf_extract(salt, sizeof(salt), ikm, sizeof(ikm), prk);
-	CHECK(zlrs_test_hex_eq(prk, sizeof(prk),
-			       "077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5"));
-
-	zlrs_hkdf_expand(prk, info, sizeof(info), okm, sizeof(okm));
-	CHECK(zlrs_test_hex_eq(okm, sizeof(okm),
-			       "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf"
-			       "34007208d5b887185865"));
-}
-
-static void test_pbkdf2_sha256(void)
-{
-	uint8_t out[ZLRS_KEY_LEN];
-
-	printf("pbkdf2-sha256\n");
-
-	/* RFC 7914 第 11 节的 PBKDF2-HMAC-SHA256 向量 */
-	zlrs_pbkdf2_sha256("password", (const uint8_t *)"salt", 4U, 1U, out);
-	CHECK(zlrs_test_hex_eq(out, sizeof(out),
-			       "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b"));
-
-	zlrs_pbkdf2_sha256("password", (const uint8_t *)"salt", 4U, 4096U, out);
-	CHECK(zlrs_test_hex_eq(out, sizeof(out),
-			       "c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a"));
-}
+/* ---- KDF 与每包 tag ------------------------------------------------------ */
 
 static void test_kdf(void)
 {
 	uint8_t key[ZLRS_KEY_LEN];
 	uint8_t a[ZLRS_SYNC_WORD_LEN];
 	uint8_t b[ZLRS_SYNC_WORD_LEN];
-	uint8_t c[ZLRS_SYNC_WORD_LEN];
-	uint8_t mac[ZLRS_SHA256_LEN];
 	uint8_t tag[ZLRS_TAG_LEN];
 	uint8_t ctx[4] = { 1U, 2U, 3U, 4U };
 
 	printf("kdf\n");
 
 	memset(key, 0x42, sizeof(key));
+
+	/* 固定向量由 Python 的 hashlib/hmac 独立算出（HKDF 空盐） */
 	zlrs_kdf(key, sizeof(key), "zlrs/sync/control", NULL, 0U, a, sizeof(a));
-	zlrs_kdf(key, sizeof(key), "zlrs/sync/control", NULL, 0U, b, sizeof(b));
-	zlrs_kdf(key, sizeof(key), "zlrs/sync/data", NULL, 0U, c, sizeof(c));
-
-	CHECK(memcmp(a, b, sizeof(a)) == 0); /* 同输入可重复 */
-	CHECK(memcmp(a, c, sizeof(a)) != 0); /* 标签不同 -> 结果不同（域分离） */
-
-	zlrs_kdf(key, sizeof(key), "zlrs/session", ctx, sizeof(ctx), c, sizeof(c));
-	CHECK(memcmp(a, c, sizeof(a)) != 0); /* 带上下文 */
+	CHECK(zlrs_test_hex_eq(a, sizeof(a), "c7f3da8b"));
 	zlrs_kdf(key, sizeof(key), "zlrs/session", ctx, sizeof(ctx), b, sizeof(b));
-	CHECK(memcmp(b, c, sizeof(b)) == 0);
+	CHECK(zlrs_test_hex_eq(b, sizeof(b), "89e0e3e0"));
 
-	zlrs_hmac_sha256(key, sizeof(key), ctx, sizeof(ctx), mac);
+	/* 同输入可重复；换标签或换上下文都必须换结果（域分离） */
+	zlrs_kdf(key, sizeof(key), "zlrs/sync/control", NULL, 0U, b, sizeof(b));
+	CHECK(memcmp(a, b, sizeof(a)) == 0);
+	zlrs_kdf(key, sizeof(key), "zlrs/sync/data", NULL, 0U, b, sizeof(b));
+	CHECK(memcmp(a, b, sizeof(a)) != 0);
+	zlrs_kdf(key, sizeof(key), "zlrs/session", ctx, sizeof(ctx), a, sizeof(a));
+	zlrs_kdf(key, sizeof(key), "zlrs/session", NULL, 0U, b, sizeof(b));
+	CHECK(memcmp(a, b, sizeof(a)) != 0);
+
+	/* 每包 tag：HMAC-SHA256 截断到 4 字节 */
 	zlrs_tag(key, sizeof(key), ctx, sizeof(ctx), tag);
-	CHECK(memcmp(tag, mac, sizeof(tag)) == 0);
+	CHECK(zlrs_test_hex_eq(tag, sizeof(tag), "e1c2dd24"));
 }
 
 /* ---- 帧格式 -------------------------------------------------------------- */
@@ -296,10 +212,6 @@ static void test_fhss(void)
 
 void test_proto(void)
 {
-	test_sha256();
-	test_hmac_sha256();
-	test_hkdf_sha256();
-	test_pbkdf2_sha256();
 	test_kdf();
 	test_frame();
 	test_frag();

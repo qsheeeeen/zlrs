@@ -234,8 +234,7 @@ MAC 里同时包含两个 nonce，因此无法重放旧握手。
 | 每包 tag | HMAC-SHA256 截断 4 B | 覆盖 header + seq + payload |
 | 可选加密（P2） | AES-CTR | MAC 覆盖密文（encrypt-then-MAC） |
 
-四个原语都由 mbedTLS 提供（Zephyr 自带的那份），本仓库只做一层薄封装，
-见 `lib/proto/crypto.h`。
+算法实现统一走 mbedTLS（Zephyr 自带的那份），本仓库不自研密码学原语。
 
 短语到密钥必须走 KDF，不能用裸哈希。
 
