@@ -127,6 +127,10 @@ python3 scripts/zlrs-config.py --port /dev/ttyACM0 exit
   额度的时隙会被让出去并计数）。
 - `CONFIG_ZLRS_APP_DATA_ARQ=y`：透传改走 ARQ（序号 + 累计 ACK + 重传），适合不能丢
   的数据；默认还是 best-effort，缓冲满就丢并计数。
+- `CONFIG_ZLRS_APP_CONTROL_RATE_HZ`（默认 150，范围 50–500）：控制帧率档。
+  实际生效值会被地区占空比与空中时间压档——EU868 的 1% 只撑得住 ~46 Hz，
+  窄带速率下上限 ~470 Hz；500 Hz 只在不限占空比的地区有意义。见
+  [doc/03-protocol.md](doc/03-protocol.md) 4.1。
 - `CONFIG_ZLRS_APP_RATE_ADAPT=y`：按链路质量自动升降速率档。阈值要按实测曲线标定，
   所以默认关着，见 [doc/05-roadmap.md](doc/05-roadmap.md) 的 M4。
 - `CONFIG_ZLRS_APP_DYNAMIC_POWER`（默认开）：按对端回报的 RSSI/LQ 自动升降

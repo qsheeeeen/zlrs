@@ -38,8 +38,17 @@
 
 LOG_MODULE_REGISTER(app, CONFIG_APP_LOG_LEVEL);
 
-#define FRAME_PERIOD_US (1000000U / ZLRS_FRAME_RATE_HZ)
-#define SLOT_BUDGET_MS 10U
+/* 控制帧的时间计划：启动时按 Kconfig 与地区占空比算出来，见 plan_init() */
+static uint32_t control_rate_hz;
+static uint32_t frame_period_us;
+static uint32_t slot_budget_us;
+static uint8_t tlm_every_n;
+static uint8_t data_every_n;
+
+/* 控制帧的空中时间粗估：22 B RC + 3 B 头 + 4 B 标签 + 2 B CRC */
+#define CTL_FRAME_LEN 31U
+#define SLOT_BUDGET_MAX_US 2000U
+
 #define SERIAL_CHUNK_LEN 64U
 #define REPORT_PERIOD_MS 1000U
 
@@ -180,6 +189,40 @@ static void on_failsafe(void *ctx, const uint8_t *payload, uint16_t len)
 	LOG_INF("failsafe values received from TX");
 }
 
+/*
+ * 控制帧的时间计划：帧率档（Kconfig）× 地区占空比上限。
+ * 500 Hz 档只有在不限占空比的地区才跑得动；EU868 的 1% 只能撑几十帧/秒，
+ * 这时压到上限并告警——法规优先，但要让用户看见发生了什么。
+ */
+static void plan_init(void)
+{
+	const uint32_t rate_bps = zlrs_region_clamp_rate(region, CONFIG_ZLRS_APP_CONTROL_RATE_BPS);
+	zlrs_control_plan_t plan;
+
+	zlrs_region_control_plan(region, CONFIG_ZLRS_APP_CONTROL_RATE_HZ, rate_bps,
+				 CTL_FRAME_LEN, &plan);
+
+	control_rate_hz = plan.rate_hz;
+	frame_period_us = plan.frame_period_us;
+	slot_budget_us = plan.slot_budget_us;
+	tlm_every_n = plan.tlm_every_n;
+	data_every_n = plan.data_every_n;
+
+	if (plan.clamped_by_duty) {
+		LOG_WRN("region %s duty %u%%: control rate %u Hz -> %u Hz",
+			region->name, region->duty_percent,
+			CONFIG_ZLRS_APP_CONTROL_RATE_HZ, (unsigned int)plan.rate_hz);
+	}
+	if (plan.clamped_by_airtime) {
+		LOG_WRN("airtime at %u bps: control rate %u Hz -> %u Hz",
+			(unsigned int)rate_bps, CONFIG_ZLRS_APP_CONTROL_RATE_HZ,
+			(unsigned int)plan.rate_hz);
+	}
+	LOG_INF("control plan: %u Hz (frame %u us, slot budget %u us), tlm 1/%u, data 1/%u",
+		(unsigned int)control_rate_hz, (unsigned int)frame_period_us,
+		(unsigned int)slot_budget_us, tlm_every_n, data_every_n);
+}
+
 /* ---- 链路搭建 ------------------------------------------------------------ */
 
 static void build_links(void)
@@ -199,6 +242,9 @@ static void build_links(void)
 		.pair_period_ms = 100U,
 		.pair_window_ms = 30000U,
 		.data_mtu = 0U,
+		/* 节奏稀疏化：见 plan_init()，两端同固件所以一致 */
+		.tlm_every_n = tlm_every_n,
+		.data_every_n = 1U, /* 控制链路不用这个字段 */
 	};
 	zlrs_link_cfg_t data_cfg = ctl_cfg;
 	const zlrs_link_events_t ctl_ev = {
@@ -223,6 +269,8 @@ static void build_links(void)
 	data_cfg.data_mtu = CONFIG_ZLRS_APP_DATA_MTU;
 	/* 数据链路的重建可以慢一点：BEACON 2 s，见 doc/03-protocol.md 3.6 */
 	data_cfg.beacon_period_ms = 2000U;
+	data_cfg.tlm_every_n = 1U; /* 数据链路没有遥测时隙 */
+	data_cfg.data_every_n = data_every_n;
 
 	zlrs_link_init(&link_control, &ctl_cfg, zlrs_rac_control_ops(), &ctl_ev);
 	zlrs_link_init(&link_data, &data_cfg, zlrs_rac_data_ops(), &data_ev);
@@ -294,7 +342,7 @@ static void load_identity(void)
 
 /* ---- 超帧 ---------------------------------------------------------------- */
 
-static void run_slot(uint8_t slot, uint32_t budget_ms)
+static void run_slot(uint8_t slot)
 {
 	zlrs_link_t *link = (slot == ZLRS_SLOT_DATA_A || slot == ZLRS_SLOT_DATA_B)
 				    ? &link_data
@@ -317,7 +365,7 @@ static void run_slot(uint8_t slot, uint32_t budget_ms)
 	}
 
 	if (link->radio.submit(link->radio.ctx, req) != 0 ||
-	    zlrs_rac_port_wait(budget_ms) != 0) {
+	    zlrs_rac_port_wait_us(slot_budget_us) != 0) {
 		/* 射频没在预算内回来：放弃事务并给链路层收尾，免得卡住 */
 		zlrs_rac_port_abort();
 		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_rac_port_now_ms());
@@ -656,6 +704,7 @@ int main(void)
 	SMTC_SW_PLATFORM_VOID(smtc_rac_init());
 
 	(void)zlrs_store_init();
+	plan_init();
 	build_links();
 	load_identity();
 	failsafe_init();
@@ -696,7 +745,8 @@ int main(void)
 		LOG_WRN("button unavailable");
 	}
 
-	LOG_INF("entering superframe loop: %u Hz, control %s / data 2.4G", ZLRS_FRAME_RATE_HZ,
+	LOG_INF("entering superframe loop: %u Hz, control %s / data 2.4G",
+		(unsigned int)control_rate_hz,
 		IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? "TX" : "RX");
 
 	for (;;) {
@@ -704,24 +754,14 @@ int main(void)
 		const uint32_t now_ms = zlrs_rac_port_now_ms();
 
 		/*
-		 * 四个时隙共享一个超帧的预算：某个时隙（比如空接收窗口）
-		 * 卡住时不能把整帧拖长，剩下的时隙按剩余的预算走。
+		 * 四个时隙平分一帧（slot_budget_us）：某个时隙卡住也不会把整帧拖长——
+		 * 超预算的事务由 run_slot 放弃并收尾，下一帧照常走。
+		 * 遥测与数据窗口的稀疏化在链路层内部按 tlm_every_n / data_every_n 做。
 		 */
-		for (size_t i = 0; i < 4U; i++) {
-			const uint8_t slots[4] = { ZLRS_SLOT_CTL_DOWN, ZLRS_SLOT_CTL_UP,
-						   ZLRS_SLOT_DATA_A, ZLRS_SLOT_DATA_B };
-			const int64_t used_us = k_uptime_get() * 1000 - start_us;
-			int64_t remain_us = (int64_t)FRAME_PERIOD_US - used_us;
-			uint32_t budget_ms = 1U;
-
-			if (remain_us > (int64_t)SLOT_BUDGET_MS * 1000) {
-				budget_ms = SLOT_BUDGET_MS;
-			} else if (remain_us > 1000) {
-				budget_ms = (uint32_t)(remain_us / 1000);
-			}
-
-			run_slot(slots[i], budget_ms);
-		}
+		run_slot(ZLRS_SLOT_CTL_DOWN);
+		run_slot(ZLRS_SLOT_CTL_UP);
+		run_slot(ZLRS_SLOT_DATA_A);
+		run_slot(ZLRS_SLOT_DATA_B);
 
 		zlrs_link_tick(&link_control, now_ms);
 		zlrs_link_tick(&link_data, now_ms);
@@ -734,7 +774,7 @@ int main(void)
 		report(now_ms);
 
 		const int64_t elapsed_us = k_uptime_get() * 1000 - start_us;
-		const int64_t remain_us = (int64_t)FRAME_PERIOD_US - elapsed_us;
+		const int64_t remain_us = (int64_t)frame_period_us - elapsed_us;
 
 		if (remain_us > 0) {
 			k_usleep((int32_t)remain_us);

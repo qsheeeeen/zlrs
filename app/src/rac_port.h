@@ -23,8 +23,11 @@ const zlrs_radio_ops_t *zlrs_rac_data_ops(void);
 /* 打开两个 RAC 客户端，并把完成结果接到这两条链路上 */
 int zlrs_rac_port_init(zlrs_link_t *control, zlrs_link_t *data);
 
-/* 等一次事务完成；超时返回负值 */
-int zlrs_rac_port_wait(uint32_t timeout_ms);
+/*
+ * 等一次事务完成；超时返回负值。
+ * 用微秒：控制帧率拉到 500 Hz 以后，一个时隙的预算只有几百微秒。
+ */
+int zlrs_rac_port_wait_us(uint32_t timeout_us);
 
 /* 把已完成的事务结果回填给链路层（链路线程里调用） */
 void zlrs_rac_port_drain(void);

@@ -245,9 +245,9 @@ static int port_submit(void *ctx, const zlrs_radio_req_t *req)
 	return 0;
 }
 
-int zlrs_rac_port_wait(uint32_t timeout_ms)
+int zlrs_rac_port_wait_us(uint32_t timeout_us)
 {
-	return k_sem_take(&done_sem, K_MSEC(timeout_ms));
+	return k_sem_take(&done_sem, K_USEC(timeout_us));
 }
 
 static void drain_client(rac_client_t *client, uint32_t now_ms)

@@ -32,6 +32,16 @@ config ZLRS_APP_CONTROL_RATE_BPS
 	int "控制链路速率（bps）"
 	default 1300000
 
+config ZLRS_APP_CONTROL_RATE_HZ
+	int "控制链路帧率（Hz）"
+	default 150
+	range 50 500
+	help
+	  150 = 通用档（远距/默认），500 = 近距离竞速档。
+	  500 Hz 时每个时隙只有几百微秒预算，而且只有不限占空比的地区跑得动；
+	  实际生效的帧率会被地区占空比压档（见 lib/region 与 doc/03-protocol.md 4.1）。
+	  上限 500 是当前架构的限制：RAC 的排期粒度是毫秒，再高要改用 FLRC burst。
+
 config ZLRS_APP_DATA_RATE_BPS
 	int "数据链路速率（bps）"
 	default 2600000
