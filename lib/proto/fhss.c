@@ -21,6 +21,11 @@ const zlrs_fhss_domain_t zlrs_fhss_domains[ZLRS_DOMAIN_COUNT] = {
 			       .start_hz = 863250000U,
 			       .step_hz = 500000U,
 			       .channel_count = 13U},
+	/* 470–510 MHz：Core2021 LF 变体用的 sub-GHz 频段，200 kHz 步进 */
+	[ZLRS_DOMAIN_CN470] = {.name = "CN470",
+			       .start_hz = 470300000U,
+			       .step_hz = 200000U,
+			       .channel_count = 96U},
 	[ZLRS_DOMAIN_ISM2400] = {.name = "ISM2400",
 				 .start_hz = 2402000000U,
 				 .step_hz = 1000000U,

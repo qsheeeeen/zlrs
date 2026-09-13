@@ -47,6 +47,7 @@ int main(void)
 	test_link();
 	test_crsf();
 	test_config();
+	test_region();
 	printf("%u checks, %u failure(s)\n", zlrs_test_checks, zlrs_test_failures);
 
 	return zlrs_test_failures == 0U ? 0 : 1;

@@ -15,10 +15,13 @@ config ZLRS_APP_ROLE_TX
 	help
 	  TX 发控制帧、收遥测，RX 相反。两端是同一份固件，只差这个开关。
 
-config ZLRS_APP_DOMAIN
-	int "控制链路频段（0 = FCC915，1 = EU868）"
+config ZLRS_APP_REGION
+	int "地区（0 = FCC915，1 = EU868，2 = CN470）"
 	default 0
-	range 0 1
+	range 0 2
+	help
+	  地区决定控制链路的频段、发射功率上限与占空比上限（见 doc/03-protocol.md
+	  5.2 和 lib/region）：EU868 是 1% 占空比，FCC915 / CN470 不限制。
 
 config ZLRS_APP_TX_POWER_DBM
 	int "发射功率（dBm）"

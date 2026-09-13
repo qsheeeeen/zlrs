@@ -1,0 +1,14 @@
+# Copyright (c) 2026 zlrs contributors
+# SPDX-License-Identifier: Apache-2.0
+
+config ZLRS_REGION
+	bool "zlrs region configuration"
+	select ZLRS_PROTO
+	help
+	  Regional tables (channel plan, power ceiling, duty cycle limit) and the
+	  duty cycle accounting used before every transmission. Pure C, see
+	  tests/host.
+
+module = ZLRS_REGION
+module-str = zlrs_region
+source "subsys/logging/Kconfig.template.log_config"

@@ -30,6 +30,7 @@
 #include "zlrs/crsf/crsf.h"
 #include "zlrs/link/link.h"
 #include "zlrs/link/rate.h"
+#include "zlrs/region/region.h"
 #include "zlrs/proto/tlm.h"
 
 LOG_MODULE_REGISTER(app, CONFIG_APP_LOG_LEVEL);
@@ -42,6 +43,10 @@ LOG_MODULE_REGISTER(app, CONFIG_APP_LOG_LEVEL);
 
 static zlrs_link_t link_control;
 static zlrs_link_t link_data;
+
+/* 地区：决定频段、功率上限与占空比记账 */
+static const zlrs_region_t *region;
+static zlrs_duty_t duty;
 
 static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(DT_ALIAS(zlrs_button), gpios);
 static bool button_down;
@@ -144,7 +149,7 @@ static void build_links(void)
 	zlrs_link_cfg_t ctl_cfg = {
 		.kind = ZLRS_LINK_CONTROL,
 		.role = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? ZLRS_ROLE_TX : ZLRS_ROLE_RX,
-		.domain = CONFIG_ZLRS_APP_DOMAIN,
+		.domain = region->domain,
 		.sync_slot = ZLRS_SYNC_SLOT_CONTROL,
 		.profile = ZLRS_PROFILE_P1,
 		.rate_bps = CONFIG_ZLRS_APP_CONTROL_RATE_BPS,
@@ -246,9 +251,20 @@ static void run_slot(uint8_t slot, uint32_t budget_ms)
 	zlrs_link_t *link = (slot == ZLRS_SLOT_DATA_A || slot == ZLRS_SLOT_DATA_B)
 				    ? &link_data
 				    : &link_control;
-	const zlrs_radio_req_t *req = zlrs_link_slot(link, slot, zlrs_rac_port_now_ms());
+	const uint32_t now_ms = zlrs_rac_port_now_ms();
+	const zlrs_radio_req_t *req = zlrs_link_slot(link, slot, now_ms);
 
 	if (req == NULL) {
+		return;
+	}
+
+	/*
+	 * 地区占空比（EU868 是 1%）：额度用完就把这个时隙让出去。
+	 * 让出去的时隙按"射频失败"收尾，链路层会把数据放回队列下轮再试。
+	 */
+	if (req->is_tx &&
+	    !zlrs_duty_reserve(&duty, zlrs_airtime_ms(req->size, req->rate_bps), now_ms)) {
+		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, now_ms);
 		return;
 	}
 
@@ -477,11 +493,30 @@ static void report(uint32_t now_ms)
 	LOG_INF("CRSF 坏帧=%u 端口丢=%u 空口积压丢=%u LQ=%u%%",
 		crsf_bad_input, zlrs_crsf_port_rx_dropped(),
 		link_data.stats.data_drop_bytes, link_control.stats.lq_percent);
+	LOG_INF("地区 %s：功率上限 %d dBm，占空比拦下 %u 次",
+		(region != NULL) ? region->name : "?", region->max_tx_power_dbm,
+		duty.denied);
 }
 
 int main(void)
 {
 	LOG_INF("zlrs %s", APP_VERSION_STRING);
+
+	/* 地区配置层：频段、功率上限与占空比都在这里定 */
+	region = zlrs_region_get(CONFIG_ZLRS_APP_REGION);
+	if (region == NULL) {
+		LOG_ERR("地区 %d 不认识", CONFIG_ZLRS_APP_REGION);
+		return 0;
+	}
+	{
+		const int rc = zlrs_region_validate(region, CONFIG_ZLRS_APP_TX_POWER_DBM);
+
+		if (rc != 0) {
+			LOG_WRN("地区校验不过（%d）：功率 %d dBm 或信道表越界，按上限用",
+				rc, CONFIG_ZLRS_APP_TX_POWER_DBM);
+		}
+	}
+	zlrs_duty_init(&duty, region, 0U);
 
 	/* 等 USP/RAC 线程就绪，再初始化 RAC（见 doc/01-system.md 第 7 节） */
 	SMTC_SW_PLATFORM_INIT();
