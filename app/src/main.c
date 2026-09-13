@@ -199,6 +199,8 @@ static void build_links(void)
 	data_cfg.arq = IS_ENABLED(CONFIG_ZLRS_APP_DATA_ARQ) ? 1U : 0U;
 	data_cfg.peer_timeout_ms = 0U; /* 数据链路不做失联判定 */
 	data_cfg.data_mtu = CONFIG_ZLRS_APP_DATA_MTU;
+	/* 数据链路的重建可以慢一点：BEACON 2 s，见 doc/03-protocol.md 3.6 */
+	data_cfg.beacon_period_ms = 2000U;
 
 	zlrs_link_init(&link_control, &ctl_cfg, zlrs_rac_control_ops(), &ctl_ev);
 	zlrs_link_init(&link_data, &data_cfg, zlrs_rac_data_ops(), &data_ev);
