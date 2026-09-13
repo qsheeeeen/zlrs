@@ -1,10 +1,10 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# 两个作业：
-#   host-tests：协议核心 / 链路层 / CRSF / 配置协议 / 地区层的单元与仿真测试，
-#               不需要 Zephyr，几十秒就能跑完
-#   firmware  ：按 README 的流程把工作区搭起来并构建原型板固件（约 10 分钟）
+# 每次 push / PR 都跑的快速检查：纯 C 层的单元与仿真测试，外加配置工具的组帧
+# 自检。不需要 Zephyr 工作区，几十秒出结果。
+#
+# 固件构建（要拉 ~5 GB 工作区、~10 分钟）单独放在 firmware.yml，见那里的说明。
 
 name: build
 
@@ -12,58 +12,24 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   host-tests:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - name: toolchain info
+        run: |
+          cc --version | head -1
+          make --version | head -1
+          python3 --version
       - name: host tests
         run: make -C tests/host run
       - name: config tool self-test
         run: python3 scripts/zlrs-config.py --self-test
-
-  firmware:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          path: zlrs
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: system deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build device-tree-compiler
-
-      # 直接用仓库里的脚本搭工作区：CI 顺带验证 README 里写的那条流程
-      - name: workspace
-        run: zlrs/scripts/setup-zephyr.sh "$GITHUB_WORKSPACE"
-
-      - name: zephyr sdk
-        run: |
-          cd "$HOME"
-          curl -fsSLO https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v1.0.0/zephyr-sdk-1.0.0_linux-x86_64_minimal.tar.xz
-          tar xf zephyr-sdk-1.0.0_linux-x86_64_minimal.tar.xz
-          cd zephyr-sdk-1.0.0
-          ./setup.sh -t arm-zephyr-eabi -h -c
-
-      - name: build firmware
-        run: |
-          . zlrs/scripts/zephyr-env.sh
-          zlrs-build
-      # 两个 sub-G SKU（hf / lf）各构建一次：标定表与地区默认值不同
-      - name: build firmware (lf sku)
-        run: |
-          . zlrs/scripts/zephyr-env.sh
-          ZLRS_BOARD=rp2350_zero_core2021/rp2350a/m33/lf zlrs-build -d build-lf
-
-      - name: upload uf2
-        uses: actions/upload-artifact@v4
-        with:
-          name: rp2350_zero_core2021-uf2
-          path: build/zephyr/zephyr.uf2
