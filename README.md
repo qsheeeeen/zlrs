@@ -175,6 +175,7 @@ zephyr/module.yml     本仓库作为 Zephyr 模块的入口（板级定义也�
 | 按键语义与状态灯的颜色/节奏 | [doc/06-ui.md](doc/06-ui.md) |
 | 载板 v1 的端口、网络与机械规格 | [doc/07-carrier.md](doc/07-carrier.md) |
 | 原型板的接线与 Core2021 选型 | [boards/zlrs/rp2350_zero_core2021/README.md](boards/zlrs/rp2350_zero_core2021/README.md) |
+| 与 ExpressLRS 的功能对比（差距与差异化） | [doc/08-vs-elrs.md](doc/08-vs-elrs.md) |
 
 ## 依赖
 
