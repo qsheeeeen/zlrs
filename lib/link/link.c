@@ -1113,6 +1113,11 @@ void zlrs_link_set_rate(zlrs_link_t *link, uint32_t rate_bps)
 	link->cfg.rate_bps = rate_bps;
 }
 
+void zlrs_link_set_power(zlrs_link_t *link, int8_t tx_power_dbm)
+{
+	link->cfg.tx_power_dbm = tx_power_dbm;
+}
+
 void zlrs_link_set_peer(zlrs_link_t *link, const uint8_t peer_id[ZLRS_DEV_ID_LEN],
 			uint32_t now_ms)
 {

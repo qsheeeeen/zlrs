@@ -4,5 +4,6 @@
 zephyr_library()
 zephyr_library_sources(
   link.c
+  power.c
   rate.c
 )

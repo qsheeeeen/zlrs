@@ -207,6 +207,9 @@ void zlrs_link_set_dev_id(zlrs_link_t *link, const uint8_t dev_id[ZLRS_DEV_ID_LE
 /* 运行中换速率档（速率自适应用），下一个事务生效 */
 void zlrs_link_set_rate(zlrs_link_t *link, uint32_t rate_bps);
 
+/* 运行中换发射功率（动态功率用），下一个事务生效 */
+void zlrs_link_set_power(zlrs_link_t *link, int8_t tx_power_dbm);
+
 /* 从持久化记录恢复配对（两端重启后不必重新配对） */
 void zlrs_link_set_peer(zlrs_link_t *link, const uint8_t peer_id[ZLRS_DEV_ID_LEN],
 			uint32_t now_ms);
