@@ -918,6 +918,11 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot,
 	const bool down = (slot == ZLRS_SLOT_CTL_DOWN);
 	const bool tx_side = (link->cfg.role == ZLRS_ROLE_TX);
 
+	/* 每帧的主时隙（下行）过一次计数，两端步调一致 */
+	if (down) {
+		link->frame_index++;
+	}
+
 	if (link->state == ZLRS_STATE_PAIRING) {
 		if (down) {
 			if (tx_side) {
@@ -989,6 +994,11 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot,
 				 link->cfg.rx_timeout_ms);
 	}
 
+	/* 上行时隙：遥测按 tlm_every_n 节流（两端同节奏，跳频不受影响） */
+	if ((link->frame_index % link->cfg.tlm_every_n) != 0U) {
+		return NULL;
+	}
+
 	if (tx_side) {
 		return submit_rx(link, zlrs_fhss_current_hz(&link->fhss), link->cfg.sync_slot,
 				 link->sync_word, link->cfg.rx_timeout_ms);
@@ -1002,6 +1012,11 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot,
 {
 	const bool a = (slot == ZLRS_SLOT_DATA_A);
 	const bool tx_side = (link->cfg.role == ZLRS_ROLE_TX);
+
+	/* 每帧的主时隙（A）过一次计数 */
+	if (a) {
+		link->frame_index++;
+	}
 
 	if (link->state == ZLRS_STATE_SEARCHING) {
 		if (tx_side && a) {
@@ -1033,6 +1048,11 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot,
 	}
 
 	if (link->state != ZLRS_STATE_CONNECTED) {
+		return NULL;
+	}
+
+	/* 控制帧率拉高以后，数据窗口按 data_every_n 稀疏（两端同节奏） */
+	if ((link->frame_index % link->cfg.data_every_n) != 0U) {
 		return NULL;
 	}
 
@@ -1075,6 +1095,13 @@ void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
 {
 	memset(link, 0, sizeof(*link));
 	link->cfg = *cfg;
+	/* 节奏参数缺省当 1（每帧都跑），0 是非法值 */
+	if (link->cfg.tlm_every_n == 0U) {
+		link->cfg.tlm_every_n = 1U;
+	}
+	if (link->cfg.data_every_n == 0U) {
+		link->cfg.data_every_n = 1U;
+	}
 	if (radio != NULL) {
 		link->radio = *radio;
 	}

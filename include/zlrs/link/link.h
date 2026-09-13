@@ -73,6 +73,12 @@ typedef struct {
 	uint16_t pair_window_ms;    /* 配对窗口 */
 	uint16_t data_mtu;          /* 数据帧载荷上限 */
 	uint8_t arq;                /* 1 = 透传走 ARQ profile，0 = best-effort */
+	/*
+	 * 节奏稀疏化（1 = 每帧都跑）：控制帧率拉高以后，遥测与数据窗口不必跟着
+	 * 每帧来一次。计数在链路层内部做，两端同固件所以节奏一致，跳频不会失步。
+	 */
+	uint8_t tlm_every_n;
+	uint8_t data_every_n;
 } zlrs_link_cfg_t;
 
 typedef struct {
@@ -154,6 +160,7 @@ typedef struct {
 	uint16_t tx_seq;
 	uint16_t last_rx_seq;
 	uint16_t lq_last_seq;
+	uint16_t frame_index; /* 本链路走了多少个"主时隙"（控制 CTL_DOWN / 数据 DATA_A） */
 	zlrs_fhss_t fhss;
 
 	/* 载荷 */

@@ -990,6 +990,51 @@ static void test_failsafe_push(void)
 	CHECK(sim.rx.failsafe_count == 0U);
 }
 
+/* 控制帧率拉高后的节奏稀疏化：遥测每 4 帧、数据窗口每 5 帧，两端仍同步 */
+static void test_cadence(void)
+{
+	sim_t sim;
+	uint8_t chunk[32];
+	uint32_t tlm_before;
+	uint32_t tlm_after;
+
+	printf("link: cadence (sparse tlm / data)\n");
+
+	sim_init(&sim);
+	/* 两端必须配一样的节奏：同固件、同配置 */
+	sim.tx.ctl.cfg.tlm_every_n = 4U;
+	sim.rx.ctl.cfg.tlm_every_n = 4U;
+	sim.tx.data.cfg.data_every_n = 5U;
+	sim.rx.data.cfg.data_every_n = 5U;
+
+	pair_and_connect(&sim);
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
+
+	/* 给 RX 一份遥测载荷：空载荷是保活帧，不会触发 on_tlm */
+	{
+		uint8_t tlm[8] = { 1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U };
+
+		zlrs_link_set_tlm(&sim.rx.ctl, tlm, sizeof(tlm));
+	}
+
+	/* 跑 100 个超帧：遥测应该只有约 25 次，而不是 100 次 */
+	tlm_before = sim.tx.tlm_count;
+	sim_run(&sim, 100U);
+	tlm_after = sim.tx.tlm_count - tlm_before;
+	CHECK(tlm_after >= 20U && tlm_after <= 30U);
+
+	/* 跳频仍然锁步 */
+	CHECK(sim.tx.ctl.fhss.index == sim.rx.ctl.fhss.index);
+	CHECK(sim.tx.data.fhss.index == sim.rx.data.fhss.index);
+
+	/* 数据窗口稀疏了但照样通 */
+	memset(chunk, 0x5AU, sizeof(chunk));
+	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
+	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(chunk), 400);
+	CHECK(sim.rx.stream_len == sizeof(chunk));
+}
+
 void test_link(void)
 {
 	test_pairing();
@@ -1009,4 +1054,5 @@ void test_link(void)
 	test_arq_giveup();
 	test_rate_adapt();
 	test_failsafe_push();
+	test_cadence();
 }
