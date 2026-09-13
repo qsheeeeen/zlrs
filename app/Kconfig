@@ -79,9 +79,12 @@ config ZLRS_APP_RATE_ADAPT
 	  阈值要按实测曲线标定（见 doc/05-roadmap.md M4），所以默认关着；
 	  打开后用 app/src/main.c 里的档位表与滞回参数。
 
-config ZLRS_APP_UNBIND_HOLD_MS
-	int "长按解绑需要按住的时间（ms）"
-	default 2000
+config ZLRS_APP_PAIR_HOLD_MS
+	int "长按配对需要按住的时间（ms）"
+	default 1000
+	help
+	  按键只有这一个动作：按住到这个时长就触发配对（见 doc/06-ui.md）。
+	  开机时按住不放则是进配置模式。
 
 endmenu
 

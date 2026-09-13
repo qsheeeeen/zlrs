@@ -21,7 +21,6 @@ typedef struct {
 	uint32_t baud;
 	bool baud_saved;
 	uint32_t pair_count;
-	uint32_t unbind_count;
 	int store_rc; /* save_root_key 想返回的错误码 */
 } fake_dev_t;
 
@@ -85,22 +84,12 @@ static int fake_pair(void *ctx)
 	return ZLRS_CFG_OK;
 }
 
-static int fake_unbind(void *ctx)
-{
-	fake_dev_t *dev = ctx;
-
-	dev->unbind_count++;
-
-	return ZLRS_CFG_OK;
-}
-
 static const zlrs_cfg_backend_t backend = {
 	.save_root_key = fake_save_key,
 	.read_status = fake_read_status,
 	.save_failsafe = fake_save_failsafe,
 	.save_baud = fake_save_baud,
 	.pair = fake_pair,
-	.unbind = fake_unbind,
 	.ctx = &fake,
 };
 
@@ -273,15 +262,11 @@ static void test_dispatch(void)
 	CHECK(parse_response(resp, len, &parser));
 	CHECK(ZLRS_CFG_PAYLOAD(&parser)[1] == ZLRS_CFG_E_PARAM);
 
-	/* PAIR / UNBIND */
+	/* PAIR */
 	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_PAIR, NULL, 0U, resp, sizeof(resp));
 	CHECK(parse_response(resp, len, &parser));
 	CHECK(ZLRS_CFG_PAYLOAD(&parser)[1] == ZLRS_CFG_OK);
 	CHECK(fake.pair_count == 1U);
-
-	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_UNBIND, NULL, 0U, resp, sizeof(resp));
-	CHECK(parse_response(resp, len, &parser));
-	CHECK(fake.unbind_count == 1U);
 
 	/* SET_FAILSAFE：22 字节通道载荷 */
 	for (uint8_t i = 0U; i < 22U; i++) {

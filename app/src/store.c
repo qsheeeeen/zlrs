@@ -117,15 +117,6 @@ int zlrs_store_save_baud(uint32_t baud)
 	return write_record(NVS_ID_BAUD, &baud, sizeof(baud));
 }
 
-int zlrs_store_clear_peer(void)
-{
-	if (!ready) {
-		return -1;
-	}
-
-	return nvs_delete(&fs, NVS_ID_PEER_ID);
-}
-
 static int hex_nibble(char c)
 {
 	if (c >= '0' && c <= '9') {

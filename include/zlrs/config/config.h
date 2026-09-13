@@ -35,7 +35,6 @@ extern "C" {
 /* 主机 → 设备 */
 #define ZLRS_CFG_CMD_STATUS 0x01U      /* 读状态 */
 #define ZLRS_CFG_CMD_PAIR 0x02U        /* 触发配对 */
-#define ZLRS_CFG_CMD_UNBIND 0x03U      /* 解绑（清配对记录） */
 #define ZLRS_CFG_CMD_SET_KEY_HEX 0x10U /* 64 个十六进制字符的根密钥 */
 #define ZLRS_CFG_CMD_SET_PHRASE 0x11U  /* 短语，设备侧派生根密钥 */
 #define ZLRS_CFG_CMD_SET_FAILSAFE 0x20U /* 22 字节 CRSF 通道载荷 */
@@ -82,7 +81,6 @@ typedef struct {
 	int (*save_failsafe)(void *ctx, const uint8_t channels[22]);
 	int (*save_baud)(void *ctx, uint32_t baud);
 	int (*pair)(void *ctx);
-	int (*unbind)(void *ctx);
 	void *ctx;
 } zlrs_cfg_backend_t;
 

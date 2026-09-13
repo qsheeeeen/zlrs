@@ -117,24 +117,12 @@ static int cfg_pair(void *ctx)
 	return ZLRS_CFG_OK;
 }
 
-static int cfg_unbind(void *ctx)
-{
-	(void)ctx;
-
-	zlrs_link_unbind(link, k_uptime_get_32());
-	(void)zlrs_store_clear_peer();
-	LOG_INF("unbind triggered by config tool");
-
-	return ZLRS_CFG_OK;
-}
-
 static const zlrs_cfg_backend_t backend = {
 	.save_root_key = cfg_save_root_key,
 	.read_status = cfg_read_status,
 	.save_failsafe = cfg_save_failsafe,
 	.save_baud = cfg_save_baud,
 	.pair = cfg_pair,
-	.unbind = cfg_unbind,
 };
 
 /* ---- 会话 ---------------------------------------------------------------- */

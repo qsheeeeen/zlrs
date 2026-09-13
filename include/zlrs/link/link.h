@@ -206,9 +206,8 @@ void zlrs_link_set_rate(zlrs_link_t *link, uint32_t rate_bps);
 void zlrs_link_set_peer(zlrs_link_t *link, const uint8_t peer_id[ZLRS_DEV_ID_LEN],
 			uint32_t now_ms);
 
-/* 按钮：短按配对、长按解绑 */
+/* 按键：长按触发配对（换绑也走这里，新记录顶掉旧的） */
 void zlrs_link_press(zlrs_link_t *link, uint32_t now_ms);
-void zlrs_link_unbind(zlrs_link_t *link, uint32_t now_ms);
 
 /* 超帧时隙：返回待提交的事务，没有则返回 NULL */
 const zlrs_radio_req_t *zlrs_link_slot(zlrs_link_t *link, uint8_t slot, uint32_t now_ms);

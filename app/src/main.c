@@ -40,7 +40,6 @@ LOG_MODULE_REGISTER(app, CONFIG_APP_LOG_LEVEL);
 #define SLOT_BUDGET_MS 10U
 #define SERIAL_CHUNK_LEN 64U
 #define REPORT_PERIOD_MS 1000U
-#define PRESS_MIN_MS 30U
 
 static zlrs_link_t link_control;
 static zlrs_link_t link_data;
@@ -51,6 +50,7 @@ static zlrs_duty_t duty;
 
 static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(DT_ALIAS(zlrs_button), gpios);
 static bool button_down;
+static bool button_fired; /* 这一次按住已经触发过配对 */
 static uint32_t button_since_ms;
 
 /* CRSF 端口的收发（定义在下面，链路回调里要用） */
@@ -306,15 +306,10 @@ static void adopt_pairing(void)
 		link_control.peer_id[1], link_control.peer_id[2], link_control.peer_id[3]);
 }
 
-static void unbind(void)
-{
-	zlrs_link_unbind(&link_control, zlrs_rac_port_now_ms());
-	zlrs_link_unbind(&link_data, zlrs_rac_port_now_ms());
-	(void)zlrs_store_clear_peer();
-
-	LOG_INF("unbound");
-}
-
+/*
+ * 按键只有一个动作：长按（按住到阈值）触发配对，见 doc/06-ui.md。
+ * 没有短按，也没有按键解绑——要换绑就直接长按重新配对，新记录会顶掉旧的。
+ */
 static void handle_button(uint32_t now_ms)
 {
 	const int pressed = gpio_pin_get_dt(&button);
@@ -322,20 +317,21 @@ static void handle_button(uint32_t now_ms)
 	if (pressed > 0 && !button_down) {
 		button_down = true;
 		button_since_ms = now_ms;
+		button_fired = false;
+		return;
+	}
+
+	if (pressed > 0 && button_down && !button_fired &&
+	    (uint32_t)(now_ms - button_since_ms) >= CONFIG_ZLRS_APP_PAIR_HOLD_MS) {
+		button_fired = true;
+		LOG_INF("pairing (button held %u ms)",
+			(unsigned int)(now_ms - button_since_ms));
+		zlrs_link_press(&link_control, now_ms);
 		return;
 	}
 
 	if (pressed == 0 && button_down) {
-		const uint32_t held_ms = now_ms - button_since_ms;
-
 		button_down = false;
-
-		if (held_ms >= CONFIG_ZLRS_APP_UNBIND_HOLD_MS) {
-			unbind();
-		} else if (held_ms >= PRESS_MIN_MS) {
-			LOG_INF("pairing (button held %u ms)", held_ms);
-			zlrs_link_press(&link_control, now_ms);
-		}
 	}
 }
 

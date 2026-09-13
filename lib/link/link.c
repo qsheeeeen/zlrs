@@ -1112,19 +1112,6 @@ void zlrs_link_press(zlrs_link_t *link, uint32_t now_ms)
 	set_state(link, ZLRS_STATE_PAIRING, now_ms);
 }
 
-void zlrs_link_unbind(zlrs_link_t *link, uint32_t now_ms)
-{
-	link->paired = false;
-	link->session_valid = false;
-	memset(link->peer_id, 0, sizeof(link->peer_id));
-	memset(link->pair_key, 0, sizeof(link->pair_key));
-	memset(link->session_key, 0, sizeof(link->session_key));
-	memset(link->sync_word, 0, sizeof(link->sync_word));
-
-	set_state(link, link->configured ? ZLRS_STATE_UNPAIRED : ZLRS_STATE_UNCONFIGURED,
-		  now_ms);
-}
-
 const zlrs_radio_req_t *zlrs_link_slot(zlrs_link_t *link, uint8_t slot, uint32_t now_ms)
 {
 	if (link->cfg.kind == ZLRS_LINK_CONTROL) {

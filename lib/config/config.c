@@ -262,11 +262,6 @@ uint8_t zlrs_cfg_dispatch(const zlrs_cfg_backend_t *backend, uint8_t cmd,
 			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_STATE);
 		}
 		return ack_frame(out, out_len, cmd, (uint8_t)backend->pair(backend->ctx));
-	case ZLRS_CFG_CMD_UNBIND:
-		if (backend->unbind == NULL) {
-			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_STATE);
-		}
-		return ack_frame(out, out_len, cmd, (uint8_t)backend->unbind(backend->ctx));
 	case ZLRS_CFG_CMD_SET_KEY_HEX:
 		return handle_set_key(backend, payload, payload_len, out, out_len, cmd);
 	case ZLRS_CFG_CMD_SET_PHRASE:
