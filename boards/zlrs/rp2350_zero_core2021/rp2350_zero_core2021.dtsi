@@ -25,6 +25,8 @@
 		lora-transceiver = &lora_core2021;
 		zlrs-data-uart = &uart1;
 		zlrs-button = &zlrs_button;
+		/* USP 官方示例（packet_error_rate_flrc 等）认这个别名 */
+		smtc-user-button = &zlrs_button;
 	};
 
 	buttons {

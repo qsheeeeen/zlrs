@@ -26,6 +26,9 @@ flash 分区都固定在 devicetree 里，应用只认 `zlrs-*` 别名，不写�
 数据脚，留给它。片选走 `cs-gpios` 而不是硬件 CSN，与 Semtech 自家 shield 的
 做法一致。
 
+按键除了 `zlrs-button`，还挂了 USP 官方示例要的 `smtc-user-button` 别名，
+所以 `usp_zephyr/samples/usp/**` 可以直接在这个板上编。
+
 ## Core2021
 
 LR2021 分 HF（2.4 GHz + 850–930 MHz）与 LF（2.4 GHz + 410–510 MHz）两个 SKU，
@@ -42,3 +45,7 @@ west build -b rp2350_zero_core2021/rp2350a/m33 app
 ```
 
 烧写走 BOOTSEL + UF2（`west flash --runner uf2`）或 SWD（openocd / probe-rs / jlink）。
+
+只提供 Cortex-M33 这一档。`west boards` 里还会带出同一个 SoC 的
+`rp2350a/hazard3` qualifier（qualifier 由 SoC 定义决定，板子改不了），但本板没有
+对应的 dts，用它会掉进 `stub.dts` 然后 Kconfig 报错——原型不跑 RISC-V 那两个核。
