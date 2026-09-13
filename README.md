@@ -100,6 +100,18 @@ cd "$ZLRS_WS" && west flash    # 默认 openocd，也可 --runner uf2/probe-rs/j
 
 配置模式是个**物理动作**：不能远程进入，也不能在运行时透传的同时配置。
 
+仓库自带一个最小配置工具（只用标准库，连设备时才需要 `pip install pyserial`）：
+
+```shell
+python3 scripts/zlrs-config.py --self-test                    # 不接设备，校验组帧
+python3 scripts/zlrs-config.py --port /dev/ttyACM0 status
+python3 scripts/zlrs-config.py --port /dev/ttyACM0 set-phrase "correct horse battery staple"
+python3 scripts/zlrs-config.py --port /dev/ttyACM0 set-failsafe @default
+python3 scripts/zlrs-config.py --port /dev/ttyACM0 exit
+```
+
+`--dry-run` 只打印要发的帧，方便对着抓包比对。
+
 ### 5. 地区与速率
 
 - `CONFIG_ZLRS_APP_REGION`：0 = FCC915、1 = EU868、2 = CN470。地区决定控制链路的
