@@ -14,4 +14,4 @@
 #include <raspberrypi/rpi_pico/rp2350a.dtsi>
 #include <raspberrypi/rpi_pico/m33.dtsi>
 
-#include "rp2350_zero.dtsi"
+#include "rp2350_zero_core2021.dtsi"

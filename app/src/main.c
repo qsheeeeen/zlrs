@@ -8,7 +8,7 @@
  *   - 串口：数据 UART 透传（app/src/serial_port.c）
  *   - 密钥与配对记录：NVS（app/src/store.c）
  *
- * 线程模型与初始化顺序见 docs/01-system.md 第 7 节。
+ * 线程模型与初始化顺序见 doc/01-system.md 第 7 节。
  */
 
 #include <zephyr/app_version.h>
@@ -168,7 +168,7 @@ static void load_identity(void)
 		have_root_key = true;
 	}
 
-	/* 设备标识：首次启动生成并存 NVS，见 docs/02-security.md 第 2 节 */
+	/* 设备标识：首次启动生成并存 NVS，见 doc/02-security.md 第 2 节 */
 	if (zlrs_store_load_dev_id(dev_id) != (int)ZLRS_DEV_ID_LEN) {
 		const uint32_t rnd = sys_rand32_get();
 
@@ -179,7 +179,7 @@ static void load_identity(void)
 	zlrs_link_set_dev_id(&link_data, dev_id);
 
 	if (!have_root_key) {
-		LOG_WRN("没有根密钥：不参与收发（等配置工具写入，见 docs/02-security.md）");
+		LOG_WRN("没有根密钥：不参与收发（等配置工具写入，见 doc/02-security.md）");
 		return;
 	}
 
@@ -309,7 +309,7 @@ int main(void)
 {
 	LOG_INF("zlrs %s", APP_VERSION_STRING);
 
-	/* 等 USP/RAC 线程就绪，再初始化 RAC（见 docs/01-system.md 第 7 节） */
+	/* 等 USP/RAC 线程就绪，再初始化 RAC（见 doc/01-system.md 第 7 节） */
 	SMTC_SW_PLATFORM_INIT();
 	SMTC_SW_PLATFORM_VOID(smtc_rac_init());
 

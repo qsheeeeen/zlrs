@@ -51,9 +51,10 @@
 | 项目 | 选择 |
 | --- | --- |
 | 射频 | Semtech LR2021（QFN32），SPI + BUSY + DIO |
-| 参考硬件 | XIAO nRF54L15 + 一颗 LR2021 模块（Semtech Wio-LR2021，或 Waveshare Core2021 的 900M / 400M 变体），无原生 USB |
-| 射频栈 | `usp_zephyr` v1.0.0 + `usp` v1.0.0，使用 RAC/RALF 层 |
-| Zephyr | v4.2.0（与 usp_zephyr 对齐） |
+| 参考硬件 | 微雪 RP2350-Zero（RP2350A，4 MB flash）+ 微雪 Core2021（LR2021；HF 2.4G+900M / LF 2.4G+400M 两个 SKU） |
+| 板级定义 | 本仓库 `boards/zlrs/rp2350_zero_core2021/`，接线与 flash 分区都在这里 |
+| 射频栈 | `usp_zephyr` v1.1.2 + `usp` v1.1.2，使用 RAC/RALF 层 |
+| Zephyr | v4.4.0（RP2350 的 TRNG 驱动从这一版起在树内） |
 | 仓库拓扑 | T2，zlrs 自己当 manifest 仓库并存放应用 |
 
 不用 LBM（LoRa Basics Modem）——那是 LoRaWAN 那套；我们要的是裸包收发，
@@ -98,7 +99,8 @@ USB 只有**两个** CDC，与空口上的两条链路一一对应。**没有专
 - 数据 UART 也应是可选的
 - 用 Kconfig 与 devicetree 表达能力，应用层靠 DT 探测，**不要到处 `#ifdef`**
 
-XIAO nRF54L15 没有原生 USB 控制器，所以 USB 只在带原生 USB 的板子上启用。
+原型板（RP2350-Zero）有原生 USB，但 USB 通路排在射频与串口之后（见
+[05-roadmap.md](05-roadmap.md) 的 M5）：在那之前配置与透传都走数据 UART。
 
 ## 3. 系统架构
 
@@ -192,26 +194,27 @@ QoS 分档按场景切换 profile，而不是散落在代码里。
 ```
 include/zlrs/proto/   协议核心头文件
 lib/proto/            协议核心：帧编解码、分片重组、FHSS 跳频表、
-                      密钥派生与标签（底层是 Zephyr 自带的 mbedTLS）。
+                      密钥派生与标签。密码学是自带的纯 C 实现，
+                      也因此在主机上能编译同一份源码。
                       空口 CRC 由射频硬件负责
 lib/link/             链路层：会话与配对、密钥派生与标签、
                       把帧翻译成 RAC 事务
-app/                  Zephyr 应用：线程与超帧、串口、射频移植、持久化
+app/                  Zephyr 应用：线程与超帧、串口、射频移植、持久化、
+                      按键与配对持久化
 tests/host/           主机侧单测（不依赖 Zephyr）
-docs/                 设计文档
+doc/                  设计文档
 ```
 
-分层原则：协议核心与链路层都能在主机上编译测试（密码学用 mbedTLS，主机侧
-链接工作区里的同一份源码）；`lib/link/` 只依赖射频抽象接口，`app/` 才依赖
-Zephyr 与 USP。
+分层原则：协议核心与链路层都能在主机上编译测试（同一个 `lib/`，同一份源码）；
+`lib/link/` 只依赖射频抽象接口，`app/` 才依赖 Zephyr 与 USP。
 
 射频侧的一切——SPI 时序、校准、频段选择、收发调度——都在 `usp_zephyr` 里，
 本仓库不含射频驱动。
 
 ## 7. 线程模型
 
-构建环境见 [README](../README.md)：`tools/setup-zephyr.sh` 用本仓库的
-`west.yml` 建工作区，`tools/zephyr-env.sh` 进环境并指向 Zephyr SDK。
+构建环境见 [README](../README.md)：`scripts/setup-zephyr.sh` 用本仓库的
+`west.yml` 建工作区，`scripts/zephyr-env.sh` 进环境并指向 Zephyr SDK。
 
 ### 7.1 线程划分
 
@@ -242,8 +245,8 @@ USP 的另外两种线程模式与 `SMTC_SW_PLATFORM()` 的展开见 usp_zephyr 
 ### 7.3 与 USP 的集成约束
 
 RAC 的初始化由应用负责：`SMTC_SW_PLATFORM_INIT()` 只等 USP 线程就绪，它不会调用
-`smtc_rac_init()`——官方示例里是应用自己调，照做即可。`usp` 的日志模块也需要应用
-侧注册，见 [README](../README.md) 的构建要点。
+`smtc_rac_init()`——官方示例里是应用自己调，照做即可。日志模块从 USP v1.1.2 起
+由 `usp_zephyr` 自己注册，应用侧不用再补 `LOG_MODULE_REGISTER(usp, ...)`。
 
 ## 8. 诊断与可观测性
 

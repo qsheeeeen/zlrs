@@ -1,13 +1,12 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# 协议核心与链路层的主机侧测试（不跑 Zephyr）：
+# 协议核心与链路层的主机侧测试（不跑 Zephyr，也不需要 west 工作区）：
 #
 #   make -C tests/host run
 #
-# 密码学原语用 mbedTLS，而且用的是**跟设备侧同一份源码**：west 工作区里的
-# mbedtls 模块。所以先跑过 tools/setup-zephyr.sh；工作区不在默认位置时用
-# MBEDTLS_DIR=<path>/modules/crypto/mbedtls 指定。
+# 密码学原语是**跟设备侧同一份源码**（lib/proto/crypto_soft.c），所以这里
+# 只要一个 C 编译器，不用先搭工作区。
 
 CC      ?= cc
 CFLAGS  ?= -std=c11 -O2 -Wall -Wextra -Werror

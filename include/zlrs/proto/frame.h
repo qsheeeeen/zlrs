@@ -1,5 +1,5 @@
 /*
- * 空口帧格式，见 docs/03-protocol.md 第 2 节：
+ * 空口帧格式，见 doc/03-protocol.md 第 2 节：
  *
  *   header(1) | seq(2) | payload(0..N) | tag(0/4)
  *   header: 高 6 位 = 类型，低 2 位 = 标志
@@ -22,7 +22,7 @@
 extern "C" {
 #endif
 
-/* 包类型（6 位空间，见 docs/03-protocol.md 2.2） */
+/* 包类型（6 位空间，见 doc/03-protocol.md 2.2） */
 typedef enum {
 	ZLRS_PKT_RC = 0,       /* TX -> RX：遥控通道 */
 	ZLRS_PKT_TLM = 1,      /* RX -> TX：遥测 */
@@ -39,7 +39,7 @@ typedef enum {
 #define ZLRS_FLAG_MORE 0x01U    /* 分片未结束 */
 #define ZLRS_FLAG_ACK_REQ 0x02U /* 请求确认 */
 
-/* 安全 profile，见 docs/02-security.md 8 节 */
+/* 安全 profile，见 doc/02-security.md 8 节 */
 typedef enum {
 	ZLRS_PROFILE_P0 = 0, /* 无 tag、无加密，仅调试 */
 	ZLRS_PROFILE_P1 = 1, /* 4 B tag */

@@ -669,7 +669,7 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot,
 				return NULL;
 			}
 			/*
-			 * 数据链路不做失联判定（见 docs/03-protocol.md 3.6），
+			 * 数据链路不做失联判定（见 doc/03-protocol.md 3.6），
 			 * 所以发起方把 BEACON 发出去就当链路可用；接收方在收到
 			 * 同一个 BEACON 时锁上会话。
 			 */

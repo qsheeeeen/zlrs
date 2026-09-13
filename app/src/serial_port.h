@@ -1,7 +1,7 @@
 /*
  * 数据串口：串口透传的落地端，中断收发 + 环形缓冲，不阻塞链路线程。
  * 具体是哪个 UART 由板级 overlay 的 zlrs-data-uart 别名决定，
- * 见 docs/01-system.md 2.1（数据 UART 端口）。
+ * 见 doc/01-system.md 2.1（数据 UART 端口）。
  *
  * SPDX-License-Identifier: Apache-2.0
  */

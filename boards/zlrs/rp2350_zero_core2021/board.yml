@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 board:
-  name: rp2350_zero
-  full_name: Waveshare RP2350-Zero
-  vendor: waveshare
+  name: rp2350_zero_core2021
+  full_name: Waveshare RP2350-Zero + Core2021
+  vendor: zlrs
   socs:
     - name: rp2350a

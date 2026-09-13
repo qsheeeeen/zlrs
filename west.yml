@@ -16,12 +16,11 @@ manifest:
   #
   #   west init -l zlrs
   #   west update
-  #   west build -b rpi_pico2/rp2350a/m33 app
+  #   west build -b rp2350_zero_core2021/rp2350a/m33 app
   projects:
     - name: zephyr
       url: https://github.com/zephyrproject-rtos/zephyr
-      # v4.4.0 起才有 RP2350 的 TRNG 驱动（raspberrypi,pico-rng）与
-      # 4M flash 的 storage 分区模板
+      # v4.4.0 起 RP2350 的 TRNG 驱动（raspberrypi,pico-rng）才在树内
       revision: v4.4.0
       import: true
     - name: usp_zephyr

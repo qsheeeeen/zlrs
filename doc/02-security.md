@@ -231,7 +231,11 @@ MAC 里同时包含两个 nonce，因此无法重放旧握手。
 | 每包 tag | HMAC-SHA256 截断 4 B | 覆盖 header + seq + payload |
 | 可选加密（P2） | AES-CTR | MAC 覆盖密文（encrypt-then-MAC） |
 
-算法实现统一走 mbedTLS（Zephyr 自带的那份），本仓库不自研密码学原语。
+算法实现是仓库自带的一份纯 C 原语（`lib/proto/crypto_soft.c`）。选它而不是
+mbedTLS/PSA 的理由是设备与主机共用同一份源码，主机侧测试不需要 Zephyr 工作区；
+代价是没有硬件加速、也没有经过第三方审计，属于"自己担着"的部分。
+接口是一层薄封装（`include/zlrs/proto/crypto.h`），要接 PSA Crypto 或硬件加速时
+只替换那一个实现文件。
 
 短语到密钥必须走 KDF，不能用裸哈希。
 

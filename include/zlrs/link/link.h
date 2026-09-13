@@ -1,6 +1,6 @@
 /*
  * 链路层：一条链路一份实例，跑文档定义的状态机与超帧时隙。
- * 见 docs/03-protocol.md 第 3、4 节。
+ * 见 doc/03-protocol.md 第 3、4 节。
  *
  *   控制链路（sub-GHz）：RC 下行 + TLM 上行，另负责 BEACON 与配对
  *   数据链路（2.4G）：DATA_UP / DATA_DOWN，best-effort 透传
@@ -39,13 +39,13 @@ extern "C" {
 #define ZLRS_LINK_CONTROL 0U
 #define ZLRS_LINK_DATA 1U
 
-/* 超帧时隙，见 docs/03-protocol.md 4.1 */
+/* 超帧时隙，见 doc/03-protocol.md 4.1 */
 #define ZLRS_SLOT_CTL_DOWN 0U /* TX -> RX：RC 帧（RX 侧是接收窗口） */
 #define ZLRS_SLOT_CTL_UP 1U   /* RX -> TX：TLM 帧（TX 侧是接收窗口） */
 #define ZLRS_SLOT_DATA_A 2U   /* 数据窗口前半：TX -> RX */
 #define ZLRS_SLOT_DATA_B 3U   /* 数据窗口后半：RX -> TX */
 
-/* 链路状态，见 docs/03-protocol.md 3.2 */
+/* 链路状态，见 doc/03-protocol.md 3.2 */
 typedef enum {
 	ZLRS_STATE_UNCONFIGURED = 0,
 	ZLRS_STATE_UNPAIRED,

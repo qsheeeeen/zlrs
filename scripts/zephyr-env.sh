@@ -1,27 +1,27 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# 设置 zlrs 的 Zephyr 构建环境。
+# 进入 zlrs 的 Zephyr 构建环境。
 #
-#   source tools/zephyr-env.sh
+#   source scripts/zephyr-env.sh
 #
-# 工作区由 tools/setup-zephyr.sh 创建，默认是仓库的上一级目录
-# （当前机器上是 /home/qs/zlrs-worksapce）。工具链用 Zephyr SDK，
+# 工作区由 scripts/setup-zephyr.sh 创建，默认是仓库的上一级目录
+# （当前机器上是 /home/qs/zlrs-worksapce）。工具链用 Zephyr SDK 1.0.0，
 # 默认 $HOME/zephyr-sdk-1.0.0。变量都能提前设好覆盖：
 #
-#   ZLRS_WS  ZLRS_VENV  ZLRS_SDK_DIR  ZLRS_BOARD  ZLRS_SHIELD  ZLRS_APP
+#   ZLRS_WS  ZLRS_VENV  ZLRS_SDK_DIR  ZLRS_BOARD  ZLRS_APP
 
 ZLRS_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ZLRS_WS="${ZLRS_WS:-$(dirname "${ZLRS_REPO_ROOT}")}"
 ZLRS_VENV="${ZLRS_VENV:-${ZLRS_WS}/.venv}"
 ZLRS_SDK_DIR="${ZLRS_SDK_DIR:-${HOME}/zephyr-sdk-1.0.0}"
 
-ZLRS_BOARD="${ZLRS_BOARD:-rpi_pico2/rp2350a/m33}"
-ZLRS_SHIELD="${ZLRS_SHIELD:-}"
-ZLRS_APP="${ZLRS_APP:-${ZLRS_WS}/zlrs/app}"
+# 原型板：微雪 RP2350-Zero + Core2021，板级定义在本仓库的 boards/ 下
+ZLRS_BOARD="${ZLRS_BOARD:-rp2350_zero_core2021/rp2350a/m33}"
+ZLRS_APP="${ZLRS_APP:-${ZLRS_REPO_ROOT}/app}"
 
 export ZLRS_REPO_ROOT ZLRS_WS ZLRS_VENV ZLRS_SDK_DIR
-export ZLRS_BOARD ZLRS_SHIELD ZLRS_APP
+export ZLRS_BOARD ZLRS_APP
 
 # west 与构建依赖装在独立 venv 里（重复 source 不重复往 PATH 里塞）
 case ":${PATH}:" in
@@ -40,18 +40,13 @@ export ZEPHYR_SDK_INSTALL_DIR="${ZLRS_SDK_DIR}"
 
 # 便捷构建：zlrs-build [west build 的额外参数]
 zlrs-build() {
-	if [ -n "${ZLRS_SHIELD}" ]; then
-		(cd "${ZLRS_WS}" && west build -b "${ZLRS_BOARD}" --shield "${ZLRS_SHIELD}" \
-			"${ZLRS_APP}" "$@")
-	else
-		(cd "${ZLRS_WS}" && west build -b "${ZLRS_BOARD}" "${ZLRS_APP}" "$@")
-	fi
+	(cd "${ZLRS_WS}" && west build -b "${ZLRS_BOARD}" "${ZLRS_APP}" "$@")
 }
 
 if [ ! -d "${ZLRS_WS}/.west" ]; then
-	echo "zlrs: 没找到 west 工作区 ${ZLRS_WS}/.west，先跑 \"${ZLRS_REPO_ROOT}/tools/setup-zephyr.sh\"" >&2
+	echo "zlrs: 没找到 west 工作区 ${ZLRS_WS}/.west，先跑 \"${ZLRS_REPO_ROOT}/scripts/setup-zephyr.sh\"" >&2
 elif [ ! -d "${ZEPHYR_BASE}" ] || [ ! -x "${ZLRS_VENV}/bin/west" ]; then
-	echo "zlrs: 工作区不完整（缺 zephyr/ 或 .venv/bin/west），再跑一遍 \"${ZLRS_REPO_ROOT}/tools/setup-zephyr.sh\"" >&2
+	echo "zlrs: 工作区不完整（缺 zephyr/ 或 .venv/bin/west），再跑一遍 \"${ZLRS_REPO_ROOT}/scripts/setup-zephyr.sh\"" >&2
 fi
 
 if [ ! -x "${ZLRS_SDK_DIR}/gnu/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc" ] &&
@@ -64,5 +59,5 @@ echo "zlrs env:"
 echo "  workspace   = ${ZLRS_WS}"
 echo "  ZEPHYR_BASE = ${ZEPHYR_BASE}"
 echo "  toolchain   = ${ZEPHYR_TOOLCHAIN_VARIANT} (Zephyr SDK $(cat "${ZLRS_SDK_DIR}/sdk_version" 2>/dev/null || echo '?') @ ${ZLRS_SDK_DIR})"
-echo "  board       = ${ZLRS_BOARD}${ZLRS_SHIELD:+ --shield ${ZLRS_SHIELD}}"
+echo "  board       = ${ZLRS_BOARD}"
 echo "  构建        = zlrs-build  ->  ${ZLRS_WS}/build"

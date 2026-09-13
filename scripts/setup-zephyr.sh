@@ -4,11 +4,11 @@
 #
 # 从零搭 zlrs 的 Zephyr 工作区。
 #
-#   tools/setup-zephyr.sh [工作区根目录]     默认是仓库的上一级目录
+#   scripts/setup-zephyr.sh [工作区根目录]     默认是仓库的上一级目录
 #
 # west T2 拓扑：本仓库自己就是 manifest 仓库，清单用仓库根的 west.yml
-# （pin 了 zephyr v4.2.0 + usp_zephyr v1.0.0 + usp v1.0.0），不再拿
-# usp_zephyr 当 manifest。
+# （pin 了 zephyr v4.4.0 + usp_zephyr/usp v1.1.2），不再拿 usp_zephyr 当
+# manifest。
 #
 # 默认布局（当前机器上是 /home/qs/zlrs-worksapce）：
 #
@@ -17,13 +17,13 @@
 #   ├── .venv/               west 与构建依赖（Python venv，ZLRS_VENV 可改）
 #   ├── build/               west build 的默认输出目录
 #   ├── zlrs/                本仓库 == manifest 仓库（west.yml 的 self.path）
-#   ├── zephyr/              Zephyr v4.2.0（外加 import 进来的一堆 module）
-#   ├── usp_zephyr/          Semtech usp_zephyr v1.0.0
-#   └── modules/lib/usp/     Semtech usp v1.0.0
+#   ├── zephyr/              Zephyr v4.4.0（外加 import 进来的一堆 module）
+#   ├── usp_zephyr/          Semtech usp_zephyr v1.1.2
+#   └── modules/lib/usp/     Semtech usp v1.1.2
 #
 # 工具链走 Zephyr SDK（默认 $HOME/zephyr-sdk-1.0.0，ZLRS_SDK_DIR 可改）：
-# 本脚本只检查，缺了会打印安装命令。有 SDK 就不用再为 libc 绕路
-# （发行版 arm-none-eabi-gcc 的 newlib 没开 retargetable locking 才要绕）。
+# 本脚本只检查，缺了会打印安装命令（发行版 arm-none-eabi-gcc 的 newlib 没开
+# retargetable locking，别拿它替）。
 #
 # 首次 west update 要把 Zephyr 的 module 全拉下来，约 5 GB。
 
@@ -99,11 +99,6 @@ fi
 echo "==> [5/5] Zephyr 的 Python 构建依赖"
 "${VENV_DIR}/bin/python" -m pip install --quiet --no-warn-script-location \
 	-r "${WS}/zephyr/scripts/requirements-base.txt"
-for req in "${WS}"/usp_zephyr/scripts/requirements*.txt; do
-	if [ -e "${req}" ]; then
-		"${VENV_DIR}/bin/python" -m pip install --quiet --no-warn-script-location -r "${req}"
-	fi
-done
 
 SDK_DIR="${ZLRS_SDK_DIR:-${HOME}/zephyr-sdk-1.0.0}"
 SDK_GCC="${SDK_DIR}/gnu/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc"
@@ -132,5 +127,5 @@ fi
 
 echo
 echo "下一步:"
-echo "  source \"${ZLRS_REPO_ROOT}/tools/zephyr-env.sh\""
-echo "  zlrs-build     # = cd \$ZLRS_WS && west build -b \$ZLRS_BOARD --shield \$ZLRS_SHIELD \$ZLRS_APP"
+echo "  source \"${ZLRS_REPO_ROOT}/scripts/zephyr-env.sh\""
+echo "  zlrs-build     # = cd \$ZLRS_WS && west build -b \$ZLRS_BOARD \$ZLRS_APP"

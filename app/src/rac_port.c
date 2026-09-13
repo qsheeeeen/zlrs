@@ -59,7 +59,7 @@ const zlrs_radio_ops_t *zlrs_rac_data_ops(void)
 	return &data_ops;
 }
 
-/* 速率档：v1.1 起原始速率与带宽合成一个枚举，见 docs/04-lr2021.md */
+/* 速率档：v1.1 起原始速率与带宽合成一个枚举，见 doc/04-lr2021.md */
 static ral_flrc_raw_bit_rate_t raw_bit_rate(uint32_t rate_bps)
 {
 	switch (rate_bps) {

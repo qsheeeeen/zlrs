@@ -1,5 +1,5 @@
 /*
- * 持久化：根密钥、设备标识与配对记录放 NVS，见 docs/02-security.md 第 2 节。
+ * 持久化：根密钥、设备标识与配对记录放 NVS，见 doc/02-security.md 第 2 节。
  *
  * SPDX-License-Identifier: Apache-2.0
  */

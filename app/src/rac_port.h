@@ -1,6 +1,6 @@
 /*
  * USP/RAC 移植层：把 zlrs 链路层的射频抽象（zlrs_radio_ops_t）落到
- * LR2021 上，回调契约见 docs/01-system.md 第 7.2 节。
+ * LR2021 上，回调契约见 doc/01-system.md 第 7.2 节。
  *
  * 两条链路各占一个 RAC 客户端：控制链路 HIGH、数据链路 MEDIUM。
  * 事务提交后由 RAC 线程回调，链路线程用 zlrs_rac_port_wait() 等结果，
