@@ -77,8 +77,38 @@ bool zlrs_duty_reserve(zlrs_duty_t *duty, uint32_t airtime_ms, uint32_t now_ms);
 /* 当前窗口还剩多少空中时间（ms）；不限制时返回 UINT32_MAX（会顺带翻窗口） */
 uint32_t zlrs_duty_remaining_ms(zlrs_duty_t *duty, uint32_t now_ms);
 
-/* 按帧长与速率估算空中时间（ms），向上取整；用于占空比记账 */
+/* 按帧长与速率估算空中时间（µs，向上取整）；用于占空比记账与帧率规划 */
+uint32_t zlrs_airtime_us(uint16_t frame_len, uint32_t rate_bps);
+
+/* 同一笔账按毫秒给（向上取整到 ms），占空比记账用 */
 uint32_t zlrs_airtime_ms(uint16_t frame_len, uint32_t rate_bps);
+
+/*
+ * 这个地区在给定帧长/速率下，每秒最多允许发多少帧。
+ * 不限制占空比时返回 UINT32_MAX。
+ */
+uint32_t zlrs_region_max_frames_per_s(const zlrs_region_t *region, uint32_t rate_bps,
+				      uint16_t frame_len);
+
+/*
+ * 控制链路的"时间计划"：帧率、帧周期、每个时隙的预算，以及遥测/数据窗口的
+ * 稀疏系数。帧率受两件事约束：地区的占空比上限、以及一帧里至少装得下
+ * "发一帧 RC + 收一帧遥测"的空中时间。
+ */
+typedef struct {
+	uint32_t rate_hz;        /* 实际生效的控制帧率 */
+	uint32_t frame_period_us;
+	uint32_t slot_budget_us; /* 每个时隙的等待预算 */
+	uint8_t tlm_every_n;     /* 遥测每 n 帧一次 */
+	uint8_t data_every_n;    /* 数据窗口每 n 帧一次 */
+	bool clamped_by_duty;    /* 帧率被地区占空比压过 */
+	bool clamped_by_airtime; /* 帧率被空中时间压过 */
+} zlrs_control_plan_t;
+
+/* want_hz 是配置档位；frame_len 是控制帧的字节数（含头与标签） */
+void zlrs_region_control_plan(const zlrs_region_t *region, uint32_t want_hz,
+			      uint32_t rate_bps, uint16_t frame_len,
+			      zlrs_control_plan_t *out);
 
 #ifdef __cplusplus
 }

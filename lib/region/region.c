@@ -109,7 +109,7 @@ int zlrs_region_validate(const zlrs_region_t *region, uint8_t band, int8_t tx_po
 	return 0;
 }
 
-uint32_t zlrs_airtime_ms(uint16_t frame_len, uint32_t rate_bps)
+uint32_t zlrs_airtime_us(uint16_t frame_len, uint32_t rate_bps)
 {
 	uint64_t bits;
 
@@ -120,7 +120,81 @@ uint32_t zlrs_airtime_ms(uint16_t frame_len, uint32_t rate_bps)
 	/* 只算载荷与开销的净时间，前导码/同步字按 32 bit 粗算 */
 	bits = ((uint64_t)frame_len + 4U) * 8U;
 
-	return (uint32_t)((bits * 1000U + rate_bps - 1U) / rate_bps);
+	return (uint32_t)((bits * 1000000U + rate_bps - 1U) / rate_bps);
+}
+
+uint32_t zlrs_airtime_ms(uint16_t frame_len, uint32_t rate_bps)
+{
+	const uint32_t us = zlrs_airtime_us(frame_len, rate_bps);
+
+	return (us + 999U) / 1000U;
+}
+
+uint32_t zlrs_region_max_frames_per_s(const zlrs_region_t *region, uint32_t rate_bps,
+				      uint16_t frame_len)
+{
+	const uint32_t airtime_us = zlrs_airtime_us(frame_len, rate_bps);
+	uint64_t budget_us;
+
+	if (region == NULL || region->duty_percent == 0U || airtime_us == 0U) {
+		return UINT32_MAX;
+	}
+
+	/* 1% = 每秒钟 10000 µs 的发射额度 */
+	budget_us = (uint64_t)region->duty_percent * 10000U;
+
+	return (uint32_t)(budget_us / airtime_us);
+}
+
+/* 每个时隙除了空中时间，还要留出 RAC 调度、模式翻转与 SPI 的余量 */
+#define SLOT_OVERHEAD_US 200U
+/* 时隙预算封顶：再长也只是等一个回不来的事务 */
+#define SLOT_BUDGET_MAX_US 2000U
+/* 遥测与数据窗口的目标速率（每秒多少次） */
+#define TLM_TARGET_HZ 150U
+#define DATA_TARGET_HZ 100U
+
+void zlrs_region_control_plan(const zlrs_region_t *region, uint32_t want_hz,
+			      uint32_t rate_bps, uint16_t frame_len,
+			      zlrs_control_plan_t *out)
+{
+	const uint32_t airtime_us = zlrs_airtime_us(frame_len, rate_bps);
+	/* 一帧至少要装下两个控制时隙：发 RC + 收遥测 */
+	const uint32_t per_slot_us = airtime_us + SLOT_OVERHEAD_US;
+	const uint32_t max_by_airtime = (per_slot_us > 0U) ? (1000000U / (2U * per_slot_us))
+							   : UINT32_MAX;
+	const uint32_t max_by_duty = zlrs_region_max_frames_per_s(region, rate_bps, frame_len);
+	uint32_t hz = want_hz;
+
+	out->clamped_by_duty = false;
+	out->clamped_by_airtime = false;
+
+	if (max_by_duty < hz) {
+		hz = max_by_duty;
+		out->clamped_by_duty = true;
+	}
+	if (max_by_airtime < hz) {
+		hz = max_by_airtime;
+		out->clamped_by_airtime = true;
+	}
+	if (hz < 10U) {
+		hz = 10U; /* 再低就没法飞了：留给日志去报 */
+	}
+
+	out->rate_hz = hz;
+	out->frame_period_us = 1000000U / hz;
+	out->slot_budget_us = out->frame_period_us / 4U;
+	/* 窄带速率下空中时间本身就超过四分之一帧，按实际需要给预算 */
+	if (out->slot_budget_us < per_slot_us) {
+		out->slot_budget_us = per_slot_us;
+	}
+	if (out->slot_budget_us > SLOT_BUDGET_MAX_US) {
+		out->slot_budget_us = SLOT_BUDGET_MAX_US;
+	}
+
+	/* 遥测/数据窗口按"每秒大约多少次"折算成"每 n 帧一次" */
+	out->tlm_every_n = (uint8_t)((hz / TLM_TARGET_HZ) > 0U ? (hz / TLM_TARGET_HZ) : 1U);
+	out->data_every_n = (uint8_t)((hz / DATA_TARGET_HZ) > 0U ? (hz / DATA_TARGET_HZ) : 1U);
 }
 
 void zlrs_duty_init(zlrs_duty_t *duty, const zlrs_region_t *region, uint32_t now_ms)
