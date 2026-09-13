@@ -1,0 +1,41 @@
+# Copyright (c) 2026 zlrs contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# 板级公共默认值：三个目标（不带变体 / hf / lf）都适用，各变体的 _defconfig
+# 里只放自己那点差异（目前就是地区默认值）。
+
+if BOARD_RP2350_ZERO_CORE2021
+
+config BUILD_OUTPUT_HEX
+	default y
+
+config BUILD_OUTPUT_UF2
+	default y
+
+config CLOCK_CONTROL
+	default y
+
+config CONSOLE
+	default y
+
+config GPIO
+	default y
+
+config RESET
+	default y
+
+config SERIAL
+	default y
+
+config UART_CONSOLE
+	default y
+
+config UART_INTERRUPT_DRIVEN
+	default y
+
+# 链接进 devicetree 里的 code 分区（1 MB），见 rp2350_zero_core2021.dtsi：
+# 镜像不能长过它，否则会压掉后面存密钥的 storage 分区
+config USE_DT_CODE_PARTITION
+	default y
+
+endif # BOARD_RP2350_ZERO_CORE2021

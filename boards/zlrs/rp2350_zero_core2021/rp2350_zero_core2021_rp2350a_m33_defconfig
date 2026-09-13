@@ -1,15 +1,7 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
+#
+# 板级公共配置在 Kconfig.defconfig 里，这里只放"不带变体"这一档的默认值。
+# 不带变体 = HF（见 rp2350_zero_core2021_rp2350a_m33.dts）。
 
-CONFIG_BUILD_OUTPUT_HEX=y
-CONFIG_BUILD_OUTPUT_UF2=y
-CONFIG_CLOCK_CONTROL=y
-CONFIG_CONSOLE=y
-CONFIG_GPIO=y
-CONFIG_RESET=y
-CONFIG_SERIAL=y
-CONFIG_UART_CONSOLE=y
-CONFIG_UART_INTERRUPT_DRIVEN=y
-# 链接进 devicetree 里的 code 分区（1 MB），见 rp2350_zero_core2021.dtsi：
-# 镜像不能长过它，否则会压掉后面存密钥的 storage 分区
-CONFIG_USE_DT_CODE_PARTITION=y
+CONFIG_ZLRS_APP_REGION=0
