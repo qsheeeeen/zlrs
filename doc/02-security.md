@@ -39,8 +39,8 @@ root_key (32B, 用户配置, 组内共享)
     sync_data = KDF(pair_key, "zlrs/sync/data")[:4]      -> 2.4G 同步字
     link_auth_ab = KDF(pair_key, "zlrs/link-auth", dev_id_a || dev_id_b)  -> 每包 tag
     link_auth_ba = KDF(pair_key, "zlrs/link-auth", dev_id_b || dev_id_a)  -> 反向那把
-    session_ab   = KDF(pair_key, "zlrs/session", nonce_t || dev_id_a || dev_id_b)
-    session_ba   = KDF(pair_key, "zlrs/session", nonce_t || dev_id_b || dev_id_a)
+    session_ab   = KDF(pair_key, "zlrs/session", nonce_t || nonce_r || dev_id_a || dev_id_b)
+    session_ba   = KDF(pair_key, "zlrs/session", nonce_t || nonce_r || dev_id_b || dev_id_a)
                                                           -> 每次会话重算的一对
     link_enc  = KDF(pair_key, "zlrs/link-enc")            -> 可选加密（P2，未实现）
 ```
@@ -101,20 +101,18 @@ MAC 里同时包含两个 nonce，因此无法重放旧握手；三条消息带�
 ## 5. 会话建立（与配对区分）
 
 配对决定"和谁通"，会话决定"这一次用什么钥匙"：`pair_key` 在配对时两端各自就算好
-（第 3 节），会话只是给它换一个每次都不同的随机数，所以不需要握手、不需要用户
-参与，也不改持久状态。流程与消息格式见 [03-protocol.md](03-protocol.md) 3.5，
-这里只说安全性质：
+（第 3 节），会话只给它换一对每次都不同的 nonce，不改持久状态、不需要用户参与。
+流程与消息格式见 [03-protocol.md](03-protocol.md) 3.5，这里只说安全性质：
 
+- **双方各出一个 nonce**：TX 出 `nonce_t`（`BEACON` 携带），RX 出 `nonce_r`
+  （`SESS_RESP` 携带），两个都进会话钥匙。只靠 TX 那个可被整帧重放的值是不够的
+  ——录一个旧 `BEACON` 重放，RX 就会重算出那次会话的钥匙。
+- **采用会话要等确认**：TX 用新钥匙打一条 `SESS_CFM`，RX 验过才采用。重放的旧帧
+  用的是当时的 `nonce_r`，跟这次现抽的对不上，一条都进不来。
 - **只换流密钥，不换身份**：会话重算不动配对记录，也不动"只认已配对 `dev_id`"这条
-  规则；`nonce_t`、会话密钥与序号都不落盘，掉电即失效。
-- **`BEACON` 用配对级的 `link_auth` 认证**：`nonce_t` 虽然公开，别人造不出能过
-  校验的 `BEACON`。
-- **旧会话的钥匙不会自动作废**：`pair_key` 不变，知道当时的 `nonce_t` 就能重算那次
-  会话的钥匙；换绑（重新配对）才会连 `pair_key` 一起换掉。
-
-**已知弱点（未修）**：RX 只记住"当前"这一个 `nonce_t`，重放更早的 `BEACON` 能把
-钥匙与序号窗口一起拉回去，等于重放一段旧控制输入。恢复能力两条链路不同，细节与
-修法见 [03-protocol.md](03-protocol.md) 3.5。
+  规则；`nonce_t`、`nonce_r`、会话密钥与序号都不落盘，掉电即失效。
+- **`BEACON` 用配对级的 `link_auth` 认证**：nonce 虽然公开，别人造不出能过校验的
+  会话消息。
 
 ## 6. 对空中格式的影响
 
@@ -155,7 +153,7 @@ ECDH），并接受"知道 `root_key` 的人能在配对窗口抢走配对"。�
 
 - 不同用户之间的碰撞与误占（跳频种子与同步字都像随机数）
 - 未配对设备占用链路，即使它知道 `root_key`
-- 报文伪造与同一会话内的重放（旧 `BEACON` 的重放是已知弱点，第 5 节）
+- 报文伪造与重放（序号 + 会话握手，旧 `BEACON` 重放拿不到旧钥匙）
 - 反射（把自己发出的帧打回自己）
 - 换绑后旧录制作废
 - 配对过程中的中间人

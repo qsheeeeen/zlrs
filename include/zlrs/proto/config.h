@@ -18,8 +18,8 @@
  * 不一致的两端首先卡在 tag 校验上，这个字段是给将来的格式兼容留的位置。
  *
  * 1：每包 tag 与会话密钥按双方 `dev_id` 派生（发送方在前 / 接收方在前，
- *    对应 out / in 一对）；`pair_key` 额外掺配对时的两个 nonce，见
- *    doc/02-security.md 第 3 节。
+ *    对应 out / in 一对）；`pair_key` 掺配对时的两个 nonce，会话密钥掺双方
+ *    各出一个的 nonce（三次握手），见 doc/02-security.md 第 3 节。
  */
 #define ZLRS_PROTO_VERSION 1U
 

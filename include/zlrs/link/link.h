@@ -158,8 +158,20 @@ typedef struct {
 	uint8_t session_key_out[ZLRS_KEY_LEN];
 	uint8_t session_key_in[ZLRS_KEY_LEN];
 	bool session_valid;
-	uint32_t session_nonce;
-	uint32_t pair_nonce;
+	/*
+	 * 会话建立与配对同一个形状（见 doc/03-protocol.md 3.5）：发起方出 nonce_t，
+	 * 响应方出 nonce_r，两个 nonce 一起进 KDF，最后一条消息带着 nonce_r 证明
+	 * 对端算出了同一把钥匙。RX 只在收到这条证明之后才采用会话，所以重放旧
+	 * BEACON 拿不到任何旧会话的钥匙。
+	 */
+	bool session_pending;    /* RX：已回应 BEACON，等对端用新钥匙确认 */
+	bool sess_resp_due;      /* RX：上行时隙要发 SESS_RESP */
+	bool sess_cfm_due;       /* TX：下行时隙要发 SESS_CFM */
+	uint32_t sess_nonce_t;   /* 发起方（TX）的 nonce */
+	uint32_t sess_nonce_r;   /* 响应方（RX）的 nonce */
+	uint16_t sess_hop;       /* 这次会话的跳频索引 */
+	uint32_t pair_nonce;     /* 配对：发起方 nonce_a */
+	uint32_t pair_nonce_b;   /* 配对：响应方 nonce_b */
 
 	/* 状态与计时 */
 	uint8_t state;

@@ -29,7 +29,8 @@ static const uint8_t pairing_sync_word[ZLRS_SYNC_WORD_LEN] = { 'Z', 'L', 'R', 'S
 #define PAIR_FAILSAFE_OFFSET 17U
 #define PAIR_FLAG_FAILSAFE 0x01U
 
-static void start_session(zlrs_link_t *link, uint32_t nonce, uint16_t hop_index);
+static void derive_session_keys(zlrs_link_t *link, uint32_t nonce_t, uint32_t nonce_r);
+static void session_activate(zlrs_link_t *link, uint16_t hop_index);
 static void roll_session(zlrs_link_t *link, uint32_t now_ms);
 
 static uint32_t rd32(const uint8_t *p)
@@ -88,10 +89,17 @@ static void set_state(zlrs_link_t *link, uint8_t state, uint32_t now_ms)
 	}
 }
 
-/* TX 侧每次进入 SEARCHING 换一个会话 nonce；RX 侧等 BEACON 里的 nonce */
+/*
+ * TX 侧每次进入 SEARCHING 抽一个新的 nonce_t，并丢掉上一次的会话。会话钥匙要等
+ * RX 回了 nonce_r 才算得出来（见 doc/03-protocol.md 3.5）。
+ */
 static void roll_session(zlrs_link_t *link, uint32_t now_ms)
 {
-	start_session(link, link_random(link, now_ms), link->fhss.index);
+	link->sess_nonce_t = link_random(link, now_ms);
+	link->session_valid = false;
+	link->session_pending = false;
+	link->sess_cfm_due = false;
+	link->sess_resp_due = false;
 }
 
 /* 本机与对端 dev_id 按数值排序后拼接，保证两端算出同一个 pair_key */
@@ -209,24 +217,33 @@ static void derive_pair(zlrs_link_t *link)
 	       ZLRS_SYNC_WORD_LEN);
 
 	link->session_valid = false;
+	link->session_pending = false;
+	link->sess_resp_due = false;
+	link->sess_cfm_due = false;
 	link->last_rx_seq = 0xFFFFU;
 	link->fhss.index = 0U;
 }
 
-/* 会话钥匙 = KDF(pair_key, "zlrs/session", nonce_t || 双方 id) */
-static void start_session(zlrs_link_t *link, uint32_t nonce, uint16_t hop_index)
+/* 会话钥匙 = KDF(pair_key, "zlrs/session", nonce_t || nonce_r || 双方 id) */
+static void derive_session_keys(zlrs_link_t *link, uint32_t nonce_t, uint32_t nonce_r)
 {
-	uint8_t nonce_le[sizeof(uint32_t)];
+	uint8_t ctx[2U * sizeof(uint32_t)];
 
-	if (link->session_valid && link->session_nonce == nonce) {
-		return;
-	}
+	wr32(&ctx[0], nonce_t);
+	wr32(&ctx[4], nonce_r);
+	derive_by_endpoints(link, LABEL_SESSION, ctx, sizeof(ctx), link->session_key_out,
+			    link->session_key_in);
+}
 
-	wr32(nonce_le, nonce);
-	derive_by_endpoints(link, LABEL_SESSION, nonce_le, sizeof(nonce_le),
-			    link->session_key_out, link->session_key_in);
-	link->session_nonce = nonce;
+/*
+ * 采用这次会话：钥匙即刻生效，序号、ARQ 与 LQ 窗口都从头开始（上一段会话在飞的
+ * 数据作废）。TX 发出 SESS_CFM 前调用，RX 验过 SESS_CFM 后调用。
+ */
+static void session_activate(zlrs_link_t *link, uint16_t hop_index)
+{
 	link->session_valid = true;
+	link->session_pending = false;
+	link->sess_resp_due = false;
 	link->last_rx_seq = 0xFFFFU;
 	link->tx_seq = 0U;
 	/* 新会话的序号从头开始，LQ 窗口不能跨会话累计 */
@@ -304,7 +321,12 @@ static const uint8_t *tag_key_for(const zlrs_link_t *link, uint8_t type, bool ou
 	case ZLRS_PKT_PAIR_CFM:
 		return link->auth_key;
 	case ZLRS_PKT_BEACON:
+	/* 会话响应要在会话钥匙生效前就能验，用配对级钥匙 */
+	case ZLRS_PKT_SESS_RESP:
 		return link_auth;
+	/* 确认帧必须用它确认的那把会话钥匙打 tag */
+	case ZLRS_PKT_SESS_CFM:
+		return session;
 	default:
 		return link->session_valid ? session : link_auth;
 	}
@@ -365,13 +387,52 @@ static const zlrs_radio_req_t *send_beacon(zlrs_link_t *link, uint32_t now_ms)
 	payload[1] = (uint8_t)link->cfg.profile;
 	payload[2] = (uint8_t)(link->fhss.index & 0xFFU);
 	payload[3] = (uint8_t)(link->fhss.index >> 8);
-	wr32(&payload[4], link->session_nonce);
+	wr32(&payload[4], link->sess_nonce_t);
 
 	len = build_frame(link, ZLRS_PKT_BEACON, 0U, payload, sizeof(payload),
 			  tag_key_for(link, ZLRS_PKT_BEACON, true));
 	link->last_beacon_ms = now_ms;
 
 	/* BEACON 固定发在同步信道 */
+	return submit_tx(link, len, sync_freq_hz(link), link->cfg.sync_slot,
+			 link->sync_word);
+}
+
+/*
+ * RX 对 BEACON 的应答：报上自己的 nonce_r，并回带收到的 nonce_t，让 TX 知道这是
+ * 对哪一次请求的回应。用配对级钥匙认证——会话钥匙还没生效。
+ */
+static const zlrs_radio_req_t *send_sess_resp(zlrs_link_t *link)
+{
+	uint8_t payload[2U * sizeof(uint32_t)];
+	uint16_t len;
+
+	wr32(&payload[0], link->sess_nonce_t);
+	wr32(&payload[4], link->sess_nonce_r);
+	len = build_frame(link, ZLRS_PKT_SESS_RESP, 0U, payload, sizeof(payload),
+			  tag_key_for(link, ZLRS_PKT_SESS_RESP, true));
+	link->sess_resp_due = false;
+
+	/* 仍发在同步信道：TX 还在 SEARCHING，正在那里等回应 */
+	return submit_tx(link, len, sync_freq_hz(link), link->cfg.sync_slot,
+			 link->sync_word);
+}
+
+/*
+ * TX 的会话确认：用刚定下来的会话钥匙打 tag、回带 nonce_r，等于告诉 RX
+ * "我算出了同一把钥匙"。丢了不要紧：RX 会在下一个 BEACON 重发同一条响应，
+ * 这里就再发一次确认。
+ */
+static const zlrs_radio_req_t *send_sess_cfm(zlrs_link_t *link)
+{
+	uint8_t payload[sizeof(uint32_t)];
+	uint16_t len;
+
+	wr32(&payload[0], link->sess_nonce_r);
+	len = build_frame(link, ZLRS_PKT_SESS_CFM, 0U, payload, sizeof(payload),
+			  tag_key_for(link, ZLRS_PKT_SESS_CFM, true));
+	link->sess_cfm_due = false;
+
 	return submit_tx(link, len, sync_freq_hz(link), link->cfg.sync_slot,
 			 link->sync_word);
 }
@@ -763,7 +824,7 @@ static void pairing_complete(zlrs_link_t *link, uint32_t now_ms)
 {
 	/* 握手交换的两个 nonce 就是这对设备的配对材料：存下来用于重算 pair_key */
 	wr32(&link->pair_salt[0], link->pair_nonce);    /* nonce_a：发起方 */
-	wr32(&link->pair_salt[4], link->session_nonce); /* nonce_b：响应方 */
+	wr32(&link->pair_salt[4], link->pair_nonce_b); /* nonce_b：响应方 */
 
 	derive_pair(link);
 	link->paired = true;
@@ -778,7 +839,11 @@ static void handle_beacon(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t
 	uint32_t nonce;
 	uint16_t hop_index;
 
-	if (frame->payload_len < 8U || !link->paired) {
+	/* 只有还在找会话的一方才处理 BEACON；会话建立后不再听 */
+	if (link->state != ZLRS_STATE_SEARCHING || !link->paired) {
+		return;
+	}
+	if (frame->payload_len < 8U) {
 		return;
 	}
 	if (frame->payload[0] != ZLRS_PROTO_VERSION ||
@@ -789,10 +854,27 @@ static void handle_beacon(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t
 	hop_index = (uint16_t)(frame->payload[2] | ((uint16_t)frame->payload[3] << 8));
 	nonce = rd32(&frame->payload[4]);
 
-	start_session(link, nonce, hop_index);
+	/*
+	 * 同一个 nonce_t 的 BEACON 是重发（TX 还没收到我们的回应）：把上次那条
+	 * 回应再发一遍，nonce_r 不能换，换了对端算出的钥匙就跟我们对不上。
+	 */
+	if (link->session_pending && nonce == link->sess_nonce_t) {
+		link->sess_resp_due = true;
+		return;
+	}
+
+	/*
+	 * 谁都可能录下 BEACON 再重放，所以这一步只是"答应谈"：抽一个自己的 nonce_r
+	 * 把钥匙预备好，等 TX 用这把钥匙确认（SESS_CFM）才算会话成立。
+	 */
+	link->sess_nonce_t = nonce;
+	link->sess_nonce_r = link_random(link, now_ms);
+	link->sess_hop = hop_index;
+	derive_session_keys(link, link->sess_nonce_t, link->sess_nonce_r);
+	link->session_pending = true;
+	link->sess_resp_due = true;
 	link->last_rx_ms = now_ms;
 	link->stats.last_rssi = link->stats.last_rssi; /* rssi 由移植层写入 */
-	set_state(link, ZLRS_STATE_CONNECTED, now_ms);
 }
 
 static bool handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame,
@@ -819,7 +901,7 @@ static bool handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame,
 		}
 		memcpy(link->peer_id, dev_a, ZLRS_DEV_ID_LEN);
 		link->pair_nonce = nonce_a;
-		link->session_nonce = link_random(link, now_ms);
+		link->pair_nonce_b = link_random(link, now_ms);
 		link->pair_wait_cfm = true;
 
 		/* 失控值由 TX 下发（它设过才带标志），存本地并交给应用 */
@@ -844,7 +926,7 @@ static bool handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame,
 			return false;
 		}
 		memcpy(link->peer_id, dev_b, ZLRS_DEV_ID_LEN);
-		link->session_nonce = nonce_b;
+		link->pair_nonce_b = nonce_b;
 		link->pair_cfm_pending = true;
 		return true;
 
@@ -855,7 +937,7 @@ static bool handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame,
 		}
 		if (!zlrs_ct_equal(dev_a, link->peer_id, ZLRS_DEV_ID_LEN) ||
 		    !zlrs_ct_equal(dev_b, link->dev_id, ZLRS_DEV_ID_LEN) ||
-		    nonce_a != link->pair_nonce || nonce_b != link->session_nonce) {
+		    nonce_a != link->pair_nonce || nonce_b != link->pair_nonce_b) {
 			return false;
 		}
 		link->pair_wait_cfm = false;
@@ -895,6 +977,73 @@ static void lq_account(zlrs_link_t *link, uint16_t seq)
 	}
 }
 
+/*
+ * RX 收到会话确认：用候选会话钥匙验 tag（不走"按状态选钥匙"那条路），验过才算
+ * 会话成立。重放的确认对不上——它绑的是这次现抽的 nonce_r。
+ */
+static int handle_sess_cfm(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
+{
+	uint8_t expect[ZLRS_TAG_LEN];
+	const uint8_t tag_len = zlrs_profile_tag_len(link->cfg.profile);
+
+	if (!link->session_pending || link->state != ZLRS_STATE_SEARCHING) {
+		return -1;
+	}
+	if (frame->payload_len < sizeof(uint32_t) || tag_len == 0U) {
+		return -1;
+	}
+
+	zlrs_tag(link->session_key_in, ZLRS_KEY_LEN, link->rx_buf,
+		 zlrs_frame_mac_len(frame), expect);
+	if (!zlrs_ct_equal(expect, frame->tag, ZLRS_TAG_LEN)) {
+		link->stats.rx_bad_tag++;
+		return -1;
+	}
+	if (rd32(frame->payload) != link->sess_nonce_r) {
+		return -1;
+	}
+
+	link->stats.rx_frames++;
+	session_activate(link, link->sess_hop);
+	link->last_rx_seq = frame->seq; /* 确认帧本身占掉序号 0 起的第一个位置 */
+	link->last_rx_ms = now_ms;
+	set_state(link, ZLRS_STATE_CONNECTED, now_ms);
+
+	return 0;
+}
+
+/*
+ * TX 收到会话响应：回带的 nonce_t 必须是当前这一次请求的（旧响应、重放的响应
+ * 一律丢），然后算钥匙、发确认。RX 没收到确认时会重发同一条响应，所以这里允许
+ * 同一对 nonce 反复触发，等于给确认帧做重传。
+ */
+static bool handle_sess_resp(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
+{
+	uint32_t nonce_t;
+	uint32_t nonce_r;
+
+	if (link->state != ZLRS_STATE_SEARCHING || frame->payload_len < 2U * sizeof(uint32_t)) {
+		return false;
+	}
+
+	nonce_t = rd32(&frame->payload[0]);
+	nonce_r = rd32(&frame->payload[4]);
+	if (nonce_t != link->sess_nonce_t) {
+		return false;
+	}
+
+	if (!link->session_valid || nonce_r != link->sess_nonce_r) {
+		link->sess_nonce_r = nonce_r;
+		derive_session_keys(link, nonce_t, nonce_r);
+		session_activate(link, link->fhss.index);
+	}
+	link->sess_cfm_due = true;
+	/* 会话刚建立：别让失联判定拿着 SEARCHING 期间的旧时间戳把这一侧踢回去 */
+	link->last_rx_ms = now_ms;
+
+	return true;
+}
+
 static int handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 {
 	const uint8_t tag_len = zlrs_profile_tag_len(link->cfg.profile);
@@ -904,6 +1053,11 @@ static int handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 	if (!zlrs_frame_decode(&frame, link->rx_buf, len, tag_len)) {
 		link->stats.rx_bad_frame++;
 		return -1;
+	}
+
+	/* 会话确认得先用候选钥匙验，不能走下面"按会话状态选钥匙"那套 */
+	if (frame.type == ZLRS_PKT_SESS_CFM) {
+		return handle_sess_cfm(link, &frame, now_ms);
 	}
 
 	key = tag_key_for(link, frame.type, false);
@@ -931,6 +1085,10 @@ static int handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 	if (frame.type == ZLRS_PKT_BEACON) {
 		handle_beacon(link, &frame, now_ms);
 		return 0;
+	}
+
+	if (frame.type == ZLRS_PKT_SESS_RESP) {
+		return handle_sess_resp(link, &frame, now_ms) ? 0 : -1;
 	}
 
 	/* 发起方收到对端的会话帧即认为链路建立 */
@@ -1005,7 +1163,7 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot,
 					const zlrs_radio_req_t *req =
 						send_pair(link, ZLRS_PKT_PAIR_CFM,
 							  link->pair_nonce,
-							  link->session_nonce, now_ms);
+							  link->pair_nonce_b, now_ms);
 
 					pairing_complete(link, now_ms);
 					return req;
@@ -1026,7 +1184,7 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot,
 		if (link->pair_wait_cfm &&
 		    (uint32_t)(now_ms - link->last_pair_tx_ms) >= link->cfg.pair_period_ms) {
 			return send_pair(link, ZLRS_PKT_PAIR_RESP, link->pair_nonce,
-					 link->session_nonce, now_ms);
+					 link->pair_nonce_b, now_ms);
 		}
 		return NULL;
 	}
@@ -1034,15 +1192,28 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot,
 	if (link->state == ZLRS_STATE_SEARCHING) {
 		if (tx_side) {
 			if (down) {
+				if (link->sess_cfm_due) {
+					/*
+					 * 确认发出去就进 CONNECTED：这样双方从下一
+					 * 帧起一起推进跳频，索引不会错开。对端没
+					 * 收到确认的话，失联判定会把我们拉回来。
+					 */
+					const zlrs_radio_req_t *req = send_sess_cfm(link);
+
+					if (req != NULL) {
+						set_state(link, ZLRS_STATE_CONNECTED, now_ms);
+					}
+					return req;
+				}
 				if ((uint32_t)(now_ms - link->last_beacon_ms) <
 				    link->cfg.beacon_period_ms) {
 					return NULL;
 				}
 				return send_beacon(link, now_ms);
 			}
+
 			/* 发起方在上行时隙等对端遥测 */
-			return submit_rx(link,
-					 sync_freq_hz(link),
+			return submit_rx(link, sync_freq_hz(link),
 					 link->cfg.sync_slot, link->sync_word,
 					 link->cfg.rx_timeout_ms);
 		}
@@ -1051,6 +1222,9 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot,
 					 sync_freq_hz(link),
 					 link->cfg.sync_slot, link->sync_word,
 					 link->cfg.rx_timeout_ms);
+		}
+		if (link->sess_resp_due) {
+			return send_sess_resp(link);
 		}
 		return NULL;
 	}
@@ -1094,30 +1268,40 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot,
 	}
 
 	if (link->state == ZLRS_STATE_SEARCHING) {
-		if (tx_side && a) {
-			if ((uint32_t)(now_ms - link->last_beacon_ms) <
-			    link->cfg.beacon_period_ms) {
-				return NULL;
-			}
-			/*
-			 * 数据链路不做失联判定（见 doc/03-protocol.md 3.6），
-			 * 所以发起方把 BEACON 发出去就当链路可用；接收方在收到
-			 * 同一个 BEACON 时锁上会话。
-			 */
-			{
-				const zlrs_radio_req_t *req = send_beacon(link, now_ms);
+		if (tx_side) {
+			if (a) {
+				if (link->sess_cfm_due) {
+					/*
+					 * 数据链路没有遥测可等，确认发出去就当
+					 * 会话成立；对端没收到的话，失联判定会
+					 * 把这一侧拉回 SEARCHING 重来。
+					 */
+					const zlrs_radio_req_t *req = send_sess_cfm(link);
 
-				if (req != NULL) {
-					set_state(link, ZLRS_STATE_CONNECTED, now_ms);
+					if (req != NULL) {
+						set_state(link, ZLRS_STATE_CONNECTED, now_ms);
+					}
+					return req;
 				}
-				return req;
+				if ((uint32_t)(now_ms - link->last_beacon_ms) <
+				    link->cfg.beacon_period_ms) {
+					return NULL;
+				}
+				return send_beacon(link, now_ms);
 			}
+			/* 发起方在上行时隙等对端的第一帧 */
+			return submit_rx(link, sync_freq_hz(link),
+					 link->cfg.sync_slot, link->sync_word,
+					 link->cfg.rx_timeout_ms);
 		}
-		if (!tx_side && a) {
+		if (a) {
 			return submit_rx(link,
 					 sync_freq_hz(link),
 					 link->cfg.sync_slot, link->sync_word,
 					 link->cfg.rx_timeout_ms);
+		}
+		if (link->sess_resp_due) {
+			return send_sess_resp(link);
 		}
 		return NULL;
 	}
@@ -1240,7 +1424,7 @@ void zlrs_link_press(zlrs_link_t *link, uint32_t now_ms)
 	}
 
 	link->pair_nonce = link_random(link, now_ms);
-	link->session_nonce = link_random(link, link->pair_nonce);
+	link->pair_nonce_b = link_random(link, link->pair_nonce);
 	link->pair_cfm_pending = false;
 	link->pair_wait_cfm = false;
 	set_state(link, ZLRS_STATE_PAIRING, now_ms);

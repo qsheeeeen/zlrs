@@ -68,6 +68,8 @@ typedef struct {
 	uint16_t up_len;
 	uint8_t beacon[ZLRS_FRAME_MAX_LEN];
 	uint16_t beacon_len;
+	uint8_t sess_resp[ZLRS_FRAME_MAX_LEN]; /* 会话响应（重放用例用） */
+	uint16_t sess_resp_len;
 } sim_t;
 
 /* ---- 回调与假射频 -------------------------------------------------------- */
@@ -214,7 +216,7 @@ static void node_init(node_t *node, uint8_t role, const uint8_t *root_key,
 	data_cfg.domain = ZLRS_DOMAIN_ISM2400;
 	data_cfg.sync_slot = ZLRS_SYNC_SLOT_DATA;
 	data_cfg.rate_bps = SIM_RATE_DATA;
-	data_cfg.peer_timeout_ms = 0U; /* 数据链路不做失联判定 */
+	data_cfg.peer_timeout_ms = 5000U; /* 与会话重连一致，见 doc/03-protocol.md 3.6 */
 	data_cfg.data_mtu = SIM_DATA_MTU;
 
 	zlrs_link_init(&node->ctl, &cfg, &ops, &ctl_ev);
@@ -275,6 +277,11 @@ static void sim_deliver(sim_t *sim, zlrs_link_t *src_link, const zlrs_radio_req_
 	if ((src->buf[0] >> 2) == (uint8_t)ZLRS_PKT_BEACON && sim->beacon_len == 0U) {
 		memcpy(sim->beacon, src->buf, len);
 		sim->beacon_len = len;
+	}
+	if ((src->buf[0] >> 2) == (uint8_t)ZLRS_PKT_SESS_RESP &&
+	    sim->sess_resp_len == 0U) {
+		memcpy(sim->sess_resp, src->buf, len);
+		sim->sess_resp_len = len;
 	}
 
 	memcpy(dst->buf, src->buf, len);
@@ -480,20 +487,22 @@ static void test_session(void)
 		     ZLRS_KEY_LEN) == 0);
 	CHECK(memcmp(sim.tx.ctl.session_key_out, sim.tx.ctl.session_key_in,
 		     ZLRS_KEY_LEN) != 0);
-	CHECK(sim.tx.ctl.session_nonce == sim.rx.ctl.session_nonce);
+	/* 两个 nonce 两端都拿到：TX 出的 nonce_t、RX 出的 nonce_r */
+	CHECK(sim.tx.ctl.sess_nonce_t == sim.rx.ctl.sess_nonce_t);
+	CHECK(sim.tx.ctl.sess_nonce_r == sim.rx.ctl.sess_nonce_r);
 	CHECK(memcmp(sim.tx.data.session_key_out, sim.rx.data.session_key_in,
 		     ZLRS_KEY_LEN) == 0);
 	CHECK(memcmp(sim.tx.ctl.session_key_out, sim.tx.data.session_key_out,
 		     ZLRS_KEY_LEN) != 0);
 
-	/* 重放当前 BEACON（同一个 nonce）不换会话；旧 nonce 的重放见 doc/03-protocol.md 3.5 */
-	nonce = sim.rx.ctl.session_nonce;
+	/* 会话建立后 RX 不再听 BEACON：重放当前那帧不能动会话 */
+	nonce = sim.rx.ctl.sess_nonce_t;
 	saved_len = sim.beacon_len;
 	CHECK(saved_len > 0U);
 	saved_len = (saved_len > sizeof(saved)) ? (uint16_t)sizeof(saved) : saved_len;
 	memcpy(saved, sim.beacon, saved_len);
 	sim_inject(&sim, &sim.rx.ctl, saved, saved_len);
-	CHECK(sim.rx.ctl.session_nonce == nonce);
+	CHECK(sim.rx.ctl.sess_nonce_t == nonce);
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
 }
 
@@ -542,22 +551,22 @@ static void test_reflection(void)
 	CHECK(sim.rx.tlm_count == counter);
 
 	/* 让 TX 判一次失联、换一个会话 nonce，空口上那帧 BEACON 就"过期"了 */
-	nonce = sim.tx.ctl.session_nonce;
+	nonce = sim.tx.ctl.sess_nonce_t;
 	sim.drop_up = 500;
 	SIM_UNTIL(&sim,
 		  sim.tx.ctl.state == ZLRS_STATE_SEARCHING &&
-			  sim.tx.ctl.session_nonce != nonce,
+			  sim.tx.ctl.sess_nonce_t != nonce,
 		  2000);
 	sim.drop_up = 0;
-	CHECK(sim.tx.ctl.session_nonce != nonce);
+	CHECK(sim.tx.ctl.sess_nonce_t != nonce);
 
 	/* TX 收到自己发过的旧 BEACON：不能把会话换回旧 nonce 上 */
 	CHECK(sim.beacon_len > 0U);
-	nonce = sim.tx.ctl.session_nonce;
+	nonce = sim.tx.ctl.sess_nonce_t;
 	bad_tag = sim.tx.ctl.stats.rx_bad_tag;
 	sim_inject(&sim, &sim.tx.ctl, sim.beacon, sim.beacon_len);
 	CHECK(sim.tx.ctl.stats.rx_bad_tag == bad_tag + 1U);
-	CHECK(sim.tx.ctl.session_nonce == nonce);
+	CHECK(sim.tx.ctl.sess_nonce_t == nonce);
 }
 
 /*
@@ -602,11 +611,76 @@ static void test_pairing_rotation(void)
 
 	/* 旧配对录下的 BEACON：钥匙已经换了，必须被丢掉 */
 	bad_tag = sim.rx.ctl.stats.rx_bad_tag;
-	nonce = sim.rx.ctl.session_nonce;
+	nonce = sim.rx.ctl.sess_nonce_t;
 	sim_inject(&sim, &sim.rx.ctl, beacon, beacon_len);
 	CHECK(sim.rx.ctl.stats.rx_bad_tag == bad_tag + 1U);
-	CHECK(sim.rx.ctl.session_nonce == nonce);
+	CHECK(sim.rx.ctl.sess_nonce_t == nonce);
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_SEARCHING);
+}
+
+/*
+ * 旧 BEACON 的重放（原 02 §5.4 那条弱点）：RX 只在收到用新会话钥匙打的确认后才
+ * 采用会话，所以重放录下来的旧 BEACON 只能换来一条带全新 nonce_r 的响应——旧会话
+ * 的钥匙一条都拿不到。同理，旧 SESS_RESP 打给 TX 也会因为 nonce_t 对不上被忽略。
+ */
+static void test_session_replay(void)
+{
+	sim_t sim;
+	uint8_t beacon[ZLRS_FRAME_MAX_LEN];
+	uint16_t beacon_len;
+	uint8_t resp[ZLRS_FRAME_MAX_LEN];
+	uint16_t resp_len;
+	uint8_t key_before[ZLRS_KEY_LEN];
+	uint32_t nonce_r;
+
+	printf("link: session replay\n");
+	sim_init(&sim);
+	pair_and_connect(&sim);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
+
+	/* 录下第一段会话的 BEACON 与会话响应 */
+	CHECK(sim.beacon_len > 0U);
+	CHECK(sim.sess_resp_len > 0U);
+	beacon_len = sim.beacon_len;
+	resp_len = sim.sess_resp_len;
+	memcpy(beacon, sim.beacon, beacon_len);
+	memcpy(resp, sim.sess_resp, resp_len);
+
+	/* 让两边都掉回 SEARCHING：这正是重放攻击的时机 */
+	sim.drop_down = 500;
+	sim.drop_up = 500;
+	SIM_UNTIL(&sim,
+		  sim.tx.ctl.state == ZLRS_STATE_SEARCHING &&
+			  sim.rx.ctl.state == ZLRS_STATE_SEARCHING,
+		  2000);
+	sim.drop_down = 0;
+	sim.drop_up = 0;
+	CHECK(!sim.rx.ctl.session_valid);
+
+	/* 重放旧 BEACON 给 RX：只能武装一个候选，不能采用 */
+	nonce_r = sim.rx.ctl.sess_nonce_r;
+	sim_inject(&sim, &sim.rx.ctl, beacon, beacon_len);
+	CHECK(!sim.rx.ctl.session_valid);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_SEARCHING);
+	CHECK(sim.rx.ctl.sess_nonce_r != nonce_r); /* 现抽的 nonce_r，不是旧会话那把 */
+	CHECK(sim.rx.ctl.session_pending);
+
+	/* 重放旧 SESS_RESP 给 TX：回带的 nonce_t 不是当前请求，必须被忽略 */
+	memcpy(key_before, sim.tx.ctl.session_key_out, ZLRS_KEY_LEN);
+	sim_inject(&sim, &sim.tx.ctl, resp, resp_len);
+	CHECK(memcmp(sim.tx.ctl.session_key_out, key_before, ZLRS_KEY_LEN) == 0);
+
+	/* 真的 TX 回来时照常建链 */
+	sim.tx.ctl.last_beacon_ms = 0U; /* 不等一个 BEACON 周期 */
+	SIM_UNTIL(&sim,
+		  sim.tx.ctl.state == ZLRS_STATE_CONNECTED &&
+			  sim.rx.ctl.state == ZLRS_STATE_CONNECTED,
+		  4000);
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.ctl.session_valid);
+	CHECK(memcmp(sim.tx.ctl.session_key_out, sim.rx.ctl.session_key_in,
+		     ZLRS_KEY_LEN) == 0);
 }
 
 static void test_control_payloads(void)
@@ -1113,6 +1187,36 @@ static void test_failsafe_push(void)
 	CHECK(sim.rx.failsafe_count == 0U);
 }
 
+/*
+ * 数据链路的重连：对端不再回包时，靠 5 s 失联判定退回 SEARCHING，再握手接上。
+ * （会话建立要 TX 回到 SEARCHING 才发得出 BEACON，所以这条判定是重连的前提。）
+ */
+static void test_data_recovery(void)
+{
+	sim_t sim;
+	uint8_t chunk[8];
+
+	printf("link: data link recovery\n");
+	sim_init(&sim);
+	pair_and_connect(&sim);
+
+	/* RX -> TX 全丢：两侧各自判失联，退回 SEARCHING 重新握手 */
+	sim.drop_up = 5000;
+	SIM_UNTIL(&sim,
+		  sim.tx.data.state == ZLRS_STATE_SEARCHING &&
+			  sim.rx.data.state != ZLRS_STATE_CONNECTED,
+		  4000);
+	sim.drop_up = 0;
+
+	memset(chunk, 0x33U, sizeof(chunk));
+	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
+	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(chunk), 4000);
+	CHECK(sim.rx.stream_len == sizeof(chunk));
+	CHECK(memcmp(sim.rx.stream, chunk, sizeof(chunk)) == 0);
+	CHECK(sim.tx.data.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.data.state == ZLRS_STATE_CONNECTED);
+}
+
 /* 控制帧率拉高后的节奏稀疏化：遥测每 4 帧、数据窗口每 5 帧，两端仍同步 */
 static void test_cadence(void)
 {
@@ -1164,6 +1268,7 @@ void test_link(void)
 	test_session();
 	test_reflection();
 	test_pairing_rotation();
+	test_session_replay();
 	test_control_payloads();
 	test_data_passthrough();
 	test_rx_rejects();
@@ -1179,5 +1284,6 @@ void test_link(void)
 	test_arq_giveup();
 	test_rate_adapt();
 	test_failsafe_push();
+	test_data_recovery();
 	test_cadence();
 }

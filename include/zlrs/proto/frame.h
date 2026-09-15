@@ -33,6 +33,8 @@ typedef enum {
 	ZLRS_PKT_PAIR_REQ = 6, /* TX -> RX：配对 */
 	ZLRS_PKT_PAIR_RESP = 7,/* RX -> TX：配对 */
 	ZLRS_PKT_PAIR_CFM = 8, /* TX -> RX：配对 */
+	ZLRS_PKT_SESS_RESP = 9,/* RX -> TX：会话响应，带自己的 nonce */
+	ZLRS_PKT_SESS_CFM = 10,/* TX -> RX：会话确认，用新会话钥匙打 tag */
 } zlrs_pkt_type_t;
 
 /* header 低 2 位 */
