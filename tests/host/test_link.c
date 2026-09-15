@@ -216,7 +216,7 @@ static void node_init(node_t *node, uint8_t role, const uint8_t *root_key,
 	data_cfg.domain = ZLRS_DOMAIN_ISM2400;
 	data_cfg.sync_slot = ZLRS_SYNC_SLOT_DATA;
 	data_cfg.rate_bps = SIM_RATE_DATA;
-	data_cfg.peer_timeout_ms = 5000U; /* 与会话重连一致，见 doc/03-protocol.md 3.6 */
+	data_cfg.peer_timeout_ms = 0U; /* 数据链路不判失联，见 doc/03-protocol.md 3.6 */
 	data_cfg.data_mtu = SIM_DATA_MTU;
 
 	zlrs_link_init(&node->ctl, &cfg, &ops, &ctl_ev);
@@ -1188,33 +1188,33 @@ static void test_failsafe_push(void)
 }
 
 /*
- * 数据链路的重连：对端不再回包时，靠 5 s 失联判定退回 SEARCHING，再握手接上。
- * （会话建立要 TX 回到 SEARCHING 才发得出 BEACON，所以这条判定是重连的前提。）
+ * 数据链路是尽力而为：空闲时不发空帧，也不判失联（见 doc/03-protocol.md 3.6）。
+ * 所以空闲再久也不能反复重建会话——否则一有数据要发就先撞上握手，头几帧白等一个
+ * BEACON 周期。
  */
-static void test_data_recovery(void)
+static void test_data_idle(void)
 {
 	sim_t sim;
 	uint8_t chunk[8];
+	uint32_t nonce_before;
 
-	printf("link: data link recovery\n");
+	printf("link: data link idle\n");
 	sim_init(&sim);
 	pair_and_connect(&sim);
-
-	/* RX -> TX 全丢：两侧各自判失联，退回 SEARCHING 重新握手 */
-	sim.drop_up = 5000;
-	SIM_UNTIL(&sim,
-		  sim.tx.data.state == ZLRS_STATE_SEARCHING &&
-			  sim.rx.data.state != ZLRS_STATE_CONNECTED,
-		  4000);
-	sim.drop_up = 0;
-
-	memset(chunk, 0x33U, sizeof(chunk));
-	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
-	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(chunk), 4000);
-	CHECK(sim.rx.stream_len == sizeof(chunk));
-	CHECK(memcmp(sim.rx.stream, chunk, sizeof(chunk)) == 0);
 	CHECK(sim.tx.data.state == ZLRS_STATE_CONNECTED);
 	CHECK(sim.rx.data.state == ZLRS_STATE_CONNECTED);
+
+	nonce_before = sim.tx.data.sess_nonce_t;
+	sim_run(&sim, 3000U); /* 约 18 s 空闲 */
+	CHECK(sim.tx.data.sess_nonce_t == nonce_before);
+	CHECK(sim.tx.data.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.data.state == ZLRS_STATE_CONNECTED);
+
+	/* 空闲之后照样能透传 */
+	memset(chunk, 0x44U, sizeof(chunk));
+	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
+	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(chunk), 400);
+	CHECK(sim.rx.stream_len == sizeof(chunk));
 }
 
 /* 控制帧率拉高后的节奏稀疏化：遥测每 4 帧、数据窗口每 5 帧，两端仍同步 */
@@ -1284,6 +1284,6 @@ void test_link(void)
 	test_arq_giveup();
 	test_rate_adapt();
 	test_failsafe_push();
-	test_data_recovery();
+	test_data_idle();
 	test_cadence();
 }

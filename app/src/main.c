@@ -268,10 +268,10 @@ static void build_links(void)
 	data_cfg.rate_bps = CONFIG_ZLRS_APP_DATA_RATE_BPS;
 	data_cfg.arq = IS_ENABLED(CONFIG_ZLRS_APP_DATA_ARQ) ? 1U : 0U;
 	/*
-	 * 数据链路也要判失联：会话重连靠 TX 退回 SEARCHING 重发 BEACON，
-	 * 不判的话对端重启就再也握不上手（见 doc/03-protocol.md 3.6）。
+	 * 数据链路尽力而为：空闲不发空帧，所以不判失联——判了会在空闲时反复重建
+	 * 会话。代价是对端重启后要等这一侧重启或重配，见 doc/03-protocol.md 3.6。
 	 */
-	data_cfg.peer_timeout_ms = 5000U;
+	data_cfg.peer_timeout_ms = 0U;
 	data_cfg.data_mtu = CONFIG_ZLRS_APP_DATA_MTU;
 	/* 数据链路的重建可以慢一点：BEACON 2 s，见 doc/03-protocol.md 3.6 */
 	data_cfg.beacon_period_ms = 2000U;
