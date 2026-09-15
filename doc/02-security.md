@@ -239,7 +239,7 @@ ECDH），并接受"知道 `root_key` 的人能在配对窗口抢走配对"。�
 
 协议核心不接触短语，也不接触 `root_key`，只接收派生好的 `fhss_seed`、两个同步字、
 按方向分开的 `link_auth` / `link_enc`，以及派生它们的输入（双方 `dev_id` 与
-`pair_salt`）；会话密钥在链路层内按 `nonce_t` 现算。
+`pair_salt`）；会话密钥在链路层内按 `nonce_t` 与 `nonce_r` 现算。
 
 ## 10. RX 如何取得根密钥
 
