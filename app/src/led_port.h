@@ -1,7 +1,7 @@
 /*
  * 状态灯的驱动侧：把 lib/led 算出来的颜色写到板上的 WS2812。
  *
- * 板级要提供 `zlrs-led` 别名（原型板是 PIO0 上的 WS2812，见 doc/06-ui.md）；
+ * 板级要提供 `zlrs-led` 别名（板子上是 PIO0 上的 WS2812，见 doc/06-ui.md）；
  * 没有这个别名的板子这里会退化成空操作。
  *
  * SPDX-License-Identifier: Apache-2.0

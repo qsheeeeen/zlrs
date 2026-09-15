@@ -2,10 +2,7 @@
 
 状态：**草稿**（等两块模块的实物尺寸与邮票孔坐标核对后定稿）。
 
-定位：把当前原型（杜邦线）做成一块 PCB——不引 RF、不自带 USB、不加端口、
-不加器件（只有去耦、输入保护、二极管或与一颗按键）。电气上就是原型的复刻，
-唯一按 Pixhawk 规范调整的是端口分配（CRSF 走 UART，见第 6 节）。因此两层板
-足够，也没有射频布局约束。
+定位：只解决连线与接插口——把两颗模块的连线固定在一块 PCB 上，对外给 J1/J2 两个接插件；不引 RF、不自带 USB、不加端口、不加器件（只有去耦、输入保护、二极管或与一颗按键）。端口按 Pixhawk 规范引到 J1/J2（见第 6 节），两层板足够，没有射频布局约束。
 
 ## 0. 符合 Pixhawk 接口规范
 
@@ -13,13 +10,10 @@
 
 - 连接器用 **JST-GH 1.25 mm**
 - 任何串口都用 **Telemetry Port** 那套 6 针线序（见下表）
-- 原文要点：*"Cables should be 1:1 to the peripheral and TX/RX as well as CTS/RTS
-  should be crossed on the peripheral side"* —— 排线是 1:1 的，**方向交叉发生在外设侧**
-  （飞控的 pin 2 是 TX 输出，外设的 pin 2 就是 RX 输入）
+- 原文要点：*"Cables should be 1:1 to the peripheral and TX/RX as well as CTS/RTS should be crossed on the peripheral side"* —— 排线是 1:1 的，**方向交叉发生在外设侧**（飞控的 pin 2 是 TX 输出，外设的 pin 2 就是 RX 输入）
 - 不支持硬件流控的端口把 CTS / RTS 悬空
 
-**DS-017 Pixhawk Radio Interface 不适用**：那是 100 W 级电台的 40-pin 板对板接口
-（10–20 V、以太网/USB），与本板不是一类东西。
+**DS-017 Pixhawk Radio Interface 不适用**：那是 100 W 级电台的 40-pin 板对板接口（10–20 V、以太网/USB），与本板不是一类东西。
 
 ## 1. 端口
 
@@ -27,12 +21,11 @@
 | --- | --- | --- |
 | J1（CRSF） | JST-GH **1.25 mm**，6P，卧式 | Pixhawk Telemetry Port 线序，见 1.1；`5V_IN` + CRSF |
 | J2（数据） | JST-GH **1.25 mm**，6P，卧式 | 同一套线序；GND + 数据口 UART1 |
-| USB-C | RP2350-Zero 模块自带 | 控制台（USB CDC）+ BOOTSEL 烧写；载板不引 USB |
+| USB-C | RP2350-Zero 模块自带 | 控制台（USB CDC）+ BOOTSEL 烧写；USB 不引到 PCB |
 | SW1 按键 | SMD 轻触 3×4 mm | GP12 ↔ GND：长按配对、开机按住进配置模式 |
-| 状态灯 | 模块自带 WS2812（GP16） | 载板不引 |
+| 状态灯 | 模块自带 WS2812（GP16） | PCB 上不引 |
 
-没有 SWD、控制台也不单独引口——它在模块的 USB-C 上（USB CDC），插上电脑就能看
-日志与烧写。
+没有 SWD、控制台也不单独引口——它在模块的 USB-C 上（USB CDC），插上电脑就能看日志与烧写。
 
 ### 1.1 两个 6P 口的线序（DS-009 Telemetry Port，外设侧视角）
 
@@ -47,9 +40,7 @@
 
 J2 用同一套线序，第 2/3 针接数据口：**RX = GP9、TX = GP8**；第 4/5 针同样悬空。
 
-两个口的 `5V_IN` 各自经一颗肖特基（SS14 / BAT54）**二极管或**后并到 5V 轨：
-既能从任一口取电，又不会在两个口同时接电源时互相反灌（压降 0.3–0.5 V，
-模块 5V 脚允许 1.8–5.5 V）。
+两个口的 `5V_IN` 各自经一颗肖特基（SS14 / BAT54）**二极管或**后并到 5V 轨：既能从任一口取电，又不会在两个口同时接电源时互相反灌（压降 0.3–0.5 V，模块 5V 脚允许 1.8–5.5 V）。
 
 ## 2. 网络清单
 
@@ -61,7 +52,7 @@ J2 用同一套线序，第 2/3 针接数据口：**RX = GP9、TX = GP8**；第 
 | BUSY | GP20 | BUSY |
 | NRESET | GP21 | NRESET |
 | DIO8（IRQ） | GP22 | DIO8 |
-| 电源 | 3V3、GND | 3V3、GND（3V3 由 Zero 供，与原型一致） |
+| 电源 | 3V3、GND | 3V3、GND（3V3 由 Zero 供） |
 
 对外与电源：
 
@@ -77,14 +68,13 @@ J2 用同一套线序，第 2/3 针接数据口：**RX = GP9、TX = GP8**；第 
 - `5V_IN` → 自恢复保险 + TVS → 100 µF + 10 µF + 0.1 µF → Zero 的 5V 脚
 - Core2021 侧就近加 10 µF + 0.1 µF
 - GND 两面整块铺铜，模块焊盘附近多打过孔
-- 独立 LDO 与电压检测**不做**（保持与原型一致）
+- 独立 LDO 与电压检测**不做**
 
 ## 4. 机械
 
 - 外形 **≈22 × 28 mm**、板厚 1.6 mm、外框 R1（最终按实物微调）
 - **两面贴装**：Top = RP2350-Zero（元件面朝上），Bottom = Core2021（元件面朝下）
-- **USB-C 那一侧让模块探出载板 2–3 mm**，方便插线；**天线座在相反的短边**，
-  该方向留 15–20 mm 净空（不铺铜、不走线、不放器件）
+- **USB-C 那一侧让模块探出载板 2–3 mm**，方便插线；**天线座在相反的短边**，该方向留 15–20 mm 净空（不铺铜、不走线、不放器件）
 - 安装孔 **2 个**，Ø2.2 mm（M2），对角放置，且不落在任一模组的投影范围内
 - 按键放 **Bottom** 面：Top 面 18 × 23.5 基本被 Zero 占满，3×4 mm 按键没位置
 
@@ -98,25 +88,10 @@ J2 用同一套线序，第 2/3 针接数据口：**RX = GP9、TX = GP8**；第 
 
 ## 6. 固件
 
-符合 Pixhawk 规范带来一处**端口分配变更**（与原型不同，原因是飞控的串口是 UART，
-飞控也不当 USB host）：
-
-| 端口 | 原型板 | 载板 |
-| --- | --- | --- |
-| CRSF | USB CDC（模块 USB-C） | **UART0**（GP0/GP1）→ J1 |
-| 数据 | UART1（GP8/9） | 不变 → J2 |
-| 控制台 | UART0 | **USB CDC**（模块 USB-C） |
-
-控制台挪到 USB 用的是 Zephyr 自带的 `cdc-acm-console` snippet
-（`west build -S cdc-acm-console`），**不新增连接器、不新增器件**；USB-C 上
-同时还是 BOOTSEL 烧写口。
-
-实现方式：新增一个板级变体/板名（DT 里 `zlrs-crsf-uart = &uart0`、数据口仍是
-`&uart1`、console 指向 `cdc_acm_uart0`），应用逻辑零改动（配置模式仍在数据口上，
-配置工具接 J2 即可）。已有的 hf / lf 两个 sub-G SKU 变体照旧按手上的 Core2021 选。
+CRSF = UART0 / GP0-GP1 → J1，数据 = UART1 / GP8-GP9 → J2，控制台在 USB 第三个 CDC；主机把某块 CDC 打开时该端口走 USB（见 01 第 2.1 节）。USB-C 同时是 BOOTSEL 烧写口。hf / lf 两个 SKU 变体按手上的 Core2021 选。
 
 ## 7. 待确认
 
 - 两块模块的实际外形尺寸、邮票孔坐标与天线座位置（按实物量）
-- 载板最终轮廓尺寸与两个安装孔的位置
+- PCB 最终轮廓尺寸与两个安装孔的位置
 - J2 第 1 针：接 5V（二极管或）还是留空（我按"二极管或"写的，两颗肖特基）

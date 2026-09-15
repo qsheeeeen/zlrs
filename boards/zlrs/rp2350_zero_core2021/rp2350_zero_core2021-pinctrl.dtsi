@@ -7,7 +7,7 @@
 #include <zephyr/dt-bindings/pinctrl/rpi-pico-rp2350a-pinctrl.h>
 
 &pinctrl {
-	/* 控制台：RP2350-Zero 上就是 Pico 的那对默认引脚 */
+	/* CRSF：RP2350-Zero 上就是 Pico 的那对默认引脚，接手台/飞控 */
 	uart0_default: uart0_default {
 		group1 {
 			pinmux = <UART0_TX_P0>;

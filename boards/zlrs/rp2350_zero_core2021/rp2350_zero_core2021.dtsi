@@ -17,15 +17,17 @@
 		zephyr,sram = &sram0;
 		zephyr,flash = &flash0;
 		zephyr,flash-controller = &qmi;
-		zephyr,console = &uart0;
-		zephyr,shell-uart = &uart0;
+		zephyr,console = &cdc_acm_uart2;
+		zephyr,shell-uart = &cdc_acm_uart2;
 		zephyr,code-partition = &code_partition;
 		zephyr,lorawan-transceiver = &lora_core2021;
 	};
 	aliases {
 		lora-transceiver = &lora_core2021;
+		zlrs-crsf-uart = &uart0;
 		zlrs-data-uart = &uart1;
-		zlrs-crsf-uart = &cdc_acm_uart0;
+		zlrs-crsf-cdc = &cdc_acm_uart0;
+		zlrs-data-cdc = &cdc_acm_uart1;
 		zlrs-button = &zlrs_button;
 		zlrs-led = &zlrs_led;
 		led-strip = &zlrs_led;
@@ -46,15 +48,15 @@
 	status = "okay";
 };
 
-/* 控制台串口 */
+/* CRSF：GP0 = TX / GP1 = RX，接手台或飞控，420000 是 CRSF 协议的波特率 */
 &uart0 {
 	status = "okay";
-	current-speed = <115200>;
+	current-speed = <420000>;
 	pinctrl-0 = <&uart0_default>;
 	pinctrl-names = "default";
 };
 
-/* 数据串口：透传口 */
+/* 数据口：透传/配置，GP8 = TX / GP9 = RX */
 &uart1 {
 	status = "okay";
 	current-speed = <115200>;
@@ -95,8 +97,13 @@
 };
 
 /*
- * CRSF 端口走 USB CDC ACM：RP2350-Zero 只有两个 UART，UART0 留给控制台、
- * UART1 是透传口，手台/飞控那一路用原生 USB（见板级 README）。
+ * USB 上三个 CDC（doc/01-system.md 2.1）：
+ *   cdc_acm_uart0 = CRSF（与 UART0 同一个逻辑端口，别名 zlrs-crsf-cdc）
+ *   cdc_acm_uart1 = 数据口（与 UART1 同一个逻辑端口，别名 zlrs-data-cdc）
+ *   cdc_acm_uart2 = 控制台：kernel log 与 shell（chosen 里的 zephyr,console）
+ *
+ * 每条链路两块端点二选一：USB 上的主机把该链路的 CDC 打开（DTR 有效）就走
+ * USB，否则走对应的 UART（app/src/ports.c）。
  */
 zephyr_udc0: &usbd {
 	status = "okay";
@@ -104,6 +111,16 @@ zephyr_udc0: &usbd {
 	cdc_acm_uart0: cdc_acm_uart0 {
 		compatible = "zephyr,cdc-acm-uart";
 		label = "zlrs CRSF";
+	};
+
+	cdc_acm_uart1: cdc_acm_uart1 {
+		compatible = "zephyr,cdc-acm-uart";
+		label = "zlrs DATA";
+	};
+
+	cdc_acm_uart2: cdc_acm_uart2 {
+		compatible = "zephyr,cdc-acm-uart";
+		label = "zlrs CONSOLE";
 	};
 };
 

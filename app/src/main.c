@@ -5,7 +5,7 @@
  * zlrs 应用入口：跑文档里的超帧，把控制链路与数据链路接上 LR2021 与串口。
  *
  *   - 射频：USP/RAC（app/src/rac_port.c）
- *   - 串口：数据 UART 透传（app/src/serial_port.c）
+ *   - 端口：CRSF、数据口透传与配置模式（app/src/ports.c）
  *   - 密钥与配对记录：NVS（app/src/store.c）
  *
  * 线程模型与初始化顺序见 doc/01-system.md 第 7 节。
@@ -25,12 +25,10 @@
 #include <smtc_rac_api.h>
 #include <smtc_sw_platform_helper.h>
 
-#include "crsf_port.h"
-#include "config_port.h"
+#include "ports.h"
 #include "board.h"
 #include "led_port.h"
 #include "rac_port.h"
-#include "serial_port.h"
 #include "store.h"
 
 #include "zlrs/crsf/crsf.h"
@@ -148,7 +146,7 @@ static void on_data(void *ctx, const uint8_t *data, uint16_t len)
 {
 	(void)ctx;
 
-	counters.data_rx += zlrs_serial_write(data, len);
+	counters.data_rx += zlrs_data_port_write(data, len);
 }
 
 static void on_state(void *ctx, uint8_t state)
@@ -388,7 +386,7 @@ static void run_slot(uint8_t slot)
 static void pump_serial(void)
 {
 	uint8_t chunk[SERIAL_CHUNK_LEN];
-	const uint16_t got = zlrs_serial_read(chunk, sizeof(chunk));
+	const uint16_t got = zlrs_data_port_read(chunk, sizeof(chunk));
 
 	if (got > 0U) {
 		(void)zlrs_link_write(&link_data, chunk, got); /* 队列满就丢尾巴 */
@@ -625,7 +623,7 @@ static void report(uint32_t now_ms)
 
 	LOG_INF("%s ctl=%u tlm=%u data=%u serial_drop=%u",
 		IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? "TX" : "RX", counters.rc_rx,
-		counters.tlm_rx, counters.data_rx, zlrs_serial_dropped());
+		counters.tlm_rx, counters.data_rx, zlrs_data_port_dropped());
 	LOG_INF("crsf_bad=%u crsf_drop=%u air_drop=%u lq=%u%%",
 		crsf_bad_input, zlrs_crsf_port_rx_dropped(),
 		link_data.stats.data_drop_bytes, link_control.stats.lq_percent);
@@ -766,7 +764,7 @@ int main(void)
 		if (zlrs_store_load_baud(&baud) != (int)sizeof(baud)) {
 			baud = 0U;
 		}
-		(void)zlrs_serial_init(baud);
+		(void)zlrs_data_port_init(baud);
 	}
 
 	zlrs_link_set_rc(&link_control, rc_payload, sizeof(rc_payload));

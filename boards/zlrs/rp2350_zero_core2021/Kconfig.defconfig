@@ -30,6 +30,20 @@ config SERIAL
 config UART_CONSOLE
 	default y
 
+# 控制台挂在 USB 的第三个 CDC 上（见 rp2350_zero_core2021.dtsi 的 chosen），
+# 所以板级默认把 USB 设备栈与 CDC ACM 类打开
+config USB_DEVICE_STACK_NEXT
+	default y
+
+config USBD_CDC_ACM_CLASS
+	default y
+
+config CDC_ACM_SERIAL_INITIALIZE_AT_BOOT
+	default y
+
+config UART_LINE_CTRL
+	default y
+
 config UART_INTERRUPT_DRIVEN
 	default y
 
