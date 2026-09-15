@@ -20,7 +20,7 @@ ELRS 是成熟的遥控链路**生态**（几百个硬件目标、WiFi 配置与
 | 接收机输出 | CRSF / SBUS / SUMD / DJI RS2 / HoTT / PWM，另有 SPI 接收机直插飞控 | 只有 CRSF（UART 或 USB CDC） |
 | 透传/数据 | AirPort（固件选项，把一对 TX/RX 变成空口透明串口）；MAVLink 透传（几百 bps～几 kbps）；standalone 遥测电台模式 | **专用 2.4G 链路**：MTU 128 B、粗估 ~97 kB/s；可选 ARQ（累计 ACK + 重传 + 重同步）与背压计数 |
 | 遥测 | LINK 包 512 ms 周期 + DATA 包，遥测比率 1:128…1:2，量级几百 bps；MSP/MAVLink/GPS/VTX | 8 B TLM（LQ/RSSI/SNR/速率档/功率档/状态）+ CRSF 链路统计帧；无 MSP/MAVLink 适配层（透传能承载原始字节） |
-| 安全 | 绑定短语官方明确"不是密码、不是加密密钥，只用于防撞"；无逐包认证/加密 | 根密钥 → HKDF 派生；**每包 HMAC-SHA256 截断 4 B**；三次握手带 nonce；序号严格递增防重放 |
+| 安全 | 绑定短语官方明确"不是密码、不是加密密钥，只用于防撞"；无逐包认证/加密 | 根密钥 → HKDF 派生；**每包 HMAC-SHA256 截断 4 B**（分方向，防反射）；配对 nonce 掺进 `pair_key`；序号递增防重放 |
 | 配对/防串 | Binding Phrase（≥8 字符）或传统按键；Model Match；Loan Model | 长按配对（三次握手）+ 配对时下发失控值；一台设备一个对端（无 Model Match） |
 | 动态功率 | 有：按 RX 上报的信号升降 TX 功率（依赖遥测开启） | 有（默认开）：按遥测 RSSI/LQ 每秒评估，3 dB 步长、2 s 保持、遥测断回上限；下限可配 |
 | 配置 | Lua（手台内）、WebUI（WiFi）、Configurator（含编译期 Regulatory Domain） | 配置协议跑数据口 + 命令行工具（`scripts/zlrs-config.py`，带与固件对拍的 self-test）；无 WiFi/Lua |
@@ -29,7 +29,7 @@ ELRS 是成熟的遥控链路**生态**（几百个硬件目标、WiFi 配置与
 | 外设集成 | Serial VTX、Team Racing、Trainer（头追）、Sentinel、Backpack、BLE 手柄 | 无 |
 | 双频用法 | Gemini：单频段双发分集；Xrossband：双频同时发同一份 RC（冗余） | 两个频段**分工**：sub-G 跑控制、2.4G 跑透传（不冗余） |
 | 固件与角色 | TX 与 RX 是不同 target | **同一份固件**，角色一个 Kconfig |
-| 工程可验证性 | 成熟 CI + CRC 测试 / RX 测试 / 单元测试 + 社区实测数据 | 纯 C 分层 + 主机双节点仿真（946 checks）+ 配置工具 self-test + CI（host 测试 + 两变体构建）；**射频层尚未上板** |
+| 工程可验证性 | 成熟 CI + CRC 测试 / RX 测试 / 单元测试 + 社区实测数据 | 纯 C 分层 + 主机双节点仿真（969 checks）+ 配置工具 self-test + CI（host 测试 + 两变体构建）；**射频层尚未上板** |
 
 ## 我们明显缺的（按优先级）
 

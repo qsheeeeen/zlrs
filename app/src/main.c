@@ -18,6 +18,8 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/random/random.h>
 
+#include <string.h>
+
 #include <smtc_rac_api.h>
 #include <smtc_sw_platform_helper.h>
 
@@ -300,7 +302,7 @@ static void load_identity(void)
 {
 	uint8_t root_key[ZLRS_KEY_LEN];
 	uint8_t dev_id[ZLRS_DEV_ID_LEN];
-	uint8_t peer_id[ZLRS_DEV_ID_LEN];
+	zlrs_store_pairing_t pairing;
 	bool have_root_key = false;
 	const uint32_t now_ms = zlrs_rac_port_now_ms();
 
@@ -334,8 +336,10 @@ static void load_identity(void)
 	zlrs_link_set_root_key(&link_control, root_key, now_ms);
 	zlrs_link_set_root_key(&link_data, root_key, now_ms);
 
-	if (zlrs_store_load_peer(peer_id) == (int)ZLRS_DEV_ID_LEN) {
-		zlrs_link_set_peer(&link_data, peer_id, now_ms);
+	/* 配对记录：对端 dev_id + 配对时的两个 nonce，两条链路都要装（见 02 第 3 节） */
+	if (zlrs_store_load_pairing(&pairing) == (int)sizeof(pairing)) {
+		zlrs_link_set_peer(&link_control, pairing.peer_id, pairing.pair_salt, now_ms);
+		zlrs_link_set_peer(&link_data, pairing.peer_id, pairing.pair_salt, now_ms);
 		LOG_INF("pairing record restored");
 	}
 }
@@ -387,13 +391,24 @@ static void pump_serial(void)
 
 static void adopt_pairing(void)
 {
-	if (!link_control.paired || link_data.paired) {
+	zlrs_store_pairing_t pairing;
+
+	if (!link_control.paired) {
+		return;
+	}
+	/* 换绑或同对设备重新配对后，dev_id 或配对 nonce 会变，数据链路要重同步 */
+	if (link_data.paired &&
+	    memcmp(link_data.peer_id, link_control.peer_id, ZLRS_DEV_ID_LEN) == 0 &&
+	    memcmp(link_data.pair_salt, link_control.pair_salt, ZLRS_PAIR_SALT_LEN) == 0) {
 		return;
 	}
 
-	/* 控制链路配对成功后，把对端 dev_id 同步给数据链路并落盘 */
-	zlrs_link_set_peer(&link_data, link_control.peer_id, zlrs_rac_port_now_ms());
-	(void)zlrs_store_save_peer(link_control.peer_id);
+	/* 控制链路配对成功后，把配对记录同步给数据链路并落盘 */
+	zlrs_link_set_peer(&link_data, link_control.peer_id, link_control.pair_salt,
+			   zlrs_rac_port_now_ms());
+	memcpy(pairing.peer_id, link_control.peer_id, ZLRS_DEV_ID_LEN);
+	memcpy(pairing.pair_salt, link_control.pair_salt, ZLRS_PAIR_SALT_LEN);
+	(void)zlrs_store_save_pairing(&pairing);
 
 	LOG_INF("paired with %02x%02x%02x%02x", link_control.peer_id[0],
 		link_control.peer_id[1], link_control.peer_id[2], link_control.peer_id[3]);

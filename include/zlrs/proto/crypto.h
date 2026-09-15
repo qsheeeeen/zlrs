@@ -38,7 +38,7 @@ void zlrs_tag(const uint8_t *key, size_t key_len, const uint8_t *data, size_t le
 
 /*
  * 短语 → 根密钥：PBKDF2-HMAC-SHA256。
- * salt 里带 KDF 版本号（见 doc/02-security.md 第 4 节），迭代次数由调用方给，
+ * salt 里带 KDF 版本号（见 doc/02-security.md 第 8 节），迭代次数由调用方给，
  * 派生规则固定在设备侧，配置工具不能改。
  */
 void zlrs_pbkdf2_sha256(const char *phrase, const uint8_t *salt, size_t salt_len,

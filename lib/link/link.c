@@ -116,25 +116,84 @@ static void ordered_ids(const zlrs_link_t *link, uint8_t out[2U * ZLRS_DEV_ID_LE
 	}
 }
 
+/* 配对的两个 nonce 同样按数值排序：谁发起都不影响派生结果 */
+static void ordered_pair_salt(const zlrs_link_t *link, uint8_t out[ZLRS_PAIR_SALT_LEN])
+{
+	uint32_t a = rd32(&link->pair_salt[0]);
+	uint32_t b = rd32(&link->pair_salt[4]);
+
+	if (a > b) {
+		const uint32_t tmp = a;
+
+		a = b;
+		b = tmp;
+	}
+	wr32(&out[0], a);
+	wr32(&out[4], b);
+}
+
 static void derive_auth(zlrs_link_t *link)
 {
 	zlrs_kdf(link->root_key, ZLRS_KEY_LEN, LABEL_AUTH, NULL, 0U, link->auth_key,
 		 ZLRS_KEY_LEN);
 }
 
+/*
+ * 一对钥匙按"发送方 → 接收方"分，上下文固定是这一对的双方 dev_id：
+ *
+ *   out = KDF(pair_key, label, ctx || 本机 || 对端)   —— 本机发出去的帧
+ *   in  = KDF(pair_key, label, ctx || 对端 || 本机)   —— 对端发来的帧
+ *
+ * 两端各算一次就配成对（本机的 out 就是对端的 in），不需要协商；两个 id 的
+ * 先后顺序本身就是方向，所以标签里既不掺角色，也不用给方向起名字。
+ *
+ * 不区分的话，tag 就只剩"谁知道密钥"这一个含义：把本机发出的一帧原样打回来，
+ * 本机自己会当成对端的帧收下（反射攻击）。
+ */
+static void derive_by_endpoints(const zlrs_link_t *link, const char *label,
+				const uint8_t *ctx, size_t ctx_len,
+				uint8_t out[ZLRS_KEY_LEN], uint8_t in[ZLRS_KEY_LEN])
+{
+	uint8_t ids_ctx[2U * sizeof(uint32_t) + 2U * ZLRS_DEV_ID_LEN];
+	const size_t len = ctx_len + 2U * ZLRS_DEV_ID_LEN;
+
+	if (len > sizeof(ids_ctx)) {
+		return;
+	}
+	if (ctx_len > 0U) {
+		memcpy(ids_ctx, ctx, ctx_len);
+	}
+
+	/* 本机发：本机在前 */
+	memcpy(&ids_ctx[ctx_len], link->dev_id, ZLRS_DEV_ID_LEN);
+	memcpy(&ids_ctx[ctx_len + ZLRS_DEV_ID_LEN], link->peer_id, ZLRS_DEV_ID_LEN);
+	zlrs_kdf(link->pair_key, ZLRS_KEY_LEN, label, ids_ctx, len, out, ZLRS_KEY_LEN);
+
+	/* 对端发：对端在前 */
+	memcpy(&ids_ctx[ctx_len], link->peer_id, ZLRS_DEV_ID_LEN);
+	memcpy(&ids_ctx[ctx_len + ZLRS_DEV_ID_LEN], link->dev_id, ZLRS_DEV_ID_LEN);
+	zlrs_kdf(link->pair_key, ZLRS_KEY_LEN, label, ids_ctx, len, in, ZLRS_KEY_LEN);
+}
+
 static void derive_pair(zlrs_link_t *link)
 {
-	uint8_t ids[2U * ZLRS_DEV_ID_LEN];
+	uint8_t ctx[2U * ZLRS_DEV_ID_LEN + ZLRS_PAIR_SALT_LEN];
 	uint8_t seed[4];
 	uint8_t ctrl_word[ZLRS_SYNC_WORD_LEN];
 	uint8_t data_word[ZLRS_SYNC_WORD_LEN];
 	uint32_t hop_seed;
 
-	ordered_ids(link, ids);
-	zlrs_kdf(link->root_key, ZLRS_KEY_LEN, LABEL_PAIR, ids, sizeof(ids), link->pair_key,
+	/*
+	 * 双方 id 与配对时的两个 nonce，排序后拼接：两端算出同一个 pair_key，
+	 * 而换一次配对就换一份 nonce，等于换掉下面整棵子树（见 doc/02-security.md
+	 * 第 3 节）。
+	 */
+	ordered_ids(link, ctx);
+	ordered_pair_salt(link, &ctx[2U * ZLRS_DEV_ID_LEN]);
+	zlrs_kdf(link->root_key, ZLRS_KEY_LEN, LABEL_PAIR, ctx, sizeof(ctx), link->pair_key,
 		 ZLRS_KEY_LEN);
-	zlrs_kdf(link->pair_key, ZLRS_KEY_LEN, LABEL_LINK_AUTH, NULL, 0U, link->link_auth,
-		 ZLRS_KEY_LEN);
+	derive_by_endpoints(link, LABEL_LINK_AUTH, NULL, 0U, link->link_auth_out,
+			    link->link_auth_in);
 
 	zlrs_kdf(link->pair_key, ZLRS_KEY_LEN, LABEL_FHSS, NULL, 0U, seed, sizeof(seed));
 	hop_seed = rd32(seed);
@@ -154,17 +213,18 @@ static void derive_pair(zlrs_link_t *link)
 	link->fhss.index = 0U;
 }
 
+/* 会话钥匙 = KDF(pair_key, "zlrs/session", nonce_t || 双方 id) */
 static void start_session(zlrs_link_t *link, uint32_t nonce, uint16_t hop_index)
 {
-	uint8_t nonce_le[4];
+	uint8_t nonce_le[sizeof(uint32_t)];
 
 	if (link->session_valid && link->session_nonce == nonce) {
 		return;
 	}
 
 	wr32(nonce_le, nonce);
-	zlrs_kdf(link->pair_key, ZLRS_KEY_LEN, LABEL_SESSION, nonce_le, sizeof(nonce_le),
-		 link->session_key, ZLRS_KEY_LEN);
+	derive_by_endpoints(link, LABEL_SESSION, nonce_le, sizeof(nonce_le),
+			    link->session_key_out, link->session_key_in);
 	link->session_nonce = nonce;
 	link->session_valid = true;
 	link->last_rx_seq = 0xFFFFU;
@@ -226,17 +286,27 @@ static uint16_t build_frame(zlrs_link_t *link, uint8_t type, uint8_t flags,
 	return total;
 }
 
-static const uint8_t *tag_key_for(const zlrs_link_t *link, uint8_t type)
+/*
+ * 取一帧的 tag 钥匙。outbound = 本机要发这一帧（用 out），否则是用来校验
+ * 对端发来的帧（用 in）。
+ *
+ * 配对握手是例外：它的三条消息靠角色门禁与类型标签分方向（见 doc/02-security.md
+ * 第 4 节），两端用同一把 auth_key，不在这里拆。
+ */
+static const uint8_t *tag_key_for(const zlrs_link_t *link, uint8_t type, bool outbound)
 {
+	const uint8_t *link_auth = outbound ? link->link_auth_out : link->link_auth_in;
+	const uint8_t *session = outbound ? link->session_key_out : link->session_key_in;
+
 	switch (type) {
 	case ZLRS_PKT_PAIR_REQ:
 	case ZLRS_PKT_PAIR_RESP:
 	case ZLRS_PKT_PAIR_CFM:
 		return link->auth_key;
 	case ZLRS_PKT_BEACON:
-		return link->link_auth;
+		return link_auth;
 	default:
-		return link->session_valid ? link->session_key : link->link_auth;
+		return link->session_valid ? session : link_auth;
 	}
 }
 
@@ -298,7 +368,7 @@ static const zlrs_radio_req_t *send_beacon(zlrs_link_t *link, uint32_t now_ms)
 	wr32(&payload[4], link->session_nonce);
 
 	len = build_frame(link, ZLRS_PKT_BEACON, 0U, payload, sizeof(payload),
-			  link->link_auth);
+			  tag_key_for(link, ZLRS_PKT_BEACON, true));
 	link->last_beacon_ms = now_ms;
 
 	/* BEACON 固定发在同步信道 */
@@ -309,7 +379,7 @@ static const zlrs_radio_req_t *send_beacon(zlrs_link_t *link, uint32_t now_ms)
 static const zlrs_radio_req_t *send_rc(zlrs_link_t *link)
 {
 	uint16_t len = build_frame(link, ZLRS_PKT_RC, 0U, link->rc_payload, link->rc_len,
-				   tag_key_for(link, ZLRS_PKT_RC));
+				   tag_key_for(link, ZLRS_PKT_RC, true));
 
 	return submit_tx(link, len, zlrs_fhss_current_hz(&link->fhss), link->cfg.sync_slot,
 			 link->sync_word);
@@ -318,7 +388,7 @@ static const zlrs_radio_req_t *send_rc(zlrs_link_t *link)
 static const zlrs_radio_req_t *send_tlm(zlrs_link_t *link)
 {
 	uint16_t len = build_frame(link, ZLRS_PKT_TLM, 0U, link->tlm_payload, link->tlm_len,
-				   tag_key_for(link, ZLRS_PKT_TLM));
+				   tag_key_for(link, ZLRS_PKT_TLM, true));
 
 	return submit_tx(link, len, zlrs_fhss_current_hz(&link->fhss), link->cfg.sync_slot,
 			 link->sync_word);
@@ -386,7 +456,7 @@ static const zlrs_radio_req_t *arq_send_slot(zlrs_link_t *link, uint8_t index,
 	}
 
 	frame_len = build_frame(link, type, more ? ZLRS_FLAG_MORE : 0U, payload,
-				(uint16_t)(len + 2U), tag_key_for(link, type));
+				(uint16_t)(len + 2U), tag_key_for(link, type, true));
 	if (frame_len == 0U) {
 		return NULL;
 	}
@@ -472,7 +542,7 @@ static const zlrs_radio_req_t *send_arq_ack(zlrs_link_t *link, uint16_t value,
 	payload[2] = flags;
 
 	frame_len = build_frame(link, ZLRS_PKT_ACK, 0U, payload, sizeof(payload),
-				tag_key_for(link, ZLRS_PKT_ACK));
+				tag_key_for(link, ZLRS_PKT_ACK, true));
 	link->arq_ack_pending = false;
 	link->pending_data_len = 0U;
 
@@ -558,7 +628,7 @@ static const zlrs_radio_req_t *send_data(zlrs_link_t *link, uint32_t now_ms)
 	}
 
 	type = (link->cfg.role == ZLRS_ROLE_TX) ? ZLRS_PKT_DATA_UP : ZLRS_PKT_DATA_DOWN;
-	len = build_frame(link, type, flags, payload, take, tag_key_for(link, type));
+	len = build_frame(link, type, flags, payload, take, tag_key_for(link, type, true));
 	link->pending_data_len = take;
 
 	return submit_tx(link, len, zlrs_fhss_current_hz(&link->fhss), link->cfg.sync_slot,
@@ -597,7 +667,8 @@ static const zlrs_radio_req_t *send_pair(zlrs_link_t *link, uint8_t type,
 	uint16_t len;
 
 	pair_payload_fill(link, payload, nonce_a, nonce_b);
-	len = build_frame(link, type, 0U, payload, sizeof(payload), link->auth_key);
+	len = build_frame(link, type, 0U, payload, sizeof(payload),
+			  tag_key_for(link, type, true));
 	link->last_pair_tx_ms = now_ms;
 
 	return submit_tx(link, len, sync_freq_hz(link), ZLRS_SYNC_SLOT_PAIRING,
@@ -690,6 +761,10 @@ static void handle_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 
 static void pairing_complete(zlrs_link_t *link, uint32_t now_ms)
 {
+	/* 握手交换的两个 nonce 就是这对设备的配对材料：存下来用于重算 pair_key */
+	wr32(&link->pair_salt[0], link->pair_nonce);    /* nonce_a：发起方 */
+	wr32(&link->pair_salt[4], link->session_nonce); /* nonce_b：响应方 */
+
 	derive_pair(link);
 	link->paired = true;
 	link->pair_cfm_pending = false;
@@ -831,7 +906,7 @@ static int handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 		return -1;
 	}
 
-	key = tag_key_for(link, frame.type);
+	key = tag_key_for(link, frame.type, false);
 	if (tag_len > 0U) {
 		uint8_t expect[ZLRS_TAG_LEN];
 
@@ -1146,9 +1221,10 @@ void zlrs_link_set_power(zlrs_link_t *link, int8_t tx_power_dbm)
 }
 
 void zlrs_link_set_peer(zlrs_link_t *link, const uint8_t peer_id[ZLRS_DEV_ID_LEN],
-			uint32_t now_ms)
+			const uint8_t pair_salt[ZLRS_PAIR_SALT_LEN], uint32_t now_ms)
 {
 	memcpy(link->peer_id, peer_id, ZLRS_DEV_ID_LEN);
+	memcpy(link->pair_salt, pair_salt, ZLRS_PAIR_SALT_LEN);
 	link->paired = true;
 
 	if (link->configured) {

@@ -83,7 +83,8 @@
 | `P1` | 4 B | 无 | **默认** |
 | `P2` | 4 B | AES-CTR | 认证加密；MAC 覆盖密文（encrypt-then-MAC） |
 
-- `tag` = **HMAC-SHA256 截断到 4 B**，覆盖 `header` + `seq` + `payload`。
+- `tag` = **HMAC-SHA256 截断到 4 B**，覆盖 `header` + `seq` + `payload`；钥匙按
+  方向派生，见 [02-security.md](02-security.md) 第 3 节。
 - 选 HMAC-SHA256 是为了让身份层**只用 SHA-256 一个原语**：PBKDF2、HKDF、MAC
   全部落在同一族函数上，不必为 P1 引入 AES。P2 才需要 AES。
 - profile 由 **TX 在 `BEACON` 里声明，RX 跟随**。TX 是链路的权威方。
@@ -177,7 +178,7 @@ tag 的代价约 16%，前导码与同步字是固定开销，速率越高占比
 | --- | --- | --- | --- |
 | `UNCONFIGURED` | 写入 `root_key` | `UNPAIRED` | 生成并保存 `dev_id` |
 | `UNPAIRED` | 长按按键 | `PAIRING` | 降功率、切配对同步字、周期发 `PAIR_REQ` |
-| `PAIRING` | 配对成功 | `SEARCHING` | 记录对端 `dev_id`、恢复功率、切常态同步字 |
+| `PAIRING` | 配对成功 | `SEARCHING` | 记录对端 `dev_id` 与两个 nonce、恢复功率、切常态同步字 |
 | `PAIRING` | 超时 30 s | `UNPAIRED` | 恢复功率与同步字 |
 | `SEARCHING` | 周期发 `BEACON`，收到对端遥测即认为已连上 | `CONNECTED` | 进入常态收发 |
 | `CONNECTED` | 250 ms 收不到任何有效包 | `SEARCHING` | 继续发 `BEACON` |
@@ -190,7 +191,7 @@ tag 的代价约 16%，前导码与同步字是固定开销，速率越高占比
 | --- | --- | --- | --- |
 | `UNCONFIGURED` | 写入 `root_key` | `UNPAIRED` | 生成并保存 `dev_id` |
 | `UNPAIRED` | 长按按键 | `PAIRING` | 切配对同步字、监听 `PAIR_REQ` |
-| `PAIRING` | 配对成功 | `SEARCHING` | 记录对端 `dev_id`、切常态同步字 |
+| `PAIRING` | 配对成功 | `SEARCHING` | 记录对端 `dev_id` 与两个 nonce、切常态同步字 |
 | `SEARCHING` | 收到 `BEACON`、锁定会话 | `CONNECTED` | 按 profile 配好射频，进入常态 |
 | `CONNECTED` | 100 ms 收不到有效包 | `SEARCHING` | 输出失控保护值 |
 
@@ -210,6 +211,9 @@ RX 必须持续输出预设的失控值给飞控，不能中断。
 （TX）填：它设过值就置 `flags` 的 bit0，响应方收到后照单存本地并写 NVS；
 没置位就保持自己那份——免得被一串 0 覆盖成"所有通道最小值"。
 
+载荷里的两个 nonce 不只管 `MAC_b` 的新鲜性：它们还参与 `pair_key` 派生（见
+[02-security.md](02-security.md) 第 3 节），所以要连同对端 `dev_id` 一起落盘。
+
 「保持最后有效值」是以后的选项，现在只有预设值这一种失控行为。
 
 ### 3.5 会话建立（零回程握手）
@@ -224,10 +228,13 @@ TX 周期性在固定信道上发 `BEACON`，携带三样东西：
 
 RX 收到后：
 
-1. 校验 `nonce_t` 不是已处理过的旧值（拒绝重放）。
-2. 算 `session_key = KDF(pair_key, "zlrs/session", nonce_t)`。
+1. 丢弃与当前会话相同的 `nonce_t`（同一个 BEACON 的重复投递）；更早的旧值见末尾
+   的已知弱点。
+2. 算会话密钥 `KDF(pair_key, "zlrs/session", nonce_t || 发送方 id || 接收方 id)`：
+   收发各一把，本机发用 out（本机 id 在前）、收对端用 in（对端 id 在前），见
+   [02-security.md](02-security.md) 第 3 节。
 3. 按 profile 重配射频（速率、同步字）。
-4. 进入 `CONNECTED`，序列号从 0 起，此后收发一律用 `session_key`。
+4. 进入 `CONNECTED`，序列号从 0 起，此后每帧的 tag 都用自己方向的会话密钥。
 
 **不需要任何回程确认。** 理由：
 
@@ -235,17 +242,20 @@ RX 收到后：
 - 「TX 是否知道 RX 收到了」本来就靠后续遥测判断，加一次显式 ACK 并不改变这一点。
 - RX 比 TX 晚开机时，等下一个 `BEACON` 即可。
 
-`nonce_t` 在 TX 每次重启或重建链路时重新随机生成，因此每次会话的密钥都不同。
-RX 记住最近接受的 `nonce_t`，重复的丢弃。
+`nonce_t` 在 TX 每次重启或重建链路时重抽，所以每次会话的密钥都不同。
 
 `BEACON` 周期：控制链路 **每秒一次**，数据链路 **每 2 秒一次**。
 
 **两条链路各自发自己的 `BEACON`，各自建立会话。** 数据链路不依赖控制链路，
 这样"一条断了不影响另一条"才真正成立。两条链路用的是同一套代码，只是参数不同。
 
-已知弱点：攻击者若能重放一个旧 `BEACON`，可把 RX 拉到错误的会话密钥上，
-造成一个 `BEACON` 周期长度的中断。下一帧真实 `BEACON` 到达即恢复。
-判定为可接受；要消除需要给 `BEACON` 加单调的会话序号。
+已知弱点（**未修**）：重放一个更早的 `BEACON` 能把 RX 拉回那次会话的钥匙上，那次
+会话里录下的帧（序号窗口一起被复位）可以重新验证一遍，等于重放一段旧控制输入。
+控制链路靠 250 ms 失联判定自愈；数据链路没有失联判定，TX 连上后也不再发
+`BEACON`，RX 会被钉住直到重启或重新配对。
+
+要消除得记住已用过的 `nonce_t`（比如最近若干个的环形缓冲），或把 `BEACON` 的
+会话序号做成单调的。
 
 ### 3.6 定时器
 

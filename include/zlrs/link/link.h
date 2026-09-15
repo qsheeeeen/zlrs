@@ -139,10 +139,24 @@ typedef struct {
 	uint8_t auth_key[ZLRS_KEY_LEN];
 	bool paired;
 	uint8_t peer_id[ZLRS_DEV_ID_LEN];
+	/*
+	 * 配对时交换的两个 nonce（发起方在前），参与 pair_key 派生，并跟着配对
+	 * 记录落盘：每次配对都换一份，旧录制里的会话就再也算不出来。
+	 * 见 doc/02-security.md 第 3 节。
+	 */
+	uint8_t pair_salt[ZLRS_PAIR_SALT_LEN];
 	uint8_t pair_key[ZLRS_KEY_LEN];
-	uint8_t link_auth[ZLRS_KEY_LEN];
+	/*
+	 * 每包 tag 的钥匙按"发送方 → 接收方"分开，上下文是这一对的双方 dev_id：
+	 * out 打本机发出去的帧（本机在前），in 校验对端发来的帧（对端在前）。
+	 * 两端各算一次就配成一对，不需要协商，也不掺角色。混成一把的话，反射回来
+	 * 的自己的帧会通过 tag 校验，见 doc/02-security.md 第 3 节。
+	 */
+	uint8_t link_auth_out[ZLRS_KEY_LEN];
+	uint8_t link_auth_in[ZLRS_KEY_LEN];
 	uint8_t sync_word[ZLRS_SYNC_WORD_LEN];
-	uint8_t session_key[ZLRS_KEY_LEN];
+	uint8_t session_key_out[ZLRS_KEY_LEN];
+	uint8_t session_key_in[ZLRS_KEY_LEN];
 	bool session_valid;
 	uint32_t session_nonce;
 	uint32_t pair_nonce;
@@ -217,9 +231,12 @@ void zlrs_link_set_rate(zlrs_link_t *link, uint32_t rate_bps);
 /* 运行中换发射功率（动态功率用），下一个事务生效 */
 void zlrs_link_set_power(zlrs_link_t *link, int8_t tx_power_dbm);
 
-/* 从持久化记录恢复配对（两端重启后不必重新配对） */
+/*
+ * 从持久化记录恢复配对（两端重启后不必重新配对）。pair_salt 必须与对端存下来的
+ * 那一份一致，它是配对时交换的两个 nonce；key 从两者重算，不落盘。
+ */
 void zlrs_link_set_peer(zlrs_link_t *link, const uint8_t peer_id[ZLRS_DEV_ID_LEN],
-			uint32_t now_ms);
+			const uint8_t pair_salt[ZLRS_PAIR_SALT_LEN], uint32_t now_ms);
 
 /* 按键：长按触发配对（换绑也走这里，新记录顶掉旧的） */
 void zlrs_link_press(zlrs_link_t *link, uint32_t now_ms);

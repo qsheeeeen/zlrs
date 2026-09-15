@@ -12,8 +12,16 @@
 #ifndef ZLRS_PROTO_CONFIG_H_
 #define ZLRS_PROTO_CONFIG_H_
 
-/* 空口协议版本：参与标签派生，版本不同的两端不互通 */
-#define ZLRS_PROTO_VERSION 0U
+/*
+ * 空口协议版本：不兼容的空口改动递增一次（帧格式、派生标签），版本不同的两端
+ * 不互通。版本号写在 BEACON 里，RX 只认同版本；派生本身不掺版本号，所以版本
+ * 不一致的两端首先卡在 tag 校验上，这个字段是给将来的格式兼容留的位置。
+ *
+ * 1：每包 tag 与会话密钥按双方 `dev_id` 派生（发送方在前 / 接收方在前，
+ *    对应 out / in 一对）；`pair_key` 额外掺配对时的两个 nonce，见
+ *    doc/02-security.md 第 3 节。
+ */
+#define ZLRS_PROTO_VERSION 1U
 
 /* 帧：header(1) + seq(2) + payload + tag(0/4)，CRC 由射频硬件生成 */
 #define ZLRS_FRAME_HDR_LEN 3U
@@ -41,6 +49,9 @@
 /* 密钥与设备标识 */
 #define ZLRS_KEY_LEN 32U
 #define ZLRS_DEV_ID_LEN 4U
+
+/* 配对时的两个 nonce（发起方 || 响应方），参与 pair_key 派生并落盘 */
+#define ZLRS_PAIR_SALT_LEN 8U
 
 /* 设备角色 */
 #define ZLRS_ROLE_TX 0U

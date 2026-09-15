@@ -39,7 +39,7 @@ typedef enum {
 #define ZLRS_FLAG_MORE 0x01U    /* 分片未结束 */
 #define ZLRS_FLAG_ACK_REQ 0x02U /* 请求确认 */
 
-/* 安全 profile，见 doc/02-security.md 8 节 */
+/* 安全 profile，见 doc/02-security.md 第 8 节 */
 typedef enum {
 	ZLRS_PROFILE_P0 = 0, /* 无 tag、无加密，仅调试 */
 	ZLRS_PROFILE_P1 = 1, /* 4 B tag */

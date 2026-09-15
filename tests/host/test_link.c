@@ -390,8 +390,11 @@ static void pair_and_connect(sim_t *sim)
 			  sim->rx.ctl.state == ZLRS_STATE_SEARCHING,
 		  2000);
 
-	zlrs_link_set_peer(&sim->tx.data, sim->rx.dev_id, sim->now_ms);
-	zlrs_link_set_peer(&sim->rx.data, sim->tx.dev_id, sim->now_ms);
+	/* 配对记录（dev_id + 配对 nonce）同步给数据链路，App 侧要做的事 */
+	zlrs_link_set_peer(&sim->tx.data, sim->rx.dev_id, sim->tx.ctl.pair_salt,
+			   sim->now_ms);
+	zlrs_link_set_peer(&sim->rx.data, sim->tx.dev_id, sim->rx.ctl.pair_salt,
+			   sim->now_ms);
 
 	SIM_UNTIL(sim,
 		  sim->tx.ctl.state == ZLRS_STATE_CONNECTED &&
@@ -470,12 +473,20 @@ static void test_session(void)
 	CHECK(sim.tx.data.state == ZLRS_STATE_CONNECTED);
 	CHECK(sim.rx.data.state == ZLRS_STATE_CONNECTED);
 
-	CHECK(memcmp(sim.tx.ctl.session_key, sim.rx.ctl.session_key, ZLRS_KEY_LEN) == 0);
+	/* 会话密钥按方向分开：本机的 out 就是对端的 in，同一台设备的 out != in */
+	CHECK(memcmp(sim.tx.ctl.session_key_out, sim.rx.ctl.session_key_in,
+		     ZLRS_KEY_LEN) == 0);
+	CHECK(memcmp(sim.tx.ctl.session_key_in, sim.rx.ctl.session_key_out,
+		     ZLRS_KEY_LEN) == 0);
+	CHECK(memcmp(sim.tx.ctl.session_key_out, sim.tx.ctl.session_key_in,
+		     ZLRS_KEY_LEN) != 0);
 	CHECK(sim.tx.ctl.session_nonce == sim.rx.ctl.session_nonce);
-	CHECK(memcmp(sim.tx.data.session_key, sim.rx.data.session_key, ZLRS_KEY_LEN) == 0);
-	CHECK(memcmp(sim.tx.ctl.session_key, sim.tx.data.session_key, ZLRS_KEY_LEN) != 0);
+	CHECK(memcmp(sim.tx.data.session_key_out, sim.rx.data.session_key_in,
+		     ZLRS_KEY_LEN) == 0);
+	CHECK(memcmp(sim.tx.ctl.session_key_out, sim.tx.data.session_key_out,
+		     ZLRS_KEY_LEN) != 0);
 
-	/* 重放旧 BEACON 不换会话 */
+	/* 重放当前 BEACON（同一个 nonce）不换会话；旧 nonce 的重放见 doc/03-protocol.md 3.5 */
 	nonce = sim.rx.ctl.session_nonce;
 	saved_len = sim.beacon_len;
 	CHECK(saved_len > 0U);
@@ -484,6 +495,118 @@ static void test_session(void)
 	sim_inject(&sim, &sim.rx.ctl, saved, saved_len);
 	CHECK(sim.rx.ctl.session_nonce == nonce);
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
+}
+
+/*
+ * 反射：把本机自己发出去的帧原样打回本机。tag 钥匙按方向分开之后，发帧用 out、
+ * 校验用 in，这些帧必须停在 tag 这一步，不能算成"对端发来的"。
+ */
+static void test_reflection(void)
+{
+	sim_t sim;
+	uint8_t frame[ZLRS_FRAME_MAX_LEN];
+	uint16_t len;
+	uint32_t bad_tag;
+	uint32_t counter;
+	uint32_t nonce;
+
+	printf("link: reflection\n");
+	sim_init(&sim);
+	pair_and_connect(&sim);
+
+	/* 取空口上真实的一帧 TX -> RX（RC） */
+	sim_slot(&sim, ZLRS_SLOT_CTL_DOWN);
+	CHECK(sim.down_len > 0U);
+	CHECK((sim.down[0] >> 2) == (uint8_t)ZLRS_PKT_RC);
+	len = sim.down_len;
+	memcpy(frame, sim.down, len);
+
+	/* 取空口上真实的一帧 RX -> TX（TLM） */
+	sim_slot(&sim, ZLRS_SLOT_CTL_UP);
+	CHECK(sim.up_len > 0U);
+	CHECK((sim.up[0] >> 2) == (uint8_t)ZLRS_PKT_TLM);
+
+	/* TX 收到自己发的 RC：tag 是"本机在前"算的，TX 校验用"对端在前" —— 必须丢 */
+	counter = sim.tx.ctl.stats.rx_frames;
+	bad_tag = sim.tx.ctl.stats.rx_bad_tag;
+	sim_inject(&sim, &sim.tx.ctl, frame, len);
+	CHECK(sim.tx.ctl.stats.rx_bad_tag == bad_tag + 1U);
+	CHECK(sim.tx.ctl.stats.rx_frames == counter);
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
+
+	/* RX 收到自己发的 TLM：同理，不能当成 TX 的遥测收下 */
+	counter = sim.rx.tlm_count;
+	bad_tag = sim.rx.ctl.stats.rx_bad_tag;
+	sim_inject(&sim, &sim.rx.ctl, sim.up, sim.up_len);
+	CHECK(sim.rx.ctl.stats.rx_bad_tag == bad_tag + 1U);
+	CHECK(sim.rx.tlm_count == counter);
+
+	/* 让 TX 判一次失联、换一个会话 nonce，空口上那帧 BEACON 就"过期"了 */
+	nonce = sim.tx.ctl.session_nonce;
+	sim.drop_up = 500;
+	SIM_UNTIL(&sim,
+		  sim.tx.ctl.state == ZLRS_STATE_SEARCHING &&
+			  sim.tx.ctl.session_nonce != nonce,
+		  2000);
+	sim.drop_up = 0;
+	CHECK(sim.tx.ctl.session_nonce != nonce);
+
+	/* TX 收到自己发过的旧 BEACON：不能把会话换回旧 nonce 上 */
+	CHECK(sim.beacon_len > 0U);
+	nonce = sim.tx.ctl.session_nonce;
+	bad_tag = sim.tx.ctl.stats.rx_bad_tag;
+	sim_inject(&sim, &sim.tx.ctl, sim.beacon, sim.beacon_len);
+	CHECK(sim.tx.ctl.stats.rx_bad_tag == bad_tag + 1U);
+	CHECK(sim.tx.ctl.session_nonce == nonce);
+}
+
+/*
+ * 换绑（重新配对）要换掉整棵子树：pair_key 掺了配对时的两个 nonce，所以同步字、
+ * 跳频表、tag 钥匙全换，旧配对录下来的帧再也验证不过。
+ */
+static void test_pairing_rotation(void)
+{
+	sim_t sim;
+	uint8_t salt_before[ZLRS_PAIR_SALT_LEN];
+	uint8_t auth_before[ZLRS_KEY_LEN];
+	uint8_t beacon[ZLRS_FRAME_MAX_LEN];
+	uint16_t beacon_len;
+	uint32_t bad_tag;
+	uint32_t nonce;
+
+	printf("link: pairing rotation\n");
+	sim_init(&sim);
+	pair_and_connect(&sim);
+
+	CHECK(sim.beacon_len > 0U);
+	beacon_len = sim.beacon_len;
+	memcpy(beacon, sim.beacon, beacon_len);
+	memcpy(salt_before, sim.tx.ctl.pair_salt, sizeof(salt_before));
+	memcpy(auth_before, sim.tx.ctl.link_auth_out, sizeof(auth_before));
+
+	/* 再配对一次（换绑走的就是这条路） */
+	zlrs_link_press(&sim.tx.ctl, sim.now_ms);
+	zlrs_link_press(&sim.rx.ctl, sim.now_ms);
+	SIM_UNTIL(&sim,
+		  sim.tx.ctl.state == ZLRS_STATE_SEARCHING &&
+			  sim.rx.ctl.state == ZLRS_STATE_SEARCHING,
+		  2000);
+
+	/* 配对材料换了，下层的同步字与 tag 钥匙跟着换 */
+	CHECK(memcmp(sim.tx.ctl.pair_salt, salt_before, ZLRS_PAIR_SALT_LEN) != 0);
+	CHECK(memcmp(sim.tx.ctl.link_auth_out, auth_before, ZLRS_KEY_LEN) != 0);
+	/* 两端仍然算出同一套 */
+	CHECK(memcmp(sim.tx.ctl.sync_word, sim.rx.ctl.sync_word, ZLRS_SYNC_WORD_LEN) == 0);
+	CHECK(memcmp(sim.tx.ctl.link_auth_out, sim.rx.ctl.link_auth_in,
+		     ZLRS_KEY_LEN) == 0);
+
+	/* 旧配对录下的 BEACON：钥匙已经换了，必须被丢掉 */
+	bad_tag = sim.rx.ctl.stats.rx_bad_tag;
+	nonce = sim.rx.ctl.session_nonce;
+	sim_inject(&sim, &sim.rx.ctl, beacon, beacon_len);
+	CHECK(sim.rx.ctl.stats.rx_bad_tag == bad_tag + 1U);
+	CHECK(sim.rx.ctl.session_nonce == nonce);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_SEARCHING);
 }
 
 static void test_control_payloads(void)
@@ -600,7 +723,7 @@ static void test_frag_drop(void)
 	pair_and_connect(&sim);
 	CHECK(sim.rx.data.state == ZLRS_STATE_CONNECTED);
 
-	key = sim.rx.data.session_key;
+	key = sim.rx.data.session_key_in; /* RX 校验 TX 发来的帧，用 in */
 	seq = (uint16_t)(sim.rx.data.last_rx_seq + 1U);
 
 	/* 缺口：整段丢弃 */
@@ -1039,6 +1162,8 @@ void test_link(void)
 {
 	test_pairing();
 	test_session();
+	test_reflection();
+	test_pairing_rotation();
 	test_control_payloads();
 	test_data_passthrough();
 	test_rx_rejects();
