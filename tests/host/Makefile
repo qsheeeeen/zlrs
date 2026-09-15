@@ -5,8 +5,9 @@
 #
 #   make -C tests/host run
 #
-# 密码学原语是**跟设备侧同一份源码**（lib/proto/crypto_soft.c），所以这里
-# 只要一个 C 编译器，不用先搭工作区。
+# 协议核心与链路层用的是 lib/ 里跟设备侧同一份源码；密码学是本目录下的
+# crypto_soft.c（同接口、零依赖，设备侧那份走 PSA）。所以这里只要一个 C 编译器，
+# 不用先搭工作区。
 
 CC      ?= cc
 # -MMD -MP：把头文件依赖写进 .d，改头文件后自动重编，避免旧对象混着新布局
@@ -22,8 +23,8 @@ LEAKS    ?= 0
 ifeq ($(SANITIZE),1)
 CFLAGS  += -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g -O1
 LDFLAGS += -fsanitize=address,undefined
-BUILD   := build-san
 SAN_ENV := ASAN_OPTIONS=detect_leaks=$(LEAKS)
+BUILD   := build-san
 else
 BUILD   := build
 endif
@@ -39,7 +40,8 @@ SRCS := main.c test_proto.c test_link.c \
         test_crsf.c test_config.c test_region.c test_led.c test_power.c \
         test_fuzz.c \
         crsf.c config.c region.c led.c \
-        crc.c crypto_soft.c fhss.c frag.c frame.c tlm.c link.c rate.c power.c
+        crypto_soft.c crc.c fhss.c frag.c frame.c tlm.c \
+        link.c rate.c power.c
 OBJS := $(addprefix $(BUILD)/,$(SRCS:.c=.o))
 DEPS := $(OBJS:.o=.d)
 

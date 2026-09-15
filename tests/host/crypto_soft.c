@@ -1,11 +1,18 @@
 /*
  * SPDX-License-Identifier: Apache-2.0
  *
- * 密码学实现：纯 C、无依赖，设备与主机侧测试用同一份代码。
+ * 密码学实现（**主机专用**）：纯 C、无依赖。设备侧一律走 lib/proto/crypto_psa.c
+ * （Zephyr 的 PSA Crypto）；这一份只在主机侧测试里用，作用有两个：
+ *
+ *   1. 跑固定向量，把 KDF / tag / 短语派生的语义钉死；
+ *   2. 跑协议仿真——主机上没有 PSA 可用，协议层需要一个能用的后端。
+ *
+ * 它与 PSA 后端必须给出同一串字节，否则设备与主机配出来的钥匙对不上。
+ *
  * 固定向量见 tests/host/test_proto.c（HKDF 与 tag 各一组，独立来源）。
  *
- * 设计上这里是可替换的一层：接口见 zlrs/proto/crypto.h。将来要接 Zephyr 的
- * PSA Crypto（比如换用带硬件加速的 provider）时，替换本文件即可。
+ * 文件是自包含的：短语派生与定长比较这两个小工具也在本文件末尾（设备侧的
+ * crypto_psa.c 里同样有一份）。两者必须给出同一串字节。
  */
 
 #include "zlrs/proto/crypto.h"
@@ -333,6 +340,7 @@ void zlrs_tag(const uint8_t *key, size_t key_len, const uint8_t *data, size_t le
 	memset(mac, 0, sizeof(mac));
 }
 
+/* 设备侧的 crypto_psa.c 里也有一份（各文件自包含），改动要两边同步 */
 void zlrs_root_key_from_phrase(const char *phrase, uint8_t out[ZLRS_KEY_LEN])
 {
 	static const char salt[] = ZLRS_KDF_V1_SALT;

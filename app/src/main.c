@@ -20,6 +20,8 @@
 
 #include <string.h>
 
+#include <psa/crypto.h>
+
 #include <smtc_rac_api.h>
 #include <smtc_sw_platform_helper.h>
 
@@ -661,6 +663,20 @@ static void fault_loop(void)
 	}
 }
 
+/*
+ * 密码学后端初始化。PSA provider 必须在第一次导入钥匙之前初始化；失败就不参与
+ * 收发——KDF 与每包 tag 都靠它，闭着眼上空中没有任何意义。
+ */
+static void crypto_init(void)
+{
+	const psa_status_t st = psa_crypto_init();
+
+	if (st != PSA_SUCCESS) {
+		LOG_ERR("psa_crypto_init failed (%d)", (int)st);
+		fault_loop();
+	}
+}
+
 static void led_tick(uint32_t now_ms)
 {
 	zlrs_led_input_t in;
@@ -725,6 +741,7 @@ int main(void)
 	(void)zlrs_store_init();
 	plan_init();
 	build_links();
+	crypto_init();
 	load_identity();
 	failsafe_init();
 

@@ -3,11 +3,20 @@
 
 config ZLRS_PROTO
 	bool "zlrs protocol core"
+	select PSA_CRYPTO
+	select PSA_WANT_ALG_HKDF
+	select PSA_WANT_ALG_HMAC
+	select PSA_WANT_ALG_SHA_256
+	select PSA_WANT_KEY_TYPE_DERIVE
+	select PSA_WANT_KEY_TYPE_HMAC
 	help
 	  Pure C protocol core: frame codec, FHSS sequence, fragmentation
-	  reassembly, CRC utility and the key derivation and tagging used on
-	  air. No Zephyr dependency, so the same sources build and run on the
-	  host, see tests/host.
+	  reassembly and CRC utility. It has no Zephyr dependency; the crypto
+	  backend does: on target the KDF and per-frame tags go through Zephyr's
+	  PSA Crypto (lib/proto/crypto_psa.c, which is why the algorithms above
+	  are selected). Host-side tests compile a self-contained software
+	  implementation instead (tests/host/crypto_soft.c) that produces the
+	  same bytes.
 
 module = ZLRS_PROTO
 module-str = zlrs_proto

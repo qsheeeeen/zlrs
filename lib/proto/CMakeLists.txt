@@ -4,7 +4,7 @@
 zephyr_library()
 zephyr_library_sources(
   crc.c
-  crypto_soft.c
+  crypto_psa.c
   fhss.c
   frag.c
   frame.c

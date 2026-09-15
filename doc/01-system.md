@@ -203,8 +203,9 @@ QoS 分档按场景切换 profile，而不是散落在代码里。
 ```
 include/zlrs/proto/   协议核心头文件
 lib/proto/            协议核心：帧编解码、分片重组、FHSS 跳频表、
-                      密钥派生与标签。密码学是自带的纯 C 实现，
-                      也因此在主机上能编译同一份源码。
+                      密钥派生与标签。密码学原语在设备侧走 PSA
+                      （lib/proto/crypto_psa.c），主机测试另有一份
+                      等价的纯 C 实现（tests/host/crypto_soft.c）。
                       空口 CRC 由射频硬件负责
 lib/link/             链路层：会话与配对、密钥派生与标签、
                       把帧翻译成 RAC 事务；ARQ profile 与速率自适应策略

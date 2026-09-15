@@ -143,7 +143,8 @@ python3 scripts/zlrs-config.py --port /dev/ttyACM0 exit
 ```
 app/                  Zephyr 应用：USP/RAC 移植、串口透传、NVS 持久化、超帧主循环
 boards/zlrs/          板级定义（原型板 RP2350-Zero + Core2021）
-lib/proto/            协议核心（纯 C）：帧编解码、分片重组、跳频表、密钥派生与标签
+lib/proto/            协议核心：帧编解码、分片重组、跳频表、密钥派生与标签
+                      （原语走 PSA，见 lib/proto/crypto_psa.c）
                       遥测载荷
 lib/link/             链路层（纯 C）：状态机、配对与会话、超帧时隙、射频抽象接口
                       ARQ profile、速率自适应策略
@@ -183,15 +184,16 @@ zephyr/module.yml     本仓库作为 Zephyr 模块的入口（板级定义也�
 | Zephyr | v4.4.0 | 由 [west.yml](west.yml) 固定；RP2350 的 TRNG 驱动从 4.4 起在树内 |
 | usp_zephyr / usp | v1.1.2-feature-202604 | Semtech 射频栈（RAC/RALF），射频驱动在这里；官方只有 feature tag |
 | Zephyr SDK | 1.0.0 | 装 `arm-zephyr-eabi` 一个工具链即可 |
-| 密码学 | 本仓库自带 | 纯 C 的 SHA-256/HMAC/HKDF/PBKDF2，设备与主机同一份源码 |
+| 密码学 | Zephyr PSA Crypto | 设备侧 KDF 与每包 tag 走 PSA（provider 通常是 mbedTLS）；主机测试用一份等价的纯 C 实现 |
 
 ## 构建要点
 
 1. **板子在本仓库里**：`zephyr/module.yml` 把仓库根同时作为 `board_root` 与
    `dts_root`，所以不需要 `--shield`，也没有板级 overlay 要维护。
 2. **换硬件只改 devicetree**：应用认的是 `lora-transceiver`、`zlrs-data-uart`、
-   `zlrs-crsf-uart`、`zlrs-button` 这些别名，引脚号不落到 C 代码里（CRSF 端口
-   在原型板上是 USB CDC ACM，自定义板指到 UART 即可）。
+   `zlrs-data-cdc`、`zlrs-crsf-cdc` / `zlrs-crsf-uart`、`zlrs-button` 这些别名，
+   引脚号不落到 C 代码里；别名缺失的端口自动裁掉（两条链路各挂一对
+   `-uart` / `-cdc`，两块都在时 USB 优先，见 app/src/port_pick.c）。
 3. **工具链固定用 Zephyr SDK**：发行版那份 `arm-none-eabi-gcc` 的 newlib 没开
    retargetable locking，会撞静态断言。
 4. **镜像不许越过 1 MB**：链接区间取的是 flash 里的 code 分区，越界是编译错误，

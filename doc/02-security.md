@@ -59,7 +59,7 @@ root_key (32B, 用户配置, 组内共享)
 自己会被当成对端帧收下（反射），见第 7.2 节。
 
 `link_enc` 还没实现；做的时候方向与 CTR 计数器要一起设计，别两个方向共用一把钥匙
-加同一套计数器。
+加同一套计数器。加密同样走 PSA（AES-CTR），在 Kconfig 里打开对应的 `PSA_WANT_*`。
 
 上空中出现的三个值（`fhss_seed` 与两个同步字）都是 `pair_key` 的单向派生值，听到
 也推不出密钥。ELRS 直接把 UID 发出去，等于把凭据发出去。
@@ -222,9 +222,10 @@ ECDH），并接受"知道 `root_key` 的人能在配对窗口抢走配对"。�
 | 每包 tag | HMAC-SHA256 截断 4 B | 覆盖 header + seq + payload |
 | 可选加密（P2） | AES-CTR | MAC 覆盖密文（encrypt-then-MAC） |
 
-实现在仓库自带的纯 C 原语（`lib/proto/crypto_soft.c`）：设备与主机共用同一份源码，
-主机侧测试不需要 Zephyr 工作区；代价是没有硬件加速、也没过第三方审计。接口是薄
-封装（`include/zlrs/proto/crypto.h`），接 PSA Crypto 或硬件加速时只换那一个文件。
+设备侧原语走 Zephyr 的 **PSA Crypto**（`lib/proto/crypto_psa.c`，provider 通常是
+mbedTLS；换带硬件加速的 provider 不用改应用）。主机侧测试没有 PSA，用一份同接口、
+零依赖的纯 C 实现（`tests/host/crypto_soft.c`）。两边必须给出同一串字节——主机侧
+用一组固定向量把它钉住。接口是薄封装（`include/zlrs/proto/crypto.h`）。
 
 ### KDF 放在设备侧
 
