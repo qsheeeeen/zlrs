@@ -58,8 +58,9 @@ dkms.conf
 build/
 compile_commands.json
 
-# 主机侧测试
+# 主机侧测试（build = 普通构建，build-san = ASan/UBSan）
 tests/host/build/
+tests/host/build-san/
 
 # Python
 *.pyc

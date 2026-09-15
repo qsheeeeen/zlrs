@@ -33,5 +33,6 @@ void test_config(void);
 void test_region(void);
 void test_led(void);
 void test_power(void);
+void test_fuzz(void);
 
 #endif /* ZLRS_HOST_TEST_H_ */

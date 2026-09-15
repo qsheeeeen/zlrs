@@ -13,11 +13,31 @@ CC      ?= cc
 CFLAGS  ?= -std=c11 -O2 -Wall -Wextra -Werror -MMD -MP
 CPPFLAGS += -I../../include
 
-BUILD := build
+# 默认就带 ASan + UBSan：主机测试是抓越界与未定义行为最便宜的地方，忘了开等于白跑。
+#   SANITIZE=0  关掉，换快一点的构建（单独目录，两边不会互相污染）
+#   LEAKS=1     打开 LeakSanitizer。默认关：lib 与用例里没有任何动态分配，而且受限
+#               容器缺 ptrace 时 LeakSanitizer 直接起不来
+SANITIZE ?= 1
+LEAKS    ?= 0
+ifeq ($(SANITIZE),1)
+CFLAGS  += -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g -O1
+LDFLAGS += -fsanitize=address,undefined
+BUILD   := build-san
+SAN_ENV := ASAN_OPTIONS=detect_leaks=$(LEAKS)
+else
+BUILD   := build
+endif
+
+# 模糊测试的迭代次数（默认见 test_fuzz.c）
+ifneq ($(FUZZ_ITERS),)
+CPPFLAGS += -DFUZZ_ITERS=$(FUZZ_ITERS)
+endif
+
 VPATH := .:../../lib/proto:../../lib/link:../../lib/crsf:../../lib/config:../../lib/region:../../lib/led
 
 SRCS := main.c test_proto.c test_link.c \
         test_crsf.c test_config.c test_region.c test_led.c test_power.c \
+        test_fuzz.c \
         crsf.c config.c region.c led.c \
         crc.c crypto_soft.c fhss.c frag.c frame.c tlm.c link.c rate.c power.c
 OBJS := $(addprefix $(BUILD)/,$(SRCS:.c=.o))
@@ -31,16 +51,16 @@ BIN := $(BUILD)/test_zlrs
 all: $(BIN)
 
 $(BIN): $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^
 
 $(BUILD)/%.o: %.c
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c -o $@ $<
 
 run: $(BIN)
-	./$(BIN)
+	$(SAN_ENV) ./$(BIN)
 
 clean:
-	rm -rf $(BUILD)
+	rm -rf build build-san
 
 -include $(DEPS)

@@ -29,7 +29,9 @@ jobs:
           cc --version | head -1
           make --version | head -1
           python3 --version
-      - name: host tests
-        run: make -C tests/host run
+      # 主机测试默认带 ASan + UBSan。CI 里额外打开泄漏检测（受限容器缺 ptrace 时
+      # 它起不来，所以本地默认关）。
+      - name: host tests (ASan + UBSan)
+        run: make -C tests/host run LEAKS=1
       - name: config tool self-test
         run: python3 scripts/zlrs-config.py --self-test

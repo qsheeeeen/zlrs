@@ -200,8 +200,10 @@ zephyr/module.yml     本仓库作为 Zephyr 模块的入口（板级定义也�
 
 ## 测试
 
-`tests/host` 用假射频与假时钟跑两个节点的仿真：配对与会话、跳频锁步、RC/TLM
-收发的防重放、400 字节跨帧透传与丢包恢复、失联与重连都在里面，不需要硬件。
+`tests/host` 用假射频与假时钟跑仿真，不需要硬件：配对与会话、跳频锁步、RC/TLM
+收发的防重放、400 字节跨帧透传与丢包恢复、失联与重连、同场多节点、畸形输入、
+时间戳与序号回绕都在里面。默认带 ASan + UBSan，开关见
+[tests/host/Makefile](tests/host/Makefile)。
 
 CI（[.github/workflows/build.yml](.github/workflows/build.yml)）跑同一套 host
 测试，另外按 README 的流程搭工作区构建一次原型板固件。

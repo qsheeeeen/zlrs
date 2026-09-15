@@ -29,7 +29,7 @@ ELRS 是成熟的遥控链路**生态**（几百个硬件目标、WiFi 配置与
 | 外设集成 | Serial VTX、Team Racing、Trainer（头追）、Sentinel、Backpack、BLE 手柄 | 无 |
 | 双频用法 | Gemini：单频段双发分集；Xrossband：双频同时发同一份 RC（冗余） | 两个频段**分工**：sub-G 跑控制、2.4G 跑透传（不冗余） |
 | 固件与角色 | TX 与 RX 是不同 target | **同一份固件**，角色一个 Kconfig |
-| 工程可验证性 | 成熟 CI + CRC 测试 / RX 测试 / 单元测试 + 社区实测数据 | 纯 C 分层 + 主机双节点仿真（990 checks）+ 配置工具 self-test + CI（host 测试 + 两变体构建）；**射频层尚未上板** |
+| 工程可验证性 | 成熟 CI + CRC 测试 / RX 测试 / 单元测试 + 社区实测数据 | 纯 C 分层 + 主机仿真（1031 checks）+ 配置工具 self-test + CI；**射频层尚未上板** |
 
 ## 我们明显缺的（按优先级）
 

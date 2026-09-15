@@ -50,6 +50,7 @@ int main(void)
 	test_region();
 	test_led();
 	test_power();
+	test_fuzz();
 	printf("%u checks, %u failure(s)\n", zlrs_test_checks, zlrs_test_failures);
 
 	return zlrs_test_failures == 0U ? 0 : 1;

@@ -20,6 +20,7 @@
 #define SIM_RATE_DATA 2600000U
 #define SIM_DATA_MTU 128U
 #define SIM_FRAMES_PER_SEC (1000U / SIM_FRAME_MS)
+#define SIM_MAX_NODES 3U /* 主对两个 + 可选的第三个（同场设备或攻击者） */
 
 typedef struct node node_t;
 
@@ -55,7 +56,10 @@ struct node {
 typedef struct {
 	node_t tx;
 	node_t rx;
+	node_t nth;        /* 第三个节点：同场设备或攻击者，只有三节点用例启用 */
+	bool nth_enabled;
 	uint32_t now_ms;
+	uint8_t root_key[ZLRS_KEY_LEN];
 	int32_t drop_down; /* 还需丢弃多少次 TX->RX 投递 */
 	int32_t drop_up;   /* 还需丢弃多少次 RX->TX 投递 */
 	int32_t drop_data_down; /* 只丢 TX->RX 的数据帧（ARQ 用例用） */
@@ -240,6 +244,7 @@ static void sim_init(sim_t *sim)
 	for (uint8_t i = 0; i < sizeof(root_key); i++) {
 		root_key[i] = (uint8_t)(i + 1U);
 	}
+	memcpy(sim->root_key, root_key, sizeof(sim->root_key));
 
 	node_init(&sim->tx, ZLRS_ROLE_TX, root_key, tx_id, 0x11111111U);
 	node_init(&sim->rx, ZLRS_ROLE_RX, root_key, rx_id, 0x22222222U);
@@ -251,47 +256,53 @@ static zlrs_link_t *link_of(node_t *node, uint8_t slot)
 								       : &node->data;
 }
 
-static void sim_deliver(sim_t *sim, zlrs_link_t *src_link, const zlrs_radio_req_t *src,
-			zlrs_link_t *dst_link, const zlrs_radio_req_t *dst, int32_t *drop)
+/*
+ * 空口上发生的事：只有频段与同步字都对得上的接收方才收得到（射频层过滤）。
+ * 比的是事务里实际用的同步字——配对阶段用的是公开常量，不是派生出来的那对。
+ */
+static bool sim_phy_match(const zlrs_radio_req_t *src, const zlrs_radio_req_t *dst,
+			  const zlrs_link_t *src_link, const zlrs_link_t *dst_link)
 {
-	uint16_t len = src->size;
+	return src_link->cfg.domain == dst_link->cfg.domain &&
+	       memcmp(src->sync_word, dst->sync_word, ZLRS_SYNC_WORD_LEN) == 0;
+}
 
-	zlrs_link_complete(src_link, ZLRS_RADIO_OK, 0U, 0, 0, sim->now_ms);
-
-	if (*drop > 0) {
-		(*drop)--;
-		zlrs_link_complete(dst_link, ZLRS_RADIO_OK, 0U, 0, 0, sim->now_ms);
-		return;
-	}
-
+/* 记录主对发出去的帧：beacon / 会话响应抓取与上下行缓冲都只认主对 */
+static void sim_record_air(sim_t *sim, const zlrs_link_t *src_link, const uint8_t *buf,
+			   uint16_t len)
+{
 	if (len > ZLRS_FRAME_MAX_LEN) {
 		len = ZLRS_FRAME_MAX_LEN;
 	}
 	if (src_link == &sim->tx.ctl || src_link == &sim->tx.data) {
-		memcpy(sim->down, src->buf, len);
+		memcpy(sim->down, buf, len);
 		sim->down_len = len;
-	} else {
-		memcpy(sim->up, src->buf, len);
+	} else if (src_link == &sim->rx.ctl || src_link == &sim->rx.data) {
+		memcpy(sim->up, buf, len);
 		sim->up_len = len;
 	}
-	if ((src->buf[0] >> 2) == (uint8_t)ZLRS_PKT_BEACON && sim->beacon_len == 0U) {
-		memcpy(sim->beacon, src->buf, len);
+	if ((buf[0] >> 2) == (uint8_t)ZLRS_PKT_BEACON && sim->beacon_len == 0U) {
+		memcpy(sim->beacon, buf, len);
 		sim->beacon_len = len;
 	}
-	if ((src->buf[0] >> 2) == (uint8_t)ZLRS_PKT_SESS_RESP &&
-	    sim->sess_resp_len == 0U) {
-		memcpy(sim->sess_resp, src->buf, len);
+	if ((buf[0] >> 2) == (uint8_t)ZLRS_PKT_SESS_RESP && sim->sess_resp_len == 0U) {
+		memcpy(sim->sess_resp, buf, len);
 		sim->sess_resp_len = len;
 	}
+}
 
-	memcpy(dst->buf, src->buf, len);
-	if (sim->corrupt_next) {
+/* 把一帧交给某个接收请求（等价于射频把这串字节写进它的接收缓冲） */
+static void sim_feed(sim_t *sim, zlrs_link_t *dst_link, const zlrs_radio_req_t *dst,
+		     const uint8_t *buf, uint16_t len, bool primary)
+{
+	memcpy(dst->buf, buf, len);
+	if (primary && sim->corrupt_next) {
 		dst->buf[len - 1U] ^= 0xFFU;
 		sim->corrupt_next = false;
 	}
 	zlrs_link_complete(dst_link, ZLRS_RADIO_OK, len, -60, 0, sim->now_ms);
 
-	if (sim->replay_next) {
+	if (primary && sim->replay_next) {
 		sim->replay_next = false;
 		zlrs_link_complete(dst_link, ZLRS_RADIO_OK, len, -60, 0, sim->now_ms);
 	}
@@ -299,28 +310,75 @@ static void sim_deliver(sim_t *sim, zlrs_link_t *src_link, const zlrs_radio_req_
 
 static void sim_slot(sim_t *sim, uint8_t slot)
 {
-	zlrs_link_t *a = link_of(&sim->tx, slot);
-	zlrs_link_t *b = link_of(&sim->rx, slot);
-	const zlrs_radio_req_t *ra = zlrs_link_slot(a, slot, sim->now_ms);
-	const zlrs_radio_req_t *rb = zlrs_link_slot(b, slot, sim->now_ms);
+	zlrs_link_t *links[SIM_MAX_NODES];
+	const zlrs_radio_req_t *reqs[SIM_MAX_NODES];
+	bool served[SIM_MAX_NODES] = { false };
+	uint8_t nodes = 0U;
 
-	if (ra != NULL && ra->is_tx && rb != NULL && !rb->is_tx) {
-		if (slot == ZLRS_SLOT_DATA_A && sim->drop_data_down > 0) {
-			int32_t once = 1;
+	links[nodes] = link_of(&sim->tx, slot);
+	reqs[nodes] = zlrs_link_slot(links[nodes], slot, sim->now_ms);
+	nodes++;
+	links[nodes] = link_of(&sim->rx, slot);
+	reqs[nodes] = zlrs_link_slot(links[nodes], slot, sim->now_ms);
+	nodes++;
+	if (sim->nth_enabled) {
+		links[nodes] = link_of(&sim->nth, slot);
+		reqs[nodes] = zlrs_link_slot(links[nodes], slot, sim->now_ms);
+		nodes++;
+	}
 
-			sim->drop_data_down--;
-			sim_deliver(sim, a, ra, b, rb, &once);
-		} else {
-			sim_deliver(sim, a, ra, b, rb, &sim->drop_down);
+	for (uint8_t i = 0U; i < nodes; i++) {
+		uint16_t len;
+
+		if (reqs[i] == NULL || !reqs[i]->is_tx) {
+			continue;
 		}
-	} else if (rb != NULL && rb->is_tx && ra != NULL && !ra->is_tx) {
-		sim_deliver(sim, b, rb, a, ra, &sim->drop_up);
-	} else {
-		if (ra != NULL) {
-			zlrs_link_complete(a, ZLRS_RADIO_OK, 0U, 0, 0, sim->now_ms);
+
+		len = reqs[i]->size;
+		if (len > ZLRS_FRAME_MAX_LEN) {
+			len = ZLRS_FRAME_MAX_LEN;
 		}
-		if (rb != NULL) {
-			zlrs_link_complete(b, ZLRS_RADIO_OK, 0U, 0, 0, sim->now_ms);
+		sim_record_air(sim, links[i], reqs[i]->buf, len);
+		zlrs_link_complete(links[i], ZLRS_RADIO_OK, 0U, 0, 0, sim->now_ms);
+
+		for (uint8_t j = 0U; j < nodes; j++) {
+			/* 主对的丢包开关只作用于主对（0 = TX 节点，1 = RX 节点） */
+			const bool primary = (i < 2U && j < 2U);
+			int32_t *drop = NULL;
+
+			if (j == i || reqs[j] == NULL || reqs[j]->is_tx || served[j] ||
+			    !sim_phy_match(reqs[i], reqs[j], links[i], links[j])) {
+				continue;
+			}
+
+			if (primary) {
+				if (i == 0U && j == 1U) {
+					drop = (slot == ZLRS_SLOT_DATA_A &&
+						sim->drop_data_down > 0)
+						       ? &sim->drop_data_down
+						       : &sim->drop_down;
+				} else if (i == 1U && j == 0U) {
+					drop = &sim->drop_up;
+				}
+			}
+
+			if (drop != NULL && *drop > 0) {
+				(*drop)--;
+				zlrs_link_complete(links[j], ZLRS_RADIO_OK, 0U, 0, 0,
+						   sim->now_ms);
+				served[j] = true;
+				continue;
+			}
+
+			sim_feed(sim, links[j], reqs[j], reqs[i]->buf, len, primary);
+			served[j] = true;
+		}
+	}
+
+	/* 没收到东西的接收请求，也要收尾 */
+	for (uint8_t j = 0U; j < nodes; j++) {
+		if (reqs[j] != NULL && !reqs[j]->is_tx && !served[j]) {
+			zlrs_link_complete(links[j], ZLRS_RADIO_OK, 0U, 0, 0, sim->now_ms);
 		}
 	}
 }
@@ -411,7 +469,206 @@ static void pair_and_connect(sim_t *sim)
 		  2000);
 }
 
+/*
+ * 启用第三个节点。三节点用例共用它，差别只在参数：
+ *   - 同场另一对设备：自己的 dev_id / peer / salt
+ *   - 攻击者：偷来的 dev_id（主对 TX 的）+ 主对 RX 当 peer；salt 对/错决定它是
+ *     "听过那次配对"（能冒充）还是只抓到了同步字（过不了 tag）
+ */
+static void sim_enable_nth(sim_t *sim, uint8_t role, const uint8_t dev_id[ZLRS_DEV_ID_LEN],
+			   const uint8_t peer_id[ZLRS_DEV_ID_LEN],
+			   const uint8_t salt[ZLRS_PAIR_SALT_LEN])
+{
+	node_init(&sim->nth, role, sim->root_key, dev_id, 0x33333333U);
+	zlrs_link_set_peer(&sim->nth.ctl, peer_id, salt, sim->now_ms);
+	zlrs_link_set_peer(&sim->nth.data, peer_id, salt, sim->now_ms);
+	sim->nth_enabled = true;
+}
+
 /* ---- 用例 ---------------------------------------------------------------- */
+
+/*
+ * 三节点之一：同场另一对设备。射频同步字不同，两边在物理层就互相听不到——
+ * 这是 doc/03 第 2 节与 doc/02 第 7.2 节"组内其它设备误占链路"那条声明的依据。
+ */
+static void test_third_node_isolation(void)
+{
+	sim_t sim;
+	uint8_t chunk[16];
+	static const uint8_t other_id[ZLRS_DEV_ID_LEN] = { 0x55, 0x66, 0x77, 0x88 };
+	static const uint8_t other_peer[ZLRS_DEV_ID_LEN] = { 0x99, 0xaa, 0xbb, 0xcc };
+	static const uint8_t other_salt[ZLRS_PAIR_SALT_LEN] = { 9U, 9U, 9U, 9U, 9U, 9U, 9U, 9U };
+
+	printf("link: third node isolation\n");
+	sim_init(&sim);
+	pair_and_connect(&sim);
+
+	sim_enable_nth(&sim, ZLRS_ROLE_TX, other_id, other_peer, other_salt);
+	sim_run(&sim, 200U);
+
+	/* 第三节点发得出去，但一帧都听不到主对 */
+	CHECK(sim.nth.ctl.stats.tx_frames > 0U);
+	CHECK(sim.nth.ctl.stats.rx_frames == 0U);
+	CHECK(sim.nth.ctl.stats.rx_bad_tag == 0U);
+
+	/* 主对也一帧都没收到它的：连坏 tag 都没有，说明没进射频 */
+	CHECK(sim.tx.ctl.stats.rx_bad_tag == 0U);
+	CHECK(sim.rx.ctl.stats.rx_bad_tag == 0U);
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
+
+	/* 主对照常透传 */
+	memset(chunk, 0x5aU, sizeof(chunk));
+	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
+	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(chunk), 400);
+	CHECK(sim.rx.stream_len == sizeof(chunk));
+}
+
+/*
+ * 三节点之二：攻击者偷到主对 TX 的 dev_id，也从空中抓到了同步字，但没听过那次
+ * 配对（salt 是错的）。帧能进接收机，tag 过不去——这就是 pair_key 掺配对 nonce
+ * 换来的东西（doc/02 第 3 节）。
+ */
+static void test_intruder_without_pair_salt(void)
+{
+	sim_t sim;
+	uint8_t chunk[8];
+	static const uint8_t wrong_salt[ZLRS_PAIR_SALT_LEN] = {
+		0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU,
+	};
+	uint32_t bad_before;
+
+	printf("link: intruder without pairing salt\n");
+	sim_init(&sim);
+	pair_and_connect(&sim);
+
+	/* 真 TX 先静默，让 RX 掉回 SEARCHING——这正是攻击者要抓的时机 */
+	sim.drop_down = 1000000;
+	SIM_UNTIL(&sim, sim.rx.ctl.state == ZLRS_STATE_SEARCHING, 400);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_SEARCHING);
+
+	sim_enable_nth(&sim, ZLRS_ROLE_TX, sim.tx.dev_id, sim.rx.dev_id, wrong_salt);
+	/* 同步字是公开发送的：攻击者抄下来就能把帧送进接收机 */
+	memcpy(sim.nth.ctl.sync_word, sim.tx.ctl.sync_word, ZLRS_SYNC_WORD_LEN);
+	memcpy(sim.nth.data.sync_word, sim.tx.data.sync_word, ZLRS_SYNC_WORD_LEN);
+
+	bad_before = sim.rx.ctl.stats.rx_bad_tag;
+	sim_run(&sim, 300U);
+
+	/* 收到了，但一帧都没验过，会话也没被建起来 */
+	CHECK(sim.rx.ctl.stats.rx_bad_tag > bad_before);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_SEARCHING);
+	CHECK(!sim.rx.ctl.session_valid);
+
+	/* 真 TX 回来：主对重新建链，攻击者插不进来 */
+	sim.drop_down = 0;
+	SIM_UNTIL(&sim,
+		  sim.tx.ctl.state == ZLRS_STATE_CONNECTED &&
+			  sim.rx.ctl.state == ZLRS_STATE_CONNECTED,
+		  4000);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
+
+	/* 主对照常透传 */
+	memset(chunk, 0x6bU, sizeof(chunk));
+	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
+	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(chunk), 400);
+	CHECK(sim.rx.stream_len == sizeof(chunk));
+}
+
+/*
+ * 三节点之三：组内成员**听过**那次配对（salt 正确、dev_id 照抄）。它能算出同一
+ * 套钥匙，于是趁真 TX 沉默时与 RX 完成握手并注入 RC。
+ *
+ * 这是 doc/02 第 7.2 节已声明的固有代价（没有逐设备身份），用例把它钉住——
+ * 别哪天以为它被修掉了。要真挡住得靠逐设备密钥/证书。
+ */
+static void test_group_member_impersonates(void)
+{
+	sim_t sim;
+	uint8_t rc[ZLRS_RC_PAYLOAD_LEN];
+
+	printf("link: group member impersonation (documented)\n");
+	sim_init(&sim);
+	pair_and_connect(&sim);
+
+	/* 真 TX 静默：丢光它到 RX 的投递，RX 100 ms 后掉回 SEARCHING */
+	sim.drop_down = 1000000;
+	SIM_UNTIL(&sim, sim.rx.ctl.state == ZLRS_STATE_SEARCHING, 400);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_SEARCHING);
+
+	/* 冒充者：dev_id 与主对 TX 相同，salt 是它听过的那一份 */
+	sim_enable_nth(&sim, ZLRS_ROLE_TX, sim.tx.dev_id, sim.rx.dev_id,
+		       sim.tx.ctl.pair_salt);
+
+	SIM_UNTIL(&sim, sim.rx.ctl.state == ZLRS_STATE_CONNECTED, 2000);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
+
+	/* 注入一帧 RC：RX 会当成真 TX 的遥控数据收下 */
+	memset(rc, 0x7bU, sizeof(rc));
+	zlrs_link_set_rc(&sim.nth.ctl, rc, sizeof(rc));
+	SIM_UNTIL(&sim, sim.rx.rc_count > 0U, 400);
+	CHECK(sim.rx.rc_count > 0U);
+	CHECK(sim.rx.rc_len == sizeof(rc));
+	CHECK(memcmp(sim.rx.rc, rc, sizeof(rc)) == 0);
+}
+
+/* 32 位毫秒时间戳回绕：超时与失联判定都按无符号差值算，跨过 0 不能抽风 */
+static void test_time_wrap(void)
+{
+	sim_t sim;
+	uint8_t chunk[8];
+
+	printf("link: time wrap\n");
+	sim_init(&sim);
+	sim.now_ms = 0xFFFFFF00U; /* 约 42 帧之后翻过 2^32 */
+	pair_and_connect(&sim);
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
+
+	sim_run(&sim, 200U);
+	CHECK(sim.now_ms < 0x1000U); /* 确实翻过去了 */
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
+
+	memset(chunk, 0x66U, sizeof(chunk));
+	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
+	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(chunk), 400);
+	CHECK(sim.rx.stream_len == sizeof(chunk));
+}
+
+/* 16 位序号回绕：接收窗口按有符号差值比大小，跨过 0xFFFF 不能把新帧当旧帧 */
+static void test_seq_wrap(void)
+{
+	sim_t sim;
+	uint8_t rc[ZLRS_RC_PAYLOAD_LEN];
+	uint8_t chunk[8];
+	uint32_t rc_before;
+
+	printf("link: sequence wrap\n");
+	sim_init(&sim);
+	pair_and_connect(&sim);
+
+	/* 把游标挪到回绕点前面，省掉 65536 帧的仿真 */
+	sim.tx.ctl.tx_seq = 0xFFF0U;
+	sim.rx.ctl.last_rx_seq = 0xFFF0U;
+	sim.rx.ctl.lq_last_seq = 0xFFF0U;
+	memset(rc, 0x21U, sizeof(rc));
+	zlrs_link_set_rc(&sim.tx.ctl, rc, sizeof(rc));
+
+	sim_run(&sim, 40U);
+	CHECK(sim.tx.ctl.tx_seq < 0xFFF0U); /* 序号真的翻过去了 */
+
+	rc_before = sim.rx.rc_count;
+	sim_run(&sim, 20U);
+	CHECK(sim.rx.rc_count > rc_before);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
+
+	/* 数据链路的序号也一样 */
+	memset(chunk, 0x77U, sizeof(chunk));
+	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
+	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(chunk), 400);
+	CHECK(sim.rx.stream_len == sizeof(chunk));
+}
 
 static void test_pairing(void)
 {
@@ -1269,6 +1526,11 @@ void test_link(void)
 	test_reflection();
 	test_pairing_rotation();
 	test_session_replay();
+	test_third_node_isolation();
+	test_intruder_without_pair_salt();
+	test_group_member_impersonates();
+	test_time_wrap();
+	test_seq_wrap();
 	test_control_payloads();
 	test_data_passthrough();
 	test_rx_rejects();
