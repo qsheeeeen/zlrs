@@ -48,6 +48,7 @@ int main(void)
 	test_crsf();
 	test_config();
 	test_region();
+	test_mod();
 	test_led();
 	test_power();
 	test_fuzz();

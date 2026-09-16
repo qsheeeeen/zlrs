@@ -31,6 +31,7 @@ void test_link(void);
 void test_crsf(void);
 void test_config(void);
 void test_region(void);
+void test_mod(void);
 void test_led(void);
 void test_power(void);
 void test_fuzz(void);

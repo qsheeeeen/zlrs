@@ -37,10 +37,10 @@ endif
 VPATH := .:../../lib/proto:../../lib/link:../../lib/crsf:../../lib/config:../../lib/region:../../lib/led
 
 SRCS := main.c test_proto.c test_link.c \
-        test_crsf.c test_config.c test_region.c test_led.c test_power.c \
+        test_crsf.c test_config.c test_region.c test_mod.c test_led.c test_power.c \
         test_fuzz.c \
         crsf.c config.c region.c led.c \
-        crypto_soft.c crc.c fhss.c frag.c frame.c tlm.c \
+        crypto_soft.c crc.c fhss.c frag.c frame.c mod.c tlm.c \
         link.c rate.c power.c
 OBJS := $(addprefix $(BUILD)/,$(SRCS:.c=.o))
 DEPS := $(OBJS:.o=.d)
