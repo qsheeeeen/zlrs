@@ -107,6 +107,7 @@
 | `CONFIG_ZLRS_APP_DATA_ARQ=n` | 透传回到 best-effort（默认就是关） | `link: arq *`、`link: backpressure` |
 | `CONFIG_ZLRS_APP_RATE_ADAPT=n` | 固定速率档（默认就是关） | `link: rate adapt` |
 | `CONFIG_ZLRS_APP_DYNAMIC_POWER=n` | 固定发射功率 | `power: *` |
+| `CONFIG_ZLRS_APP_RESYNC_PERIOD_MS=0` | 不做连接态周期 `BEACON`：跳频索引只在建链时对齐，对端重启也不会自动重连 | `link: hop resync`、`link: peer restart reconnect` |
 
 推荐的顺序：`P0` + 关跳频 + 关握手 + 关遥测 → 先确认"自己发的帧自己能收到"；然后打开 tag（`P1`）；再打开跳频；再打开遥测与失联判定；最后才是速率自适应与动态功率——这两项的阈值本来就要等实测曲线（见 [05-roadmap.md](05-roadmap.md) 的 M4），上板第一步不该被它们干扰。
 

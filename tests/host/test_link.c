@@ -1710,6 +1710,167 @@ static void test_bringup_no_telemetry(void)
 	CHECK(memcmp(sim.rx.rc, rc, sizeof(rc)) == 0);
 }
 
+/*
+ * 连接态周期 BEACON（doc/03-protocol.md 5.1）：两端晶振差会让跳频索引慢慢错开，
+ * RX 踩空之后靠这个帧把索引拉回来。这里直接把索引挪开 4 格来模拟漂移。
+ */
+static void test_hop_resync(void)
+{
+	sim_t sim;
+	uint8_t rc[ZLRS_RC_PAYLOAD_LEN];
+	uint8_t chunk[8];
+	uint32_t resync_before;
+
+	printf("link: hop resync (connected-state beacon)\n");
+
+	sim_init(&sim);
+	sim.tx.ctl.cfg.resync_every_n = 25U;
+	sim.rx.ctl.cfg.resync_every_n = 25U;
+	sim.tx.data.cfg.resync_every_n = 50U;
+	sim.rx.data.cfg.resync_every_n = 50U;
+	pair_and_connect(&sim);
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
+
+	memset(rc, 0x81U, sizeof(rc));
+	zlrs_link_set_rc(&sim.tx.ctl, rc, sizeof(rc));
+	sim_run(&sim, 30U);
+	CHECK(sim.rx.rc_count > 0U);
+	CHECK(sim.rx.ctl.fhss.index == sim.tx.ctl.fhss.index);
+
+	/* 制造漂移：RX 的索引偏了 4 格，接下来的帧全都对不上频点 */
+	sim.rx.ctl.fhss.index = (uint16_t)((sim.rx.ctl.fhss.index + 4U) %
+					   sim.rx.ctl.fhss.sequence_count);
+	CHECK(sim.rx.ctl.fhss.index != sim.tx.ctl.fhss.index);
+
+	resync_before = sim.rx.ctl.stats.hop_resync;
+	SIM_UNTIL(&sim, sim.rx.ctl.fhss.index == sim.tx.ctl.fhss.index, 200);
+	CHECK(sim.rx.ctl.fhss.index == sim.tx.ctl.fhss.index);
+	CHECK(sim.rx.ctl.stats.hop_resync > resync_before);
+	CHECK(sim.rx.ctl.stats.rx_beacons > 0U);
+
+	/* 拉回索引之后照常收发 */
+	memset(chunk, 0x82U, sizeof(chunk));
+	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
+	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(chunk), 400);
+	CHECK(sim.rx.stream_len == sizeof(chunk));
+	CHECK(sim.rx.ctl.fhss.index == sim.tx.ctl.fhss.index);
+	CHECK(sim.rx.data.fhss.index == sim.tx.data.fhss.index);
+}
+
+/*
+ * 对端重启后的自动重连（doc/03-protocol.md 3.5 那条已知限制的解法）：RX 重启
+ * 后链路状态全丢，只剩 NVS 里的配对记录；TX 这边还在跑，周期 BEACON 会让它重新
+ * 握手。两条链路都要能自己回来。
+ */
+static void test_peer_restart(void)
+{
+	sim_t sim;
+	uint8_t salt[ZLRS_PAIR_SALT_LEN];
+	uint8_t rx_id[ZLRS_DEV_ID_LEN];
+	uint8_t rc[ZLRS_RC_PAYLOAD_LEN];
+	uint8_t chunk[8];
+
+	printf("link: peer restart reconnect\n");
+
+	sim_init(&sim);
+	sim.tx.ctl.cfg.resync_every_n = 20U;
+	sim.rx.ctl.cfg.resync_every_n = 20U;
+	sim.tx.data.cfg.resync_every_n = 20U;
+	sim.rx.data.cfg.resync_every_n = 20U;
+	pair_and_connect(&sim);
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
+
+	memcpy(salt, sim.rx.ctl.pair_salt, sizeof(salt));
+	memcpy(rx_id, sim.rx.dev_id, sizeof(rx_id));
+
+	/* RX 重启：链路状态全丢，只留下"配对记录"（dev_id + 配对 nonce） */
+	node_init(&sim.rx, ZLRS_ROLE_RX, sim.root_key, rx_id, 0x22222222U);
+	sim.rx.ctl.cfg.resync_every_n = 20U;
+	sim.rx.data.cfg.resync_every_n = 20U;
+	zlrs_link_set_peer(&sim.rx.ctl, sim.tx.dev_id, salt, sim.now_ms);
+	zlrs_link_set_peer(&sim.rx.data, sim.tx.dev_id, salt, sim.now_ms);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_SEARCHING);
+	CHECK(sim.rx.data.state == ZLRS_STATE_SEARCHING);
+
+	SIM_UNTIL(&sim,
+		  sim.tx.ctl.state == ZLRS_STATE_CONNECTED &&
+			  sim.rx.ctl.state == ZLRS_STATE_CONNECTED &&
+			  sim.tx.data.state == ZLRS_STATE_CONNECTED &&
+			  sim.rx.data.state == ZLRS_STATE_CONNECTED,
+		  4000);
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.tx.data.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.data.state == ZLRS_STATE_CONNECTED);
+	/* 重连之后钥匙仍然配套 */
+	CHECK(memcmp(sim.tx.ctl.session_key_out, sim.rx.ctl.session_key_in, ZLRS_KEY_LEN) ==
+	      0);
+
+	/* 遥控与透传照常 */
+	memset(rc, 0x91U, sizeof(rc));
+	zlrs_link_set_rc(&sim.tx.ctl, rc, sizeof(rc));
+	sim_run(&sim, 4U);
+	CHECK(sim.rx.rc_count > 0U);
+	CHECK(memcmp(sim.rx.rc, rc, sizeof(rc)) == 0);
+	memset(chunk, 0x92U, sizeof(chunk));
+	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
+	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(chunk), 400);
+	CHECK(sim.rx.stream_len == sizeof(chunk));
+}
+
+/*
+ * 重放的旧 BEACON 不能动会话：tag 是配对级的，录下来的旧 BEACON 能验过，
+ * 所以"换会话"这条路要求最近完全听不到对端，同会话那条要求序号更新。
+ */
+static void test_beacon_replay_guard(void)
+{
+	sim_t sim;
+	uint8_t beacon[ZLRS_FRAME_MAX_LEN];
+	uint16_t beacon_len;
+	uint8_t key_before[ZLRS_KEY_LEN];
+	uint32_t nonce_before;
+	uint32_t beacon_nonce;
+
+	printf("link: connected-state beacon replay\n");
+
+	sim_init(&sim);
+	sim.tx.ctl.cfg.resync_every_n = 20U;
+	sim.rx.ctl.cfg.resync_every_n = 20U;
+	pair_and_connect(&sim);
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
+
+	/* 录下当前会话的 BEACON，等 TX 换过会话之后再放回去 */
+	CHECK(sim.beacon_len > 0U);
+	beacon_len = sim.beacon_len;
+	memcpy(beacon, sim.beacon, beacon_len);
+
+	/* 掐掉上行，让 TX 判一次失联、换一个 nonce，再重连 */
+	sim.drop_up = 1000000;
+	SIM_UNTIL(&sim, sim.tx.ctl.state == ZLRS_STATE_SEARCHING, 2000);
+	sim.drop_up = 0;
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_SEARCHING);
+	SIM_UNTIL(&sim,
+		  sim.tx.ctl.state == ZLRS_STATE_CONNECTED &&
+			  sim.rx.ctl.state == ZLRS_STATE_CONNECTED,
+		  4000);
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
+
+	/* 现在这帧的 nonce 是上一段会话的 */
+	nonce_before = sim.rx.ctl.sess_nonce_t;
+	memcpy(key_before, sim.rx.ctl.session_key_in, ZLRS_KEY_LEN);
+	beacon_nonce = (uint32_t)beacon[7] | ((uint32_t)beacon[8] << 8) |
+		       ((uint32_t)beacon[9] << 16) | ((uint32_t)beacon[10] << 24);
+	CHECK(beacon_nonce != nonce_before);
+
+	/* 会话还在正常跑：旧 BEACON 只能被丢掉 */
+	sim_inject(&sim, &sim.rx.ctl, beacon, beacon_len);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.ctl.sess_nonce_t == nonce_before);
+	CHECK(memcmp(sim.rx.ctl.session_key_in, key_before, ZLRS_KEY_LEN) == 0);
+}
+
 void test_link(void)
 {
 	test_pairing();
@@ -1743,4 +1904,7 @@ void test_link(void)
 	test_bringup_fixed_channel();
 	test_bringup_no_handshake();
 	test_bringup_no_telemetry();
+	test_hop_resync();
+	test_peer_restart();
+	test_beacon_replay_guard();
 }

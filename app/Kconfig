@@ -68,6 +68,15 @@ config ZLRS_APP_TELEMETRY
 	  "只下行 RC"，适合上板先只验证遥控通道。TX 的失联判定会一并关掉，否则它
 	  会因为收不到东西而反复重建会话。
 
+config ZLRS_APP_RESYNC_PERIOD_MS
+	int "连接态周期 BEACON 的间隔（毫秒，0 = 关）"
+	default 1000
+	range 0 10000
+	help
+	  连上以后每隔这么久用同步信道发一次 BEACON：对端据此校正跳频索引（两端
+	  晶振差会累积成"踩空"），也据此发现对端重启或重新配对，自动重新握手。
+	  见 doc/03-protocol.md 5.1。间隔按帧数换算，至少 1 帧。
+
 config ZLRS_APP_CONTROL_RATE_BPS
 	int "控制链路速率（bps）"
 	default 1300000

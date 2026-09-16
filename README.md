@@ -111,6 +111,7 @@ python3 scripts/zlrs-config.py --port /dev/ttyACM1 exit
 - `CONFIG_ZLRS_APP_CONTROL_RATE_HZ`（默认 150，范围 50–500）：控制帧率档。实际生效值会被地区占空比与空中时间压档——EU868 的 1% 只撑得住 ~46 Hz，窄带速率下上限 ~470 Hz；500 Hz 只在不限占空比的地区有意义。见 [doc/03-protocol.md](doc/03-protocol.md) 4.1。
 - `CONFIG_ZLRS_APP_RATE_ADAPT=y`：按链路质量自动升降速率档。阈值要按实测曲线标定，所以默认关着，见 [doc/05-roadmap.md](doc/05-roadmap.md) 的 M4。
 - `CONFIG_ZLRS_APP_DYNAMIC_POWER`（默认开）：按对端回报的 RSSI/LQ 自动升降发射功率，判据每秒评估一次，遥测断了回到上限；下限用 `CONFIG_ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM`。阈值按实测曲线标定。
+- `CONFIG_ZLRS_APP_RESYNC_PERIOD_MS`（默认 1000，0 = 关）：连接态周期 `BEACON`。RX 据此把跳频索引拉回来（两端晶振差会累积成"踩空"），同一条路也让对端重启后能自动重连，见 [doc/03-protocol.md](doc/03-protocol.md) 5.1。
 - 窄带场景（433/868）以后允许换成 LoRa 等调制，见 [doc/05-roadmap.md](doc/05-roadmap.md) 的 M4 待做项。
 
 ### 6. 上板调试的开关
@@ -124,6 +125,7 @@ python3 scripts/zlrs-config.py --port /dev/ttyACM1 exit
 | `CONFIG_ZLRS_APP_SESSION_HANDSHAKE=n` | 配对级钥匙直接当会话钥匙：BEACON 之后只回一条 `SESS_RESP` |
 | `CONFIG_ZLRS_APP_TELEMETRY=n` | 控制链路只剩下行 RC（TX 的失联判定一并关掉） |
 | `CONFIG_ZLRS_APP_DATA_ARQ=n` / `ZLRS_APP_RATE_ADAPT=n` / `ZLRS_APP_DYNAMIC_POWER=n` | 透传 best-effort / 固定速率档 / 固定发射功率 |
+| `CONFIG_ZLRS_APP_RESYNC_PERIOD_MS=0` | 不做连接态周期 `BEACON`（跳频只在对齐时校准，对端重启不自动重连） |
 
 ```shell
 # 最简形态：不带 tag、不跳频、不握手、不发遥测

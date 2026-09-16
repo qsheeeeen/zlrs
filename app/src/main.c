@@ -46,6 +46,7 @@ static uint32_t frame_period_us;
 static uint32_t slot_budget_us;
 static uint8_t tlm_every_n;
 static uint8_t data_every_n;
+static uint8_t resync_every_n;
 
 /* 控制帧的空中时间粗估：22 B RC + 3 B 头 + 4 B 标签 + 2 B CRC */
 #define CTL_FRAME_LEN 31U
@@ -220,9 +221,26 @@ static void plan_init(void)
 			(unsigned int)rate_bps, CONFIG_ZLRS_APP_CONTROL_RATE_HZ,
 			(unsigned int)plan.rate_hz);
 	}
+
+	/*
+	 * 连接态周期 BEACON：按帧数换算（见 doc/03-protocol.md 5.1）。
+	 * 帧周期长到 10 ms 以上时 1000 ms 装得下 100 帧以内，uint8 够用；
+	 * 更短的帧周期由 MAX/MIN 压到 255 帧以内。
+	 */
+	if (CONFIG_ZLRS_APP_RESYNC_PERIOD_MS > 0) {
+		const uint32_t frames = ((uint32_t)CONFIG_ZLRS_APP_RESYNC_PERIOD_MS * 1000U) /
+					frame_period_us;
+
+		resync_every_n = (uint8_t)MIN(MAX(frames, 1U), 255U);
+	} else {
+		resync_every_n = 0U;
+	}
+
 	LOG_INF("control plan: %u Hz (frame %u us, slot budget %u us), tlm 1/%u, data 1/%u",
 		(unsigned int)control_rate_hz, (unsigned int)frame_period_us,
 		(unsigned int)slot_budget_us, tlm_every_n, data_every_n);
+	LOG_INF("connected-state beacon every %u frame(s) (resync, doc/03 5.1)",
+		(unsigned int)resync_every_n);
 }
 
 /* ---- 链路搭建 ------------------------------------------------------------ */
@@ -263,6 +281,8 @@ static void build_links(void)
 		/* 节奏稀疏化：见 plan_init()，两端同固件所以一致 */
 		.tlm_every_n = tlm_every_n,
 		.data_every_n = 1U, /* 控制链路不用这个字段 */
+		/* 连接态周期 BEACON：跳频索引重同步 + 对端重启后自动重连 */
+		.resync_every_n = resync_every_n,
 	};
 	zlrs_link_cfg_t data_cfg = ctl_cfg;
 	const zlrs_link_events_t ctl_ev = {
