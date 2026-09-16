@@ -107,6 +107,12 @@ echo "    imgtool（MCUboot 签名）依赖"
 "${VENV_DIR}/bin/python" -m pip install --quiet --no-warn-script-location \
 	-r "${WS}/bootloader/mcuboot/scripts/requirements.txt"
 
+# 主机侧的工具脚本：pyserial 给配置模式与"触发进恢复"用，smpmgr 给升级用
+# （scripts/zlrs-config.py、zlrs-recovery.py、zlrs-update.py）。
+echo "    主机侧脚本依赖（pyserial / smpmgr）"
+"${VENV_DIR}/bin/python" -m pip install --quiet --no-warn-script-location \
+	pyserial smpmgr
+
 SDK_DIR="${ZLRS_SDK_DIR:-${HOME}/zephyr-sdk-1.0.0}"
 SDK_GCC="${SDK_DIR}/gnu/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc"
 [ -x "${SDK_GCC}" ] || SDK_GCC="${SDK_DIR}/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc"

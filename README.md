@@ -121,7 +121,7 @@ python3 scripts/zlrs-update.py --port /dev/ttyACM1        # 镜像默认取 buil
 
 配置模式是个**物理动作**：不能远程进入，也不能在运行时透传的同时配置。
 
-仓库自带一个最小配置工具（只用标准库，连设备时才需要 `pip install pyserial`）：
+仓库自带一个最小配置工具（组帧只用标准库；连设备要 pyserial，`scripts/setup-zephyr.sh` 已经把它和升级用的 smpmgr 一起装进工作区 venv）：
 
 USB 三个 CDC 依次是 CRSF、数据口、控制台（`/dev/ttyACM0/1/2`）；不插 USB 时数据口走 UART1（USB 串口线一般是 `/dev/ttyUSB0`）。
 
