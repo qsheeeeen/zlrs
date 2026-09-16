@@ -116,5 +116,7 @@ flash 起始地址，不是 slot0）。带 bootloader 的构建只拖 `zephyr.si
 bootloader 模式的 USB 只有两块 CDC：**第 1 块是恢复口**（对应应用模式的数据口），
 第 2 块是控制台；CRSF 那块在 bootloader 里被裁掉了。所以升级脚本要按
 `/dev/serial/by-id/...MCUBOOT...` 找恢复口，不能沿用应用模式的 `ttyACM1`。
+一条命令的版本：`python3 scripts/zlrs-update.py --port /dev/ttyACM1`
+（触发 + 等恢复口 + 上传 + 等应用回来，见 [README](../../../README.md)）。
 
 只提供 Cortex-M33 这一档。`west boards` 里还会带出同一个 SoC 的 `rp2350a/hazard3` qualifier（qualifier 由 SoC 定义决定，板子改不了），但本板没有对应的 dts，用它会掉进 `stub.dts` 然后 Kconfig 报错——本板不跑 RISC-V 那两个核。

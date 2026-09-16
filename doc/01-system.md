@@ -147,8 +147,9 @@
 
 CRSF 那块 CDC 在 bootloader 里没有用处，直接从 DT 里删掉（`app/sysbuild/mcuboot.overlay`）。
 好处是升级只需要插板载 USB-C，不用 UART 转接；代价是**端口号会变**：应用模式是
-`ttyACM0/1/2`（CRSF/数据/控制台），bootloader 模式只有两块。所以脚本按
-`/dev/serial/by-id/...MCUBOOT...-if00`（或按产品字符串）找恢复口，别写死编号。
+`ttyACM0/1/2`（CRSF/数据/控制台），bootloader 模式只有两块。两种模式在 USB 上自报的
+名字不同——应用是 `ZLRS`、bootloader 是 `ZLRS MCUBOOT`（`CONFIG_CDC_ACM_SERIAL_PRODUCT_STRING`），
+所以脚本按 `/dev/serial/by-id/...` 里的名字找端口，不写死编号。
 
 进恢复模式有四条入口，都不碰 BOOTSEL：
 
@@ -169,10 +170,17 @@ boot mode 那块标志放在 SRAM 起始处的 4 字节里（Zephyr 树里 RP235
 hwinfo 把 POWMAN 的 `HAD_RUN` 位映射成 `RESET_PIN`，这一位在"芯片跑过"这件事上的
 语义比"按了复位键"宽，没上板确认之前开它就有"每次上电都停在恢复模式"的风险。
 
-主机侧：`scripts/zlrs-recovery.py --port <数据口>` 负责触发（`--self-test` 不用设备），
-镜像上传用 mcumgr 客户端（Go 版 `mcumgr` 或 Python 的 `smpmgr`），上传的是
-`zephyr.signed.bin`。把"触发 + 上传 + 查回滚状态"合成一条脚本是后面的事
-（见 [05-roadmap.md](05-roadmap.md) M1 的升级链路待做项）。
+主机侧一条命令就够：
+
+```shell
+python3 scripts/zlrs-update.py --port /dev/ttyACM1
+```
+
+它按顺序做四件事：① 跑 `scripts/zlrs-recovery.py` 触发；② 等 bootloader 的恢复口
+（按 USB 名字找，`--recovery-port` 可指定）；③ 用 `smpmgr upgrade` 上传
+`zephyr.signed.bin`、标记下次启动并重启（`--client none` 只打印命令）；
+④ 等应用的 `ZLRS` 端口回来报成功。要看底层两步就分别用 `zlrs-recovery.py`
+和你的 mcumgr 客户端（Go 版 `mcumgr` 或 Python 的 `smpmgr`）。
 
 **密钥。** 开发期用 MCUboot 自带的测试密钥（`bootloader/mcuboot/root-ec-p256.pem`），
 bootloader 校验与应用签名用的是同一把——由 sysbuild 统一设置，两边不会不一致。

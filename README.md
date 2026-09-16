@@ -80,6 +80,15 @@ python3 scripts/make-signed-uf2.py                   # 把签名镜像打成可�
 应用模式不同：按 `/dev/serial/by-id/...MCUBOOT...` 找恢复口，别写死 `ttyACM1`。
 设备侧还有两条兜底入口：复位后的 300 ms 窗口（主机先发 mcumgr 命令再接复位）、
 以及砖机自动停在恢复模式。
+
+上面这一串有现成的一条命令（触发 + 等恢复口 + 上传 + 等应用回来）：
+
+```shell
+python3 scripts/zlrs-update.py --port /dev/ttyACM1        # 镜像默认取 build/app/zephyr/zephyr.signed.bin
+```
+
+它用 `smpmgr`（`pip install smpmgr`）上传；`--client none` 只打印要执行的命令，
+`--no-trigger` 用于设备已经在恢复模式的情况，`--self-test` 不接设备也能跑。
 镜像签名与分区表见 [doc/01-system.md](doc/01-system.md) 2.4 与
 [板级 README](boards/zlrs/rp2350_zero_core2021/README.md)。
 

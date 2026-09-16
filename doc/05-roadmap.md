@@ -26,7 +26,8 @@
 - 已做（软件侧）：**MCUboot 启动链与两槽分区**——`.../m33/{hf,lf}/mcuboot` 变体（sysbuild），镜像 ECDSA-P256 签名、`swap using offset` 可回滚、bootloader 串口恢复走数据口 UART1；第一次烧写拖两个 UF2 即可，之后升级不用按键。见 [01](01-system.md) 第 2.4 节
 - 已做（软件侧，升级入口）：**恢复只走 USB CDC**——bootloader 模式下 USB 留两块 CDC（第 1 块恢复、第 2 块内核日志），CRSF 那块由 per-image overlay 裁掉；插板载 USB-C 就能升级，不需要 UART 转接。见 [01](01-system.md) 2.4
 - 已做（软件侧，升级入口）：**应用侧触发进串口恢复**——数据口收到 16 字节魔数（`scripts/zlrs-recovery.py`）就置 boot mode 并重启，MCUboot 停在串口恢复等上传；升级一台健康设备不用拔插、不用按键。标志放在 SRAM 起始的 4 字节 retained 区（Zephyr 树里 RP2350 专用覆盖），应用与 bootloader 共用同一份 DT。见 [01](01-system.md) 2.4
-- 待做（升级链路的后续，按收益排序）：① 主机侧升级脚本（`scripts/update.sh`：触发 + 上传 signed 镜像 + 查回滚状态），把现在的"手动两步"收成一条命令；② 应用侧 mcumgr（真正的运行中升级：镜像直接写 slot1，不必重启进 bootloader）；③ 无线 OTA（镜像走 2.4G 透传链路，≈10 s/1 MB，见 M4）
+- 已做（软件侧，主机侧一条命令）：**`scripts/zlrs-update.py`**——触发进恢复 → 按 USB 名字等 bootloader 的恢复口 → `smpmgr upgrade` 上传签名镜像并重启 → 等应用端口回来。两种模式在 USB 上分别自报 `ZLRS` 与 `ZLRS MCUBOOT`，脚本据此找端口；`--client none` 只打印命令，`--no-trigger` 用于已在恢复模式的设备，`--self-test` 不接设备
+- 待做（升级链路的后续，按收益排序）：① 应用侧 mcumgr（真正的运行中升级：镜像直接写 slot1，连"重启进 bootloader"都省了；需要把 SMP 流和透传流在数据口上复用）；② 无线 OTA（镜像走 2.4G 透传链路，≈10 s/1 MB，见 M4）
 - 验收：150 Hz 控制帧率下连续 10 分钟不掉线；透传 200 kB，串口侧丢弃计数与链路统计能对上（best-effort 允许丢，但必须看得见）
 - 测量：射频回调延迟抖动、频段切换开销、各速率档的误包率曲线、实际透传吞吐
 - 调参：接收窗口长度、超帧预算、tick 粒度（当前量化到 1 ms，见 01 第 7 节）

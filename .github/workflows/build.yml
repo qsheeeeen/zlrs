@@ -37,3 +37,5 @@ jobs:
         run: python3 scripts/zlrs-config.py --self-test
       - name: recovery trigger self-test
         run: python3 scripts/zlrs-recovery.py --self-test
+      - name: update script self-test
+        run: python3 scripts/zlrs-update.py --self-test
