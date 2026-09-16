@@ -173,6 +173,9 @@ static void fx_link_init(zlrs_link_t *link, uint8_t arq)
 		.pair_window_ms = 30000U,
 		.data_mtu = 128U,
 		.arq = arq,
+		.hopping = 1U,
+		.handshake = 1U,
+		.telemetry = 1U,
 		.tlm_every_n = 1U,
 		.data_every_n = 1U,
 	};

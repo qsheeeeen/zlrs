@@ -76,6 +76,26 @@ typedef struct {
 	uint16_t sess_resp_len;
 } sim_t;
 
+/*
+ * 上板调试开关：默认全是"生产"档，单个用例可以按需关掉某一项，验证关掉之后
+ * 链路仍然工作（见 doc/01-system.md 2.3）。建节点之前设置。
+ */
+typedef struct {
+	uint8_t hopping;
+	uint8_t handshake;
+	uint8_t telemetry;
+	uint8_t resync_every_n;
+} sim_features_t;
+
+static const sim_features_t sim_features_default = {
+	.hopping = 1U,
+	.handshake = 1U,
+	.telemetry = 1U,
+	.resync_every_n = 0U,
+};
+
+static sim_features_t sim_features;
+
 /* ---- 回调与假射频 -------------------------------------------------------- */
 
 static uint32_t next_random(uint32_t *state)
@@ -192,6 +212,10 @@ static void node_init(node_t *node, uint8_t role, const uint8_t *root_key,
 		.pair_period_ms = 100U,
 		.pair_window_ms = 30000U,
 		.data_mtu = 0U,
+		.hopping = sim_features.hopping,
+		.handshake = sim_features.handshake,
+		.telemetry = sim_features.telemetry,
+		.resync_every_n = sim_features.resync_every_n,
 	};
 	zlrs_link_events_t ctl_ev = {
 		.on_rc = on_rc,
@@ -234,12 +258,14 @@ static void node_init(node_t *node, uint8_t role, const uint8_t *root_key,
 	}
 }
 
-static void sim_init(sim_t *sim)
+/* features = NULL 用生产档；上板调试档由用例显式传进来 */
+static void sim_init_with(sim_t *sim, const sim_features_t *features)
 {
 	static uint8_t root_key[ZLRS_KEY_LEN];
 	static const uint8_t tx_id[ZLRS_DEV_ID_LEN] = { 0x11, 0x22, 0x33, 0x44 };
 	static const uint8_t rx_id[ZLRS_DEV_ID_LEN] = { 0xaa, 0xbb, 0xcc, 0xdd };
 
+	sim_features = (features != NULL) ? *features : sim_features_default;
 	memset(sim, 0, sizeof(*sim));
 	for (uint8_t i = 0; i < sizeof(root_key); i++) {
 		root_key[i] = (uint8_t)(i + 1U);
@@ -248,6 +274,11 @@ static void sim_init(sim_t *sim)
 
 	node_init(&sim->tx, ZLRS_ROLE_TX, root_key, tx_id, 0x11111111U);
 	node_init(&sim->rx, ZLRS_ROLE_RX, root_key, rx_id, 0x22222222U);
+}
+
+static void sim_init(sim_t *sim)
+{
+	sim_init_with(sim, NULL);
 }
 
 static zlrs_link_t *link_of(node_t *node, uint8_t slot)
@@ -1519,6 +1550,166 @@ static void test_cadence(void)
 	CHECK(sim.rx.stream_len == sizeof(chunk));
 }
 
+/*
+ * 上板调试档之零：P0——帧不带 tag。先只确认收发时序与帧格式，把密钥路径整段
+ * 排除掉（代价是任何人都能注入，只能台架用）。
+ */
+static void test_bringup_no_tag(void)
+{
+	sim_t sim;
+	uint8_t rc[ZLRS_RC_PAYLOAD_LEN];
+	uint8_t chunk[16];
+
+	printf("link: bring-up without tag (P0)\n");
+
+	sim_init(&sim);
+	sim.tx.ctl.cfg.profile = ZLRS_PROFILE_P0;
+	sim.rx.ctl.cfg.profile = ZLRS_PROFILE_P0;
+	sim.tx.data.cfg.profile = ZLRS_PROFILE_P0;
+	sim.rx.data.cfg.profile = ZLRS_PROFILE_P0;
+	pair_and_connect(&sim);
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
+
+	memset(rc, 0x61U, sizeof(rc));
+	zlrs_link_set_rc(&sim.tx.ctl, rc, sizeof(rc));
+	sim_run(&sim, 4U);
+	CHECK(sim.rx.rc_count > 0U);
+	CHECK(memcmp(sim.rx.rc, rc, sizeof(rc)) == 0);
+	CHECK(sim.rx.ctl.stats.rx_bad_tag == 0U);
+
+	/* 空口上的帧就是 header + 载荷，没有 tag */
+	sim_slot(&sim, ZLRS_SLOT_CTL_DOWN);
+	CHECK(sim.down_len == (uint16_t)(ZLRS_FRAME_HDR_LEN + sizeof(rc)));
+
+	/* 透传照常 */
+	memset(chunk, 0x62U, sizeof(chunk));
+	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
+	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(chunk), 400);
+	CHECK(sim.rx.stream_len == sizeof(chunk));
+}
+
+/*
+ * 上板调试档之一：关掉逐包跳频。所有帧都落在同步信道上（跳频表的第 0 个位置），
+ * 收发时序与跳频表可以分开看——这一档只应该影响用哪个频点，不影响别的行为。
+ */
+static void test_bringup_fixed_channel(void)
+{
+	sim_features_t features = sim_features_default;
+	const zlrs_fhss_domain_t *domain = &zlrs_fhss_domains[ZLRS_DOMAIN_FCC915];
+	const uint32_t sync_hz =
+		domain->start_hz + (uint32_t)(domain->channel_count / 2U) * domain->step_hz;
+	sim_t sim;
+	uint8_t rc[ZLRS_RC_PAYLOAD_LEN];
+	uint8_t chunk[16];
+
+	printf("link: bring-up without hopping\n");
+
+	features.hopping = 0U;
+	sim_init_with(&sim, &features);
+	pair_and_connect(&sim);
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
+
+	memset(rc, 0x31U, sizeof(rc));
+	zlrs_link_set_rc(&sim.tx.ctl, rc, sizeof(rc));
+	sim_run(&sim, 300U);
+
+	/* 索引一直停在 0（= 同步信道），两端都一样 */
+	CHECK(sim.tx.ctl.fhss.index == 0U);
+	CHECK(sim.rx.ctl.fhss.index == 0U);
+	CHECK(zlrs_fhss_current_hz(&sim.tx.ctl.fhss) == sync_hz);
+	CHECK(zlrs_fhss_current_hz(&sim.rx.ctl.fhss) == sync_hz);
+
+	/* 遥控与透传照常 */
+	CHECK(sim.rx.rc_count > 0U);
+	CHECK(memcmp(sim.rx.rc, rc, sizeof(rc)) == 0);
+	memset(chunk, 0x32U, sizeof(chunk));
+	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
+	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(chunk), 400);
+	CHECK(sim.rx.stream_len == sizeof(chunk));
+	CHECK(sim.rx.ctl.stats.rx_bad_tag == 0U);
+}
+
+/*
+ * 上板调试档之二：关掉三次握手。配对级的 link_auth 直接当会话钥匙，RX 收到
+ * BEACON 就算建立，再用 SESS_RESP 反复"报到"直到听见对端的第一帧。
+ * 报到帧丢掉几次也要能连上——这是这一档唯一的新时序。
+ */
+static void test_bringup_no_handshake(void)
+{
+	sim_features_t features = sim_features_default;
+	sim_t sim;
+	uint8_t chunk[16];
+	uint8_t rc[ZLRS_RC_PAYLOAD_LEN];
+
+	printf("link: bring-up without session handshake\n");
+
+	features.handshake = 0U;
+	sim_init_with(&sim, &features);
+
+	/* 报到帧丢两帧：RX 必须继续报到，直到 TX 听见 */
+	sim.drop_up = 2;
+	pair_and_connect(&sim);
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.tx.data.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.data.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.sess_resp_len > 0U); /* 用的是 SESS_RESP，不是 SESS_CFM */
+
+	/* 会话钥匙就是配对级钥匙：没有逐会话的 nonce 派生 */
+	CHECK(memcmp(sim.tx.ctl.session_key_out, sim.tx.ctl.link_auth_out, ZLRS_KEY_LEN) ==
+	      0);
+	CHECK(memcmp(sim.tx.ctl.session_key_in, sim.rx.ctl.link_auth_out, ZLRS_KEY_LEN) ==
+	      0);
+	CHECK(!sim.rx.ctl.session_pending);
+	CHECK(!sim.tx.ctl.sess_cfm_due);
+
+	/* 遥控、透传照常 */
+	memset(rc, 0x41U, sizeof(rc));
+	zlrs_link_set_rc(&sim.tx.ctl, rc, sizeof(rc));
+	sim_run(&sim, 10U);
+	CHECK(sim.rx.rc_count > 0U);
+	CHECK(memcmp(sim.rx.rc, rc, sizeof(rc)) == 0);
+	memset(chunk, 0x42U, sizeof(chunk));
+	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
+	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(chunk), 400);
+	CHECK(sim.rx.stream_len == sizeof(chunk));
+	CHECK(sim.rx.ctl.stats.rx_bad_tag == 0U);
+	CHECK(sim.tx.ctl.stats.rx_bad_tag == 0U);
+}
+
+/*
+ * 上板调试档之三：关掉上行遥测。控制链路退化成"只下行 RC"：TX 不再开遥测接收
+ * 窗口（失联判定由 App 一并关掉，见 doc/01-system.md 2.3），RX 也不再发。
+ */
+static void test_bringup_no_telemetry(void)
+{
+	sim_features_t features = sim_features_default;
+	sim_t sim;
+	uint8_t rc[ZLRS_RC_PAYLOAD_LEN];
+
+	printf("link: bring-up without telemetry\n");
+
+	features.telemetry = 0U;
+	sim_init_with(&sim, &features);
+	pair_and_connect(&sim);
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
+
+	/* App 侧在关掉遥测时把 TX 的失联判定一并关掉：没东西可听 */
+	sim.tx.ctl.cfg.peer_timeout_ms = 0U;
+	memset(rc, 0x51U, sizeof(rc));
+	zlrs_link_set_rc(&sim.tx.ctl, rc, sizeof(rc));
+	sim_run(&sim, 500U);
+
+	CHECK(sim.tx.tlm_count == 0U);
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.rc_count > 0U);
+	CHECK(memcmp(sim.rx.rc, rc, sizeof(rc)) == 0);
+}
+
 void test_link(void)
 {
 	test_pairing();
@@ -1548,4 +1739,8 @@ void test_link(void)
 	test_failsafe_push();
 	test_data_idle();
 	test_cadence();
+	test_bringup_no_tag();
+	test_bringup_fixed_channel();
+	test_bringup_no_handshake();
+	test_bringup_no_telemetry();
 }

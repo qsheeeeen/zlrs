@@ -113,6 +113,30 @@ python3 scripts/zlrs-config.py --port /dev/ttyACM1 exit
 - `CONFIG_ZLRS_APP_DYNAMIC_POWER`（默认开）：按对端回报的 RSSI/LQ 自动升降发射功率，判据每秒评估一次，遥测断了回到上限；下限用 `CONFIG_ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM`。阈值按实测曲线标定。
 - 窄带场景（433/868）以后允许换成 LoRa 等调制，见 [doc/05-roadmap.md](doc/05-roadmap.md) 的 M4 待做项。
 
+### 6. 上板调试的开关
+
+硬件第一次上电时不要一次把所有东西都打开：每一项复杂功能都有自己的 Kconfig 开关，从最简形态往上逐层验证。关掉的项开机会打一条 `bring-up:` 警告，整套思路与推荐顺序见 [doc/01-system.md](doc/01-system.md) 2.3。
+
+| 开关 | 关掉之后 |
+| --- | --- |
+| `CONFIG_ZLRS_APP_SECURITY_PROFILE_P0=y` | 帧不带 tag，先确认收发时序与帧格式 |
+| `CONFIG_ZLRS_APP_FHSS=n` | 固定发在同步信道，不跳频 |
+| `CONFIG_ZLRS_APP_SESSION_HANDSHAKE=n` | 配对级钥匙直接当会话钥匙：BEACON 之后只回一条 `SESS_RESP` |
+| `CONFIG_ZLRS_APP_TELEMETRY=n` | 控制链路只剩下行 RC（TX 的失联判定一并关掉） |
+| `CONFIG_ZLRS_APP_DATA_ARQ=n` / `ZLRS_APP_RATE_ADAPT=n` / `ZLRS_APP_DYNAMIC_POWER=n` | 透传 best-effort / 固定速率档 / 固定发射功率 |
+
+```shell
+# 最简形态：不带 tag、不跳频、不握手、不发遥测
+west build -b "$ZLRS_BOARD" "$ZLRS_APP" -- \
+  -DCONFIG_ZLRS_APP_SECURITY_PROFILE_P0=y \
+  -DCONFIG_ZLRS_APP_SECURITY_PROFILE_P1=n \
+  -DCONFIG_ZLRS_APP_FHSS=n \
+  -DCONFIG_ZLRS_APP_SESSION_HANDSHAKE=n \
+  -DCONFIG_ZLRS_APP_TELEMETRY=n
+```
+
+每个开关都有一条主机侧用例断言"关掉之后链路照常工作"（`make -C tests/host run`）。
+
 ## 仓库结构
 
 ```
@@ -169,7 +193,7 @@ zephyr/module.yml     本仓库作为 Zephyr 模块的入口（板级定义也�
 
 ## 测试
 
-`tests/host` 用假射频与假时钟跑仿真，不需要硬件：配对与会话、跳频锁步、RC/TLM 收发的防重放、400 字节跨帧透传与丢包恢复、失联与重连、同场多节点、畸形输入、时间戳与序号回绕都在里面。默认带 ASan + UBSan，开关见 [tests/host/Makefile](tests/host/Makefile)。
+`tests/host` 用假射频与假时钟跑仿真，不需要硬件：配对与会话、跳频锁步、RC/TLM 收发的防重放、400 字节跨帧透传与丢包恢复、失联与重连、同场多节点、畸形输入、时间戳与序号回绕，以及每个上板调试开关"关掉之后照常工作"都在里面。默认带 ASan + UBSan，开关见 [tests/host/Makefile](tests/host/Makefile)。
 
 CI（[.github/workflows/build.yml](.github/workflows/build.yml)）跑同一套 host 测试，另外按 README 的流程搭工作区构建一次固件。
 

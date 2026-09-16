@@ -72,6 +72,20 @@ jobs:
           . zlrs/scripts/zephyr-env.sh
           ZLRS_BOARD=rp2350_zero_core2021/rp2350a/m33/lf zlrs-build -d build-lf
 
+      # 上板调试档：把所有复杂功能都关掉，验证裁剪组合也编得过（见 01 第 2.3 节）
+      - name: build (bring-up toggles off, both skus)
+        run: |
+          set -x
+          . zlrs/scripts/zephyr-env.sh
+          for board in rp2350_zero_core2021/rp2350a/m33/hf rp2350_zero_core2021/rp2350a/m33/lf; do
+            ZLRS_BOARD="$board" zlrs-build -d "build-bringup-${board##*/}" -- \
+              -DCONFIG_ZLRS_APP_SECURITY_PROFILE_P0=y \
+              -DCONFIG_ZLRS_APP_SECURITY_PROFILE_P1=n \
+              -DCONFIG_ZLRS_APP_FHSS=n \
+              -DCONFIG_ZLRS_APP_SESSION_HANDSHAKE=n \
+              -DCONFIG_ZLRS_APP_TELEMETRY=n
+          done
+
       - name: upload uf2
         if: always()
         uses: actions/upload-artifact@v4

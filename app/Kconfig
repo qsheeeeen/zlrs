@@ -28,6 +28,46 @@ config ZLRS_APP_TX_POWER_DBM
 	default 10
 	range -10 22
 
+choice ZLRS_APP_SECURITY_PROFILE
+	prompt "空口安全 profile"
+	default ZLRS_APP_SECURITY_PROFILE_P1
+	help
+	  P1 是生产档：每帧 4 字节 tag。P0 不带 tag，只用于台架——先把收发时序
+	  跑通，再打开 tag 看密钥路径。见 doc/02-security.md 第 8 节。
+
+config ZLRS_APP_SECURITY_PROFILE_P0
+	bool "P0：不带 tag（仅调试）"
+
+config ZLRS_APP_SECURITY_PROFILE_P1
+	bool "P1：4 字节 tag（默认）"
+
+endchoice
+
+config ZLRS_APP_FHSS
+	bool "逐包跳频"
+	default y
+	help
+	  关掉以后所有帧都落在同步信道上（跳频表的第 0 个位置），上板调试时先把
+	  收发时序与跳频表分开看。固定信道不满足 FCC 15.247 的跳频条款，只能用于
+	  台架，见 doc/03-protocol.md 5.2。
+
+config ZLRS_APP_SESSION_HANDSHAKE
+	bool "会话三次握手（每次会话换一把钥匙）"
+	default y
+	help
+	  关掉以后直接用配对级的 link_auth 当会话钥匙：RX 收到 BEACON 就算建立，
+	  再回 SESS_RESP 报到，少一段钥匙派生、少一条确认消息。代价是没有逐会话的
+	  钥匙轮换，录下来的旧帧在换会话后仍能重放——只用于上板调试，
+	  见 doc/02-security.md 第 3 节。
+
+config ZLRS_APP_TELEMETRY
+	bool "控制链路上行遥测"
+	default y
+	help
+	  关掉以后 RX 不在上行时隙发遥测、TX 也不开那个接收窗口：控制链路退化成
+	  "只下行 RC"，适合上板先只验证遥控通道。TX 的失联判定会一并关掉，否则它
+	  会因为收不到东西而反复重建会话。
+
 config ZLRS_APP_CONTROL_RATE_BPS
 	int "控制链路速率（bps）"
 	default 1300000
@@ -92,6 +132,7 @@ config ZLRS_APP_RATE_ADAPT
 config ZLRS_APP_DYNAMIC_POWER
 	bool "按对端回报的信号质量自动升降发射功率"
 	default y
+	depends on ZLRS_APP_TELEMETRY
 	help
 	  信号富余就降功率（省电、少干扰），信号吃力就升回来；收不到遥测直接回到
 	  上限（那一头多半掉线了）。判据每秒评估一次，阈值与滞回见

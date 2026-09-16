@@ -234,13 +234,29 @@ static void build_links(void)
 		.role = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? ZLRS_ROLE_TX : ZLRS_ROLE_RX,
 		.domain = region->domain,
 		.sync_slot = ZLRS_SYNC_SLOT_CONTROL,
-		.profile = ZLRS_PROFILE_P1,
+		.profile = IS_ENABLED(CONFIG_ZLRS_APP_SECURITY_PROFILE_P0) ? ZLRS_PROFILE_P0
+									    : ZLRS_PROFILE_P1,
+		/*
+		 * 上板调试档：这三项各自可以关（见 doc/01-system.md 2.3）。
+		 * 关掉跳频 → 收发时序与跳频表分开看；关掉握手 → 少一段钥匙派生；
+		 * 关掉遥测 → 控制链路只剩下行 RC。
+		 */
+		.hopping = IS_ENABLED(CONFIG_ZLRS_APP_FHSS) ? 1U : 0U,
+		.handshake = IS_ENABLED(CONFIG_ZLRS_APP_SESSION_HANDSHAKE) ? 1U : 0U,
+		.telemetry = IS_ENABLED(CONFIG_ZLRS_APP_TELEMETRY) ? 1U : 0U,
 		/* 窄频段地区（868/470/433）放不下宽带档，按地区上限压下来 */
 		.rate_bps = zlrs_region_clamp_rate(region, CONFIG_ZLRS_APP_CONTROL_RATE_BPS),
 		.tx_power_dbm = MIN(CONFIG_ZLRS_APP_TX_POWER_DBM, region->max_tx_power_dbm),
 		.rx_timeout_ms = 2U,
 		.beacon_period_ms = 1000U,
-		.peer_timeout_ms = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? 250U : 100U,
+		/*
+		 * 遥测是 TX 侧的活证：关掉遥测就没东西可听，失联判定得一起关，
+		 * 否则每一帧都会把 TX 拉回 SEARCHING 重建会话。
+		 */
+		.peer_timeout_ms = (IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) &&
+				    IS_ENABLED(CONFIG_ZLRS_APP_TELEMETRY))
+					   ? 250U
+					   : (IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? 0U : 100U),
 		.pair_period_ms = 100U,
 		.pair_window_ms = 30000U,
 		.data_mtu = 0U,
@@ -704,6 +720,20 @@ static void led_tick(uint32_t now_ms)
 int main(void)
 {
 	LOG_INF("zlrs %s", APP_VERSION_STRING);
+
+	/* 上板调试档：这些开关关掉以后链路不再是生产形态，开机就喊一声 */
+	if (!IS_ENABLED(CONFIG_ZLRS_APP_SECURITY_PROFILE_P1)) {
+		LOG_WRN("bring-up: security profile P0, frames carry no tag");
+	}
+	if (!IS_ENABLED(CONFIG_ZLRS_APP_FHSS)) {
+		LOG_WRN("bring-up: hopping off, every frame stays on the sync channel");
+	}
+	if (!IS_ENABLED(CONFIG_ZLRS_APP_SESSION_HANDSHAKE)) {
+		LOG_WRN("bring-up: session handshake off, pairing keys are session keys");
+	}
+	if (!IS_ENABLED(CONFIG_ZLRS_APP_TELEMETRY)) {
+		LOG_WRN("bring-up: telemetry off, control link is RC-only");
+	}
 
 	/* 地区配置层：频段、功率上限与占空比都在这里定 */
 	region = zlrs_region_get(CONFIG_ZLRS_APP_REGION);

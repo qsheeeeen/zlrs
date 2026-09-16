@@ -77,6 +77,10 @@ static void set_state(zlrs_link_t *link, uint8_t state, uint32_t now_ms)
 
 	link->state = state;
 	link->state_ms = now_ms;
+	/* 简化握手的"我在"只在 CONNECTED 有意义 */
+	if (state != ZLRS_STATE_CONNECTED) {
+		link->announce = false;
+	}
 	if (link->ev.on_state != NULL) {
 		link->ev.on_state(link->ev.ctx, state);
 	}
@@ -100,6 +104,7 @@ static void roll_session(zlrs_link_t *link, uint32_t now_ms)
 	link->session_pending = false;
 	link->sess_cfm_due = false;
 	link->sess_resp_due = false;
+	link->announce = false;
 }
 
 /* 本机与对端 dev_id 按数值排序后拼接，保证两端算出同一个 pair_key */
@@ -220,6 +225,15 @@ static void derive_pair(zlrs_link_t *link)
 	link->session_pending = false;
 	link->sess_resp_due = false;
 	link->sess_cfm_due = false;
+	/*
+	 * 简化握手（只在上板调试时关）：不派生会话钥匙，配对级的 link_auth 直接
+	 * 当会话钥匙用，BEACON 之后只回一条 SESS_RESP，见 doc/02-security.md 第 3 节。
+	 */
+	if (link->cfg.handshake == 0U) {
+		memcpy(link->session_key_out, link->link_auth_out, ZLRS_KEY_LEN);
+		memcpy(link->session_key_in, link->link_auth_in, ZLRS_KEY_LEN);
+		link->session_valid = true;
+	}
 	link->last_rx_seq = 0xFFFFU;
 	link->fhss.index = 0U;
 }
@@ -401,6 +415,9 @@ static const zlrs_radio_req_t *send_beacon(zlrs_link_t *link, uint32_t now_ms)
 /*
  * RX 对 BEACON 的应答：报上自己的 nonce_r，并回带收到的 nonce_t，让 TX 知道这是
  * 对哪一次请求的回应。用配对级钥匙认证——会话钥匙还没生效。
+ *
+ * 简化握手（cfg.handshake = 0）下它同时是"我在"报到帧：nonce_r 位置填 0，
+ * 对端只拿 nonce_t 对号，收到就当认识（见 handle_sess_resp）。
  */
 static const zlrs_radio_req_t *send_sess_resp(zlrs_link_t *link)
 {
@@ -854,6 +871,22 @@ static void handle_beacon(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t
 	hop_index = (uint16_t)(frame->payload[2] | ((uint16_t)frame->payload[3] << 8));
 	nonce = rd32(&frame->payload[4]);
 
+	if (link->cfg.handshake == 0U) {
+		/*
+		 * 简化握手：这条 BEACON 已经用配对级钥匙验过，采用它报告的跳频索引
+		 * 就算会话成立——钥匙是静态的，没有 nonce 要交换。接下来用 SESS_RESP
+		 * 反复报到，直到听见对端的第一帧，见 send_announce()。
+		 */
+		link->sess_nonce_t = nonce;
+		link->sess_hop = hop_index;
+		session_activate(link, hop_index);
+		link->last_rx_seq = frame->seq;
+		link->last_rx_ms = now_ms;
+		link->announce = true;
+		set_state(link, ZLRS_STATE_CONNECTED, now_ms);
+		return;
+	}
+
 	/*
 	 * 同一个 nonce_t 的 BEACON 是重发（TX 还没收到我们的回应）：把上次那条
 	 * 回应再发一遍，nonce_r 不能换，换了对端算出的钥匙就跟我们对不上。
@@ -989,15 +1022,21 @@ static int handle_sess_cfm(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_
 	if (!link->session_pending || link->state != ZLRS_STATE_SEARCHING) {
 		return -1;
 	}
-	if (frame->payload_len < sizeof(uint32_t) || tag_len == 0U) {
+	if (frame->payload_len < sizeof(uint32_t)) {
 		return -1;
 	}
 
-	zlrs_tag(link->session_key_in, ZLRS_KEY_LEN, link->rx_buf,
-		 zlrs_frame_mac_len(frame), expect);
-	if (!zlrs_ct_equal(expect, frame->tag, ZLRS_TAG_LEN)) {
-		link->stats.rx_bad_tag++;
-		return -1;
+	/*
+	 * P0（无 tag）下这条确认没有任何东西可以验——P0 本来就是"不做身份校验"的
+	 * 调试档，只能靠回带的 nonce_r 对号。生产档没有这个分支。
+	 */
+	if (tag_len > 0U) {
+		zlrs_tag(link->session_key_in, ZLRS_KEY_LEN, link->rx_buf,
+			 zlrs_frame_mac_len(frame), expect);
+		if (!zlrs_ct_equal(expect, frame->tag, ZLRS_TAG_LEN)) {
+			link->stats.rx_bad_tag++;
+			return -1;
+		}
 	}
 	if (rd32(frame->payload) != link->sess_nonce_r) {
 		return -1;
@@ -1022,13 +1061,31 @@ static bool handle_sess_resp(zlrs_link_t *link, const zlrs_frame_t *frame, uint3
 	uint32_t nonce_t;
 	uint32_t nonce_r;
 
-	if (link->state != ZLRS_STATE_SEARCHING || frame->payload_len < 2U * sizeof(uint32_t)) {
+	/* SESS_RESP 是响应方回给发起方的，角色不对直接丢 */
+	if (link->cfg.role != ZLRS_ROLE_TX ||
+	    frame->payload_len < 2U * sizeof(uint32_t)) {
 		return false;
 	}
 
 	nonce_t = rd32(&frame->payload[0]);
 	nonce_r = rd32(&frame->payload[4]);
 	if (nonce_t != link->sess_nonce_t) {
+		return false;
+	}
+
+	/*
+	 * 简化握手：对端说的是"我听见你了"。钥匙是静态的，没有确认帧要发——
+	 * 本端接下来的数据帧就是确认。CONNECTED 下收到它只当"对端还在"。
+	 */
+	if (link->cfg.handshake == 0U) {
+		link->last_rx_ms = now_ms;
+		if (link->state == ZLRS_STATE_SEARCHING) {
+			set_state(link, ZLRS_STATE_CONNECTED, now_ms);
+		}
+		return true;
+	}
+
+	if (link->state != ZLRS_STATE_SEARCHING) {
 		return false;
 	}
 
@@ -1109,6 +1166,8 @@ static int handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 	}
 	link->last_rx_seq = frame.seq;
 	link->last_rx_ms = now_ms;
+	/* 对端活着：简化握手的"我在"报到不用再发了 */
+	link->announce = false;
 	lq_account(link, frame.seq);
 
 	switch (frame.type) {
@@ -1140,6 +1199,11 @@ static int handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 
 static void advance_hop(zlrs_link_t *link)
 {
+	if (link->cfg.hopping == 0U) {
+		/* 固定在同步信道（跳频表第 0 个位置就是它） */
+		return;
+	}
+
 	if (link->state == ZLRS_STATE_CONNECTED) {
 		(void)zlrs_fhss_next_hz(&link->fhss);
 	}
@@ -1243,6 +1307,22 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot,
 				 link->cfg.rx_timeout_ms);
 	}
 
+	/*
+	 * 简化握手的报到帧优先：对端可能还在 SEARCHING，正守在同步信道上。
+	 * 关掉遥测以后这个信道上就只剩报到帧了。
+	 */
+	if (link->announce) {
+		if (tx_side) {
+			return submit_rx(link, sync_freq_hz(link), link->cfg.sync_slot,
+					 link->sync_word, link->cfg.rx_timeout_ms);
+		}
+		return send_sess_resp(link);
+	}
+
+	if (link->cfg.telemetry == 0U) {
+		return NULL;
+	}
+
 	/* 上行时隙：遥测按 tlm_every_n 节流（两端同节奏，跳频不受影响） */
 	if ((link->frame_index % link->cfg.tlm_every_n) != 0U) {
 		return NULL;
@@ -1316,6 +1396,11 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot,
 	}
 
 	advance_hop(link);
+
+	/* 简化握手的报到帧：数据链路在自己的那个半窗口里发，走同步信道 */
+	if (link->announce && (tx_side == a)) {
+		return send_sess_resp(link);
+	}
 
 	if (tx_side == a) {
 		const zlrs_radio_req_t *req;

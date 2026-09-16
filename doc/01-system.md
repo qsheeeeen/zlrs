@@ -94,6 +94,24 @@
 
 本板（RP2350-Zero）每条链路都是 UART + CDC 两块端点，控制台在 USB 第三个 CDC。轻量板把 `zlrs-data-cdc`（或整个 `&usbd`）删掉即可；别名一个都不挂就是 "这条链路的端口不存在"，一样编得过。
 
+### 2.3 上板调试的分层开关
+
+硬件第一次上电时不要一次把所有东西都打开。每一项复杂功能都有自己的 Kconfig 开关，从最简单的形态往上逐层验证：每关掉一层，剩下的还能跑通就说明问题不在被关掉的那一层。关掉的项在开机时会打一条 `bring-up:` 警告，日志里能看出这台设备不是生产形态。
+
+| 开关 | 关掉之后 | 主机侧用例 |
+| --- | --- | --- |
+| `CONFIG_ZLRS_APP_SECURITY_PROFILE_P0=y` | 帧不带 tag，先把收发时序与帧格式跑通 | `link: bring-up without tag (P0)` |
+| `CONFIG_ZLRS_APP_FHSS=n` | 固定发在同步信道，不跳频 | `link: bring-up without hopping` |
+| `CONFIG_ZLRS_APP_SESSION_HANDSHAKE=n` | 配对级钥匙直接当会话钥匙：BEACON 之后只回一条 `SESS_RESP` | `link: bring-up without session handshake` |
+| `CONFIG_ZLRS_APP_TELEMETRY=n` | 控制链路只剩下行 RC（TX 的失联判定一并关掉，否则它会一直重建会话） | `link: bring-up without telemetry` |
+| `CONFIG_ZLRS_APP_DATA_ARQ=n` | 透传回到 best-effort（默认就是关） | `link: arq *`、`link: backpressure` |
+| `CONFIG_ZLRS_APP_RATE_ADAPT=n` | 固定速率档（默认就是关） | `link: rate adapt` |
+| `CONFIG_ZLRS_APP_DYNAMIC_POWER=n` | 固定发射功率 | `power: *` |
+
+推荐的顺序：`P0` + 关跳频 + 关握手 + 关遥测 → 先确认"自己发的帧自己能收到"；然后打开 tag（`P1`）；再打开跳频；再打开遥测与失联判定；最后才是速率自适应与动态功率——这两项的阈值本来就要等实测曲线（见 [05-roadmap.md](05-roadmap.md) 的 M4），上板第一步不该被它们干扰。
+
+每个开关都对应一条主机侧用例，断言"关掉之后链路照常工作"：这套用例跑在 `tests/host`，不需要硬件。
+
 ## 3. 系统架构
 
 ### 3.1 两条链路

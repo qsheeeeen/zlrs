@@ -74,11 +74,31 @@ typedef struct {
 	uint16_t data_mtu;          /* 数据帧载荷上限 */
 	uint8_t arq;                /* 1 = 透传走 ARQ profile，0 = best-effort */
 	/*
+	 * 逐包跳频。0 = 固定在同步信道（跳频表的第 0 个位置就是同步信道），
+	 * 上板调试时先把"收发时序"与"跳频表"分开看，见 doc/01-system.md 2.3。
+	 */
+	uint8_t hopping;
+	/*
+	 * 会话三次握手。0 = 直接用配对级的 link_auth 当会话钥匙：BEACON 之后的
+	 * 应答只需要 SESS_RESP，对端用第一条数据帧当确认。少一段钥匙派生、少一条
+	 * 消息，代价是没有逐会话的钥匙轮换——只用于上板调试，见 doc/02-security.md
+	 * 第 3 节。
+	 */
+	uint8_t handshake;
+	/* 控制链路的上行遥测时隙。0 = 不发、也不开这个接收窗口 */
+	uint8_t telemetry;
+	/*
 	 * 节奏稀疏化（1 = 每帧都跑）：控制帧率拉高以后，遥测与数据窗口不必跟着
 	 * 每帧来一次。计数在链路层内部做，两端同固件所以节奏一致，跳频不会失步。
 	 */
 	uint8_t tlm_every_n;
 	uint8_t data_every_n;
+	/*
+	 * 连接态周期 BEACON 的间隔（帧）。0 = 不周期重同步（只在建链时对齐跳频
+	 * 索引）；>0 = 每这么多帧用同步信道发一次 BEACON，对端据此校正跳频索引，
+	 * 也据此发现"对端换了会话"（重启/重新配对）并自动重新握手。
+	 */
+	uint8_t resync_every_n;
 } zlrs_link_cfg_t;
 
 typedef struct {
@@ -103,6 +123,8 @@ typedef struct {
 	uint32_t tx_retries;      /* ARQ：重传次数 */
 	uint32_t tx_arq_drop;     /* ARQ：重传用尽后放弃的帧数 */
 	uint32_t rx_frag_drop;
+	uint32_t rx_beacons;      /* 连接态收到的 BEACON 数 */
+	uint32_t hop_resync;      /* 跳频索引被 BEACON 校正过的次数 */
 	uint32_t radio_fail;
 	int16_t last_rssi;
 	int8_t last_snr; /* FLRC 下射频栈给不出，见 doc/04-lr2021.md */
@@ -181,6 +203,11 @@ typedef struct {
 	uint32_t last_pair_tx_ms;
 	bool pair_cfm_pending;  /* TX 收到 PAIR_RESP，下一个下行时隙发 PAIR_CFM */
 	bool pair_wait_cfm;     /* RX 已回 PAIR_RESP，等 PAIR_CFM */
+	/*
+	 * 简化握手（cfg.handshake = 0）：RX 收到 BEACON 就进 CONNECTED，但要反复
+	 * 回 SESS_RESP 直到收到对端的第一帧——否则对端可能还在 SEARCHING。
+	 */
+	bool announce;
 
 	/* 序号与跳频 */
 	uint16_t tx_seq;
