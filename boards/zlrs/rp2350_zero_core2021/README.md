@@ -108,4 +108,8 @@ python3 scripts/make-signed-uf2.py          # 生成应用镜像的 signed UF2
 **注意**：应用目录里那份 `zephyr.uf2` 是**未签名**镜像，MCUboot 不认（而且基址是
 flash 起始地址，不是 slot0）。带 bootloader 的构建只拖 `zephyr.signed.uf2`。
 
+之后升级不用再按 BOOTSEL：主机先用 mcumgr 往数据口发命令，再让设备复位
+（拔插 USB 或按复位键），bootloader 在复位后的 300 ms 窗口里接住命令就停在串口
+恢复模式，上传 `zephyr.signed.bin` 即可。
+
 只提供 Cortex-M33 这一档。`west boards` 里还会带出同一个 SoC 的 `rp2350a/hazard3` qualifier（qualifier 由 SoC 定义决定，板子改不了），但本板没有对应的 dts，用它会掉进 `stub.dts` 然后 Kconfig 报错——本板不跑 RISC-V 那两个核。
