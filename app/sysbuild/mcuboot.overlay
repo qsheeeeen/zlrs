@@ -1,0 +1,36 @@
+/*
+ * Copyright (c) 2026 zlrs contributors
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * 只作用于 mcuboot 镜像的 devicetree 覆盖（sysbuild 自动认 app/sysbuild/<image>.overlay）。
+ *
+ * 应用镜像有三块 CDC（CRSF / 数据 / 控制台），bootloader 只留两块：
+ *   - cdc_acm_uart1 = 数据口 → 串口恢复（mcumgr 帧走这里，`zephyr,uart-mcumgr`
+ *     在板级 dts 里指过来）
+ *   - cdc_acm_uart2 = 控制台 → 内核日志（chosen `zephyr,console` 保持不变）
+ *   - cdc_acm_uart0（CRSF）在 bootloader 里没有用处，删掉；它的别名一起清掉，
+ *     否则 dtc 会因为悬空引用报错
+ * 于是升级模式下主机看到 "MCUBOOT" 的两个串口：第一个恢复、第二个日志。
+ *
+ * 另外这里要自己写上 `zephyr,code-partition = &boot_partition`：Zephyr 只在
+ * *没有* DTC_OVERLAY_FILE 时才去找 MCUboot 自带的
+ * bootloader/mcuboot/boot/zephyr/app.overlay，而那份里就这一行（bootloader 必须
+ * 链接到 0x0 的 mcuboot 分区，不是 slot0）。给了自己的 overlay，就得把它带上。
+ */
+
+/ {
+	aliases {
+		/delete-property/ zlrs-crsf-cdc;
+		/* zlrs-data-cdc 指向恢复用的那块 CDC，留着 */
+	};
+
+	chosen {
+		zephyr,code-partition = &boot_partition;
+		/* zephyr,console 与 zephyr,shell-uart 仍指向 cdc_acm_uart2，不用改 */
+	};
+};
+
+&usbd {
+	/delete-node/ cdc_acm_uart0;
+};

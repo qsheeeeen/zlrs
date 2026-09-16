@@ -137,10 +137,18 @@
 （ECDSA-P256）+ 启动校验，坏了能回滚；③ 砖机也能救——bootloader 起来后没有可启动的
 镜像就停在串口恢复里。
 
-**升级通道：MCUboot 串口恢复。** bootloader 自己收 mcumgr 帧，走数据口的 UART1
-（GP8/GP9，devicetree chosen `zephyr,uart-mcumgr`），写进 slot1 后由 MCUboot 换槽。
-bootloader 里不带 USB 栈是有意的：少一份复杂度，恢复时用一根 USB 串口线就行。
-（USB CDC 恢复是后面可选的加法，128 KB 的 bootloader 分区就是给它留的余量。）
+**升级通道：MCUboot 串口恢复，只走 USB。** bootloader 自己收 mcumgr 帧，写进 slot
+后由 MCUboot 换槽。USB 上只留两块 CDC（应用是三块）：
+
+| bootloader 模式 | 对应应用的哪一块 | 用途 |
+| --- | --- | --- |
+| 第 1 块 CDC | 数据口（`cdc_acm_uart1`） | 串口恢复：mcumgr 帧走这里（chosen `zephyr,uart-mcumgr`） |
+| 第 2 块 CDC | 控制台（`cdc_acm_uart2`） | 内核日志（chosen `zephyr,console`） |
+
+CRSF 那块 CDC 在 bootloader 里没有用处，直接从 DT 里删掉（`app/sysbuild/mcuboot.overlay`）。
+好处是升级只需要插板载 USB-C，不用 UART 转接；代价是**端口号会变**：应用模式是
+`ttyACM0/1/2`（CRSF/数据/控制台），bootloader 模式只有两块。所以脚本按
+`/dev/serial/by-id/...MCUBOOT...-if00`（或按产品字符串）找恢复口，别写死编号。
 
 进恢复模式有四条入口，都不碰 BOOTSEL：
 

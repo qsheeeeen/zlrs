@@ -29,10 +29,10 @@
 		/* 应用链接进 slot0：MCUboot 校验通过后从这里启动 */
 		zephyr,code-partition = &slot0_partition;
 		/*
-		 * MCUboot 的串口恢复走数据口的 UART（GP8/GP9，板上那一路
-		 * `zlrs-data-uart`），不占用 USB 控制台——bootloader 里不带
-		 * USB 栈，恢复时用一根 USB 串口线接这三个脚就行。
+		 * MCUboot 的串口恢复只走 USB：指向数据口那块 CDC
+		 * （`cdc_acm_uart1`，板载 USB-C 枚举出来的第二个口）。插一根 USB 线
+		 * 就能升级，不需要 UART 转接板；GP8/GP9 那路 UART 仍然留给应用。
 		 */
-		zephyr,uart-mcumgr = &uart1;
+		zephyr,uart-mcumgr = &cdc_acm_uart1;
 	};
 };

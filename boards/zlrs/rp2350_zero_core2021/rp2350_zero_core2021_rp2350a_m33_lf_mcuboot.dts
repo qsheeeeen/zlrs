@@ -24,6 +24,7 @@
 / {
 	chosen {
 		zephyr,code-partition = &slot0_partition;
-		zephyr,uart-mcumgr = &uart1;
+		/* 串口恢复只走 USB（数据口那块 CDC），同 hf/mcuboot */
+		zephyr,uart-mcumgr = &cdc_acm_uart1;
 	};
 };

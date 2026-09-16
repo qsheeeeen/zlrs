@@ -17,6 +17,10 @@
 # 之后用 mcumgr 客户端上传签名镜像（工具与参数以你的客户端版本为准）：
 #   smpmgr -t serial -p <port> image upload zephyr.signed.bin
 #   mcumgr --conntype serial --connstring <port> image upload -e zephyr.signed.bin
+#
+# 注意端口会变：应用模式三块 CDC（数据口是 ttyACM1），bootloader 模式只有两块
+# （恢复口在前、控制台在后）。按 /dev/serial/by-id/...MCUBOOT...-if00 找恢复口，
+# 别沿用触发时用的那个端口号。
 
 import argparse
 import sys
@@ -64,7 +68,8 @@ def send_magic(port: str, baud: int, dry_run: bool) -> int:
         dev.flush()
 
     print(f"已发送升级触发（{port}@{baud}）：设备会重启并停在 MCUboot 串口恢复")
-    print("接下来上传签名镜像（注意数据口波特率：默认 115200，配置过要带上同一个值）")
+    print("接下来上传签名镜像：bootloader 模式只剩两块 CDC（恢复口在前、控制台在后），")
+    print("按 /dev/serial/by-id/...MCUBOOT... 找恢复口，别沿用刚才这个端口号")
     return 0
 
 
