@@ -467,6 +467,8 @@ uint32_t zlrs_crsf_port_rx_dropped(void)
 
 /* ===== 4. 配置模式 ======================================================= */
 
+#if IS_ENABLED(CONFIG_ZLRS_CONFIG)
+
 #define CFG_RX_CHUNK 32U
 #define CFG_EXIT_POLL_MS 50U
 
@@ -650,3 +652,16 @@ int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 
 	return exit_requested ? 0 : 1;
 }
+
+#else /* !CONFIG_ZLRS_CONFIG */
+
+/* 配置协议被裁掉：应用照旧调用，这里直接说"没有配置模式" */
+int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
+{
+	(void)control;
+	(void)failsafe;
+
+	return -1;
+}
+
+#endif /* CONFIG_ZLRS_CONFIG */

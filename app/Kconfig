@@ -9,6 +9,19 @@ endmenu
 
 menu "zlrs"
 
+config ZLRS_APP_CORE
+	def_bool y
+	select ZLRS_PROTO
+	select ZLRS_LINK
+	select ZLRS_REGION
+	select ZLRS_CRSF
+	help
+	  应用永远需要协议核心、链路层、地区配置层与 CRSF 编解码：超帧、配对与会话、
+	  法规门、失控值默认值都在这些层里。库层的开关（lib/*/Kconfig）是给别的
+	  消费者用的，应用这边由"需要哪一项功能"反选出来，避免出现"把库关掉、应用
+	  却还在调用它"的组合；CRSF 端口、配置模式、状态灯关掉时，对应的库才可以
+	  跟着裁掉。
+
 config ZLRS_APP_ROLE_TX
 	bool "构建成 TX 角色"
 	default y
@@ -93,6 +106,7 @@ config ZLRS_APP_LINK_DATA
 config ZLRS_APP_CRSF_PORT
 	bool "CRSF 端口（手台 ↔ 模块、接收机 → 飞控）"
 	default y
+	select ZLRS_CRSF
 	help
 	  关掉以后不初始化 CRSF 端口：TX 一直发配置好的失控值，RX 也不往飞控
 	  输出。适合只验证空口、不接手台/飞控的台架。
@@ -100,6 +114,7 @@ config ZLRS_APP_CRSF_PORT
 config ZLRS_APP_CONFIG_MODE
 	bool "开机按住按键进配置模式"
 	default y
+	select ZLRS_CONFIG
 
 config ZLRS_APP_PAIRING_BUTTON
 	bool "长按按键触发配对"
@@ -110,6 +125,7 @@ config ZLRS_APP_PAIRING_BUTTON
 config ZLRS_APP_STATUS_LED
 	bool "状态灯"
 	default y
+	select ZLRS_LED
 
 choice ZLRS_APP_BAND_ROLE
 	prompt "频段角色"

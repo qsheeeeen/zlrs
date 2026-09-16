@@ -12,6 +12,8 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
+#include "zlrs/led/led.h"
+
 LOG_MODULE_REGISTER(zlrs_led_port, CONFIG_APP_LOG_LEVEL);
 
 /* 20 Hz 足够让闪烁看起来连续，又不会把时间花在刷灯上 */
@@ -23,6 +25,24 @@ static const struct device *const strip = DEVICE_DT_GET(DT_ALIAS(zlrs_led));
 #else
 #define LED_AVAILABLE 0
 #endif
+
+/*
+ * 状态灯引擎（lib/led）本身也是可裁的：关掉以后这个移植层退化成空操作，
+ * 应用侧不用再关心有没有灯（见 doc/01-system.md 2.2 与 2.3）。
+ */
+#if !IS_ENABLED(CONFIG_ZLRS_LED)
+int zlrs_led_port_init(void)
+{
+	return -1;
+}
+
+void zlrs_led_port_update(const zlrs_led_input_t *in, uint32_t now_ms)
+{
+	(void)in;
+	(void)now_ms;
+}
+
+#else
 
 static bool ready;
 static uint32_t last_update_ms;
@@ -61,3 +81,5 @@ void zlrs_led_port_update(const zlrs_led_input_t *in, uint32_t now_ms)
 
 	(void)led_strip_update_rgb(strip, pixels, ZLRS_LED_PIXELS);
 }
+
+#endif /* CONFIG_ZLRS_LED */
