@@ -214,6 +214,7 @@ static void test_control_plan(void)
 static void test_lora_plan(void)
 {
 	const zlrs_mod_cfg_t lora = zlrs_mod_lora(7U, 125000U, 1U, 8U);
+	const zlrs_mod_cfg_t sub_g_slow = zlrs_mod_flrc(325000U);
 	zlrs_control_plan_t plan;
 	zlrs_plan_req_t req = {
 		.region = NULL, /* FCC915：不限占空比 */
@@ -236,18 +237,53 @@ static void test_lora_plan(void)
 	/* 时隙预算要容得下 72 ms 的 RC 帧——FLRC 的 2 ms 上限在这里不适用 */
 	CHECK(plan.slot_budget_us >= 71936U + 200U);
 
-	/* 给数据链路预留 4 ms，帧率再掉一点，但不会掉到 0 */
-	req.reserve_us = 4000U;
+	/* 数据链路在 sub-G 跑窄带：两个 135 B 的窗口摊进来，帧率再掉一点 */
+	req.other_mod = &sub_g_slow;
+	req.other_frame_len = 135U;
 	zlrs_region_control_plan(&req, &plan);
 	CHECK(plan.rate_hz == 8U);
-	CHECK(plan.frame_period_us >= 108432U + 4000U);
+	CHECK(plan.frame_period_us >= 108432U + 2U * 3622U);
 
 	/* EU868 的 1% 占空比撑不住 LoRa：告警归告警，帧率兜底到 1 Hz */
 	req.region = zlrs_region_get(ZLRS_REGION_EU868);
-	req.reserve_us = 0U;
+	req.other_mod = NULL;
+	req.other_frame_len = 0U;
 	zlrs_region_control_plan(&req, &plan);
 	CHECK(plan.clamped_by_duty);
 	CHECK(plan.rate_hz == 1U);
+}
+
+/*
+ * 竞速模式（doc/01-system.md 3.2）：控制链路独占 2.4G——它没有地区表，占空比
+ * 门不作用在它身上；让到 sub-G 的那条链路（数据）才受法规约束，它的窗口按
+ * data_every_n 摊进超帧，峰值帧率被拖下来一点。
+ */
+static void test_racing_plan(void)
+{
+	const zlrs_mod_cfg_t ctl = zlrs_mod_flrc(2600000U);
+	const zlrs_mod_cfg_t sub_g_slow = zlrs_mod_flrc(325000U);
+	zlrs_control_plan_t plan;
+	zlrs_plan_req_t req = {
+		.region = NULL, /* 2.4G：没有地区表 */
+		.mod = &ctl,
+		.want_hz = 500U,
+		.frame_len = 31U,
+		.tlm_len = 15U,
+		.other_mod = &sub_g_slow,
+		.other_frame_len = 135U,
+	};
+
+	printf("region: racing plan (control on 2.4g, data on sub-g)\n");
+
+	zlrs_region_control_plan(&req, &plan);
+
+	/* 不受占空比限制，但 sub-G 数据窗口的预留把峰值压到 420 Hz */
+	CHECK(!plan.clamped_by_duty);
+	CHECK(plan.clamped_by_airtime);
+	CHECK(plan.rate_hz == 420U);
+	/* 数据窗口每 4 帧一次：7204 µs 的预留摊到每帧 1811 µs，和帧率自洽 */
+	CHECK(plan.data_every_n == 4U);
+	CHECK(plan.frame_period_us == 2380U);
 }
 
 void test_region(void)
@@ -259,5 +295,6 @@ void test_region(void)
 	test_max_frames();
 	test_control_plan();
 	test_lora_plan();
+	test_racing_plan();
 	test_duty();
 }

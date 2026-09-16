@@ -52,10 +52,6 @@ static uint8_t resync_every_n;
 #define CTL_FRAME_LEN 31U
 /* 遥测帧：8 B 载荷 + 头与标签 */
 #define CTL_TLM_LEN 15U
-/* 每一个时隙留给 RAC 调度、模式翻转与 SPI 的余量（与 lib/region 一致） */
-#define PORT_SLOT_OVERHEAD_US 200U
-#define SLOT_BUDGET_MAX_US 2000U
-
 /*
  * 上板调试：两条链路可以各自单独跑。控制链路承载 RC 与配对，数据链路承载
  * 透传——先各自单独跑通，再合起来看分时（见 doc/01-system.md 2.3）。
@@ -73,6 +69,16 @@ static zlrs_link_t link_data;
 /* 两条链路各自的调制档：启动时按 Kconfig 与地区定下来，见 plan_init() */
 static zlrs_mod_cfg_t control_mod;
 static zlrs_mod_cfg_t data_mod;
+
+/*
+ * 频段角色（doc/01-system.md 3.2）：默认控制链路占 sub-G、数据链路占 2.4G；
+ * 竞速模式对调。法规门（功率上限、速率上限、占空比）+ sub-G 那条链路才吃。
+ */
+#if IS_ENABLED(CONFIG_ZLRS_APP_BAND_ROLE_SUBG_DATA)
+#define CONTROL_ON_SUBG 0
+#else
+#define CONTROL_ON_SUBG 1
+#endif
 
 /* 地区：决定频段、功率上限与占空比记账 */
 static const zlrs_region_t *region;
@@ -220,8 +226,11 @@ static void on_failsafe(void *ctx, const uint8_t *payload, uint16_t len)
 static void plan_init(void)
 {
 	zlrs_control_plan_t plan;
+	/* 法规门只作用在 sub-G 那条链路上：竞速模式下它是数据链路 */
+	const zlrs_region_t *ctl_region = CONTROL_ON_SUBG ? region : NULL;
+	const zlrs_region_t *data_region = CONTROL_ON_SUBG ? NULL : region;
 	zlrs_plan_req_t req = {
-		.region = region,
+		.region = ctl_region,
 		.frame_len = CTL_FRAME_LEN,
 		.tlm_len = CTL_TLM_LEN,
 	};
@@ -230,31 +239,34 @@ static void plan_init(void)
 	 * 调制按链路各自选（doc/03-protocol.md 4.1.1）：窄带地区放不下宽带
 	 * FLRC 时控制链路改跑 LoRa 远距档，数据链路始终留在 2.4G 跑 FLRC。
 	 */
-#if IS_ENABLED(CONFIG_ZLRS_APP_CONTROL_MODULATION_LORA)
+#if IS_ENABLED(CONFIG_ZLRS_APP_BAND_ROLE_SUBG_DATA)
+	/* 竞速模式：控制链路独占 2.4G，速率/帧率用它自己那套配置 */
+	control_mod = zlrs_mod_flrc(CONFIG_ZLRS_APP_RACING_CONTROL_RATE_BPS);
+	req.want_hz = CONFIG_ZLRS_APP_RACING_CONTROL_RATE_HZ;
+#elif IS_ENABLED(CONFIG_ZLRS_APP_CONTROL_MODULATION_LORA)
 	control_mod = zlrs_region_clamp_mod(
-		region, zlrs_mod_lora(CONFIG_ZLRS_APP_CONTROL_LORA_SF,
-				      CONFIG_ZLRS_APP_CONTROL_LORA_BW_HZ,
-				      CONFIG_ZLRS_APP_CONTROL_LORA_CR,
-				      CONFIG_ZLRS_APP_CONTROL_LORA_PREAMBLE));
+		ctl_region, zlrs_mod_lora(CONFIG_ZLRS_APP_CONTROL_LORA_SF,
+					  CONFIG_ZLRS_APP_CONTROL_LORA_BW_HZ,
+					  CONFIG_ZLRS_APP_CONTROL_LORA_CR,
+					  CONFIG_ZLRS_APP_CONTROL_LORA_PREAMBLE));
 	req.want_hz = CONFIG_ZLRS_APP_LORA_CONTROL_RATE_HZ;
 #else
 	control_mod = zlrs_region_clamp_mod(
-		region,
-		zlrs_mod_flrc(zlrs_region_clamp_rate(region, CONFIG_ZLRS_APP_CONTROL_RATE_BPS)));
+		ctl_region,
+		zlrs_mod_flrc(zlrs_region_clamp_rate(ctl_region,
+						     CONFIG_ZLRS_APP_CONTROL_RATE_BPS)));
 	req.want_hz = CONFIG_ZLRS_APP_CONTROL_RATE_HZ;
 #endif
-	data_mod = zlrs_mod_flrc(CONFIG_ZLRS_APP_DATA_RATE_BPS);
+	data_mod = zlrs_mod_flrc(
+		zlrs_region_clamp_rate(data_region, CONFIG_ZLRS_APP_DATA_RATE_BPS));
 	req.mod = &control_mod;
 
 	/*
-	 * 超帧周期由最慢的那条链路决定：先算一遍控制链路，拿到数据窗口的稀疏
-	 * 系数，再把数据链路那两个窗口摊到每帧上重算一遍。
+	 * 超帧周期由最慢的那条链路决定：数据链路那两个窗口按"每 data_every_n
+	 * 帧跑一次"摊到每一帧里，计划内部迭代到自洽（见 lib/region/region.c）。
 	 */
-	zlrs_region_control_plan(&req, &plan);
-	req.reserve_us =
-		(2U * (zlrs_mod_airtime_us(&data_mod, CONFIG_ZLRS_APP_DATA_MTU + 7U) +
-		       PORT_SLOT_OVERHEAD_US)) /
-		((plan.data_every_n > 0U) ? plan.data_every_n : 1U);
+	req.other_mod = ZLRS_DATA_ENABLED ? &data_mod : NULL;
+	req.other_frame_len = (uint16_t)(CONFIG_ZLRS_APP_DATA_MTU + 7U);
 	zlrs_region_control_plan(&req, &plan);
 
 	control_rate_hz = plan.rate_hz;
@@ -306,7 +318,8 @@ static void build_links(void)
 	zlrs_link_cfg_t ctl_cfg = {
 		.kind = ZLRS_LINK_CONTROL,
 		.role = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? ZLRS_ROLE_TX : ZLRS_ROLE_RX,
-		.domain = region->domain,
+		/* 频段角色可配：远距模式控制链路占 sub-G，竞速模式对调（见 01 第 3.2 节） */
+		.domain = CONTROL_ON_SUBG ? region->domain : ZLRS_DOMAIN_ISM2400,
 		.sync_slot = ZLRS_SYNC_SLOT_CONTROL,
 		.profile = IS_ENABLED(CONFIG_ZLRS_APP_SECURITY_PROFILE_P0) ? ZLRS_PROFILE_P0
 									    : ZLRS_PROFILE_P1,
@@ -320,7 +333,10 @@ static void build_links(void)
 		.telemetry = IS_ENABLED(CONFIG_ZLRS_APP_TELEMETRY) ? 1U : 0U,
 		/* 调制档：窄频段地区走 LoRa 远距档，宽带地区走 FLRC（见 plan_init） */
 		.mod = control_mod,
-		.tx_power_dbm = MIN(CONFIG_ZLRS_APP_TX_POWER_DBM, region->max_tx_power_dbm),
+		.tx_power_dbm = CONTROL_ON_SUBG
+					? MIN(CONFIG_ZLRS_APP_TX_POWER_DBM,
+					      region->max_tx_power_dbm)
+					: CONFIG_ZLRS_APP_TX_POWER_DBM,
 		.rx_timeout_ms = 2U,
 		.beacon_period_ms = 1000U,
 		/*
@@ -355,9 +371,13 @@ static void build_links(void)
 	};
 
 	data_cfg.kind = ZLRS_LINK_DATA;
-	data_cfg.domain = ZLRS_DOMAIN_ISM2400;
+	data_cfg.domain = CONTROL_ON_SUBG ? ZLRS_DOMAIN_ISM2400 : region->domain;
 	data_cfg.sync_slot = ZLRS_SYNC_SLOT_DATA;
 	data_cfg.mod = data_mod;
+	data_cfg.tx_power_dbm =
+		CONTROL_ON_SUBG ? CONFIG_ZLRS_APP_TX_POWER_DBM
+				: MIN(CONFIG_ZLRS_APP_TX_POWER_DBM,
+				      region->max_tx_power_dbm);
 	data_cfg.arq = IS_ENABLED(CONFIG_ZLRS_APP_DATA_ARQ) ? 1U : 0U;
 	/*
 	 * ARQ 重传超时由档位派生：一帧的空中时间加一次往返余量，至少留 30 ms
@@ -454,6 +474,8 @@ static void run_slot(uint8_t slot)
 	const bool data_slot = (slot == ZLRS_SLOT_DATA_A || slot == ZLRS_SLOT_DATA_B);
 	zlrs_link_t *link = data_slot ? &link_data : &link_control;
 	const uint32_t now_ms = zlrs_rac_port_now_ms();
+	/* 法规门（占空比）只作用在 sub-G 那条链路上 */
+	const bool on_subg = data_slot ? (CONTROL_ON_SUBG == 0) : (CONTROL_ON_SUBG != 0);
 	const zlrs_radio_req_t *req;
 
 	if (data_slot ? !ZLRS_DATA_ENABLED : !ZLRS_CONTROL_ENABLED) {
@@ -469,8 +491,9 @@ static void run_slot(uint8_t slot)
 	/*
 	 * 地区占空比（EU868 是 1%）：额度用完就把这个时隙让出去。
 	 * 让出去的时隙按"射频失败"收尾，链路层会把数据放回队列下轮再试。
+	 * 只有 sub-G 那条链路受这条约束（竞速模式下就是数据链路）。
 	 */
-	if (req->is_tx &&
+	if (req->is_tx && on_subg &&
 	    !zlrs_duty_reserve(&duty, zlrs_airtime_mod_ms(&req->mod, req->size), now_ms)) {
 		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, now_ms);
 		return;

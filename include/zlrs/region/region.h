@@ -127,7 +127,13 @@ typedef struct {
 	uint32_t want_hz;          /* 配置档位 */
 	uint16_t frame_len;        /* RC 帧字节数（含头与标签） */
 	uint16_t tlm_len;          /* 遥测帧字节数；0 = 就用 frame_len */
-	uint32_t reserve_us;       /* 同一超帧里留给另一条链路的空中时间 */
+	/*
+	 * 另一条链路的窗口预留：给它的调制档与帧长，计划自己按"每 data_every_n
+	 * 帧跑一次"把它摊到每一帧里（见 zlrs_control_plan_t 的 data_every_n）。
+	 * NULL = 不预留（只有控制链路的形状）。
+	 */
+	const zlrs_mod_cfg_t *other_mod;
+	uint16_t other_frame_len;
 } zlrs_plan_req_t;
 
 void zlrs_region_control_plan(const zlrs_plan_req_t *req, zlrs_control_plan_t *out);

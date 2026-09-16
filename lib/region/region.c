@@ -221,43 +221,78 @@ void zlrs_region_control_plan(const zlrs_plan_req_t *req, zlrs_control_plan_t *o
 	const uint32_t per_slot_us =
 		((airtime_us > tlm_airtime_us) ? airtime_us : tlm_airtime_us) +
 		SLOT_OVERHEAD_US;
-	const uint32_t per_frame_us = airtime_us + tlm_airtime_us + 2U * SLOT_OVERHEAD_US +
-				      ((req != NULL) ? req->reserve_us : 0U);
-	const uint32_t max_by_airtime =
-		(per_frame_us > 0U) ? (1000000U / per_frame_us) : UINT32_MAX;
 	const uint32_t max_by_duty = zlrs_region_max_frames_per_s_mod(
 		region, (req != NULL) ? req->mod : NULL, (req != NULL) ? req->frame_len : 0U);
 	uint32_t hz = (req != NULL) ? req->want_hz : 0U;
+	uint32_t reserve_us = 0U;
 
 	out->clamped_by_duty = false;
 	out->clamped_by_airtime = false;
 
-	if (max_by_duty < hz) {
-		hz = max_by_duty;
-		out->clamped_by_duty = true;
-	}
-	if (max_by_airtime < hz) {
-		hz = max_by_airtime;
-		out->clamped_by_airtime = true;
-	}
-
 	/*
-	 * 兜底：不让帧率掉到 0。占空比或空中时间只够几赫兹时，压到 1 Hz 并让
-	 * clamped_* 把话说清楚——LoRa 远距档在 EU868 上就是这个下场（1% 占空比
-	 * 撑不住几十毫秒的帧）。但兜底不能超过空中时间允许的上限，否则每一帧
-	 * 都会超预算。
+	 * 另一条链路的预留取决于"数据窗口每 n 帧跑一次"，而 n 又取决于帧率——
+	 * 迭代几轮让它收敛。不收敛的极端情况（帧率掉档）也只会多做一两轮。
 	 */
-	if (hz < MIN_CONTROL_HZ) {
-		hz = MIN_CONTROL_HZ;
-		if (max_by_airtime < hz) {
-			hz = max_by_airtime;
-		}
+	for (uint8_t iter = 0U; iter < 4U; iter++) {
+		const uint32_t per_frame_us = airtime_us + tlm_airtime_us +
+					      2U * SLOT_OVERHEAD_US + reserve_us;
+		const uint32_t max_by_airtime =
+			(per_frame_us > 0U) ? (1000000U / per_frame_us) : UINT32_MAX;
+		uint32_t next_reserve = 0U;
+
+		hz = (req != NULL) ? req->want_hz : 0U;
+
 		if (max_by_duty < hz) {
 			hz = max_by_duty;
+			out->clamped_by_duty = true;
+		} else {
+			out->clamped_by_duty = false;
 		}
-	}
-	if (hz == 0U) {
-		hz = 1U;
+		if (max_by_airtime < hz) {
+			hz = max_by_airtime;
+			out->clamped_by_airtime = true;
+		} else {
+			out->clamped_by_airtime = false;
+		}
+
+		/*
+		 * 兜底：不让帧率掉到 0。占空比或空中时间只够几赫兹时，压到
+		 * MIN_CONTROL_HZ，但不会超过空中时间允许的上限——否则每一帧都会
+		 * 超预算。LoRa 远距档在 EU868 上就是这个下场（1% 占空比撑不住
+		 * 几十毫秒的帧）。
+		 */
+		if (hz < MIN_CONTROL_HZ) {
+			hz = MIN_CONTROL_HZ;
+			if (max_by_airtime < hz) {
+				hz = max_by_airtime;
+			}
+			if (max_by_duty < hz) {
+				hz = max_by_duty;
+			}
+		}
+		if (hz == 0U) {
+			hz = 1U;
+		}
+
+		if (req == NULL || req->other_mod == NULL || req->other_frame_len == 0U) {
+			break;
+		}
+
+		/* 另一条链路的两个窗口，按 data_every_n 摊到每帧 */
+		{
+			const uint32_t other_us =
+				zlrs_mod_airtime_us(req->other_mod, req->other_frame_len);
+			const uint8_t every_n = (uint8_t)((hz / DATA_TARGET_HZ) > 0U
+								  ? (hz / DATA_TARGET_HZ)
+								  : 1U);
+
+			next_reserve = (2U * (other_us + SLOT_OVERHEAD_US)) / every_n;
+		}
+
+		if (next_reserve == reserve_us) {
+			break;
+		}
+		reserve_us = next_reserve;
 	}
 
 	out->rate_hz = hz;

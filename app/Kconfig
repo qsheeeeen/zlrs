@@ -111,9 +111,27 @@ config ZLRS_APP_STATUS_LED
 	bool "状态灯"
 	default y
 
+choice ZLRS_APP_BAND_ROLE
+	prompt "频段角色"
+	default ZLRS_APP_BAND_ROLE_SUBG_CONTROL
+	help
+	  远距模式（默认）：控制链路占 sub-G（距离），数据链路占 2.4G（吞吐）。
+	  竞速模式：对调——控制链路独占 2.4G（短空口时间、高帧率），数据链路让到
+	  sub-G 并受地区法规约束（也可以直接关掉数据链路）。见 doc/01-system.md
+	  3.2。
+
+config ZLRS_APP_BAND_ROLE_SUBG_CONTROL
+	bool "远距模式：控制 sub-G / 数据 2.4G"
+
+config ZLRS_APP_BAND_ROLE_SUBG_DATA
+	bool "竞速模式：控制 2.4G / 数据 sub-G"
+
+endchoice
+
 choice ZLRS_APP_CONTROL_MODULATION
 	prompt "控制链路调制"
 	default ZLRS_APP_CONTROL_MODULATION_FLRC
+	depends on ZLRS_APP_BAND_ROLE_SUBG_CONTROL
 	help
 	  调制按链路各自选（doc/03-protocol.md 4.1.1）：数据链路始终留在 2.4G 跑
 	  FLRC，控制链路可以改跑 LoRa 远距档——窄带地区（868/470/433）放不下
@@ -126,6 +144,23 @@ config ZLRS_APP_CONTROL_MODULATION_LORA
 	bool "LoRa（窄带远距档）"
 
 endchoice
+
+config ZLRS_APP_RACING_CONTROL_RATE_BPS
+	int "竞速模式控制链路速率（bps）"
+	default 2600000
+	depends on ZLRS_APP_BAND_ROLE_SUBG_DATA
+	help
+	  竞速模式下控制链路独占 2.4G：这里只填 FLRC 的速率档，不受 sub-G 地区
+	  的速率上限约束。
+
+config ZLRS_APP_RACING_CONTROL_RATE_HZ
+	int "竞速模式控制帧率（Hz）"
+	default 500
+	range 50 500
+	depends on ZLRS_APP_BAND_ROLE_SUBG_DATA
+	help
+	  2.4G 的帧可以更密（默认 500），但超帧周期仍然要装得下让到 sub-G 的
+	  数据链路那两个窗口（见 doc/01-system.md 3.2）。
 
 config ZLRS_APP_LORA_CONTROL_RATE_HZ
 	int "LoRa 控制帧率（Hz）"

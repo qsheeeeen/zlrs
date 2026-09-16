@@ -113,6 +113,7 @@ python3 scripts/zlrs-config.py --port /dev/ttyACM1 exit
 - `CONFIG_ZLRS_APP_DYNAMIC_POWER`（默认开）：按对端回报的 RSSI/LQ 自动升降发射功率，判据每秒评估一次，遥测断了回到上限；下限用 `CONFIG_ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM`。阈值按实测曲线标定。
 - `CONFIG_ZLRS_APP_RESYNC_PERIOD_MS`（默认 1000，0 = 关）：连接态周期 `BEACON`。RX 据此把跳频索引拉回来（两端晶振差会累积成"踩空"），同一条路也让对端重启后能自动重连，见 [doc/03-protocol.md](doc/03-protocol.md) 5.1。
 - `CONFIG_ZLRS_APP_CONTROL_MODULATION_LORA=y`：控制链路改跑 LoRa 远距档（默认 SF7 / BW125 / CR 4/5 / 8 符号前导），数据链路仍留在 2.4G 跑 FLRC。超帧周期由最慢的那条链路决定——SF7/BW125 下 31 B 的 RC 帧要 72 ms，所以配置的 10 Hz 会被空中时间压到 9 Hz；EU868 的 1% 占空比撑不住这一档（压到 1 Hz 并告警）。参数与换算见 [doc/03-protocol.md](doc/03-protocol.md) 4.1.1。
+- `CONFIG_ZLRS_APP_BAND_ROLE_SUBG_DATA=y`：竞速模式——控制链路独占 2.4G（`CONFIG_ZLRS_APP_RACING_CONTROL_RATE_BPS/_HZ`，默认 2.6 Mbps / 500 Hz），数据链路让到 sub-G 并受地区法规约束（也可以 `ZLRS_APP_LINK_DATA=n` 直接关掉）。法规门只作用在 sub-G 那条链路上。见 [doc/01-system.md](doc/01-system.md) 3.2。
 
 ### 6. 上板调试的开关
 

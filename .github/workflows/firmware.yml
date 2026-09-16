@@ -112,6 +112,17 @@ jobs:
               -DCONFIG_ZLRS_APP_CONTROL_MODULATION_FLRC=n
           done
 
+      # 竞速模式：控制链路独占 2.4G，数据链路让到 sub-G
+      - name: build (racing band role, both skus)
+        run: |
+          set -x
+          . zlrs/scripts/zephyr-env.sh
+          for board in rp2350_zero_core2021/rp2350a/m33/hf rp2350_zero_core2021/rp2350a/m33/lf; do
+            ZLRS_BOARD="$board" zlrs-build -d "build-racing-${board##*/}" -- \
+              -DCONFIG_ZLRS_APP_BAND_ROLE_SUBG_DATA=y \
+              -DCONFIG_ZLRS_APP_BAND_ROLE_SUBG_CONTROL=n
+          done
+
       - name: upload uf2
         if: always()
         uses: actions/upload-artifact@v4
