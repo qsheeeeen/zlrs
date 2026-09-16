@@ -100,6 +100,13 @@ echo "==> [5/5] Zephyr 的 Python 构建依赖"
 "${VENV_DIR}/bin/python" -m pip install --quiet --no-warn-script-location \
 	-r "${WS}/zephyr/scripts/requirements-base.txt"
 
+# 带 MCUboot 的构建用 imgtool 签名镜像（`west build --sysbuild ... /mcuboot`），
+# 它的依赖不在 Zephyr 的 requirements-base 里：少了它们，构建会在签名那一步
+# 报 "No module named 'cryptography'"。
+echo "    imgtool（MCUboot 签名）依赖"
+"${VENV_DIR}/bin/python" -m pip install --quiet --no-warn-script-location \
+	-r "${WS}/bootloader/mcuboot/scripts/requirements.txt"
+
 SDK_DIR="${ZLRS_SDK_DIR:-${HOME}/zephyr-sdk-1.0.0}"
 SDK_GCC="${SDK_DIR}/gnu/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc"
 [ -x "${SDK_GCC}" ] || SDK_GCC="${SDK_DIR}/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc"

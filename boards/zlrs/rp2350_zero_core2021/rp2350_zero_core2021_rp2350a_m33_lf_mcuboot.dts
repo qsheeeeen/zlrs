@@ -1,0 +1,26 @@
+/*
+ * Copyright (c) 2026 zlrs contributors
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * 带 MCUboot 的 LF 变体（470 / 433）。组合顺序同 hf/mcuboot，只是第 4 步换成
+ * LF SKU 的 sub-G 标定。
+ */
+
+/dts-v1/;
+
+#include <raspberrypi/rpi_pico/rp2350a.dtsi>
+#include <raspberrypi/rpi_pico/m33.dtsi>
+
+#include "rp2350_zero_core2021.dtsi"
+#include "rp2350_zero_core2021_lf.dtsi"
+
+/* 分区：mcuboot 128 KB / slot0 832 KB / slot1 832 KB / storage 2.25 MB */
+#include "rp2350_zero_core2021_partitions_mcuboot.dtsi"
+
+/ {
+	chosen {
+		zephyr,code-partition = &slot0_partition;
+		zephyr,uart-mcumgr = &uart1;
+	};
+};

@@ -1,0 +1,34 @@
+/*
+ * Copyright (c) 2026 zlrs contributors
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * 带 MCUboot 的 HF 变体（868 / 915）。组合顺序：
+ * 1. SoC 公共部分（rp2350a）  2. 核相关部分（Cortex-M33）
+ * 3. 板级公共部分  4. HF SKU 的 sub-G 标定
+ * 5. MCUboot 分区表（见同目录 README 与 partitions_mcuboot.dtsi）
+ */
+
+/dts-v1/;
+
+#include <raspberrypi/rpi_pico/rp2350a.dtsi>
+#include <raspberrypi/rpi_pico/m33.dtsi>
+
+#include "rp2350_zero_core2021.dtsi"
+#include "rp2350_zero_core2021_hf.dtsi"
+
+/* 分区：mcuboot 128 KB / slot0 832 KB / slot1 832 KB / storage 2.25 MB */
+#include "rp2350_zero_core2021_partitions_mcuboot.dtsi"
+
+/ {
+	chosen {
+		/* 应用链接进 slot0：MCUboot 校验通过后从这里启动 */
+		zephyr,code-partition = &slot0_partition;
+		/*
+		 * MCUboot 的串口恢复走数据口的 UART（GP8/GP9，板上那一路
+		 * `zlrs-data-uart`），不占用 USB 控制台——bootloader 里不带
+		 * USB 栈，恢复时用一根 USB 串口线接这三个脚就行。
+		 */
+		zephyr,uart-mcumgr = &uart1;
+	};
+};

@@ -33,6 +33,11 @@ Core2021 的 sub-G 是**两个不同的 SKU**，PA 网络与频段都不同，�
 | --- | --- | --- | --- |
 | `.../rp2350a/m33/hf` | HF：850–930 MHz | FCC915(0) / EU868(1) | FCC915 |
 | `.../rp2350a/m33/lf` | LF：410–510 MHz | CN470(2) / CN433(3) | CN470 |
+| `.../rp2350a/m33/hf/mcuboot` | 同 hf | 同 hf | FCC915 |
+| `.../rp2350a/m33/lf/mcuboot` | 同 lf | 同 lf | CN470 |
+
+带 `/mcuboot` 的两个变体多一个 bootloader 与两槽固件分区（见下面"分区与启动"）；
+它们的构建要加 `--sysbuild`，把 MCUboot 一起编出来。
 
 **板子只有这两种形态**，构建时必须显式指定变体：不带变体的 `rp2350_zero_core2021/rp2350a/m33` 没有对应的硬件，板级定义里也没有它的 dts，用它构建会失败（Zephyr 会退回 `stub.dts`）。
 
@@ -61,5 +66,46 @@ west build -b rp2350_zero_core2021/rp2350a/m33/hf app   # 或 .../lf
 ```
 
 烧写走 BOOTSEL + UF2（`west flash --runner uf2`）或 SWD（openocd / probe-rs / jlink）。
+
+## 分区与启动
+
+两块板子的镜像都是 4 MB flash，分区按变体分两套（定义在 dts/dtsi 里）：
+
+**不带 bootloader 的 hf / lf 变体**（`rp2350_zero_core2021_partitions_1m.dtsi`）：
+
+| 分区 | 偏移 | 大小 | 用途 |
+| --- | --- | --- | --- |
+| code | 0x000000 | 1 MB | 应用镜像（`zephyr,code-partition`） |
+| storage | 0x100000 | 3 MB | NVS：根密钥、设备标识、配对记录、失控值、波特率 |
+
+启动链：RP2350 bootrom → 应用（`west build` 的产物，`zephyr.uf2` 直接拖进去）。
+
+**带 MCUboot 的 hf/mcuboot 与 lf/mcuboot 变体**
+（`rp2350_zero_core2021_partitions_mcuboot.dtsi`）：
+
+| 分区 | 偏移 | 大小 | 用途 |
+| --- | --- | --- | --- |
+| mcuboot | 0x000000 | 128 KB | bootloader（实测 61.6 KB，留出 USB CDC 恢复等后续配置的余量） |
+| image-0 (slot0) | 0x020000 | 832 KB | 应用镜像（签名后放这里） |
+| image-1 (slot1) | 0x0F0000 | 832 KB | 升级镜像落这里，MCUboot 换槽 |
+| storage | 0x1C0000 | 2.25 MB | 同上面的 NVS |
+
+启动链：RP2350 bootrom → MCUboot（校验 slot0 的签名）→ 应用。换槽方式用
+`swap using offset`（不需要 scratch 分区，升级后可以回滚）。
+
+第一次烧写（没有调试器）：
+
+```shell
+west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33/hf/mcuboot app
+python3 scripts/make-signed-uf2.py          # 生成应用镜像的 signed UF2
+```
+
+按住 BOOTSEL 插 USB，把 `build/mcuboot/zephyr/zephyr.uf2` 与应用镜像的
+`zephyr.signed.uf2` 依次拖进 `RPI-RP2` 盘。之后升级走 MCUboot 的串口恢复
+（数据口 UART1，GP8/GP9），见 [README](../../../README.md) 与
+[doc/01-system.md](../../../doc/01-system.md) 2.4。
+
+**注意**：应用目录里那份 `zephyr.uf2` 是**未签名**镜像，MCUboot 不认（而且基址是
+flash 起始地址，不是 slot0）。带 bootloader 的构建只拖 `zephyr.signed.uf2`。
 
 只提供 Cortex-M33 这一档。`west boards` 里还会带出同一个 SoC 的 `rp2350a/hazard3` qualifier（qualifier 由 SoC 定义决定，板子改不了），但本板没有对应的 dts，用它会掉进 `stub.dts` 然后 Kconfig 报错——本板不跑 RISC-V 那两个核。

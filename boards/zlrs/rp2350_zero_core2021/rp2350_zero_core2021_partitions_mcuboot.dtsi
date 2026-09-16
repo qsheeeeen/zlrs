@@ -1,0 +1,45 @@
+/*
+ * Copyright (c) 2026 zlrs contributors
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * 带 MCUboot 的分区表（4 MB）。布局与 Zephyr 树里 raspberrypi/
+ * partitions_4M_sysbuild.dtsi 同形，只把 bootloader 从 64 KB 放宽到 128 KB：
+ * 实测带串口恢复（mcumgr over UART）的 MCUboot 已经占掉 61.6 KB（96%），
+ * 再加代码就没地方了；128 KB 给后续"USB CDC 恢复"之类的配置留了余量。
+ *
+ *   0x000000  mcuboot   128 KB   RP2350 bootrom 从这里启动
+ *   0x020000  slot0     832 KB   应用（signed）——zephyr,code-partition
+ *   0x0F0000  slot1     832 KB   升级镜像落这里，MCUboot 换槽
+ *   0x1C0000  storage  2.25 MB   NVS：根密钥、设备标识、配对记录、失控值
+ */
+
+&flash0 {
+	status = "okay";
+
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		boot_partition: partition@0 {
+			label = "mcuboot";
+			reg = <0x0 0x20000>;
+		};
+
+		slot0_partition: partition@20000 {
+			label = "image-0";
+			reg = <0x20000 0xd0000>;
+		};
+
+		slot1_partition: partition@f0000 {
+			label = "image-1";
+			reg = <0xf0000 0xd0000>;
+		};
+
+		storage_partition: partition@1c0000 {
+			label = "storage";
+			reg = <0x1c0000 0x240000>;
+		};
+	};
+};

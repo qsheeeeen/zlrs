@@ -27,6 +27,7 @@ Core2021 的 sub-G 是**两个 SKU**（PA 网络不同），所以板级是两�
 | 产物 | 命令 | 说明 |
 | --- | --- | --- |
 | 固件（TX 或 RX） | `zlrs-build` | 默认目标 `rp2350_zero_core2021/rp2350a/m33/hf`（LF SKU 用 `.../m33/lf`） |
+| 固件 + MCUboot | `zlrs-build-mcuboot` | 目标 `.../m33/hf/mcuboot`（LF 用 `.../m33/lf/mcuboot`），`west build --sysbuild` 把 bootloader 一起编出来 |
 | 主机侧测试 | `make -C tests/host run` | 协议核心、链路层（含 ARQ 与占空比）、CRSF 与配置协议，不需要硬件与工作区 |
 | 官方示例 | 见下 | Semtech 的 `packet_error_rate_flrc`，用来单独验证工具链与射频栈 |
 
@@ -60,6 +61,20 @@ cd "$ZLRS_WS" && west flash    # 默认 openocd，也可 --runner uf2/probe-rs/j
 按住 BOOTSEL 上电后拖 `zephyr.uf2` 也可以，产物在 `$ZLRS_WS/build/zephyr/`。
 
 kernel log 与 shell 在 USB 的第三个 CDC 上（Linux 下 `/dev/ttyACM2`）。
+
+#### 带 MCUboot 的构建（推荐）
+
+换成 `/mcuboot` 目标就把 bootloader 一起编进来，之后升级不用再按 BOOTSEL：
+
+```shell
+zlrs-build-mcuboot                                   # = west build --sysbuild -b $ZLRS_BOARD/mcuboot $ZLRS_APP
+python3 scripts/make-signed-uf2.py                   # 把签名镜像打成可拖的 UF2
+```
+
+第一次烧写（没有调试器）：按住 BOOTSEL 插 USB，把 `build/mcuboot/zephyr/zephyr.uf2`
+和 `build/app/zephyr/zephyr.signed.uf2` 依次拖进 `RPI-RP2` 盘。
+之后升级走 MCUboot 的串口恢复（数据口 UART1，GP8/GP9），镜像签名与分区表见
+[doc/01-system.md](doc/01-system.md) 2.4 与 [板级 README](boards/zlrs/rp2350_zero_core2021/README.md)。
 
 `scripts/zephyr-env.sh` 导出这些变量：
 

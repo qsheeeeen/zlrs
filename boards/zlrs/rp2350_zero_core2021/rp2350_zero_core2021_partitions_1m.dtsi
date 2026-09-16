@@ -1,0 +1,33 @@
+/*
+ * Copyright (c) 2026 zlrs contributors
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * 不带 bootloader 的分区表：4 MB flash 划成 1 MB code + 3 MB storage（NVS 存
+ * 密钥与配对记录）。带 MCUboot 的变体用 Zephyr 树里的
+ * raspberrypi/partitions_4M_sysbuild.dtsi，见同目录 README 的分区表。
+ */
+
+&flash0 {
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		code_partition: partition@0 {
+			label = "code";
+			reg = <0x0 DT_SIZE_M(1)>;
+		};
+
+		storage_partition: partition@100000 {
+			label = "storage";
+			reg = <0x100000 DT_SIZE_M(3)>;
+		};
+	};
+};
+
+/ {
+	chosen {
+		zephyr,code-partition = &code_partition;
+	};
+};

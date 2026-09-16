@@ -1,7 +1,6 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# 板级公共配置在 Kconfig.defconfig 里。
-# HF SKU（868 / 915）：默认 FCC915，EU868 用 CONFIG_ZLRS_APP_REGION=1
-
-CONFIG_ZLRS_APP_REGION=0
+# 这个变体没有额外板级配置：地区默认值按 SKU 由 app/Kconfig 的
+# ZLRS_APP_REGION default 给（见那里的注释：bootloader 镜像读同一份 defconfig，
+# 放应用符号会报错）。

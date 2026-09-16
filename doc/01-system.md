@@ -119,6 +119,39 @@
 
 每个开关都对应一条主机侧用例，断言"关掉之后链路照常工作"：这套用例跑在 `tests/host`，不需要硬件。
 
+### 2.4 启动链与固件升级
+
+板级有两个目标家族：`.../m33/hf`、`.../m33/lf`（应用直接放在 flash 里）与
+`.../m33/hf/mcuboot`、`.../m33/lf/mcuboot`（多一个 bootloader 与两槽固件分区）。
+两者共用同一份应用代码，差别只在分区表与是否带 bootloader；具体分区数字见
+[板级 README](../boards/zlrs/rp2350_zero_core2021/README.md#分区与启动)。
+
+| | 不带 bootloader | 带 MCUboot |
+| --- | --- | --- |
+| 启动链 | RP2350 bootrom → 应用 | RP2350 bootrom → MCUboot（校验签名）→ slot0 里的应用 |
+| flash 布局 | code 1 MB + storage 3 MB | mcuboot 128 KB + slot0/slot1 各 832 KB + storage 2.25 MB |
+| 升级 | 按住 BOOTSEL 拖 `zephyr.uf2`（或 SWD） | 拖一次 `zephyr.signed.uf2` 起步；之后走串口恢复，不用按键 |
+| 回滚 | 无 | `swap using offset`：升级失败可以退回上一版 |
+
+**为什么上 MCUboot。** 三件事：① 现场升级不需要拆机、不需要调试器；② 镜像签名
+（ECDSA-P256）+ 启动校验，坏了能回滚；③ 砖机也能救——bootloader 起来后没有可启动的
+镜像就停在串口恢复里。
+
+**升级通道：MCUboot 串口恢复。** bootloader 自己收 mcumgr 帧，走数据口的 UART1
+（GP8/GP9，devicetree chosen `zephyr,uart-mcumgr`），写进 slot1 后由 MCUboot 换槽。
+bootloader 里不带 USB 栈是有意的：少一份复杂度，恢复时用一根 USB 串口线就行。
+（USB CDC 恢复是后面可选的加法，128 KB 的 bootloader 分区就是给它留的余量。）
+
+**密钥。** 开发期用 MCUboot 自带的测试密钥（`bootloader/mcuboot/root-ec-p256.pem`），
+bootloader 校验与应用签名用的是同一把——由 sysbuild 统一设置，两边不会不一致。
+量产前生成自己的密钥（`imgtool genkey -t ecdsa-p256`），私钥不进仓库，并且**要重新烧
+一次 bootloader**：公钥在 bootloader 里。
+
+**和 2.3 的调试开关怎么配合。** 带 bootloader 的构建同样支持那批分层开关：第一次上板
+建议先烧"最简形态"（P0 + 关跳频 + 关握手 + 关遥测）确认启动链与日志，再逐层打开。
+注意 bootloader **不使用板上那颗按键**（按键在应用里已经有"开机按住进配置"的语义），
+所以它不会和配置模式抢。
+
 ## 3. 系统架构
 
 ### 3.1 两条链路

@@ -29,12 +29,20 @@ config ZLRS_APP_ROLE_TX
 	  TX 发控制帧、收遥测，RX 相反。两端是同一份固件，只差这个开关。
 
 config ZLRS_APP_REGION
-	int "地区（0 = FCC915，1 = EU868，2 = CN470）"
+	int "地区（0 = FCC915，1 = EU868，2 = CN470，3 = CN433）"
+	# 默认值按板级变体的 SKU 给：HF 模块跑 868/915，LF 模块跑 470/433。
+	# 放在应用侧而不是板级 defconfig 里，是因为 bootloader 镜像也读同一份板级
+	# defconfig，而 ZLRS_APP_* 是应用自己的符号（bootloader 里没有它们，
+	# Kconfig 会报"给未定义符号赋值"）。
+	default 2 if BOARD_RP2350_ZERO_CORE2021_RP2350A_M33_LF
+	default 2 if BOARD_RP2350_ZERO_CORE2021_RP2350A_M33_LF_MCUBOOT
 	default 0
-	range 0 2
+	range 0 3
 	help
 	  地区决定控制链路的频段、发射功率上限与占空比上限（见 doc/03-protocol.md
 	  5.2 和 lib/region）：EU868 是 1% 占空比，FCC915 / CN470 不限制。
+	  HF SKU 只能选 0/1，LF SKU 只能选 2/3——选错的话启动校验会红灯告警并且
+	  不发射频（法规相关的不凑合）。
 
 config ZLRS_APP_TX_POWER_DBM
 	int "发射功率（dBm）"

@@ -19,8 +19,9 @@
 		zephyr,flash-controller = &qmi;
 		zephyr,console = &cdc_acm_uart2;
 		zephyr,shell-uart = &cdc_acm_uart2;
-		zephyr,code-partition = &code_partition;
 		zephyr,lorawan-transceiver = &lora_core2021;
+		/* zephyr,code-partition 由各变体自己给：不带 bootloader 的是 code，
+		 * 带 MCUboot 的是 slot0（见同目录 README 的分区表） */
 	};
 	aliases {
 		lora-transceiver = &lora_core2021;
@@ -124,25 +125,11 @@ zephyr_udc0: &usbd {
 	};
 };
 
-/* 4 MB QSPI flash：1 MB code + 3 MB storage（NVS 存密钥与配对记录） */
+/* 4 MB QSPI flash。分区表不在公共 dtsi 里：不带 bootloader 的变体用
+ * partitions_1m.dtsi（1 MB code + 3 MB storage），带 MCUboot 的变体用
+ * Zephyr 树里的 raspberrypi/partitions_4M_sysbuild.dtsi。 */
 &flash0 {
 	reg = <0x10000000 DT_SIZE_M(4)>;
-
-	partitions {
-		compatible = "fixed-partitions";
-		#address-cells = <1>;
-		#size-cells = <1>;
-
-		code_partition: partition@0 {
-			label = "code";
-			reg = <0x0 DT_SIZE_M(1)>;
-		};
-
-		storage_partition: partition@100000 {
-			label = "storage";
-			reg = <0x100000 DT_SIZE_M(3)>;
-		};
-	};
 };
 
 &spi0 {

@@ -12,5 +12,12 @@ board:
         # 与 LF（410–510 MHz，跑 470/433）。2.4G 那一路两者相同。
         - name: hf
           cpucluster: m33
+          variants:
+            # 带 MCUboot 的构建：分区与升级流程见 README
+            - name: mcuboot
+              cpucluster: m33
         - name: lf
           cpucluster: m33
+          variants:
+            - name: mcuboot
+              cpucluster: m33

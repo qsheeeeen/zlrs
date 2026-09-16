@@ -1,0 +1,5 @@
+# Copyright (c) 2026 zlrs contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# 带 MCUboot 的变体同样没有额外板级配置：分区表在 dts 里，地区默认值由
+# app/Kconfig 按 SKU 给（bootloader 镜像也读这份 defconfig，不能放应用符号）。

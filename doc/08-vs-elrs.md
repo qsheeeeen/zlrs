@@ -21,7 +21,7 @@ ELRS 是成熟的遥控链路**生态**（几百个硬件目标、WiFi 配置与
 | 配对/防串 | Binding Phrase（≥8 字符）或传统按键；Model Match；Loan Model | 长按配对（三次握手）+ 配对时下发失控值；一台设备一个对端（无 Model Match） |
 | 动态功率 | 有：按 RX 上报的信号升降 TX 功率（依赖遥测开启） | 有（默认开）：按遥测 RSSI/LQ 每秒评估，3 dB 步长、2 s 保持、遥测断回上限；下限可配 |
 | 配置 | Lua（手台内）、WebUI（WiFi）、Configurator（含编译期 Regulatory Domain） | 配置协议跑数据口 + 命令行工具（`scripts/zlrs-config.py`，带与固件对拍的 self-test）；无 WiFi/Lua |
-| 升级 | WiFi OTA、Betaflight passthrough、DFU、串口 | UF2（模块自带 USB-C）+ SWD；无 OTA |
+| 升级 | WiFi OTA、Betaflight passthrough、DFU、串口 | UF2（BOOTSEL）+ SWD；带 MCUboot 的变体支持串口恢复式 DFU（镜像签名 + 回滚），无无线 OTA |
 | 法规 | 编译期 Regulatory Domain 预设（功率上限等） | 运行期四张地区表 + **SKU/band 一致性校验** + 占空比记账（超限让出时隙并计数）+ 速率/帧率压档 |
 | 外设集成 | Serial VTX、Team Racing、Trainer（头追）、Sentinel、Backpack、BLE 手柄 | 无 |
 | 双频用法 | Gemini：单频段双发分集；Xrossband：双频同时发同一份 RC（冗余） | 两个频段**分工**：sub-G 跑控制、2.4G 跑透传（不冗余） |
@@ -34,7 +34,7 @@ ELRS 是成熟的遥控链路**生态**（几百个硬件目标、WiFi 配置与
 2. **手台侧生态**：Lua 参数协议、Model Match（多机防串）、VTX 控制、头追/教练/ 团队赛——全缺，且都要与手台/飞控生态对接。
 3. **LoRa 调制**：软件侧已实现（按链路各自选，含空中时间模型与派生同步字），但**没上板验证过**——灵敏度、误包率曲线、实测空中时间都还欠；窄带地区现在既可以跑 0.325 Mbps 的 FLRC，也可以切 LoRa 远距档（EU868 的 1% 占空比撑不住后者）。
 4. **射频层数据与工具链**：PER 曲线、延迟、灵敏度、认证测试——都还挂在 M0/M1。
-5. **硬件覆盖与 OTA**：只有一块板；升级靠 UF2（我们不打算做 WiFi OTA——板子没有 WiFi）。
+5. **硬件覆盖与无线 OTA**：只有一块板；有线升级已经齐了（UF2 / MCUboot 串口恢复），无线 OTA 还没做——板子没有 WiFi，要做就得走 2.4G 透传链路（见 M4 的余量：97 kB/s 下 1 MB ≈ 10 s）。
 
 ## 我们独有的（值得守住）
 

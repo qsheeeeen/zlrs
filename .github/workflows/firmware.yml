@@ -126,6 +126,18 @@ jobs:
               -DCONFIG_ZLRS_APP_BAND_ROLE_SUBG_CONTROL=n
           done
 
+      # MCUboot：sysbuild 把 bootloader 与应用（签名）一起编出来，两个 SKU 各一次，
+      # 并顺手验证"签名镜像打 UF2"那条脚本（第一次拖盘要用它）
+      - name: build (mcuboot, both skus)
+        run: |
+          set -x
+          . zlrs/scripts/zephyr-env.sh
+          for board in rp2350_zero_core2021/rp2350a/m33/hf rp2350_zero_core2021/rp2350a/m33/lf; do
+            sku="${board##*/}"
+            west build --sysbuild -b "${board}/mcuboot" zlrs/app -d "build-${sku}-mcuboot"
+            python3 zlrs/scripts/make-signed-uf2.py "build-${sku}-mcuboot"
+          done
+
       - name: upload uf2
         if: always()
         uses: actions/upload-artifact@v4
@@ -134,4 +146,8 @@ jobs:
           path: |
             build/zephyr/zephyr.uf2
             build-lf/zephyr/zephyr.uf2
+            build-hf-mcuboot/mcuboot/zephyr/zephyr.uf2
+            build-hf-mcuboot/app/zephyr/zephyr.signed.uf2
+            build-lf-mcuboot/mcuboot/zephyr/zephyr.uf2
+            build-lf-mcuboot/app/zephyr/zephyr.signed.uf2
           if-no-files-found: ignore
