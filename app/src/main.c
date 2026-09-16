@@ -56,6 +56,14 @@ static uint8_t resync_every_n;
 #define PORT_SLOT_OVERHEAD_US 200U
 #define SLOT_BUDGET_MAX_US 2000U
 
+/*
+ * 上板调试：两条链路可以各自单独跑。控制链路承载 RC 与配对，数据链路承载
+ * 透传——先各自单独跑通，再合起来看分时（见 doc/01-system.md 2.3）。
+ */
+#define ZLRS_CONTROL_ENABLED IS_ENABLED(CONFIG_ZLRS_APP_LINK_CONTROL)
+#define ZLRS_DATA_ENABLED IS_ENABLED(CONFIG_ZLRS_APP_LINK_DATA)
+#define ZLRS_CRSF_ENABLED IS_ENABLED(CONFIG_ZLRS_APP_CRSF_PORT)
+
 #define SERIAL_CHUNK_LEN 64U
 #define REPORT_PERIOD_MS 1000U
 
@@ -443,11 +451,16 @@ static void load_identity(void)
 
 static void run_slot(uint8_t slot)
 {
-	zlrs_link_t *link = (slot == ZLRS_SLOT_DATA_A || slot == ZLRS_SLOT_DATA_B)
-				    ? &link_data
-				    : &link_control;
+	const bool data_slot = (slot == ZLRS_SLOT_DATA_A || slot == ZLRS_SLOT_DATA_B);
+	zlrs_link_t *link = data_slot ? &link_data : &link_control;
 	const uint32_t now_ms = zlrs_rac_port_now_ms();
-	const zlrs_radio_req_t *req = zlrs_link_slot(link, slot, now_ms);
+	const zlrs_radio_req_t *req;
+
+	if (data_slot ? !ZLRS_DATA_ENABLED : !ZLRS_CONTROL_ENABLED) {
+		return; /* 这条链路这次没启用 */
+	}
+
+	req = zlrs_link_slot(link, slot, now_ms);
 
 	if (req == NULL) {
 		return;
@@ -477,7 +490,13 @@ static void run_slot(uint8_t slot)
 static void pump_serial(void)
 {
 	uint8_t chunk[SERIAL_CHUNK_LEN];
-	const uint16_t got = zlrs_data_port_read(chunk, sizeof(chunk));
+	uint16_t got;
+
+	if (!ZLRS_DATA_ENABLED) {
+		return; /* 没有数据链路：串口不往上送 */
+	}
+
+	got = zlrs_data_port_read(chunk, sizeof(chunk));
 
 	if (got > 0U) {
 		(void)zlrs_link_write(&link_data, chunk, got); /* 队列满就丢尾巴 */
@@ -487,6 +506,11 @@ static void pump_serial(void)
 static void adopt_pairing(void)
 {
 	zlrs_store_pairing_t pairing;
+
+	/* 配对记录由控制链路产生、数据链路采用；少一条就不用同步 */
+	if (!ZLRS_CONTROL_ENABLED || !ZLRS_DATA_ENABLED) {
+		return;
+	}
 
 	if (!link_control.paired) {
 		return;
@@ -516,6 +540,11 @@ static void adopt_pairing(void)
 static void handle_button(uint32_t now_ms)
 {
 	const int pressed = gpio_pin_get_dt(&button);
+
+	/* 上板调试可以关掉按键配对：只剩开机进配置模式那一种用法 */
+	if (!IS_ENABLED(CONFIG_ZLRS_APP_PAIRING_BUTTON) || !ZLRS_CONTROL_ENABLED) {
+		return;
+	}
 
 	if (pressed > 0 && !button_down) {
 		button_down = true;
@@ -582,6 +611,10 @@ static void crsf_send_link_stats(const zlrs_tlm_t *tlm)
 	zlrs_crsf_link_stats_t stats;
 	uint8_t payload[ZLRS_CRSF_LINK_STATS_LEN];
 
+	if (!ZLRS_CRSF_ENABLED) {
+		return;
+	}
+
 	memset(&stats, 0, sizeof(stats));
 	stats.uplink_rssi_ant1 = tlm->rssi_neg_dbm;
 	stats.uplink_rssi_ant2 = tlm->rssi_neg_dbm;
@@ -602,7 +635,7 @@ static void crsf_send_link_stats(const zlrs_tlm_t *tlm)
 /* RX：把收到的 RC 载荷重建成 CRSF 帧发给飞控 */
 static void crsf_send_rc(const uint8_t *payload, uint8_t len)
 {
-	if (len != ZLRS_CRSF_RC_PAYLOAD_LEN) {
+	if (!ZLRS_CRSF_ENABLED || len != ZLRS_CRSF_RC_PAYLOAD_LEN) {
 		return;
 	}
 
@@ -644,6 +677,11 @@ static void pump_crsf(uint32_t now_ms)
 	uint8_t type = 0U;
 	uint8_t payload[ZLRS_CRSF_PAYLOAD_MAX_LEN];
 	uint8_t len;
+
+	/* 上板调试可以关掉 CRSF 端口：TX 就只发配置好的失控值 */
+	if (!ZLRS_CRSF_ENABLED || !ZLRS_CONTROL_ENABLED) {
+		return;
+	}
 
 	if (!zlrs_crsf_port_ready()) {
 		return;
@@ -771,6 +809,10 @@ static void led_tick(uint32_t now_ms)
 	zlrs_led_input_t in;
 	const uint32_t drops = link_data.stats.data_drop_bytes;
 
+	if (!IS_ENABLED(CONFIG_ZLRS_APP_STATUS_LED)) {
+		return;
+	}
+
 	if (drops != led_drop_seen) {
 		led_drop_seen = drops;
 		led_drop_ms = now_ms;
@@ -809,6 +851,25 @@ int main(void)
 	if (!IS_ENABLED(CONFIG_ZLRS_APP_TELEMETRY)) {
 		LOG_WRN("bring-up: telemetry off, control link is RC-only");
 	}
+	if (!ZLRS_CONTROL_ENABLED) {
+		LOG_WRN("bring-up: control link off, only the data link runs "
+			"(pairing needs the control link)");
+	}
+	if (!ZLRS_DATA_ENABLED) {
+		LOG_WRN("bring-up: data link off, no serial passthrough");
+	}
+	if (!ZLRS_CRSF_ENABLED) {
+		LOG_WRN("bring-up: CRSF port off, TX sends the configured failsafe values");
+	}
+	if (!IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)) {
+		LOG_WRN("bring-up: config mode off, this build cannot be configured");
+	}
+	if (!IS_ENABLED(CONFIG_ZLRS_APP_PAIRING_BUTTON)) {
+		LOG_WRN("bring-up: pairing button off");
+	}
+	if (!IS_ENABLED(CONFIG_ZLRS_APP_STATUS_LED)) {
+		LOG_WRN("bring-up: status led off");
+	}
 
 	/* 地区配置层：频段、功率上限与占空比都在这里定 */
 	region = zlrs_region_get(CONFIG_ZLRS_APP_REGION);
@@ -835,7 +896,9 @@ int main(void)
 		}
 	}
 	zlrs_duty_init(&duty, region, 0U);
-	(void)zlrs_led_port_init();
+	if (IS_ENABLED(CONFIG_ZLRS_APP_STATUS_LED)) {
+		(void)zlrs_led_port_init();
+	}
 
 	/* 等 USP/RAC 线程就绪，再初始化 RAC（见 doc/01-system.md 第 7 节） */
 	SMTC_SW_PLATFORM_INIT();
@@ -852,7 +915,7 @@ int main(void)
 	 * 配置模式：开机时按键按住就进，见 doc/01-system.md 2.1。
 	 * 跑完直接继续正常启动，不用重启——写进去的密钥与失控值当场就生效。
 	 */
-	if (gpio_is_ready_dt(&button) &&
+	if (IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE) && gpio_is_ready_dt(&button) &&
 	    gpio_pin_configure_dt(&button, GPIO_INPUT) == 0) {
 		k_msleep(20); /* 上电去抖 */
 		if (gpio_pin_get_dt(&button) > 0) {
@@ -873,7 +936,9 @@ int main(void)
 	}
 
 	zlrs_link_set_rc(&link_control, rc_payload, sizeof(rc_payload));
-	(void)zlrs_crsf_port_init();
+	if (ZLRS_CRSF_ENABLED) {
+		(void)zlrs_crsf_port_init();
+	}
 
 	if (zlrs_rac_port_init(&link_control, &link_data) != 0) {
 		LOG_ERR("RAC init failed");
@@ -884,8 +949,10 @@ int main(void)
 		LOG_WRN("button unavailable");
 	}
 
-	LOG_INF("entering superframe loop: %u Hz, control %s / data 2.4G",
+	LOG_INF("entering superframe loop: %u Hz, %s / %s (%s)",
 		(unsigned int)control_rate_hz,
+		ZLRS_CONTROL_ENABLED ? "control on" : "control off",
+		ZLRS_DATA_ENABLED ? "data on" : "data off",
 		IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? "TX" : "RX");
 
 	for (;;) {
@@ -902,8 +969,12 @@ int main(void)
 		run_slot(ZLRS_SLOT_DATA_A);
 		run_slot(ZLRS_SLOT_DATA_B);
 
-		zlrs_link_tick(&link_control, now_ms);
-		zlrs_link_tick(&link_data, now_ms);
+		if (ZLRS_CONTROL_ENABLED) {
+			zlrs_link_tick(&link_control, now_ms);
+		}
+		if (ZLRS_DATA_ENABLED) {
+			zlrs_link_tick(&link_data, now_ms);
+		}
 
 		adopt_pairing();
 		pump_serial();

@@ -77,6 +77,40 @@ config ZLRS_APP_RESYNC_PERIOD_MS
 	  晶振差会累积成"踩空"），也据此发现对端重启或重新配对，自动重新握手。
 	  见 doc/03-protocol.md 5.1。间隔按帧数换算，至少 1 帧。
 
+config ZLRS_APP_LINK_CONTROL
+	bool "控制链路（sub-G：RC + 遥测 + 配对）"
+	default y
+	help
+	  关掉以后只有数据链路在跑：适合先把 2.4G 透传单独调通。注意配对走控制
+	  链路，所以关掉它以后只能靠 NVS 里已有的配对记录工作。
+
+config ZLRS_APP_LINK_DATA
+	bool "数据链路（2.4G：串口透传）"
+	default y
+	help
+	  关掉以后只有控制链路在跑：适合先把遥控与遥测单独调通。
+
+config ZLRS_APP_CRSF_PORT
+	bool "CRSF 端口（手台 ↔ 模块、接收机 → 飞控）"
+	default y
+	help
+	  关掉以后不初始化 CRSF 端口：TX 一直发配置好的失控值，RX 也不往飞控
+	  输出。适合只验证空口、不接手台/飞控的台架。
+
+config ZLRS_APP_CONFIG_MODE
+	bool "开机按住按键进配置模式"
+	default y
+
+config ZLRS_APP_PAIRING_BUTTON
+	bool "长按按键触发配对"
+	default y
+	help
+	  关掉以后按键只用于开机进配置模式（配对只能从配置工具触发）。
+
+config ZLRS_APP_STATUS_LED
+	bool "状态灯"
+	default y
+
 choice ZLRS_APP_CONTROL_MODULATION
 	prompt "控制链路调制"
 	default ZLRS_APP_CONTROL_MODULATION_FLRC

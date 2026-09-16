@@ -109,6 +109,9 @@
 | `CONFIG_ZLRS_APP_DYNAMIC_POWER=n` | 固定发射功率 | `power: *` |
 | `CONFIG_ZLRS_APP_RESYNC_PERIOD_MS=0` | 不做连接态周期 `BEACON`：跳频索引只在建链时对齐，对端重启也不会自动重连 | `link: hop resync`、`link: peer restart reconnect` |
 | `CONFIG_ZLRS_APP_CONTROL_MODULATION_FLRC=y`（默认） | 控制链路跑 FLRC；换成 `..._LORA=y` 则进 LoRa 远距档（超帧周期跟着变长） | `link: lora control modulation`、`region: lora control plan` |
+| `CONFIG_ZLRS_APP_LINK_CONTROL=n` / `ZLRS_APP_LINK_DATA=n` | 只跑一条链路：先把单条链路（含射频时序）跑通，再合起来看分时 | 编译验证（两个 SKU 都在 CI 里） |
+| `CONFIG_ZLRS_APP_CRSF_PORT=n` | 不初始化 CRSF 端口：TX 只发配置好的失控值 | 编译验证 |
+| `CONFIG_ZLRS_APP_CONFIG_MODE=n` / `ZLRS_APP_PAIRING_BUTTON=n` / `ZLRS_APP_STATUS_LED=n` | 关掉配置模式 / 按键配对 / 状态灯 | 编译验证 |
 
 推荐的顺序：`P0` + 关跳频 + 关握手 + 关遥测 → 先确认"自己发的帧自己能收到"；然后打开 tag（`P1`）；再打开跳频；再打开遥测与失联判定；最后才是速率自适应与动态功率——这两项的阈值本来就要等实测曲线（见 [05-roadmap.md](05-roadmap.md) 的 M4），上板第一步不该被它们干扰。
 

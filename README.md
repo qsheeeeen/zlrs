@@ -126,6 +126,8 @@ python3 scripts/zlrs-config.py --port /dev/ttyACM1 exit
 | `CONFIG_ZLRS_APP_TELEMETRY=n` | 控制链路只剩下行 RC（TX 的失联判定一并关掉） |
 | `CONFIG_ZLRS_APP_DATA_ARQ=n` / `ZLRS_APP_RATE_ADAPT=n` / `ZLRS_APP_DYNAMIC_POWER=n` | 透传 best-effort / 固定速率档 / 固定发射功率 |
 | `CONFIG_ZLRS_APP_RESYNC_PERIOD_MS=0` | 不做连接态周期 `BEACON`（跳频只在对齐时校准，对端重启不自动重连） |
+| `CONFIG_ZLRS_APP_LINK_CONTROL=n` / `ZLRS_APP_LINK_DATA=n` | 只跑一条链路（先单独调通射频时序） |
+| `CONFIG_ZLRS_APP_CRSF_PORT=n` / `ZLRS_APP_CONFIG_MODE=n` / `ZLRS_APP_PAIRING_BUTTON=n` / `ZLRS_APP_STATUS_LED=n` | 关掉 CRSF 端口 / 配置模式 / 按键配对 / 状态灯 |
 
 ```shell
 # 最简形态：不带 tag、不跳频、不握手、不发遥测
