@@ -286,6 +286,39 @@ static void test_racing_plan(void)
 	CHECK(plan.frame_period_us == 2380U);
 }
 
+/*
+ * 1000 Hz 档的时间预算（doc/03-protocol.md 4.1）：2.6 Mbps 下 31 B 的 RC 帧是
+ * 108 µs，一帧 1000 µs，四个时隙分得开——协议侧没问题，跑不跑得起来取决于射频
+ * 侧是不是直调驱动（RAC 的排期粒度是毫秒）。
+ */
+static void test_plan_1000hz(void)
+{
+	const zlrs_mod_cfg_t fast = zlrs_mod_flrc(2600000U);
+	zlrs_control_plan_t plan;
+	zlrs_plan_req_t req = {
+		.region = NULL, /* FCC915：不限占空比 */
+		.mod = &fast,
+		.want_hz = 1000U,
+		.frame_len = 31U,
+		.tlm_len = 15U,
+		.other_mod = &fast,
+		.other_frame_len = 135U,
+	};
+
+	printf("region: 1000 Hz plan\n");
+
+	req.region = zlrs_region_get(ZLRS_REGION_FCC915);
+	zlrs_region_control_plan(&req, &plan);
+
+	CHECK(plan.rate_hz == 1000U);
+	CHECK(plan.frame_period_us == 1000U);
+	/* 时隙预算 = 空中时间 108 µs + 200 µs 余量 */
+	CHECK(plan.slot_budget_us == 308U);
+	CHECK(plan.tlm_every_n == 6U);   /* ≈167 次/秒 */
+	CHECK(plan.data_every_n == 10U); /* =100 次/秒 */
+	CHECK(!plan.clamped_by_airtime && !plan.clamped_by_duty);
+}
+
 void test_region(void)
 {
 	printf("region: tables\n");
@@ -296,5 +329,6 @@ void test_region(void)
 	test_control_plan();
 	test_lora_plan();
 	test_racing_plan();
+	test_plan_1000hz();
 	test_duty();
 }

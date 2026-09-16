@@ -59,6 +59,8 @@ typedef struct {
 	node_t nth;        /* 第三个节点：同场设备或攻击者，只有三节点用例启用 */
 	bool nth_enabled;
 	uint32_t now_ms;
+	/* 一个超帧多少毫秒：默认 6（≈167 Hz），1000 Hz 的用例把它设成 1 */
+	uint32_t frame_ms;
 	uint8_t root_key[ZLRS_KEY_LEN];
 	int32_t drop_down; /* 还需丢弃多少次 TX->RX 投递 */
 	int32_t drop_up;   /* 还需丢弃多少次 RX->TX 投递 */
@@ -267,6 +269,7 @@ static void sim_init_with(sim_t *sim, const sim_features_t *features)
 
 	sim_features = (features != NULL) ? *features : sim_features_default;
 	memset(sim, 0, sizeof(*sim));
+	sim->frame_ms = SIM_FRAME_MS;
 	for (uint8_t i = 0; i < sizeof(root_key); i++) {
 		root_key[i] = (uint8_t)(i + 1U);
 	}
@@ -434,7 +437,7 @@ static void sim_run(sim_t *sim, uint32_t frames)
 		zlrs_link_tick(&sim->rx.ctl, sim->now_ms);
 		zlrs_link_tick(&sim->rx.data, sim->now_ms);
 
-		sim->now_ms += SIM_FRAME_MS;
+		sim->now_ms += sim->frame_ms;
 	}
 }
 
@@ -1924,6 +1927,56 @@ static void test_lora_control(void)
 	CHECK(sim.rx.stream_len == sizeof(chunk));
 }
 
+/*
+ * 1000 Hz 的协议侧（doc/03-protocol.md 4.1）：帧周期压到 1 ms 时，超帧、跳频
+ * 锁步、遥测/数据窗口的稀疏化、连接态重同步都不能乱。射频侧要直调驱动才能真的
+ * 跑到 1000 Hz（RAC 的排期粒度是毫秒），这里只钉协议与时间常数。
+ */
+static void test_high_frame_rate(void)
+{
+	sim_t sim;
+	uint8_t rc[ZLRS_RC_PAYLOAD_LEN];
+	uint8_t tlm[8];
+	uint8_t chunk[8];
+
+	printf("link: 1000 Hz frame cadence\n");
+
+	sim_init(&sim);
+	sim.frame_ms = 1U; /* 一帧 1 ms */
+	/* 1 ms 一帧只有 2.6 Mbps 档装得下；节奏系数就是计划算出来的那两个 */
+	sim.tx.ctl.cfg.mod = zlrs_mod_flrc(2600000U);
+	sim.rx.ctl.cfg.mod = zlrs_mod_flrc(2600000U);
+	sim.tx.ctl.cfg.tlm_every_n = 6U; /* ≈167 次/秒 */
+	sim.rx.ctl.cfg.tlm_every_n = 6U;
+	sim.tx.data.cfg.data_every_n = 10U; /* =100 次/秒 */
+	sim.rx.data.cfg.data_every_n = 10U;
+	sim.tx.ctl.cfg.resync_every_n = 100U; /* 100 ms 一次重同步 */
+	sim.rx.ctl.cfg.resync_every_n = 100U;
+	pair_and_connect(&sim);
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.tx.data.state == ZLRS_STATE_CONNECTED);
+
+	memset(rc, 0xD1U, sizeof(rc));
+	zlrs_link_set_rc(&sim.tx.ctl, rc, sizeof(rc));
+	memset(tlm, 0xD2U, sizeof(tlm));
+	zlrs_link_set_tlm(&sim.rx.ctl, tlm, sizeof(tlm));
+	sim_run(&sim, 300U); /* 300 ms */
+
+	/* 300 ms 里 2.6 Mbps 那一档几乎不该丢帧 */
+	CHECK(sim.rx.rc_count > 250U);
+	CHECK(memcmp(sim.rx.rc, rc, sizeof(rc)) == 0);
+	CHECK(sim.tx.tlm_count > 30U);
+	/* 跳频仍然锁步，重同步帧也按 100 帧的节奏出现过 */
+	CHECK(sim.tx.ctl.fhss.index == sim.rx.ctl.fhss.index);
+	CHECK(sim.rx.ctl.stats.rx_beacons > 0U);
+	/* 数据窗口稀疏到每 10 帧一次，但透传照常 */
+	memset(chunk, 0xD3U, sizeof(chunk));
+	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
+	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(chunk), 400);
+	CHECK(sim.rx.stream_len == sizeof(chunk));
+}
+
 void test_link(void)
 {
 	test_pairing();
@@ -1961,4 +2014,5 @@ void test_link(void)
 	test_peer_restart();
 	test_beacon_replay_guard();
 	test_lora_control();
+	test_high_frame_rate();
 }
