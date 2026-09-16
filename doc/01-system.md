@@ -108,6 +108,7 @@
 | `CONFIG_ZLRS_APP_RATE_ADAPT=n` | 固定速率档（默认就是关） | `link: rate adapt` |
 | `CONFIG_ZLRS_APP_DYNAMIC_POWER=n` | 固定发射功率 | `power: *` |
 | `CONFIG_ZLRS_APP_RESYNC_PERIOD_MS=0` | 不做连接态周期 `BEACON`：跳频索引只在建链时对齐，对端重启也不会自动重连 | `link: hop resync`、`link: peer restart reconnect` |
+| `CONFIG_ZLRS_APP_CONTROL_MODULATION_FLRC=y`（默认） | 控制链路跑 FLRC；换成 `..._LORA=y` 则进 LoRa 远距档（超帧周期跟着变长） | `link: lora control modulation`、`region: lora control plan` |
 
 推荐的顺序：`P0` + 关跳频 + 关握手 + 关遥测 → 先确认"自己发的帧自己能收到"；然后打开 tag（`P1`）；再打开跳频；再打开遥测与失联判定；最后才是速率自适应与动态功率——这两项的阈值本来就要等实测曲线（见 [05-roadmap.md](05-roadmap.md) 的 M4），上板第一步不该被它们干扰。
 
@@ -147,7 +148,7 @@
 
 两条链路默认都用 FLRC。改调制类型（FLRC ↔ LoRa）在射频侧比单纯改频率贵得多，共用调制能让每次切换只改频率。LoRa 只作远距兜底档。
 
-调制是**按链路各自选**的（已定，待实现）：窄带地区（868 / 470 / 433）放不下宽带 FLRC 时，控制链路改用 LoRa（默认 SF7 / BW125、10 Hz），数据链路仍在 2.4G 跑 FLRC；超帧周期由最慢的那条链路决定。见 [03-protocol.md](03-protocol.md) 4.1.1 与 [05-roadmap.md](05-roadmap.md) 的 M4。
+调制是**按链路各自选**的（`CONFIG_ZLRS_APP_CONTROL_MODULATION_*`）：窄带地区（868 / 470 / 433）放不下宽带 FLRC 时，控制链路改用 LoRa（默认 SF7 / BW125、配置 10 Hz，实际由空中时间定），数据链路仍在 2.4G 跑 FLRC；超帧周期由最慢的那条链路决定，时隙预算、ARQ 超时这些常数跟着档位派生。见 [03-protocol.md](03-protocol.md) 4.1.1。
 
 ## 4. 时序预算（背景数据）
 

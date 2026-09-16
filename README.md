@@ -112,7 +112,7 @@ python3 scripts/zlrs-config.py --port /dev/ttyACM1 exit
 - `CONFIG_ZLRS_APP_RATE_ADAPT=y`：按链路质量自动升降速率档。阈值要按实测曲线标定，所以默认关着，见 [doc/05-roadmap.md](doc/05-roadmap.md) 的 M4。
 - `CONFIG_ZLRS_APP_DYNAMIC_POWER`（默认开）：按对端回报的 RSSI/LQ 自动升降发射功率，判据每秒评估一次，遥测断了回到上限；下限用 `CONFIG_ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM`。阈值按实测曲线标定。
 - `CONFIG_ZLRS_APP_RESYNC_PERIOD_MS`（默认 1000，0 = 关）：连接态周期 `BEACON`。RX 据此把跳频索引拉回来（两端晶振差会累积成"踩空"），同一条路也让对端重启后能自动重连，见 [doc/03-protocol.md](doc/03-protocol.md) 5.1。
-- 窄带场景（433/868）以后允许换成 LoRa 等调制，见 [doc/05-roadmap.md](doc/05-roadmap.md) 的 M4 待做项。
+- `CONFIG_ZLRS_APP_CONTROL_MODULATION_LORA=y`：控制链路改跑 LoRa 远距档（默认 SF7 / BW125 / CR 4/5 / 8 符号前导），数据链路仍留在 2.4G 跑 FLRC。超帧周期由最慢的那条链路决定——SF7/BW125 下 31 B 的 RC 帧要 72 ms，所以配置的 10 Hz 会被空中时间压到 9 Hz；EU868 的 1% 占空比撑不住这一档（压到 1 Hz 并告警）。参数与换算见 [doc/03-protocol.md](doc/03-protocol.md) 4.1.1。
 
 ### 6. 上板调试的开关
 
@@ -146,9 +146,9 @@ app/                  Zephyr 应用：USP/RAC 移植、串口透传、NVS 持久
 boards/zlrs/          板级定义（RP2350-Zero + Core2021）
 lib/proto/            协议核心：帧编解码、分片重组、跳频表、密钥派生与标签
                       （原语走 PSA，见 lib/proto/crypto_psa.c）
-                      遥测载荷
+                      遥测载荷、调制档与空中时间模型（FLRC / LoRa）
 lib/link/             链路层（纯 C）：状态机、配对与会话、超帧时隙、射频抽象接口
-                      ARQ profile、速率自适应策略
+                      ARQ profile、速率自适应策略（档位 = 调制 + 参数）
 lib/crsf/             CRSF 端口编解码（纯 C）：RC 通道帧与链路统计帧
 lib/config/           配置协议（纯 C）：帧格式 + 命令分发（落盘通过回调）
 lib/region/           地区配置层（纯 C）：信道表、功率上限、占空比记账

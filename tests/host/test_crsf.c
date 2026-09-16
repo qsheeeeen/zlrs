@@ -229,6 +229,16 @@ static void test_link_statistics(void)
 
 	/* 未知速率档不编号 */
 	CHECK(zlrs_crsf_rf_mode(12345U) == 0xFFU);
+
+	/* 调制感知：LoRa 档按 SF 编号（0x10 | SF），FLRC 与老入口一致 */
+	{
+		const zlrs_mod_cfg_t lora = zlrs_mod_lora(7U, 125000U, 1U, 8U);
+		const zlrs_mod_cfg_t flrc = zlrs_mod_flrc(1300000U);
+
+		CHECK(zlrs_crsf_rf_mode_mod(&lora) == 0x17U);
+		CHECK(zlrs_crsf_rf_mode_mod(&flrc) == 1U);
+		CHECK(zlrs_crsf_rf_mode_mod(NULL) == 0xFFU);
+	}
 }
 
 void test_crsf(void)

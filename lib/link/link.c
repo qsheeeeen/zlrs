@@ -15,6 +15,8 @@ static const uint8_t pairing_sync_word[ZLRS_SYNC_WORD_LEN] = { 'Z', 'L', 'R', 'S
 #define LABEL_FHSS "zlrs/fhss"
 #define LABEL_SYNC_CONTROL "zlrs/sync/control"
 #define LABEL_SYNC_DATA "zlrs/sync/data"
+#define LABEL_SYNC_LORA_CONTROL "zlrs/sync/lora/control"
+#define LABEL_SYNC_LORA_DATA "zlrs/sync/lora/data"
 #define LABEL_LINK_AUTH "zlrs/link-auth"
 #define LABEL_SESSION "zlrs/session"
 
@@ -244,6 +246,25 @@ static void derive_pair(zlrs_link_t *link)
 	       (link->cfg.kind == ZLRS_LINK_CONTROL) ? ctrl_word : data_word,
 	       ZLRS_SYNC_WORD_LEN);
 
+	/*
+	 * LoRa 的同步字是 1 字节 + private bit，不能沿用上面那 4 字节，所以另开
+	 * 一条派生标签（还是按角色命名，不按频段）。最高位当 private bit，用来
+	 * 区分"我们这一组"与公开的同步字。见 doc/03-protocol.md 5.3。
+	 */
+	{
+		const char *label = (link->cfg.kind == ZLRS_LINK_CONTROL)
+					    ? LABEL_SYNC_LORA_CONTROL
+					    : LABEL_SYNC_LORA_DATA;
+		uint8_t byte = 0U;
+
+		zlrs_kdf(link->pair_key, ZLRS_KEY_LEN, label, NULL, 0U, &byte,
+			 sizeof(byte));
+		link->lora_sync = (uint8_t)(byte | 0x80U);
+		if (link->cfg.mod.modulation == (uint8_t)ZLRS_MOD_LORA) {
+			link->cfg.mod.sync_byte = link->lora_sync;
+		}
+	}
+
 	link->session_valid = false;
 	link->session_pending = false;
 	link->sess_resp_due = false;
@@ -379,7 +400,7 @@ static const zlrs_radio_req_t *make_req(zlrs_link_t *link, bool is_tx, uint16_t 
 	}
 
 	link->req.freq_hz = freq_hz;
-	link->req.rate_bps = link->cfg.rate_bps;
+	link->req.mod = link->cfg.mod;
 	link->req.sync_slot = sync_slot;
 	memcpy(link->req.sync_word, sync_word, ZLRS_SYNC_WORD_LEN);
 	link->req.is_tx = is_tx;
@@ -578,9 +599,11 @@ static const zlrs_radio_req_t *arq_send_slot(zlrs_link_t *link, uint8_t index,
 static const zlrs_radio_req_t *send_data_arq(zlrs_link_t *link, uint32_t now_ms)
 {
 	const uint16_t inflight = arq_inflight_bytes(link);
+	const uint16_t timeout_ms = (link->cfg.arq_timeout_ms > 0U)
+					    ? link->cfg.arq_timeout_ms
+					    : ZLRS_ARQ_TIMEOUT_MS;
 	const bool timeout = (link->arq_used > 0U) &&
-			     (uint32_t)(now_ms - link->arq_sent_ms) >=
-				     ZLRS_ARQ_TIMEOUT_MS;
+			     (uint32_t)(now_ms - link->arq_sent_ms) >= timeout_ms;
 
 	if (timeout) {
 		if (link->arq_retries >= ZLRS_ARQ_MAX_RETRIES) {
@@ -1630,9 +1653,17 @@ void zlrs_link_set_dev_id(zlrs_link_t *link, const uint8_t dev_id[ZLRS_DEV_ID_LE
 	memcpy(link->dev_id, dev_id, ZLRS_DEV_ID_LEN);
 }
 
-void zlrs_link_set_rate(zlrs_link_t *link, uint32_t rate_bps)
+void zlrs_link_set_mod(zlrs_link_t *link, const zlrs_mod_cfg_t *mod)
 {
-	link->cfg.rate_bps = rate_bps;
+	if (mod == NULL) {
+		return;
+	}
+
+	link->cfg.mod = *mod;
+	/* LoRa 的同步字是派生出来的，外面给 0 时不覆盖现用的那个 */
+	if (link->cfg.mod.modulation == (uint8_t)ZLRS_MOD_LORA && link->cfg.mod.sync_byte == 0U) {
+		link->cfg.mod.sync_byte = link->lora_sync;
+	}
 }
 
 void zlrs_link_set_power(zlrs_link_t *link, int8_t tx_power_dbm)

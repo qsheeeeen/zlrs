@@ -28,7 +28,16 @@ uint32_t zlrs_rate_current_bps(const zlrs_rate_ctl_t *ctl)
 		return 0U;
 	}
 
-	return ctl->tiers[ctl->current].rate_bps;
+	return ctl->tiers[ctl->current].mod.rate_bps;
+}
+
+const zlrs_mod_cfg_t *zlrs_rate_current_mod(const zlrs_rate_ctl_t *ctl)
+{
+	if (ctl->tiers == NULL || ctl->count == 0U) {
+		return NULL;
+	}
+
+	return &ctl->tiers[ctl->current].mod;
 }
 
 bool zlrs_rate_update(zlrs_rate_ctl_t *ctl, uint8_t lq_percent, uint32_t now_ms,

@@ -221,6 +221,23 @@ uint8_t zlrs_crsf_rf_mode(uint32_t rate_bps)
 	}
 }
 
+/*
+ * LoRa 档没有"速率"这个说法，用 0x10 | SF 编码：手台侧只要求两端一致，
+ * 至少要能看出"这是 LoRa、SF 多少"。见 doc/03-protocol.md 4.1.1。
+ */
+uint8_t zlrs_crsf_rf_mode_mod(const zlrs_mod_cfg_t *mod)
+{
+	if (mod == NULL) {
+		return 0xFFU;
+	}
+
+	if (mod->modulation == (uint8_t)ZLRS_MOD_LORA) {
+		return (uint8_t)(0x10U | (mod->sf & 0x0FU));
+	}
+
+	return zlrs_crsf_rf_mode(mod->rate_bps);
+}
+
 void zlrs_crsf_link_stats_encode(uint8_t out[ZLRS_CRSF_LINK_STATS_LEN],
 				 const zlrs_crsf_link_stats_t *stats)
 {

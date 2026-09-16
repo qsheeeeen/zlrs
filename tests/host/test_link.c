@@ -204,7 +204,7 @@ static void node_init(node_t *node, uint8_t role, const uint8_t *root_key,
 		.domain = ZLRS_DOMAIN_FCC915,
 		.sync_slot = ZLRS_SYNC_SLOT_CONTROL,
 		.profile = ZLRS_PROFILE_P1,
-		.rate_bps = SIM_RATE_CTL,
+		.mod = { .modulation = ZLRS_MOD_FLRC, .rate_bps = SIM_RATE_CTL },
 		.tx_power_dbm = 10,
 		.rx_timeout_ms = 2U,
 		.beacon_period_ms = 1000U,
@@ -243,7 +243,7 @@ static void node_init(node_t *node, uint8_t role, const uint8_t *root_key,
 	data_cfg.kind = ZLRS_LINK_DATA;
 	data_cfg.domain = ZLRS_DOMAIN_ISM2400;
 	data_cfg.sync_slot = ZLRS_SYNC_SLOT_DATA;
-	data_cfg.rate_bps = SIM_RATE_DATA;
+	data_cfg.mod = zlrs_mod_flrc(SIM_RATE_DATA);
 	data_cfg.peer_timeout_ms = 0U; /* 数据链路不判失联，见 doc/03-protocol.md 3.6 */
 	data_cfg.data_mtu = SIM_DATA_MTU;
 
@@ -1375,10 +1375,14 @@ static void test_arq_giveup(void)
 static void test_rate_adapt(void)
 {
 	static const zlrs_rate_tier_t tiers[] = {
-		{ .rate_bps = 2600000U, .min_lq_to_stay = 85U },
-		{ .rate_bps = 1300000U, .min_lq_to_stay = 60U },
-		{ .rate_bps = 650000U, .min_lq_to_stay = 35U },
-		{ .rate_bps = 325000U, .min_lq_to_stay = 0U },
+		{ .mod = { .modulation = ZLRS_MOD_FLRC, .rate_bps = 2600000U },
+		  .min_lq_to_stay = 85U },
+		{ .mod = { .modulation = ZLRS_MOD_FLRC, .rate_bps = 1300000U },
+		  .min_lq_to_stay = 60U },
+		{ .mod = { .modulation = ZLRS_MOD_FLRC, .rate_bps = 650000U },
+		  .min_lq_to_stay = 35U },
+		{ .mod = { .modulation = ZLRS_MOD_FLRC, .rate_bps = 325000U },
+		  .min_lq_to_stay = 0U },
 	};
 	zlrs_rate_ctl_t ctl;
 	uint8_t next = 0xFFU;
@@ -1871,6 +1875,55 @@ static void test_beacon_replay_guard(void)
 	CHECK(memcmp(sim.rx.ctl.session_key_in, key_before, ZLRS_KEY_LEN) == 0);
 }
 
+/*
+ * 调制按链路各自选（doc/03-protocol.md 4.1.1）：控制链路跑 LoRa 远距档，
+ * 数据链路留在 2.4G 跑 FLRC。LoRa 的同步字是另派生的 1 字节（最高位当 private
+ * bit），不能沿用 FLRC 那 4 字节。
+ */
+static void test_lora_control(void)
+{
+	sim_t sim;
+	uint8_t rc[ZLRS_RC_PAYLOAD_LEN];
+	uint8_t tlm[8];
+	uint8_t chunk[8];
+
+	printf("link: lora control modulation\n");
+
+	sim_init(&sim);
+	sim.tx.ctl.cfg.mod = zlrs_mod_lora(7U, 125000U, 1U, 8U);
+	sim.rx.ctl.cfg.mod = zlrs_mod_lora(7U, 125000U, 1U, 8U);
+	pair_and_connect(&sim);
+
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.tx.data.state == ZLRS_STATE_CONNECTED);
+
+	/* 派生的 1 字节同步字：两端一致，带上 private bit，控制与数据域分离 */
+	CHECK(sim.tx.ctl.lora_sync == sim.rx.ctl.lora_sync);
+	CHECK((sim.tx.ctl.lora_sync & 0x80U) != 0U);
+	CHECK(sim.tx.ctl.lora_sync != sim.tx.data.lora_sync);
+	CHECK(sim.tx.ctl.cfg.mod.sync_byte == sim.tx.ctl.lora_sync);
+	/* LoRa 档没有"速率"这个字段 */
+	CHECK(sim.tx.ctl.cfg.mod.rate_bps == 0U);
+	/* 数据链路没被带着改调制 */
+	CHECK(sim.tx.data.cfg.mod.modulation == (uint8_t)ZLRS_MOD_FLRC);
+
+	/* 遥控、遥测与透传照常 */
+	memset(rc, 0xA1U, sizeof(rc));
+	zlrs_link_set_rc(&sim.tx.ctl, rc, sizeof(rc));
+	memset(tlm, 0xB1U, sizeof(tlm));
+	zlrs_link_set_tlm(&sim.rx.ctl, tlm, sizeof(tlm));
+	sim_run(&sim, 4U);
+	CHECK(sim.rx.rc_count > 0U);
+	CHECK(memcmp(sim.rx.rc, rc, sizeof(rc)) == 0);
+	CHECK(sim.tx.tlm_count > 0U);
+	CHECK(memcmp(sim.tx.tlm, tlm, sizeof(tlm)) == 0);
+	memset(chunk, 0xC1U, sizeof(chunk));
+	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
+	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(chunk), 400);
+	CHECK(sim.rx.stream_len == sizeof(chunk));
+}
+
 void test_link(void)
 {
 	test_pairing();
@@ -1907,4 +1960,5 @@ void test_link(void)
 	test_hop_resync();
 	test_peer_restart();
 	test_beacon_replay_guard();
+	test_lora_control();
 }

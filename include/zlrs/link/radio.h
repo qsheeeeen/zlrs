@@ -12,6 +12,7 @@
 #include <stdint.h>
 
 #include "zlrs/proto/config.h"
+#include "zlrs/proto/mod.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -19,7 +20,12 @@ extern "C" {
 
 typedef struct {
 	uint32_t freq_hz;   /* 载波频率 */
-	uint32_t rate_bps;  /* 速率档，0 表示由移植层用默认值 */
+	/*
+	 * 调制档：FLRC 的速率或 LoRa 的 SF/带宽/编码率/前导码，见
+	 * doc/03-protocol.md 4.1.1。移植层按 modulation 分派到 RAC 的 flrc /
+	 * lora 参数组。
+	 */
+	zlrs_mod_cfg_t mod;
 	uint8_t sync_slot;  /* 同步字槽：1 控制、2 数据、3 配对 */
 	uint8_t sync_word[ZLRS_SYNC_WORD_LEN];
 	bool is_tx;

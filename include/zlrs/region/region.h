@@ -16,6 +16,7 @@
 #include <stdint.h>
 
 #include "zlrs/proto/fhss.h"
+#include "zlrs/proto/mod.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -59,6 +60,9 @@ int zlrs_region_validate(const zlrs_region_t *region, uint8_t band, int8_t tx_po
 /* 地区带宽决定的速率上限：配置超过上限就压下来，返回实际可用的速率 */
 uint32_t zlrs_region_clamp_rate(const zlrs_region_t *region, uint32_t rate_bps);
 
+/* 调制档也要过地区门：FLRC 压速率，LoRa 把带宽压到地区宽度以内 */
+zlrs_mod_cfg_t zlrs_region_clamp_mod(const zlrs_region_t *region, zlrs_mod_cfg_t mod);
+
 /* 占空比记账：窗口内累计发射的空中时间，超过上限就不再允许发射 */
 typedef struct {
 	uint32_t window_ms;
@@ -83,12 +87,20 @@ uint32_t zlrs_airtime_us(uint16_t frame_len, uint32_t rate_bps);
 /* 同一笔账按毫秒给（向上取整到 ms），占空比记账用 */
 uint32_t zlrs_airtime_ms(uint16_t frame_len, uint32_t rate_bps);
 
+/* 调制感知版本：FLRC 与上面两个等价，LoRa 走 lib/proto/mod.c 的模型 */
+uint32_t zlrs_airtime_mod_us(const zlrs_mod_cfg_t *mod, uint16_t frame_len);
+uint32_t zlrs_airtime_mod_ms(const zlrs_mod_cfg_t *mod, uint16_t frame_len);
+
 /*
  * 这个地区在给定帧长/速率下，每秒最多允许发多少帧。
  * 不限制占空比时返回 UINT32_MAX。
  */
 uint32_t zlrs_region_max_frames_per_s(const zlrs_region_t *region, uint32_t rate_bps,
 				      uint16_t frame_len);
+
+/* 同上，按调制档算（LoRa 的一帧比 FLRC 长得多，占空比压得更狠） */
+uint32_t zlrs_region_max_frames_per_s_mod(const zlrs_region_t *region,
+					  const zlrs_mod_cfg_t *mod, uint16_t frame_len);
 
 /*
  * 控制链路的"时间计划"：帧率、帧周期、每个时隙的预算，以及遥测/数据窗口的
@@ -105,10 +117,20 @@ typedef struct {
 	bool clamped_by_airtime; /* 帧率被空中时间压过 */
 } zlrs_control_plan_t;
 
-/* want_hz 是配置档位；frame_len 是控制帧的字节数（含头与标签） */
-void zlrs_region_control_plan(const zlrs_region_t *region, uint32_t want_hz,
-			      uint32_t rate_bps, uint16_t frame_len,
-			      zlrs_control_plan_t *out);
+/*
+ * 控制链路时间计划的输入。框成一族而不是一串位置参数，是因为"调制档 + 两个帧长
+ * + 给另一条链路的预留"这四件事都会随硬件与地区变。
+ */
+typedef struct {
+	const zlrs_region_t *region;
+	const zlrs_mod_cfg_t *mod; /* 控制链路的调制档 */
+	uint32_t want_hz;          /* 配置档位 */
+	uint16_t frame_len;        /* RC 帧字节数（含头与标签） */
+	uint16_t tlm_len;          /* 遥测帧字节数；0 = 就用 frame_len */
+	uint32_t reserve_us;       /* 同一超帧里留给另一条链路的空中时间 */
+} zlrs_plan_req_t;
+
+void zlrs_region_control_plan(const zlrs_plan_req_t *req, zlrs_control_plan_t *out);
 
 #ifdef __cplusplus
 }

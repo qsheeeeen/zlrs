@@ -164,7 +164,7 @@ static void fx_link_init(zlrs_link_t *link, uint8_t arq)
 		.domain = ZLRS_DOMAIN_ISM2400,
 		.sync_slot = ZLRS_SYNC_SLOT_DATA,
 		.profile = ZLRS_PROFILE_P1,
-		.rate_bps = 2600000U,
+		.mod = { .modulation = ZLRS_MOD_FLRC, .rate_bps = 2600000U },
 		.tx_power_dbm = 10,
 		.rx_timeout_ms = 2U,
 		.beacon_period_ms = 2000U,

@@ -64,7 +64,12 @@ typedef struct {
 	uint8_t domain;    /* ZLRS_DOMAIN_* */
 	uint8_t sync_slot; /* ZLRS_SYNC_SLOT_* */
 	zlrs_profile_t profile;
-	uint32_t rate_bps;
+	/*
+	 * 调制档：FLRC 的速率档或 LoRa 的 SF/带宽/编码率/前导码，见
+	 * doc/03-protocol.md 4.1.1。LoRa 的同步字由配对钥匙派生，链路层自己填
+	 * mod.sync_byte（外面给 0 就行）。
+	 */
+	zlrs_mod_cfg_t mod;
 	int8_t tx_power_dbm;
 	uint16_t rx_timeout_ms;     /* 单次接收窗口 */
 	uint16_t beacon_period_ms;  /* SEARCHING 下 BEACON 周期 */
@@ -73,6 +78,8 @@ typedef struct {
 	uint16_t pair_window_ms;    /* 配对窗口 */
 	uint16_t data_mtu;          /* 数据帧载荷上限 */
 	uint8_t arq;                /* 1 = 透传走 ARQ profile，0 = best-effort */
+	/* ARQ 重传超时（ms）。0 = 用 ZLRS_ARQ_TIMEOUT_MS（FLRC 的亚毫秒帧） */
+	uint16_t arq_timeout_ms;
 	/*
 	 * 逐包跳频。0 = 固定在同步信道（跳频表的第 0 个位置就是同步信道），
 	 * 上板调试时先把"收发时序"与"跳频表"分开看，见 doc/01-system.md 2.3。
@@ -177,6 +184,8 @@ typedef struct {
 	uint8_t link_auth_out[ZLRS_KEY_LEN];
 	uint8_t link_auth_in[ZLRS_KEY_LEN];
 	uint8_t sync_word[ZLRS_SYNC_WORD_LEN];
+	/* LoRa 的同步字只有 1 字节 + private bit，见 doc/03-protocol.md 5.3 */
+	uint8_t lora_sync;
 	uint8_t session_key_out[ZLRS_KEY_LEN];
 	uint8_t session_key_in[ZLRS_KEY_LEN];
 	bool session_valid;
@@ -264,8 +273,8 @@ void zlrs_link_set_root_key(zlrs_link_t *link, const uint8_t root_key[ZLRS_KEY_L
 			    uint32_t now_ms);
 void zlrs_link_set_dev_id(zlrs_link_t *link, const uint8_t dev_id[ZLRS_DEV_ID_LEN]);
 
-/* 运行中换速率档（速率自适应用），下一个事务生效 */
-void zlrs_link_set_rate(zlrs_link_t *link, uint32_t rate_bps);
+/* 运行中换调制档（速率自适应用），下一个事务生效 */
+void zlrs_link_set_mod(zlrs_link_t *link, const zlrs_mod_cfg_t *mod);
 
 /* 运行中换发射功率（动态功率用），下一个事务生效 */
 void zlrs_link_set_power(zlrs_link_t *link, int8_t tx_power_dbm);

@@ -50,6 +50,10 @@ static uint8_t resync_every_n;
 
 /* 控制帧的空中时间粗估：22 B RC + 3 B 头 + 4 B 标签 + 2 B CRC */
 #define CTL_FRAME_LEN 31U
+/* 遥测帧：8 B 载荷 + 头与标签 */
+#define CTL_TLM_LEN 15U
+/* 每一个时隙留给 RAC 调度、模式翻转与 SPI 的余量（与 lib/region 一致） */
+#define PORT_SLOT_OVERHEAD_US 200U
 #define SLOT_BUDGET_MAX_US 2000U
 
 #define SERIAL_CHUNK_LEN 64U
@@ -57,6 +61,10 @@ static uint8_t resync_every_n;
 
 static zlrs_link_t link_control;
 static zlrs_link_t link_data;
+
+/* 两条链路各自的调制档：启动时按 Kconfig 与地区定下来，见 plan_init() */
+static zlrs_mod_cfg_t control_mod;
+static zlrs_mod_cfg_t data_mod;
 
 /* 地区：决定频段、功率上限与占空比记账 */
 static const zlrs_region_t *region;
@@ -88,10 +96,14 @@ static uint32_t led_drop_ms;
  */
 #if IS_ENABLED(CONFIG_ZLRS_APP_RATE_ADAPT)
 static const zlrs_rate_tier_t rate_tiers[] = {
-	{ .rate_bps = 2600000U, .min_lq_to_stay = 85U },
-	{ .rate_bps = 1300000U, .min_lq_to_stay = 60U },
-	{ .rate_bps = 650000U, .min_lq_to_stay = 35U },
-	{ .rate_bps = 325000U, .min_lq_to_stay = 0U },
+	{ .mod = { .modulation = ZLRS_MOD_FLRC, .rate_bps = 2600000U },
+	  .min_lq_to_stay = 85U },
+	{ .mod = { .modulation = ZLRS_MOD_FLRC, .rate_bps = 1300000U },
+	  .min_lq_to_stay = 60U },
+	{ .mod = { .modulation = ZLRS_MOD_FLRC, .rate_bps = 650000U },
+	  .min_lq_to_stay = 35U },
+	{ .mod = { .modulation = ZLRS_MOD_FLRC, .rate_bps = 325000U },
+	  .min_lq_to_stay = 0U },
 };
 static zlrs_rate_ctl_t rate_ctl;
 #endif
@@ -199,11 +211,43 @@ static void on_failsafe(void *ctx, const uint8_t *payload, uint16_t len)
  */
 static void plan_init(void)
 {
-	const uint32_t rate_bps = zlrs_region_clamp_rate(region, CONFIG_ZLRS_APP_CONTROL_RATE_BPS);
 	zlrs_control_plan_t plan;
+	zlrs_plan_req_t req = {
+		.region = region,
+		.frame_len = CTL_FRAME_LEN,
+		.tlm_len = CTL_TLM_LEN,
+	};
 
-	zlrs_region_control_plan(region, CONFIG_ZLRS_APP_CONTROL_RATE_HZ, rate_bps,
-				 CTL_FRAME_LEN, &plan);
+	/*
+	 * 调制按链路各自选（doc/03-protocol.md 4.1.1）：窄带地区放不下宽带
+	 * FLRC 时控制链路改跑 LoRa 远距档，数据链路始终留在 2.4G 跑 FLRC。
+	 */
+#if IS_ENABLED(CONFIG_ZLRS_APP_CONTROL_MODULATION_LORA)
+	control_mod = zlrs_region_clamp_mod(
+		region, zlrs_mod_lora(CONFIG_ZLRS_APP_CONTROL_LORA_SF,
+				      CONFIG_ZLRS_APP_CONTROL_LORA_BW_HZ,
+				      CONFIG_ZLRS_APP_CONTROL_LORA_CR,
+				      CONFIG_ZLRS_APP_CONTROL_LORA_PREAMBLE));
+	req.want_hz = CONFIG_ZLRS_APP_LORA_CONTROL_RATE_HZ;
+#else
+	control_mod = zlrs_region_clamp_mod(
+		region,
+		zlrs_mod_flrc(zlrs_region_clamp_rate(region, CONFIG_ZLRS_APP_CONTROL_RATE_BPS)));
+	req.want_hz = CONFIG_ZLRS_APP_CONTROL_RATE_HZ;
+#endif
+	data_mod = zlrs_mod_flrc(CONFIG_ZLRS_APP_DATA_RATE_BPS);
+	req.mod = &control_mod;
+
+	/*
+	 * 超帧周期由最慢的那条链路决定：先算一遍控制链路，拿到数据窗口的稀疏
+	 * 系数，再把数据链路那两个窗口摊到每帧上重算一遍。
+	 */
+	zlrs_region_control_plan(&req, &plan);
+	req.reserve_us =
+		(2U * (zlrs_mod_airtime_us(&data_mod, CONFIG_ZLRS_APP_DATA_MTU + 7U) +
+		       PORT_SLOT_OVERHEAD_US)) /
+		((plan.data_every_n > 0U) ? plan.data_every_n : 1U);
+	zlrs_region_control_plan(&req, &plan);
 
 	control_rate_hz = plan.rate_hz;
 	frame_period_us = plan.frame_period_us;
@@ -213,12 +257,12 @@ static void plan_init(void)
 
 	if (plan.clamped_by_duty) {
 		LOG_WRN("region %s duty %u%%: control rate %u Hz -> %u Hz",
-			region->name, region->duty_percent,
-			CONFIG_ZLRS_APP_CONTROL_RATE_HZ, (unsigned int)plan.rate_hz);
+			region->name, region->duty_percent, (unsigned int)req.want_hz,
+			(unsigned int)plan.rate_hz);
 	}
 	if (plan.clamped_by_airtime) {
-		LOG_WRN("airtime at %u bps: control rate %u Hz -> %u Hz",
-			(unsigned int)rate_bps, CONFIG_ZLRS_APP_CONTROL_RATE_HZ,
+		LOG_WRN("airtime (mod %u): control rate %u Hz -> %u Hz",
+			(unsigned int)control_mod.modulation, (unsigned int)req.want_hz,
 			(unsigned int)plan.rate_hz);
 	}
 
@@ -239,6 +283,10 @@ static void plan_init(void)
 	LOG_INF("control plan: %u Hz (frame %u us, slot budget %u us), tlm 1/%u, data 1/%u",
 		(unsigned int)control_rate_hz, (unsigned int)frame_period_us,
 		(unsigned int)slot_budget_us, tlm_every_n, data_every_n);
+	LOG_INF("modulation: control %u (sf %u bw %u), data %u (%u bps)",
+		(unsigned int)control_mod.modulation, control_mod.sf,
+		(unsigned int)control_mod.bw_hz, (unsigned int)data_mod.modulation,
+		(unsigned int)data_mod.rate_bps);
 	LOG_INF("connected-state beacon every %u frame(s) (resync, doc/03 5.1)",
 		(unsigned int)resync_every_n);
 }
@@ -262,8 +310,8 @@ static void build_links(void)
 		.hopping = IS_ENABLED(CONFIG_ZLRS_APP_FHSS) ? 1U : 0U,
 		.handshake = IS_ENABLED(CONFIG_ZLRS_APP_SESSION_HANDSHAKE) ? 1U : 0U,
 		.telemetry = IS_ENABLED(CONFIG_ZLRS_APP_TELEMETRY) ? 1U : 0U,
-		/* 窄频段地区（868/470/433）放不下宽带档，按地区上限压下来 */
-		.rate_bps = zlrs_region_clamp_rate(region, CONFIG_ZLRS_APP_CONTROL_RATE_BPS),
+		/* 调制档：窄频段地区走 LoRa 远距档，宽带地区走 FLRC（见 plan_init） */
+		.mod = control_mod,
 		.tx_power_dbm = MIN(CONFIG_ZLRS_APP_TX_POWER_DBM, region->max_tx_power_dbm),
 		.rx_timeout_ms = 2U,
 		.beacon_period_ms = 1000U,
@@ -301,8 +349,15 @@ static void build_links(void)
 	data_cfg.kind = ZLRS_LINK_DATA;
 	data_cfg.domain = ZLRS_DOMAIN_ISM2400;
 	data_cfg.sync_slot = ZLRS_SYNC_SLOT_DATA;
-	data_cfg.rate_bps = CONFIG_ZLRS_APP_DATA_RATE_BPS;
+	data_cfg.mod = data_mod;
 	data_cfg.arq = IS_ENABLED(CONFIG_ZLRS_APP_DATA_ARQ) ? 1U : 0U;
+	/*
+	 * ARQ 重传超时由档位派生：一帧的空中时间加一次往返余量，至少留 30 ms
+	 * （FLRC 的亚毫秒帧用的就是那个默认值）。
+	 */
+	data_cfg.arq_timeout_ms = (uint16_t)MAX(
+		ZLRS_ARQ_TIMEOUT_MS,
+		2U * zlrs_mod_airtime_ms(&data_mod, CONFIG_ZLRS_APP_DATA_MTU + 7U));
 	/*
 	 * 数据链路尽力而为：空闲不发空帧，所以不判失联——判了会在空闲时反复重建
 	 * 会话。代价是对端重启后要等这一侧重启或重配，见 doc/03-protocol.md 3.6。
@@ -322,7 +377,7 @@ static void build_links(void)
 		uint8_t start = 0U;
 
 		for (uint8_t i = 0U; i < ARRAY_SIZE(rate_tiers); i++) {
-			if (rate_tiers[i].rate_bps == ctl_cfg.rate_bps) {
+			if (rate_tiers[i].mod.rate_bps == ctl_cfg.mod.rate_bps) {
 				start = i;
 			}
 		}
@@ -403,7 +458,7 @@ static void run_slot(uint8_t slot)
 	 * 让出去的时隙按"射频失败"收尾，链路层会把数据放回队列下轮再试。
 	 */
 	if (req->is_tx &&
-	    !zlrs_duty_reserve(&duty, zlrs_airtime_ms(req->size, req->rate_bps), now_ms)) {
+	    !zlrs_duty_reserve(&duty, zlrs_airtime_mod_ms(&req->mod, req->size), now_ms)) {
 		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, now_ms);
 		return;
 	}
@@ -569,7 +624,7 @@ static void crsf_report_tlm(uint32_t now_ms)
 	tlm.lq_percent = link_control.stats.lq_percent;
 	tlm.rssi_neg_dbm = zlrs_crsf_rssi_from_dbm(link_control.stats.last_rssi);
 	tlm.snr_db = link_control.stats.last_snr;
-	tlm.rf_mode = zlrs_crsf_rf_mode(link_control.cfg.rate_bps);
+	tlm.rf_mode = zlrs_crsf_rf_mode_mod(&link_control.cfg.mod);
 	tlm.tx_power = zlrs_crsf_tx_power_index(link_control.cfg.tx_power_dbm);
 	tlm.state = link_control.state;
 	if (link_control.paired) {
@@ -630,9 +685,9 @@ static void report(uint32_t now_ms)
 
 		if (zlrs_rate_update(&rate_ctl, link_control.stats.lq_percent, now_ms, &next)) {
 			LOG_INF("rate tier -> %u bps (LQ %u%%)",
-				(unsigned int)rate_tiers[next].rate_bps,
+				(unsigned int)rate_tiers[next].mod.rate_bps,
 				link_control.stats.lq_percent);
-			zlrs_link_set_rate(&link_control, rate_tiers[next].rate_bps);
+			zlrs_link_set_mod(&link_control, &rate_tiers[next].mod);
 		}
 	}
 #endif

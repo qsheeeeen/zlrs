@@ -26,6 +26,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "zlrs/proto/mod.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -102,8 +104,14 @@ uint8_t zlrs_crsf_rssi_from_dbm(int16_t dbm);
 /* 发射功率档索引：0=0mW 1=10 2=25 3=100 4=500 5=1000 6=2000 7=250 8=50 */
 uint8_t zlrs_crsf_tx_power_index(int8_t dbm);
 
-/* 速率档编号：zlrs 自己定，只要求两端一致（2.6M=0 / 1.3M=1 / 0.65M=2 / 0.325M=3） */
+/*
+ * 速率档编号：zlrs 自己定，只要求两端一致
+ * （FLRC 2.6M=0 / 1.3M=1 / 0.65M=2 / 0.325M=3，LoRa = 0x10 | SF）
+ */
 uint8_t zlrs_crsf_rf_mode(uint32_t rate_bps);
+
+/* 调制感知版本：LoRa 档按 SF 编码，其余与上面一致 */
+uint8_t zlrs_crsf_rf_mode_mod(const zlrs_mod_cfg_t *mod);
 
 typedef struct {
 	uint8_t uplink_rssi_ant1; /* dBm 的相反数，见 zlrs_crsf_rssi_from_dbm() */

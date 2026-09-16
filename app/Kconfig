@@ -77,14 +77,64 @@ config ZLRS_APP_RESYNC_PERIOD_MS
 	  晶振差会累积成"踩空"），也据此发现对端重启或重新配对，自动重新握手。
 	  见 doc/03-protocol.md 5.1。间隔按帧数换算，至少 1 帧。
 
+choice ZLRS_APP_CONTROL_MODULATION
+	prompt "控制链路调制"
+	default ZLRS_APP_CONTROL_MODULATION_FLRC
+	help
+	  调制按链路各自选（doc/03-protocol.md 4.1.1）：数据链路始终留在 2.4G 跑
+	  FLRC，控制链路可以改跑 LoRa 远距档——窄带地区（868/470/433）放不下
+	  宽带 FLRC 时就是这条路。超帧周期由最慢的那条链路决定。
+
+config ZLRS_APP_CONTROL_MODULATION_FLRC
+	bool "FLRC（宽带，默认）"
+
+config ZLRS_APP_CONTROL_MODULATION_LORA
+	bool "LoRa（窄带远距档）"
+
+endchoice
+
+config ZLRS_APP_LORA_CONTROL_RATE_HZ
+	int "LoRa 控制帧率（Hz）"
+	default 10
+	range 1 50
+	depends on ZLRS_APP_CONTROL_MODULATION_LORA
+	help
+	  LoRa 的一帧就是几十毫秒，10 Hz 已经是"每秒 100 ms"的量级；实际生效值
+	  还会被空中时间压档（例如 SF7/BW125、31 B 帧只能到 9 Hz）。
+
+config ZLRS_APP_CONTROL_LORA_SF
+	int "LoRa 扩频因子（5–12）"
+	default 7
+	range 5 12
+	depends on ZLRS_APP_CONTROL_MODULATION_LORA
+
+config ZLRS_APP_CONTROL_LORA_BW_HZ
+	int "LoRa 带宽（Hz：125000 / 250000 / 500000）"
+	default 125000
+	depends on ZLRS_APP_CONTROL_MODULATION_LORA
+
+config ZLRS_APP_CONTROL_LORA_CR
+	int "LoRa 编码率（1–4 表示 4/5–4/8）"
+	default 1
+	range 1 4
+	depends on ZLRS_APP_CONTROL_MODULATION_LORA
+
+config ZLRS_APP_CONTROL_LORA_PREAMBLE
+	int "LoRa 前导码长度（符号数）"
+	default 8
+	range 4 32
+	depends on ZLRS_APP_CONTROL_MODULATION_LORA
+
 config ZLRS_APP_CONTROL_RATE_BPS
 	int "控制链路速率（bps）"
 	default 1300000
+	depends on ZLRS_APP_CONTROL_MODULATION_FLRC
 
 config ZLRS_APP_CONTROL_RATE_HZ
 	int "控制链路帧率（Hz）"
 	default 150
 	range 50 500
+	depends on ZLRS_APP_CONTROL_MODULATION_FLRC
 	help
 	  150 = 通用档（远距/默认），500 = 近距离竞速档。
 	  500 Hz 时每个时隙只有几百微秒预算，而且只有不限占空比的地区跑得动；
@@ -134,6 +184,7 @@ config ZLRS_APP_DATA_ARQ
 config ZLRS_APP_RATE_ADAPT
 	bool "按链路质量自动升降速率档"
 	default n
+	depends on ZLRS_APP_CONTROL_MODULATION_FLRC
 	help
 	  阈值要按实测曲线标定（见 doc/05-roadmap.md M4），所以默认关着；
 	  打开后用 app/src/main.c 里的档位表与滞回参数。

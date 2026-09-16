@@ -111,6 +111,56 @@ static ral_flrc_tx_syncword_t tx_syncword(uint8_t slot)
 	}
 }
 
+/* 带宽按 Hz 给，RAC/RAL 那边是枚举 */
+static ral_lora_bw_t lora_bw(uint32_t bw_hz)
+{
+	switch (bw_hz) {
+	case 250000U:
+		return RAL_LORA_BW_250_KHZ;
+	case 500000U:
+		return RAL_LORA_BW_500_KHZ;
+	case 125000U:
+	default:
+		return RAL_LORA_BW_125_KHZ;
+	}
+}
+
+/*
+ * LoRa 事务的参数。同步字是 1 字节（链路层从配对钥匙派生，最高位当 private
+ * bit，见 lib/link/link.c 的 derive_pair）；RAC 那边虽然声明成枚举，实际是把
+ * 这个字节原样交给驱动，驱动的约束只有"高 4 位不能是 0"。
+ */
+static void fill_lora_params(smtc_rac_context_t *rac, const zlrs_radio_req_t *req)
+{
+	static const uint8_t lora_default_sync = LORA_PRIVATE_NETWORK_SYNCWORD;
+
+	rac->radio_params.lora.is_tx = req->is_tx;
+	rac->radio_params.lora.is_ranging_exchange = false;
+	rac->radio_params.lora.frequency_in_hz = req->freq_hz;
+	rac->radio_params.lora.sf = (ral_lora_sf_t)req->mod.sf;
+	rac->radio_params.lora.bw = lora_bw(req->mod.bw_hz);
+	rac->radio_params.lora.cr = (ral_lora_cr_t)((req->mod.cr >= 1U && req->mod.cr <= 4U)
+							    ? req->mod.cr
+							    : 1U);
+	rac->radio_params.lora.preamble_len_in_symb = req->mod.preamble;
+	rac->radio_params.lora.header_type = RAL_LORA_PKT_EXPLICIT;
+	rac->radio_params.lora.invert_iq_is_on = 0U;
+	rac->radio_params.lora.crc_is_on = 1U;
+	/*
+	 * 配对时还没有配对钥匙，派生不出同步字，只能落在固定值上——配对帧就用它，
+	 * 别把"上一对留下的派生值"带进来。
+	 */
+	rac->radio_params.lora.sync_word =
+		(req->mod.sync_byte != 0U && req->sync_slot != ZLRS_SYNC_SLOT_PAIRING)
+			? (smtc_rac_lora_syncword_t)req->mod.sync_byte
+			: (smtc_rac_lora_syncword_t)lora_default_sync;
+	rac->radio_params.lora.tx_power_in_dbm = (uint8_t)req->tx_power_dbm;
+	rac->radio_params.lora.tx_size = req->size;
+	rac->radio_params.lora.rx_timeout_ms = req->timeout_ms;
+	rac->radio_params.lora.symb_nb_timeout = 0U;
+	rac->radio_params.lora.max_rx_size = req->max_rx_size;
+}
+
 static ral_flrc_rx_match_sync_word_t rx_match_syncword(uint8_t slot)
 {
 	switch (slot) {
@@ -215,23 +265,34 @@ static int port_submit(void *ctx, const zlrs_radio_req_t *req)
 	rac->smtc_rac_data_buffer_setup.rx_payload_buffer = req->buf;
 	rac->smtc_rac_data_buffer_setup.size_of_rx_payload_buffer = req->max_rx_size;
 
-	rac->radio_params.flrc.is_tx = req->is_tx;
-	rac->radio_params.flrc.tx_size = req->size;
-	rac->radio_params.flrc.max_rx_size = req->max_rx_size;
-	rac->radio_params.flrc.frequency_in_hz = req->freq_hz;
-	rac->radio_params.flrc.tx_power_in_dbm = req->tx_power_dbm;
-	rac->radio_params.flrc.raw_bit_rate = raw_bit_rate(req->rate_bps);
-	rac->radio_params.flrc.cr = RAL_FLRC_CR_3_4;
-	rac->radio_params.flrc.tx_syncword_index = tx_syncword(req->sync_slot);
-	rac->radio_params.flrc.match_sync_word = rx_match_syncword(req->sync_slot);
-	/* 三个同步字槽各一个指针，只填这次事务用到的那个 */
-	for (uint8_t i = 0U; i < 3U; i++) {
-		rac->radio_params.flrc.sync_word[i] = NULL;
+	/*
+	 * 调制按链路各自选：控制链路可能是 LoRa 远距档，数据链路始终是 FLRC。
+	 * 见 doc/03-protocol.md 4.1.1。
+	 */
+	if (req->mod.modulation == (uint8_t)ZLRS_MOD_LORA) {
+		rac->modulation_type = SMTC_RAC_MODULATION_LORA;
+		fill_lora_params(rac, req);
+	} else {
+		rac->modulation_type = SMTC_RAC_MODULATION_FLRC;
+		rac->radio_params.flrc.is_tx = req->is_tx;
+		rac->radio_params.flrc.tx_size = req->size;
+		rac->radio_params.flrc.max_rx_size = req->max_rx_size;
+		rac->radio_params.flrc.frequency_in_hz = req->freq_hz;
+		rac->radio_params.flrc.tx_power_in_dbm = req->tx_power_dbm;
+		rac->radio_params.flrc.raw_bit_rate = raw_bit_rate(req->mod.rate_bps);
+		rac->radio_params.flrc.cr = RAL_FLRC_CR_3_4;
+		rac->radio_params.flrc.tx_syncword_index = tx_syncword(req->sync_slot);
+		rac->radio_params.flrc.match_sync_word = rx_match_syncword(req->sync_slot);
+		/* 三个同步字槽各一个指针，只填这次事务用到的那个 */
+		for (uint8_t i = 0U; i < 3U; i++) {
+			rac->radio_params.flrc.sync_word[i] = NULL;
+		}
+		if (req->sync_slot >= ZLRS_SYNC_SLOT_CONTROL &&
+		    req->sync_slot <= ZLRS_SYNC_SLOT_PAIRING) {
+			rac->radio_params.flrc.sync_word[req->sync_slot - 1U] = req->sync_word;
+		}
+		rac->radio_params.flrc.rx_timeout_ms = req->timeout_ms;
 	}
-	if (req->sync_slot >= ZLRS_SYNC_SLOT_CONTROL && req->sync_slot <= ZLRS_SYNC_SLOT_PAIRING) {
-		rac->radio_params.flrc.sync_word[req->sync_slot - 1U] = req->sync_word;
-	}
-	rac->radio_params.flrc.rx_timeout_ms = req->timeout_ms;
 
 	rac->scheduler_config.start_time_ms = smtc_modem_hal_get_time_in_ms();
 

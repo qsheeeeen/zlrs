@@ -158,12 +158,19 @@ static void test_duty(void)
 static void test_control_plan(void)
 {
 	zlrs_control_plan_t plan;
+	const zlrs_mod_cfg_t fast = zlrs_mod_flrc(1300000U);
+	const zlrs_mod_cfg_t narrow = zlrs_mod_flrc(325000U);
+	zlrs_plan_req_t req = {
+		.mod = &fast,
+		.frame_len = 31U,
+	};
 
 	printf("region: control plan\n");
 
 	/* 默认档：FCC915 + 1.3 Mbps，150 Hz 原样跑 */
-	zlrs_region_control_plan(zlrs_region_get(ZLRS_REGION_FCC915), 150U, 1300000U, 31U,
-				 &plan);
+	req.region = zlrs_region_get(ZLRS_REGION_FCC915);
+	req.want_hz = 150U;
+	zlrs_region_control_plan(&req, &plan);
 	CHECK(plan.rate_hz == 150U);
 	CHECK(plan.frame_period_us == 6666U);
 	CHECK(plan.slot_budget_us == 1666U);
@@ -172,8 +179,8 @@ static void test_control_plan(void)
 	CHECK(!plan.clamped_by_duty && !plan.clamped_by_airtime);
 
 	/* 500 Hz 档：FCC915 不限占空比，1.3 Mbps 的空中时间也撑得住 */
-	zlrs_region_control_plan(zlrs_region_get(ZLRS_REGION_FCC915), 500U, 1300000U, 31U,
-				 &plan);
+	req.want_hz = 500U;
+	zlrs_region_control_plan(&req, &plan);
 	CHECK(plan.rate_hz == 500U);
 	CHECK(plan.frame_period_us == 2000U);
 	CHECK(plan.slot_budget_us == 500U);
@@ -182,21 +189,65 @@ static void test_control_plan(void)
 	CHECK(!plan.clamped_by_duty && !plan.clamped_by_airtime);
 
 	/* EU868 的 1% 占空比把 500 Hz 压到 46 Hz */
-	zlrs_region_control_plan(zlrs_region_get(ZLRS_REGION_EU868), 500U, 1300000U, 31U,
-				 &plan);
+	req.region = zlrs_region_get(ZLRS_REGION_EU868);
+	zlrs_region_control_plan(&req, &plan);
 	CHECK(plan.rate_hz == 46U);
 	CHECK(plan.clamped_by_duty);
 	CHECK(!plan.clamped_by_airtime);
 	CHECK(plan.tlm_every_n == 1U); /* 帧率已经低于目标速率：每帧都发 */
 
 	/* 窄带速率（CN470 被压到 0.325 Mbps）下，帧率受空中时间限制 */
-	zlrs_region_control_plan(zlrs_region_get(ZLRS_REGION_CN470), 500U, 325000U, 31U,
-				 &plan);
+	req.region = zlrs_region_get(ZLRS_REGION_CN470);
+	req.mod = &narrow;
+	zlrs_region_control_plan(&req, &plan);
 	CHECK(plan.clamped_by_airtime);
 	/* 空中时间 862 µs + 200 µs 余量 → 一帧两个控制时隙 ≈ 470 Hz */
 	CHECK(plan.rate_hz == 470U);
 	/* 四分之一帧（531 µs）装不下 1062 µs 的时隙，预算按实际需要给 */
 	CHECK(plan.slot_budget_us == 1062U);
+}
+
+/*
+ * LoRa 远距档（doc/03-protocol.md 4.1.1）：一帧就是几十毫秒，帧率由空中时间
+ * 定，不再是配置里写多少就是多少。
+ */
+static void test_lora_plan(void)
+{
+	const zlrs_mod_cfg_t lora = zlrs_mod_lora(7U, 125000U, 1U, 8U);
+	zlrs_control_plan_t plan;
+	zlrs_plan_req_t req = {
+		.region = NULL, /* FCC915：不限占空比 */
+		.mod = &lora,
+		.want_hz = 10U,
+		.frame_len = 31U,
+		.tlm_len = 7U,
+	};
+
+	printf("region: lora control plan\n");
+
+	req.region = zlrs_region_get(ZLRS_REGION_FCC915);
+	zlrs_region_control_plan(&req, &plan);
+
+	/* 10 Hz 装不下（72 + 36 + 余量 = 108 ms），压到 9 Hz */
+	CHECK(plan.clamped_by_airtime);
+	CHECK(!plan.clamped_by_duty);
+	CHECK(plan.rate_hz == 9U);
+	CHECK(plan.frame_period_us == 111111U);
+	/* 时隙预算要容得下 72 ms 的 RC 帧——FLRC 的 2 ms 上限在这里不适用 */
+	CHECK(plan.slot_budget_us >= 71936U + 200U);
+
+	/* 给数据链路预留 4 ms，帧率再掉一点，但不会掉到 0 */
+	req.reserve_us = 4000U;
+	zlrs_region_control_plan(&req, &plan);
+	CHECK(plan.rate_hz == 8U);
+	CHECK(plan.frame_period_us >= 108432U + 4000U);
+
+	/* EU868 的 1% 占空比撑不住 LoRa：告警归告警，帧率兜底到 1 Hz */
+	req.region = zlrs_region_get(ZLRS_REGION_EU868);
+	req.reserve_us = 0U;
+	zlrs_region_control_plan(&req, &plan);
+	CHECK(plan.clamped_by_duty);
+	CHECK(plan.rate_hz == 1U);
 }
 
 void test_region(void)
@@ -207,5 +258,6 @@ void test_region(void)
 	test_airtime();
 	test_max_frames();
 	test_control_plan();
+	test_lora_plan();
 	test_duty();
 }

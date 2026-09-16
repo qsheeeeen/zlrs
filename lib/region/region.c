@@ -69,6 +69,37 @@ uint32_t zlrs_region_clamp_rate(const zlrs_region_t *region, uint32_t rate_bps)
 	return (rate_bps > region->max_rate_bps) ? region->max_rate_bps : rate_bps;
 }
 
+zlrs_mod_cfg_t zlrs_region_clamp_mod(const zlrs_region_t *region, zlrs_mod_cfg_t mod)
+{
+	/* 窄频段地区的步进是按 FLRC 的带宽定的（见 lib/proto/fhss.c），
+	   LoRa 的带宽也得塞进地区边界里 */
+	static const uint32_t bws[] = { 500000U, 250000U, 125000U };
+
+	if (region == NULL) {
+		return mod;
+	}
+
+	if (mod.modulation == (uint8_t)ZLRS_MOD_FLRC) {
+		mod.rate_bps = zlrs_region_clamp_rate(region, mod.rate_bps);
+		return mod;
+	}
+
+	if (mod.modulation != (uint8_t)ZLRS_MOD_LORA) {
+		return mod;
+	}
+
+	/* 从宽到窄找一个既不超过申请值、又塞得进地区边界的带宽 */
+	for (uint8_t i = 0U; i < sizeof(bws) / sizeof(bws[0]); i++) {
+		if (bws[i] <= mod.bw_hz && bws[i] <= (region->high_hz - region->low_hz)) {
+			mod.bw_hz = bws[i];
+			return mod;
+		}
+	}
+
+	/* 一个都放不下：原样返回，让启动校验去喊 */
+	return mod;
+}
+
 const zlrs_region_t *zlrs_region_get(uint8_t id)
 {
 	if (id >= ZLRS_REGION_COUNT) {
@@ -130,10 +161,19 @@ uint32_t zlrs_airtime_ms(uint16_t frame_len, uint32_t rate_bps)
 	return (us + 999U) / 1000U;
 }
 
-uint32_t zlrs_region_max_frames_per_s(const zlrs_region_t *region, uint32_t rate_bps,
-				      uint16_t frame_len)
+uint32_t zlrs_airtime_mod_us(const zlrs_mod_cfg_t *mod, uint16_t frame_len)
 {
-	const uint32_t airtime_us = zlrs_airtime_us(frame_len, rate_bps);
+	return zlrs_mod_airtime_us(mod, frame_len);
+}
+
+uint32_t zlrs_airtime_mod_ms(const zlrs_mod_cfg_t *mod, uint16_t frame_len)
+{
+	return zlrs_mod_airtime_ms(mod, frame_len);
+}
+
+/* 每秒能发多少帧：额度按占空比给，一帧的代价是它的空中时间 */
+static uint32_t max_frames_for_airtime(const zlrs_region_t *region, uint32_t airtime_us)
+{
 	uint64_t budget_us;
 
 	if (region == NULL || region->duty_percent == 0U || airtime_us == 0U) {
@@ -146,25 +186,48 @@ uint32_t zlrs_region_max_frames_per_s(const zlrs_region_t *region, uint32_t rate
 	return (uint32_t)(budget_us / airtime_us);
 }
 
+uint32_t zlrs_region_max_frames_per_s(const zlrs_region_t *region, uint32_t rate_bps,
+				      uint16_t frame_len)
+{
+	return max_frames_for_airtime(region, zlrs_airtime_us(frame_len, rate_bps));
+}
+
+uint32_t zlrs_region_max_frames_per_s_mod(const zlrs_region_t *region,
+					  const zlrs_mod_cfg_t *mod, uint16_t frame_len)
+{
+	return max_frames_for_airtime(region, zlrs_mod_airtime_us(mod, frame_len));
+}
+
 /* 每个时隙除了空中时间，还要留出 RAC 调度、模式翻转与 SPI 的余量 */
 #define SLOT_OVERHEAD_US 200U
 /* 时隙预算封顶：再长也只是等一个回不来的事务 */
 #define SLOT_BUDGET_MAX_US 2000U
+/* 帧率下限：再低就没法飞了（占空比压过头时按它兜底，但不会超过空中时间允许的上限） */
+#define MIN_CONTROL_HZ 10U
 /* 遥测与数据窗口的目标速率（每秒多少次） */
 #define TLM_TARGET_HZ 150U
 #define DATA_TARGET_HZ 100U
 
-void zlrs_region_control_plan(const zlrs_region_t *region, uint32_t want_hz,
-			      uint32_t rate_bps, uint16_t frame_len,
-			      zlrs_control_plan_t *out)
+void zlrs_region_control_plan(const zlrs_plan_req_t *req, zlrs_control_plan_t *out)
 {
-	const uint32_t airtime_us = zlrs_airtime_us(frame_len, rate_bps);
-	/* 一帧至少要装下两个控制时隙：发 RC + 收遥测 */
-	const uint32_t per_slot_us = airtime_us + SLOT_OVERHEAD_US;
-	const uint32_t max_by_airtime = (per_slot_us > 0U) ? (1000000U / (2U * per_slot_us))
-							   : UINT32_MAX;
-	const uint32_t max_by_duty = zlrs_region_max_frames_per_s(region, rate_bps, frame_len);
-	uint32_t hz = want_hz;
+	const zlrs_region_t *region = (req != NULL) ? req->region : NULL;
+	const uint16_t tlm_len = (req != NULL && req->tlm_len > 0U) ? req->tlm_len
+								   : ((req != NULL) ? req->frame_len : 0U);
+	const uint32_t airtime_us = zlrs_mod_airtime_us((req != NULL) ? req->mod : NULL,
+							(req != NULL) ? req->frame_len : 0U);
+	const uint32_t tlm_airtime_us = zlrs_mod_airtime_us((req != NULL) ? req->mod : NULL,
+							    tlm_len);
+	/* 一帧至少要装下两个控制时隙：发 RC + 收遥测，外加另一条链路的预留 */
+	const uint32_t per_slot_us =
+		((airtime_us > tlm_airtime_us) ? airtime_us : tlm_airtime_us) +
+		SLOT_OVERHEAD_US;
+	const uint32_t per_frame_us = airtime_us + tlm_airtime_us + 2U * SLOT_OVERHEAD_US +
+				      ((req != NULL) ? req->reserve_us : 0U);
+	const uint32_t max_by_airtime =
+		(per_frame_us > 0U) ? (1000000U / per_frame_us) : UINT32_MAX;
+	const uint32_t max_by_duty = zlrs_region_max_frames_per_s_mod(
+		region, (req != NULL) ? req->mod : NULL, (req != NULL) ? req->frame_len : 0U);
+	uint32_t hz = (req != NULL) ? req->want_hz : 0U;
 
 	out->clamped_by_duty = false;
 	out->clamped_by_airtime = false;
@@ -177,8 +240,24 @@ void zlrs_region_control_plan(const zlrs_region_t *region, uint32_t want_hz,
 		hz = max_by_airtime;
 		out->clamped_by_airtime = true;
 	}
-	if (hz < 10U) {
-		hz = 10U; /* 再低就没法飞了：留给日志去报 */
+
+	/*
+	 * 兜底：不让帧率掉到 0。占空比或空中时间只够几赫兹时，压到 1 Hz 并让
+	 * clamped_* 把话说清楚——LoRa 远距档在 EU868 上就是这个下场（1% 占空比
+	 * 撑不住几十毫秒的帧）。但兜底不能超过空中时间允许的上限，否则每一帧
+	 * 都会超预算。
+	 */
+	if (hz < MIN_CONTROL_HZ) {
+		hz = MIN_CONTROL_HZ;
+		if (max_by_airtime < hz) {
+			hz = max_by_airtime;
+		}
+		if (max_by_duty < hz) {
+			hz = max_by_duty;
+		}
+	}
+	if (hz == 0U) {
+		hz = 1U;
 	}
 
 	out->rate_hz = hz;
@@ -188,8 +267,18 @@ void zlrs_region_control_plan(const zlrs_region_t *region, uint32_t want_hz,
 	if (out->slot_budget_us < per_slot_us) {
 		out->slot_budget_us = per_slot_us;
 	}
-	if (out->slot_budget_us > SLOT_BUDGET_MAX_US) {
-		out->slot_budget_us = SLOT_BUDGET_MAX_US;
+	/*
+	 * 上限跟着调制档走：FLRC 的亚毫秒帧等超过 2 ms 就是卡住了，LoRa 的一帧
+	 * 本来就要几十毫秒，压到 2 ms 等于每帧都超时——上限取"实际需要的时间"与
+	 * "FLRC 的经验上限"里的较大者。
+	 */
+	{
+		const uint32_t cap = (per_slot_us > SLOT_BUDGET_MAX_US) ? per_slot_us
+								       : SLOT_BUDGET_MAX_US;
+
+		if (out->slot_budget_us > cap) {
+			out->slot_budget_us = cap;
+		}
 	}
 
 	/* 遥测/数据窗口按"每秒大约多少次"折算成"每 n 帧一次" */

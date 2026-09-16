@@ -14,12 +14,19 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "zlrs/proto/mod.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 typedef struct {
-	uint32_t rate_bps;
+	/*
+	 * 档位 = 一整套调制参数：FLRC 的速率，或者 LoRa 的 SF/带宽/编码率。
+	 * 见 doc/03-protocol.md 4.1.1——"速率档表从'一个速率'变成'调制 + 参数'"
+	 * 就是这里。
+	 */
+	zlrs_mod_cfg_t mod;
 	/* 低于这个 LQ 就守不住这一档，该降档（百分比） */
 	uint8_t min_lq_to_stay;
 } zlrs_rate_tier_t;
@@ -51,6 +58,9 @@ bool zlrs_rate_update(zlrs_rate_ctl_t *ctl, uint8_t lq_percent, uint32_t now_ms,
 		      uint8_t *out);
 
 uint32_t zlrs_rate_current_bps(const zlrs_rate_ctl_t *ctl);
+
+/* 当前档位的完整调制描述（FLRC 与 LoRa 都适用） */
+const zlrs_mod_cfg_t *zlrs_rate_current_mod(const zlrs_rate_ctl_t *ctl);
 
 #ifdef __cplusplus
 }
