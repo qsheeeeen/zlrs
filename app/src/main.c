@@ -17,10 +17,15 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/random/random.h>
+#include <zephyr/sys/reboot.h>
 
 #include <string.h>
 
 #include <psa/crypto.h>
+
+#if IS_ENABLED(CONFIG_ZLRS_APP_UPDATE_TRIGGER)
+#include <zephyr/retention/bootmode.h>
+#endif
 
 #include <smtc_rac_api.h>
 #include <smtc_sw_platform_helper.h>
@@ -510,6 +515,68 @@ static void run_slot(uint8_t slot)
 	zlrs_rac_port_drain();
 }
 
+/*
+ * 数据口上的"进串口恢复"触发（见 doc/01-system.md 2.4 与 app/Kconfig 的
+ * ZLRS_APP_UPDATE_TRIGGER）：字节流里出现 `zlrs!bootloader!` 就置 boot mode 并
+ * 重启，MCUboot 读到标志后停在串口恢复等主机上传。
+ *
+ * 匹配是逐字节的：只有当前缀的那几个字节会被扣住，一旦不匹配就把扣住的字节
+ * 原样交回透传队列（顺序不变），所以正常数据不会丢、也不会重复。
+ */
+#if IS_ENABLED(CONFIG_ZLRS_APP_UPDATE_TRIGGER)
+static const char update_magic[] = "zlrs!bootloader!";
+static uint8_t update_held[sizeof(update_magic) - 1U];
+static uint8_t magic_len;
+
+static void enter_serial_recovery(void)
+{
+	LOG_WRN("update trigger: rebooting into MCUboot serial recovery");
+
+	if (bootmode_set(BOOT_MODE_TYPE_BOOTLOADER) != 0) {
+		LOG_ERR("boot mode write failed; MCUboot will boot the app again");
+	}
+
+	/* 让日志先出串口，再重启（boot mode 在 SRAM 里，重启不会丢） */
+	k_msleep(50);
+	sys_reboot(SYS_REBOOT_COLD);
+}
+
+static void feed_serial(const uint8_t *data, uint16_t len)
+{
+	for (uint16_t i = 0U; i < len; i++) {
+		const uint8_t byte = data[i];
+
+		if (magic_len == 0U && byte != (uint8_t)update_magic[0]) {
+			(void)zlrs_link_write(&link_data, &byte, 1U);
+			continue;
+		}
+
+		if (byte == (uint8_t)update_magic[magic_len]) {
+			update_held[magic_len] = byte;
+			magic_len++;
+			if (magic_len == (uint8_t)(sizeof(update_magic) - 1U)) {
+				enter_serial_recovery(); /* 不会返回 */
+			}
+			continue;
+		}
+
+		/*
+		 * 不是魔数：把扣住的这半截还回透传队列。当前这个字节也可能是新
+		 * 一段匹配的开头（`zlrzlrs!...`），所以还完之后重新看一眼。
+		 */
+		(void)zlrs_link_write(&link_data, update_held, magic_len);
+		magic_len = 0U;
+
+		if (byte == (uint8_t)update_magic[0]) {
+			update_held[0] = byte;
+			magic_len = 1U;
+		} else {
+			(void)zlrs_link_write(&link_data, &byte, 1U);
+		}
+	}
+}
+#endif /* CONFIG_ZLRS_APP_UPDATE_TRIGGER */
+
 static void pump_serial(void)
 {
 	uint8_t chunk[SERIAL_CHUNK_LEN];
@@ -522,7 +589,11 @@ static void pump_serial(void)
 	got = zlrs_data_port_read(chunk, sizeof(chunk));
 
 	if (got > 0U) {
+#if IS_ENABLED(CONFIG_ZLRS_APP_UPDATE_TRIGGER)
+		feed_serial(chunk, got); /* 命中魔数就直接重启，不会走到下面 */
+#else
 		(void)zlrs_link_write(&link_data, chunk, got); /* 队列满就丢尾巴 */
+#endif
 	}
 }
 

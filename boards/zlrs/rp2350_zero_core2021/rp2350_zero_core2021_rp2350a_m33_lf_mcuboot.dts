@@ -18,6 +18,9 @@
 /* 分区：mcuboot 128 KB / slot0 832 KB / slot1 832 KB / storage 2.25 MB */
 #include "rp2350_zero_core2021_partitions_mcuboot.dtsi"
 
+/* 应用侧"进串口恢复"用的 boot mode 区（同 hf/mcuboot） */
+#include <vendor/raspberrypi/rp2350-boot-mode-retention.dtsi>
+
 / {
 	chosen {
 		zephyr,code-partition = &slot0_partition;

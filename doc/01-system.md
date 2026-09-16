@@ -142,21 +142,29 @@
 bootloader 里不带 USB 栈是有意的：少一份复杂度，恢复时用一根 USB 串口线就行。
 （USB CDC 恢复是后面可选的加法，128 KB 的 bootloader 分区就是给它留的余量。）
 
-进恢复模式有三条入口，都不碰 BOOTSEL：
+进恢复模式有四条入口，都不碰 BOOTSEL：
 
 | 入口 | 什么时候生效 | 说明 |
 | --- | --- | --- |
+| 应用侧触发 | 设备正常运行中 | 数据口收到 16 字节魔数 `zlrs!bootloader!`（`scripts/zlrs-recovery.py`）→ 应用置 boot mode 并重启 → bootloader 读到标志就停在恢复模式。**升级一台健康设备不用碰设备本身** |
 | 启动窗口 | 每次复位后 300 ms | 窗口里收到**合法的 mcumgr 帧**就停下来升级——主机脚本先开始发 `image list`，再让设备复位（拔插 USB 或按复位键） |
 | 没有可启动镜像 | 砖机 | 校验失败/镜像为空时停在恢复模式，永远不会"转圈" |
 | 按键 | 不用 | bootloader 不占板上按键：它在应用里有"开机按住进配置"的语义，抢占会让两边都变歧义 |
+
+boot mode 那块标志放在 SRAM 起始处的 4 字节里（Zephyr 树里 RP2350 专用的
+`rp2350-boot-mode-retention.dtsi`，`sram0` 相应让开 4 字节），由 `RETENTION_BOOT_MODE`
+读写，应用与 bootloader 看到的是同一份 DT。魔数匹配是逐字节的：只有当前缀的那几个
+字节会被扣住，一旦不匹配就原样交回透传队列，所以正常数据既不丢也不重复。这个入口
+在 Kconfig 里是 `CONFIG_ZLRS_APP_UPDATE_TRIGGER`，量产/竞速构建可以关掉。
 
 `CONFIG_BOOT_SERIAL_PIN_RESET`（"复位由引脚引起就进恢复"）**故意没开**：RP2350 的
 hwinfo 把 POWMAN 的 `HAD_RUN` 位映射成 `RESET_PIN`，这一位在"芯片跑过"这件事上的
 语义比"按了复位键"宽，没上板确认之前开它就有"每次上电都停在恢复模式"的风险。
 
-主机侧的客户端用 mcumgr（Go 版 `mcumgr` 或 Python 的 `smpmgr`），上传的是
-`zephyr.signed.bin`。把"发命令 + 复位 + 上传 + 查回滚状态"合成一条脚本是后面的
-事（见 [05-roadmap.md](05-roadmap.md) M1 的升级链路待做项）。
+主机侧：`scripts/zlrs-recovery.py --port <数据口>` 负责触发（`--self-test` 不用设备），
+镜像上传用 mcumgr 客户端（Go 版 `mcumgr` 或 Python 的 `smpmgr`），上传的是
+`zephyr.signed.bin`。把"触发 + 上传 + 查回滚状态"合成一条脚本是后面的事
+（见 [05-roadmap.md](05-roadmap.md) M1 的升级链路待做项）。
 
 **密钥。** 开发期用 MCUboot 自带的测试密钥（`bootloader/mcuboot/root-ec-p256.pem`），
 bootloader 校验与应用签名用的是同一把——由 sysbuild 统一设置，两边不会不一致。

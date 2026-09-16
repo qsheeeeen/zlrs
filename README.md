@@ -73,9 +73,11 @@ python3 scripts/make-signed-uf2.py                   # 把签名镜像打成可�
 
 第一次烧写（没有调试器）：按住 BOOTSEL 插 USB，把 `build/mcuboot/zephyr/zephyr.uf2`
 和 `build/app/zephyr/zephyr.signed.uf2` 依次拖进 `RPI-RP2` 盘。
-之后升级走 MCUboot 的串口恢复（数据口 UART1，GP8/GP9）：主机先用 mcumgr 发命令
-（`mcumgr` 或 Python 的 `smpmgr`），再让设备复位（拔插 USB 或按复位键），bootloader
-在复位后的 300 ms 窗口里接住命令就停下来收镜像；砖机则直接停在恢复模式。
+之后升级不用碰设备：`python3 scripts/zlrs-recovery.py --port /dev/ttyACM1`
+（数据口）让应用置 boot mode 并重启，MCUboot 读到标志就停在串口恢复，再用
+mcumgr 客户端（`mcumgr` 或 Python 的 `smpmgr`）上传 `zephyr.signed.bin`。
+设备侧还有两条兜底入口：复位后的 300 ms 窗口（主机先发 mcumgr 命令再接复位）、
+以及砖机自动停在恢复模式。
 镜像签名与分区表见 [doc/01-system.md](doc/01-system.md) 2.4 与
 [板级 README](boards/zlrs/rp2350_zero_core2021/README.md)。
 

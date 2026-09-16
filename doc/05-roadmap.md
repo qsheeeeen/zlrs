@@ -24,7 +24,8 @@
 - 待验收：全部。这一条没有任何"先在主机上做"的空间
 - 已做（软件侧）：上板调试的分层开关——不带 tag（P0）、不跳频、不握手、不发遥测都能单独关，关掉后链路照常工作且有主机侧用例，见 [01](01-system.md) 第 2.3 节
 - 已做（软件侧）：**MCUboot 启动链与两槽分区**——`.../m33/{hf,lf}/mcuboot` 变体（sysbuild），镜像 ECDSA-P256 签名、`swap using offset` 可回滚、bootloader 串口恢复走数据口 UART1；第一次烧写拖两个 UF2 即可，之后升级不用按键。见 [01](01-system.md) 第 2.4 节
-- 待做（升级链路的后续，按收益排序）：① 主机侧升级脚本（`scripts/update.sh`：发 mcumgr 命令 + 触发复位 + 上传 signed 镜像 + 查回滚状态），把现在的"手动两步"收成一条命令；② bootloader 的 USB CDC 恢复（插板载 USB 就能升级，不用 UART 转接，128 KB 的 bootloader 分区是给它留的）；③ 应用侧 mcumgr 或应用侧置 boot mode 后重启（省掉"拔插复位"这一下）；④ 无线 OTA（镜像走 2.4G 透传链路，≈10 s/1 MB，见 M4）
+- 已做（软件侧，升级入口）：**应用侧触发进串口恢复**——数据口收到 16 字节魔数（`scripts/zlrs-recovery.py`）就置 boot mode 并重启，MCUboot 停在串口恢复等上传；升级一台健康设备不用拔插、不用按键。标志放在 SRAM 起始的 4 字节 retained 区（Zephyr 树里 RP2350 专用覆盖），应用与 bootloader 共用同一份 DT。见 [01](01-system.md) 2.4
+- 待做（升级链路的后续，按收益排序）：① 主机侧升级脚本（`scripts/update.sh`：触发 + 上传 signed 镜像 + 查回滚状态），把现在的"手动两步"收成一条命令；② bootloader 的 USB CDC 恢复（插板载 USB 就能升级，不用 UART 转接，128 KB 的 bootloader 分区是给它留的）；③ 应用侧 mcumgr（真正的运行中升级：镜像直接写 slot1，不必重启进 bootloader）；④ 无线 OTA（镜像走 2.4G 透传链路，≈10 s/1 MB，见 M4）
 - 验收：150 Hz 控制帧率下连续 10 分钟不掉线；透传 200 kB，串口侧丢弃计数与链路统计能对上（best-effort 允许丢，但必须看得见）
 - 测量：射频回调延迟抖动、频段切换开销、各速率档的误包率曲线、实际透传吞吐
 - 调参：接收窗口长度、超帧预算、tick 粒度（当前量化到 1 ms，见 01 第 7 节）

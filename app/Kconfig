@@ -135,6 +135,22 @@ config ZLRS_APP_STATUS_LED
 	default y
 	select ZLRS_LED
 
+config ZLRS_APP_UPDATE_TRIGGER
+	bool "数据口触发进 MCUboot 串口恢复"
+	default y
+	depends on BOOTLOADER_MCUBOOT
+	select RETENTION
+	select RETENTION_BOOT_MODE
+	select RETAINED_MEM
+	select REBOOT
+	help
+	  数据口收到 16 字节魔数（`zlrs!bootloader!`）就置 boot mode 并重启：
+	  MCUboot 读到这个标志后停在串口恢复，等主机上传签名镜像。这样升级一台
+	  健康设备不用拔插 USB 也不用按复位键。见 doc/01-system.md 2.4。
+
+	  魔数是文本串，正常透传数据里几乎不会出现；万一撞上，只有匹配到前缀的那
+	  几个字节会被当魔数处理，不会重复投递给上层。量产/竞速构建可以关掉它。
+
 choice ZLRS_APP_BAND_ROLE
 	prompt "频段角色"
 	default ZLRS_APP_BAND_ROLE_SUBG_CONTROL
