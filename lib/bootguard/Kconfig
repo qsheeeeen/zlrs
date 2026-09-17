@@ -1,0 +1,21 @@
+# Copyright (c) 2026 zlrs contributors
+# SPDX-License-Identifier: Apache-2.0
+
+config ZLRS_BOOTGUARD
+	bool "bootloader 里的启动护栏（先把看门狗 disarm 掉）"
+	default y if IS_BOOTLOADER
+	depends on WATCHDOG
+	help
+	  MCUboot 起来后第一件事就是把看门狗关掉。
+
+	  为什么需要：应用侧的 ZLRS_APP_WATCHDOG 崩溃时复位芯片，而 RP2350 的
+	  看门狗在"看门狗复位"之后 ENABLE 位通常仍然是 1（它会一直按周期复位，
+	  直到软件清掉）。于是 MCUboot 刚起来跑换槽/回滚，8 秒后又被复位打断——
+	  回滚永远做不完，现象是设备在"USB 描述符请求失败 / 掉线"之间反复。
+	  护栏把这一环掐断：不管上一轮谁把看门狗点着的，bootloader 先关掉它，
+	  换槽与回滚都在没有看门狗的环境里跑完；进应用后再由应用自己决定要不要
+	  重新武装（见 app/Kconfig 的 ZLRS_APP_WATCHDOG）。
+
+module = ZLRS_BOOTGUARD
+module-str = zlrs_bootguard
+source "subsys/logging/Kconfig.template.log_config"

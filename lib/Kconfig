@@ -10,5 +10,6 @@ rsource "config/Kconfig"
 rsource "region/Kconfig"
 rsource "led/Kconfig"
 rsource "usb/Kconfig"
+rsource "bootguard/Kconfig"
 
 endmenu
