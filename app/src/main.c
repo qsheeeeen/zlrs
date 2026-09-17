@@ -32,6 +32,10 @@
 #include <zephyr/dfu/mcuboot.h>
 #endif
 
+#if IS_ENABLED(CONFIG_ZLRS_APP_SHELL)
+#include <zephyr/shell/shell.h>
+#endif
+
 #if IS_ENABLED(CONFIG_ZLRS_APP_RADIO)
 #include <smtc_rac_api.h>
 #include <smtc_sw_platform_helper.h>
@@ -531,11 +535,49 @@ static void run_slot(uint8_t slot)
  * 匹配是逐字节的：只有当前缀的那几个字节会被扣住，一旦不匹配就把扣住的字节
  * 原样交回透传队列（顺序不变），所以正常数据不会丢、也不会重复。
  */
+#if IS_ENABLED(CONFIG_ZLRS_APP_UPDATE_TRIGGER) || IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MAGIC)
+
+/*
+ * 数据口上的"控制魔数"：正常透传的字节流里出现某个魔数就切模式。
+ *
+ *   zlrs!bootloader!   重启进 MCUboot 串口恢复（ZLRS_APP_UPDATE_TRIGGER）
+ *   zlrs!configmode!   当场进配置模式，EXIT/超时后回正常（ZLRS_APP_CONFIG_MAGIC）
+ *
+ * 匹配是逐字节的：只有当前缀的那几个字节会被扣住，一旦不匹配就原样交回透传队列，
+ * 所以正常数据既不丢也不重复。两个魔数共用一份前缀状态——它们开头相同，各扣一份
+ * 会把字节吐两遍。
+ */
+enum control_magic {
+	CONTROL_MAGIC_BOOTLOADER,
+	CONTROL_MAGIC_CONFIG,
+};
+
+static const struct {
+	const char *text;
+	uint8_t id;
+} control_magics[] = {
 #if IS_ENABLED(CONFIG_ZLRS_APP_UPDATE_TRIGGER)
-static const char update_magic[] = "zlrs!bootloader!";
-static uint8_t update_held[sizeof(update_magic) - 1U];
+	{ "zlrs!bootloader!", CONTROL_MAGIC_BOOTLOADER },
+#endif
+#if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MAGIC)
+	{ "zlrs!configmode!", CONTROL_MAGIC_CONFIG },
+#endif
+};
+
+/* 最长魔数的长度（不含结尾的 '\0'） */
+#define CONTROL_MAGIC_MAX 16U
+
+static uint8_t magic_held[CONTROL_MAGIC_MAX];
 static uint8_t magic_len;
 
+static void enter_config_mode(void);
+#if IS_ENABLED(CONFIG_ZLRS_APP_UPDATE_TRIGGER)
+static void enter_serial_recovery(void);
+
+/*
+ * 重启进 MCUboot 的串口恢复：置 boot mode 标志（retained SRAM，重启不丢），
+ * MCUboot 读到就停在恢复里等签名镜像。见 doc/01-system.md 2.4。
+ */
 static void enter_serial_recovery(void)
 {
 	LOG_WRN("update trigger: rebooting into MCUboot serial recovery");
@@ -544,9 +586,36 @@ static void enter_serial_recovery(void)
 		LOG_ERR("boot mode write failed; MCUboot will boot the app again");
 	}
 
-	/* 让日志先出串口，再重启（boot mode 在 SRAM 里，重启不会丢） */
+	/* 让日志先出串口，再重启 */
 	k_msleep(50);
 	sys_reboot(SYS_REBOOT_COLD);
+}
+#endif
+
+/* held[0..len) 是不是某个魔数的前缀；是就返回它的下标，否则 -1 */
+static int magic_prefix(uint8_t len)
+{
+	for (size_t i = 0U; i < ARRAY_SIZE(control_magics); i++) {
+		if (strncmp((const char *)magic_held, control_magics[i].text, len) == 0) {
+			return (int)i;
+		}
+	}
+
+	return -1;
+}
+
+static void magic_fire(size_t index)
+{
+#if IS_ENABLED(CONFIG_ZLRS_APP_UPDATE_TRIGGER)
+	if (control_magics[index].id == CONTROL_MAGIC_BOOTLOADER) {
+		enter_serial_recovery(); /* 不会返回 */
+		return;
+	}
+#endif
+
+#if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
+	enter_config_mode();
+#endif
 }
 
 static void feed_serial(const uint8_t *data, uint16_t len)
@@ -554,36 +623,36 @@ static void feed_serial(const uint8_t *data, uint16_t len)
 	for (uint16_t i = 0U; i < len; i++) {
 		const uint8_t byte = data[i];
 
-		if (magic_len == 0U && byte != (uint8_t)update_magic[0]) {
-			(void)zlrs_link_write(&link_data, &byte, 1U);
-			continue;
-		}
+		if (magic_len < CONTROL_MAGIC_MAX) {
+			magic_held[magic_len] = byte;
 
-		if (byte == (uint8_t)update_magic[magic_len]) {
-			update_held[magic_len] = byte;
-			magic_len++;
-			if (magic_len == (uint8_t)(sizeof(update_magic) - 1U)) {
-				enter_serial_recovery(); /* 不会返回 */
+			const int hit = magic_prefix((uint8_t)(magic_len + 1U));
+
+			if (hit >= 0) {
+				magic_len++;
+				if (magic_len == (uint8_t)strlen(control_magics[hit].text)) {
+					magic_len = 0U;
+					magic_fire((size_t)hit);
+				}
+				continue;
 			}
-			continue;
 		}
 
-		/*
-		 * 不是魔数：把扣住的这半截还回透传队列。当前这个字节也可能是新
-		 * 一段匹配的开头（`zlrzlrs!...`），所以还完之后重新看一眼。
-		 */
-		(void)zlrs_link_write(&link_data, update_held, magic_len);
-		magic_len = 0U;
+		/* 不匹配：把扣住的这半截还回去，再拿当前字节重新起头 */
+		if (magic_len > 0U) {
+			(void)zlrs_link_write(&link_data, magic_held, magic_len);
+			magic_len = 0U;
+		}
 
-		if (byte == (uint8_t)update_magic[0]) {
-			update_held[0] = byte;
+		magic_held[0] = byte;
+		if (magic_prefix(1U) >= 0) {
 			magic_len = 1U;
 		} else {
 			(void)zlrs_link_write(&link_data, &byte, 1U);
 		}
 	}
 }
-#endif /* CONFIG_ZLRS_APP_UPDATE_TRIGGER */
+#endif /* 控制魔数 */
 
 static void pump_serial(void)
 {
@@ -975,6 +1044,86 @@ static void confirm_image(uint32_t now_ms)
 #endif
 }
 
+#if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
+/*
+ * 进配置模式：阻塞跑一段配置会话（EXIT 或空闲超时结束），出来继续正常模式。
+ * 三个入口共用：开机按住按键、数据口魔数（ZLRS_APP_CONFIG_MAGIC）、
+ * 控制台 shell 的 `zlrs config`（ZLRS_APP_SHELL）。
+ *
+ * 会话里可能改过失控值，所以出来要把 rc_payload 重新同步一次。
+ */
+static void enter_config_mode(void)
+{
+	LOG_WRN("entering config mode");
+
+	(void)zlrs_config_mode_run(&link_control, failsafe_payload);
+	memcpy(rc_payload, failsafe_payload, sizeof(rc_payload));
+	zlrs_link_set_rc(&link_control, rc_payload, sizeof(rc_payload));
+
+	LOG_INF("config mode done, back to normal");
+}
+#endif /* CONFIG_ZLRS_APP_CONFIG_MODE */
+
+#if IS_ENABLED(CONFIG_ZLRS_APP_SHELL)
+static int cmd_status(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	shell_print(sh, "role   : %s", IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? "TX" : "RX");
+	shell_print(sh, "sub-G  : %s (band %d)", ZLRS_SUBG_BAND == ZLRS_BAND_SUBG_LF ? "LF" : "HF",
+		    ZLRS_SUBG_BAND);
+	shell_print(sh, "region : %s (max %d dBm)",
+		    (region != NULL) ? region->name : "?", region->max_tx_power_dbm);
+	shell_print(sh, "control: state %d, lq %u%%, paired %d",
+		    link_control.state, link_control.stats.lq_percent, link_control.paired);
+	shell_print(sh, "data   : state %d, drop %u B", link_data.state,
+		    link_data.stats.data_drop_bytes);
+	shell_print(sh, "radio  : %s", IS_ENABLED(CONFIG_ZLRS_APP_RADIO) ? "on" : "off (bring-up)");
+
+	return 0;
+}
+
+#if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
+static int cmd_config(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	shell_print(sh, "进配置模式：数据口改跑配置协议，EXIT 回来");
+	enter_config_mode();
+
+	return 0;
+}
+#endif
+
+#if IS_ENABLED(CONFIG_ZLRS_APP_UPDATE_TRIGGER)
+static int cmd_recovery(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	shell_print(sh, "重启进 MCUboot 串口恢复");
+	enter_serial_recovery(); /* 不会返回 */
+
+	return 0;
+}
+#endif
+
+SHELL_STATIC_SUBCMD_SET_CREATE(
+	zlrs_cmds,
+	SHELL_CMD(status, NULL, "角色 / SKU / 地区 / 链路状态", cmd_status),
+#if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
+	SHELL_CMD(config, NULL, "进配置模式（EXIT 回正常）", cmd_config),
+#endif
+#if IS_ENABLED(CONFIG_ZLRS_APP_UPDATE_TRIGGER)
+	SHELL_CMD(recovery, NULL, "重启进 MCUboot 串口恢复", cmd_recovery),
+#endif
+	SHELL_SUBCMD_SET_END);
+
+SHELL_CMD_REGISTER(zlrs, &zlrs_cmds, "zlrs 调试命令", NULL);
+#endif /* CONFIG_ZLRS_APP_SHELL */
+
 int main(void)
 {
 	/*
@@ -1078,10 +1227,8 @@ int main(void)
 	    gpio_pin_configure_dt(&button, GPIO_INPUT) == 0) {
 		k_msleep(20); /* 上电去抖 */
 		if (gpio_pin_get_dt(&button) > 0) {
-			LOG_WRN("button held at boot: entering config mode");
-			(void)zlrs_config_mode_run(&link_control, failsafe_payload);
-			memcpy(rc_payload, failsafe_payload, sizeof(rc_payload));
-			zlrs_link_set_rc(&link_control, rc_payload, sizeof(rc_payload));
+			LOG_WRN("button held at boot");
+			enter_config_mode();
 		}
 	}
 

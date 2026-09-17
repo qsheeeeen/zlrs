@@ -96,6 +96,8 @@
 
 **USB 设备栈由镜像自己建**（`lib/usb/usb_dev.c`，开关 `CONFIG_ZLRS_USB`，应用侧是 `CONFIG_ZLRS_APP_USB`）。Zephyr 的 device_next 栈里 devicetree 的 `zephyr,cdc-acm-uart` 节点只表达"要几块 CDC"，设备不会自己上线：镜像得建 usbd context、把类注册进配置、再 `usbd_enable()`。Zephyr 自带的 `CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT` 只注册**第一块** CDC，本板有三块（bootloader 两块），没注册的那块没有 context，第一次往它写日志就是 NULL 解引用、整机停住——所以那个开关保持关着。应用与 bootloader 共用这一份代码，差别只在字符串与 VID/PID（`zlrs` / `ZLRS` 与 `zlrs` / `ZLRS MCUBOOT`）。
 
+**CDC 的接收端要用自己的缓冲池**（`CONFIG_USBD_CDC_ACM_BUF_POOL=y`）。全速设备上这个开关默认是关的，多块 CDC 会去抢 UDC 的公共池；RX 工作项一旦分配失败就再也不重试（`CDC_ACM_RX_FIFO_BUSY` 位不清），表现是"串口只能发不能收"，而 CDC 驱动的日志又因为控制台挂在 CDC 上被强制关掉、一点提示都没有——上板第一次就是这么被坑的，见 [05-roadmap.md](05-roadmap.md) 的 M1。
+
 库层的开关（`lib/*/Kconfig`）由应用的功能开关反选：`ZLRS_APP_CONFIG_MODE` / `ZLRS_APP_STATUS_LED` / `ZLRS_APP_CRSF_PORT` 一关，对应的 `ZLRS_CONFIG` / `ZLRS_LED` / `ZLRS_CRSF` 就可以一起裁掉（应用里留了退化实现，编得过）。协议核心、链路层、地区配置层与 CRSF 编解码是应用永远需要的，由 `ZLRS_APP_CORE` 固定选中。
 
 ### 2.3 上板调试的分层开关

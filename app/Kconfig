@@ -216,6 +216,34 @@ config ZLRS_APP_CONFIG_MODE
 	default y
 	select ZLRS_CONFIG
 
+config ZLRS_APP_CONFIG_MAGIC
+	bool "数据口收到魔数就进配置模式（板上没有用户按键时用）"
+	default n
+	select ZLRS_CONFIG
+	help
+	  数据口字节流里出现 16 字节 `zlrs!configmode!` 就进配置模式（与
+	  ZLRS_APP_UPDATE_TRIGGER 的 `zlrs!bootloader!` 同一套匹配：不是魔数就原样
+	  透传，不丢字节）。命令 EXIT 或超时后回正常模式。
+
+	  为什么需要它：板子上没有可编程按键时（只有 BOOTSEL 与 RESET），
+	  "开机按住按键进配置"没有入口；轻量版 RX 也常常没有按键。上板调试默认关，
+	  需要时打开。
+
+config ZLRS_APP_SHELL
+	bool "控制台 CDC 上的调试 shell"
+	default n
+	select SHELL
+	select SHELL_BACKEND_SERIAL
+	help
+	  在 `zephyr,shell-uart`（本板是 USB 第三块 CDC，跟控制台同一个口）上开一个
+	  shell，带几条命令：
+
+	    zlrs status      角色、SKU、地区、链路状态
+	    zlrs config      进配置模式（EXIT 回正常）
+	    zlrs recovery    进 MCUboot 串口恢复（等同数据口的 `zlrs!bootloader!`）
+
+	  上板调试用；量产关掉（省 flash，也少一个入口）。
+
 config ZLRS_APP_PAIRING_BUTTON
 	bool "长按按键触发配对"
 	default y
