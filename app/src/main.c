@@ -1097,6 +1097,32 @@ static int cmd_config(const struct shell *sh, size_t argc, char **argv)
 }
 #endif
 
+/*
+ * 数据口两块端点的状态：上板调试用。端点二选一在这个板上被坑过两次——
+ * 先看 DTR（usbipd 上送不到）、后加"收到过主机字节"。这条命令一次把判据摊开。
+ */
+static int cmd_ports(const struct shell *sh, size_t argc, char **argv)
+{
+	zlrs_port_state_t states[2];
+	const size_t count = zlrs_data_port_state(states, ARRAY_SIZE(states));
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	if (count == 0U) {
+		shell_print(sh, "数据口没有可用端点");
+		return 0;
+	}
+
+	for (size_t i = 0U; i < count; i++) {
+		shell_print(sh, "%-16s ready=%d active=%d rx_total=%u rx_dropped=%u",
+			    states[i].name, states[i].ready, states[i].active,
+			    states[i].rx_total, states[i].rx_dropped);
+	}
+
+	return 0;
+}
+
 #if IS_ENABLED(CONFIG_ZLRS_APP_UPDATE_TRIGGER)
 static int cmd_recovery(const struct shell *sh, size_t argc, char **argv)
 {
@@ -1113,6 +1139,7 @@ static int cmd_recovery(const struct shell *sh, size_t argc, char **argv)
 SHELL_STATIC_SUBCMD_SET_CREATE(
 	zlrs_cmds,
 	SHELL_CMD(status, NULL, "角色 / SKU / 地区 / 链路状态", cmd_status),
+	SHELL_CMD(ports, NULL, "数据口两块端点的状态", cmd_ports),
 #if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
 	SHELL_CMD(config, NULL, "进配置模式（EXIT 回正常）", cmd_config),
 #endif

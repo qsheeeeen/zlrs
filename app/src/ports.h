@@ -23,6 +23,21 @@
 
 /* ---- 数据口：透传字节流（正常模式） ------------------------------------- */
 
+/* 上板调试用：一块数据端点的状态（`zlrs ports` 命令打印它） */
+typedef struct {
+	const char *name;
+	bool ready;      /* 板上有这块端点且设备就绪 */
+	bool active;     /* 当前选中的就是它（见 port_active） */
+	uint32_t rx_total;   /* 收到过多少字节（主机在用的证据之一） */
+	uint32_t rx_dropped; /* 非当前端点被丢掉的字节数 */
+} zlrs_port_state_t;
+
+/*
+ * 取数据口两块端点的状态，返回填了几条。
+ * 端点二选一的判据（DTR / 收到过主机字节）在 port_active()，这里只做展示。
+ */
+size_t zlrs_data_port_state(zlrs_port_state_t *out, size_t count);
+
 /* baud = 0 表示用板级默认（115200）；非 0 时覆盖（配置工具设过就用它） */
 int zlrs_data_port_init(uint32_t baud);
 

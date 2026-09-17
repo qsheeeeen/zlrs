@@ -1,6 +1,17 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 
+# RP2350 的 SoC Kconfig 默认给**每个**镜像都编 ROM bootloader 跳转钩子
+# （`rp2_bootloader_check_boot_init()`，PRE_KERNEL_2：看到 boot mode 标志就清掉、
+# 跳进 ROM 的 USB bootloader = U 盘模式）。留在 bootloader 镜像里的话，应用置好
+# 标志重启后是它先执行，MCUboot 里那段"停在串口恢复"（io_detect_boot_mode）永远
+# 轮不到——现象就是"触发 recovery 结果进了 U 盘模式（2e8a:000f）"。
+#
+# 应用镜像保留这个钩子：没有 MCUboot 的轻量构建里，它是"砖机进 U 盘"的兜底。
+# 这个符号没有 prompt，只能在模块 Kconfig 里追加一个 default 覆盖 SoC 的默认。
+config RPI_PICO_ROM_BOOTLOADER
+	default n if IS_BOOTLOADER
+
 config ZLRS_BOOTGUARD
 	bool "bootloader 里的启动护栏（先把看门狗 disarm 掉）"
 	default y if IS_BOOTLOADER

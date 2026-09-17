@@ -153,6 +153,7 @@ struct data_ep {
 	uint8_t rx_mem[DATA_RX_RING_LEN];
 	uint8_t tx_mem[DATA_TX_RING_LEN];
 	uint32_t rx_dropped;
+	uint32_t rx_total; /* 收到过多少字节（端点二选一的证据之一） */
 	bool ready;
 };
 
@@ -182,6 +183,7 @@ static void data_isr(const struct device *dev, void *user_data)
 			if (n > 0) {
 				/* 先记证据：端点选择的判据，见 port_active() */
 				host_seen_mark(dev);
+				ep->rx_total += (uint32_t)n;
 			}
 
 			if (n > 0 &&
@@ -215,6 +217,27 @@ static void data_ep_drop_rx(struct data_ep *const ep)
 	while ((n = ring_buf_get(&ep->rx, scratch, sizeof(scratch))) > 0U) {
 		ep->rx_dropped += n;
 	}
+}
+
+size_t zlrs_data_port_state(zlrs_port_state_t *out, size_t count)
+{
+	const struct device *const active = port_active(&data_pair);
+	size_t written = 0U;
+
+	for (size_t i = 0U; (i < PORT_MAX) && (written < count); i++) {
+		if (data_eps[i].dev == NULL) {
+			continue;
+		}
+
+		out[written].name = data_eps[i].dev->name;
+		out[written].ready = data_eps[i].ready;
+		out[written].active = (data_eps[i].dev == active);
+		out[written].rx_total = data_eps[i].rx_total;
+		out[written].rx_dropped = data_eps[i].rx_dropped;
+		written++;
+	}
+
+	return written;
 }
 
 int zlrs_data_port_init(uint32_t baud)

@@ -10,11 +10,29 @@
 #include <zephyr/logging/log.h>
 
 #if DT_NODE_EXISTS(DT_ALIAS(watchdog0))
+#include <hardware/watchdog.h>
+
 #include <zephyr/drivers/watchdog.h>
 
 LOG_MODULE_REGISTER(zlrs_bootguard, CONFIG_ZLRS_BOOTGUARD_LOG_LEVEL);
 
 static const struct device *const wdt = DEVICE_DT_GET(DT_ALIAS(watchdog0));
+
+/*
+ * 为什么不用 wdt_disable()：RP2350 的看门狗驱动里那个函数是
+ *
+ *     if (data->enabled == false) { return -EFAULT; }   // 什么都不做
+ *
+ * 而复位之后驱动状态是全新的一局（enabled = false），硬件却可能还在跑——上一轮
+ * 应用用 ZLRS_APP_WATCHDOG 点着的看门狗不会因为 SYSRESETREQ 就停。于是"护栏"
+ * 调用 wdt_disable() 会被它自己拒绝（-EFAULT），硬件继续倒数：MCUboot 刚进串口
+ * 恢复，几秒后就被复位打断——现象是"恢复口闪现一下又回到应用"。所以这里直接清
+ * 硬件使能位（pico-sdk 的 register 定义，看门狗驱动自己也用它）。
+ */
+static void bootguard_clear_wdt_enable(void)
+{
+	hw_clear_bits(&watchdog_hw->ctrl, WATCHDOG_CTRL_ENABLE_BITS);
+}
 
 /*
  * 排在 wdt 驱动自己的初始化后面（PRE_KERNEL_1 + CONFIG_KERNEL_INIT_PRIORITY_DEVICE，
@@ -27,11 +45,9 @@ static int bootguard_disarm_watchdog(void)
 		return 0;
 	}
 
-	if (wdt_disable(wdt) != 0) {
-		LOG_ERR("watchdog disarm failed");
-	} else {
-		LOG_INF("watchdog disarmed for boot");
-	}
+	bootguard_clear_wdt_enable();
+	(void)wdt_disable(wdt); /* 顺手把驱动状态也标成停：成功才说明两边一致 */
+	LOG_INF("watchdog disarmed for boot");
 
 	return 0;
 }
