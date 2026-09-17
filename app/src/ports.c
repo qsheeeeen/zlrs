@@ -85,14 +85,52 @@ static bool cdc_opened(const struct device *dev)
 	return dtr != 0U;
 }
 
-/* 当前该用哪块端点：两块都在时 USB 打开就是 USB，否则 UART；一块都没有则 NULL */
+/*
+ * "主机在用这块端点"的证据。标准做法是 CDC 的 DTR（SET_CONTROL_LINE_STATE），
+ * 但转发/虚拟化路径上（usbipd 走 USB/IP、有些虚拟机）这个控制请求不一定会送到
+ * 设备，SET_CONTROL_LINE_STATE 丢了的后果是端点永远选不中：主机发过来的字节被
+ * 当"非当前端点"直接丢掉，配置协议、透传、CRSF 输入全都收不到。
+ *
+ * 所以再加一条证据：这块端点**收到过主机的字节**。ISR 在判断当前端点之前先记一笔
+ * （见 data_isr / crsf_isr），于是主机写进来的第一帧就会被认出来，不会被丢掉。
+ */
+#define HOST_SEEN_MAX PORT_MAX * 2
+static const struct device *host_seen_devs[HOST_SEEN_MAX];
+
+static void host_seen_mark(const struct device *dev)
+{
+	for (size_t i = 0U; i < ARRAY_SIZE(host_seen_devs); i++) {
+		if (host_seen_devs[i] == dev) {
+			return;
+		}
+		if (host_seen_devs[i] == NULL) {
+			host_seen_devs[i] = dev;
+			return;
+		}
+	}
+}
+
+static bool host_seen_any(const struct device *dev)
+{
+	for (size_t i = 0U; i < ARRAY_SIZE(host_seen_devs); i++) {
+		if (host_seen_devs[i] == dev) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+/* 当前该用哪块端点：两块都在时 USB 在用就是 USB，否则 UART；一块都没有则 NULL */
 static const struct device *port_active(const struct port_pair *pair)
 {
 	const bool uart_ok = (pair->uart != NULL) && device_is_ready(pair->uart);
 	const bool cdc_ok = (pair->cdc != NULL) && device_is_ready(pair->cdc);
 
 	if (uart_ok && cdc_ok) {
-		return cdc_opened(pair->cdc) ? pair->cdc : pair->uart;
+		const bool cdc_in_use = cdc_opened(pair->cdc) || host_seen_any(pair->cdc);
+
+		return cdc_in_use ? pair->cdc : pair->uart;
 	}
 
 	if (uart_ok) {
@@ -140,6 +178,11 @@ static void data_isr(const struct device *dev, void *user_data)
 		if (uart_irq_rx_ready(dev)) {
 			uint8_t chunk[64];
 			const int n = uart_fifo_read(dev, chunk, sizeof(chunk));
+
+			if (n > 0) {
+				/* 先记证据：端点选择的判据，见 port_active() */
+				host_seen_mark(dev);
+			}
 
 			if (n > 0 &&
 			    ring_buf_put(&ep->rx, chunk, (uint32_t)n) != (uint32_t)n) {
@@ -306,21 +349,26 @@ static struct crsf_ep *crsf_ep_of(const struct device *dev)
 static void crsf_isr(const struct device *dev, void *user_data)
 {
 	struct crsf_ep *const ep = user_data;
-	const bool active = (dev == port_active(&crsf_pair));
-
-	if (active && dev != crsf_rx_source) {
-		/* 切换端点：作废半截帧，免得把两块端点的字节拼成一帧 */
-		zlrs_crsf_parser_init(&crsf_parser);
-		crsf_rx_source = dev;
-	}
 
 	while (uart_irq_update(dev) && uart_irq_is_pending(dev)) {
 		if (uart_irq_rx_ready(dev)) {
 			uint8_t chunk[32];
 			const int n = uart_fifo_read(dev, chunk, sizeof(chunk));
 
-			if (!active) {
+			if (n > 0) {
+				/* 先记证据：端点选择的判据，见 port_active() */
+				host_seen_mark(dev);
+			}
+
+			/* 记完证据再判断当前端点：第一帧不该被选择滞后吃掉 */
+			if (dev != port_active(&crsf_pair)) {
 				continue; /* 不是当前端点：收进来也不做数 */
+			}
+
+			if (dev != crsf_rx_source) {
+				/* 切换端点：作废半截帧，免得把两块端点的字节拼成一帧 */
+				zlrs_crsf_parser_init(&crsf_parser);
+				crsf_rx_source = dev;
 			}
 
 			for (int i = 0; i < n; i++) {
@@ -354,7 +402,7 @@ static void crsf_isr(const struct device *dev, void *user_data)
 				continue;
 			}
 
-			if (!active) {
+			if (dev != port_active(&crsf_pair)) {
 				uart_irq_tx_disable(dev); /* 排队中的字节等切回来再发 */
 				continue;
 			}
