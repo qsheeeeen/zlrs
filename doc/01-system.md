@@ -71,6 +71,8 @@
 
 每条链路有两块端点，二选一——主机把该链路的 CDC 打开（DTR 有效）就走 USB，否则走 UART。端口分配：CRSF = UART0（GP0/GP1，`zlrs-crsf-uart`）+ `cdc_acm_uart0`，数据 = UART1（GP8/GP9，`zlrs-data-uart`）+ `cdc_acm_uart1`；控制台在 USB 的第三个 CDC 上（`cdc_acm_uart2`，`zephyr,console`）。别名按端点种类命名（`-uart` / `-cdc`）。
 
+"主机在用这块端点"有两条证据：CDC 的 **DTR**（标准做法），以及**这块端点收到过主机字节**。第二条是上板补的：`SET_CONTROL_LINE_STATE` 在 USB/IP 转发（usbipd）与部分虚拟化场景里不一定送得到设备，只看 DTR 的话 CDC 永远选不中，主机发来的字节会被当"非当前端点"静静丢掉——配置协议、透传、CRSF 输入全都收不到，而且没有任何报错。ISR 在判断当前端点**之前**先记下"收到过字节"，所以第一帧不会被端点选择的滞后吃掉（见 `app/src/ports.c` 的 `port_active()`）。
+
 按键的**时机**决定行为：
 
 | 时机 | 行为 |
