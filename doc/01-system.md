@@ -94,6 +94,8 @@
 
 本板（RP2350-Zero）每条链路都是 UART + CDC 两块端点，控制台在 USB 第三个 CDC。轻量板把 `zlrs-data-cdc`（或整个 `&usbd`）删掉即可；别名一个都不挂就是 "这条链路的端口不存在"，一样编得过。
 
+**USB 设备栈由镜像自己建**（`lib/usb/usb_dev.c`，开关 `CONFIG_ZLRS_USB`，应用侧是 `CONFIG_ZLRS_APP_USB`）。Zephyr 的 device_next 栈里 devicetree 的 `zephyr,cdc-acm-uart` 节点只表达"要几块 CDC"，设备不会自己上线：镜像得建 usbd context、把类注册进配置、再 `usbd_enable()`。Zephyr 自带的 `CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT` 只注册**第一块** CDC，本板有三块（bootloader 两块），没注册的那块没有 context，第一次往它写日志就是 NULL 解引用、整机停住——所以那个开关保持关着。应用与 bootloader 共用这一份代码，差别只在字符串与 VID/PID（`zlrs` / `ZLRS` 与 `zlrs` / `ZLRS MCUBOOT`）。
+
 库层的开关（`lib/*/Kconfig`）由应用的功能开关反选：`ZLRS_APP_CONFIG_MODE` / `ZLRS_APP_STATUS_LED` / `ZLRS_APP_CRSF_PORT` 一关，对应的 `ZLRS_CONFIG` / `ZLRS_LED` / `ZLRS_CRSF` 就可以一起裁掉（应用里留了退化实现，编得过）。协议核心、链路层、地区配置层与 CRSF 编解码是应用永远需要的，由 `ZLRS_APP_CORE` 固定选中。
 
 ### 2.3 上板调试的分层开关
@@ -112,6 +114,7 @@
 | `CONFIG_ZLRS_APP_RESYNC_PERIOD_MS=0` | 不做连接态周期 `BEACON`：跳频索引只在建链时对齐，对端重启也不会自动重连 | `link: hop resync`、`link: peer restart reconnect` |
 | `CONFIG_ZLRS_APP_CONTROL_MODULATION_FLRC=y`（默认） | 控制链路跑 FLRC；换成 `..._LORA=y` 则进 LoRa 远距档（超帧周期跟着变长） | `link: lora control modulation`、`region: lora control plan` |
 | `CONFIG_ZLRS_APP_LINK_CONTROL=n` / `ZLRS_APP_LINK_DATA=n` | 只跑一条链路：先把单条链路（含射频时序）跑通，再合起来看分时 | 编译验证（两个 SKU 都在 CI 里） |
+| `CONFIG_ZLRS_APP_RADIO=n` | 射频整块不参与：不初始化 USP/RAC、不提交任何事务，每次事务当场按"发出去、没收到回音"收尾（`app/src/radio_null.c`）。端口、配置模式、按键、状态灯、NVS 照常跑，适合 Core2021 还没接上时先验证射频以外的部分 | 编译验证 + 上板（USB/端口/配置模式） |
 | `CONFIG_ZLRS_APP_CRSF_PORT=n` | 不初始化 CRSF 端口：TX 只发配置好的失控值 | 编译验证 |
 | `CONFIG_ZLRS_APP_CONFIG_MODE=n` / `ZLRS_APP_PAIRING_BUTTON=n` / `ZLRS_APP_STATUS_LED=n` | 关掉配置模式 / 按键配对 / 状态灯 | 编译验证 |
 
@@ -130,7 +133,7 @@
 | --- | --- | --- |
 | 启动链 | RP2350 bootrom → 应用 | RP2350 bootrom → MCUboot（校验签名）→ slot0 里的应用 |
 | flash 布局 | code 1 MB + storage 3 MB | mcuboot 128 KB + slot0/slot1 各 832 KB + storage 2.25 MB |
-| 升级 | 按住 BOOTSEL 拖 `zephyr.uf2`（或 SWD） | 拖一次 `zephyr.signed.uf2` 起步；之后走串口恢复，不用按键 |
+| 升级 | 按住 BOOTSEL 拖 `zephyr.uf2`（或 SWD） | 第一次两轮 BOOTSEL（先 bootloader、再 `zephyr.signed.uf2`，bootloader 起来后 ROM 的 U 盘模式不再回来）；之后走串口恢复，不用按键 |
 | 回滚 | 无 | `swap using offset`：升级失败可以退回上一版 |
 
 **为什么上 MCUboot。** 三件事：① 现场升级不需要拆机、不需要调试器；② 镜像签名
@@ -191,6 +194,20 @@ bootloader 校验与应用签名用的是同一把——由 sysbuild 统一设�
 建议先烧"最简形态"（P0 + 关跳频 + 关握手 + 关遥测）确认启动链与日志，再逐层打开。
 注意 bootloader **不使用板上那颗按键**（按键在应用里已经有"开机按住进配置"的语义），
 所以它不会和配置模式抢。
+
+**镜像什么时候算"好"：确认位 + 复位。** 回滚的判据只有一位——镜像有没有被确认：
+
+| 环节 | 谁做 | 配置 |
+| --- | --- | --- |
+| 打标志 | 应用把该初始化的都初始化完（端口、NVS、链路、USB 都起来了）就调 `boot_write_img_confirmed()` | `CONFIG_ZLRS_APP_MCUBOOT_CONFIRM`（默认开，`..._CONFIRM_MS` 可再要一段观察窗口） |
+| 回滚 | 升级用 test 语义（`smpmgr upgrade` 默认，我们的 `scripts/zlrs-update.py` 就是这么传的）：换进来的镜像没确认就崩，**下一次复位**时 MCUboot 回滚到上一版；没有上一版就停在串口恢复（`BOOT_SERIAL_NO_APPLICATION`） | bootloader 侧，不用配 |
+| 让复位发生 | 应用崩了是 CPU 停住（这块板上 Zephyr 没有 `RESET_ON_FATAL_ERROR`），所以要么手动复位/断电，要么打开看门狗让它自己复位 | `CONFIG_ZLRS_APP_WATCHDOG`（默认**关**，调试期建议开；`..._TIMEOUT_MS` 默认 8 s） |
+
+看门狗和回滚是两件事：看门狗只负责"把卡死变成复位"，判据始终是那个确认位。
+打开时它在 `PRE_KERNEL_1` 就武装（紧跟 wdt 驱动），所以连**驱动初始化阶段**的挂死
+也能被复位；喂狗只在主循环与配置模式的轮询循环里做，主循环卡住同样算死。
+上板调试开着的实际好处：刷坏的镜像自己复位 → MCUboot 回滚 → 停在串口恢复 →
+直接再从 USB 上传，全程不用按 BOOTSEL。
 
 ## 3. 系统架构
 

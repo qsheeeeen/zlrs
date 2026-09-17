@@ -9,5 +9,6 @@ rsource "crsf/Kconfig"
 rsource "config/Kconfig"
 rsource "region/Kconfig"
 rsource "led/Kconfig"
+rsource "usb/Kconfig"
 
 endmenu

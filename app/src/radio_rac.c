@@ -1,8 +1,11 @@
 /*
+ * 射频移植层（RAC 后端）：CONFIG_ZLRS_APP_RADIO=y 时用这份。
+ * 接口与契约见 radio_port.h，回调时序见 doc/01-system.md 第 7.2 节。
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "rac_port.h"
+#include "radio_port.h"
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -12,7 +15,7 @@
 #include <smtc_rac_api.h>
 #include <smtc_sw_platform_helper.h>
 
-LOG_MODULE_REGISTER(zlrs_rac, CONFIG_APP_LOG_LEVEL);
+LOG_MODULE_REGISTER(zlrs_radio_rac, CONFIG_APP_LOG_LEVEL);
 
 typedef struct {
 	uint8_t access_id;
@@ -50,12 +53,12 @@ static const zlrs_radio_ops_t data_ops = {
 	.ctx = &data_client,
 };
 
-const zlrs_radio_ops_t *zlrs_rac_control_ops(void)
+const zlrs_radio_ops_t *zlrs_radio_control_ops(void)
 {
 	return &control_ops;
 }
 
-const zlrs_radio_ops_t *zlrs_rac_data_ops(void)
+const zlrs_radio_ops_t *zlrs_radio_data_ops(void)
 {
 	return &data_ops;
 }
@@ -240,7 +243,7 @@ static int client_open(rac_client_t *client, uint8_t priority, void (*post)(rp_s
 	return 0;
 }
 
-int zlrs_rac_port_init(zlrs_link_t *control, zlrs_link_t *data)
+int zlrs_radio_port_init(zlrs_link_t *control, zlrs_link_t *data)
 {
 	if (client_open(&control_client, RAC_HIGH_PRIORITY, control_post, control) != 0) {
 		return -1;
@@ -306,7 +309,7 @@ static int port_submit(void *ctx, const zlrs_radio_req_t *req)
 	return 0;
 }
 
-int zlrs_rac_port_wait_us(uint32_t timeout_us)
+int zlrs_radio_port_wait_us(uint32_t timeout_us)
 {
 	return k_sem_take(&done_sem, K_USEC(timeout_us));
 }
@@ -324,21 +327,21 @@ static void drain_client(rac_client_t *client, uint32_t now_ms)
 			   client->snr, now_ms);
 }
 
-void zlrs_rac_port_drain(void)
+void zlrs_radio_port_drain(void)
 {
-	const uint32_t now_ms = zlrs_rac_port_now_ms();
+	const uint32_t now_ms = zlrs_radio_port_now_ms();
 
 	drain_client(&control_client, now_ms);
 	drain_client(&data_client, now_ms);
 }
 
-void zlrs_rac_port_abort(void)
+void zlrs_radio_port_abort(void)
 {
 	(void)SMTC_SW_PLATFORM(smtc_rac_abort_radio_submit(control_client.access_id));
 	(void)SMTC_SW_PLATFORM(smtc_rac_abort_radio_submit(data_client.access_id));
 }
 
-uint32_t zlrs_rac_port_now_ms(void)
+uint32_t zlrs_radio_port_now_ms(void)
 {
 	return smtc_modem_hal_get_time_in_ms();
 }

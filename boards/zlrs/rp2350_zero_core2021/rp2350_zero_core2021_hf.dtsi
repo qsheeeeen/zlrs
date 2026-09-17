@@ -12,9 +12,13 @@
 #include "rp2350_zero_core2021.dtsi"
 
 / {
-	chosen {
-		/* sub-G 硬件：HF。地区必须与它匹配，见 lib/region */
-		zlrs,subg-band = <1>;
+	/*
+	 * sub-G 硬件：HF。地区必须与它匹配，见 lib/region。
+	 * 不能写在 /chosen 里（自定义前缀的 chosen 属性 DT 宏读不到）。
+	 */
+	zlrs_subg_band: subg-band {
+		compatible = "zlrs,subg-band";
+		band = <1>;
 	};
 };
 

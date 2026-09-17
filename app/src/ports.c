@@ -25,6 +25,7 @@
 #include "board.h"
 #include "led_port.h"
 #include "store.h"
+#include "watchdog.h"
 #include "zlrs/config/config.h"
 #include "zlrs/crsf/crsf.h"
 #include "zlrs/link/link.h"
@@ -600,6 +601,8 @@ int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 		uint8_t chunk[CFG_RX_CHUNK];
 		bool any = false;
 		zlrs_led_input_t led_in;
+
+		zlrs_watchdog_feed();
 
 		/* 配置模式：白灯慢闪，一眼看出"现在不是正常工作状态" */
 		memset(&led_in, 0, sizeof(led_in));

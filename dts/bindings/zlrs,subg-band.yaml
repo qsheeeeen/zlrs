@@ -1,0 +1,20 @@
+# Copyright (c) 2026 zlrs contributors
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  本机 sub-G 硬件（Core2021 的 SKU）：LF = 410–510 MHz（470 / 433），
+  HF = 850–930 MHz（868 / 915）。地区必须与它匹配，见 lib/region 的
+  zlrs_region_validate()——LF 板跑不了 915，HF 板跑不了 470/433。
+
+  这条信息以前写在 /chosen 里（`zlrs,subg-band`），但 Zephyr 的 DT 宏只导出
+  `zephyr,` 前缀的 chosen 属性：自定义前缀根本读不到，于是板级永远退回默认值
+  HF——LF 板于是永远卡在地区校验上（app/src/board.h 的 ZLRS_SUBG_BAND）。
+
+compatible: "zlrs,subg-band"
+
+properties:
+  band:
+    type: int
+    required: true
+    description: 0 = LF（470 / 433），1 = HF（868 / 915）
+    enum: [0, 1]

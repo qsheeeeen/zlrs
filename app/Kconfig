@@ -98,6 +98,98 @@ config ZLRS_APP_RESYNC_PERIOD_MS
 	  晶振差会累积成"踩空"），也据此发现对端重启或重新配对，自动重新握手。
 	  见 doc/03-protocol.md 5.1。间隔按帧数换算，至少 1 帧。
 
+config ZLRS_APP_STATS_LOG
+	bool "每秒在控制台打一条链路状态（上板调试用）"
+	default n
+	help
+	  每秒四行：收发计数、串口/空口丢弃、LQ、地区与占空比、当前功率。
+	  上板调试建议开（控制台直接看出链路在干什么），量产关掉——每秒四行
+	  日志挨着 150 Hz 的链路纯属噪声。
+	  只影响打不打日志：速率档与动态功率的每秒评估不受影响。
+
+config ZLRS_APP_BOOT_DELAY_MS
+	int "USB 起来后、继续初始化之前先等一会儿（毫秒，0 = 不等）"
+	default 0
+	range 0 30000
+	help
+	  上板调试用：USB 设备栈一上线就在这里等一会儿，让主机来得及打开控制台
+	  端口（CDC 的 TX 要主机打开端口才收），然后再往下走。这样"初始化中途
+	  崩了"的那一刻，panic 日志能真的打到控制台上，而不是丢在没人开的口上。
+	  生产构建保持 0。
+
+config ZLRS_APP_WATCHDOG
+	bool "看门狗：崩溃或卡死自动复位（回滚的助力，不是回滚本身）"
+	default n
+	depends on WATCHDOG
+	help
+	  在 PRE_KERNEL_1 就把板上的看门狗装好（app/src/watchdog.c），超时后复位
+	  整颗芯片；喂狗只在主循环与配置模式的轮询循环里做，所以"主循环卡住"
+	  也算死。
+
+	  注意它和镜像确认是两件事：回滚只发生在**复位**时，而"确认标志"才是
+	  MCUboot 判断该不该回滚的依据（ZLRS_APP_MCUBOOT_CONFIRM）。没有看门狗
+	  也能回滚——只要应用崩了之后有人复位它（手动按键/断电，或别处有看门狗）；
+	  打开这个开关只是让"崩在初始化里、自己停住"的设备能自己回来，上板调试
+	  时不用按 BOOTSEL。
+
+config ZLRS_APP_WATCHDOG_TIMEOUT_MS
+	int "看门狗超时（毫秒）"
+	default 8000
+	range 100 10000
+	depends on ZLRS_APP_WATCHDOG
+	help
+	  要能给最慢的一次喂狗间隔留足余量（配置模式里 PBKDF2 会跑一会儿），
+	  又不能长到"崩了要等半天才回来"。8 秒是两边都舒服的值。
+
+config ZLRS_APP_MCUBOOT_CONFIRM
+	bool "初始化跑完就确认镜像（配合 MCUboot 的 test/revert 回滚）"
+	default y
+	depends on BOOTLOADER_MCUBOOT
+	# IMG_MANAGER 下面那个 choice 只有一项（MCUBOOT_IMG_MANAGER），
+	# 选择项不能 select，所以打开 IMG_MANAGER 就等于选中它
+	select STREAM_FLASH
+	select IMG_MANAGER
+	help
+	  应用把该初始化的都初始化完（端口、NVS、链路、USB 都起来了）之后调
+	  boot_write_img_confirmed()，把当前镜像标成"已确认"——这一位就是
+	  "应用跑起来了、不是坏镜像"的标志。
+
+	  升级走 test 语义（scripts/zlrs-update.py 用的 smpmgr upgrade 默认就是）：
+	  新镜像换进来后如果**没跑到这一步**就崩了，下一次复位时 MCUboot 直接
+	  回滚到上一版；没有上一版就停在串口恢复（BOOT_SERIAL_NO_APPLICATION）。
+
+config ZLRS_APP_MCUBOOT_CONFIRM_MS
+	int "初始化完成后还要再跑多久才确认（毫秒，0 = 立刻）"
+	default 0
+	range 0 600000
+	depends on ZLRS_APP_MCUBOOT_CONFIRM
+	help
+	  0 = 初始化一结束就确认（默认，按"跑完初始化就算正常"的判据）。
+	  想更保守可以给一段观察窗口：这段时间里崩掉仍然算"没通过"，
+	  复位后照样回滚。
+
+config ZLRS_APP_USB
+	bool "USB 设备栈（三块 CDC：CRSF / 数据口 / 控制台）"
+	default y
+	select ZLRS_USB
+	help
+	  用 lib/usb 那份设备栈：自己建 usbd context、把 devicetree 里的三块 CDC
+	  一次注册进去，再 usbd_enable()。Zephyr 的
+	  CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT 只注册第一块 CDC，本应用用不了，
+	  所以那个开关保持关着（见 app/prj.conf）。
+	  轻量硬件（没有原生 USB）把 devicetree 里的 usbd 与别名删掉即可，这里关掉
+	  则连设备栈都不建。
+
+config ZLRS_APP_RADIO
+	bool "射频（USP/RAC + LR2021）"
+	default y
+	help
+	  关掉以后整条射频都不参与：不初始化 USP/RAC，也不提交任何事务——每次
+	  事务当场按"发出去、这一轮没收到回音"收尾，链路层的状态机、加密与组帧
+	  照常跑，端口、配置模式、按键、状态灯、NVS 都不受影响。
+	  Core2021 还没接上时用它先验证射频以外的部分：LR20xx 的 HAL 等不到
+	  BUSY 会 k_oops，模块没接上整机就起不来。见 doc/01-system.md 2.3。
+
 config ZLRS_APP_LINK_CONTROL
 	bool "控制链路（sub-G：RC + 遥测 + 配对）"
 	default y

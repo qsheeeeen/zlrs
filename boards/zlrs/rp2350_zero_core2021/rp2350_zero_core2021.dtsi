@@ -32,6 +32,7 @@
 		zlrs-button = &zlrs_button;
 		zlrs-led = &zlrs_led;
 		led-strip = &zlrs_led;
+		watchdog0 = &wdt0;
 		/* USP 官方示例（packet_error_rate_flrc 等）认这个别名 */
 		smtc-user-button = &zlrs_button;
 	};
@@ -46,6 +47,16 @@
 };
 
 &gpio0 {
+	status = "okay";
+};
+
+/*
+ * 硬件看门狗（RP2350 wdt0）：应用起来就武装，主循环里喂。崩溃（fatal error）
+ * 或线程卡死时芯片自动复位，配合 MCUboot 的 test/revert：没被确认的镜像会被
+ * 回滚，回滚后没有可用镜像就停在串口恢复里——上板调试时不用再按 BOOTSEL。
+ * 见 doc/01-system.md 2.4。
+ */
+&wdt0 {
 	status = "okay";
 };
 

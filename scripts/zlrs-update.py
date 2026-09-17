@@ -90,9 +90,23 @@ def find_client(name: str = "smpmgr") -> str | None:
     return None
 
 
-def upload_command(client: str, port: str, image: Path, baud: int) -> list[str]:
-    """smpmgr 的 upgrade = 上传 + 标记下次启动 + 重启（0.19 起）。"""
-    return [client, "--port", port, "--baudrate", str(baud), "upgrade", str(image)]
+def upload_command(client: str, port: str, image: Path, baud: int,
+                   confirm: bool = False) -> list[str]:
+    """
+    smpmgr 的 upgrade = 上传 + 标记下次启动 + 重启（0.19 起）。
+
+    confirm=False（默认）走 MCUboot 的 test 语义：换槽进新镜像，没确认就回滚——
+    有回滚兜底，但要走一次换槽（这块板上 `swap using offset` 还没验证通过，见
+    doc/05-roadmap.md 的 M1）。
+    confirm=True 直接写 slot0 并标记为永久：不换槽、没有回滚，上板调试时用来
+    绕开换槽这条路。
+    """
+    cmd = [client, "--port", port, "--baudrate", str(baud), "upgrade"]
+    if confirm:
+        cmd.append("--confirm")
+    cmd.append(str(image))
+
+    return cmd
 
 
 def run_trigger(port: str, baud: int) -> int:
@@ -128,6 +142,13 @@ def self_test() -> int:
     cmd = upload_command("smpmgr", "/dev/ttyACM0", Path("zephyr.signed.bin"), DEFAULT_BAUD)
     if cmd[0] != "smpmgr" or "upgrade" not in cmd or cmd[-1] != "zephyr.signed.bin":
         problems.append(f"上传命令不对：{cmd}")
+    if "--confirm" in cmd:
+        problems.append(f"默认上传不该带 --confirm：{cmd}")
+
+    cmd_confirm = upload_command("smpmgr", "/dev/ttyACM0", Path("zephyr.signed.bin"),
+                                 DEFAULT_BAUD, confirm=True)
+    if "--confirm" not in cmd_confirm or cmd_confirm[-1] != "zephyr.signed.bin":
+        problems.append(f"--confirm 上传命令不对：{cmd_confirm}")
 
     # 触发那一步必须存在，且魔数与应用侧一致（交给它自己的 self-test 查）
     recovery = repo_root() / "scripts" / "zlrs-recovery.py"
@@ -161,6 +182,8 @@ def main() -> int:
     parser.add_argument("--no-trigger", action="store_true", help="设备已经在恢复模式，不触发")
     parser.add_argument("--no-wait", action="store_true", help="不等应用模式端口回来")
     parser.add_argument("--timeout", type=float, default=15.0, help="等端口出现的时间（秒，默认 15）")
+    parser.add_argument("--confirm", action="store_true",
+                        help="直接写 slot0 并标记永久（不换槽、没有回滚；绕开还没验证的换槽路径）")
     parser.add_argument("--self-test", action="store_true", help="不接设备，校验路径与命令")
     args = parser.parse_args()
 
@@ -205,7 +228,8 @@ def main() -> int:
             print("找不到 smpmgr：pip install smpmgr", file=sys.stderr)
             return 1
 
-    cmd = upload_command(client or "smpmgr", args.recovery_port, image, args.baud)
+    cmd = upload_command(client or "smpmgr", args.recovery_port, image, args.baud,
+                         confirm=args.confirm)
     if client is None:
         print("[3/4] 请手动上传（没让脚本自己跑）：")
         print("      " + " ".join(cmd))

@@ -4,7 +4,8 @@
  *
  * zlrs 应用入口：跑文档里的超帧，把控制链路与数据链路接上 LR2021 与串口。
  *
- *   - 射频：USP/RAC（app/src/rac_port.c）
+ *   - 射频：USP/RAC（app/src/radio_rac.c）；Core2021 没接时用空后端
+ *     （app/src/radio_null.c，CONFIG_ZLRS_APP_RADIO=n）
  *   - 端口：CRSF、数据口透传与配置模式（app/src/ports.c）
  *   - 密钥与配对记录：NVS（app/src/store.c）
  *
@@ -27,14 +28,21 @@
 #include <zephyr/retention/bootmode.h>
 #endif
 
+#if IS_ENABLED(CONFIG_ZLRS_APP_MCUBOOT_CONFIRM)
+#include <zephyr/dfu/mcuboot.h>
+#endif
+
+#if IS_ENABLED(CONFIG_ZLRS_APP_RADIO)
 #include <smtc_rac_api.h>
 #include <smtc_sw_platform_helper.h>
+#endif
 
 #include "ports.h"
 #include "board.h"
 #include "led_port.h"
-#include "rac_port.h"
+#include "radio_port.h"
 #include "store.h"
+#include "watchdog.h"
 
 #include "zlrs/crsf/crsf.h"
 #include "zlrs/link/link.h"
@@ -402,8 +410,8 @@ static void build_links(void)
 	data_cfg.tlm_every_n = 1U; /* 数据链路没有遥测时隙 */
 	data_cfg.data_every_n = data_every_n;
 
-	zlrs_link_init(&link_control, &ctl_cfg, zlrs_rac_control_ops(), &ctl_ev);
-	zlrs_link_init(&link_data, &data_cfg, zlrs_rac_data_ops(), &data_ev);
+	zlrs_link_init(&link_control, &ctl_cfg, zlrs_radio_control_ops(), &ctl_ev);
+	zlrs_link_init(&link_data, &data_cfg, zlrs_radio_data_ops(), &data_ev);
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_RATE_ADAPT)
 	{
@@ -432,7 +440,7 @@ static void load_identity(void)
 	uint8_t dev_id[ZLRS_DEV_ID_LEN];
 	zlrs_store_pairing_t pairing;
 	bool have_root_key = false;
-	const uint32_t now_ms = zlrs_rac_port_now_ms();
+	const uint32_t now_ms = zlrs_radio_port_now_ms();
 
 	/* 根密钥：编译期给的优先（台架用），否则读 NVS */
 	if (strlen(CONFIG_ZLRS_APP_ROOT_KEY_HEX) > 0U) {
@@ -478,7 +486,7 @@ static void run_slot(uint8_t slot)
 {
 	const bool data_slot = (slot == ZLRS_SLOT_DATA_A || slot == ZLRS_SLOT_DATA_B);
 	zlrs_link_t *link = data_slot ? &link_data : &link_control;
-	const uint32_t now_ms = zlrs_rac_port_now_ms();
+	const uint32_t now_ms = zlrs_radio_port_now_ms();
 	/* 法规门（占空比）只作用在 sub-G 那条链路上 */
 	const bool on_subg = data_slot ? (CONTROL_ON_SUBG == 0) : (CONTROL_ON_SUBG != 0);
 	const zlrs_radio_req_t *req;
@@ -505,14 +513,14 @@ static void run_slot(uint8_t slot)
 	}
 
 	if (link->radio.submit(link->radio.ctx, req) != 0 ||
-	    zlrs_rac_port_wait_us(slot_budget_us) != 0) {
+	    zlrs_radio_port_wait_us(slot_budget_us) != 0) {
 		/* 射频没在预算内回来：放弃事务并给链路层收尾，免得卡住 */
-		zlrs_rac_port_abort();
-		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_rac_port_now_ms());
+		zlrs_radio_port_abort();
+		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_radio_port_now_ms());
 		return;
 	}
 
-	zlrs_rac_port_drain();
+	zlrs_radio_port_drain();
 }
 
 /*
@@ -618,7 +626,7 @@ static void adopt_pairing(void)
 
 	/* 控制链路配对成功后，把配对记录同步给数据链路并落盘 */
 	zlrs_link_set_peer(&link_data, link_control.peer_id, link_control.pair_salt,
-			   zlrs_rac_port_now_ms());
+			   zlrs_radio_port_now_ms());
 	memcpy(pairing.peer_id, link_control.peer_id, ZLRS_DEV_ID_LEN);
 	memcpy(pairing.pair_salt, link_control.pair_salt, ZLRS_PAIR_SALT_LEN);
 	(void)zlrs_store_save_pairing(&pairing);
@@ -692,7 +700,7 @@ static void crsf_handle_input(uint8_t type, const uint8_t *payload, uint8_t len)
 	}
 
 	zlrs_link_set_rc(&link_control, payload, len);
-	last_rc_input_ms = zlrs_rac_port_now_ms();
+	last_rc_input_ms = zlrs_radio_port_now_ms();
 	rc_input_seen = true;
 }
 
@@ -844,6 +852,14 @@ static void report(uint32_t now_ms)
 	}
 #endif
 
+	/*
+	 * 每秒四条状态日志：上板调试开着（一眼看出链路在干什么），量产关掉。
+	 * 注意这只影响"打不打日志"——速率档与动态功率的每秒评估在上面，跟它无关。
+	 */
+	if (!IS_ENABLED(CONFIG_ZLRS_APP_STATS_LOG)) {
+		return;
+	}
+
 	LOG_INF("%s ctl=%u tlm=%u data=%u serial_drop=%u",
 		IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? "TX" : "RX", counters.rc_rx,
 		counters.tlm_rx, counters.data_rx, zlrs_data_port_dropped());
@@ -928,8 +944,48 @@ static void led_tick(uint32_t now_ms)
 	zlrs_led_port_update(&in, now_ms);
 }
 
+/*
+ * 镜像确认：初始化全跑完了就告诉 MCUboot "这一版是好的"。
+ *
+ * MCUboot 的 test/revert 判据只有这一位——升级（scripts/zlrs-update.py 走 smpmgr
+ * upgrade，默认 test 语义）换进来的镜像如果没跑到这里就崩了，下一次复位时会被
+ * 回滚到上一版；没有上一版就停在串口恢复里（见 doc/01-system.md 2.4）。
+ *
+ * 判据是"初始化跑完"而不是"跑了多久"：端口、NVS、链路、USB 都起来了，就说明这
+ * 一版至少能把自己拉起来。想要更保守的观察窗口就设 ZLRS_APP_MCUBOOT_CONFIRM_MS。
+ */
+static void confirm_image(uint32_t now_ms)
+{
+#if IS_ENABLED(CONFIG_ZLRS_APP_MCUBOOT_CONFIRM)
+	static bool confirmed;
+
+	if (confirmed || now_ms < (uint32_t)CONFIG_ZLRS_APP_MCUBOOT_CONFIRM_MS) {
+		return;
+	}
+
+	confirmed = true;
+
+	if (boot_write_img_confirmed() == 0) {
+		LOG_INF("image confirmed: this build stays after a reset");
+	} else {
+		LOG_ERR("image confirm failed; MCUboot will revert on next reset");
+	}
+#else
+	ARG_UNUSED(now_ms);
+#endif
+}
+
 int main(void)
 {
+	/*
+	 * 上板调试档：USB 已经起来了（lib/usb 在 APPLICATION 层初始化），先等
+	 * 主机打开控制台端口再往下走，否则"接下来这几步崩了"的 panic 日志会打在
+	 * 一个没人打开的口上，什么都看不到。生产构建这个值是 0。
+	 */
+	if (CONFIG_ZLRS_APP_BOOT_DELAY_MS > 0) {
+		k_msleep(CONFIG_ZLRS_APP_BOOT_DELAY_MS);
+	}
+
 	LOG_INF("zlrs %s", APP_VERSION_STRING);
 
 	/* 上板调试档：这些开关关掉以后链路不再是生产形态，开机就喊一声 */
@@ -964,6 +1020,9 @@ int main(void)
 	if (!IS_ENABLED(CONFIG_ZLRS_APP_STATUS_LED)) {
 		LOG_WRN("bring-up: status led off");
 	}
+	if (!IS_ENABLED(CONFIG_ZLRS_APP_RADIO)) {
+		LOG_WRN("bring-up: radio off, no USP/RAC and no LR2021 traffic");
+	}
 
 	/* 地区配置层：频段、功率上限与占空比都在这里定 */
 	region = zlrs_region_get(CONFIG_ZLRS_APP_REGION);
@@ -971,6 +1030,10 @@ int main(void)
 		LOG_ERR("unknown region %d", CONFIG_ZLRS_APP_REGION);
 		return 0;
 	}
+	/* 上板第一眼要看的两件事：这块板子是哪个 SKU、跑的是哪个地区 */
+	LOG_INF("board: sub-G %s (band %d), region %s",
+		ZLRS_SUBG_BAND == ZLRS_BAND_SUBG_LF ? "LF" : "HF", ZLRS_SUBG_BAND,
+		region->name);
 	{
 		const int rc = zlrs_region_validate(region, ZLRS_SUBG_BAND,
 						    CONFIG_ZLRS_APP_TX_POWER_DBM);
@@ -995,8 +1058,10 @@ int main(void)
 	}
 
 	/* 等 USP/RAC 线程就绪，再初始化 RAC（见 doc/01-system.md 第 7 节） */
+#if IS_ENABLED(CONFIG_ZLRS_APP_RADIO)
 	SMTC_SW_PLATFORM_INIT();
 	SMTC_SW_PLATFORM_VOID(smtc_rac_init());
+#endif
 
 	(void)zlrs_store_init();
 	plan_init();
@@ -1034,7 +1099,7 @@ int main(void)
 		(void)zlrs_crsf_port_init();
 	}
 
-	if (zlrs_rac_port_init(&link_control, &link_data) != 0) {
+	if (zlrs_radio_port_init(&link_control, &link_data) != 0) {
 		LOG_ERR("RAC init failed");
 		return 0;
 	}
@@ -1049,9 +1114,18 @@ int main(void)
 		ZLRS_DATA_ENABLED ? "data on" : "data off",
 		IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? "TX" : "RX");
 
+	/*
+	 * 初始化到这里算跑完了（端口、NVS、链路、USB 都起来了）：确认镜像，
+	 * 让 MCUboot 认这一版。
+	 */
+	confirm_image(zlrs_radio_port_now_ms());
+
 	for (;;) {
 		const int64_t start_us = k_uptime_get() * 1000;
-		const uint32_t now_ms = zlrs_rac_port_now_ms();
+		const uint32_t now_ms = zlrs_radio_port_now_ms();
+
+		zlrs_watchdog_feed();
+		confirm_image(now_ms);
 
 		/*
 		 * 四个时隙平分一帧（slot_budget_us）：某个时隙卡住也不会把整帧拖长——

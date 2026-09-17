@@ -1,0 +1,56 @@
+# Copyright (c) 2026 zlrs contributors
+# SPDX-License-Identifier: Apache-2.0
+
+menu "zlrs usb device"
+
+config ZLRS_USB
+	bool "zlrs USB 设备栈（usbd context + devicetree 里的全部 CDC）"
+	depends on USB_DEVICE_STACK_NEXT && USBD_CDC_ACM_CLASS
+	help
+	  Zephyr 的 device_next 栈里，devicetree 的 `zephyr,cdc-acm-uart` 节点只是
+	  "要几块 CDC"，不会让设备自己上线：应用要建 usbd context、把类注册进配置、
+	  再 usbd_enable()。这个库就把这件事做掉（lib/usb/usb_dev.c），一次注册
+	  devicetree 里全部的 CDC 实例。
+
+	  不要用 Zephyr 自带的 CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT：它只注册
+	  第一块 CDC，没注册的那块没有 context，第一次往它写日志就是 NULL 解引用
+	  （usbd_ep_buf_allocate() → uds_ctx->dev），整机当场停住。
+
+	  应用镜像（三块 CDC：CRSF / 数据口 / 控制台）与 MCUboot 镜像（两块：
+	  恢复口 / 控制台）都用这一份代码，差别只在下面的字符串与 VID/PID。
+
+if ZLRS_USB
+
+config ZLRS_USB_VID
+	hex "USB 厂商 ID（VID）"
+	default 0x2fe3
+	help
+	  0x2fe3 是 Zephyr 项目给自己示例留的 VID。做产品要换成自己的。
+
+config ZLRS_USB_PID
+	hex "USB 产品 ID（PID）"
+	default 0x0004
+
+config ZLRS_USB_MANUFACTURER
+	string "USB 厂商字符串"
+	default "zlrs"
+
+config ZLRS_USB_PRODUCT
+	string "USB 产品字符串"
+	default "ZLRS"
+	help
+	  升级脚本按 /dev/serial/by-id 里的名字找端口：应用模式是 "ZLRS"，
+	  bootloader 模式是 "ZLRS MCUBOOT"（见 scripts/zlrs-update.py）。
+
+config ZLRS_USB_MAX_POWER
+	int "USB bMaxPower（单位 2 mA）"
+	default 125
+	range 0 250
+
+endif # ZLRS_USB
+
+endmenu
+
+module = ZLRS_USB
+module-str = zlrs_usb
+source "subsys/logging/Kconfig.template.log_config"

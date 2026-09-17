@@ -46,7 +46,12 @@ west build -b rp2350_zero_core2021/rp2350a/m33/hf app   # 868 / 915
 west build -b rp2350_zero_core2021/rp2350a/m33/lf app   # 470 / 433
 ```
 
-板子通过 DT 的 `zlrs,subg-band` 声明自己是哪种 sub-G 硬件；应用启动时校验"地区 vs 本机硬件"，不匹配就**红灯告警并且不发射频**（法规相关的错误不凑合）。
+板子通过 DT 里的 `zlrs,subg-band` 节点（`band = <0>` LF / `<1>` HF，绑定见
+`dts/bindings/zlrs,subg-band.yaml`）声明自己是哪种 sub-G 硬件；应用启动时校验
+"地区 vs 本机硬件"，不匹配就**红灯告警并且不发射频**（法规相关的错误不凑合）。
+这个值**不要**写进 `/chosen`：Zephyr 的 DT 宏只导出 `zephyr,` 前缀的 chosen 属性，
+自定义前缀读不到，会静默退回默认值 HF——LF 板于是永远过不了校验（上板第一次
+就是这个现象，见 [doc/05-roadmap.md](../../../doc/05-roadmap.md) 的 M1）。
 
 ## Core2021
 
@@ -100,8 +105,10 @@ west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33/hf/mcuboot app
 python3 scripts/make-signed-uf2.py          # 生成应用镜像的 signed UF2
 ```
 
-按住 BOOTSEL 插 USB，把 `build/mcuboot/zephyr/zephyr.uf2` 与应用镜像的
-`zephyr.signed.uf2` 依次拖进 `RPI-RP2` 盘。之后升级走 MCUboot 的串口恢复
+按住 BOOTSEL 插 USB 拖 `build/mcuboot/zephyr/zephyr.uf2`，**再按住 BOOTSEL 插
+一次**，拖应用镜像的 `zephyr.signed.uf2`（bootloader 跑起来以后 ROM 的 U 盘模式
+就不会再回来了，两轮省不掉，见 [README](../../../README.md)）。
+之后升级走 MCUboot 的串口恢复
 （数据口 UART1，GP8/GP9），见 [README](../../../README.md) 与
 [doc/01-system.md](../../../doc/01-system.md) 2.4。
 

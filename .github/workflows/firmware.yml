@@ -87,6 +87,17 @@ jobs:
               -DCONFIG_ZLRS_APP_RESYNC_PERIOD_MS=0
           done
 
+      # 射频整块关掉（CONFIG_ZLRS_APP_RADIO=n）：Core2021 还没接上时的档，
+      # 只跑端口 / 配置模式 / 按键 / 状态灯 / NVS，走 app/src/radio_null.c。
+      - name: build (radio off, both skus)
+        run: |
+          set -x
+          . zlrs/scripts/zephyr-env.sh
+          for board in rp2350_zero_core2021/rp2350a/m33/hf rp2350_zero_core2021/rp2350a/m33/lf; do
+            ZLRS_BOARD="$board" zlrs-build -d "build-noradio-${board##*/}" -- \
+              -DCONFIG_ZLRS_APP_RADIO=n
+          done
+
       # 单链路裁剪：只跑数据链路（控制链路、CRSF、配置模式、按键、状态灯全关，
       # 对应的库也跟着裁掉）
       - name: build (data link only, both skus)

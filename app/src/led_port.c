@@ -19,7 +19,11 @@ LOG_MODULE_REGISTER(zlrs_led_port, CONFIG_APP_LOG_LEVEL);
 /* 20 Hz 足够让闪烁看起来连续，又不会把时间花在刷灯上 */
 #define LED_UPDATE_MS 50U
 
-#if DT_NODE_EXISTS(DT_ALIAS(zlrs_led))
+/*
+ * 有别名还不够：还要真的有灯带驱动在编（CONFIG_LED_STRIP）。只把驱动裁掉、
+ * 别名留在 devicetree 里的话，DEVICE_DT_GET 会引用一个不存在的设备，链接失败。
+ */
+#if DT_NODE_EXISTS(DT_ALIAS(zlrs_led)) && IS_ENABLED(CONFIG_LED_STRIP)
 static const struct device *const strip = DEVICE_DT_GET(DT_ALIAS(zlrs_led));
 #define LED_AVAILABLE 1
 #else
@@ -30,9 +34,12 @@ static const struct device *const strip = DEVICE_DT_GET(DT_ALIAS(zlrs_led));
  * 状态灯引擎（lib/led）本身也是可裁的：关掉以后这个移植层退化成空操作，
  * 应用侧不用再关心有没有灯（见 doc/01-system.md 2.2 与 2.3）。
  */
-#if !IS_ENABLED(CONFIG_ZLRS_LED)
+#if !IS_ENABLED(CONFIG_ZLRS_LED) || !LED_AVAILABLE
 int zlrs_led_port_init(void)
 {
+#if IS_ENABLED(CONFIG_ZLRS_LED)
+	LOG_WRN("no led strip device on this board: status led disabled");
+#endif
 	return -1;
 }
 

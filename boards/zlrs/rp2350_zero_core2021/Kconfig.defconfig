@@ -31,14 +31,16 @@ config UART_CONSOLE
 	default y
 
 # 控制台挂在 USB 的第三个 CDC 上（见 rp2350_zero_core2021.dtsi 的 chosen），
-# 所以板级默认把 USB 设备栈与 CDC ACM 类打开
+# 所以板级默认把 USB 设备栈与 CDC ACM 类打开。
+#
+# 注意这里不给 CDC_ACM_SERIAL_INITIALIZE_AT_BOOT 默认值：那个辅助实现只注册
+# 第一块 CDC，应用侧要用 ZLRS_APP_USB（app/src/usb_dev.c）自己建 context 并
+# 注册全部三块；bootloader 另算——它只有两块 CDC，且 app/sysbuild/mcuboot.conf
+# 里自己把这个开关打开（见 doc/01-system.md 2.4）。
 config USB_DEVICE_STACK_NEXT
 	default y
 
 config USBD_CDC_ACM_CLASS
-	default y
-
-config CDC_ACM_SERIAL_INITIALIZE_AT_BOOT
 	default y
 
 config UART_LINE_CTRL
