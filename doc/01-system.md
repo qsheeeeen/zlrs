@@ -231,6 +231,18 @@ Bootloader 侧有个对应的护栏（`lib/bootguard`，`CONFIG_ZLRS_BOOTGUARD`�
 设备在"USB 描述符请求失败 / 掉线"之间反复。护栏先把这一环掐断，进应用后再由应用
 自己决定要不要重新武装。
 
+**看门狗与串口恢复。** 两处必须一起做，缺一个都会踩坑（上板各踩过一次）：
+
+1. **应用侧**：`zlrs recovery` / 数据口魔数触发时，重启前先
+   `zlrs_watchdog_disarm()`（`app/src/watchdog.c`）。这时驱动状态里看门狗是
+   enabled，`wdt_disable()` 真的有效；不关的话它会跟着重启跑进 bootloader。
+2. **bootloader 侧**：护栏**不能**用 `wdt_disable()`——驱动的实现是
+   `if (data->enabled == false) return -EFAULT;`（复位后驱动状态是全新一局，硬件
+   却还开着），所以 `lib/bootguard` 直接清 `watchdog_hw->ctrl` 的 `ENABLE` 位。
+
+漏掉任一侧的现象都一样：MCUboot 进了串口恢复、**几秒后被看门狗复位打断**（上板实测
+只有 ~1.5 s 窗口），主机这边就是"恢复口闪现一下、镜像永远传不完"。
+
 ## 3. 系统架构
 
 ### 3.1 两条链路
