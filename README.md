@@ -29,6 +29,7 @@ Core2021 的 sub-G 是**两个 SKU**（PA 网络不同），所以板级是两�
 | 固件（TX 或 RX） | `zlrs-build` | 默认目标 `rp2350_zero_core2021/rp2350a/m33/hf`（LF SKU 用 `.../m33/lf`） |
 | 固件 + MCUboot | `zlrs-build-mcuboot` | 目标 `.../m33/hf/mcuboot`（LF 用 `.../m33/lf/mcuboot`），`west build --sysbuild` 把 bootloader 一起编出来 |
 | 主机侧测试 | `make -C tests/host run` | 协议核心、链路层（含 ARQ 与占空比）、CRSF 与配置协议，不需要硬件与工作区 |
+| 上板自检 | `python3 scripts/zlrs-bringup.py` | 板子上跑一遍"不依赖射频"的那档：三块 CDC、数据口魔数进配置模式、配置协议读写、NVS 持久化 |
 | 官方示例 | 见下 | Semtech 的 `packet_error_rate_flrc`，用来单独验证工具链与射频栈 |
 
 ```shell
