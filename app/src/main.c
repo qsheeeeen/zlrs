@@ -582,6 +582,13 @@ static void enter_serial_recovery(void)
 {
 	LOG_WRN("update trigger: rebooting into MCUboot serial recovery");
 
+	/*
+	 * 重启前先把看门狗关掉：RP2350 的看门狗在 SYSRESETREQ 之后可能还开着，
+	 * 留给 MCUboot 就会把它的串口恢复打断（上板实测恢复只活 ~1.5 s，
+	 * 上传永远传不完）。bootloader 侧还有一道护栏（lib/bootguard），两边都做。
+	 */
+	zlrs_watchdog_disarm();
+
 	if (bootmode_set(BOOT_MODE_TYPE_BOOTLOADER) != 0) {
 		LOG_ERR("boot mode write failed; MCUboot will boot the app again");
 	}

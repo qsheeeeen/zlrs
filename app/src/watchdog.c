@@ -80,11 +80,29 @@ void zlrs_watchdog_feed(void)
 	}
 }
 
+void zlrs_watchdog_disarm(void)
+{
+	if (wdt_channel >= 0) {
+		/*
+		 * 这里能真的关掉：驱动状态里这块看门狗是 enabled（我们自己装的），
+		 * 所以 wdt_disable() 不会像"复位后的新一局"那样被拒绝。
+		 */
+		(void)wdt_disable(wdt);
+		wdt_channel = -1;
+		LOG_INF("watchdog disarmed before reboot");
+	}
+}
+
 #else /* !CONFIG_ZLRS_APP_WATCHDOG */
 
 void zlrs_watchdog_feed(void)
 {
 	/* 看门狗没开：喂狗是空的，调用点不用写条件编译 */
+}
+
+void zlrs_watchdog_disarm(void)
+{
+	/* 看门狗没开：没什么可关的 */
 }
 
 #endif /* CONFIG_ZLRS_APP_WATCHDOG */
