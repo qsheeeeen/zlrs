@@ -91,7 +91,7 @@ void zlrs_watchdog_disarm(void)
 		/* 驱动状态里它是 enabled（我们装的），所以 wdt_disable() 这次能生效 */
 		(void)wdt_disable(wdt);
 		wdt_channel = -1;
-		LOG_INF("watchdog disarmed before reboot");
+		LOG_INF("watchdog disarmed");
 	}
 }
 

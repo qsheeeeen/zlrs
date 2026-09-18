@@ -661,8 +661,9 @@ int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 	cfg_link = control;
 	cfg_failsafe_out = failsafe;
 
-	if (port_active(&data_pair) == NULL) {
-		LOG_WRN("no data port on this board: config mode unavailable");
+	/* 端点得先经过 zlrs_data_port_init：没初始化就没有缓冲与 IRQ，会话只会空转 */
+	if (data_ready_ports == 0U) {
+		LOG_WRN("no usable data port: config mode unavailable");
 		return -1;
 	}
 

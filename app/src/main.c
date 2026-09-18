@@ -1014,6 +1014,10 @@ static void confirm_image(uint32_t now_ms)
 }
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
+/* shell 入口只置这个标志：会话要跑在主循环里（超帧停、数据口不被透传抢），
+ * 见主循环里的处理 */
+static atomic_t config_request;
+
 /* 跑一段配置会话（EXIT 或空闲超时结束）后继续正常模式。三个入口共用 */
 static void enter_config_mode(void)
 {
@@ -1060,8 +1064,8 @@ static int cmd_config(const struct shell *sh, size_t argc, char **argv)
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
 
-	shell_print(sh, "进配置模式：数据口改跑配置协议，EXIT 回来");
-	enter_config_mode();
+	atomic_set(&config_request, 1);
+	shell_print(sh, "已请求配置模式：数据口改跑配置协议，EXIT 回来");
 
 	return 0;
 }
@@ -1219,6 +1223,16 @@ int main(void)
 	load_identity();
 	failsafe_init();
 
+	/* 数据口必须先于配置模式初始化：按键入口就在下面，会话直接读数据口 */
+	{
+		uint32_t baud = 0U;
+
+		if (zlrs_store_load_baud(&baud) != (int)sizeof(baud)) {
+			baud = 0U;
+		}
+		(void)zlrs_data_port_init(baud);
+	}
+
 	/*
 	 * 配置模式：开机时按键按住就进，见 doc/01-system.md 2.1。
 	 * 跑完直接继续正常启动，不用重启——写进去的密钥与失控值当场就生效。
@@ -1230,15 +1244,6 @@ int main(void)
 			LOG_WRN("button held at boot");
 			enter_config_mode();
 		}
-	}
-
-	{
-		uint32_t baud = 0U;
-
-		if (zlrs_store_load_baud(&baud) != (int)sizeof(baud)) {
-			baud = 0U;
-		}
-		(void)zlrs_data_port_init(baud);
 	}
 
 	zlrs_link_set_rc(&link_control, rc_payload, sizeof(rc_payload));
@@ -1273,6 +1278,14 @@ int main(void)
 
 		zlrs_watchdog_feed();
 		confirm_image(now_ms);
+
+#if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
+		/* shell 的 `zlrs config` 只置请求，会话在这里跑：与魔数入口同一套语义，
+		 * 超帧暂停，数据口字节不会被 pump_serial 半路抢走 */
+		if (atomic_cas(&config_request, 1, 0)) {
+			enter_config_mode();
+		}
+#endif
 
 		/* 四个时隙平分一帧：超预算的事务由 run_slot 放弃并收尾，不拖长整帧 */
 		run_slot(ZLRS_SLOT_CTL_DOWN);
