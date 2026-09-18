@@ -217,6 +217,7 @@ zephyr/module.yml     本仓库作为 Zephyr 模块的入口（板级定义也�
 | 载板的接线、接插口与机械规格 | [doc/07-carrier.md](doc/07-carrier.md) |
 | 接线与 Core2021 选型 | [boards/zlrs/rp2350_zero_core2021/README.md](boards/zlrs/rp2350_zero_core2021/README.md) |
 | 与 ExpressLRS 的功能对比（差距与差异化） | [doc/08-vs-elrs.md](doc/08-vs-elrs.md) |
+| 原型（RP2350-Zero + Core2021）的物理接口与各模式下的用法 | [doc/09-prototype.md](doc/09-prototype.md) |
 
 ## 依赖
 

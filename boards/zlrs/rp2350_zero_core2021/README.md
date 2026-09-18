@@ -108,8 +108,8 @@ python3 scripts/make-signed-uf2.py          # 生成应用镜像的 signed UF2
 按住 BOOTSEL 插 USB 拖 `build/mcuboot/zephyr/zephyr.uf2`，**再按住 BOOTSEL 插
 一次**，拖应用镜像的 `zephyr.signed.uf2`（bootloader 跑起来以后 ROM 的 U 盘模式
 就不会再回来了，两轮省不掉，见 [README](../../../README.md)）。
-之后升级走 MCUboot 的串口恢复
-（数据口 UART1，GP8/GP9），见 [README](../../../README.md) 与
+之后升级走 MCUboot 的串口恢复，**只走 USB**（数据口那块 CDC，见下）；GP8/GP9
+那路 UART 仍是应用自己的数据口，升级用不到。见 [README](../../../README.md) 与
 [doc/01-system.md](../../../doc/01-system.md) 2.4。
 
 **注意**：应用目录里那份 `zephyr.uf2` 是**未签名**镜像，MCUboot 不认（而且基址是
