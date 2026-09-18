@@ -319,6 +319,32 @@ static void test_plan_1000hz(void)
 	CHECK(!plan.clamped_by_airtime && !plan.clamped_by_duty);
 }
 
+static void test_mix_limit(void)
+{
+	const zlrs_region_t *eu = zlrs_region_get(ZLRS_REGION_EU868);
+	const zlrs_region_t *fcc = zlrs_region_get(ZLRS_REGION_FCC915);
+
+	printf("region: sub-band mix limit\n");
+
+	/* 不限占空比：直接 100%（档位 3 = 4 个时隙） */
+	CHECK(zlrs_region_mix_level(fcc, 24U, 1000U) == 3U);
+	CHECK(zlrs_region_mix_level(NULL, 24U, 1000U) == 3U);
+
+	/* EU868 1%：24 ms 窗口里只允许 0.24 ms 的 sub-G 发射
+	 * 1 ms/时隙 → 一个都放不下（0/25/50/100 全超） */
+	CHECK(zlrs_region_mix_level(eu, 24U, 1000U) == 0U);
+	/* 时隙短一点（200 us）：0.24 ms 允许 1 个 → 25% */
+	CHECK(zlrs_region_mix_level(eu, 24U, 200U) == 1U);
+	/* 100 us/时隙：允许 2 个 → 50% */
+	CHECK(zlrs_region_mix_level(eu, 24U, 100U) == 2U);
+	/* 窗口拉长到 400 ms：1% = 4 ms，够 4 个 1 ms 的时隙 → 100% */
+	CHECK(zlrs_region_mix_level(eu, 400U, 1000U) == 3U);
+
+	/* 非法参数不崩 */
+	CHECK(zlrs_region_mix_level(eu, 0U, 100U) == 3U);
+	CHECK(zlrs_region_mix_level(eu, 24U, 0U) == 3U);
+}
+
 void test_region(void)
 {
 	printf("region: tables\n");
@@ -329,6 +355,7 @@ void test_region(void)
 	test_control_plan();
 	test_lora_plan();
 	test_racing_plan();
+	test_mix_limit();
 	test_plan_1000hz();
 	test_duty();
 }

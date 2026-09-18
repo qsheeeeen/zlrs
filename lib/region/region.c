@@ -354,6 +354,33 @@ uint32_t zlrs_duty_remaining_ms(zlrs_duty_t *duty, uint32_t now_ms)
 	return budget - duty->used_ms;
 }
 
+uint8_t zlrs_region_mix_level(const zlrs_region_t *region, uint32_t window_ms,
+			      uint32_t subg_slot_airtime_us)
+{
+	static const uint8_t slots[4] = { 0U, 1U, 2U, 4U };
+	uint64_t allowed_us;
+	uint8_t level = 3U;
+
+	if (region == NULL || region->duty_percent == 0U || window_ms == 0U ||
+	    subg_slot_airtime_us == 0U) {
+		return 3U; /* 不限占空比：100% */
+	}
+
+	/* 窗口内允许的发射时间 = 窗口时长 × 占空比 */
+	allowed_us = ((uint64_t)window_ms * 1000U * region->duty_percent) / 100U;
+
+	/* 从最高档往下找第一个装得下的（四档的顺序是 0/1/2/4 个时隙） */
+	for (int i = 3; i >= 0; i--) {
+		if ((uint64_t)slots[i] * subg_slot_airtime_us <= allowed_us) {
+			level = (uint8_t)i;
+			break;
+		}
+		level = 0U;
+	}
+
+	return level;
+}
+
 bool zlrs_duty_reserve(zlrs_duty_t *duty, uint32_t airtime_ms, uint32_t now_ms)
 {
 	if (!duty->limited) {

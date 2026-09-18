@@ -93,6 +93,17 @@ uint32_t zlrs_airtime_mod_ms(const zlrs_mod_cfg_t *mod, uint16_t frame_len);
 uint32_t zlrs_region_max_frames_per_s(const zlrs_region_t *region, uint32_t rate_bps,
 				      uint16_t frame_len);
 
+/*
+ * 子带混合比的法规上限（doc/09-protocol.md 5.1）：一个 4 时隙的窗口里最多几个
+ * 时隙可以落 sub-G。duty_percent = 0 的地区不限（返回 3 = 100%）；有占空比的
+ * 地区按"窗口时长 × 占空比"折算，落到四档（0/1/2/4 个时隙）里不超过上限的
+ * 那一档。
+ *   window_ms            —— 4 个时隙的总时长
+ *   subg_slot_airtime_us —— 一个 sub-G 时隙的空中时间
+ */
+uint8_t zlrs_region_mix_level(const zlrs_region_t *region, uint32_t window_ms,
+			      uint32_t subg_slot_airtime_us);
+
 /* 同上，按调制档算（LoRa 的一帧比 FLRC 长得多，占空比压得更狠） */
 uint32_t zlrs_region_max_frames_per_s_mod(const zlrs_region_t *region,
 					  const zlrs_mod_cfg_t *mod, uint16_t frame_len);
