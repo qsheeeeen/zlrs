@@ -1,8 +1,8 @@
 # 原型：RP2350-Zero + Core2021
 
-状态：**桌上原型**——RP2350-Zero 与 Core2021 两块模块用线连起来。对外的接口**只有 USB-C**（供电、三块 CDC、烧写）；CRSF 与数据是模块焊盘上的两路 UART，原型上没接外设，要用就自己引线。
+现在的实物是**两块模块用线连起来**：微雪 RP2350-Zero 加微雪 Core2021。对外的接口**只有 USB-C**（供电、三块 CDC、烧写）；CRSF 与数据是模块焊盘上的两路 UART，原型上没接外设，要用就自己引线。
 
-本文写这套实物的接口与用法：有哪些口、软件在各种模式下怎么用它们、怎么烧写。引脚与别名的完整定义见 [板级 README](../boards/zlrs/rp2350_zero_core2021/README.md)，模式的设计理由见 [01-system.md](01-system.md) 2.1/2.4。
+本文写这套实物的接口与用法：有哪些口、软件在各种模式下怎么用它们、怎么烧写。引脚与别名的权威定义见[板级 README](../boards/zlrs/rp2350_zero_core2021/README.md)，模式的设计理由见 [02-platform](02-platform.md) 第 2、5 节。
 
 ## 1. 实物构成
 
@@ -51,7 +51,7 @@
 | --- | --- | --- |
 | BOOTSEL 按键 | RP2350-Zero | 芯片级：按住插 USB 进 ROM 的 UF2 模式 |
 | RESET 按键 | RP2350-Zero | 复位；复位后 300 ms 内收到合法 mcumgr 帧会停在恢复模式 |
-| WS2812B | RP2350-Zero（GP16） | 状态灯，语义见 [07-ux.md](07-ux.md) |
+| WS2812B | RP2350-Zero（GP16） | 状态灯，语义见 [09-ux](09-ux.md) |
 | 天线座 | Core2021 | 接 433 MHz 天线 |
 
 ## 3. 软件模式 × 接口用法
@@ -63,12 +63,12 @@
 | UART1 GP8/9 | 字节透传 | 改跑配置协议 | **不用**（恢复走 USB） | 不跑固件 |
 | 射频 SPI / BUSY / DIO8 | 每帧四个时隙收发 | 不发事务 | 不碰 | 不跑固件 |
 | 按键 GP12 | 运行中长按 ≥1 s 配对 | 会话里不看按键 | 刻意不用（`BOOT_SERIAL_ENTRANCE_GPIO=n`） | BOOTSEL 是另一颗芯片级按钮 |
-| 状态灯 | 颜色 + 节奏见 [07-ux.md](07-ux.md) | 白灯 0.5 Hz | MCUboot 不驱动，保持复位前最后一帧颜色 | 不驱动 |
+| 状态灯 | 颜色 + 节奏见 [09-ux](09-ux.md) | 白灯 0.5 Hz | MCUboot 不驱动，保持复位前最后一帧颜色 | 不驱动 |
 | 看门狗 wdt0 | 默认关；开了主循环喂 | 会话期间 `disarm`，退出再 `arm` | `lib/bootguard` 先清硬件 `ENABLE` 位 | — |
 
 ### 3.1 应用模式（正常收发）
 
-两条逻辑链路（CRSF、数据），每条都有两块端点二选一：主机的 CDC 被打开（DTR 有效）**或**该端点收到过主机字节，就走 USB；否则走 UART；非当前端点的进账直接丢。判据的由来与 ISR 时序见 [01-system.md](01-system.md) 2.1，实现在 `app/src/ports.c` 的 `port_active()`。
+两条逻辑链路（CRSF、数据），每条都有两块端点二选一：主机的 CDC 被打开（DTR 有效）**或**该端点收到过主机字节，就走 USB；否则走 UART；非当前端点的进账直接丢。判据的由来与 ISR 时序见 [02-platform](02-platform.md) 第 2 节，实现在 `app/src/ports.c` 的 `port_active()`。
 
 控制台固定钉在 USB 第三块 CDC（`zephyr,console` = `cdc_acm_uart2`），不参与二选一；数据口上的控制魔数是 `zlrs!configmode!`（进配置）与 `zlrs!bootloader!`（进恢复），只有匹配到前缀的字节被扣住，正常数据不丢不重（`app/src/main.c`）。
 
@@ -82,13 +82,13 @@
 | 数据口魔数 | `CONFIG_ZLRS_APP_CONFIG_MAGIC` | 关 | 能，上板验证走的就是这条 |
 | 控制台 shell `zlrs config` | `CONFIG_ZLRS_APP_SHELL` | 关 | 能（`zlrs status` / `ports` / `recovery` 同在此开关下） |
 
-三个入口进的是同一个会话，而且都在主循环里跑（shell 只置一个请求）：会话期间超帧暂停、数据口不会被透传抢字节；会话开始先 `zlrs_watchdog_disarm()`（写短语要几十秒 PBKDF2，会被 8 s 看门狗复位），退出再武装。
+三个入口进的是同一个会话，而且都在主循环里跑（shell 只置一个请求）：会话期间超帧暂停、数据口不会被透传抢字节；会话开始先 `zlrs_watchdog_disarm()`（写短语要几十秒 PBKDF2，会被 8 s 看门狗复位），退出再武装。协议帧与命令见 [05-security](05-security.md) 第 10 节。
 
 ### 3.3 MCUboot 串口恢复
 
 只走 USB。bootloader 模式下 USB 只剩两块 CDC：第 1 块（= 应用的数据口那块 `cdc_acm_uart1`，`zephyr,uart-mcumgr`）收 mcumgr 帧，第 2 块是内核日志；CRSF 那块由 `app/sysbuild/mcuboot.overlay` 删掉。GP8/GP9 那路 UART 在恢复模式下**不参与**。
 
-进恢复有四条入口：应用侧魔数 / `zlrs recovery`（置 boot mode 重启）、复位后 300 ms 窗口收到合法 mcumgr 帧、没有可启动镜像、以及**不用**的按键与 PIN_RESET。换槽用 `swap using offset`，应用把初始化跑完才 `boot_write_img_confirmed()`，没确认的镜像下次复位回滚。机制与踩过的坑见 [01-system.md](01-system.md) 2.4，当前状态见 [08-roadmap.md](08-roadmap.md) M1。
+进恢复有四条入口：应用侧魔数 / `zlrs recovery`（置 boot mode 重启）、复位后 300 ms 窗口收到合法 mcumgr 帧、没有可启动镜像、以及**不用**的按键与 PIN_RESET。换槽用 `swap using offset`，应用把初始化跑完才 `boot_write_img_confirmed()`，没确认的镜像下次复位回滚。机制与踩过的坑见 [02-platform](02-platform.md) 第 5 节，当前状态见 [10-roadmap](10-roadmap.md) M1。
 
 ### 3.4 ROM BOOTSEL
 
@@ -96,7 +96,7 @@
 
 ### 3.5 bring-up 档（现在的状态）
 
-`CONFIG_ZLRS_APP_RADIO=n` 是构建档位不是运行模式：不初始化 USP/RAC、不提交任何事务，每次事务当场按"发出去、没收到回音"收尾；端口、配置模式、按键、状态灯、NVS 照常。上板自检 `scripts/zlrs-bringup.py` 跑的就是这一档。分层开关与推荐顺序见 [01-system.md](01-system.md) 2.3。
+`CONFIG_ZLRS_APP_RADIO=n` 是构建档位不是运行模式：不初始化 USP/RAC、不提交任何事务，每次事务当场按"发出去、没收到回音"收尾；端口、配置模式、按键、状态灯、NVS 照常。上板自检 `scripts/zlrs-bringup.py` 跑的就是这一档。分层开关与推荐顺序见 [02-platform](02-platform.md) 第 4 节。
 
 ## 4. 烧写路径
 
@@ -105,7 +105,7 @@
 | 不带 bootloader | 按住 BOOTSEL 拖 `zephyr.uf2`，或 SWD | 同上（没有回滚） |
 | 带 MCUboot | 两轮 BOOTSEL：先 bootloader，再 `zephyr.signed.uf2` | 应用侧触发进恢复 + `smpmgr` 上传签名镜像，不用按键 |
 
-一条命令升级：`python3 scripts/zlrs-update.py --port /dev/ttyACM1`。分区数字见 [板级 README](../boards/zlrs/rp2350_zero_core2021/README.md#4-分区与启动)。
+一条命令升级：`python3 scripts/zlrs-update.py --port /dev/ttyACM1`。分区数字见[板级 README](../boards/zlrs/rp2350_zero_core2021/README.md#4-分区与启动)。
 
 ## 5. 接线与摆放注意
 
@@ -113,7 +113,7 @@
 - SPI 跳线尽量短；GP16 被板载 WS2812B 占着，所以射频 SPI 用 GP4–GP7 而不是 Pico 默认的 GP16–19。
 - 天线座那一侧留 15–20 mm 净空（不贴金属、不过线）。
 - 按键要自己接：GP12 对地、内部上拉（DT 里配好了），不接就只有魔数 / shell 两个配置入口。
-- hf / lf 两套标定表按 SKU 分家，功率表与标定频点不能共用；上板后要按 Core2021 的 PA 网络重标，验收标准见 [08-roadmap.md](08-roadmap.md) 的 M0。
+- hf / lf 两套标定表按 SKU 分家，功率表与标定频点不能共用；上板后要按 Core2021 的 PA 网络重标，验收标准见 [10-roadmap](10-roadmap.md) 的 M0。
 
 ## 6. 这块原型上的限制
 
@@ -123,13 +123,13 @@
 | 没有用户按键 | 配置模式只能靠数据口魔数或控制台 shell 进入 |
 | Core2021 还没接上 | 只能跑 `CONFIG_ZLRS_APP_RADIO=n` 档，射频未验证 |
 
-软件侧的待修/待查项（RP2350 TRNG 会让 USB 死掉、MCUboot 换槽未走通、`--confirm` 的"标记永久"被 bootloader 拒绝）统一记在 [08-roadmap.md](08-roadmap.md) M1。
+软件侧的待修/待查项（RP2350 TRNG 会让 USB 死掉、MCUboot 换槽未走通、`--confirm` 的"标记永久"被 bootloader 拒绝）统一记在 [10-roadmap](10-roadmap.md) M1。
 
 ## 7. 相关文档
 
 | 内容 | 文档 |
 | --- | --- |
-| 引脚、别名、SKU 标定、分区表的权威定义 | [板级 README](../boards/zlrs/rp2350_zero_core2021/README.md) |
-| 模式设计、端点二选一、启动链与升级 | [01-system.md](01-system.md) 2.1 / 2.4 |
-| 进度与待办 | [08-roadmap.md](08-roadmap.md) |
-| 按键与状态灯语义 | [07-ux.md](07-ux.md) |
+| 引脚、别名、SKU 标定、分区表 | [板级 README](../boards/zlrs/rp2350_zero_core2021/README.md) |
+| 端口与模式的设计、启动链与升级 | [02-platform](02-platform.md) 第 2、5 节 |
+| 进度与待办 | [10-roadmap](10-roadmap.md) |
+| 按键与状态灯 | [09-ux](09-ux.md) |

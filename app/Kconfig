@@ -36,7 +36,7 @@ config ZLRS_APP_REGION
 	default 0
 	range 0 3
 	help
-	  地区决定控制链路的频段、发射功率上限与占空比上限（见 doc/02-protocol.md
+	  地区决定控制链路的频段、发射功率上限与占空比上限（见 doc/04-protocol.md
 	  5.2 和 lib/region）：EU868 是 1% 占空比，FCC915 / CN470 不限制。
 	  HF SKU 只能选 0/1，LF SKU 只能选 2/3——选错的话启动校验会红灯告警并且
 	  不发射频（法规相关的不凑合）。
@@ -51,7 +51,7 @@ choice ZLRS_APP_SECURITY_PROFILE
 	default ZLRS_APP_SECURITY_PROFILE_P1
 	help
 	  P1 是生产档：每帧 4 字节 tag。P0 不带 tag，只用于台架——先把收发时序
-	  跑通，再打开 tag 看密钥路径。见 doc/03-security.md 第 8 节。
+	  跑通，再打开 tag 看密钥路径。见 doc/05-security.md 第 8 节。
 
 config ZLRS_APP_SECURITY_PROFILE_P0
 	bool "P0：不带 tag（仅调试）"
@@ -67,7 +67,7 @@ config ZLRS_APP_FHSS
 	help
 	  关掉以后所有帧都落在同步信道上（跳频表的第 0 个位置），上板调试时先把
 	  收发时序与跳频表分开看。固定信道不满足 FCC 15.247 的跳频条款，只能用于
-	  台架，见 doc/02-protocol.md 5.2。
+	  台架，见 doc/04-protocol.md 5.2。
 
 config ZLRS_APP_SESSION_HANDSHAKE
 	bool "会话三次握手（每次会话换一把钥匙）"
@@ -76,7 +76,7 @@ config ZLRS_APP_SESSION_HANDSHAKE
 	  关掉以后直接用配对级的 link_auth 当会话钥匙：RX 收到 BEACON 就算建立，
 	  再回 SESS_RESP 报到，少一段钥匙派生、少一条确认消息。代价是没有逐会话的
 	  钥匙轮换，录下来的旧帧在换会话后仍能重放——只用于上板调试，
-	  见 doc/03-security.md 第 3 节。
+	  见 doc/05-security.md 第 3 节。
 
 config ZLRS_APP_TELEMETRY
 	bool "控制链路上行遥测"
@@ -93,7 +93,7 @@ config ZLRS_APP_RESYNC_PERIOD_MS
 	help
 	  连上以后每隔这么久用同步信道发一次 BEACON：对端据此校正跳频索引（两端
 	  晶振差会累积成"踩空"），也据此发现对端重启或重新配对，自动重新握手。
-	  见 doc/02-protocol.md 5.1。间隔按帧数换算，至少 1 帧。
+	  见 doc/04-protocol.md 5.1。间隔按帧数换算，至少 1 帧。
 
 config ZLRS_APP_STATS_LOG
 	bool "每秒在控制台打一条链路状态（上板调试用）"
@@ -161,7 +161,7 @@ config ZLRS_APP_RADIO
 	help
 	  关掉后整条射频不参与（走 app/src/radio_null.c），链路状态机与其余功能照常。
 	  Core2021 没接时用它验证射频以外的部分：LR20xx 的 HAL 等不到 BUSY 会 k_oops。
-	  见 doc/01-system.md 2.3。
+	  见 doc/02-platform.md 第 4 节。
 
 config ZLRS_APP_LINK_CONTROL
 	bool "控制链路（sub-G：RC + 遥测 + 配对）"
@@ -230,7 +230,7 @@ config ZLRS_APP_UPDATE_TRIGGER
 	help
 	  数据口收到 16 字节魔数（`zlrs!bootloader!`）就置 boot mode 并重启：
 	  MCUboot 读到这个标志后停在串口恢复，等主机上传签名镜像。这样升级一台
-	  健康设备不用拔插 USB 也不用按复位键。见 doc/01-system.md 2.4。
+	  健康设备不用拔插 USB 也不用按复位键。见 doc/02-platform.md 第 5 节。
 
 	  魔数是文本串，正常透传数据里几乎不会出现；万一撞上，只有匹配到前缀的那
 	  几个字节会被当魔数处理，不会重复投递给上层。量产/竞速构建可以关掉它。
@@ -241,8 +241,7 @@ choice ZLRS_APP_BAND_ROLE
 	help
 	  远距模式（默认）：控制链路占 sub-G（距离），数据链路占 2.4G（吞吐）。
 	  竞速模式：对调——控制链路独占 2.4G（短空口时间、高帧率），数据链路让到
-	  sub-G 并受地区法规约束（也可以直接关掉数据链路）。见 doc/01-system.md
-	  3.2。
+	  sub-G 并受地区法规约束（也可以直接关掉数据链路）。见 doc/03-architecture.md 第 2 节。
 
 config ZLRS_APP_BAND_ROLE_SUBG_CONTROL
 	bool "远距模式：控制 sub-G / 数据 2.4G"
@@ -257,7 +256,7 @@ choice ZLRS_APP_CONTROL_MODULATION
 	default ZLRS_APP_CONTROL_MODULATION_FLRC
 	depends on ZLRS_APP_BAND_ROLE_SUBG_CONTROL
 	help
-	  调制按链路各自选（doc/02-protocol.md 4.1.1）：数据链路始终留在 2.4G 跑
+	  调制按链路各自选（doc/04-protocol.md 4.1.1）：数据链路始终留在 2.4G 跑
 	  FLRC，控制链路可以改跑 LoRa 远距档——窄带地区（868/470/433）放不下
 	  宽带 FLRC 时就是这条路。超帧周期由最慢的那条链路决定。
 
@@ -284,7 +283,7 @@ config ZLRS_APP_RACING_CONTROL_RATE_HZ
 	depends on ZLRS_APP_BAND_ROLE_SUBG_DATA
 	help
 	  2.4G 的帧可以更密（默认 500），但超帧周期仍然要装得下让到 sub-G 的
-	  数据链路那两个窗口（见 doc/01-system.md 3.2）。
+	  数据链路那两个窗口（见 doc/03-architecture.md 第 2 节）。
 
 config ZLRS_APP_LORA_CONTROL_RATE_HZ
 	int "LoRa 控制帧率（Hz）"
@@ -331,7 +330,7 @@ config ZLRS_APP_CONTROL_RATE_HZ
 	help
 	  150 = 通用档（远距/默认），500 = 近距离竞速档。
 	  500 Hz 时每个时隙只有几百微秒预算，而且只有不限占空比的地区跑得动；
-	  实际生效的帧率会被地区占空比压档（见 lib/region 与 doc/02-protocol.md 4.1）。
+	  实际生效的帧率会被地区占空比压档（见 lib/region 与 doc/04-protocol.md 4.1）。
 	  上限 500 是当前架构的限制：RAC 的排期粒度是毫秒，再高要改用 FLRC burst。
 
 config ZLRS_APP_DATA_RATE_BPS
@@ -355,7 +354,7 @@ config ZLRS_APP_CRSF_TIMEOUT_MS
 	default 100
 	help
 	  手台拔线或关机后，TX 在这段时间内没有收到 RC 帧就把空口载荷换成预设
-	  失控值。见 doc/01-system.md 2.1。
+	  失控值。见 doc/02-platform.md 第 2 节。
 
 config ZLRS_APP_TLM_PERIOD_MS
 	int "RX 上报遥测的周期（ms）"
@@ -365,21 +364,21 @@ config ZLRS_APP_CONFIG_TIMEOUT_S
 	int "配置模式无操作超时（秒）"
 	default 300
 	help
-	  开机时按住按键进入配置模式；这么久没有命令就退出，见 doc/01-system.md 2.1。
+	  开机时按住按键进入配置模式；这么久没有命令就退出，见 doc/02-platform.md 第 2 节。
 
 config ZLRS_APP_DATA_ARQ
 	bool "透传走 ARQ profile（长度前缀 + 序号 + 累计 ACK + 重传）"
 	default n
 	help
 	  默认是 best-effort：缓冲满就丢，只计数。ARQ 适合不能丢的透传数据，
-	  代价是延迟与内存（窗口 4 帧）。见 doc/02-protocol.md 4.3。
+	  代价是延迟与内存（窗口 4 帧）。见 doc/04-protocol.md 4.3。
 
 config ZLRS_APP_RATE_ADAPT
 	bool "按链路质量自动升降速率档"
 	default n
 	depends on ZLRS_APP_CONTROL_MODULATION_FLRC
 	help
-	  阈值要按实测曲线标定（见 doc/08-roadmap.md M4），所以默认关着；
+	  阈值要按实测曲线标定（见 doc/10-roadmap.md M4），所以默认关着；
 	  打开后用 app/src/main.c 里的档位表与滞回参数。
 
 config ZLRS_APP_DYNAMIC_POWER
@@ -401,7 +400,7 @@ config ZLRS_APP_PAIR_HOLD_MS
 	int "长按配对需要按住的时间（ms）"
 	default 1000
 	help
-	  按键只有这一个动作：按住到这个时长就触发配对（见 doc/07-ux.md）。
+	  按键只有这一个动作：按住到这个时长就触发配对（见 doc/09-ux.md）。
 	  开机时按住不放则是进配置模式。
 
 endmenu
@@ -416,4 +415,4 @@ config ZLRS_APP_ENTROPY_TRNG
 	help
 	  默认关：打开后 USB 会死（pico-sdk 的 TRNG 采样是"关中断 + 忙等
 	  trng_busy"，USB 得不到服务）。CSPRNG 退到 Zephyr 默认路径，bring-up 够用；
-	  量产前必须改成安全取数或换熵源，见 doc/08-roadmap.md 的 M0/M1。
+	  量产前必须改成安全取数或换熵源，见 doc/10-roadmap.md 的 M0/M1。

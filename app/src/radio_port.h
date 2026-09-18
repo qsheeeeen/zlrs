@@ -1,5 +1,5 @@
 /*
- * 射频移植层：zlrs_radio_ops_t 的具体后端，回调契约见 doc/01-system.md 7.2。
+ * 射频移植层：zlrs_radio_ops_t 的具体后端，回调契约见 doc/03-architecture.md 7.2。
  * 由 CONFIG_ZLRS_APP_RADIO 二选一：radio_rac.c（RAC/LR2021）或 radio_null.c。
  *
  * SPDX-License-Identifier: Apache-2.0

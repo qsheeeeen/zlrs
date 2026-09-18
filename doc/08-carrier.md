@@ -4,7 +4,7 @@
 
 定位：只解决连线与接插口——把两颗模块的连线固定在一块 PCB 上，对外给 J1/J2 两个接插件；不引 RF、不自带 USB、不加端口、不加器件（只有去耦、输入保护、二极管或与一颗按键）。端口按 Pixhawk 规范引到 J1/J2（见第 6 节），两层板足够，没有射频布局约束。
 
-原型（两模块直接连线、只靠 USB）见 [05-prototype.md](05-prototype.md)；本文是它的下一步硬件形态。
+现在的原型（两模块直接连线、只靠 USB）见 [07-prototype](07-prototype.md)；本文是它的下一步硬件形态。
 
 ## 0. 符合 Pixhawk 接口规范
 
@@ -90,7 +90,7 @@ J2 用同一套线序，第 2/3 针接数据口：**RX = GP9、TX = GP8**；第 
 
 ## 6. 固件
 
-CRSF = UART0 / GP0-GP1 → J1，数据 = UART1 / GP8-GP9 → J2，控制台在 USB 第三个 CDC；主机把某块 CDC 打开时该端口走 USB（见 [01](01-system.md) 2.1）。USB-C 同时是 BOOTSEL 烧写口。hf / lf 两个 SKU 变体按手上的 Core2021 选。
+CRSF = UART0 / GP0-GP1 → J1，数据 = UART1 / GP8-GP9 → J2，控制台在 USB 第三个 CDC；主机把某块 CDC 打开时该端口走 USB（见 [02-platform](02-platform.md) 第 2 节）。USB-C 同时是 BOOTSEL 烧写口。hf / lf 两个 SKU 变体按手上的 Core2021 选。
 
 ## 7. 待确认
 

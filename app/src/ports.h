@@ -1,7 +1,7 @@
 /*
  * 端口层：CRSF 端口、数据口（透传）与配置模式，含两条链路的端点二选一。
  *
- * 端点由板级别名给出，选择规则与裁剪方式见 doc/01-system.md 2.1/2.2；控制台不走
+ * 端点由板级别名给出，选择规则与裁剪方式见 doc/02-platform.md 第 2、3 节；控制台不走
  * 这一层（板级 chosen 的 `zephyr,console`）。
  *
  * SPDX-License-Identifier: Apache-2.0
@@ -62,7 +62,7 @@ uint8_t zlrs_crsf_port_read(uint8_t *type, uint8_t *payload, uint8_t max_len);
 /* 端口统计：接收缓冲放不下而丢掉的帧数 */
 uint32_t zlrs_crsf_port_rx_dropped(void);
 
-/* ---- 配置模式：开机时按住按键进入，数据口改跑配置协议（doc/02 第 10 节） -- */
+/* ---- 配置模式：开机时按住按键进入，数据口改跑配置协议（doc/05-security.md 第 10 节） -- */
 
 /*
  * 阻塞式跑配置会话：到超时或收到 EXIT 为止。

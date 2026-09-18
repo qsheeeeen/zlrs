@@ -46,7 +46,7 @@ zlrs-build() {
 }
 
 # 带 MCUboot 的构建：目标名多一层 /mcuboot，并且要 --sysbuild 才会把 bootloader
-# 一起编出来（见 doc/01-system.md 2.4）。LF SKU：ZLRS_BOARD=.../lf zlrs-build-mcuboot
+# 一起编出来（见 doc/02-platform.md 第 5 节）。LF SKU：ZLRS_BOARD=.../lf zlrs-build-mcuboot
 zlrs-build-mcuboot() {
 	(cd "${ZLRS_WS}" && west build --sysbuild -b "${ZLRS_BOARD}/mcuboot" "${ZLRS_APP}" "$@")
 }

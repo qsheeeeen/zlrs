@@ -1,6 +1,6 @@
 /*
  * 地区配置层：把"在哪儿用"翻译成信道表、功率上限与占空比上限，法规约束见
- * doc/02-protocol.md 5.2。校验（启动时）与限制（发射前）分开。
+ * doc/04-protocol.md 5.2。校验（启动时）与限制（发射前）分开。
  *
  * SPDX-License-Identifier: Apache-2.0
  */

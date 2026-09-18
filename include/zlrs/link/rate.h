@@ -1,6 +1,6 @@
 /*
  * 速率自适应框架：档位间的升降策略（连续窗口 + 保持时间 + 升档余量），
- * 档位表与阈值由实测曲线标定，见 doc/08-roadmap.md M4。
+ * 档位表与阈值由实测曲线标定，见 doc/10-roadmap.md M4。
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -19,7 +19,7 @@ extern "C" {
 typedef struct {
 	/*
 	 * 档位 = 一整套调制参数：FLRC 的速率，或者 LoRa 的 SF/带宽/编码率。
-	 * 见 doc/02-protocol.md 4.1.1——"速率档表从'一个速率'变成'调制 + 参数'"
+	 * 见 doc/04-protocol.md 4.1.1——"速率档表从'一个速率'变成'调制 + 参数'"
 	 * 就是这里。
 	 */
 	zlrs_mod_cfg_t mod;

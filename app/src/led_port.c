@@ -32,7 +32,7 @@ static const struct device *const strip = DEVICE_DT_GET(DT_ALIAS(zlrs_led));
 
 /*
  * 状态灯引擎（lib/led）本身也是可裁的：关掉以后这个移植层退化成空操作，
- * 应用侧不用再关心有没有灯（见 doc/01-system.md 2.2 与 2.3）。
+ * 应用侧不用再关心有没有灯（见 doc/02-platform.md 第 3 节 与 2.3）。
  */
 #if !IS_ENABLED(CONFIG_ZLRS_LED) || !LED_AVAILABLE
 int zlrs_led_port_init(void)

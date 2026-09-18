@@ -73,7 +73,7 @@ static uint32_t sync_freq_hz(const zlrs_link_t *link)
 }
 
 /*
- * 这一帧是不是"重同步帧"（见 doc/02-protocol.md 5.1）：连接态下每
+ * 这一帧是不是"重同步帧"（见 doc/04-protocol.md 5.1）：连接态下每
  * cfg.resync_every_n 帧来一次，整帧都停在同步信道上——下行发 BEACON，上行让
  * 对端有机会回 SESS_RESP。两端用同一个 frame_index 推，节奏天然一致。
  */
@@ -120,7 +120,7 @@ static void set_state(zlrs_link_t *link, uint8_t state, uint32_t now_ms)
 
 /*
  * TX 侧每次进入 SEARCHING 抽一个新的 nonce_t，并丢掉上一次的会话。会话钥匙要等
- * RX 回了 nonce_r 才算得出来（见 doc/02-protocol.md 3.5）。
+ * RX 回了 nonce_r 才算得出来（见 doc/04-protocol.md 3.5）。
  */
 static void roll_session(zlrs_link_t *link, uint32_t now_ms)
 {
@@ -216,7 +216,7 @@ static void derive_pair(zlrs_link_t *link)
 
 	/*
 	 * 双方 id 与配对时的两个 nonce，排序后拼接：两端算出同一个 pair_key，
-	 * 而换一次配对就换一份 nonce，等于换掉下面整棵子树（见 doc/03-security.md
+	 * 而换一次配对就换一份 nonce，等于换掉下面整棵子树（见 doc/05-security.md
 	 * 第 3 节）。
 	 */
 	ordered_ids(link, ctx);
@@ -242,7 +242,7 @@ static void derive_pair(zlrs_link_t *link)
 	/*
 	 * LoRa 的同步字是 1 字节 + private bit，不能沿用上面那 4 字节，所以另开
 	 * 一条派生标签（还是按角色命名，不按频段）。最高位当 private bit，用来
-	 * 区分"我们这一组"与公开的同步字。见 doc/02-protocol.md 5.3。
+	 * 区分"我们这一组"与公开的同步字。见 doc/04-protocol.md 5.3。
 	 */
 	{
 		const char *label = (link->cfg.kind == ZLRS_LINK_CONTROL)
@@ -264,7 +264,7 @@ static void derive_pair(zlrs_link_t *link)
 	link->sess_cfm_due = false;
 	/*
 	 * 简化握手（只在上板调试时关）：不派生会话钥匙，配对级的 link_auth 直接
-	 * 当会话钥匙用，BEACON 之后只回一条 SESS_RESP，见 doc/03-security.md 第 3 节。
+	 * 当会话钥匙用，BEACON 之后只回一条 SESS_RESP，见 doc/05-security.md 第 3 节。
 	 */
 	if (link->cfg.handshake == 0U) {
 		memcpy(link->session_key_out, link->link_auth_out, ZLRS_KEY_LEN);
@@ -355,7 +355,7 @@ static uint16_t build_frame(zlrs_link_t *link, uint8_t type, uint8_t flags,
 }
 
 /* 取一帧的 tag 钥匙：outbound 用 out，否则用 in。配对握手是例外——它靠角色门禁
- * 与类型标签分方向，两端同一把 auth_key（见 doc/03-security.md 第 4 节）。 */
+ * 与类型标签分方向，两端同一把 auth_key（见 doc/05-security.md 第 4 节）。 */
 static const uint8_t *tag_key_for(const zlrs_link_t *link, uint8_t type, bool outbound)
 {
 	const uint8_t *link_auth = outbound ? link->link_auth_out : link->link_auth_in;
@@ -507,7 +507,7 @@ static const zlrs_radio_req_t *send_tlm(zlrs_link_t *link)
 			 link->sync_word);
 }
 
-/* ---- ARQ（数据链路可选档，见 doc/02-protocol.md 4.3） ------------------- */
+/* ---- ARQ（数据链路可选档，见 doc/04-protocol.md 4.3） ------------------- */
 
 static uint16_t arq_inflight_bytes(const zlrs_link_t *link)
 {
@@ -910,7 +910,7 @@ static void handle_beacon(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t
 
 	if (link->state == ZLRS_STATE_CONNECTED) {
 		/*
-		 * 连接态的周期 BEACON（doc/02-protocol.md 5.1）。
+		 * 连接态的周期 BEACON（doc/04-protocol.md 5.1）。
 		 */
 		if (link->cfg.resync_every_n == 0U) {
 			/* 没开周期重同步：会话建立后不再听 BEACON（老行为） */

@@ -8,10 +8,10 @@
 #   scripts/zlrs-config.py --port /dev/ttyACM1 set-phrase "correct horse battery staple"
 #   scripts/zlrs-config.py --self-test          # 不接设备，校验组帧与 C 侧逐字节一致
 #
-# 设备进配置模式的办法：按住按键上电（见 doc/01-system.md 2.1）。
+# 设备进配置模式的办法：按住按键上电（见 doc/02-platform.md 第 2 节）。
 # 数据口二选一：主机把 USB 数据 CDC 打开（DTR）就走 USB，否则走 UART1。
 # USB 三个 CDC 依次是 CRSF、数据口、控制台（/dev/ttyACM0/1/2）。
-# 帧格式与命令表见 doc/03-security.md 第 10 节、include/zlrs/config/config.h。
+# 帧格式与命令表见 doc/05-security.md 第 10 节、include/zlrs/config/config.h。
 #
 # 依赖：只用标准库；真的要连设备时需要 pyserial（pip install pyserial）。
 

@@ -2,7 +2,7 @@
  * 射频空后端（CONFIG_ZLRS_APP_RADIO=n，接口见 radio_port.h）：
  * 不碰 SPI/BUSY（LR20xx 的 HAL 等不到 BUSY 会 k_oops，模块没接就起不来），
  * 事务当场按"发出、没回音"收尾——链路状态机与其余功能照常跑，只是握不上手。
- * 用途见 doc/01-system.md 2.3。
+ * 用途见 doc/02-platform.md 第 4 节。
  *
  * SPDX-License-Identifier: Apache-2.0
  */

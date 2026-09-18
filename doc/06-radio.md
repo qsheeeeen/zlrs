@@ -1,6 +1,6 @@
-# LR2021 关键参数摘要
+# LR2021 关键参数
 
-来源：Semtech LR2021 Final Datasheet Rev. 1.1（DS.LR2021，2025-10-14，共 236 页）。本文只摘录与 zlrs 方案相关的部分：选型依据、速率与灵敏度、模式切换时序、SPI/IRQ 接口与引脚。协议怎么用这些参数见 [02-protocol.md](02-protocol.md)，板级标定见 [板级 README](../boards/zlrs/rp2350_zero_core2021/README.md)。
+来源：Semtech LR2021 Final Datasheet Rev. 1.1（DS.LR2021，2025-10-14，共 236 页）。这里只摘录与 zlrs 相关的部分：选型依据、速率与灵敏度、模式切换时序、SPI/IRQ 接口与引脚。我们怎么用这些参数见 [03-architecture](03-architecture.md) 与 [04-protocol](04-protocol.md)，板级标定见[板级 README](../boards/zlrs/rp2350_zero_core2021/README.md)。
 
 ## 器件定位
 
@@ -94,7 +94,7 @@ LoRa 符号率 = `BW / 2^SF`。前导码建议 SF5/SF6 用 ≥12 符号，其余
 | `TSTXRX` | Tx → Rx | 91 µs |
 | `TSRXTX` | Rx → Tx | 107 µs |
 
-超帧里怎么用这些数字（切换开销、时隙预算）见 [01-system.md](01-system.md) 第 4 节。
+超帧里怎么用这些数字见 [03-architecture](03-architecture.md) 第 4 节。
 
 ## SPI 与主机接口
 
@@ -145,4 +145,4 @@ LoRa 符号率 = `BW / 2^SF`。前导码建议 SF5/SF6 用 ≥12 符号，其余
 - `RFO_HF`：HF PA 输出（2.4 GHz）
 - `VTCXO`：可为外部 TCXO 供电，电压由 `SetTcxoMode` 配置
 
-switchless 前端要求 LF/HF 各自的匹配网络共存，若只用单频段可以简化。（本板用的 Core2021 模块自带匹配网络，且用的是晶振而非 TCXO，见 [板级 README](../boards/zlrs/rp2350_zero_core2021/README.md)。）
+switchless 前端要求 LF/HF 各自的匹配网络共存，若只用单频段可以简化。本板用的 Core2021 模块自带匹配网络，且用的是晶振而非 TCXO，见[板级 README](../boards/zlrs/rp2350_zero_core2021/README.md)。

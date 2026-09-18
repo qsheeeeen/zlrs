@@ -21,7 +21,7 @@ typedef struct {
 	uint32_t freq_hz;   /* 载波频率 */
 	/*
 	 * 调制档：FLRC 的速率或 LoRa 的 SF/带宽/编码率/前导码，见
-	 * doc/02-protocol.md 4.1.1。移植层按 modulation 分派到 RAC 的 flrc /
+	 * doc/04-protocol.md 4.1.1。移植层按 modulation 分派到 RAC 的 flrc /
 	 * lora 参数组。
 	 */
 	zlrs_mod_cfg_t mod;
