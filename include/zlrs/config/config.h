@@ -20,18 +20,24 @@ extern "C" {
 
 #define ZLRS_CFG_SOF0 0xA5U
 #define ZLRS_CFG_SOF1 0x5AU
-#define ZLRS_CFG_VERSION 1U
+#define ZLRS_CFG_VERSION 2U
 #define ZLRS_CFG_FRAME_MAX_LEN 96U
 #define ZLRS_CFG_PAYLOAD_MAX_LEN (ZLRS_CFG_FRAME_MAX_LEN - 6U)
 
 /* 主机 → 设备 */
+#define ZLRS_CFG_CMD_ENTER 0x00U       /* 进配置模式（正式入口） */
 #define ZLRS_CFG_CMD_STATUS 0x01U      /* 读状态 */
 #define ZLRS_CFG_CMD_PAIR 0x02U        /* 触发配对 */
+#define ZLRS_CFG_CMD_ERASE_PAIR 0x03U  /* 擦除配对记录 */
 #define ZLRS_CFG_CMD_SET_KEY_HEX 0x10U /* 64 个十六进制字符的根密钥 */
 #define ZLRS_CFG_CMD_SET_PHRASE 0x11U  /* 短语，设备侧派生根密钥 */
 #define ZLRS_CFG_CMD_SET_FAILSAFE 0x20U /* 22 字节 CRSF 通道载荷 */
 #define ZLRS_CFG_CMD_SET_BAUD 0x21U    /* 4 字节小端波特率 */
+#define ZLRS_CFG_CMD_SET_REGION 0x22U  /* 1 字节地区号（0..3） */
+#define ZLRS_CFG_CMD_SET_POWER 0x23U   /* 1 字节有符号 dBm */
 #define ZLRS_CFG_CMD_EXIT 0x30U        /* 退出配置模式 */
+#define ZLRS_CFG_CMD_FACTORY_RESET 0x40U /* 清 NVS */
+#define ZLRS_CFG_CMD_RECOVERY 0x41U    /* 重启进 MCUboot 串口恢复 */
 
 /* 设备 → 主机 */
 #define ZLRS_CFG_CMD_ACK 0x80U         /* [cmd][status] */
@@ -44,8 +50,8 @@ extern "C" {
 #define ZLRS_CFG_E_STORE 3U
 #define ZLRS_CFG_E_UNKNOWN 4U
 
-/* 状态响应：固定的 16 字节，字段顺序变了就改版本号 */
-#define ZLRS_CFG_STATUS_LEN 16U
+/* 状态响应：固定的 20 字节，字段顺序变了就改版本号 */
+#define ZLRS_CFG_STATUS_LEN 20U
 #define ZLRS_CFG_PHRASE_MAX_LEN 32U
 
 typedef struct {
@@ -56,7 +62,10 @@ typedef struct {
 	uint8_t dev_id[ZLRS_DEV_ID_LEN];
 	uint8_t peer_id[ZLRS_DEV_ID_LEN];
 	uint8_t lq_percent;
-	uint8_t band; /* 本机 sub-G 硬件：0 = LF（470/433），1 = HF（868/915） */
+	uint8_t band;        /* 本机 sub-G 硬件：0 = LF（470/433），1 = HF（868/915） */
+	uint8_t region;      /* 当前地区号（0..3） */
+	int8_t tx_power_dbm; /* 当前发射功率上限 */
+	uint32_t data_baud;  /* 数据口波特率（下次启动生效） */
 } zlrs_cfg_status_t;
 
 #define ZLRS_CFG_FLAG_KEY 0x01U
@@ -72,7 +81,12 @@ typedef struct {
 	int (*read_status)(void *ctx, zlrs_cfg_status_t *out);
 	int (*save_failsafe)(void *ctx, const uint8_t channels[22]);
 	int (*save_baud)(void *ctx, uint32_t baud);
+	int (*save_region)(void *ctx, uint8_t region);
+	int (*save_power)(void *ctx, int8_t dbm);
 	int (*pair)(void *ctx);
+	int (*erase_pair)(void *ctx);
+	int (*factory_reset)(void *ctx);
+	int (*enter_recovery)(void *ctx);
 	void *ctx;
 } zlrs_cfg_backend_t;
 
@@ -114,4 +128,3 @@ bool zlrs_cfg_status_decode(const uint8_t *in, uint8_t len, zlrs_cfg_status_t *s
 #ifdef __cplusplus
 }
 #endif
-

@@ -146,8 +146,12 @@ void zlrs_cfg_status_encode(uint8_t out[ZLRS_CFG_STATUS_LEN],
 	memcpy(&out[8], status->peer_id, ZLRS_DEV_ID_LEN);
 	out[12] = status->lq_percent;
 	out[13] = status->band;
-	out[14] = 0U;
-	out[15] = 0U;
+	out[14] = status->region;
+	out[15] = (uint8_t)status->tx_power_dbm;
+	out[16] = (uint8_t)(status->data_baud & 0xFFU);
+	out[17] = (uint8_t)((status->data_baud >> 8) & 0xFFU);
+	out[18] = (uint8_t)((status->data_baud >> 16) & 0xFFU);
+	out[19] = (uint8_t)((status->data_baud >> 24) & 0xFFU);
 }
 
 bool zlrs_cfg_status_decode(const uint8_t *in, uint8_t len, zlrs_cfg_status_t *status)
@@ -164,6 +168,10 @@ bool zlrs_cfg_status_decode(const uint8_t *in, uint8_t len, zlrs_cfg_status_t *s
 	memcpy(status->peer_id, &in[8], ZLRS_DEV_ID_LEN);
 	status->lq_percent = in[12];
 	status->band = in[13];
+	status->region = in[14];
+	status->tx_power_dbm = (int8_t)in[15];
+	status->data_baud = (uint32_t)in[16] | ((uint32_t)in[17] << 8) |
+			    ((uint32_t)in[18] << 16) | ((uint32_t)in[19] << 24);
 
 	return true;
 }
@@ -237,6 +245,9 @@ uint8_t zlrs_cfg_dispatch(const zlrs_cfg_backend_t *backend, uint8_t cmd,
 	}
 
 	switch (cmd) {
+	case ZLRS_CFG_CMD_ENTER:
+		/* 进配置模式由应用在会话外处理；走到这里说明已经在会话里 */
+		return ack_frame(out, out_len, cmd, ZLRS_CFG_OK);
 	case ZLRS_CFG_CMD_STATUS: {
 		zlrs_cfg_status_t status;
 		uint8_t body[ZLRS_CFG_STATUS_LEN];
@@ -262,6 +273,11 @@ uint8_t zlrs_cfg_dispatch(const zlrs_cfg_backend_t *backend, uint8_t cmd,
 			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_STATE);
 		}
 		return ack_frame(out, out_len, cmd, (uint8_t)backend->pair(backend->ctx));
+	case ZLRS_CFG_CMD_ERASE_PAIR:
+		if (backend->erase_pair == NULL) {
+			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_STATE);
+		}
+		return ack_frame(out, out_len, cmd, (uint8_t)backend->erase_pair(backend->ctx));
 	case ZLRS_CFG_CMD_SET_KEY_HEX:
 		return handle_set_key(backend, payload, payload_len, out, out_len, cmd);
 	case ZLRS_CFG_CMD_SET_PHRASE:
@@ -285,9 +301,33 @@ uint8_t zlrs_cfg_dispatch(const zlrs_cfg_backend_t *backend, uint8_t cmd,
 		return ack_frame(out, out_len, cmd,
 				 (uint8_t)backend->save_baud(backend->ctx, baud));
 	}
+	case ZLRS_CFG_CMD_SET_REGION:
+		if (payload_len != 1U || backend->save_region == NULL) {
+			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_PARAM);
+		}
+		return ack_frame(out, out_len, cmd,
+				 (uint8_t)backend->save_region(backend->ctx, payload[0]));
+	case ZLRS_CFG_CMD_SET_POWER:
+		if (payload_len != 1U || backend->save_power == NULL) {
+			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_PARAM);
+		}
+		return ack_frame(out, out_len, cmd,
+				 (uint8_t)backend->save_power(backend->ctx, (int8_t)payload[0]));
 	case ZLRS_CFG_CMD_EXIT:
 		/* 退出由应用处理（一般是重启），这里只确认收到 */
 		return ack_frame(out, out_len, cmd, ZLRS_CFG_OK);
+	case ZLRS_CFG_CMD_FACTORY_RESET:
+		if (backend->factory_reset == NULL) {
+			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_STATE);
+		}
+		return ack_frame(out, out_len, cmd,
+				 (uint8_t)backend->factory_reset(backend->ctx));
+	case ZLRS_CFG_CMD_RECOVERY:
+		if (backend->enter_recovery == NULL) {
+			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_STATE);
+		}
+		return ack_frame(out, out_len, cmd,
+				 (uint8_t)backend->enter_recovery(backend->ctx));
 	default:
 		return ack_frame(out, out_len, cmd, ZLRS_CFG_E_UNKNOWN);
 	}

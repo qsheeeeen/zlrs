@@ -17,8 +17,9 @@
 		zephyr,sram = &sram0;
 		zephyr,flash = &flash0;
 		zephyr,flash-controller = &qmi;
-		zephyr,console = &cdc_acm_uart2;
-		zephyr,shell-uart = &cdc_acm_uart2;
+		/* 控制台默认关闭：debug overlay 打开 cdc_acm_uart3 后才存在 */
+		zephyr,console = &cdc_acm_uart3;
+		zephyr,shell-uart = &cdc_acm_uart3;
 		zephyr,lorawan-transceiver = &lora_core2021;
 		/* zephyr,code-partition 由各变体自己给：不带 bootloader 的是 code，
 		 * 带 MCUboot 的是 slot0（见同目录 README 的分区表） */
@@ -29,6 +30,7 @@
 		zlrs-data-uart = &uart1;
 		zlrs-crsf-cdc = &cdc_acm_uart0;
 		zlrs-data-cdc = &cdc_acm_uart1;
+		zlrs-config-cdc = &cdc_acm_uart2;
 		zlrs-button = &zlrs_button;
 		zlrs-led = &zlrs_led;
 		led-strip = &zlrs_led;
@@ -109,13 +111,14 @@
 };
 
 /*
- * USB 上三个 CDC（doc/08-firmware.md 第 1 节）：
- *   cdc_acm_uart0 = CRSF（与 UART0 同一个逻辑端口，别名 zlrs-crsf-cdc）
- *   cdc_acm_uart1 = 数据口（与 UART1 同一个逻辑端口，别名 zlrs-data-cdc）
- *   cdc_acm_uart2 = 控制台：kernel log 与 shell（chosen 里的 zephyr,console）
+ * USB 上的 CDC（doc/08-firmware.md 第 1 节）：
+ *   cdc_acm_uart0 = CRSF（别名 zlrs-crsf-cdc）
+ *   cdc_acm_uart1 = 数据口（别名 zlrs-data-cdc）
+ *   cdc_acm_uart2 = 配置口（别名 zlrs-config-cdc）：配置协议、进配置模式
+ *   cdc_acm_uart3 = 控制台（kernel log + shell）：默认关闭，debug overlay 打开
  *
- * 每条链路两块端点二选一：USB 上的主机把该链路的 CDC 打开（DTR 有效）就走
- * USB，否则走对应的 UART（app/src/ports.c）。
+ * 前两块是链路的 USB 端点，与各自的 UART 二选一（app/src/ports.c）；配置口与
+ * 控制台只在 USB 上。
  */
 zephyr_udc0: &usbd {
 	status = "okay";
@@ -132,7 +135,13 @@ zephyr_udc0: &usbd {
 
 	cdc_acm_uart2: cdc_acm_uart2 {
 		compatible = "zephyr,cdc-acm-uart";
+		label = "zlrs CONFIG";
+	};
+
+	cdc_acm_uart3: cdc_acm_uart3 {
+		compatible = "zephyr,cdc-acm-uart";
 		label = "zlrs CONSOLE";
+		status = "disabled";
 	};
 };
 

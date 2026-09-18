@@ -5,12 +5,12 @@
  *
  * 只作用于 mcuboot 镜像的 devicetree 覆盖（sysbuild 自动认 app/sysbuild/<image>.overlay）。
  *
- * 应用镜像有三块 CDC（CRSF / 数据 / 控制台），bootloader 只留两块：
+ * 应用镜像有三块 CDC（CRSF / 数据 / 配置），bootloader 只留两块：
  *   - cdc_acm_uart1 = 数据口 → 串口恢复（mcumgr 帧走这里，`zephyr,uart-mcumgr`
  *     在板级 dts 里指过来）
- *   - cdc_acm_uart2 = 控制台 → 内核日志（chosen `zephyr,console` 保持不变）
- *   - cdc_acm_uart0（CRSF）在 bootloader 里没有用处，删掉；它的别名一起清掉，
- *     否则 dtc 会因为悬空引用报错
+ *   - cdc_acm_uart3 = 控制台 → 内核日志（板级默认 disabled，这里打开）
+ *   - cdc_acm_uart0（CRSF）与 cdc_acm_uart2（配置口）在 bootloader 里没有用处，
+ *     删掉；CRSF 的别名一起清掉，否则 dtc 会因为悬空引用报错
  * 于是升级模式下主机看到 "MCUBOOT" 的两个串口：第一个恢复、第二个日志。
  *
  * 另外这里要自己写上 `zephyr,code-partition = &boot_partition`：Zephyr 只在
@@ -22,15 +22,20 @@
 / {
 	aliases {
 		/delete-property/ zlrs-crsf-cdc;
+		/delete-property/ zlrs-config-cdc;
 		/* zlrs-data-cdc 指向恢复用的那块 CDC，留着 */
 	};
 
 	chosen {
 		zephyr,code-partition = &boot_partition;
-		/* zephyr,console 与 zephyr,shell-uart 仍指向 cdc_acm_uart2，不用改 */
 	};
 };
 
 &usbd {
 	/delete-node/ cdc_acm_uart0;
+	/delete-node/ cdc_acm_uart2;
+};
+
+&cdc_acm_uart3 {
+	status = "okay";
 };

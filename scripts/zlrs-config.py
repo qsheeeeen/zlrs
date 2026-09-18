@@ -2,15 +2,14 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# zlrs 配置工具：在配置模式下通过数据口和设备说话。
+# zlrs 配置工具：通过专用的配置 CDC 和设备说话。
 #
-#   scripts/zlrs-config.py --port /dev/ttyACM1 status
-#   scripts/zlrs-config.py --port /dev/ttyACM1 set-phrase "correct horse battery staple"
+#   scripts/zlrs-config.py --port /dev/ttyACM2 status
+#   scripts/zlrs-config.py --port /dev/ttyACM2 set-phrase "correct horse battery staple"
 #   scripts/zlrs-config.py --self-test          # 不接设备，校验组帧与 C 侧逐字节一致
 #
-# 设备进配置模式的办法：按住按键上电（见 doc/08-firmware.md 第 1 节）。
-# 数据口二选一：主机把 USB 数据 CDC 打开（DTR）就走 USB，否则走 UART1。
-# USB 三个 CDC 依次是 CRSF、数据口、控制台（/dev/ttyACM0/1/2）。
+# 除了 `enter`，每条命令都会先发"进配置模式"；设备确认后才发真正的命令。
+# USB 三个 CDC 依次是 CRSF、数据口、配置口（/dev/ttyACM0/1/2）。
 # 帧格式与命令表见 doc/10-security.md 第 10 节、include/zlrs/config/config.h。
 #
 # 依赖：只用标准库；真的要连设备时需要 pyserial（pip install pyserial）。
@@ -19,15 +18,21 @@ import argparse
 import sys
 
 SOF = b"\xa5\x5a"
-VERSION = 1
+VERSION = 2
 
+CMD_ENTER = 0x00
 CMD_STATUS = 0x01
 CMD_PAIR = 0x02
+CMD_ERASE_PAIR = 0x03
 CMD_SET_KEY_HEX = 0x10
 CMD_SET_PHRASE = 0x11
 CMD_SET_FAILSAFE = 0x20
 CMD_SET_BAUD = 0x21
+CMD_SET_REGION = 0x22
+CMD_SET_POWER = 0x23
 CMD_EXIT = 0x30
+CMD_FACTORY_RESET = 0x40
+CMD_RECOVERY = 0x41
 ACK = 0x80
 STATUS_RESP = 0x81
 
@@ -107,11 +112,12 @@ def parse_channels(text: str):
 
 
 def status_text(payload: bytes) -> str:
-    if len(payload) < 16:
+    if len(payload) < 20:
         return f"status payload too short: {payload.hex()}"
     flags = payload[3]
     dev = payload[4:8].hex()
     peer = payload[8:12].hex()
+    baud = int.from_bytes(payload[16:20], "little")
     return (
         f"role={'TX' if payload[1] == 0 else 'RX'} "
         f"subg={'HF (868/915)' if payload[13] else 'LF (470/433)'} "
@@ -119,39 +125,46 @@ def status_text(payload: bytes) -> str:
         f"key={'yes' if flags & 0x01 else 'no'} "
         f"paired={'yes' if flags & 0x02 else 'no'} "
         f"session={'yes' if flags & 0x04 else 'no'} "
-        f"dev_id={dev} peer_id={peer} lq={payload[12]}%"
+        f"dev_id={dev} peer_id={peer} lq={payload[12]}% "
+        f"region={payload[14]} power={payload[15] - 256 if payload[15] > 127 else payload[15]}dBm "
+        f"baud={baud or 115200}"
     )
 
 
 def self_test() -> int:
     """组帧结果必须与 C 侧 zlrs_cfg_encode() 的输出逐字节一致。"""
     cases = [
-        ("status", CMD_STATUS, b"", "a55a01010088"),
-        ("pair", CMD_PAIR, b"", "a55a01020095"),
-        (
-            "set-phrase",
-            CMD_SET_PHRASE,
-            b"hello",
-            "a55a01110568656c6c6f71",
-        ),
-        (
-            "set-baud",
-            CMD_SET_BAUD,
-            bytes([0x00, 0x25, 0x06, 0x00]),
-            "a55a01210400250600ab",
-        ),
-        ("exit", CMD_EXIT, b"", "a55a01300086"),
+        ("enter", CMD_ENTER, b"", "a55a020000d3"),
+        ("status", CMD_STATUS, b"", "a55a020100d8"),
+        ("pair", CMD_PAIR, b"", "a55a020200c5"),
+        ("erase-pair", CMD_ERASE_PAIR, b"", "a55a020300ce"),
+        ("set-phrase", CMD_SET_PHRASE, b"hello", "a55a02110568656c6c6fb4"),
+        ("set-key-hex", CMD_SET_KEY_HEX, b"00" * 32, None),
+        ("set-baud", CMD_SET_BAUD, bytes([0x00, 0x25, 0x06, 0x00]), "a55a02210400250600c2"),
+        ("set-region", CMD_SET_REGION, bytes([3]), "a55a02220103ca"),
+        ("set-power", CMD_SET_POWER, bytes([20]), "a55a022301144f"),
+        ("factory-reset", CMD_FACTORY_RESET, b"", "a55a0240006c"),
+        ("recovery", CMD_RECOVERY, b"", "a55a02410067"),
+        ("exit", CMD_EXIT, b"", "a55a023000d6"),
     ]
 
     failures = 0
     for name, cmd, payload, want in cases:
+        if want is None:
+            # 只校验能组出合法帧并能解回
+            frame = encode(cmd, payload)
+            got_cmd, got_payload = decode(frame)
+            if got_cmd != cmd or got_payload != payload:
+                print(f"  FAIL {name}: round trip")
+                failures += 1
+            continue
         got = encode(cmd, payload).hex()
         if got != want:
             print(f"  FAIL {name}: got {got} want {want}")
             failures += 1
 
     # 单向自检：把上面那帧解回来
-    cmd, payload = decode(bytes.fromhex("a55a01110568656c6c6f71"))
+    cmd, payload = decode(bytes.fromhex("a55a02110568656c6c6fb4"))
     if cmd != CMD_SET_PHRASE or payload != b"hello":
         print("  FAIL decode round trip")
         failures += 1
@@ -169,7 +182,24 @@ def self_test() -> int:
     return 0 if failures == 0 else 1
 
 
-def talk(port: str, baud: int, frame: bytes, expect: bool, timeout: float) -> int:
+def read_response(link):
+    """读一帧：先找 SOF，再按长度字段收满。"""
+    buf = bytearray()
+    while True:
+        byte = link.read(1)
+        if not byte:
+            raise TimeoutError("等响应超时")
+        buf += byte
+        if len(buf) == 1 and buf[0] != 0xA5:
+            buf.clear()
+        elif len(buf) >= 2 and buf[1] != 0x5A:
+            buf.clear()
+        elif len(buf) >= 5 and len(buf) == buf[4] + 6:
+            return decode(bytes(buf))
+
+
+def talk(port: str, baud: int, frame: bytes, expect: bool, timeout: float,
+         prelude: bytes | None) -> int:
     try:
         import serial  # pyserial
     except ImportError:
@@ -177,26 +207,28 @@ def talk(port: str, baud: int, frame: bytes, expect: bool, timeout: float) -> in
         return 2
 
     with serial.Serial(port, baudrate=baud, timeout=timeout) as link:
+        if prelude is not None:
+            link.write(prelude)
+            try:
+                cmd, payload = read_response(link)
+            except TimeoutError as exc:
+                print(f"进配置模式失败：{exc}", file=sys.stderr)
+                return 1
+
+            code = payload[1] if cmd == ACK and len(payload) >= 2 else 0xFF
+            if cmd != ACK or code != 0:
+                print(f"进配置模式失败：{STATUS_NAMES.get(code, hex(code))}", file=sys.stderr)
+                return 1
+
         link.write(frame)
         if not expect:
             return 0
 
-        # 读一帧：先找 SOF，再按长度字段收满
-        buf = bytearray()
-        while True:
-            byte = link.read(1)
-            if not byte:
-                print("等响应超时", file=sys.stderr)
-                return 1
-            buf += byte
-            if len(buf) == 1 and buf[0] != 0xA5:
-                buf.clear()
-            elif len(buf) >= 2 and buf[1] != 0x5A:
-                buf.clear()
-            elif len(buf) >= 5 and len(buf) == buf[4] + 6:
-                break
-
-        cmd, payload = decode(bytes(buf))
+        try:
+            cmd, payload = read_response(link)
+        except TimeoutError:
+            print("等响应超时", file=sys.stderr)
+            return 1
         if cmd == ACK:
             code = payload[1] if len(payload) >= 2 else 0xFF
             print(f"ack: {STATUS_NAMES.get(code, hex(code))}")
@@ -210,15 +242,19 @@ def talk(port: str, baud: int, frame: bytes, expect: bool, timeout: float) -> in
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="zlrs 配置工具")
-    parser.add_argument("--port", help="数据口设备（进配置模式后）")
+    parser.add_argument("--port", help="配置口设备（应用模式的第三块 CDC，如 /dev/ttyACM2）")
     parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument("--timeout", type=float, default=1.0)
     parser.add_argument("--dry-run", action="store_true", help="只打印帧，不连设备")
+    parser.add_argument("--no-enter", action="store_true",
+                        help="不先发'进配置模式'（设备已经在配置模式里时用）")
     parser.add_argument("--self-test", action="store_true", help="校验组帧后退出")
 
     sub = parser.add_subparsers(dest="command")
+    sub.add_parser("enter", help="进配置模式")
     sub.add_parser("status")
     sub.add_parser("pair")
+    sub.add_parser("erase-pair")
     phrase = sub.add_parser("set-phrase")
     phrase.add_argument("phrase")
     key = sub.add_parser("set-key-hex")
@@ -227,6 +263,13 @@ def main() -> int:
     failsafe.add_argument("channels", help="16 个通道值，或 @default")
     baud = sub.add_parser("set-baud")
     baud.add_argument("baud", type=int)
+    region = sub.add_parser("set-region")
+    region.add_argument("region", type=int, choices=[0, 1, 2, 3],
+                        help="0=FCC915 1=EU868 2=CN470 3=CN433")
+    power = sub.add_parser("set-power")
+    power.add_argument("dbm", type=int, help="发射功率上限（dBm）")
+    sub.add_parser("factory-reset")
+    sub.add_parser("recovery")
     sub.add_parser("exit")
 
     args = parser.parse_args()
@@ -238,10 +281,14 @@ def main() -> int:
         parser.print_help()
         return 2
 
-    if args.command == "status":
+    if args.command == "enter":
+        frame, expect = encode(CMD_ENTER), True
+    elif args.command == "status":
         frame, expect = encode(CMD_STATUS), True
     elif args.command == "pair":
         frame, expect = encode(CMD_PAIR), True
+    elif args.command == "erase-pair":
+        frame, expect = encode(CMD_ERASE_PAIR), True
     elif args.command == "set-phrase":
         frame, expect = encode(CMD_SET_PHRASE, args.phrase.encode()), True
     elif args.command == "set-key-hex":
@@ -256,18 +303,34 @@ def main() -> int:
     elif args.command == "set-baud":
         frame = encode(CMD_SET_BAUD, args.baud.to_bytes(4, "little"))
         expect = True
+    elif args.command == "set-region":
+        frame = encode(CMD_SET_REGION, bytes([args.region]))
+        expect = True
+    elif args.command == "set-power":
+        frame = encode(CMD_SET_POWER, bytes([args.dbm & 0xFF]))
+        expect = True
+    elif args.command == "factory-reset":
+        frame, expect = encode(CMD_FACTORY_RESET), True
+    elif args.command == "recovery":
+        frame, expect = encode(CMD_RECOVERY), False
     else:  # exit
         frame, expect = encode(CMD_EXIT), True
 
     if args.dry_run:
-        print(frame.hex())
+        print(f"enter: {encode(CMD_ENTER).hex()}")
+        if args.command != "enter":
+            print(f"cmd  : {frame.hex()}")
         return 0
 
     if not args.port:
         print("要连设备得给 --port；只想看帧就用 --dry-run", file=sys.stderr)
         return 2
 
-    return talk(args.port, args.baud, frame, expect, args.timeout)
+    prelude = None
+    if args.command not in ("enter", "recovery") and not args.no_enter:
+        prelude = encode(CMD_ENTER)
+
+    return talk(args.port, args.baud, frame, expect, args.timeout, prelude)
 
 
 if __name__ == "__main__":

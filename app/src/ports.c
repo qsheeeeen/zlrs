@@ -208,6 +208,15 @@ static void data_ep_drop_rx(struct data_ep *const ep)
 	}
 }
 
+void zlrs_data_port_discard_rx(void)
+{
+	for (size_t i = 0U; i < PORT_MAX; i++) {
+		if (data_eps[i].ready) {
+			data_ep_drop_rx(&data_eps[i]);
+		}
+	}
+}
+
 size_t zlrs_data_port_state(zlrs_port_state_t *out, size_t count)
 {
 	const struct device *const active = port_active(&data_pair);
@@ -549,11 +558,186 @@ uint32_t zlrs_crsf_port_rx_dropped(void)
 #define CFG_RX_CHUNK 32U
 #define CFG_EXIT_POLL_MS 50U
 
+/* ---- 配置口：专用的 CDC，常驻在 USB 上 -------------------------------- */
+
+#define CFG_PORT_RX_RING_LEN 512U
+#define CFG_PORT_TX_RING_LEN 512U
+
+struct cfg_port {
+	const struct device *dev;
+	struct ring_buf rx;
+	struct ring_buf tx;
+	uint8_t rx_mem[CFG_PORT_RX_RING_LEN];
+	uint8_t tx_mem[CFG_PORT_TX_RING_LEN];
+	uint32_t rx_dropped;
+	bool ready;
+};
+
+static struct cfg_port cfg_port;
+static const zlrs_config_ops_t *cfg_ops;
+
+void zlrs_config_set_ops(const zlrs_config_ops_t *ops)
+{
+	cfg_ops = ops;
+}
+
+static void cfg_port_isr(const struct device *dev, void *user_data)
+{
+	struct cfg_port *const p = user_data;
+
+	while (uart_irq_update(dev) && uart_irq_is_pending(dev)) {
+		if (uart_irq_rx_ready(dev)) {
+			uint8_t chunk[32];
+			const int n = uart_fifo_read(dev, chunk, sizeof(chunk));
+
+			if (n > 0 && ring_buf_put(&p->rx, chunk, (uint32_t)n) != (uint32_t)n) {
+				p->rx_dropped++;
+			}
+		}
+
+		if (uart_irq_tx_ready(dev)) {
+			uint8_t *claim = NULL;
+			const uint32_t claimed = ring_buf_get_claim(&p->tx, &claim, 64U);
+
+			if (claimed == 0U) {
+				uart_irq_tx_disable(dev);
+				continue;
+			}
+
+			const int sent = uart_fifo_fill(dev, claim, (int)claimed);
+
+			ring_buf_get_finish(&p->tx, (sent > 0) ? (uint32_t)sent : 0U);
+		}
+	}
+}
+
+int zlrs_config_port_init(void)
+{
+#if DT_NODE_EXISTS(DT_ALIAS(zlrs_config_cdc))
+	const struct device *const dev = DEVICE_DT_GET(DT_ALIAS(zlrs_config_cdc));
+
+	if (!device_is_ready(dev)) {
+		LOG_ERR("config port %s not ready", dev->name);
+		return -1;
+	}
+
+	ring_buf_init(&cfg_port.rx, sizeof(cfg_port.rx_mem), cfg_port.rx_mem);
+	ring_buf_init(&cfg_port.tx, sizeof(cfg_port.tx_mem), cfg_port.tx_mem);
+	cfg_port.dev = dev;
+
+	/* 判返回值：驱动不支持 IRQ 收发时返回 -ENOSYS/-ENOTSUP，忽略就是收不到命令 */
+	if (uart_irq_callback_user_data_set(dev, cfg_port_isr, &cfg_port) != 0) {
+		LOG_ERR("config port %s: RX setup failed", dev->name);
+		cfg_port.dev = NULL;
+		return -1;
+	}
+
+	uart_irq_rx_enable(dev);
+	cfg_port.ready = true;
+
+	LOG_INF("config port ready (%s)", dev->name);
+
+	return 0;
+#else
+	LOG_WRN("no zlrs-config-cdc alias: config port disabled");
+
+	return -1;
+#endif
+}
+
+bool zlrs_config_port_ready(void)
+{
+	return cfg_port.ready;
+}
+
+static uint16_t cfg_port_read(uint8_t *buf, uint16_t len)
+{
+	if (!cfg_port.ready) {
+		return 0U;
+	}
+
+	return (uint16_t)ring_buf_get(&cfg_port.rx, buf, len);
+}
+
+static uint16_t cfg_port_write(const uint8_t *buf, uint16_t len)
+{
+	uint32_t written;
+
+	if (!cfg_port.ready) {
+		return 0U;
+	}
+
+	written = ring_buf_put(&cfg_port.tx, buf, len);
+	if (written > 0U) {
+		uart_irq_tx_enable(cfg_port.dev);
+	}
+
+	return (uint16_t)written;
+}
+
+bool zlrs_config_port_poll_enter(void)
+{
+	static zlrs_cfg_parser_t parser;
+	static bool parser_ready;
+	uint8_t chunk[CFG_RX_CHUNK];
+	const uint16_t got = cfg_port_read(chunk, sizeof(chunk));
+
+	if (got == 0U) {
+		return false;
+	}
+
+	if (!parser_ready) {
+		zlrs_cfg_parser_init(&parser);
+		parser_ready = true;
+	}
+
+	bool enter = false;
+
+	for (uint16_t i = 0U; i < got; i++) {
+		if (zlrs_cfg_feed(&parser, chunk[i]) != 1) {
+			continue;
+		}
+
+		const uint8_t cmd = parser.cmd;
+		uint8_t reply[ZLRS_CFG_FRAME_MAX_LEN];
+		uint8_t payload[2];
+		uint8_t len;
+
+		if (cmd == ZLRS_CFG_CMD_ENTER) {
+			enter = true;
+		}
+
+		/* 进恢复不需要先配置：确认后直接重启，主循环不再返回 */
+		if (cmd == ZLRS_CFG_CMD_RECOVERY && cfg_ops != NULL &&
+		    cfg_ops->enter_recovery != NULL) {
+			payload[0] = cmd;
+			payload[1] = ZLRS_CFG_OK;
+			len = zlrs_cfg_encode(reply, sizeof(reply), ZLRS_CFG_CMD_ACK,
+					      payload, sizeof(payload));
+			(void)cfg_port_write(reply, len);
+			(void)cfg_ops->enter_recovery();
+		}
+
+		/* 会话外的其它命令一律回"状态不对"；EXIT 当空操作 */
+		payload[0] = cmd;
+		payload[1] = (cmd == ZLRS_CFG_CMD_ENTER || cmd == ZLRS_CFG_CMD_EXIT)
+				     ? ZLRS_CFG_OK
+				     : ZLRS_CFG_E_STATE;
+
+		len = zlrs_cfg_encode(reply, sizeof(reply), ZLRS_CFG_CMD_ACK, payload,
+				      sizeof(payload));
+		(void)cfg_port_write(reply, len);
+	}
+
+	return enter;
+}
+
+/* ---- 会话 -------------------------------------------------------------- */
+
 static zlrs_cfg_parser_t cfg_parser;
 static uint8_t cfg_tx_line[ZLRS_CFG_FRAME_MAX_LEN];
 static zlrs_link_t *cfg_link; /* 配置模式作用的链路（控制链路） */
 static uint8_t *cfg_failsafe_out;
-
 /* ---- backend：把命令落到 NVS 与链路层 ---------------------------------- */
 
 static int cfg_save_root_key(void *ctx, const uint8_t key[ZLRS_KEY_LEN])
@@ -593,6 +777,32 @@ static int cfg_read_status(void *ctx, zlrs_cfg_status_t *out)
 	memcpy(out->dev_id, cfg_link->dev_id, ZLRS_DEV_ID_LEN);
 	out->lq_percent = cfg_link->stats.lq_percent;
 	out->band = ZLRS_SUBG_BAND;
+	{
+		/* 先报 NVS 里的值（刚写过还没重启时它是"待生效"的那个），没写过再报运行值 */
+		uint8_t stored_region;
+		int8_t stored_power;
+
+		out->region = (zlrs_store_load_region(&stored_region) ==
+			       (int)sizeof(stored_region))
+				      ? stored_region
+				      : ((cfg_ops != NULL && cfg_ops->region != NULL)
+						 ? cfg_ops->region()
+						 : 0U);
+		out->tx_power_dbm = (zlrs_store_load_power(&stored_power) ==
+				     (int)sizeof(stored_power))
+					    ? stored_power
+					    : ((cfg_ops != NULL && cfg_ops->power != NULL)
+						       ? cfg_ops->power()
+						       : 0);
+	}
+	{
+		uint32_t baud;
+
+		if (zlrs_store_load_baud(&baud) != (int)sizeof(baud)) {
+			baud = 0U;
+		}
+		out->data_baud = baud;
+	}
 
 	return ZLRS_CFG_OK;
 }
@@ -641,12 +851,72 @@ static int cfg_pair(void *ctx)
 	return ZLRS_CFG_OK;
 }
 
+static int cfg_save_region(void *ctx, uint8_t region)
+{
+	(void)ctx;
+
+	if (cfg_ops == NULL || cfg_ops->save_region == NULL) {
+		return ZLRS_CFG_E_STATE;
+	}
+
+	return cfg_ops->save_region(region);
+}
+
+static int cfg_save_power(void *ctx, int8_t dbm)
+{
+	(void)ctx;
+
+	if (cfg_ops == NULL || cfg_ops->save_power == NULL) {
+		return ZLRS_CFG_E_STATE;
+	}
+
+	return cfg_ops->save_power(dbm);
+}
+
+static int cfg_erase_pair(void *ctx)
+{
+	(void)ctx;
+
+	if (cfg_ops == NULL || cfg_ops->erase_pair == NULL) {
+		return ZLRS_CFG_E_STATE;
+	}
+
+	return cfg_ops->erase_pair();
+}
+
+static int cfg_factory_reset(void *ctx)
+{
+	(void)ctx;
+
+	if (cfg_ops == NULL || cfg_ops->factory_reset == NULL) {
+		return ZLRS_CFG_E_STATE;
+	}
+
+	return cfg_ops->factory_reset();
+}
+
+static int cfg_enter_recovery(void *ctx)
+{
+	(void)ctx;
+
+	if (cfg_ops == NULL || cfg_ops->enter_recovery == NULL) {
+		return ZLRS_CFG_E_STATE;
+	}
+
+	return cfg_ops->enter_recovery();
+}
+
 static const zlrs_cfg_backend_t cfg_backend = {
 	.save_root_key = cfg_save_root_key,
 	.read_status = cfg_read_status,
 	.save_failsafe = cfg_save_failsafe,
 	.save_baud = cfg_save_baud,
+	.save_region = cfg_save_region,
+	.save_power = cfg_save_power,
 	.pair = cfg_pair,
+	.erase_pair = cfg_erase_pair,
+	.factory_reset = cfg_factory_reset,
+	.enter_recovery = cfg_enter_recovery,
 };
 
 /* ---- 会话 -------------------------------------------------------------- */
@@ -661,9 +931,8 @@ int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 	cfg_link = control;
 	cfg_failsafe_out = failsafe;
 
-	/* 端点得先经过 zlrs_data_port_init：没初始化就没有缓冲与 IRQ，会话只会空转 */
-	if (data_ready_ports == 0U) {
-		LOG_WRN("no usable data port: config mode unavailable");
+	if (!cfg_port.ready) {
+		LOG_WRN("no config port: config mode unavailable");
 		return -1;
 	}
 
@@ -696,11 +965,10 @@ int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 		led_in.uptime_ms = k_uptime_get_32();
 		zlrs_led_port_update(&led_in, led_in.uptime_ms);
 
-		/* 每轮重新选端点：配置途中插上 USB 也能切过去 */
-		const uint16_t got = zlrs_data_port_read(chunk, sizeof(chunk));
+		/* 配置模式期间射频停：数据口收到的东西直接丢，只计数 */
+		zlrs_data_port_discard_rx();
 
-		/* 收发都走端口层，别用 uart_poll_in/out：数据口的 ISR 已经在搬字节，
-		 * poll_in 只会看到空缓冲；poll_out 也不会真的发出去。 */
+		const uint16_t got = cfg_port_read(chunk, sizeof(chunk));
 		for (uint16_t i = 0U; i < got; i++) {
 			any = true;
 
@@ -720,7 +988,7 @@ int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 				&cfg_backend, cfg_parser.cmd, ZLRS_CFG_PAYLOAD(&cfg_parser),
 				cfg_parser.payload_len, cfg_tx_line, sizeof(cfg_tx_line));
 
-			(void)zlrs_data_port_write(cfg_tx_line, len);
+			(void)cfg_port_write(cfg_tx_line, len);
 		}
 
 		if (!any) {

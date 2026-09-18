@@ -43,6 +43,7 @@
 #include "watchdog.h"
 
 #include "zlrs/crsf/crsf.h"
+#include "zlrs/config/config.h"
 #include "zlrs/link/link.h"
 #include "zlrs/link/power.h"
 #include "zlrs/link/rate.h"
@@ -93,6 +94,8 @@ static zlrs_mod_cfg_t data_mod;
 
 /* 地区：决定频段、功率上限与占空比记账 */
 static const zlrs_region_t *region;
+static uint8_t region_id;
+static int8_t tx_power_dbm;
 static zlrs_duty_t duty;
 
 
@@ -337,9 +340,9 @@ static void build_links(void)
 		/* 调制档：窄频段地区走 LoRa 远距档，宽带地区走 FLRC（见 plan_init） */
 		.mod = control_mod,
 		.tx_power_dbm = CONTROL_ON_SUBG
-					? MIN(CONFIG_ZLRS_APP_TX_POWER_DBM,
+					? MIN(tx_power_dbm,
 					      region->max_tx_power_dbm)
-					: CONFIG_ZLRS_APP_TX_POWER_DBM,
+					: tx_power_dbm,
 		.rx_timeout_ms = 2U,
 		.beacon_period_ms = 1000U,
 		/*
@@ -378,8 +381,8 @@ static void build_links(void)
 	data_cfg.sync_slot = ZLRS_SYNC_SLOT_DATA;
 	data_cfg.mod = data_mod;
 	data_cfg.tx_power_dbm =
-		CONTROL_ON_SUBG ? CONFIG_ZLRS_APP_TX_POWER_DBM
-				: MIN(CONFIG_ZLRS_APP_TX_POWER_DBM,
+		CONTROL_ON_SUBG ? tx_power_dbm
+				: MIN(tx_power_dbm,
 				      region->max_tx_power_dbm);
 	data_cfg.arq = IS_ENABLED(CONFIG_ZLRS_APP_DATA_ARQ) ? 1U : 0U;
 	/*
@@ -419,7 +422,7 @@ static void build_links(void)
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)
 	/* 上限取"配置功率与地区上限的较小值"，下限是配置项 */
-	zlrs_power_init(&power_ctl, MIN(CONFIG_ZLRS_APP_TX_POWER_DBM, region->max_tx_power_dbm),
+	zlrs_power_init(&power_ctl, MIN(tx_power_dbm, region->max_tx_power_dbm),
 			CONFIG_ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM, 0U);
 #endif
 }
@@ -1036,6 +1039,98 @@ static void enter_config_mode(void)
 
 	LOG_INF("config mode done, back to normal");
 }
+
+/* ---- 配置协议要动的应用侧动作 ------------------------------------------ */
+
+static int cfg_op_save_region(uint8_t id)
+{
+	const zlrs_region_t *const want = zlrs_region_get(id);
+
+	if (want == NULL) {
+		return ZLRS_CFG_E_PARAM;
+	}
+
+	/* 地区要的 sub-G 硬件必须与板子一致（-5 = SKU 不匹配），不匹配直接拒绝 */
+	if (zlrs_region_validate(want, ZLRS_SUBG_BAND, tx_power_dbm) == -5) {
+		return ZLRS_CFG_E_PARAM;
+	}
+
+	if (zlrs_store_save_region(id) != 0) {
+		return ZLRS_CFG_E_STORE;
+	}
+
+	LOG_INF("region set to %s (takes effect on next boot)", want->name);
+
+	return ZLRS_CFG_OK;
+}
+
+static int cfg_op_save_power(int8_t dbm)
+{
+	if (region == NULL || dbm > region->max_tx_power_dbm) {
+		return ZLRS_CFG_E_PARAM;
+	}
+
+	if (zlrs_store_save_power(dbm) != 0) {
+		return ZLRS_CFG_E_STORE;
+	}
+
+	LOG_INF("tx power set to %d dBm (takes effect on next boot)", dbm);
+
+	return ZLRS_CFG_OK;
+}
+
+static int cfg_op_erase_pair(void)
+{
+	if (zlrs_store_erase_pairing() != 0) {
+		return ZLRS_CFG_E_STORE;
+	}
+
+	LOG_INF("pairing erased (takes effect on next boot)");
+
+	return ZLRS_CFG_OK;
+}
+
+static int cfg_op_factory_reset(void)
+{
+	if (zlrs_store_erase_all() != 0) {
+		return ZLRS_CFG_E_STORE;
+	}
+
+	LOG_WRN("factory reset: NVS cleared (takes effect on next boot)");
+
+	return ZLRS_CFG_OK;
+}
+
+#if IS_ENABLED(CONFIG_ZLRS_APP_UPDATE_TRIGGER)
+static int cfg_op_recovery(void)
+{
+	enter_serial_recovery(); /* 不会返回 */
+
+	return ZLRS_CFG_OK;
+}
+#endif
+
+static uint8_t cfg_op_region(void)
+{
+	return region_id;
+}
+
+static int8_t cfg_op_power(void)
+{
+	return tx_power_dbm;
+}
+
+static const zlrs_config_ops_t cfg_ops = {
+	.save_region = cfg_op_save_region,
+	.save_power = cfg_op_save_power,
+	.erase_pair = cfg_op_erase_pair,
+	.factory_reset = cfg_op_factory_reset,
+#if IS_ENABLED(CONFIG_ZLRS_APP_UPDATE_TRIGGER)
+	.enter_recovery = cfg_op_recovery,
+#endif
+	.region = cfg_op_region,
+	.power = cfg_op_power,
+};
 #endif /* CONFIG_ZLRS_APP_CONFIG_MODE */
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_SHELL)
@@ -1171,10 +1266,35 @@ int main(void)
 		LOG_WRN("bring-up: radio off, no USP/RAC and no LR2021 traffic");
 	}
 
-	/* 地区配置层：频段、功率上限与占空比都在这里定 */
-	region = zlrs_region_get(CONFIG_ZLRS_APP_REGION);
+	/*
+	 * NVS 先起来：地区、功率、密钥、配对、失控值、波特率都从它读。挂了不至于
+	 * 不能跑，但必须说清楚后果：读不出来也存不下去，设备会停在"未配置"
+	 * （不发射频）。store 自己也会打一条错误。
+	 */
+	if (zlrs_store_init() != 0) {
+		LOG_ERR("store unavailable: keys, pairing and failsafe will not persist");
+	}
+
+	/*
+	 * 地区与功率上限是运行期参数（配置协议可写）：NVS 里有就用它，没有就用
+	 * 编译期默认值。写入的取值在配置回调里校验（见 cfg_op_save_region）。
+	 */
+	region_id = CONFIG_ZLRS_APP_REGION;
+	tx_power_dbm = CONFIG_ZLRS_APP_TX_POWER_DBM;
+	{
+		uint8_t stored_region;
+		int8_t stored_power;
+
+		if (zlrs_store_load_region(&stored_region) == (int)sizeof(stored_region)) {
+			region_id = stored_region;
+		}
+		if (zlrs_store_load_power(&stored_power) == (int)sizeof(stored_power)) {
+			tx_power_dbm = stored_power;
+		}
+	}
+	region = zlrs_region_get(region_id);
 	if (region == NULL) {
-		LOG_ERR("unknown region %d", CONFIG_ZLRS_APP_REGION);
+		LOG_ERR("unknown region %d", region_id);
 		return 0;
 	}
 	/* 上板第一眼要看的两件事：这块板子是哪个 SKU、跑的是哪个地区 */
@@ -1182,8 +1302,7 @@ int main(void)
 		ZLRS_SUBG_BAND == ZLRS_BAND_SUBG_LF ? "LF" : "HF", ZLRS_SUBG_BAND,
 		region->name);
 	{
-		const int rc = zlrs_region_validate(region, ZLRS_SUBG_BAND,
-						    CONFIG_ZLRS_APP_TX_POWER_DBM);
+		const int rc = zlrs_region_validate(region, ZLRS_SUBG_BAND, tx_power_dbm);
 
 		/* -5：地区要的 sub-G 硬件跟这块板子不是一回事 → 不发射频 */
 		if (rc == -5) {
@@ -1193,8 +1312,7 @@ int main(void)
 		}
 		if (rc == -2) {
 			LOG_WRN("region %s caps tx power at %d dBm (configured %d)",
-				region->name, region->max_tx_power_dbm,
-				CONFIG_ZLRS_APP_TX_POWER_DBM);
+				region->name, region->max_tx_power_dbm, tx_power_dbm);
 		} else if (rc != 0) {
 			LOG_WRN("region check failed (%d): channel plan out of band", rc);
 		}
@@ -1210,13 +1328,6 @@ int main(void)
 	SMTC_SW_PLATFORM_VOID(smtc_rac_init());
 #endif
 
-	/*
-	 * NVS 挂了不至于不能跑，但必须说清楚后果：密钥/配对/失控值都读不出来也
-	 * 存不下去，设备会停在"未配置"（不发射频）。store 自己也会打一条错误。
-	 */
-	if (zlrs_store_init() != 0) {
-		LOG_ERR("store unavailable: keys, pairing and failsafe will not persist");
-	}
 	plan_init();
 	build_links();
 	crypto_init();
@@ -1233,18 +1344,11 @@ int main(void)
 		(void)zlrs_data_port_init(baud);
 	}
 
-	/*
-	 * 配置模式：由配置工具在配置 CDC 上发命令进入，见 doc/08-firmware.md 第 2 节。
-	 * 跑完直接继续正常启动，不用重启——写进去的密钥与失控值当场就生效。
-	 */
-	if (IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE) && gpio_is_ready_dt(&button) &&
-	    gpio_pin_configure_dt(&button, GPIO_INPUT) == 0) {
-		k_msleep(20); /* 上电去抖 */
-		if (gpio_pin_get_dt(&button) > 0) {
-			LOG_WRN("button held at boot");
-			enter_config_mode();
-		}
-	}
+#if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
+	/* 配置口常驻：配置工具在它上面发"进配置模式"，主循环里轮询 */
+	(void)zlrs_config_port_init();
+	zlrs_config_set_ops(&cfg_ops);
+#endif
 
 	zlrs_link_set_rc(&link_control, rc_payload, sizeof(rc_payload));
 	if (ZLRS_CRSF_ENABLED) {
@@ -1280,9 +1384,9 @@ int main(void)
 		confirm_image(now_ms);
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
-		/* shell 的 `zlrs config` 只置请求，会话在这里跑：与魔数入口同一套语义，
-		 * 超帧暂停，数据口字节不会被 pump_serial 半路抢走 */
-		if (atomic_cas(&config_request, 1, 0)) {
+		/* 进配置模式的三个入口都收敛到这里：配置口命令、shell、调试魔数。
+		 * 会话期间超帧暂停、射频停、数据口字节丢弃。 */
+		if (zlrs_config_port_poll_enter() || atomic_cas(&config_request, 1, 0)) {
 			enter_config_mode();
 		}
 #endif

@@ -43,6 +43,22 @@ uint16_t zlrs_data_port_write(const uint8_t *buf, uint16_t len);
 /* 没送出去的字节数：缓冲满丢的 + 当前端点之外那块端点收到的 */
 uint32_t zlrs_data_port_dropped(void);
 
+/* 配置模式期间用：把两块端点收到的字节丢掉（只计数，不投递） */
+void zlrs_data_port_discard_rx(void);
+
+/* 配置协议要动的应用侧动作；应用启动时注册，没注册的动作回 E_STATE */
+typedef struct {
+	int (*save_region)(uint8_t region);
+	int (*save_power)(int8_t dbm);
+	int (*erase_pair)(void);
+	int (*factory_reset)(void);
+	int (*enter_recovery)(void);
+	uint8_t (*region)(void);
+	int8_t (*power)(void);
+} zlrs_config_ops_t;
+
+void zlrs_config_set_ops(const zlrs_config_ops_t *ops);
+
 /* ---- CRSF 端口：手台 ↔ 模块（TX 侧）、接收机 → 飞控（RX 侧） ------------- */
 
 int zlrs_crsf_port_init(void);
@@ -62,6 +78,17 @@ uint8_t zlrs_crsf_port_read(uint8_t *type, uint8_t *payload, uint8_t max_len);
 /* 端口统计：接收缓冲放不下而丢掉的帧数 */
 uint32_t zlrs_crsf_port_rx_dropped(void);
 
+/* ---- 配置口：专用的 CDC（doc/08-firmware.md 第 1 节） --------------------- */
+
+int zlrs_config_port_init(void);
+bool zlrs_config_port_ready(void);
+
+/*
+ * 主循环里非阻塞地看配置口：
+ * 收到"进配置模式"返回 true（ACK 已回），其它命令回 E_STATE。
+ */
+bool zlrs_config_port_poll_enter(void);
+
 /* ---- 配置模式：由配置工具在配置 CDC 上发命令进入（doc/08-firmware.md 第 2 节） -- */
 
 /*
@@ -70,4 +97,3 @@ uint32_t zlrs_crsf_port_rx_dropped(void);
  * 返回 0 = 收到 EXIT，1 = 超时，-1 = 板上没有数据口别名。
  */
 int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe);
-

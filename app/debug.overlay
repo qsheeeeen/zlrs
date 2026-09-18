@@ -1,0 +1,15 @@
+/*
+ * Copyright (c) 2026 zlrs contributors
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * 调试构建的 devicetree 覆盖：把板级默认关掉的 console CDC 打开
+ * （cdc_acm_uart3，chosen `zephyr,console` / `zephyr,shell-uart` 已指向它）。
+ *
+ *   west build ... -- -DEXTRA_CONF_FILE=app/debug.conf \
+ *                     -DDTC_OVERLAY_FILE=app/debug.overlay
+ */
+
+&cdc_acm_uart3 {
+	status = "okay";
+};

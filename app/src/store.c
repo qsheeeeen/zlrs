@@ -18,6 +18,8 @@ LOG_MODULE_REGISTER(zlrs_store, CONFIG_APP_LOG_LEVEL);
 #define NVS_ID_FAILSAFE 4U
 #define NVS_ID_BAUD 5U
 #define NVS_ID_PAIRING 6U
+#define NVS_ID_REGION 7U
+#define NVS_ID_POWER 8U
 
 #define NVS_SECTOR_SIZE 4096U
 
@@ -128,6 +130,63 @@ int zlrs_store_save_failsafe(const uint8_t channels[ZLRS_CFG_FAILSAFE_LEN])
 int zlrs_store_save_baud(uint32_t baud)
 {
 	return write_record(NVS_ID_BAUD, &baud, sizeof(baud));
+}
+
+int zlrs_store_load_region(uint8_t *out)
+{
+	return read_record(NVS_ID_REGION, out, sizeof(*out));
+}
+
+int zlrs_store_load_power(int8_t *out)
+{
+	return read_record(NVS_ID_POWER, out, sizeof(*out));
+}
+
+int zlrs_store_save_region(uint8_t region)
+{
+	return write_record(NVS_ID_REGION, &region, sizeof(region));
+}
+
+int zlrs_store_save_power(int8_t dbm)
+{
+	return write_record(NVS_ID_POWER, &dbm, sizeof(dbm));
+}
+
+int zlrs_store_erase_all(void)
+{
+	static const uint16_t ids[] = {
+		NVS_ID_ROOT_KEY, NVS_ID_DEV_ID, NVS_ID_FAILSAFE,
+		NVS_ID_BAUD,     NVS_ID_PAIRING, NVS_ID_REGION, NVS_ID_POWER,
+	};
+
+	if (!ready) {
+		return -1;
+	}
+
+	for (size_t i = 0U; i < ARRAY_SIZE(ids); i++) {
+		const int rc = nvs_delete(&fs, ids[i]);
+
+		/* 记录不存在也算成功：恢复出厂就是让它不在 */
+		if (rc != 0 && rc != -ENOENT) {
+			LOG_ERR("nvs_delete(id %u) returned %d", ids[i], rc);
+			return rc;
+		}
+	}
+
+	return 0;
+}
+
+int zlrs_store_erase_pairing(void)
+{
+	int rc;
+
+	if (!ready) {
+		return -1;
+	}
+
+	rc = nvs_delete(&fs, NVS_ID_PAIRING);
+
+	return (rc == 0 || rc == -ENOENT) ? 0 : rc;
 }
 
 static int hex_nibble(char c)

@@ -3,16 +3,16 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# 上板自检：一条命令验完"不依赖射频"那一档（roadmap M1/M3 的软件侧）：
-# 三块 CDC → 数据口魔数进配置模式 → 配置协议读写（含 PBKDF2 落 NVS）→
+# 上板自检：一条命令验完"不依赖射频"那一档：
+# 三块 CDC → 配置口进配置模式 → 配置协议读写（含 PBKDF2 落 NVS）→
 # 退出后再进一次确认 NVS 持久化。射频相关的一律不碰。
 #
 # 用法：
 #   python3 scripts/zlrs-bringup.py                # 自动按 by-id 找端口
-#   python3 scripts/zlrs-bringup.py --data /dev/ttyACM1 --console /dev/ttyACM2
+#   python3 scripts/zlrs-bringup.py --config /dev/ttyACM2
 #   python3 scripts/zlrs-bringup.py --self-test    # 不接设备，校验逻辑
 #
-# 需要设备侧打开 CONFIG_ZLRS_APP_CONFIG_MAGIC（板上没有用户按键时的入口）。
+# 配置口是应用模式的第三块 CDC（...-if04）。
 
 import argparse
 import glob
@@ -24,7 +24,6 @@ from pathlib import Path
 BY_ID_DIR = "/dev/serial/by-id"
 APP_HINT = "ZLRS"
 MCUBOOT_HINT = "MCUBOOT"
-CONFIG_MAGIC = b"zlrs!configmode!"
 DEFAULT_BAUD = 115200
 
 
@@ -49,7 +48,7 @@ def app_ports() -> list[str]:
 
 
 def pick_port(ports: list[str], iface: str) -> str | None:
-    """三块 CDC 按 USB 接口号认：if00 CRSF、if02 数据口、if04 控制台。"""
+    """CDC 按 USB 接口号认：if00 CRSF、if02 数据口、if04 配置口、if06 控制台（调试）。"""
     for path in ports:
         if Path(path).name.endswith(iface):
             return path
@@ -57,15 +56,8 @@ def pick_port(ports: list[str], iface: str) -> str | None:
 
 
 def send_magic(port: str, baud: int = DEFAULT_BAUD) -> int:
-    try:
-        import serial  # pyserial
-    except ImportError:
-        print("需要 pyserial：pip install pyserial", file=sys.stderr)
-        return 2
-
-    with serial.Serial(port, baudrate=baud, timeout=1) as link:
-        link.write(CONFIG_MAGIC)
-        link.flush()
+    """兼容旧流程的空实现：配置工具现在自己会先发"进配置模式"。"""
+    del port, baud
 
     return 0
 
@@ -82,24 +74,19 @@ def run_config(*args: str) -> tuple[int, str]:
 
 
 def enter_config_mode(data_port: str, tries: int = 8) -> bool:
-    """发魔数 + 用 status 探测，直到配置模式应答。"""
+    """用配置工具探一次：工具会先发"进配置模式"，设备应答就说明在配置模式里。"""
     for attempt in range(1, tries + 1):
-        if send_magic(data_port) != 0:
-            return False
-        time.sleep(0.3)
         rc, out = run_config("--port", data_port, "status")
         if rc == 0 and "role=" in out:
             print(f"    配置模式已进入（第 {attempt} 次尝试）")
             print(f"    {out}")
             return True
+        time.sleep(0.5)
     return False
 
 
 def self_test() -> int:
     problems = []
-
-    if len(CONFIG_MAGIC) != 16:
-        problems.append(f"魔数必须是 16 字节：{CONFIG_MAGIC!r}")
 
     fake = [
         "/dev/serial/by-id/usb-zlrs_ZLRS_1234-if00",
@@ -116,14 +103,14 @@ def self_test() -> int:
         if pick_port(ports, "-if02") != fake[1]:
             problems.append("数据口认错")
         if pick_port(ports, "-if04") != fake[2]:
-            problems.append("控制台认错")
+            problems.append("配置口认错")
     finally:
         glob.glob = original  # type: ignore[assignment]
 
-    # 应用侧 C 代码里的魔数必须一致（改了要同步改 app/src/main.c）
-    with open(repo_root() / "app" / "src" / "main.c", "rb") as source:
-        if CONFIG_MAGIC not in source.read():
-            problems.append("app/src/main.c 里没有同一个魔数")
+    # 配置工具必须支持正式入口"进配置模式"
+    tool = repo_root() / "scripts" / "zlrs-config.py"
+    if "CMD_ENTER" not in tool.read_text(encoding="utf-8"):
+        problems.append("配置工具没有 CMD_ENTER")
 
     for line in problems:
         print(f"  FAIL {line}")
@@ -134,7 +121,8 @@ def self_test() -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="上板自检（非射频那一档）")
     parser.add_argument("--data", help="数据口设备（默认按 by-id 找 ...-if02）")
-    parser.add_argument("--console", help="控制台设备（默认按 by-id 找 ...-if04）")
+    parser.add_argument("--config", help="配置口设备（默认按 by-id 找 ...-if04）")
+    parser.add_argument("--console", help="调试构建的控制台口（...-if06）")
     parser.add_argument("--phrase", default="zlrs bring-up phrase",
                         help="set-phrase 用的短语")
     parser.add_argument("--self-test", action="store_true", help="不接设备，校验逻辑")
@@ -150,9 +138,13 @@ def main() -> int:
         return 1
 
     data = args.data or pick_port(ports, "-if02")
-    console = args.console or pick_port(ports, "-if04")
+    config = args.config or pick_port(ports, "-if04")
+    console = args.console or pick_port(ports, "-if06")
     if data is None:
         print(f"没找到数据口（...-if02）：{ports}", file=sys.stderr)
+        return 1
+    if config is None:
+        print(f"没找到配置口（...-if04）：{ports}", file=sys.stderr)
         return 1
 
     print("1) 端口")
@@ -161,39 +153,39 @@ def main() -> int:
     if console is None:
         print("    警告：没找到控制台口（...-if04），继续")
 
-    print("2) 数据口魔数进配置模式")
-    if not enter_config_mode(data):
-        print("    进不去。检查 CONFIG_ZLRS_APP_CONFIG_MAGIC 是否编进去了，"
-              "以及数据口是不是被别的程序占着", file=sys.stderr)
+    print("2) 配置口进配置模式")
+    if not enter_config_mode(config):
+        print("    进不去。检查配置口是不是被别的程序占着，"
+              "以及固件是不是带配置协议", file=sys.stderr)
         return 1
 
     print("3) 配置协议")
-    rc, out = run_config("--port", data, "set-phrase", args.phrase)
+    rc, out = run_config("--port", config, "set-phrase", args.phrase)
     print(f"    set-phrase: rc={rc} {out}")
     if rc != 0:
         return 1
 
-    rc, out = run_config("--port", data, "set-failsafe", "@default")
+    rc, out = run_config("--port", config, "set-failsafe", "@default")
     print(f"    set-failsafe: rc={rc} {out}")
     if rc != 0:
         return 1
 
-    rc, out = run_config("--port", data, "status")
+    rc, out = run_config("--port", config, "status")
     print(f"    status: {out}")
     if rc != 0 or "key=yes" not in out:
         print("    写完短语之后 key 位还是 no", file=sys.stderr)
         return 1
 
-    rc, out = run_config("--port", data, "exit")
+    rc, out = run_config("--port", config, "exit")
     print(f"    exit: rc={rc} {out}")
     time.sleep(0.3)
 
     print("4) NVS 持久化（再进一次配置模式）")
-    if not enter_config_mode(data):
+    if not enter_config_mode(config):
         print("    第二次进配置模式失败", file=sys.stderr)
         return 1
 
-    rc, out = run_config("--port", data, "status")
+    rc, out = run_config("--port", config, "status")
     print(f"    status: {out}")
     if rc != 0 or "key=yes" not in out:
         print("    重启后 key 位不是 yes：NVS 没保住", file=sys.stderr)
@@ -201,7 +193,7 @@ def main() -> int:
 
     run_config("--port", data, "exit")
 
-    print("自检通过：端口、配置模式（魔数入口）、配置协议、NVS 持久化都对")
+    print("自检通过：端口、配置模式（配置口命令）、配置协议、NVS 持久化都对")
     return 0
 
 

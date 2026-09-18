@@ -28,13 +28,22 @@ int zlrs_store_load_dev_id(uint8_t out[ZLRS_DEV_ID_LEN]);
 int zlrs_store_load_pairing(zlrs_store_pairing_t *out);
 int zlrs_store_load_failsafe(uint8_t out[ZLRS_CFG_FAILSAFE_LEN]);
 int zlrs_store_load_baud(uint32_t *out);
+int zlrs_store_load_region(uint8_t *out);
+int zlrs_store_load_power(int8_t *out);
 
 int zlrs_store_save_root_key(const uint8_t key[ZLRS_KEY_LEN]);
 int zlrs_store_save_dev_id(const uint8_t id[ZLRS_DEV_ID_LEN]);
 int zlrs_store_save_pairing(const zlrs_store_pairing_t *pairing);
 int zlrs_store_save_failsafe(const uint8_t channels[ZLRS_CFG_FAILSAFE_LEN]);
 int zlrs_store_save_baud(uint32_t baud);
+int zlrs_store_save_region(uint8_t region);
+int zlrs_store_save_power(int8_t dbm);
+
+/* 恢复出厂：清掉所有记录（密钥、配对、失控值、波特率、地区、功率） */
+int zlrs_store_erase_all(void);
+
+/* 只擦配对记录（设备标识与密钥保留） */
+int zlrs_store_erase_pairing(void);
 
 /* 把 64 个十六进制字符解析成根密钥，成功返回 0 */
 int zlrs_store_parse_hex_key(const char *hex, uint8_t out[ZLRS_KEY_LEN]);
-

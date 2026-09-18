@@ -15,9 +15,6 @@ config BUILD_OUTPUT_UF2
 config CLOCK_CONTROL
 	default y
 
-config CONSOLE
-	default y
-
 config GPIO
 	default y
 
@@ -27,16 +24,15 @@ config RESET
 config SERIAL
 	default y
 
-config UART_CONSOLE
-	default y
-
-# 控制台挂在 USB 的第三个 CDC 上（见 rp2350_zero_core2021.dtsi 的 chosen），
-# 所以板级默认把 USB 设备栈与 CDC ACM 类打开。
+# 控制台默认不在（cdc_acm_uart3 是 disabled，chosen 指过去但只有 debug overlay
+# 会打开它），所以板级不给 CONSOLE / UART_CONSOLE 默认值；调试构建由
+# app/debug.conf + app/debug.overlay 打开（doc/12-debug.md 第 1 节）。
+#
+# USB 设备栈与 CDC ACM 类默认打开：应用三块 CDC（CRSF / 数据 / 配置），
+# bootloader 两块（恢复 / 控制台）。
 #
 # 注意这里不给 CDC_ACM_SERIAL_INITIALIZE_AT_BOOT 默认值：那个辅助实现只注册
-# 第一块 CDC，应用侧要用 ZLRS_APP_USB（app/src/usb_dev.c）自己建 context 并
-# 注册全部三块；bootloader 另算——它只有两块 CDC，且 app/sysbuild/mcuboot.conf
-# 里自己把这个开关打开（见 doc/08-firmware.md 第 5 节）。
+# 第一块 CDC，应用侧要用 lib/usb 自己建 context 并注册全部 CDC。
 config USB_DEVICE_STACK_NEXT
 	default y
 
