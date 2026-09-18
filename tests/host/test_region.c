@@ -208,7 +208,7 @@ static void test_control_plan(void)
 }
 
 /*
- * LoRa 远距档（doc/03-protocol.md 4.1.1）：一帧就是几十毫秒，帧率由空中时间
+ * LoRa 远距档（doc/02-protocol.md 4.1.1）：一帧就是几十毫秒，帧率由空中时间
  * 定，不再是配置里写多少就是多少。
  */
 static void test_lora_plan(void)
@@ -287,7 +287,7 @@ static void test_racing_plan(void)
 }
 
 /*
- * 1000 Hz 档的时间预算（doc/03-protocol.md 4.1）：2.6 Mbps 下 31 B 的 RC 帧是
+ * 1000 Hz 档的时间预算（doc/02-protocol.md 4.1）：2.6 Mbps 下 31 B 的 RC 帧是
  * 108 µs，一帧 1000 µs，四个时隙分得开——协议侧没问题，跑不跑得起来取决于射频
  * 侧是不是直调驱动（RAC 的排期粒度是毫秒）。
  */

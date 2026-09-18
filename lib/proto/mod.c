@@ -1,5 +1,5 @@
 /*
- * 调制档与空中时间模型，见 include/zlrs/proto/mod.h 与 doc/03-protocol.md 4.1.1。
+ * 调制档与空中时间模型，见 include/zlrs/proto/mod.h 与 doc/02-protocol.md 4.1.1。
  *
  * SPDX-License-Identifier: Apache-2.0
  */

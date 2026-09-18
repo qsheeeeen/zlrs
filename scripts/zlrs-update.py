@@ -97,7 +97,7 @@ def upload_command(client: str, port: str, image: Path, baud: int,
 
     confirm=False（默认）走 MCUboot 的 test 语义：换槽进新镜像，没确认就回滚——
     有回滚兜底，但要走一次换槽（这块板上 `swap using offset` 还没验证通过，见
-    doc/05-roadmap.md 的 M1）。
+    doc/08-roadmap.md 的 M1）。
     confirm=True 直接写 slot0 并标记为永久：不换槽、没有回滚，上板调试时用来
     绕开换槽这条路。
     """

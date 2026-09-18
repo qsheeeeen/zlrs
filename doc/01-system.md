@@ -1,6 +1,6 @@
 # zlrs 系统设计
 
-基于 Zephyr 自研的低延迟遥控 + 串口透传链路，射频芯片为 Semtech LR2021。本文是系统级设计：目标与边界、平台基线、架构、时序预算、分层与线程。协议细节见 [03-protocol.md](03-protocol.md)，安全见 [02-security.md](02-security.md)，硬件实物见 [09-prototype.md](09-prototype.md)。
+基于 Zephyr 自研的低延迟遥控 + 串口透传链路，射频芯片为 Semtech LR2021。本文是系统级设计：目标与边界、平台基线、架构、时序预算、分层与线程。协议细节见 [02-protocol.md](02-protocol.md)，安全见 [03-security.md](03-security.md)，硬件实物见 [05-prototype.md](05-prototype.md)。
 
 ## 1. 目标与边界
 
@@ -12,7 +12,7 @@
 - 严肃 DIY 用户
 - 工业与数控场景是**长远目标**，当前不为其做专项设计，但架构不能挡住它
 
-**为什么自研**：可控、可扩展（现成方案难以适配将来的其它项目）、以及信息安全（见 [02-security.md](02-security.md)）。
+**为什么自研**：可控、可扩展（现成方案难以适配将来的其它项目）、以及信息安全（见 [03-security.md](03-security.md)）。
 
 **硬件取向**：
 
@@ -26,7 +26,7 @@
 - 不与官方 ExpressLRS 逐字节兼容
 - 不追求 20 km 级距离（那是 4G 的场景），**控制链路目标 2 km**
 - 不做图传
-- 不防 L3 级攻击者（见 [02-security.md](02-security.md) 第 7 节）
+- 不防 L3 级攻击者（见 [03-security.md](03-security.md) 第 7 节）
 - 不做产线，没有出厂密钥注入
 - 配置协议、NVS 布局与地区配置表的细节不在本文档范围内
 
@@ -66,9 +66,9 @@
 
 "主机在用这块端点"有两条证据：CDC 的 **DTR**（标准做法），以及**这块端点收到过主机字节**。第二条是上板补的：`SET_CONTROL_LINE_STATE` 在 USB/IP 转发（usbipd）与部分虚拟化场景里不一定送得到设备，只看 DTR 的话 CDC 永远选不中，主机发来的字节会被当"非当前端点"静静丢掉——配置协议、透传、CRSF 输入全都收不到，而且没有任何报错。ISR 在判断当前端点**之前**先记下"收到过字节"，所以第一帧不会被端点选择的滞后吃掉（见 `app/src/ports.c` 的 `port_active()`）。
 
-物理接口清单与各模式下的完整用法见 [09-prototype.md](09-prototype.md)；板级别名与引脚见 [板级 README](../boards/zlrs/rp2350_zero_core2021/README.md)。
+物理接口清单与各模式下的完整用法见 [05-prototype.md](05-prototype.md)；板级别名与引脚见 [板级 README](../boards/zlrs/rp2350_zero_core2021/README.md)。
 
-**按键的时机决定行为**（语义见 [06-ui.md](06-ui.md)）：
+**按键的时机决定行为**（语义见 [07-ui.md](07-ui.md)）：
 
 | 时机 | 行为 |
 | --- | --- |
@@ -88,7 +88,7 @@
 
 配对同理：没有按键时用配置工具的 `pair` 命令触发（`scripts/zlrs-config.py`）。
 
-代价是 TX 也不能在运行时边透传边配置——进配置会话就暂停收发，`EXIT` 或超时后继续。换来的是 TX/RX 完全相同的流程，以及配置模式**不可能被远程触发**（对安全有实际价值，见 [02-security.md](02-security.md) 第 10 节）。
+代价是 TX 也不能在运行时边透传边配置——进配置会话就暂停收发，`EXIT` 或超时后继续。换来的是 TX/RX 完全相同的流程，以及配置模式**不可能被远程触发**（对安全有实际价值，见 [03-security.md](03-security.md) 第 10 节）。
 
 轻量硬件可以裁掉 USB，那时配置只能走数据 UART。这是下一节"特性可裁剪"的一个具体例子。
 
@@ -104,7 +104,7 @@
 
 **USB 设备栈由镜像自己建**（`lib/usb/usb_dev.c`，开关 `CONFIG_ZLRS_USB`，应用侧是 `CONFIG_ZLRS_APP_USB`）。Zephyr 的 device_next 栈里 devicetree 的 `zephyr,cdc-acm-uart` 节点只表达"要几块 CDC"，设备不会自己上线：镜像得建 usbd context、把类注册进配置、再 `usbd_enable()`。Zephyr 自带的 `CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT` 只注册**第一块** CDC，本板应用三块（bootloader 两块），没注册的那块没有 context，第一次往它写日志就是 NULL 解引用、整机停住——所以那个开关保持关着。应用与 bootloader 共用这一份代码，差别只在字符串与 VID/PID（`zlrs` / `ZLRS` 与 `zlrs` / `ZLRS MCUBOOT`）。
 
-**CDC 的接收端要用自己的缓冲池**（`CONFIG_USBD_CDC_ACM_BUF_POOL=y`）。全速设备上这个开关默认是关的，多块 CDC 会去抢 UDC 的公共池；RX 工作项一旦分配失败就再也不重试（`CDC_ACM_RX_FIFO_BUSY` 位不清），表现是"串口只能发不能收"，而 CDC 驱动的日志又因为控制台挂在 CDC 上被强制关掉、一点提示都没有——上板第一次就是这么被坑的，见 [05-roadmap.md](05-roadmap.md) 的 M1。
+**CDC 的接收端要用自己的缓冲池**（`CONFIG_USBD_CDC_ACM_BUF_POOL=y`）。全速设备上这个开关默认是关的，多块 CDC 会去抢 UDC 的公共池；RX 工作项一旦分配失败就再也不重试（`CDC_ACM_RX_FIFO_BUSY` 位不清），表现是"串口只能发不能收"，而 CDC 驱动的日志又因为控制台挂在 CDC 上被强制关掉、一点提示都没有——上板第一次就是这么被坑的，见 [08-roadmap.md](08-roadmap.md) 的 M1。
 
 库层的开关（`lib/*/Kconfig`）由应用的功能开关反选：`ZLRS_APP_CONFIG_MODE` / `ZLRS_APP_STATUS_LED` / `ZLRS_APP_CRSF_PORT` 一关，对应的 `ZLRS_CONFIG` / `ZLRS_LED` / `ZLRS_CRSF` 就可以一起裁掉（应用里留了退化实现，编得过）。协议核心、链路层、地区配置层与 CRSF 编解码是应用永远需要的，由 `ZLRS_APP_CORE` 固定选中。
 
@@ -128,7 +128,7 @@
 | `CONFIG_ZLRS_APP_CRSF_PORT=n` | 不初始化 CRSF 端口：TX 只发配置好的失控值 | 编译验证 |
 | `CONFIG_ZLRS_APP_CONFIG_MODE=n` / `ZLRS_APP_PAIRING_BUTTON=n` / `ZLRS_APP_STATUS_LED=n` | 关掉配置模式 / 按键配对 / 状态灯 | 编译验证 |
 
-推荐的顺序：`P0` + 关跳频 + 关握手 + 关遥测 → 先确认"自己发的帧自己能收到"；然后打开 tag（`P1`）；再打开跳频；再打开遥测与失联判定；最后才是速率自适应与动态功率——这两项的阈值本来就要等实测曲线（见 [05-roadmap.md](05-roadmap.md) 的 M4），上板第一步不该被它们干扰。
+推荐的顺序：`P0` + 关跳频 + 关握手 + 关遥测 → 先确认"自己发的帧自己能收到"；然后打开 tag（`P1`）；再打开跳频；再打开遥测与失联判定；最后才是速率自适应与动态功率——这两项的阈值本来就要等实测曲线（见 [08-roadmap.md](08-roadmap.md) 的 M4），上板第一步不该被它们干扰。
 
 每个开关都对应一条主机侧用例，断言"关掉之后链路照常工作"：这套用例跑在 `tests/host`，不需要硬件。
 
@@ -249,11 +249,11 @@ Bootloader 侧有个对应的护栏（`lib/bootguard`，`CONFIG_ZLRS_BOOTGUARD`�
 
 ### 3.3 分时
 
-分时不自己写调度器，而是把两条链路注册成两个 RAC 客户端，用优先级让 radio planner 仲裁——线程与回调的做法见第 7 节。超帧的具体形状见 [03-protocol.md](03-protocol.md) 第 4 节；跳频采用逐包跳频，见 [03-protocol.md](03-protocol.md) 第 5 节；法规约束同节 5.2。
+分时不自己写调度器，而是把两条链路注册成两个 RAC 客户端，用优先级让 radio planner 仲裁——线程与回调的做法见第 7 节。超帧的具体形状见 [02-protocol.md](02-protocol.md) 第 4 节；跳频采用逐包跳频，见 [02-protocol.md](02-protocol.md) 第 5 节；法规约束同节 5.2。
 
 两条链路默认都用 FLRC。改调制类型（FLRC ↔ LoRa）在射频侧比单纯改频率贵得多，共用调制能让每次切换只改频率。LoRa 只作远距兜底档。
 
-调制是**按链路各自选**的（`CONFIG_ZLRS_APP_CONTROL_MODULATION_*`）：窄带地区（868 / 470 / 433）放不下宽带 FLRC 时，控制链路改用 LoRa（默认 SF7 / BW125、配置 10 Hz，实际由空中时间定），数据链路仍在 2.4G 跑 FLRC；超帧周期由最慢的那条链路决定，时隙预算、ARQ 超时这些常数跟着档位派生。见 [03-protocol.md](03-protocol.md) 4.1.1。
+调制是**按链路各自选**的（`CONFIG_ZLRS_APP_CONTROL_MODULATION_*`）：窄带地区（868 / 470 / 433）放不下宽带 FLRC 时，控制链路改用 LoRa（默认 SF7 / BW125、配置 10 Hz，实际由空中时间定），数据链路仍在 2.4G 跑 FLRC；超帧周期由最慢的那条链路决定，时隙预算、ARQ 超时这些常数跟着档位派生。见 [02-protocol.md](02-protocol.md) 4.1.1。
 
 ## 4. 时序预算（背景数据）
 
@@ -286,7 +286,7 @@ Bootloader 侧有个对应的护栏（`lib/bootguard`，`CONFIG_ZLRS_BOOTGUARD`�
 
 ## 5. 协议设计
 
-帧格式、包类型、链路状态机与分时结构见 [03-protocol.md](03-protocol.md)。身份与密钥见 [02-security.md](02-security.md)。
+帧格式、包类型、链路状态机与分时结构见 [02-protocol.md](02-protocol.md)。身份与密钥见 [03-security.md](03-security.md)。
 
 透传数据的两种语义，做成可切换 profile：
 
@@ -319,7 +319,7 @@ doc/                  设计文档
 
 射频侧的一切——SPI 时序、校准、频段选择、收发调度——都在 `usp_zephyr` 里，本仓库不含射频驱动。
 
-发射前还要过一道**地区门**：`lib/region` 给出该地区的信道表、功率上限与占空比上限（EU868 是 1%），额度用完的时隙就让出去，次数计入日志。见 [03-protocol.md](03-protocol.md) 5.2。
+发射前还要过一道**地区门**：`lib/region` 给出该地区的信道表、功率上限与占空比上限（EU868 是 1%），额度用完的时隙就让出去，次数计入日志。见 [02-protocol.md](02-protocol.md) 5.2。
 
 ## 7. 线程模型
 
@@ -353,4 +353,4 @@ RAC 的初始化由应用负责：`SMTC_SW_PLATFORM_INIT()` 只等 USP 线程就
 
 ## 8. 诊断与可观测性
 
-诊断**不另建通道**：链路质量走 CRSF 既有的链路统计帧，见 [03-protocol.md](03-protocol.md) 2.7。数据链路的溢出与丢弃字节数没有现成的 CRSF 字段承载，不上报。
+诊断**不另建通道**：链路质量走 CRSF 既有的链路统计帧，见 [02-protocol.md](02-protocol.md) 2.7。数据链路的溢出与丢弃字节数没有现成的 CRSF 字段承载，不上报。

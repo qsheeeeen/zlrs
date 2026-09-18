@@ -117,7 +117,7 @@ static uint32_t led_drop_ms;
 
 /*
  * 速率自适应的档位表（从快到慢）。阈值要等实测误包率曲线回来再标定，
- * 见 doc/05-roadmap.md M4——这里给的是占位值，框架本身与阈值无关。
+ * 见 doc/08-roadmap.md M4——这里给的是占位值，框架本身与阈值无关。
  */
 #if IS_ENABLED(CONFIG_ZLRS_APP_RATE_ADAPT)
 static const zlrs_rate_tier_t rate_tiers[] = {
@@ -172,7 +172,7 @@ static void on_tlm(void *ctx, const uint8_t *payload, uint16_t len)
 		crsf_send_link_stats(&tlm);
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)
-		/* 只存下来：判据在 1 Hz 的 report() 里评估，见 doc/03-protocol.md 4.6 */
+		/* 只存下来：判据在 1 Hz 的 report() 里评估，见 doc/02-protocol.md 4.6 */
 		tlm_latest.rssi_dbm = -(int16_t)tlm.rssi_neg_dbm;
 		tlm_latest.lq = tlm.lq_percent;
 		tlm_latest.fresh = true;
@@ -246,7 +246,7 @@ static void plan_init(void)
 	};
 
 	/*
-	 * 调制按链路各自选（doc/03-protocol.md 4.1.1）：窄带地区放不下宽带
+	 * 调制按链路各自选（doc/02-protocol.md 4.1.1）：窄带地区放不下宽带
 	 * FLRC 时控制链路改跑 LoRa 远距档，数据链路始终留在 2.4G 跑 FLRC。
 	 */
 #if IS_ENABLED(CONFIG_ZLRS_APP_BAND_ROLE_SUBG_DATA)
@@ -296,7 +296,7 @@ static void plan_init(void)
 			(unsigned int)plan.rate_hz);
 	}
 
-	/* 连接态周期 BEACON 按帧数换算（见 doc/03-protocol.md 5.1）：1000 ms 在
+	/* 连接态周期 BEACON 按帧数换算（见 doc/02-protocol.md 5.1）：1000 ms 在
 	 * 常见帧周期下装得进 uint8，更短的帧周期由 MAX 压到 255 帧以内 */
 	if (CONFIG_ZLRS_APP_RESYNC_PERIOD_MS > 0) {
 		const uint32_t frames = ((uint32_t)CONFIG_ZLRS_APP_RESYNC_PERIOD_MS * 1000U) /
@@ -391,11 +391,11 @@ static void build_links(void)
 		2U * zlrs_mod_airtime_ms(&data_mod, CONFIG_ZLRS_APP_DATA_MTU + 7U));
 	/*
 	 * 数据链路尽力而为：空闲不发空帧，所以不判失联——判了会在空闲时反复重建
-	 * 会话。代价是对端重启后要等这一侧重启或重配，见 doc/03-protocol.md 3.6。
+	 * 会话。代价是对端重启后要等这一侧重启或重配，见 doc/02-protocol.md 3.6。
 	 */
 	data_cfg.peer_timeout_ms = 0U;
 	data_cfg.data_mtu = CONFIG_ZLRS_APP_DATA_MTU;
-	/* 数据链路的重建可以慢一点：BEACON 2 s，见 doc/03-protocol.md 3.6 */
+	/* 数据链路的重建可以慢一点：BEACON 2 s，见 doc/02-protocol.md 3.6 */
 	data_cfg.beacon_period_ms = 2000U;
 	data_cfg.tlm_every_n = 1U; /* 数据链路没有遥测时隙 */
 	data_cfg.data_every_n = data_every_n;
@@ -444,7 +444,7 @@ static void load_identity(void)
 		have_root_key = true;
 	}
 
-	/* 设备标识：首次启动生成并存 NVS，见 doc/02-security.md 第 2 节 */
+	/* 设备标识：首次启动生成并存 NVS，见 doc/03-security.md 第 2 节 */
 	if (zlrs_store_load_dev_id(dev_id) != (int)ZLRS_DEV_ID_LEN) {
 		const uint32_t rnd = sys_rand32_get();
 
@@ -455,7 +455,7 @@ static void load_identity(void)
 	zlrs_link_set_dev_id(&link_data, dev_id);
 
 	if (!have_root_key) {
-		LOG_WRN("no root key: staying off air until one is written (doc/02-security.md)");
+		LOG_WRN("no root key: staying off air until one is written (doc/03-security.md)");
 		return;
 	}
 
@@ -679,7 +679,7 @@ static void adopt_pairing(void)
 }
 
 /*
- * 按键只有一个动作：长按（按住到阈值）触发配对，见 doc/06-ui.md。
+ * 按键只有一个动作：长按（按住到阈值）触发配对，见 doc/07-ui.md。
  * 没有短按，也没有按键解绑——要换绑就直接长按重新配对，新记录会顶掉旧的。
  */
 static void handle_button(uint32_t now_ms)
@@ -920,7 +920,7 @@ static void report(uint32_t now_ms)
 }
 
 /*
- * 状态灯：把链路状态翻译成 lib/led 的输入，见 doc/06-ui.md。
+ * 状态灯：把链路状态翻译成 lib/led 的输入，见 doc/07-ui.md。
  * 每 20 Hz 刷一次（zlrs_led_port_update 内部限速）。
  */
 /*

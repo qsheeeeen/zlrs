@@ -64,9 +64,9 @@
 
 目标：透传接近空口上限，且行为可预期。
 
-- 已做：ARQ profile（累计 ACK、窗口 4 帧、超时重传、重传用尽后重同步）、背压计数（队列满丢掉的字节、ARQ 放弃的段）、速率自适应框架（档位表 + 连续窗口 + 保持时间 + 滞回）、动态功率（按 RX 遥测回报的 RSSI/LQ 升降 TX 功率，遥测断了回到上限；见 [03](03-protocol.md) 4.6）
+- 已做：ARQ profile（累计 ACK、窗口 4 帧、超时重传、重传用尽后重同步）、背压计数（队列满丢掉的字节、ARQ 放弃的段）、速率自适应框架（档位表 + 连续窗口 + 保持时间 + 滞回）、动态功率（按 RX 遥测回报的 RSSI/LQ 升降 TX 功率，遥测断了回到上限；见 [02](02-protocol.md) 4.6）
 - 待标定：速率档的阈值与滞回参数必须按实测误包率曲线填（框架与阈值是分开的），动态功率的 RSSI/LQ 阈值同理（`lib/link/power.c` 里是占位值）
-- 已做（软件侧）：**调制按链路各自选**。① `zlrs_radio_req_t` 与链路配置换成 `zlrs_mod_cfg_t`（调制 + 参数），移植层按 `modulation` 填 RAC 的 `radio_params.lora` / `.flrc`；② 速率档表与空中时间模型落到 `lib/proto/mod.c`（FLRC 沿用原模型，LoRa 按 Semtech 公式），超帧时隙、ARQ 超时由档位派生；③ LoRa 的同步字另派生 1 字节 + private bit，配对帧固定落在私网同步字上。见 [03](03-protocol.md) 4.1.1
+- 已做（软件侧）：**调制按链路各自选**。① `zlrs_radio_req_t` 与链路配置换成 `zlrs_mod_cfg_t`（调制 + 参数），移植层按 `modulation` 填 RAC 的 `radio_params.lora` / `.flrc`；② 速率档表与空中时间模型落到 `lib/proto/mod.c`（FLRC 沿用原模型，LoRa 按 Semtech 公式），超帧时隙、ARQ 超时由档位派生；③ LoRa 的同步字另派生 1 字节 + private bit，配对帧固定落在私网同步字上。见 [02](02-protocol.md) 4.1.1
 - 待验收（LoRa 远距档）：上板量误包率与灵敏度、核 SF7/BW125 的实测空中时间与模型差多少、EU868 的 1% 占空比下这条路是否还能用
 - 已做（控制帧率档）：**150 / 500 Hz**。帧率、时隙预算与遥测/数据窗口的稀疏系数由 `zlrs_region_control_plan()` 按地区占空比与空中时间算出；500 Hz 档在 EU868 会被压到 ~46 Hz（1% 占空比），窄带速率下会被压到 ~470 Hz
 - 已做（1000 Hz 的协议侧）：1 ms 一帧的时长预算（31 B 帧 108 µs、时隙 308 µs）、遥测/数据的稀疏系数（1/6、1/10）、超帧与跳频节奏都有主机侧用例（`region: 1000 Hz plan`、`link: 1000 Hz frame cadence`）
@@ -82,7 +82,7 @@
 
 ## M6 抗干扰
 
-- 已做（软件侧）：连接态的周期性重同步与漂移处理——每 `CONFIG_ZLRS_APP_RESYNC_PERIOD_MS`（默认 1 s）发一条 `BEACON`，RX 据此把跳频索引拉回来；同一条路也解决了"对端重启后自动重连"。用例：`link: hop resync`、`link: peer restart reconnect`。见 [03](03-protocol.md) 5.1
+- 已做（软件侧）：连接态的周期性重同步与漂移处理——每 `CONFIG_ZLRS_APP_RESYNC_PERIOD_MS`（默认 1 s）发一条 `BEACON`，RX 据此把跳频索引拉回来；同一条路也解决了"对端重启后自动重连"。用例：`link: hop resync`、`link: peer restart reconnect`。见 [02](02-protocol.md) 5.1
 - 待验收：逐包跳频上板验证——时隙锁步、真实晶振偏差下长时间飞行的漂移速率、重同步周期该取多大
 - 待验收：共存与干扰测试——同频段多套设备、单音与宽带干扰
 - 待验收：法规参数核对——FCC 跳频条款与 ETSI 占空比

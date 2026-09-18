@@ -246,7 +246,7 @@ static void node_init(node_t *node, uint8_t role, const uint8_t *root_key,
 	data_cfg.domain = ZLRS_DOMAIN_ISM2400;
 	data_cfg.sync_slot = ZLRS_SYNC_SLOT_DATA;
 	data_cfg.mod = zlrs_mod_flrc(SIM_RATE_DATA);
-	data_cfg.peer_timeout_ms = 0U; /* 数据链路不判失联，见 doc/03-protocol.md 3.6 */
+	data_cfg.peer_timeout_ms = 0U; /* 数据链路不判失联，见 doc/02-protocol.md 3.6 */
 	data_cfg.data_mtu = SIM_DATA_MTU;
 
 	zlrs_link_init(&node->ctl, &cfg, &ops, &ctl_ev);
@@ -1480,7 +1480,7 @@ static void test_failsafe_push(void)
 }
 
 /*
- * 数据链路是尽力而为：空闲时不发空帧，也不判失联（见 doc/03-protocol.md 3.6）。
+ * 数据链路是尽力而为：空闲时不发空帧，也不判失联（见 doc/02-protocol.md 3.6）。
  * 所以空闲再久也不能反复重建会话——否则一有数据要发就先撞上握手，头几帧白等一个
  * BEACON 周期。
  */
@@ -1715,7 +1715,7 @@ static void test_bringup_no_telemetry(void)
 }
 
 /*
- * 连接态周期 BEACON（doc/03-protocol.md 5.1）：两端晶振差会让跳频索引慢慢错开，
+ * 连接态周期 BEACON（doc/02-protocol.md 5.1）：两端晶振差会让跳频索引慢慢错开，
  * RX 踩空之后靠这个帧把索引拉回来。这里直接把索引挪开 4 格来模拟漂移。
  */
 static void test_hop_resync(void)
@@ -1763,7 +1763,7 @@ static void test_hop_resync(void)
 }
 
 /*
- * 对端重启后的自动重连（doc/03-protocol.md 3.5 那条已知限制的解法）：RX 重启
+ * 对端重启后的自动重连（doc/02-protocol.md 3.5 那条已知限制的解法）：RX 重启
  * 后链路状态全丢，只剩 NVS 里的配对记录；TX 这边还在跑，周期 BEACON 会让它重新
  * 握手。两条链路都要能自己回来。
  */
@@ -1876,7 +1876,7 @@ static void test_beacon_replay_guard(void)
 }
 
 /*
- * 调制按链路各自选（doc/03-protocol.md 4.1.1）：控制链路跑 LoRa 远距档，
+ * 调制按链路各自选（doc/02-protocol.md 4.1.1）：控制链路跑 LoRa 远距档，
  * 数据链路留在 2.4G 跑 FLRC。LoRa 的同步字是另派生的 1 字节（最高位当 private
  * bit），不能沿用 FLRC 那 4 字节。
  */
@@ -1925,7 +1925,7 @@ static void test_lora_control(void)
 }
 
 /*
- * 1000 Hz 的协议侧（doc/03-protocol.md 4.1）：帧周期压到 1 ms 时，超帧、跳频
+ * 1000 Hz 的协议侧（doc/02-protocol.md 4.1）：帧周期压到 1 ms 时，超帧、跳频
  * 锁步、遥测/数据窗口的稀疏化、连接态重同步都不能乱。射频侧要直调驱动才能真的
  * 跑到 1000 Hz（RAC 的排期粒度是毫秒），这里只钉协议与时间常数。
  */

@@ -7,11 +7,11 @@
 - **一份固件适配多种硬件**：角色、频段、USB 之类的特性由 Kconfig 与 devicetree 裁剪，不写 `#ifdef` 分支。
 - **自研协议**：不与 ExpressLRS 兼容；控制距离目标 2 km；不做图传；不做产线密钥注入。
 
-仓库包含协议核心、链路层、固件（射频链路、CRSF 端口、串口透传、配置模式、配对持久化）与板级定义；射频驱动来自 Semtech 的 USP，不在本仓库。接下来做什么见 [doc/05-roadmap.md](doc/05-roadmap.md)。
+仓库包含协议核心、链路层、固件（射频链路、CRSF 端口、串口透传、配置模式、配对持久化）与板级定义；射频驱动来自 Semtech 的 USP，不在本仓库。接下来做什么见 [doc/08-roadmap.md](doc/08-roadmap.md)。
 
 ## 硬件
 
-现在的实物是两模块原型：微雪 RP2350-Zero（RP2350A，4 MB flash，Cortex-M33）+ 微雪 Core2021（LR2021）用线连起来，**对外只有 USB-C 一个口**。物理接口、模式用法与板内连线见 [doc/09-prototype.md](doc/09-prototype.md)；引脚表、SKU 标定与 flash 分区见 [板级 README](boards/zlrs/rp2350_zero_core2021/README.md)。
+现在的实物是两模块原型：微雪 RP2350-Zero（RP2350A，4 MB flash，Cortex-M33）+ 微雪 Core2021（LR2021）用线连起来，**对外只有 USB-C 一个口**。物理接口、模式用法与板内连线见 [doc/05-prototype.md](doc/05-prototype.md)；引脚表、SKU 标定与 flash 分区见 [板级 README](boards/zlrs/rp2350_zero_core2021/README.md)。
 
 Core2021 的 sub-G 是**两个 SKU**（PA 网络不同），所以板级是两个变体，代码同一份：
 
@@ -117,7 +117,7 @@ python3 scripts/zlrs-update.py --port /dev/ttyACM1        # 镜像默认取 buil
 
 | 入口 | 开关 | 说明 |
 | --- | --- | --- |
-| 开机时按住按键 | `CONFIG_ZLRS_APP_CONFIG_MODE`（默认开） | 按键时机区分"配置"与"配对"，见 [doc/06-ui.md](doc/06-ui.md) |
+| 开机时按住按键 | `CONFIG_ZLRS_APP_CONFIG_MODE`（默认开） | 按键时机区分"配置"与"配对"，见 [doc/07-ui.md](doc/07-ui.md) |
 | 数据口魔数 | `CONFIG_ZLRS_APP_CONFIG_MAGIC`（默认关） | 数据口收到 16 字节 `zlrs!configmode!`；给没有按键的板子用 |
 | 控制台 shell | `CONFIG_ZLRS_APP_SHELL`（默认关） | 控制台 CDC 上敲 `zlrs config`；另有 `zlrs status` / `ports` / `recovery` |
 
@@ -131,11 +131,11 @@ python3 scripts/zlrs-config.py --port /dev/ttyACM1 set-failsafe @default
 python3 scripts/zlrs-config.py --port /dev/ttyACM1 exit
 ```
 
-`--dry-run` 只打印要发的帧，方便对着抓包比对。帧格式与安全性质见 [doc/02-security.md](doc/02-security.md) 第 10 节。
+`--dry-run` 只打印要发的帧，方便对着抓包比对。帧格式与安全性质见 [doc/03-security.md](doc/03-security.md) 第 10 节。
 
 ### 5. 地区、速率与链路策略
 
-常用 Kconfig（语义与取值理由见 [doc/03-protocol.md](doc/03-protocol.md)）：
+常用 Kconfig（语义与取值理由见 [doc/02-protocol.md](doc/02-protocol.md)）：
 
 | 开关 | 默认 | 作用 |
 | --- | --- | --- |
@@ -185,23 +185,23 @@ doc/                  设计文档（见下面的文档地图）
 zephyr/module.yml     本仓库作为 Zephyr 模块的入口（板级定义也挂在这里）
 ```
 
-分层原则：`lib/` 与 `include/` 不依赖 Zephyr，协议核心与链路层在主机上编译同一份源码，设备侧只多一个射频移植层（`app/src/rac_port.c`）。射频侧的一切——SPI 时序、校准、频段、收发调度——都由 `usp_zephyr` 承担。宿主/设备两边的密码学实现对拍见 [doc/02-security.md](doc/02-security.md) 第 8 节。
+分层原则：`lib/` 与 `include/` 不依赖 Zephyr，协议核心与链路层在主机上编译同一份源码，设备侧只多一个射频移植层（`app/src/rac_port.c`）。射频侧的一切——SPI 时序、校准、频段、收发调度——都由 `usp_zephyr` 承担。宿主/设备两边的密码学实现对拍见 [doc/03-security.md](doc/03-security.md) 第 8 节。
 
 ## 文档地图
 
-每份文档只拥有一类事实，其它地方只链接不复述：
+每份文档只拥有一类事实，其它地方只链接不复述。编号就是阅读顺序：先系统与协议（怎么工作），再硬件（拿什么跑），然后交互、进度与横向对比。
 
 | 文档 | 拥有 |
 | --- | --- |
 | [doc/01-system.md](doc/01-system.md) | 目标与边界、平台基线、端口与工作模式的设计、特性裁剪、上板调试开关、启动链与升级、系统架构、时序预算、软件分层、线程模型、错误处理 |
-| [doc/02-security.md](doc/02-security.md) | 身份与密钥、配对与会话的安全性质、威胁模型、密码学参数、配置通道与配置协议帧 |
-| [doc/03-protocol.md](doc/03-protocol.md) | 空中帧格式、包类型、链路状态机、会话握手、超帧、速率档与自适应、跳频与法规 |
+| [doc/02-protocol.md](doc/02-protocol.md) | 空中帧格式、包类型、链路状态机、会话握手、超帧、速率档与自适应、跳频与法规 |
+| [doc/03-security.md](doc/03-security.md) | 身份与密钥、配对与会话的安全性质、威胁模型、密码学参数、配置通道与配置协议帧 |
 | [doc/04-lr2021.md](doc/04-lr2021.md) | LR2021 的速率、灵敏度、切换时序、SPI/IRQ 与引脚摘要 |
-| [doc/05-roadmap.md](doc/05-roadmap.md) | 里程碑、进度（已做 / 待验收 / 待做）与验收标准 |
-| [doc/06-ui.md](doc/06-ui.md) | 按键语义与状态灯的颜色/节奏 |
-| [doc/07-carrier.md](doc/07-carrier.md) | 载板 v1（草稿）：接插件、线序、电源与机械 |
-| [doc/08-vs-elrs.md](doc/08-vs-elrs.md) | 与 ExpressLRS 的事实对比、差距与差异化 |
-| [doc/09-prototype.md](doc/09-prototype.md) | 原型实物：模块、对外接口、板内连线、模式 × 接口用法 |
+| [doc/05-prototype.md](doc/05-prototype.md) | 原型实物：模块、对外接口、板内连线、模式 × 接口用法 |
+| [doc/06-carrier.md](doc/06-carrier.md) | 载板 v1（草稿）：接插件、线序、电源与机械 |
+| [doc/07-ui.md](doc/07-ui.md) | 按键语义与状态灯的颜色/节奏 |
+| [doc/08-roadmap.md](doc/08-roadmap.md) | 里程碑、进度（已做 / 待验收 / 待做）与验收标准 |
+| [doc/09-vs-elrs.md](doc/09-vs-elrs.md) | 与 ExpressLRS 的事实对比、差距与差异化 |
 | [板级 README](boards/zlrs/rp2350_zero_core2021/README.md) | 板级定义：引脚与别名、两个 SKU 的标定表、flash 分区、构建目标与烧写 |
 
 ## 依赖
@@ -227,4 +227,4 @@ zephyr/module.yml     本仓库作为 Zephyr 模块的入口（板级定义也�
 
 CI（[.github/workflows/build.yml](.github/workflows/build.yml)）跑同一套主机测试与各脚本的 self-test；固件构建单独一条流水线（[firmware.yml](.github/workflows/firmware.yml)），按 README 的流程搭工作区把 hf / lf 两个变体各构建一次。
 
-射频与实时性相关的部分——回调延迟、换频开销、误包率、实际透传吞吐——只能在板上量，可以直接用 Semtech 官方示例，也可以用本仓库固件。当前进度与待办见 [doc/05-roadmap.md](doc/05-roadmap.md)。
+射频与实时性相关的部分——回调延迟、换频开销、误包率、实际透传吞吐——只能在板上量，可以直接用 Semtech 官方示例，也可以用本仓库固件。当前进度与待办见 [doc/08-roadmap.md](doc/08-roadmap.md)。

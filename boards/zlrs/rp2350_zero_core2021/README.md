@@ -4,7 +4,7 @@
 
 板子叫 `rp2350_zero_core2021` 而不是 `rp2350_zero`：Zephyr 4.4 树内已经有 `waveshare/rp2350_zero`（裸板，没有射频），板名必须全局唯一；这里的差异是多一颗 Core2021 与一整套接线，所以 vendor 用自己的 `zlrs`。
 
-**实物与各模式下的用法见 [doc/09-prototype.md](../../../doc/09-prototype.md)**；本文只写板级定义：引脚与别名、SKU 标定、分区与构建目标。
+**实物与各模式下的用法见 [doc/05-prototype.md](../../../doc/05-prototype.md)**；本文只写板级定义：引脚与别名、SKU 标定、分区与构建目标。
 
 ## 1. 引脚与别名
 
@@ -18,13 +18,13 @@
 | UART0 TX / RX | GP0 / GP1 | `zlrs-crsf-uart` = `uart0` | CRSF，420000，接手台/飞控 |
 | UART1 TX / RX | GP8 / GP9 | `zlrs-data-uart` = `uart1` | 透传/配置口，默认 115200（NVS 可改） |
 | 按键 | GP12 | `zlrs-button`、`smtc-user-button` | 对地，内部上拉；本板没焊，留给自接按键 |
-| WS2812B | GP16 | `zlrs-led`、`led-strip` | 板上自带，PIO0 驱动，语义见 [doc/06-ui.md](../../../doc/06-ui.md) |
+| WS2812B | GP16 | `zlrs-led`、`led-strip` | 板上自带，PIO0 驱动，语义见 [doc/07-ui.md](../../../doc/07-ui.md) |
 | USB-C（原生 USB） | — | `zephyr_udc0` = `usbd` | 三块 CDC：`cdc_acm_uart0`（`zlrs-crsf-cdc`）、`cdc_acm_uart1`（`zlrs-data-cdc`）、`cdc_acm_uart2`（控制台，`zephyr,console`） |
 | 看门狗 | — | `watchdog0` = `wdt0` | 应用侧 `CONFIG_ZLRS_APP_WATCHDOG` 打开才武装 |
 
 射频总线没用 Pico 默认的 GP16–19：GP16 在 RP2350-Zero 上是板载 WS2812B 的数据脚，留给状态灯。`smtc-user-button` 是 USP 官方示例要的别名，挂了它 `usp_zephyr/samples/usp/**` 就能直接在这块板上编。
 
-每条链路有两块端点（UART + USB CDC），二选一的规则、`port_active()` 的判据与配置模式入口见 [doc/01-system.md](../../../doc/01-system.md) 2.1 与 [doc/09-prototype.md](../../../doc/09-prototype.md) 第 3 节。
+每条链路有两块端点（UART + USB CDC），二选一的规则、`port_active()` 的判据与配置模式入口见 [doc/01-system.md](../../../doc/01-system.md) 2.1 与 [doc/05-prototype.md](../../../doc/05-prototype.md) 第 3 节。
 
 ## 2. 两个 SKU → 四个构建目标
 
@@ -50,7 +50,7 @@ west build -b rp2350_zero_core2021/rp2350a/m33/lf app   # 470 / 433
 
 板子通过 DT 节点 `zlrs_subg_band`（`compatible = "zlrs,subg-band"`，绑定见 `dts/bindings/zlrs,subg-band.yaml`）声明自己是哪种 sub-G 硬件：`band = <0>` LF、`<1>` HF。应用启动时校验"地区 vs 本机硬件"，不匹配就**红灯告警并且不发射频**（法规相关的错误不凑合）。
 
-这个值**不要**写进 `/chosen`：Zephyr 的 DT 宏只导出 `zephyr,` 前缀的 chosen 属性，自定义前缀读不到，会静默退回默认值 HF——LF 板于是永远过不了校验（上板第一次就是这个现象，见 [doc/05-roadmap.md](../../../doc/05-roadmap.md) 的 M1）。
+这个值**不要**写进 `/chosen`：Zephyr 的 DT 宏只导出 `zephyr,` 前缀的 chosen 属性，自定义前缀读不到，会静默退回默认值 HF——LF 板于是永远过不了校验（上板第一次就是这个现象，见 [doc/08-roadmap.md](../../../doc/08-roadmap.md) 的 M1）。
 
 ## 3. Core2021 与标定
 
@@ -59,7 +59,7 @@ west build -b rp2350_zero_core2021/rp2350a/m33/lf app   # 470 / 433
 - 两个变体各带自己的 sub-G 标定表：
   - **HF**：`tx-power-cfg-lf` 与 `tx-dbm-to-ua-reg-mode-dcdc-lf-vreg` 用 902 MHz 的参考表（Semtech Wio-LR2021 实测），`calibration-freqs` = 897.5 MHz + 2.44 GHz。
   - **LF**：用 470 MHz 的参考表，`calibration-freqs` = 433.3 / 470.3 / 498.8 MHz + 2.44 GHz（LF 要同时覆盖 470 与 433，所以标定点多一个）。
-- 两张表都是**参考值**，上板后要按 Core2021 的 PA 网络重标，验收标准见 [doc/05-roadmap.md](../../../doc/05-roadmap.md) 的 M0。
+- 两张表都是**参考值**，上板后要按 Core2021 的 PA 网络重标，验收标准见 [doc/08-roadmap.md](../../../doc/08-roadmap.md) 的 M0。
 - 2.4 GHz 那一路两个 SKU 相同（同一颗 LR2021 分时双频），标定频点里都带 2.441 GHz。
 
 ## 4. 分区与启动

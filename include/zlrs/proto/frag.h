@@ -1,6 +1,6 @@
 /*
  * 分片重组：严格按 seq 顺序，出现缺口或超时即丢弃整段，见
- * doc/03-protocol.md 2.5。
+ * doc/02-protocol.md 2.5。
  *
  * SPDX-License-Identifier: Apache-2.0
  */

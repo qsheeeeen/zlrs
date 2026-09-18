@@ -223,7 +223,7 @@ uint8_t zlrs_crsf_rf_mode(uint32_t rate_bps)
 
 /*
  * LoRa 档没有"速率"这个说法，用 0x10 | SF 编码：手台侧只要求两端一致，
- * 至少要能看出"这是 LoRa、SF 多少"。见 doc/03-protocol.md 4.1.1。
+ * 至少要能看出"这是 LoRa、SF 多少"。见 doc/02-protocol.md 4.1.1。
  */
 uint8_t zlrs_crsf_rf_mode_mod(const zlrs_mod_cfg_t *mod)
 {

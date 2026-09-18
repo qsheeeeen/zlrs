@@ -1,6 +1,6 @@
 /*
  * 状态灯的驱动侧：把 lib/led 算出的颜色写到板上的 WS2812（需要 `zlrs-led` 别名，
- * 没有就退化成空操作）。见 doc/06-ui.md。
+ * 没有就退化成空操作）。见 doc/07-ui.md。
  *
  * SPDX-License-Identifier: Apache-2.0
  */

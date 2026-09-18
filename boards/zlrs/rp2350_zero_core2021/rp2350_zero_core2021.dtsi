@@ -82,7 +82,7 @@
 };
 
 /*
- * 板载 WS2812B（GP16，单像素）当状态灯，见 doc/06-ui.md：
+ * 板载 WS2812B（GP16，单像素）当状态灯，见 doc/07-ui.md：
  * 用 PIO0 驱动，接法与上游 waveshare/rp2350_zero 一致。
  */
 &pio0 {

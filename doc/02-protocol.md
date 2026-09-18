@@ -1,6 +1,6 @@
 # 空中格式与链路状态机
 
-本文定义 zlrs 的空中协议：帧格式、包类型、链路状态机、会话建立、超帧、速率与功率自适应、跳频与法规。身份与密钥见 [02-security.md](02-security.md)，线程与射频栈见 [01-system.md](01-system.md) 第 7 节，系统级取舍见 [01-system.md](01-system.md)。
+本文定义 zlrs 的空中协议：帧格式、包类型、链路状态机、会话建立、超帧、速率与功率自适应、跳频与法规。身份与密钥见 [03-security.md](03-security.md)，线程与射频栈见 [01-system.md](01-system.md) 第 7 节，系统级取舍见 [01-system.md](01-system.md)。
 
 ## 1. 物理层已经给了什么
 
@@ -79,7 +79,7 @@
 | `P1` | 4 B | 无 | **默认** |
 | `P2` | 4 B | AES-CTR | 认证加密；MAC 覆盖密文（encrypt-then-MAC） |
 
-- `tag` = **HMAC-SHA256 截断到 4 B**，覆盖 `header` + `seq` + `payload`；钥匙按方向派生，见 [02-security.md](02-security.md) 第 3 节。
+- `tag` = **HMAC-SHA256 截断到 4 B**，覆盖 `header` + `seq` + `payload`；钥匙按方向派生，见 [03-security.md](03-security.md) 第 3 节。
 - 选 HMAC-SHA256 是为了让身份层**只用 SHA-256 一个原语**：PBKDF2、HKDF、MAC 全部落在同一族函数上，不必为 P1 引入 AES。P2 才需要 AES。
 - `P2` 还没实现：链路层看到 P2 直接不发包，现在只有 P0（调试）与 P1 可用。
 - profile 目前是**编译期配置**：`BEACON` 里声明的 profile 必须与本机一致，不一致直接丢弃。要让 RX 跟随 TX 就得按 profile 重配射频，那是另一件事（速率、tag 与加密路径都跟着变）。
@@ -194,7 +194,7 @@ tag 的代价约 16%，前导码与同步字是固定开销，速率越高占比
 
 `failsafe` 是 22 字节的 RC 通道载荷（与 CRSF 的通道帧同格式），只有发起方（TX）填：它设过值就置 `flags` 的 bit0，响应方收到后照单存本地并写 NVS；没置位就保持自己那份——免得被一串 0 覆盖成"所有通道最小值"。
 
-载荷里的两个 nonce 不只管 `MAC_b` 的新鲜性：它们还参与 `pair_key` 派生（见 [02-security.md](02-security.md) 第 3 节），所以要连同对端 `dev_id` 一起落盘。
+载荷里的两个 nonce 不只管 `MAC_b` 的新鲜性：它们还参与 `pair_key` 派生（见 [03-security.md](03-security.md) 第 3 节），所以要连同对端 `dev_id` 一起落盘。
 
 「保持最后有效值」是以后的选项，现在只有预设值这一种失控行为。
 
@@ -216,7 +216,7 @@ TX 周期性在固定信道上发 `BEACON`，携带三样东西：
 2. RX → TX：`SESS_RESP{nonce_t, nonce_r}`，同样用 `link_auth` 认证；`nonce_r` 由 RX 现抽，回带 `nonce_t` 是为了让 TX 认出这是对哪一次请求的回应。
 3. TX → RX：`SESS_CFM{nonce_r, hop}`，用**新会话钥匙**打 tag，并回带本端此刻的跳频索引。RX 验过它才采用会话。
 
-会话钥匙 `KDF(pair_key, "zlrs/session", nonce_t || nonce_r || 发送方 id || 接收方 id)`：收发各一把，本机发用 out（本机 id 在前）、收对端用 in（对端 id 在前），见 [02-security.md](02-security.md) 第 3 节。采用会话时按确认帧里的跳频索引对齐（旧固件的确认只有 `nonce_r`，那一步退回用 `BEACON` 里那个），序列号从 0 起。（代码里这两个 nonce 是 `zlrs_link_t` 的 `sess_nonce_t` 与 `sess_nonce_r`。）
+会话钥匙 `KDF(pair_key, "zlrs/session", nonce_t || nonce_r || 发送方 id || 接收方 id)`：收发各一把，本机发用 out（本机 id 在前）、收对端用 in（对端 id 在前），见 [03-security.md](03-security.md) 第 3 节。采用会话时按确认帧里的跳频索引对齐（旧固件的确认只有 `nonce_r`，那一步退回用 `BEACON` 里那个），序列号从 0 起。（代码里这两个 nonce 是 `zlrs_link_t` 的 `sess_nonce_t` 与 `sess_nonce_r`。）
 
 **为什么必须有第二步。** 只有 `nonce_t` 的话，钥匙完全由 TX 那个可被整帧重放的值决定：录一个旧 `BEACON` 重放，RX 就会重算出那次会话的钥匙、连序号窗口一起复位，旧录制的帧又能验证一遍。掺进 RX 现抽的 `nonce_r` 之后，重放只能换来一条全新钥匙的候选会话，而采用它需要 TX 拿同一把钥匙来确认——录制的旧帧一条都用不上。
 
@@ -285,7 +285,7 @@ TX 周期性在固定信道上发 `BEACON`，携带三样东西：
 
 计划的内容：帧周期、每个时隙的等待预算（帧周期的四分之一，窄带时按实际空中时间放宽）、以及遥测/数据窗口的稀疏系数——控制帧率拉高以后，遥测与数据窗口不必跟着涨：遥测按 ~150 次/秒、数据窗口按 ~100 次/秒折算成"每 n 帧一次"（500 Hz 档就是 1/3 与 1/5）。稀疏化在链路层内部计数完成，两端同固件所以节奏一致，跳频不会失步。
 
-再往上（1000 Hz）这套架构不够用：RAC 的排期粒度是毫秒，而每帧只剩 1 ms。**这不是换个 RAC 调用能解决的**——RAC 的 FLRC burst 是**单向批量传输**（一次事务把一大块数据拆成固定帧连续发、只有两个 TX FIFO 指针边发边填、带唤醒握手），`min_interframe_delay_us` 是"把帧间隔压到最小"的吞吐旋钮而不是 1 ms 节拍，事务起点仍由毫秒粒度的 planner 决定，也不提供收发交织与逐帧换频。1000 Hz 要的是**控制链路自己拥有射频**：IRQ 驱动的逐帧时序（直调驱动 + 硬件 auto-Tx/Rx），代价见 [05-roadmap.md](05-roadmap.md) 的 M4。
+再往上（1000 Hz）这套架构不够用：RAC 的排期粒度是毫秒，而每帧只剩 1 ms。**这不是换个 RAC 调用能解决的**——RAC 的 FLRC burst 是**单向批量传输**（一次事务把一大块数据拆成固定帧连续发、只有两个 TX FIFO 指针边发边填、带唤醒握手），`min_interframe_delay_us` 是"把帧间隔压到最小"的吞吐旋钮而不是 1 ms 节拍，事务起点仍由毫秒粒度的 planner 决定，也不提供收发交织与逐帧换频。1000 Hz 要的是**控制链路自己拥有射频**：IRQ 驱动的逐帧时序（直调驱动 + 硬件 auto-Tx/Rx），代价见 [08-roadmap.md](08-roadmap.md) 的 M4。
 
 协议与时间计划这一侧已经按 1 ms 一帧钉住了（`link: 1000 Hz frame cadence`、`region: 1000 Hz plan`）：2.6 Mbps 档下 31 B 的 RC 帧是 108 µs，时隙预算 308 µs，四个时隙分得开；遥测与数据窗口的稀疏系数是 1/6 与 1/10。差的是射频后端——那部分要上板做（见 M4 的路径 A）。
 
@@ -392,7 +392,7 @@ ARQ 档的实现要点（见 `include/zlrs/link/link.h` 与 `lib/link/link.c`）
 
 上下限：上限取"配置功率与地区上限的较小值"（法规优先级最高，见 5.2），下限是配置项（默认 0 dBm）。起手用上限：没拿到遥测之前没有降功率的理由。
 
-与 ELRS 的动态功率是同一个思路，差别在于我们的判据直接来自 RX 的遥测回报（8 字节 TLM 里的 RSSI/LQ），不需要额外的统计通道。默认开启（`CONFIG_ZLRS_APP_DYNAMIC_POWER=y`），阈值与滞回按实测曲线标定（见 [05-roadmap.md](05-roadmap.md) 的 M4）。
+与 ELRS 的动态功率是同一个思路，差别在于我们的判据直接来自 RX 的遥测回报（8 字节 TLM 里的 RSSI/LQ），不需要额外的统计通道。默认开启（`CONFIG_ZLRS_APP_DYNAMIC_POWER=y`），阈值与滞回按实测曲线标定（见 [08-roadmap.md](08-roadmap.md) 的 M4）。
 
 ## 5. 跳频策略
 
@@ -434,7 +434,7 @@ ARQ 档的实现要点（见 `include/zlrs/link/link.h` 与 `lib/link/link.c`）
 
 信道间隔按**调制带宽**定，不照抄 LoRa 的信道规划：CN470 用 300 kHz 间隔（96 信道），CN433 只有 1.74 MHz 宽、放得下 5 个 300 kHz 信道。窄频段地区因此带 `max_rate_bps`，配置超过上限会自动压到 0.325 Mbps 的窄带档（FCC915 不限）。
 
-想要更高吞吐或更长距离时，这些地区可以改用 LoRa 等窄带调制（见 4.1.1），但**这不是改参数**：速率档表要变成"调制 + 参数 + 空中时间模型"，超帧时隙、ARQ 超时、LQ 窗口这些跟着调制时间预算派生的常数都要重推。见 [05-roadmap.md](05-roadmap.md) 的 M4。
+想要更高吞吐或更长距离时，这些地区可以改用 LoRa 等窄带调制（见 4.1.1），但**这不是改参数**：速率档表要变成"调制 + 参数 + 空中时间模型"，超帧时隙、ARQ 超时、LQ 窗口这些跟着调制时间预算派生的常数都要重推。见 [08-roadmap.md](08-roadmap.md) 的 M4。
 
 ### 5.3 前导码与同步字
 

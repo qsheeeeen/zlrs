@@ -1,5 +1,5 @@
 /*
- * 跳频序列，见 doc/03-protocol.md 第 5 节：两端由 fhss_seed 各自算出同一张表，
+ * 跳频序列，见 doc/02-protocol.md 第 5 节：两端由 fhss_seed 各自算出同一张表，
  * 每块第 0 个时隙固定落在同步信道，其余块内洗牌（等概率使用）。
  *
  * SPDX-License-Identifier: Apache-2.0

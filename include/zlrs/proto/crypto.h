@@ -1,7 +1,7 @@
 /*
  * 密码学原语接口：HKDF-SHA256 派生与每包 4 字节截断标签。标签长度、域分离与
  * KDF 上下文拼接都集中在这里，换后端（PSA / 硬件加速）只换 .c，见
- * lib/proto/crypto_psa.c 与 doc/02-security.md。
+ * lib/proto/crypto_psa.c 与 doc/03-security.md。
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -20,7 +20,7 @@ extern "C" {
 
 /*
  * KDF(key, label[, ctx])：HKDF-SHA256，空盐 extract，info = label || ctx。
- * 派生值与 doc/02-security.md 第 3 节的派生树一一对应。
+ * 派生值与 doc/03-security.md 第 3 节的派生树一一对应。
  */
 void zlrs_kdf(const uint8_t *key, size_t key_len, const char *label,
 	      const uint8_t *ctx, size_t ctx_len, uint8_t *out, size_t out_len);
@@ -31,7 +31,7 @@ void zlrs_tag(const uint8_t *key, size_t key_len, const uint8_t *data, size_t le
 
 /*
  * 短语 → 根密钥：PBKDF2-HMAC-SHA256。
- * salt 里带 KDF 版本号（见 doc/02-security.md 第 8 节），迭代次数由调用方给，
+ * salt 里带 KDF 版本号（见 doc/03-security.md 第 8 节），迭代次数由调用方给，
  * 派生规则固定在设备侧，配置工具不能改。
  */
 void zlrs_pbkdf2_sha256(const char *phrase, const uint8_t *salt, size_t salt_len,

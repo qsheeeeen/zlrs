@@ -270,7 +270,7 @@ static int port_submit(void *ctx, const zlrs_radio_req_t *req)
 
 	/*
 	 * 调制按链路各自选：控制链路可能是 LoRa 远距档，数据链路始终是 FLRC。
-	 * 见 doc/03-protocol.md 4.1.1。
+	 * 见 doc/02-protocol.md 4.1.1。
 	 */
 	if (req->mod.modulation == (uint8_t)ZLRS_MOD_LORA) {
 		rac->modulation_type = SMTC_RAC_MODULATION_LORA;
