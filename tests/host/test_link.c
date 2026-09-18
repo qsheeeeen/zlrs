@@ -1766,6 +1766,46 @@ static void test_hop_resync(void)
  * 子带混合比（doc/09-protocol.md 5.1）：TX 单方面推进，RX 在处理 SYNC 时采用；
  * 太久没听到新版 SYNC 就退回默认比例。
  */
+/*
+ * 子带混合的端到端：两条链路都配两张表，TX 推到 100% 后 RC 与遥测仍能通过
+ * （说明两端在同一个子带上收）——纯 C 侧能验的就是"两端选频一致"。
+ */
+static void test_sub_mix_data_path(void)
+{
+	sim_t sim;
+	uint8_t rc[ZLRS_RC_PAYLOAD_LEN];
+
+	printf("link: sub-band mix data path\n");
+
+	sim_init(&sim);
+	sim.tx.ctl.cfg.second_domain = ZLRS_DOMAIN_ISM2400;
+	sim.rx.ctl.cfg.second_domain = ZLRS_DOMAIN_ISM2400;
+	sim.tx.ctl.cfg.resync_every_n = 5U;
+	sim.rx.ctl.cfg.resync_every_n = 5U;
+	sim.tx.data.cfg.second_domain = ZLRS_DOMAIN_ISM2400;
+	sim.rx.data.cfg.second_domain = ZLRS_DOMAIN_ISM2400;
+	sim.tx.data.cfg.resync_every_n = 5U;
+	sim.rx.data.cfg.resync_every_n = 5U;
+	pair_and_connect(&sim);
+
+	/* 双表就绪 */
+	CHECK(zlrs_fhss_sub_ready(&sim.tx.ctl.fhss));
+	CHECK(zlrs_fhss_sub_ready(&sim.rx.ctl.fhss));
+
+	/* TX 推到 100%：整条控制链路退到第二张表（2.4G） */
+	zlrs_link_set_mix(&sim.tx.ctl, 3U);
+	memset(rc, 0x91U, sizeof(rc));
+	zlrs_link_set_rc(&sim.tx.ctl, rc, sizeof(rc));
+	SIM_UNTIL(&sim, sim.rx.ctl.sub_mix == 3U, 400);
+	CHECK(sim.rx.ctl.sub_mix == 3U);
+
+	/* 两端仍在同一频点、RC 照常收到 */
+	CHECK(zlrs_fhss_sub_current_hz(&sim.tx.ctl.fhss) ==
+	      zlrs_fhss_sub_current_hz(&sim.rx.ctl.fhss));
+	sim_run(&sim, 40U);
+	CHECK(sim.rx.rc_count > 0U);
+}
+
 static void test_sub_mix(void)
 {
 	sim_t sim;
@@ -2055,6 +2095,7 @@ void test_link(void)
 	test_bringup_no_telemetry();
 	test_hop_resync();
 	test_sub_mix();
+	test_sub_mix_data_path();
 	test_peer_restart();
 	test_sync_replay_guard();
 	test_lora_control();

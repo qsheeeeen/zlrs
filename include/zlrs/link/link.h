@@ -49,7 +49,12 @@ typedef enum {
 typedef struct {
 	uint8_t kind;      /* ZLRS_LINK_CONTROL / ZLRS_LINK_DATA */
 	uint8_t role;      /* ZLRS_ROLE_TX / ZLRS_ROLE_RX */
-	uint8_t domain;    /* ZLRS_DOMAIN_* */
+	uint8_t domain;    /* ZLRS_DOMAIN_*：主跳频表 */
+	/*
+	 * 第二张表（子带混合用，见 doc/09-protocol.md 5.1）：0xFF = 不配，
+	 * 整条链路只跳主表；否则两条子带各自一张表，按 sub_mix 分配时隙。
+	 */
+	uint8_t second_domain;
 	uint8_t sync_slot; /* ZLRS_SYNC_SLOT_* */
 	zlrs_profile_t profile;
 	/*

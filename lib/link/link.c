@@ -264,7 +264,12 @@ static void derive_pair(zlrs_link_t *link)
 
 	zlrs_kdf(link->pair_key, ZLRS_KEY_LEN, LABEL_FHSS, NULL, 0U, seed, sizeof(seed));
 	hop_seed = rd32(seed);
-	zlrs_fhss_init(&link->fhss, link->cfg.domain, hop_seed);
+	if (link->cfg.second_domain != 0xFFU) {
+		zlrs_fhss_init_dual(&link->fhss, link->cfg.domain,
+				    link->cfg.second_domain, hop_seed);
+	} else {
+		zlrs_fhss_init(&link->fhss, link->cfg.domain, hop_seed);
+	}
 
 	zlrs_kdf(link->pair_key, ZLRS_KEY_LEN, LABEL_SYNC_CONTROL, NULL, 0U, ctrl_word,
 		 sizeof(ctrl_word));

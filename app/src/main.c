@@ -349,6 +349,7 @@ static void build_links(void)
 		.role = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? ZLRS_ROLE_TX : ZLRS_ROLE_RX,
 		/* 频段角色可配：远距模式控制链路占 sub-G，竞速模式对调（见 01 第 3.2 节） */
 		.domain = CONTROL_ON_SUBG ? region->domain : ZLRS_DOMAIN_ISM2400,
+		.second_domain = CONTROL_ON_SUBG ? ZLRS_DOMAIN_ISM2400 : region->domain,
 		.sync_slot = ZLRS_SYNC_SLOT_CONTROL,
 		.profile = IS_ENABLED(CONFIG_ZLRS_APP_SECURITY_PROFILE_P0) ? ZLRS_PROFILE_P0
 									    : ZLRS_PROFILE_P1,
@@ -397,6 +398,7 @@ static void build_links(void)
 
 	data_cfg.kind = ZLRS_LINK_DATA;
 	data_cfg.domain = CONTROL_ON_SUBG ? ZLRS_DOMAIN_ISM2400 : region->domain;
+	data_cfg.second_domain = CONTROL_ON_SUBG ? region->domain : ZLRS_DOMAIN_ISM2400;
 	data_cfg.sync_slot = ZLRS_SYNC_SLOT_DATA;
 	data_cfg.mod = data_mod;
 	data_cfg.tx_power_dbm =
