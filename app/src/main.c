@@ -240,6 +240,28 @@ static void on_failsafe(void *ctx, const uint8_t *payload, uint16_t len)
  * 控制帧的时间计划：帧率档（Kconfig）× 地区占空比上限。超了就压到上限并
  * 告警——法规优先，但要让用户看见。
  */
+/*
+ * 搜索态的 SYNC 周期按调制档定（doc/09-protocol.md 3.6）：
+ * 速率越低、一帧空中时间越长，间隔相应放宽到 100–600 ms。
+ */
+static uint16_t sync_period_for_mod(const zlrs_mod_cfg_t *mod)
+{
+	if (mod->modulation != ZLRS_MOD_FLRC) {
+		return 600U; /* LoRa：一帧几十毫秒，再密就没意义 */
+	}
+	if (mod->rate_bps >= 2600000U) {
+		return 100U;
+	}
+	if (mod->rate_bps >= 1300000U) {
+		return 150U;
+	}
+	if (mod->rate_bps >= 650000U) {
+		return 300U;
+	}
+
+	return 600U;
+}
+
 static void plan_init(void)
 {
 	zlrs_control_plan_t plan;
@@ -366,7 +388,7 @@ static void build_links(void)
 					      region->max_tx_power_dbm)
 					: tx_power_dbm,
 		.rx_timeout_ms = 2U,
-		.sync_period_ms = 1000U,
+		.sync_period_ms = sync_period_for_mod(&control_mod),
 		/*
 		 * 遥测是 TX 侧的活证：关掉遥测就没东西可听，失联判定得一起关，
 		 * 否则每一帧都会把 TX 拉回 SEARCHING 重建会话。
@@ -421,8 +443,7 @@ static void build_links(void)
 	 */
 	data_cfg.peer_timeout_ms = 0U;
 	data_cfg.data_mtu = data_mtu;
-	/* 数据链路的重建可以慢一点：SYNC 2 s，见 doc/09-protocol.md 3.7 */
-	data_cfg.sync_period_ms = 2000U;
+	data_cfg.sync_period_ms = sync_period_for_mod(&data_mod);
 	data_cfg.tlm_every_n = 1U; /* 数据链路没有遥测时隙 */
 	data_cfg.data_every_n = data_every_n;
 

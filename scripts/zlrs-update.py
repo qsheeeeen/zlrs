@@ -235,10 +235,23 @@ def main() -> int:
         print("      " + " ".join(cmd))
     else:
         print(f"[3/4] 上传并重启：{image.name}")
-        result = subprocess.run(cmd, check=False)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        out = f"{result.stdout or ''}{result.stderr or ''}"
+
+        if out.strip():
+            print(out.rstrip())
+
         if result.returncode != 0:
-            print("上传失败", file=sys.stderr)
-            return result.returncode
+            # bootloader 的串口恢复不接受"标记永久"（image state 写回 ENOTSUP）：
+            # 镜像其实已经写进 slot0 了，补一条复位把它启动起来即可。
+            if "ENOTSUP" in out or "Marking uploaded image" in out:
+                print("    标记永久被 bootloader 拒绝（已知），镜像已写入 slot0；补一条复位")
+                subprocess.run([client, "--port", args.recovery_port,
+                                "--baudrate", str(args.baud), "os", "reset"],
+                               check=False)
+            else:
+                print("上传失败", file=sys.stderr)
+                return result.returncode
 
     # 4. 等应用回来
     if not args.no_wait and client is not None:
