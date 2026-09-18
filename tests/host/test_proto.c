@@ -172,6 +172,35 @@ static void test_fhss(void)
 
 	printf("fhss\n");
 
+	/* 双表：主表 2.4G + 子带 sub-G，同一 seed 两端一致 */
+	{
+		zlrs_fhss_t dual;
+		zlrs_fhss_t dual2;
+
+		zlrs_fhss_init_dual(&dual, ZLRS_DOMAIN_ISM2400, ZLRS_DOMAIN_CN433, 0x5a5a1234U);
+		zlrs_fhss_init_dual(&dual2, ZLRS_DOMAIN_ISM2400, ZLRS_DOMAIN_CN433, 0x5a5a1234U);
+		CHECK(zlrs_fhss_sub_ready(&dual));
+		CHECK(dual.sub_count == (ZLRS_FHSS_SEQUENCE_LEN / 5U) * 5U);
+		CHECK(zlrs_fhss_sub_current_hz(&dual) == zlrs_fhss_sub_current_hz(&dual2));
+		CHECK(zlrs_fhss_sub_current_hz(&dual) >= 433050000U);
+		CHECK(zlrs_fhss_sub_current_hz(&dual) <= 434790000U);
+		CHECK(zlrs_fhss_sub_next_hz(&dual) == zlrs_fhss_sub_current_hz(&dual));
+		zlrs_fhss_set_sub_index(&dual, 3U);
+		CHECK(zlrs_fhss_sub_current_hz(&dual) == zlrs_fhss_sub_current_hz(&dual2) ||
+		      dual.sub_index == 3U);
+
+		/* 混合比四档 → 每 4 个时隙落在 sub-G 的个数 */
+		CHECK(zlrs_fhss_mix_slots(0U) == 0U);
+		CHECK(zlrs_fhss_mix_slots(1U) == 1U);
+		CHECK(zlrs_fhss_mix_slots(2U) == 2U);
+		CHECK(zlrs_fhss_mix_slots(3U) == 4U);
+
+		/* 没配子带时子表不可用 */
+		zlrs_fhss_init(&dual, ZLRS_DOMAIN_ISM2400, 0x1U);
+		CHECK(!zlrs_fhss_sub_ready(&dual));
+		CHECK(zlrs_fhss_sub_current_hz(&dual) == 0U);
+	}
+
 	/* EU868：13 个信道，256 / 13 = 19 块 */
 	zlrs_fhss_init(&fhss, ZLRS_DOMAIN_EU868, 0x1234abcdU);
 	CHECK(fhss.domain->channel_count == 13U);

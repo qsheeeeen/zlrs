@@ -135,6 +135,66 @@ void zlrs_fhss_init(zlrs_fhss_t *fhss, uint8_t domain_id, uint32_t seed)
 			       fhss->sequence);
 }
 
+void zlrs_fhss_init_dual(zlrs_fhss_t *fhss, uint8_t main_domain_id,
+			 uint8_t sub_domain_id, uint32_t seed)
+{
+	zlrs_fhss_init(fhss, main_domain_id, seed);
+
+	if (sub_domain_id >= ZLRS_DOMAIN_COUNT) {
+		return;
+	}
+
+	fhss->sub_domain = &zlrs_fhss_domains[sub_domain_id];
+	fhss->sub_sync_channel = (uint8_t)(fhss->sub_domain->channel_count / 2U);
+	fhss->sub_index = 0U;
+	/* 子表的种子与主表区分开：同一对设备、两个子带不能跳成同一张表 */
+	fhss->sub_count = build_sequence(seed ^ 0x9E3779B9U,
+					 fhss->sub_domain->channel_count,
+					 fhss->sub_sync_channel, fhss->sub_sequence);
+}
+
+uint8_t zlrs_fhss_mix_slots(uint8_t mix)
+{
+	static const uint8_t slots[4] = { 0U, 1U, 2U, 4U };
+
+	return slots[mix & 0x03U];
+}
+
+bool zlrs_fhss_sub_ready(const zlrs_fhss_t *fhss)
+{
+	return fhss->sub_domain != NULL && fhss->sub_count > 0U;
+}
+
+uint32_t zlrs_fhss_sub_current_hz(const zlrs_fhss_t *fhss)
+{
+	if (!zlrs_fhss_sub_ready(fhss)) {
+		return 0U;
+	}
+
+	return fhss->sub_domain->start_hz +
+	       (uint32_t)fhss->sub_sequence[fhss->sub_index] * fhss->sub_domain->step_hz;
+}
+
+uint32_t zlrs_fhss_sub_next_hz(zlrs_fhss_t *fhss)
+{
+	if (!zlrs_fhss_sub_ready(fhss)) {
+		return 0U;
+	}
+
+	fhss->sub_index = (uint16_t)((fhss->sub_index + 1U) % fhss->sub_count);
+
+	return zlrs_fhss_sub_current_hz(fhss);
+}
+
+void zlrs_fhss_set_sub_index(zlrs_fhss_t *fhss, uint16_t index)
+{
+	if (!zlrs_fhss_sub_ready(fhss)) {
+		return;
+	}
+
+	fhss->sub_index = (uint16_t)(index % fhss->sub_count);
+}
+
 static uint32_t freq_hz(const zlrs_fhss_t *fhss, uint8_t channel)
 {
 	if (fhss->domain == NULL) {
