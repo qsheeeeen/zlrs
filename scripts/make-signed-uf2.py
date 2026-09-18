@@ -18,7 +18,7 @@
 # 第一次烧写（没有调试器）：
 #   1. 按住 BOOTSEL 插 USB，把 <build>/mcuboot/zephyr/zephyr.uf2 拖进 RPI-RP2
 #   2. 再把本脚本生成的 <build>/<app>/zephyr/zephyr.signed.uf2 拖进 RPI-RP2
-# 之后升级走 MCUboot 串口恢复（数据口 UART1），见 README 与 doc/03-architecture.md。
+# 之后升级走 MCUboot 串口恢复（数据口 UART1），见 README 与 doc/07-architecture.md。
 
 import argparse
 import os

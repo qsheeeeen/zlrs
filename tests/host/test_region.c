@@ -208,7 +208,7 @@ static void test_control_plan(void)
 }
 
 /*
- * LoRa 远距档（doc/04-protocol.md 4.1.1）：一帧就是几十毫秒，帧率由空中时间
+ * LoRa 远距档（doc/07-architecture.md 第 3 节）：一帧就是几十毫秒，帧率由空中时间
  * 定，不再是配置里写多少就是多少。
  */
 static void test_lora_plan(void)
@@ -254,7 +254,7 @@ static void test_lora_plan(void)
 }
 
 /*
- * 竞速模式（doc/03-architecture.md 第 2 节）：控制链路独占 2.4G——它没有地区表，占空比
+ * 竞速模式（doc/07-architecture.md 第 2 节）：控制链路独占 2.4G——它没有地区表，占空比
  * 门不作用在它身上；让到 sub-G 的那条链路（数据）才受法规约束，它的窗口按
  * data_every_n 摊进超帧，峰值帧率被拖下来一点。
  */
@@ -287,7 +287,7 @@ static void test_racing_plan(void)
 }
 
 /*
- * 1000 Hz 档的时间预算（doc/04-protocol.md 4.1）：2.6 Mbps 下 31 B 的 RC 帧是
+ * 1000 Hz 档的时间预算（doc/09-protocol.md 4.1）：2.6 Mbps 下 31 B 的 RC 帧是
  * 108 µs，一帧 1000 µs，四个时隙分得开——协议侧没问题，跑不跑得起来取决于射频
  * 侧是不是直调驱动（RAC 的排期粒度是毫秒）。
  */

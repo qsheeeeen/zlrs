@@ -7,7 +7,7 @@
 #
 # 原理：应用在数据口上监听一个 16 字节魔数（CONFIG_ZLRS_APP_UPDATE_TRIGGER），
 # 收到就置 boot mode 并重启；MCUboot 读到标志后停在串口恢复里等镜像上传。
-# 见 doc/02-platform.md 第 5 节。
+# 见 doc/08-firmware.md 第 5 节。
 #
 # 用法：
 #   python3 scripts/zlrs-recovery.py --port /dev/ttyACM1     # USB 数据 CDC

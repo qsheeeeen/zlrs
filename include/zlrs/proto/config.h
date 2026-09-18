@@ -10,7 +10,7 @@
 /*
  * 空口协议版本：不兼容的改动递增一次，写在 BEACON 里，RX 只认同版本。
  * 1：tag/会话密钥按双方 dev_id 派生（方向由顺序编码），pair_key 掺配对 nonce，
- *    会话密钥掺三次握手的两个 nonce，见 doc/05-security.md 第 3 节。
+ *    会话密钥掺三次握手的两个 nonce，见 doc/10-security.md 第 3 节。
  */
 #define ZLRS_PROTO_VERSION 1U
 

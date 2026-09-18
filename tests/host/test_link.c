@@ -80,7 +80,7 @@ typedef struct {
 
 /*
  * 上板调试开关：默认全是"生产"档，单个用例可以按需关掉某一项，验证关掉之后
- * 链路仍然工作（见 doc/02-platform.md 第 4 节）。建节点之前设置。
+ * 链路仍然工作（见 doc/12-debug.md 第 3 节）。建节点之前设置。
  */
 typedef struct {
 	uint8_t hopping;
@@ -246,7 +246,7 @@ static void node_init(node_t *node, uint8_t role, const uint8_t *root_key,
 	data_cfg.domain = ZLRS_DOMAIN_ISM2400;
 	data_cfg.sync_slot = ZLRS_SYNC_SLOT_DATA;
 	data_cfg.mod = zlrs_mod_flrc(SIM_RATE_DATA);
-	data_cfg.peer_timeout_ms = 0U; /* 数据链路不判失联，见 doc/04-protocol.md 3.6 */
+	data_cfg.peer_timeout_ms = 0U; /* 数据链路不判失联，见 doc/09-protocol.md 3.7 */
 	data_cfg.data_mtu = SIM_DATA_MTU;
 
 	zlrs_link_init(&node->ctl, &cfg, &ops, &ctl_ev);
@@ -523,7 +523,7 @@ static void sim_enable_nth(sim_t *sim, uint8_t role, const uint8_t dev_id[ZLRS_D
 
 /*
  * 三节点之一：同场另一对设备。射频同步字不同，两边在物理层就互相听不到——
- * 这是 doc/04-protocol.md 第 2 节与 doc/05-security.md 7.2"组内其它设备误占链路"那条声明的依据。
+ * 这是 doc/09-protocol.md 第 2 节与 doc/10-security.md 7.2"组内其它设备误占链路"那条声明的依据。
  */
 static void test_third_node_isolation(void)
 {
@@ -561,7 +561,7 @@ static void test_third_node_isolation(void)
 /*
  * 三节点之二：攻击者偷到主对 TX 的 dev_id，也从空中抓到了同步字，但没听过那次
  * 配对（salt 是错的）。帧能进接收机，tag 过不去——这就是 pair_key 掺配对 nonce
- * 换来的东西（doc/05-security.md 第 3 节）。
+ * 换来的东西（doc/10-security.md 第 3 节）。
  */
 static void test_intruder_without_pair_salt(void)
 {
@@ -611,7 +611,7 @@ static void test_intruder_without_pair_salt(void)
 
 /*
  * 听过配对的组内成员能算出同一套钥匙，于是能冒充真 TX 注入 RC——这是
- * doc/05-security.md 7.2 声明的固有代价（没有逐设备身份），用例把它钉住。
+ * doc/10-security.md 7.2 声明的固有代价（没有逐设备身份），用例把它钉住。
  */
 static void test_group_member_impersonates(void)
 {
@@ -1480,7 +1480,7 @@ static void test_failsafe_push(void)
 }
 
 /*
- * 数据链路是尽力而为：空闲时不发空帧，也不判失联（见 doc/04-protocol.md 3.6）。
+ * 数据链路是尽力而为：空闲时不发空帧，也不判失联（见 doc/09-protocol.md 3.7）。
  * 所以空闲再久也不能反复重建会话——否则一有数据要发就先撞上握手，头几帧白等一个
  * BEACON 周期。
  */
@@ -1685,7 +1685,7 @@ static void test_bringup_no_handshake(void)
 
 /*
  * 上板调试档之三：关掉上行遥测。控制链路退化成"只下行 RC"：TX 不再开遥测接收
- * 窗口（失联判定由 App 一并关掉，见 doc/02-platform.md 第 4 节），RX 也不再发。
+ * 窗口（失联判定由 App 一并关掉，见 doc/12-debug.md 第 3 节），RX 也不再发。
  */
 static void test_bringup_no_telemetry(void)
 {
@@ -1715,7 +1715,7 @@ static void test_bringup_no_telemetry(void)
 }
 
 /*
- * 连接态周期 BEACON（doc/04-protocol.md 5.1）：两端晶振差会让跳频索引慢慢错开，
+ * 连接态周期 BEACON（doc/09-protocol.md 5.1）：两端晶振差会让跳频索引慢慢错开，
  * RX 踩空之后靠这个帧把索引拉回来。这里直接把索引挪开 4 格来模拟漂移。
  */
 static void test_hop_resync(void)
@@ -1763,7 +1763,7 @@ static void test_hop_resync(void)
 }
 
 /*
- * 对端重启后的自动重连（doc/04-protocol.md 3.5 那条已知限制的解法）：RX 重启
+ * 对端重启后的自动重连（doc/09-protocol.md 3.5 那条已知限制的解法）：RX 重启
  * 后链路状态全丢，只剩 NVS 里的配对记录；TX 这边还在跑，周期 BEACON 会让它重新
  * 握手。两条链路都要能自己回来。
  */
@@ -1876,7 +1876,7 @@ static void test_beacon_replay_guard(void)
 }
 
 /*
- * 调制按链路各自选（doc/04-protocol.md 4.1.1）：控制链路跑 LoRa 远距档，
+ * 调制按链路各自选（doc/07-architecture.md 第 3 节）：控制链路跑 LoRa 远距档，
  * 数据链路留在 2.4G 跑 FLRC。LoRa 的同步字是另派生的 1 字节（最高位当 private
  * bit），不能沿用 FLRC 那 4 字节。
  */
@@ -1925,7 +1925,7 @@ static void test_lora_control(void)
 }
 
 /*
- * 1000 Hz 的协议侧（doc/04-protocol.md 4.1）：帧周期压到 1 ms 时，超帧、跳频
+ * 1000 Hz 的协议侧（doc/09-protocol.md 4.1）：帧周期压到 1 ms 时，超帧、跳频
  * 锁步、遥测/数据窗口的稀疏化、连接态重同步都不能乱。射频侧要直调驱动才能真的
  * 跑到 1000 Hz（RAC 的排期粒度是毫秒），这里只钉协议与时间常数。
  */

@@ -54,7 +54,7 @@
  * 硬件看门狗（RP2350 wdt0）：应用起来就武装，主循环里喂。崩溃（fatal error）
  * 或线程卡死时芯片自动复位，配合 MCUboot 的 test/revert：没被确认的镜像会被
  * 回滚，回滚后没有可用镜像就停在串口恢复里——上板调试时不用再按 BOOTSEL。
- * 见 doc/02-platform.md 第 5 节。
+ * 见 doc/08-firmware.md 第 5 节。
  */
 &wdt0 {
 	status = "okay";
@@ -82,7 +82,7 @@
 };
 
 /*
- * 板载 WS2812B（GP16，单像素）当状态灯，见 doc/09-ux.md：
+ * 板载 WS2812B（GP16，单像素）当状态灯，见 doc/11-ux.md：
  * 用 PIO0 驱动，接法与上游 waveshare/rp2350_zero 一致。
  */
 &pio0 {
@@ -109,7 +109,7 @@
 };
 
 /*
- * USB 上三个 CDC（doc/02-platform.md 第 2 节）：
+ * USB 上三个 CDC（doc/08-firmware.md 第 1 节）：
  *   cdc_acm_uart0 = CRSF（与 UART0 同一个逻辑端口，别名 zlrs-crsf-cdc）
  *   cdc_acm_uart1 = 数据口（与 UART1 同一个逻辑端口，别名 zlrs-data-cdc）
  *   cdc_acm_uart2 = 控制台：kernel log 与 shell（chosen 里的 zephyr,console）

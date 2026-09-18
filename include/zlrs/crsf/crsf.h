@@ -4,7 +4,7 @@
  *
  * 取舍：CRSF 在我们的方案里只是端口格式（手台 ↔ 模块、接收机 ↔ 飞控），
  * 与 ExpressLRS 的空口协议无关；地址字段解析时不校验（手台与飞控用的地址
- * 不止一个），发送时由调用方给出，见 doc/02-platform.md 第 2 节。
+ * 不止一个），发送时由调用方给出，见 doc/08-firmware.md 第 1 节。
  *
  * SPDX-License-Identifier: Apache-2.0
  */

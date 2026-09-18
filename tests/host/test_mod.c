@@ -91,7 +91,7 @@ static void test_mod_lora_reference(void)
 }
 
 /*
- * 10 Hz 的 LoRa 远距档要装得下"发 RC + 收遥测"：这就是 doc/04-protocol.md 4.1.1 里那句
+ * 10 Hz 的 LoRa 远距档要装得下"发 RC + 收遥测"：这就是 doc/07-architecture.md 第 3 节 里那句
  * "超帧周期由最慢的那条链路决定"的定量版本。
  */
 static void test_mod_lora_control_budget(void)

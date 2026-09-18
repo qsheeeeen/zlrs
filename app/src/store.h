@@ -1,5 +1,5 @@
 /*
- * 持久化：根密钥、设备标识与配对记录放 NVS，见 doc/05-security.md 第 2 节。
+ * 持久化：根密钥、设备标识与配对记录放 NVS，见 doc/10-security.md 第 2 节。
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -14,7 +14,7 @@
 int zlrs_store_init(void);
 
 /*
- * 配对记录：对端身份 + 配对时的两个 nonce（见 doc/05-security.md 第 2、3 节）。
+ * 配对记录：对端身份 + 配对时的两个 nonce（见 doc/10-security.md 第 2、3 节）。
  * 一次配对就是一条记录，没有别的形态。
  */
 typedef struct {

@@ -36,7 +36,7 @@ config UART_CONSOLE
 # 注意这里不给 CDC_ACM_SERIAL_INITIALIZE_AT_BOOT 默认值：那个辅助实现只注册
 # 第一块 CDC，应用侧要用 ZLRS_APP_USB（app/src/usb_dev.c）自己建 context 并
 # 注册全部三块；bootloader 另算——它只有两块 CDC，且 app/sysbuild/mcuboot.conf
-# 里自己把这个开关打开（见 doc/02-platform.md 第 5 节）。
+# 里自己把这个开关打开（见 doc/08-firmware.md 第 5 节）。
 config USB_DEVICE_STACK_NEXT
 	default y
 

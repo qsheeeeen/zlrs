@@ -1,6 +1,6 @@
 # LR2021 关键参数
 
-来源：Semtech LR2021 Final Datasheet Rev. 1.1（DS.LR2021，2025-10-14，共 236 页）。这里只摘录与 zlrs 相关的部分：选型依据、速率与灵敏度、模式切换时序、SPI/IRQ 接口与引脚。我们怎么用这些参数见 [03-architecture](03-architecture.md) 与 [04-protocol](04-protocol.md)，板级标定见[板级 README](../boards/zlrs/rp2350_zero_core2021/README.md)。
+来源：Semtech LR2021 Final Datasheet Rev. 1.1（DS.LR2021，2025-10-14，共 236 页）。这里只摘录与 zlrs 相关的部分：速率与灵敏度、模式切换时序、SPI/IRQ 接口与引脚。我们怎么用这些参数见 [07-architecture](07-architecture.md) 与 [09-protocol](09-protocol.md)，板级标定见[板级 README](../boards/zlrs/rp2350_zero_core2021/README.md)。
 
 ## 器件定位
 
@@ -8,12 +8,12 @@
 - **半双工**收发机，单 switchless 前端，LF/HF 两路 PA/LNA。
 - 频率范围 150–2500 MHz：sub-GHz 150–960 MHz 走 LF 路径；S-band 与 2.4 GHz ISM 走 HF 路径。
 - 与 SX126x / SX127x / SX128x / LR11xx 家族向后兼容；FLRC 与 SX128x 的 FLRC 兼容。
-- 因此同一时刻只能在一个频段工作，但频段间切换开销很小（见下面的切换时间）。
+- 同一时刻只能在一个频段工作，但频段间切换开销很小。
 
 ## 调制与速率
 
 - LoRa、(G)FSK、(G)MSK、FLRC、4-FSK、O-QPSK、OOK、DBPSK（仅发）、LR-FHSS（仅发）。
-- FLRC 最高 2.6 Mbps，且 **sub-GHz 与 2.4 GHz 都支持**。
+- FLRC 最高 2.6 Mbps，sub-GHz 与 2.4 GHz 都支持。
 
 ### FLRC 速率与带宽（Table 18-1）
 
@@ -94,7 +94,7 @@ LoRa 符号率 = `BW / 2^SF`。前导码建议 SF5/SF6 用 ≥12 符号，其余
 | `TSTXRX` | Tx → Rx | 91 µs |
 | `TSRXTX` | Rx → Tx | 107 µs |
 
-超帧里怎么用这些数字见 [03-architecture](03-architecture.md) 第 4 节。
+超帧里怎么用这些数字见 [07-architecture](07-architecture.md) 第 4 节。
 
 ## SPI 与主机接口
 
@@ -145,4 +145,4 @@ LoRa 符号率 = `BW / 2^SF`。前导码建议 SF5/SF6 用 ≥12 符号，其余
 - `RFO_HF`：HF PA 输出（2.4 GHz）
 - `VTCXO`：可为外部 TCXO 供电，电压由 `SetTcxoMode` 配置
 
-switchless 前端要求 LF/HF 各自的匹配网络共存，若只用单频段可以简化。本板用的 Core2021 模块自带匹配网络，且用的是晶振而非 TCXO，见[板级 README](../boards/zlrs/rp2350_zero_core2021/README.md)。
+switchless 前端要求 LF/HF 各自的匹配网络共存。本板用的 Core2021 模块自带匹配网络，且用的是晶振而非 TCXO（`tcxo-*` 保持关断，`reg-mode` 用 DC/DC），见[板级 README](../boards/zlrs/rp2350_zero_core2021/README.md)。

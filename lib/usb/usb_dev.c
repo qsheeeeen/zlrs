@@ -73,7 +73,7 @@ static int zlrs_usb_init(void)
 	int err;
 
 	/*
-	 * USB 可裁（doc/02-platform.md 第 3 节）：失败只报警不住手——SYS_INIT 返回非零会
+	 * USB 可裁（doc/08-firmware.md 第 4 节）：失败只报警不住手——SYS_INIT 返回非零会
 	 * 让 Zephyr 停住整机，而 USB 起不来不该拖死只能跑串口/空口的板子。
 	 */
 	err = zlrs_usb_add_descriptors();

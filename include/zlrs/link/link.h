@@ -1,5 +1,5 @@
 /*
- * 链路层：一条链路一份实例，跑状态机与超帧时隙，见 doc/04-protocol.md 第 3、4 节。
+ * 链路层：一条链路一份实例，跑状态机与超帧时隙，见 doc/09-protocol.md 第 3、4 节。
  *
  * 每个超帧：zlrs_link_slot() 取事务 → radio.submit() → 完成后 zlrs_link_complete()，
  * 帧尾再 zlrs_link_tick() 走超时与状态迁移。本层不依赖 Zephyr，也不碰射频芯片。
@@ -27,13 +27,13 @@ extern "C" {
 #define ZLRS_LINK_CONTROL 0U
 #define ZLRS_LINK_DATA 1U
 
-/* 超帧时隙，见 doc/04-protocol.md 4.1 */
+/* 超帧时隙，见 doc/09-protocol.md 4.1 */
 #define ZLRS_SLOT_CTL_DOWN 0U /* TX -> RX：RC 帧（RX 侧是接收窗口） */
 #define ZLRS_SLOT_CTL_UP 1U   /* RX -> TX：TLM 帧（TX 侧是接收窗口） */
 #define ZLRS_SLOT_DATA_A 2U   /* 数据窗口前半：TX -> RX */
 #define ZLRS_SLOT_DATA_B 3U   /* 数据窗口后半：RX -> TX */
 
-/* 链路状态，见 doc/04-protocol.md 3.2 */
+/* 链路状态，见 doc/09-protocol.md 3.2 */
 typedef enum {
 	ZLRS_STATE_UNCONFIGURED = 0,
 	ZLRS_STATE_UNPAIRED,
@@ -54,7 +54,7 @@ typedef struct {
 	zlrs_profile_t profile;
 	/*
 	 * 调制档：FLRC 的速率档或 LoRa 的 SF/带宽/编码率/前导码，见
-	 * doc/04-protocol.md 4.1.1。LoRa 的同步字由配对钥匙派生，链路层自己填
+	 * doc/07-architecture.md 第 3 节。LoRa 的同步字由配对钥匙派生，链路层自己填
 	 * mod.sync_byte（外面给 0 就行）。
 	 */
 	zlrs_mod_cfg_t mod;
@@ -70,13 +70,13 @@ typedef struct {
 	uint16_t arq_timeout_ms;
 	/*
 	 * 逐包跳频。0 = 固定在同步信道（跳频表的第 0 个位置就是同步信道），
-	 * 上板调试时先把"收发时序"与"跳频表"分开看，见 doc/02-platform.md 第 4 节。
+	 * 上板调试时先把"收发时序"与"跳频表"分开看，见 doc/12-debug.md 第 3 节。
 	 */
 	uint8_t hopping;
 	/*
 	 * 会话三次握手。0 = 直接用配对级的 link_auth 当会话钥匙：BEACON 之后的
 	 * 应答只需要 SESS_RESP，对端用第一条数据帧当确认。少一段钥匙派生、少一条
-	 * 消息，代价是没有逐会话的钥匙轮换——只用于上板调试，见 doc/05-security.md
+	 * 消息，代价是没有逐会话的钥匙轮换——只用于上板调试，见 doc/10-security.md
 	 * 第 3 节。
 	 */
 	uint8_t handshake;
@@ -135,7 +135,7 @@ typedef struct {
 #define ZLRS_LINK_TLM_MAX_LEN 32U
 
 /*
- * ARQ profile（数据链路可选档，见 doc/04-protocol.md 4.3）：累计 ACK + 固定窗口
+ * ARQ profile（数据链路可选档，见 doc/09-protocol.md 4.3）：累计 ACK + 固定窗口
  * + 超时重传。窗口是"从队首开始连续的若干帧"，只有收到 ACK 才把对应字节从
  * 队列里提交出去，所以重传不需要额外缓存。
  */
@@ -159,7 +159,7 @@ typedef struct {
 	/*
 	 * 配对时交换的两个 nonce（发起方在前），参与 pair_key 派生，并跟着配对
 	 * 记录落盘：每次配对都换一份，旧录制里的会话就再也算不出来。
-	 * 见 doc/05-security.md 第 3 节。
+	 * 见 doc/10-security.md 第 3 节。
 	 */
 	uint8_t pair_salt[ZLRS_PAIR_SALT_LEN];
 	uint8_t pair_key[ZLRS_KEY_LEN];
@@ -167,18 +167,18 @@ typedef struct {
 	 * 每包 tag 的钥匙按"发送方 → 接收方"分开，上下文是这一对的双方 dev_id：
 	 * out 打本机发出去的帧（本机在前），in 校验对端发来的帧（对端在前）。
 	 * 两端各算一次就配成一对，不需要协商，也不掺角色。混成一把的话，反射回来
-	 * 的自己的帧会通过 tag 校验，见 doc/05-security.md 第 3 节。
+	 * 的自己的帧会通过 tag 校验，见 doc/10-security.md 第 3 节。
 	 */
 	uint8_t link_auth_out[ZLRS_KEY_LEN];
 	uint8_t link_auth_in[ZLRS_KEY_LEN];
 	uint8_t sync_word[ZLRS_SYNC_WORD_LEN];
-	/* LoRa 的同步字只有 1 字节 + private bit，见 doc/04-protocol.md 5.3 */
+	/* LoRa 的同步字只有 1 字节 + private bit，见 doc/09-protocol.md 5.3 */
 	uint8_t lora_sync;
 	uint8_t session_key_out[ZLRS_KEY_LEN];
 	uint8_t session_key_in[ZLRS_KEY_LEN];
 	bool session_valid;
 	/*
-	 * 会话建立与配对同一个形状（见 doc/04-protocol.md 3.5）：发起方出 nonce_t，
+	 * 会话建立与配对同一个形状（见 doc/09-protocol.md 3.5）：发起方出 nonce_t，
 	 * 响应方出 nonce_r，两个 nonce 一起进 KDF，最后一条消息带着 nonce_r 证明
 	 * 对端算出了同一把钥匙。RX 只在收到这条证明之后才采用会话，所以重放旧
 	 * BEACON 拿不到任何旧会话的钥匙。
@@ -277,7 +277,7 @@ void zlrs_link_set_peer(zlrs_link_t *link, const uint8_t peer_id[ZLRS_DEV_ID_LEN
 /* 按键：长按触发配对（换绑也走这里，新记录顶掉旧的） */
 void zlrs_link_press(zlrs_link_t *link, uint32_t now_ms);
 
-/* TX 侧设置配对时下发给 RX 的失控值（RC 载荷，见 doc/04-protocol.md 3.4） */
+/* TX 侧设置配对时下发给 RX 的失控值（RC 载荷，见 doc/09-protocol.md 3.4） */
 void zlrs_link_set_failsafe(zlrs_link_t *link, const uint8_t *payload, uint16_t len);
 
 /* 超帧时隙：返回待提交的事务，没有则返回 NULL */

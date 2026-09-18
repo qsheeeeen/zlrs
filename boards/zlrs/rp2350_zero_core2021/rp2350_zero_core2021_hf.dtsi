@@ -4,7 +4,7 @@
  * sub-G 的标定表按 SKU 分家：HF（850–930 MHz）与 LF（410–510 MHz）的 PA 网络
  * 不同，功率表与前端标定频点都不能共用。表里给的是参考值（HF 取自 Semtech
  * Wio-LR2021 @902 MHz，LF 是 470 MHz 实测），上板后按 Core2021 的 PA 网络重标
- * ——验收标准见 doc/10-roadmap.md 的 M0。
+ * ——验收标准见 doc/13-roadmap.md。
  *
  * SPDX-License-Identifier: Apache-2.0
  */

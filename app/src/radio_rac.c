@@ -1,6 +1,6 @@
 /*
  * 射频移植层（RAC 后端）：CONFIG_ZLRS_APP_RADIO=y 时用这份。
- * 接口与契约见 radio_port.h，回调时序见 doc/03-architecture.md 7.2。
+ * 接口与契约见 radio_port.h，回调时序见 doc/07-architecture.md 6.2。
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -270,7 +270,7 @@ static int port_submit(void *ctx, const zlrs_radio_req_t *req)
 
 	/*
 	 * 调制按链路各自选：控制链路可能是 LoRa 远距档，数据链路始终是 FLRC。
-	 * 见 doc/04-protocol.md 4.1.1。
+	 * 见 doc/07-architecture.md 第 3 节。
 	 */
 	if (req->mod.modulation == (uint8_t)ZLRS_MOD_LORA) {
 		rac->modulation_type = SMTC_RAC_MODULATION_LORA;

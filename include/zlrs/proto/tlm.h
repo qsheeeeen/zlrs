@@ -2,7 +2,7 @@
  * 空口遥测载荷：RX 回报本侧测到的链路质量，TX 再组装成 CRSF 统计帧（0x14）。
  * 不复用 CRSF 帧当载荷：那是地面侧格式（含地址与 CRC），空口上多带没意义。
  * 载荷数字是 uplink 方向（RX 测 TX→RX），downlink 由 TX 自己测，见
- * doc/03-architecture.md 第 3 节。
+ * doc/07-architecture.md 第 3 节。
  *
  * SPDX-License-Identifier: Apache-2.0
  */

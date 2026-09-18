@@ -6,7 +6,7 @@
 # 一条命令升级一台健康设备：触发进恢复 → 等 bootloader 的恢复口 → 上传签名镜像 →
 # 等应用回来。省掉"拔插 USB / 按复位键"和"手动两步"。
 #
-# 流程（见 doc/02-platform.md 第 5 节）：
+# 流程（见 doc/08-firmware.md 第 5 节）：
 #   1. 往应用模式的数据口发 16 字节魔数（复用 scripts/zlrs-recovery.py），
 #      应用置 boot mode 后重启；
 #   2. MCUboot 停在串口恢复，USB 重新枚举成 "ZLRS MCUBOOT"（两块 CDC：
@@ -97,7 +97,7 @@ def upload_command(client: str, port: str, image: Path, baud: int,
 
     confirm=False（默认）走 MCUboot 的 test 语义：换槽进新镜像，没确认就回滚——
     有回滚兜底，但要走一次换槽（这块板上 `swap using offset` 还没验证通过，见
-    doc/10-roadmap.md 的 M1）。
+    doc/13-roadmap.md）。
     confirm=True 直接写 slot0 并标记为永久：不换槽、没有回滚，上板调试时用来
     绕开换槽这条路。
     """
@@ -213,7 +213,7 @@ def main() -> int:
         print(f"[2/4] 等 bootloader 的恢复口（名字里有 {RECOVERY_PORT_HINT}，最多 {args.timeout:g} s）")
         args.recovery_port = wait_for_by_id(RECOVERY_PORT_HINT, args.timeout)
         if args.recovery_port is None:
-            print("没等到恢复口。设备起来了但没进恢复？检查 boot mode 那块标志（见 doc/02-platform.md 第 5 节），"
+            print("没等到恢复口。设备起来了但没进恢复？检查 boot mode 那块标志（见 doc/08-firmware.md 第 5 节），"
                   "或用 --recovery-port 指明端口", file=sys.stderr)
             return 1
     print(f"    恢复口：{args.recovery_port}")

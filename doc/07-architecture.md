@@ -1,0 +1,127 @@
+# 系统架构
+
+本文写系统怎么搭起来：两条链路怎么分工、频段角色怎么配、分时怎么排、时间预算怎么算、代码怎么分层、线程与回调怎么约定。产品形态见 [01-product](01-product.md)，平台见 [03-platform](03-platform.md)，协议见 [09-protocol](09-protocol.md)。
+
+## 1. 两条链路
+
+| 链路 | 默认频段 | 调制 | 承载 | 优化目标 |
+| --- | --- | --- | --- | --- |
+| 控制链路 | sub-GHz | FLRC | CRSF（通道下行 + 遥测上行） | 距离与稳定性 |
+| 数传链路 | 2.4 GHz | FLRC | 串口透传字节流 | 帧率与吞吐 |
+
+两条链路各跑一份相同的状态机，**互相独立**：一条断了不影响另一条。但它们共用一颗射频、一个 MCU、一路供电——**不是冗余链路**，只是在干扰层面互为备份；射频芯片或电源故障会让两条一起失效。
+
+不做频段自动故障切换：切换判据需要真实干扰数据才能标定，而两条链路状态独立已经覆盖了干扰层面的备份需求。
+
+## 2. 频段角色
+
+[01-product](01-product.md) 的三种形态，由编译期配置选出：`CONFIG_ZLRS_APP_BAND_ROLE_SUBG_CONTROL`（双频混合，默认）或 `CONFIG_ZLRS_APP_BAND_ROLE_SUBG_DATA`（纯 2.4G）：
+
+| 形态 | 控制链路 | 数传链路 |
+| --- | --- | --- |
+| 纯 2.4G 高速控制 | 2.4G 独占（`RACING_CONTROL_RATE_BPS/_HZ`，默认 2.6 Mbps / 500 Hz） | 关闭（`LINK_DATA=n`） |
+| 纯 2.4G 高速数传 | 关闭（`LINK_CONTROL=n`） | 2.4G |
+| 双频混合 | sub-G（远距） | 2.4G |
+
+实现上几乎没有额外代价——同步字的派生标签按**角色**命名（`sync/control` / `sync/data`），不是按频段命名，所以角色互换不影响密钥结构（[10-security](10-security.md) 第 3 节）。
+
+**法规门只作用在 sub-G 那条链路上**：2.4G 没有地区表。控制链路跑 sub-G 时吃功率/速率上限与占空比。
+
+超帧周期按"最慢的那条链路"算：数传窗口按 `data_every_n` 摊进每一帧，控制帧率被它拖下来多少由时间计划算出来。
+
+## 3. 分时与调度
+
+分时不自己写调度器，而是把两条链路注册成两个 RAC 客户端，用优先级让 radio planner 仲裁：
+
+| 链路 | RAC 优先级 | 调度方式 |
+| --- | --- | --- |
+| 控制链路 | `RAC_HIGH_PRIORITY` | 超帧由应用排序，RAC 侧 `ASAP` |
+| 数传链路 | `RAC_MEDIUM_PRIORITY` | 控制链路空出来的时隙，`ASAP` |
+
+时隙顺序由应用保证：RAC 的排期粒度是毫秒，而超帧时隙是亚毫秒级，所以应用按超帧推进、逐个提交事务，RAC 只负责尽快执行。超帧的具体形状见 [09-protocol](09-protocol.md) 第 4 节。
+
+两条链路默认都用 FLRC。改调制类型（FLRC ↔ LoRa）在射频侧比单纯改频率贵得多，共用调制能让每次切换只改频率。**调制按链路各自选**：默认 `CONFIG_ZLRS_APP_CONTROL_MODULATION_FLRC`，要更远时切 `CONFIG_ZLRS_APP_CONTROL_MODULATION_LORA`（默认 SF7 / BW125 / CR 4/5）；窄带地区用 0.325 Mbps 的窄带 FLRC，数传链路始终留在 2.4G 跑 FLRC。
+
+## 4. 时序预算与速率档
+
+取自 LR2021 datasheet Rev 1.1 Table 3-23（typical 值），完整表见 [06-radio](06-radio.md)：
+
+| 符号 | 含义 | typ |
+| --- | --- | --- |
+| `PLL_LOCK` | 合成器锁定 | 32 µs |
+| `TSFSTX1` | FS → Tx | 45 µs |
+| `TSFSRX2` | FS → Rx（FSK／FLRC） | 37 µs |
+| `TSTXRX` | Tx → Rx | 91 µs |
+| `TSRXTX` | Rx → Tx | 107 µs |
+| `TSXORX` | STDBY_XOSC → Rx | 84 µs |
+| `TSXOTX` | STDBY_XOSC → Tx | 76 µs |
+
+一次「sub-G 发 → 2.4G 收」的切换约 `Tx→FS(54) + PLL(32) + FS→Rx(37) ≈ 123 µs`，来回约 250 µs。按 150 Hz 控制帧率（周期 6.67 ms）算，切换开销约 3.7%。
+
+收发路径按频率自动分流：`ral_lr20xx_bsp_get_rx_cfg()` 在 `freq >= 1.6 GHz` 时选 HF 通道，否则 LF——所以我们只管填频率。
+
+### 速率档
+
+| 档位 | FLRC 原始速率 | 有效速率（CR 3/4） | 用途 |
+| --- | --- | --- | --- |
+| 近距高速 | 2.6 Mbps | 1.95 Mbps | 2.4G 数传默认；纯 2.4G 控制 |
+| 均衡 | 1.3 Mbps | 0.975 Mbps | 双频混合的控制链路 |
+| 远距 | 0.65 Mbps | 0.488 Mbps | 控制链路降级 |
+| 兜底 | 0.325 Mbps | 0.244 Mbps | 窄带地区 |
+
+粗算：6.67 ms 周期里分 40% 给 2.4G 数传 ≈ 650 字节/周期 ≈ **97 kB/s**。
+
+## 5. 软件分层
+
+```
+include/zlrs/proto/   协议核心头文件
+lib/proto/            协议核心：帧编解码、分片重组、FHSS 跳频表、
+                      密钥派生与标签。密码学原语在设备侧走 PSA
+                      （lib/proto/crypto_psa.c），主机测试另有一份
+                      等价的纯 C 实现（tests/host/crypto_soft.c）
+lib/link/             链路层：会话与配对、密钥派生与标签、
+                      把帧翻译成 RAC 事务；可靠重传与速率自适应策略
+lib/crsf/             CRSF 端口编解码：RC 通道帧与链路统计帧
+lib/config/           配置协议：帧格式与命令分发（落盘通过回调交给应用）
+lib/region/           地区配置层：信道表、功率上限、占空比记账
+lib/led/              状态灯模式引擎：状态 → 颜色与节奏
+lib/usb/              USB 设备栈：usbd context + devicetree 里的全部 CDC
+app/                  Zephyr 应用：线程与超帧、端口层、射频移植、按键与持久化
+tests/host/           主机侧单测（不依赖 Zephyr）
+```
+
+分层原则：协议核心与链路层都能在主机上编译测试（同一个 `lib/`，同一份源码）；`lib/link/` 只依赖射频抽象接口，`app/` 才依赖 Zephyr 与 USP。射频侧的一切——SPI 时序、校准、频段选择、收发调度——都在 `usp_zephyr` 里。
+
+发射前还要过一道**地区门**：`lib/region` 给出该地区的信道表、功率上限与占空比上限，额度用完的时隙就让出去，次数计入日志。见 [09-protocol](09-protocol.md) 5.2。
+
+## 6. 线程模型与回调契约
+
+### 6.1 线程划分
+
+| 线程 | 优先级 | 职责 |
+| --- | --- | --- |
+| RAC 线程（USP 提供） | `-4` | 跑 radio planner，派发收发回调 |
+| 链路线程（`main`） | `-2` | 链路状态机、组装/提交事务、处理结果 |
+| 串口 | 中断上下文 | 环形缓冲收发，不做射频相关决策 |
+
+采用协作式多线程（`CONFIG_USP_MAIN_THREAD=y`、`CONFIG_USP_THREADS_MUTEXES=n`）：RAC API 直调，没有互斥锁开销；链路逻辑全是 I/O 驱动、会频繁让出。代价是串口突发处理太久会推迟射频事件，所以串口收发切成小块并及时让出。USP 的另外两种线程模式见 usp_zephyr 的 `doc/THREAD_MANAGEMENT.md`。
+
+配置模式不在链路线程里跑：它由主循环（`main()`）进入，会话期间射频停（见 [08-firmware](08-firmware.md) 第 2 节）。
+
+### 6.2 回调契约
+
+`callback_post_radio_transaction` 在 RAC 线程上下文里执行，只允许：
+
+1. 记录 `rp_status_t` 与收到的长度；
+2. 把结果投递给链路线程（`k_sem` / `k_msgq`）；
+3. 返回。
+
+不在回调里做校验、不在回调里翻协议栈、不在回调里碰串口，**也不在回调里提交下一个事务**：抢占式 + 互斥锁模式下那是对 `rac_api_mutex` 重复加锁，属于官方示例未覆盖的路径。
+
+### 6.3 与 USP 的集成约束
+
+RAC 的初始化由应用负责：`SMTC_SW_PLATFORM_INIT()` 只等 USP 线程就绪，它不会调用 `smtc_rac_init()`——官方示例里是应用自己调。日志模块从 USP v1.1.2 起由 `usp_zephyr` 自己注册，应用侧不用再补 `LOG_MODULE_REGISTER(usp, ...)`。
+
+## 7. 诊断
+
+诊断**不另建通道**：链路质量走 CRSF 既有的链路统计帧（见 [09-protocol](09-protocol.md) 2.7）。数传链路的溢出与丢弃字节数没有现成的 CRSF 字段承载，不上报，只在配置协议的 `STATUS` 里带计数。
