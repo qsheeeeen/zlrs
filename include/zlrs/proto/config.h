@@ -5,8 +5,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef ZLRS_PROTO_CONFIG_H_
-#define ZLRS_PROTO_CONFIG_H_
+#pragma once
 
 /*
  * 空口协议版本：不兼容的改动递增一次，写在 BEACON 里，RX 只认同版本。
@@ -58,4 +57,3 @@
 /* 配置协议里的失控值：就是同一份 22 字节 CRSF 通道载荷 */
 #define ZLRS_CFG_FAILSAFE_LEN ZLRS_RC_PAYLOAD_LEN
 
-#endif /* ZLRS_PROTO_CONFIG_H_ */

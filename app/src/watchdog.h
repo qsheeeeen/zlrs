@@ -4,8 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef ZLRS_APP_WATCHDOG_H_
-#define ZLRS_APP_WATCHDOG_H_
+#pragma once
 
 /* 喂狗：主循环与配置模式的轮询循环里调用。没开看门狗时是空实现 */
 void zlrs_watchdog_feed(void);
@@ -17,4 +16,3 @@ void zlrs_watchdog_disarm(void);
 /* 重新武装（配置会话这类长时间阻塞的操作结束后调用）。没开时是空实现 */
 void zlrs_watchdog_arm(void);
 
-#endif /* ZLRS_APP_WATCHDOG_H_ */

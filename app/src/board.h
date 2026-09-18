@@ -4,8 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef ZLRS_APP_BOARD_H_
-#define ZLRS_APP_BOARD_H_
+#pragma once
 
 #include <zephyr/devicetree.h>
 
@@ -15,4 +14,3 @@
  * 只能从 DT 节点读：/chosen 里自定义前缀的属性 DT 宏读不到（会静默用默认值）。 */
 #define ZLRS_SUBG_BAND DT_PROP(DT_NODELABEL(zlrs_subg_band), band)
 
-#endif /* ZLRS_APP_BOARD_H_ */

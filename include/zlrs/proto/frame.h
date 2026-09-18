@@ -5,8 +5,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef ZLRS_PROTO_FRAME_H_
-#define ZLRS_PROTO_FRAME_H_
+#pragma once
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -79,4 +78,3 @@ uint16_t zlrs_frame_mac_len(const zlrs_frame_t *frame);
 }
 #endif
 
-#endif /* ZLRS_PROTO_FRAME_H_ */

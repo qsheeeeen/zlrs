@@ -7,8 +7,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef ZLRS_APP_PORTS_H_
-#define ZLRS_APP_PORTS_H_
+#pragma once
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -72,4 +71,3 @@ uint32_t zlrs_crsf_port_rx_dropped(void);
  */
 int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe);
 
-#endif /* ZLRS_APP_PORTS_H_ */

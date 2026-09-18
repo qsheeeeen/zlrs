@@ -7,8 +7,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef ZLRS_PROTO_TLM_H_
-#define ZLRS_PROTO_TLM_H_
+#pragma once
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -42,4 +41,3 @@ bool zlrs_tlm_decode(const uint8_t *in, uint16_t len, zlrs_tlm_t *tlm);
 }
 #endif
 
-#endif /* ZLRS_PROTO_TLM_H_ */

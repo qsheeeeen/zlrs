@@ -6,8 +6,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef ZLRS_CONFIG_CONFIG_H_
-#define ZLRS_CONFIG_CONFIG_H_
+#pragma once
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -116,4 +115,3 @@ bool zlrs_cfg_status_decode(const uint8_t *in, uint8_t len, zlrs_cfg_status_t *s
 }
 #endif
 
-#endif /* ZLRS_CONFIG_CONFIG_H_ */

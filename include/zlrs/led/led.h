@@ -6,8 +6,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef ZLRS_LED_LED_H_
-#define ZLRS_LED_LED_H_
+#pragma once
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -46,4 +45,3 @@ zlrs_led_rgb_t zlrs_led_frame(const zlrs_led_input_t *in, uint32_t now_ms);
 }
 #endif
 
-#endif /* ZLRS_LED_LED_H_ */

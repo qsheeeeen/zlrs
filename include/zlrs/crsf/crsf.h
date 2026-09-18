@@ -9,8 +9,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef ZLRS_CRSF_CRSF_H_
-#define ZLRS_CRSF_CRSF_H_
+#pragma once
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -125,4 +124,3 @@ void zlrs_crsf_link_stats_decode(const uint8_t in[ZLRS_CRSF_LINK_STATS_LEN],
 }
 #endif
 
-#endif /* ZLRS_CRSF_CRSF_H_ */

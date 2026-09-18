@@ -5,8 +5,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef ZLRS_APP_LED_PORT_H_
-#define ZLRS_APP_LED_PORT_H_
+#pragma once
 
 #include <stdint.h>
 
@@ -18,4 +17,3 @@ int zlrs_led_port_init(void);
 /* 按状态算出颜色并刷新（内部限速 20 Hz）；now_ms 用链路时基 */
 void zlrs_led_port_update(const zlrs_led_input_t *in, uint32_t now_ms);
 
-#endif /* ZLRS_APP_LED_PORT_H_ */

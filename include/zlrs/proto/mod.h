@@ -6,8 +6,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef ZLRS_PROTO_MOD_H_
-#define ZLRS_PROTO_MOD_H_
+#pragma once
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -63,4 +62,3 @@ uint32_t zlrs_mod_airtime_ms(const zlrs_mod_cfg_t *mod, uint16_t frame_len);
 }
 #endif
 
-#endif /* ZLRS_PROTO_MOD_H_ */

@@ -5,8 +5,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef ZLRS_REGION_REGION_H_
-#define ZLRS_REGION_REGION_H_
+#pragma once
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -138,4 +137,3 @@ void zlrs_region_control_plan(const zlrs_plan_req_t *req, zlrs_control_plan_t *o
 }
 #endif
 
-#endif /* ZLRS_REGION_REGION_H_ */

@@ -5,8 +5,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef ZLRS_LINK_RADIO_H_
-#define ZLRS_LINK_RADIO_H_
+#pragma once
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -48,4 +47,3 @@ typedef struct {
 }
 #endif
 
-#endif /* ZLRS_LINK_RADIO_H_ */

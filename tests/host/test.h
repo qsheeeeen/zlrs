@@ -4,8 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef ZLRS_HOST_TEST_H_
-#define ZLRS_HOST_TEST_H_
+#pragma once
 
 #include <stddef.h>
 #include <stdint.h>
@@ -36,4 +35,3 @@ void test_led(void);
 void test_power(void);
 void test_fuzz(void);
 
-#endif /* ZLRS_HOST_TEST_H_ */

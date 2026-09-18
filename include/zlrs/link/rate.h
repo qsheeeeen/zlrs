@@ -5,8 +5,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef ZLRS_LINK_RATE_H_
-#define ZLRS_LINK_RATE_H_
+#pragma once
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -63,4 +62,3 @@ const zlrs_mod_cfg_t *zlrs_rate_current_mod(const zlrs_rate_ctl_t *ctl);
 }
 #endif
 
-#endif /* ZLRS_LINK_RATE_H_ */

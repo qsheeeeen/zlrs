@@ -4,8 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef ZLRS_APP_STORE_H_
-#define ZLRS_APP_STORE_H_
+#pragma once
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -39,4 +38,3 @@ int zlrs_store_save_baud(uint32_t baud);
 /* 把 64 个十六进制字符解析成根密钥，成功返回 0 */
 int zlrs_store_parse_hex_key(const char *hex, uint8_t out[ZLRS_KEY_LEN]);
 
-#endif /* ZLRS_APP_STORE_H_ */

@@ -6,8 +6,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef ZLRS_LINK_POWER_H_
-#define ZLRS_LINK_POWER_H_
+#pragma once
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -62,4 +61,3 @@ int8_t zlrs_power_current_dbm(const zlrs_power_ctl_t *ctl);
 }
 #endif
 
-#endif /* ZLRS_LINK_POWER_H_ */

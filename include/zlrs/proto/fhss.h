@@ -5,8 +5,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef ZLRS_PROTO_FHSS_H_
-#define ZLRS_PROTO_FHSS_H_
+#pragma once
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -55,4 +54,3 @@ void zlrs_fhss_set_index(zlrs_fhss_t *fhss, uint16_t index);
 }
 #endif
 
-#endif /* ZLRS_PROTO_FHSS_H_ */

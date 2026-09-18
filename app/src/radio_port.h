@@ -5,8 +5,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef ZLRS_APP_RADIO_PORT_H_
-#define ZLRS_APP_RADIO_PORT_H_
+#pragma once
 
 #include <stdint.h>
 
@@ -35,4 +34,3 @@ void zlrs_radio_port_abort(void);
 /* 与射频后端同一个时间基（k_uptime_get_32） */
 uint32_t zlrs_radio_port_now_ms(void);
 
-#endif /* ZLRS_APP_RADIO_PORT_H_ */

@@ -5,8 +5,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef ZLRS_PROTO_FRAG_H_
-#define ZLRS_PROTO_FRAG_H_
+#pragma once
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -45,4 +44,3 @@ int zlrs_reasm_push(zlrs_reasm_t *reasm, const zlrs_frame_t *frame, uint32_t now
 }
 #endif
 
-#endif /* ZLRS_PROTO_FRAG_H_ */

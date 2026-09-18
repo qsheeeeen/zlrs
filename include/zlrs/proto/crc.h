@@ -4,8 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef ZLRS_PROTO_CRC_H_
-#define ZLRS_PROTO_CRC_H_
+#pragma once
 
 #include <stddef.h>
 #include <stdint.h>
@@ -21,4 +20,3 @@ uint8_t zlrs_crc8(const uint8_t *data, size_t len);
 }
 #endif
 
-#endif /* ZLRS_PROTO_CRC_H_ */

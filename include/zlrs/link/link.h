@@ -7,8 +7,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef ZLRS_LINK_LINK_H_
-#define ZLRS_LINK_LINK_H_
+#pragma once
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -309,4 +308,3 @@ void zlrs_link_set_tlm(zlrs_link_t *link, const uint8_t *payload, uint16_t len);
 }
 #endif
 
-#endif /* ZLRS_LINK_LINK_H_ */

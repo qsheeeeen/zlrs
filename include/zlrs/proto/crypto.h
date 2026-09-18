@@ -6,8 +6,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef ZLRS_PROTO_CRYPTO_H_
-#define ZLRS_PROTO_CRYPTO_H_
+#pragma once
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -51,4 +50,3 @@ bool zlrs_ct_equal(const uint8_t *a, const uint8_t *b, size_t len);
 }
 #endif
 
-#endif /* ZLRS_PROTO_CRYPTO_H_ */
