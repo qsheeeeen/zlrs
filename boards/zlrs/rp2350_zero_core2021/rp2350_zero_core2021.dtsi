@@ -101,8 +101,13 @@
 			status = "okay";
 			gpios = <&gpio0 16 GPIO_ACTIVE_HIGH>;
 			chain-length = <1>;
-			color-mapping = <LED_COLOR_ID_RED
-					 LED_COLOR_ID_GREEN
+			/*
+			 * WS2812B 的物理字节顺序是 GRB：这里要按灯珠的顺序声明，
+			 * 否则红绿互换（实测发红显示绿、发蓝显示紫）。上游
+			 * waveshare rp2350_zero 写的是 RGB，是同一个坑。
+			 */
+			color-mapping = <LED_COLOR_ID_GREEN
+					 LED_COLOR_ID_RED
 					 LED_COLOR_ID_BLUE>;
 			reset-delay = <280>;
 			frequency = <DT_FREQ_K(800)>;
