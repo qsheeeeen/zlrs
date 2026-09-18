@@ -802,6 +802,39 @@ static void report(uint32_t now_ms)
 	}
 #endif
 
+#if IS_ENABLED(CONFIG_ZLRS_APP_SUB_BAND_MIX)
+	/*
+	 * 子带混合自适应（doc/09-protocol.md 5.1）：LQ 掉了就把时隙往 sub-G 挪
+	 * （顺序由链路层定：遥测 → 数传 → RC），LQ 好了再挪回来。上限受地区
+	 * 占空比约束（zlrs_region_mix_level），每秒最多动一档。
+	 */
+	{
+		static uint32_t mix_last_ms;
+		static uint8_t mix_level;
+		uint8_t want = mix_level;
+		const uint32_t window_ms = (uint32_t)(4U * (frame_period_us / 1000U));
+		const uint32_t airtime_us =
+			zlrs_mod_airtime_us(&control_mod, CTL_FRAME_LEN);
+		const uint8_t cap = zlrs_region_mix_level(CONTROL_ON_SUBG ? region : NULL,
+							  window_ms, airtime_us);
+
+		if (link_control.stats.lq_percent < 70U && mix_level < cap) {
+			want = (uint8_t)(mix_level + 1U);
+		} else if (link_control.stats.lq_percent > 90U && mix_level > 0U) {
+			want = (uint8_t)(mix_level - 1U);
+		}
+
+		if (want != mix_level && (uint32_t)(now_ms - mix_last_ms) >= 2000U) {
+			mix_level = want;
+			mix_last_ms = now_ms;
+			LOG_INF("sub-band mix -> %u (LQ %u%%, region cap %u)",
+				mix_level, link_control.stats.lq_percent, cap);
+			zlrs_link_set_mix(&link_control, mix_level);
+			zlrs_link_set_mix(&link_data, mix_level);
+		}
+	}
+#endif
+
 #if IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)
 	{
 		int8_t next = 0;

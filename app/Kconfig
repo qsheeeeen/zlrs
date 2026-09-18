@@ -360,6 +360,14 @@ config ZLRS_APP_DATA_ARQ
 	  代价是延迟与内存。关掉退回 best-effort（缓冲满就丢，只计数）。
 	  见 doc/09-protocol.md 4.3。
 
+config ZLRS_APP_SUB_BAND_MIX
+	bool "子带混合自适应（按 LQ 在 2.4G 与 sub-G 之间挪时隙）"
+	default y
+	help
+	  LQ 掉了先把遥测时隙挪到 sub-G，再挪数传，最后才动 RC 下行；LQ 好了反向
+	  挪回。上限受地区占空比约束（zlrs_region_mix_level）。见
+	  doc/09-protocol.md 5.1。
+
 config ZLRS_APP_RATE_ADAPT
 	bool "按链路质量自动升降速率档"
 	default n
