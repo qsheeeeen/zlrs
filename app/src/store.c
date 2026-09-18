@@ -68,17 +68,23 @@ static int write_record(uint16_t id, const void *data, size_t len)
 	}
 
 	rc = nvs_write(&fs, id, data, len);
-	if (rc < 0) {
-		LOG_ERR("nvs_write(id %u, len %u) failed: %d", id, (unsigned int)len, rc);
-		return rc;
+	/*
+	 * nvs_write() 的返回（见 zephyr/kvss/nvs.h）：
+	 *   len  成功写入
+	 *   0    内容与已存的一致，没动 flash（也算成功）
+	 *   < 0  errno
+	 * 只判 <0 是不够的：长度对不上的正常返回（比如写了一半）会被当成成功。
+	 * 所以两种成功都放行，其余一律按失败上报——上板那次"storage error"就是
+	 * 这里把 len 当成了错误（数据其实写进去了）。
+	 */
+	if (rc == 0 || rc == (ssize_t)len) {
+		return 0;
 	}
 
-	/*
-	 * 成功时 nvs_write() 返回的是写入的字节数（见 zephyr/kvss/nvs.h），不是 0。
-	 * 上层按 0/负判断成功失败，所以这里归一一下——不归一的话每次写都会被当成
-	 * "storage error"（上板就是：工具报错、其实数据写进去了）。
-	 */
-	return 0;
+	LOG_ERR("nvs_write(id %u, len %u) returned %d: treating as failure", id,
+		(unsigned int)len, rc);
+
+	return (rc < 0) ? (int)rc : -EIO;
 }
 
 int zlrs_store_load_root_key(uint8_t out[ZLRS_KEY_LEN])
