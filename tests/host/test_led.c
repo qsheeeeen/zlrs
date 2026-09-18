@@ -29,16 +29,17 @@ static void test_config_mode_wins(void)
 	in.failsafe = true; /* 这两条同时成立时，灯只表现配置模式 */
 	in.link_state = ZLRS_STATE_SEARCHING;
 
-	/* 白，2 秒周期里亮 200 ms */
+	/* 白，1 秒周期里亮 500 ms */
 	CHECK(!is_off(zlrs_led_frame(&in, 0U)));
 	CHECK(is_off(zlrs_led_frame(&in, 500U)));
 	CHECK(!is_off(zlrs_led_frame(&in, 2000U)));
 
-	/* 关掉配置模式：失控保护接管（红，5 Hz 快闪） */
+	/* 关掉配置模式：失控保护接管（红，1 Hz、亮 800 ms——最长的亮窗=最紧急） */
 	in.config_mode = false;
 	CHECK(!is_off(zlrs_led_frame(&in, 0U)));
-	CHECK(is_off(zlrs_led_frame(&in, 100U))); /* 亮 60 ms、灭 140 ms */
-	CHECK(!is_off(zlrs_led_frame(&in, 200U)));
+	CHECK(!is_off(zlrs_led_frame(&in, 500U)));
+	CHECK(is_off(zlrs_led_frame(&in, 900U)));
+	CHECK(!is_off(zlrs_led_frame(&in, 1000U)));
 }
 
 static void test_link_states(void)
@@ -50,24 +51,24 @@ static void test_link_states(void)
 	memset(&in, 0, sizeof(in));
 	in.uptime_ms = 10000U;
 	in.link_state = ZLRS_STATE_UNCONFIGURED;
-	/* 紫 / 黄都是 1 Hz：t=0 亮，t=500 灭 */
+	/* 紫 0.5 Hz、黄 1 Hz：两者 t=0 亮、t=500 灭 */
 	CHECK(!is_off(zlrs_led_frame(&in, 0U)));
 	CHECK(is_off(zlrs_led_frame(&in, 500U)));
 	in.link_state = ZLRS_STATE_UNPAIRED;
 	CHECK(!is_off(zlrs_led_frame(&in, 0U)));
 	CHECK(is_off(zlrs_led_frame(&in, 500U)));
 
-	/* 配对中：4 Hz，亮 80 ms */
+	/* 配对中：1 Hz，亮 300 ms */
 	in.link_state = ZLRS_STATE_PAIRING;
 	CHECK(!is_off(zlrs_led_frame(&in, 0U)));
-	CHECK(is_off(zlrs_led_frame(&in, 150U)));
-	CHECK(!is_off(zlrs_led_frame(&in, 250U)));
+	CHECK(is_off(zlrs_led_frame(&in, 500U)));
+	CHECK(!is_off(zlrs_led_frame(&in, 1000U)));
 
-	/* 搜索中：2 Hz，亮 80 ms */
+	/* 搜索中：0.5 Hz，亮 150 ms */
 	in.link_state = ZLRS_STATE_SEARCHING;
 	CHECK(!is_off(zlrs_led_frame(&in, 0U)));
 	CHECK(is_off(zlrs_led_frame(&in, 200U)));
-	CHECK(!is_off(zlrs_led_frame(&in, 500U)));
+	CHECK(!is_off(zlrs_led_frame(&in, 2000U)));
 }
 
 static void test_connected_lq(void)

@@ -35,7 +35,11 @@ static zlrs_led_rgb_t scale(zlrs_led_rgb_t color, uint8_t percent)
 	return out;
 }
 
-/* 闪烁：周期 period_ms 里亮 on_ms，其余时间灭 */
+/*
+ * 闪烁：周期 period_ms 里亮 on_ms，其余时间灭。
+ * 灯语约定：周期不短于 1 秒（最快 1 Hz），紧急程度用颜色 + 占空比表达，
+ * 不靠更快的闪烁——见 doc/11-ux.md。
+ */
 static zlrs_led_rgb_t blink(zlrs_led_rgb_t color, uint32_t now_ms, uint32_t period_ms,
 			    uint32_t on_ms)
 {
@@ -61,14 +65,14 @@ static zlrs_led_rgb_t link_state_frame(const zlrs_led_input_t *in, uint32_t now_
 		}
 		return scale(amber, 30U);
 	case ZLRS_STATE_PAIRING:
-		return blink(scale(blue, 60U), now_ms, 250U, 80U);
+		return blink(scale(blue, 60U), now_ms, 1000U, 300U);
 	case ZLRS_STATE_SEARCHING:
-		return blink(scale(cyan, 40U), now_ms, 500U, 80U);
+		return blink(scale(cyan, 40U), now_ms, 2000U, 150U);
 	case ZLRS_STATE_UNPAIRED:
-		return blink(scale(yellow, 40U), now_ms, 1000U, 100U);
+		return blink(scale(yellow, 40U), now_ms, 1000U, 120U);
 	case ZLRS_STATE_UNCONFIGURED:
 	default:
-		return blink(scale(purple, 40U), now_ms, 1000U, 100U);
+		return blink(scale(purple, 40U), now_ms, 2000U, 200U);
 	}
 }
 
@@ -82,7 +86,7 @@ zlrs_led_rgb_t zlrs_led_frame(const zlrs_led_input_t *in, uint32_t now_ms)
 
 	/* 1. 配置模式：白，0.5 Hz 慢闪 */
 	if (in->config_mode) {
-		return blink(scale(white, 30U), now_ms, 2000U, 200U);
+		return blink(scale(white, 30U), now_ms, 1000U, 500U);
 	}
 
 	/* 2. 开机自检：前 1.5 秒用角色色（蓝 = TX，绿 = RX），两块板子分得清 */
@@ -92,7 +96,7 @@ zlrs_led_rgb_t zlrs_led_frame(const zlrs_led_input_t *in, uint32_t now_ms)
 
 	/* 3. 失控保护：红，5 Hz 快闪——"没有可用链路"最要紧 */
 	if (in->failsafe && in->link_state != ZLRS_STATE_CONNECTED) {
-		return blink(scale(red, 60U), now_ms, 200U, 60U);
+		return blink(scale(red, 60U), now_ms, 1000U, 800U);
 	}
 
 	/* 4. 链路状态 */
@@ -100,7 +104,7 @@ zlrs_led_rgb_t zlrs_led_frame(const zlrs_led_input_t *in, uint32_t now_ms)
 
 	/* 5. 丢弃提示：只在已连接时常亮的基础上每 2 秒单闪一次 */
 	if (in->link_state == ZLRS_STATE_CONNECTED && in->drop_recent &&
-	    single_flash(now_ms, 2000U, 120U)) {
+	    single_flash(now_ms, 2000U, 300U)) {
 		frame = scale(orange, 60U);
 	}
 
