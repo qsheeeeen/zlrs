@@ -1763,6 +1763,52 @@ static void test_hop_resync(void)
 }
 
 /*
+ * 子带混合比（doc/09-protocol.md 5.1）：TX 单方面推进，RX 在处理 SYNC 时采用；
+ * 太久没听到新版 SYNC 就退回默认比例。
+ */
+static void test_sub_mix(void)
+{
+	sim_t sim;
+	uint8_t rc[ZLRS_RC_PAYLOAD_LEN];
+	uint32_t changes_before;
+
+	printf("link: sub-band mix over SYNC\n");
+
+	sim_init(&sim);
+	sim.tx.ctl.cfg.resync_every_n = 5U;
+	sim.rx.ctl.cfg.resync_every_n = 5U;
+	sim.tx.data.cfg.resync_every_n = 5U;
+	sim.rx.data.cfg.resync_every_n = 5U;
+	pair_and_connect(&sim);
+
+	CHECK(sim.tx.ctl.sub_mix == 0U);
+	CHECK(sim.rx.ctl.sub_mix == 0U);
+
+	/* TX 推进到 50%，RX 从下一条 SYNC 起采用 */
+	zlrs_link_set_mix(&sim.tx.ctl, 2U);
+	CHECK(sim.tx.ctl.sub_mix == 2U);
+	changes_before = sim.rx.ctl.stats.mix_changes;
+	memset(rc, 0x81U, sizeof(rc));
+	zlrs_link_set_rc(&sim.tx.ctl, rc, sizeof(rc));
+	SIM_UNTIL(&sim, sim.rx.ctl.sub_mix == 2U, 400);
+	CHECK(sim.rx.ctl.sub_mix == 2U);
+	CHECK(sim.rx.ctl.stats.mix_changes > changes_before);
+
+	/* RX 侧改默认值只是回退目标，不直接改当前比例 */
+	zlrs_link_set_mix(&sim.rx.ctl, 0U);
+	CHECK(sim.rx.ctl.sub_mix == 2U);
+	CHECK(sim.rx.ctl.sub_mix_default == 0U);
+
+	/* 掐掉 TX 的 SYNC（模拟只改了 TX 一侧）：RX 在 3 个 SYNC 周期后回退 */
+	sim.tx.ctl.cfg.resync_every_n = 0U;
+	sim.tx.ctl.sub_mix = 3U;
+	sim.rx.ctl.sub_mix_seen_ms = sim.now_ms;
+	SIM_UNTIL(&sim, sim.rx.ctl.sub_mix == sim.rx.ctl.sub_mix_default, 4000);
+	CHECK(sim.rx.ctl.sub_mix == 0U);
+	CHECK(sim.rx.ctl.stats.mix_fallbacks > 0U);
+}
+
+/*
  * 对端重启后的自动重连（doc/09-protocol.md 3.5 那条已知限制的解法）：RX 重启
  * 后链路状态全丢，只剩 NVS 里的配对记录；TX 这边还在跑，周期 SYNC 会让它重新
  * 握手。两条链路都要能自己回来。
@@ -2008,6 +2054,7 @@ void test_link(void)
 	test_bringup_no_handshake();
 	test_bringup_no_telemetry();
 	test_hop_resync();
+	test_sub_mix();
 	test_peer_restart();
 	test_sync_replay_guard();
 	test_lora_control();

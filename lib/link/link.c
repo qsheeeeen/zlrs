@@ -430,7 +430,8 @@ static const zlrs_radio_req_t *send_sync(zlrs_link_t *link, uint32_t now_ms)
 	uint16_t len;
 
 	payload[0] = ZLRS_PROTO_VERSION;
-	payload[1] = (uint8_t)link->cfg.profile;
+	payload[1] = (uint8_t)((uint8_t)link->cfg.profile | (uint8_t)(link->sub_mix << 4) |
+			      (uint8_t)(link->sub_mix_version << 6));
 	payload[2] = (uint8_t)(link->fhss.index & 0xFFU);
 	payload[3] = (uint8_t)(link->fhss.index >> 8);
 	wr32(&payload[4], link->sess_nonce_t);
@@ -901,8 +902,25 @@ static void handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 		return;
 	}
 	if (frame->payload[0] != ZLRS_PROTO_VERSION ||
-	    frame->payload[1] != (uint8_t)link->cfg.profile) {
+	    (frame->payload[1] & 0x0FU) != (uint8_t)link->cfg.profile) {
 		return;
+	}
+
+	/*
+	 * 子带混合比与表版本（doc/09-protocol.md 5.1）：TX 单方面推进，RX 在处理
+	 * 这条 SYNC 时采用——处理同步帧这一刻就是两端的"帧边界"，不会一半用旧表
+	 * 一半用新表。
+	 */
+	{
+		const uint8_t mix = (uint8_t)((frame->payload[1] >> 4) & 0x03U);
+		const uint8_t version = (uint8_t)((frame->payload[1] >> 6) & 0x03U);
+
+		if (version != link->sub_mix_version || mix != link->sub_mix) {
+			link->sub_mix = mix;
+			link->sub_mix_version = version;
+			link->stats.mix_changes++;
+		}
+		link->sub_mix_seen_ms = now_ms;
 	}
 
 	hop_index = (uint16_t)(frame->payload[2] | ((uint16_t)frame->payload[3] << 8));
@@ -1605,6 +1623,11 @@ void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
 	if (link->cfg.data_every_n == 0U) {
 		link->cfg.data_every_n = 1U;
 	}
+	/* 子带混合：初始比例来自配置，TX 后续用 SYNC 的表版本推进 */
+	link->sub_mix = (uint8_t)(link->cfg.mix & 0x03U);
+	link->sub_mix_default = link->sub_mix;
+	link->sub_mix_version = 0U;
+	link->sub_mix_seen_ms = 0U;
 	if (radio != NULL) {
 		link->radio = *radio;
 	}
@@ -1636,6 +1659,17 @@ void zlrs_link_set_root_key(zlrs_link_t *link, const uint8_t root_key[ZLRS_KEY_L
 void zlrs_link_set_dev_id(zlrs_link_t *link, const uint8_t dev_id[ZLRS_DEV_ID_LEN])
 {
 	memcpy(link->dev_id, dev_id, ZLRS_DEV_ID_LEN);
+}
+
+void zlrs_link_set_mix(zlrs_link_t *link, uint8_t mix)
+{
+	link->sub_mix_default = (uint8_t)(mix & 0x03U);
+
+	/* TX 立即推进（下一条 SYNC 带新版本）；RX 只更新回退目标 */
+	if (link->cfg.role == ZLRS_ROLE_TX) {
+		link->sub_mix = link->sub_mix_default;
+		link->sub_mix_version = (uint8_t)((link->sub_mix_version + 1U) & 0x03U);
+	}
 }
 
 void zlrs_link_set_mod(zlrs_link_t *link, const zlrs_mod_cfg_t *mod)
@@ -1745,6 +1779,18 @@ void zlrs_link_rx(zlrs_link_t *link, const uint8_t *buf, uint16_t len, int16_t r
 
 void zlrs_link_tick(zlrs_link_t *link, uint32_t now_ms)
 {
+	/*
+	 * 子带混合的回退：TX 改了比例而 RX 没跟上时，RX 在默认比例上继续收；
+	 * 连续 3 个 SYNC 周期没听到新版就退回默认比例，避免卡在错的子带上。
+	 */
+	if (link->state == ZLRS_STATE_CONNECTED && link->sub_mix != link->sub_mix_default &&
+	    link->cfg.sync_period_ms > 0U &&
+	    (uint32_t)(now_ms - link->sub_mix_seen_ms) >
+		    (uint32_t)(3U * link->cfg.sync_period_ms)) {
+		link->sub_mix = link->sub_mix_default;
+		link->stats.mix_fallbacks++;
+	}
+
 	switch (link->state) {
 	case ZLRS_STATE_UNCONFIGURED:
 		if (link->configured) {

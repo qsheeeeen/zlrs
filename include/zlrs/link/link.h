@@ -89,6 +89,11 @@ typedef struct {
 	uint8_t tlm_every_n;
 	uint8_t data_every_n;
 	/*
+	 * 子带混合比（0..3 → 每 4 个时隙里 0/1/2/4 个落 sub-G）：初始值，
+	 * 运行中由 TX 用 SYNC 里的表版本推进，见 doc/09-protocol.md 5.1。
+	 */
+	uint8_t mix;
+	/*
 	 * 连接态周期 SYNC 的间隔（帧）。0 = 不周期重同步（只在建链时对齐跳频
 	 * 索引）；>0 = 每这么多帧用同步信道发一次 SYNC，对端据此校正跳频索引，
 	 * 也据此发现"对端换了会话"（重启/重新配对）并自动重新握手。
@@ -119,6 +124,8 @@ typedef struct {
 	uint32_t tx_arq_drop;     /* ARQ：重传用尽后放弃的帧数 */
 	uint32_t rx_frag_drop;
 	uint32_t rx_syncs;      /* 连接态收到的 SYNC 数 */
+	uint32_t mix_changes;   /* 采用过多少次新的子带混合比 */
+	uint32_t mix_fallbacks; /* 太久没听到新版 SYNC 而退回默认比例的次数 */
 	uint32_t hop_resync;      /* 跳频索引被 SYNC 校正过的次数 */
 	uint32_t radio_fail;
 	int16_t last_rssi;
@@ -212,6 +219,11 @@ typedef struct {
 	uint16_t lq_last_seq;
 	uint16_t frame_index; /* 本链路走了多少个"主时隙"（控制 CTL_DOWN / 数据 DATA_A） */
 	zlrs_fhss_t fhss;
+	/* 子带混合：当前比例、表版本、默认比例与"多久没听到新版"的计时 */
+	uint8_t sub_mix;
+	uint8_t sub_mix_version;
+	uint8_t sub_mix_default;
+	uint32_t sub_mix_seen_ms;
 
 	/* 载荷 */
 	uint8_t rc_payload[ZLRS_RC_PAYLOAD_LEN];
@@ -264,6 +276,12 @@ void zlrs_link_set_dev_id(zlrs_link_t *link, const uint8_t dev_id[ZLRS_DEV_ID_LE
 /* 运行中换调制档（速率自适应用），下一个事务生效 */
 void zlrs_link_set_mod(zlrs_link_t *link, const zlrs_mod_cfg_t *mod);
 
+/*
+ * 设置子带混合比：TX 侧调用后下一次 SYNC 起生效（表版本 +1）；RX 侧调用只改
+ * 默认值（回退目标），当前比例仍由 TX 的 SYNC 推进。
+ */
+void zlrs_link_set_mix(zlrs_link_t *link, uint8_t mix);
+
 /* 运行中换发射功率（动态功率用），下一个事务生效 */
 void zlrs_link_set_power(zlrs_link_t *link, int8_t tx_power_dbm);
 
@@ -307,4 +325,3 @@ void zlrs_link_set_tlm(zlrs_link_t *link, const uint8_t *payload, uint16_t len);
 #ifdef __cplusplus
 }
 #endif
-
