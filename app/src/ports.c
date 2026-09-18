@@ -1,10 +1,5 @@
 /*
- * 端口层的实现，见 ports.h。分成四段：
- *
- *   1. 端点选择：别名 → 端点表，UART / USB CDC 二选一
- *   2. 数据口：透传字节流，中断收 + 环形缓冲
- *   3. CRSF 端口：收字节喂解析器、组帧发送
- *   4. 配置模式：开机按住按键时借数据口跑配置协议
+ * 端口层实现，见 ports.h：端点选择 → 数据口 → CRSF 端口 → 配置模式。
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -66,10 +61,7 @@ static const struct device *port_ep_dev(const struct port_pair *pair, size_t idx
 	return (idx == 0U) ? pair->uart : pair->cdc;
 }
 
-/*
- * "USB 连上"取主机把 CDC 打开那一刻：驱动收到 SET_CONTROL_LINE_STATE 里的 DTR
- * 才置位，枚举完不打开端口不算——没程序读的端口上发数据也没意义。
- */
+/* "USB 连上"取主机真正打开 CDC 那一刻：枚举完没人读算不上在用 */
 static bool cdc_opened(const struct device *dev)
 {
 	uint32_t dtr = 0U;
@@ -86,13 +78,10 @@ static bool cdc_opened(const struct device *dev)
 }
 
 /*
- * "主机在用这块端点"的证据。标准做法是 CDC 的 DTR（SET_CONTROL_LINE_STATE），
- * 但转发/虚拟化路径上（usbipd 走 USB/IP、有些虚拟机）这个控制请求不一定会送到
- * 设备，SET_CONTROL_LINE_STATE 丢了的后果是端点永远选不中：主机发过来的字节被
- * 当"非当前端点"直接丢掉，配置协议、透传、CRSF 输入全都收不到。
- *
- * 所以再加一条证据：这块端点**收到过主机的字节**。ISR 在判断当前端点之前先记一笔
- * （见 data_isr / crsf_isr），于是主机写进来的第一帧就会被认出来，不会被丢掉。
+ * "主机在用这块端点"的证据。标准做法是 CDC 的 DTR，但 USB/IP 转发等路径上
+ * SET_CONTROL_LINE_STATE 不一定送到设备，只认 DTR 会导致端点永远选不中（收到的
+ * 字节被当"非当前端点"丢掉）。所以再认一条：**收到过主机字节**——ISR 在判断当前
+ * 端点之前先记这笔（见 data_isr / crsf_isr），第一帧不会被选择滞后吃掉。
  */
 #define HOST_SEEN_MAX PORT_MAX * 2
 static const struct device *host_seen_devs[HOST_SEEN_MAX];
@@ -121,7 +110,7 @@ static bool host_seen_any(const struct device *dev)
 	return false;
 }
 
-/* 当前该用哪块端点：两块都在时 USB 在用就是 USB，否则 UART；一块都没有则 NULL */
+/* 两块都在时 USB 在用就选 USB；都没有返回 NULL */
 static const struct device *port_active(const struct port_pair *pair)
 {
 	const bool uart_ok = (pair->uart != NULL) && device_is_ready(pair->uart);
@@ -272,13 +261,9 @@ int zlrs_data_port_init(uint32_t baud)
 		data_ready_ports++;
 
 		/*
-		 * 装回调这一步必须判：驱动不支持 IRQ 收发时它返回 -ENOSYS/-ENOTSUP，
-		 * 忽略掉就是"能发不能收"甚至完全没反应，而且不会有任何迹象——
-		 * 上板踩过一次（CDC 抢占缓冲池让 RX 工作项静默失败）。
-		 * 失败就把这块端点标成不可用，让上层走"这块端点不存在"的路径，
-		 * 而不是假装在收。
-		 * （uart_irq_rx_enable() 在这个 Zephyr 版本里返回 void，没法判，
-		 *   所以能不能收只能靠回调装上 + 上层的超时/计数去暴露。）
+		 * 必须判：驱动不支持 IRQ 收发时返回 -ENOSYS/-ENOTSUP，忽略就是
+		 * "能发不能收"且毫无迹象。失败即把端点标成不可用，让上层走
+		 * "端点不存在"路径。rx_enable 返回 void，判不了。
 		 */
 		if (uart_irq_callback_user_data_set(dev, data_isr, &data_eps[i]) != 0) {
 			LOG_ERR("data port %s: RX setup failed; endpoint disabled", dev->name);
@@ -332,8 +317,7 @@ uint16_t zlrs_data_port_write(const uint8_t *buf, uint16_t len)
 	const uint32_t written = ring_buf_put(&ep->tx, buf, len);
 
 	if (written > 0U) {
-		/* uart_irq_tx_enable() 返回 void，开不了也没法当场知道；
-		 * 真没发出去的话，上层会从对端的超时/重传看出来 */
+		/* tx_enable 返回 void，发不出去只能靠对端超时/重传暴露 */
 		uart_irq_tx_enable(ep->dev);
 	}
 
@@ -682,18 +666,14 @@ int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 		return -1;
 	}
 
-	/* 配置模式直接用轮询收发：这里没有超帧要抢时间，逻辑越直白越好 */
+	/* 这里没有超帧要抢时间，逻辑越直白越好 */
 	zlrs_cfg_parser_init(&cfg_parser);
 
 	LOG_INF("config mode: %u s idle timeout, exit on EXIT command",
 		(unsigned int)CONFIG_ZLRS_APP_CONFIG_TIMEOUT_S);
 
-	/*
-	 * 配置会话期间先关掉看门狗：写短语那条命令要做 100000 轮 PBKDF2（M33 上
-	 * 十几秒到几十秒），8 秒看门狗会把整个会话复位掉——上板实测就是
-	 * "status 能应答，set-phrase 一按设备就重启"。配置是有人值守的操作，
-	 * 退出时再武装回来。
-	 */
+	/* 会话期间关狗：写短语要 100000 轮 PBKDF2（几十秒），会被 8 秒看门狗复位。
+	 * 配置是有人值守的操作，退出时再武装回来。 */
 	zlrs_watchdog_disarm();
 
 	while (!exit_requested &&
@@ -704,7 +684,7 @@ int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 
 		zlrs_watchdog_feed();
 
-		/* 配置模式：白灯慢闪，一眼看出"现在不是正常工作状态" */
+		/* 白灯慢闪 = 不是正常工作状态 */
 		memset(&led_in, 0, sizeof(led_in));
 		led_in.config_mode = true;
 		led_in.configured = cfg_link->configured;
@@ -715,15 +695,11 @@ int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 		led_in.uptime_ms = k_uptime_get_32();
 		zlrs_led_port_update(&led_in, led_in.uptime_ms);
 
-		/* 每一轮重新选端点：配置到一半插上 USB 也会跟着切过去 */
+		/* 每轮重新选端点：配置途中插上 USB 也能切过去 */
 		const uint16_t got = zlrs_data_port_read(chunk, sizeof(chunk));
 
-		/*
-		 * 收发都走端口层（中断收 + 中断发），不要用 uart_poll_in/out：
-		 * 数据口的 ISR 已经在把驱动环形缓冲里的字节搬进端点缓冲，
-		 * poll_in 只会看到空缓冲（上板实测：能进配置模式，但一条命令都不应答）；
-		 * poll_out 同理也不会触发 USB/串口的实际发送。
-		 */
+		/* 收发都走端口层，别用 uart_poll_in/out：数据口的 ISR 已经在搬字节，
+		 * poll_in 只会看到空缓冲；poll_out 也不会真的发出去。 */
 		for (uint16_t i = 0U; i < got; i++) {
 			any = true;
 

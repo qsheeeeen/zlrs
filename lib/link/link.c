@@ -177,16 +177,9 @@ static void derive_auth(zlrs_link_t *link)
 }
 
 /*
- * 一对钥匙按"发送方 → 接收方"分，上下文固定是这一对的双方 dev_id：
- *
- *   out = KDF(pair_key, label, ctx || 本机 || 对端)   —— 本机发出去的帧
- *   in  = KDF(pair_key, label, ctx || 对端 || 本机)   —— 对端发来的帧
- *
- * 两端各算一次就配成对（本机的 out 就是对端的 in），不需要协商；两个 id 的
- * 先后顺序本身就是方向，所以标签里既不掺角色，也不用给方向起名字。
- *
- * 不区分的话，tag 就只剩"谁知道密钥"这一个含义：把本机发出的一帧原样打回来，
- * 本机自己会当成对端的帧收下（反射攻击）。
+ * 钥匙按方向分：KDF(pair_key, label, ctx || 本机 || 对端) 用于发出去的帧，两个 id
+ * 调过来用于校验对端的帧——顺序本身编码方向，两端各算一次即可配对。
+ * 不区分方向的话，把自己发的帧原样打回来就会被当成对端的帧收下（反射攻击）。
  */
 static void derive_by_endpoints(const zlrs_link_t *link, const char *label,
 				const uint8_t *ctx, size_t ctx_len,
@@ -361,13 +354,8 @@ static uint16_t build_frame(zlrs_link_t *link, uint8_t type, uint8_t flags,
 	return total;
 }
 
-/*
- * 取一帧的 tag 钥匙。outbound = 本机要发这一帧（用 out），否则是用来校验
- * 对端发来的帧（用 in）。
- *
- * 配对握手是例外：它的三条消息靠角色门禁与类型标签分方向（见 doc/02-security.md
- * 第 4 节），两端用同一把 auth_key，不在这里拆。
- */
+/* 取一帧的 tag 钥匙：outbound 用 out，否则用 in。配对握手是例外——它靠角色门禁
+ * 与类型标签分方向，两端同一把 auth_key（见 doc/02-security.md 第 4 节）。 */
 static const uint8_t *tag_key_for(const zlrs_link_t *link, uint8_t type, bool outbound)
 {
 	const uint8_t *link_auth = outbound ? link->link_auth_out : link->link_auth_in;
@@ -457,11 +445,8 @@ static const zlrs_radio_req_t *send_beacon(zlrs_link_t *link, uint32_t now_ms)
 }
 
 /*
- * RX 对 BEACON 的应答：报上自己的 nonce_r，并回带收到的 nonce_t，让 TX 知道这是
- * 对哪一次请求的回应。用配对级钥匙认证——会话钥匙还没生效。
- *
- * 简化握手（cfg.handshake = 0）下它同时是"我在"报到帧：nonce_r 位置填 0，
- * 对端只拿 nonce_t 对号，收到就当认识（见 handle_sess_resp）。
+ * RX 对 BEACON 的应答：报 nonce_r、回带 nonce_t，用配对级钥匙认证（会话钥匙还没
+ * 生效）。简化握手（handshake=0）下它同时是"我在"报到帧：nonce_r 填 0。
  */
 static const zlrs_radio_req_t *send_sess_resp(zlrs_link_t *link)
 {

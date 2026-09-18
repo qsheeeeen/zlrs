@@ -2,14 +2,8 @@
  * Copyright (c) 2026 zlrs contributors
  * SPDX-License-Identifier: Apache-2.0
  *
- * zlrs 应用入口：跑文档里的超帧，把控制链路与数据链路接上 LR2021 与串口。
- *
- *   - 射频：USP/RAC（app/src/radio_rac.c）；Core2021 没接时用空后端
- *     （app/src/radio_null.c，CONFIG_ZLRS_APP_RADIO=n）
- *   - 端口：CRSF、数据口透传与配置模式（app/src/ports.c）
- *   - 密钥与配对记录：NVS（app/src/store.c）
- *
- * 线程模型与初始化顺序见 doc/01-system.md 第 7 节。
+ * zlrs 应用入口：跑超帧，把两条链路接上射频与串口。线程模型与初始化顺序见
+ * doc/01-system.md 第 7 节。
  */
 
 #include <zephyr/app_version.h>
@@ -236,9 +230,8 @@ static void on_failsafe(void *ctx, const uint8_t *payload, uint16_t len)
 }
 
 /*
- * 控制帧的时间计划：帧率档（Kconfig）× 地区占空比上限。
- * 500 Hz 档只有在不限占空比的地区才跑得动；EU868 的 1% 只能撑几十帧/秒，
- * 这时压到上限并告警——法规优先，但要让用户看见发生了什么。
+ * 控制帧的时间计划：帧率档（Kconfig）× 地区占空比上限。超了就压到上限并
+ * 告警——法规优先，但要让用户看见。
  */
 static void plan_init(void)
 {
@@ -303,11 +296,8 @@ static void plan_init(void)
 			(unsigned int)plan.rate_hz);
 	}
 
-	/*
-	 * 连接态周期 BEACON：按帧数换算（见 doc/03-protocol.md 5.1）。
-	 * 帧周期长到 10 ms 以上时 1000 ms 装得下 100 帧以内，uint8 够用；
-	 * 更短的帧周期由 MAX/MIN 压到 255 帧以内。
-	 */
+	/* 连接态周期 BEACON 按帧数换算（见 doc/03-protocol.md 5.1）：1000 ms 在
+	 * 常见帧周期下装得进 uint8，更短的帧周期由 MAX 压到 255 帧以内 */
 	if (CONFIG_ZLRS_APP_RESYNC_PERIOD_MS > 0) {
 		const uint32_t frames = ((uint32_t)CONFIG_ZLRS_APP_RESYNC_PERIOD_MS * 1000U) /
 					frame_period_us;
@@ -340,11 +330,7 @@ static void build_links(void)
 		.sync_slot = ZLRS_SYNC_SLOT_CONTROL,
 		.profile = IS_ENABLED(CONFIG_ZLRS_APP_SECURITY_PROFILE_P0) ? ZLRS_PROFILE_P0
 									    : ZLRS_PROFILE_P1,
-		/*
-		 * 上板调试档：这三项各自可以关（见 doc/01-system.md 2.3）。
-		 * 关掉跳频 → 收发时序与跳频表分开看；关掉握手 → 少一段钥匙派生；
-		 * 关掉遥测 → 控制链路只剩下行 RC。
-		 */
+		/* 上板调试档，各自可关，见 doc/01-system.md 2.3 */
 		.hopping = IS_ENABLED(CONFIG_ZLRS_APP_FHSS) ? 1U : 0U,
 		.handshake = IS_ENABLED(CONFIG_ZLRS_APP_SESSION_HANDSHAKE) ? 1U : 0U,
 		.telemetry = IS_ENABLED(CONFIG_ZLRS_APP_TELEMETRY) ? 1U : 0U,
@@ -505,11 +491,8 @@ static void run_slot(uint8_t slot)
 		return;
 	}
 
-	/*
-	 * 地区占空比（EU868 是 1%）：额度用完就把这个时隙让出去。
-	 * 让出去的时隙按"射频失败"收尾，链路层会把数据放回队列下轮再试。
-	 * 只有 sub-G 那条链路受这条约束（竞速模式下就是数据链路）。
-	 */
+	/* 地区占空比额度用完就让出时隙（按射频失败收尾，链路层下轮再试）；
+	 * 只约束 sub-G 那条链路。 */
 	if (req->is_tx && on_subg &&
 	    !zlrs_duty_reserve(&duty, zlrs_airtime_mod_ms(&req->mod, req->size), now_ms)) {
 		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, now_ms);
@@ -527,25 +510,12 @@ static void run_slot(uint8_t slot)
 	zlrs_radio_port_drain();
 }
 
-/*
- * 数据口上的"进串口恢复"触发（见 doc/01-system.md 2.4 与 app/Kconfig 的
- * ZLRS_APP_UPDATE_TRIGGER）：字节流里出现 `zlrs!bootloader!` 就置 boot mode 并
- * 重启，MCUboot 读到标志后停在串口恢复等主机上传。
- *
- * 匹配是逐字节的：只有当前缀的那几个字节会被扣住，一旦不匹配就把扣住的字节
- * 原样交回透传队列（顺序不变），所以正常数据不会丢、也不会重复。
- */
 #if IS_ENABLED(CONFIG_ZLRS_APP_UPDATE_TRIGGER) || IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MAGIC)
 
 /*
- * 数据口上的"控制魔数"：正常透传的字节流里出现某个魔数就切模式。
- *
- *   zlrs!bootloader!   重启进 MCUboot 串口恢复（ZLRS_APP_UPDATE_TRIGGER）
- *   zlrs!configmode!   当场进配置模式，EXIT/超时后回正常（ZLRS_APP_CONFIG_MAGIC）
- *
- * 匹配是逐字节的：只有当前缀的那几个字节会被扣住，一旦不匹配就原样交回透传队列，
- * 所以正常数据既不丢也不重复。两个魔数共用一份前缀状态——它们开头相同，各扣一份
- * 会把字节吐两遍。
+ * 数据口上的控制魔数：`zlrs!bootloader!` 重启进串口恢复、`zlrs!configmode!`
+ * 当场进配置模式。逐字节匹配，不匹配的字节原样交回透传队列（不丢不重）。
+ * 两个魔数共用一份前缀状态：它们开头相同，各扣一份会把字节吐两遍。
  */
 enum control_magic {
 	CONTROL_MAGIC_BOOTLOADER,
@@ -582,11 +552,8 @@ static void enter_serial_recovery(void)
 {
 	LOG_WRN("update trigger: rebooting into MCUboot serial recovery");
 
-	/*
-	 * 重启前先把看门狗关掉：RP2350 的看门狗在 SYSRESETREQ 之后可能还开着，
-	 * 留给 MCUboot 就会把它的串口恢复打断（上板实测恢复只活 ~1.5 s，
-	 * 上传永远传不完）。bootloader 侧还有一道护栏（lib/bootguard），两边都做。
-	 */
+	/* RP2350 的看门狗在 SYSRESETREQ 之后可能还开着，留给 MCUboot 会打断它的
+	 * 串口恢复；bootloader 侧另有一道护栏（lib/bootguard）。 */
 	zlrs_watchdog_disarm();
 
 	if (bootmode_set(BOOT_MODE_TYPE_BOOTLOADER) != 0) {
@@ -977,8 +944,8 @@ static void fault_loop(void)
 }
 
 /*
- * 密码学后端初始化。PSA provider 必须在第一次导入钥匙之前初始化；失败就不参与
- * 收发——KDF 与每包 tag 都靠它，闭着眼上空中没有任何意义。
+ * PSA provider 必须在第一次导入钥匙之前初始化；失败就别收发——KDF 与每包
+ * tag 都靠它，闭着眼上空中没有意义。
  */
 static void crypto_init(void)
 {
@@ -1021,14 +988,9 @@ static void led_tick(uint32_t now_ms)
 }
 
 /*
- * 镜像确认：初始化全跑完了就告诉 MCUboot "这一版是好的"。
- *
- * MCUboot 的 test/revert 判据只有这一位——升级（scripts/zlrs-update.py 走 smpmgr
- * upgrade，默认 test 语义）换进来的镜像如果没跑到这里就崩了，下一次复位时会被
- * 回滚到上一版；没有上一版就停在串口恢复里（见 doc/01-system.md 2.4）。
- *
- * 判据是"初始化跑完"而不是"跑了多久"：端口、NVS、链路、USB 都起来了，就说明这
- * 一版至少能把自己拉起来。想要更保守的观察窗口就设 ZLRS_APP_MCUBOOT_CONFIRM_MS。
+ * 镜像确认：初始化跑完就告诉 MCUboot "这一版是好的"——test/revert 的判据只有
+ * 这一位，没跑到这里的镜像复位后会被回滚（见 doc/01-system.md 2.4）。
+ * 判据是"初始化跑完"，要观察窗口就用 ZLRS_APP_MCUBOOT_CONFIRM_MS。
  */
 static void confirm_image(uint32_t now_ms)
 {
@@ -1052,22 +1014,12 @@ static void confirm_image(uint32_t now_ms)
 }
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
-/*
- * 进配置模式：阻塞跑一段配置会话（EXIT 或空闲超时结束），出来继续正常模式。
- * 三个入口共用：开机按住按键、数据口魔数（ZLRS_APP_CONFIG_MAGIC）、
- * 控制台 shell 的 `zlrs config`（ZLRS_APP_SHELL）。
- *
- * 会话里可能改过失控值，所以出来要把 rc_payload 重新同步一次。
- */
+/* 跑一段配置会话（EXIT 或空闲超时结束）后继续正常模式。三个入口共用 */
 static void enter_config_mode(void)
 {
 	LOG_WRN("entering config mode");
 
-	/*
-	 * 返回 0 = 收到 EXIT，1 = 空闲超时，-1 = 板上没有可用数据口。
-	 * 三种都不影响继续跑，但日志里要能分辨——"按了 EXIT 没退"和
-	 * "根本没进配置模式"是完全不同的问题。
-	 */
+	/* 0 = EXIT，1 = 超时，-1 = 没有可用数据口：日志里要能分辨 */
 	{
 		const int rc = zlrs_config_mode_run(&link_control, failsafe_payload);
 
@@ -1171,11 +1123,8 @@ SHELL_CMD_REGISTER(zlrs, &zlrs_cmds, "zlrs 调试命令", NULL);
 
 int main(void)
 {
-	/*
-	 * 上板调试档：USB 已经起来了（lib/usb 在 APPLICATION 层初始化），先等
-	 * 主机打开控制台端口再往下走，否则"接下来这几步崩了"的 panic 日志会打在
-	 * 一个没人打开的口上，什么都看不到。生产构建这个值是 0。
-	 */
+	/* 上板调试档：USB 已就绪，先等主机打开控制台端口，否则接下来的 panic
+	 * 日志会打在没人打开的口上。生产构建为 0 */
 	if (CONFIG_ZLRS_APP_BOOT_DELAY_MS > 0) {
 		k_msleep(CONFIG_ZLRS_APP_BOOT_DELAY_MS);
 	}
@@ -1325,11 +1274,7 @@ int main(void)
 		zlrs_watchdog_feed();
 		confirm_image(now_ms);
 
-		/*
-		 * 四个时隙平分一帧（slot_budget_us）：某个时隙卡住也不会把整帧拖长——
-		 * 超预算的事务由 run_slot 放弃并收尾，下一帧照常走。
-		 * 遥测与数据窗口的稀疏化在链路层内部按 tlm_every_n / data_every_n 做。
-		 */
+		/* 四个时隙平分一帧：超预算的事务由 run_slot 放弃并收尾，不拖长整帧 */
 		run_slot(ZLRS_SLOT_CTL_DOWN);
 		run_slot(ZLRS_SLOT_CTL_UP);
 		run_slot(ZLRS_SLOT_DATA_A);

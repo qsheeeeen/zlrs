@@ -1,17 +1,12 @@
 /*
- * 硬件看门狗（RP2350 wdt0），CONFIG_ZLRS_APP_WATCHDOG 打开时才生效。
+ * 硬件看门狗（RP2350 wdt0），CONFIG_ZLRS_APP_WATCHDOG 打开才生效。
  *
- * 它**不是**回滚机制本身：MCUboot 的回滚只看"镜像有没有被确认"
- * （app/Kconfig 的 ZLRS_APP_MCUBOOT_CONFIRM），而回滚发生在**复位**时。看门狗
- * 管的只是"把卡死变成复位"：Zephyr 在这块板上没有 RESET_ON_FATAL_ERROR，崩溃就是
- * CPU 停住，没人复位就永远等不到回滚（第一次上板正是如此：USB 掉线，之后只能按
- * BOOTSEL）。
+ * 它不负责回滚，只负责"把卡死变成复位"（回滚判据是镜像确认位，见
+ * app/Kconfig 的 ZLRS_APP_MCUBOOT_CONFIRM）。这块板上 Zephyr 没有
+ * RESET_ON_FATAL_ERROR，崩溃就是 CPU 停住，没有它永远等不到那次复位。
  *
- * 打开时在 PRE_KERNEL_1 就装好（紧跟 wdt 驱动自己的初始化），这样连它之后的
- * POST_KERNEL 驱动初始化挂死也能被复位。
- *
- * 喂狗点只有两处：主循环（超帧）与配置模式的轮询循环。**不要**用定时器或独立线程
- * 喂狗——那样主循环卡死也照样喂，看门狗就白装了。
+ * PRE_KERNEL_1 就装好：连其后 POST_KERNEL 驱动初始化挂死也能复位。
+ * 喂狗只在会阻塞的循环里做——用独立线程喂等于白装。
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -93,10 +88,7 @@ void zlrs_watchdog_feed(void)
 void zlrs_watchdog_disarm(void)
 {
 	if (wdt_channel >= 0) {
-		/*
-		 * 这里能真的关掉：驱动状态里这块看门狗是 enabled（我们自己装的），
-		 * 所以 wdt_disable() 不会像"复位后的新一局"那样被拒绝。
-		 */
+		/* 驱动状态里它是 enabled（我们装的），所以 wdt_disable() 这次能生效 */
 		(void)wdt_disable(wdt);
 		wdt_channel = -1;
 		LOG_INF("watchdog disarmed before reboot");
@@ -107,17 +99,17 @@ void zlrs_watchdog_disarm(void)
 
 void zlrs_watchdog_arm(void)
 {
-	/* 看门狗没开：没什么可武装的 */
+	/* 没开：空实现 */
 }
 
 void zlrs_watchdog_feed(void)
 {
-	/* 看门狗没开：喂狗是空的，调用点不用写条件编译 */
+	/* 没开：空实现，调用点不用写条件编译 */
 }
 
 void zlrs_watchdog_disarm(void)
 {
-	/* 看门狗没开：没什么可关的 */
+	/* 没开：空实现 */
 }
 
 #endif /* CONFIG_ZLRS_APP_WATCHDOG */

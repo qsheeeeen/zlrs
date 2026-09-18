@@ -1,12 +1,8 @@
 /*
- * 射频移植层（空后端）：CONFIG_ZLRS_APP_RADIO=n 时用这份，接口见 radio_port.h。
- *
- * Core2021 还没接上时整条射频都不参与：不初始化 USP/RAC，也不碰 SPI 与 BUSY
- * 引脚——LR20xx 的 HAL 等不到 BUSY 会 k_oops，模块没接就整机起不来。
- *
- * 每次事务提交后当场按"发出去、这一轮没收到回音"收尾，所以链路层的状态机、
- * 加密、组帧、时隙节奏照常跑，只是永远握不上手；端口（CRSF / 透传 / 配置模式）、
- * 按键、状态灯与 NVS 都不受影响。见 doc/01-system.md 2.3。
+ * 射频空后端（CONFIG_ZLRS_APP_RADIO=n，接口见 radio_port.h）：
+ * 不碰 SPI/BUSY（LR20xx 的 HAL 等不到 BUSY 会 k_oops，模块没接就起不来），
+ * 事务当场按"发出、没回音"收尾——链路状态机与其余功能照常跑，只是握不上手。
+ * 用途见 doc/01-system.md 2.3。
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -20,8 +16,8 @@
 LOG_MODULE_REGISTER(zlrs_radio_null, CONFIG_APP_LOG_LEVEL);
 
 typedef struct {
-	zlrs_link_t *link; /* 这次事务回填给哪条链路 */
-	bool pending;      /* 事务已"完成"，等着 drain 回填 */
+	zlrs_link_t *link;
+	bool pending; /* 事务已"完成"，等 drain 回填 */
 } null_client_t;
 
 static null_client_t control_client;

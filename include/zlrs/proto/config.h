@@ -1,10 +1,6 @@
 /*
- * zlrs 协议核心的编译期配置。
- *
- * 工程分三层：
- *   - lib/proto：纯 C、无 RTOS 依赖的协议核心，主机上可直接编译测试
- *   - lib/link：链路层，把帧翻译成射频事务，同样不依赖 Zephyr
- *   - app/：Zephyr 侧粘合（线程、UART、USP/RAC）
+ * 协议核心的编译期配置。分层：lib/proto（协议核心）、lib/link（链路层）都不
+ * 依赖 Zephyr、主机可直接测；Zephyr 粘合只在 app/。
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -13,13 +9,9 @@
 #define ZLRS_PROTO_CONFIG_H_
 
 /*
- * 空口协议版本：不兼容的空口改动递增一次（帧格式、派生标签），版本不同的两端
- * 不互通。版本号写在 BEACON 里，RX 只认同版本；派生本身不掺版本号，所以版本
- * 不一致的两端首先卡在 tag 校验上，这个字段是给将来的格式兼容留的位置。
- *
- * 1：每包 tag 与会话密钥按双方 `dev_id` 派生（发送方在前 / 接收方在前，
- *    对应 out / in 一对）；`pair_key` 掺配对时的两个 nonce，会话密钥掺双方
- *    各出一个的 nonce（三次握手），见 doc/02-security.md 第 3 节。
+ * 空口协议版本：不兼容的改动递增一次，写在 BEACON 里，RX 只认同版本。
+ * 1：tag/会话密钥按双方 dev_id 派生（方向由顺序编码），pair_key 掺配对 nonce，
+ *    会话密钥掺三次握手的两个 nonce，见 doc/02-security.md 第 3 节。
  */
 #define ZLRS_PROTO_VERSION 1U
 

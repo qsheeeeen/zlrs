@@ -7,17 +7,11 @@ config ZLRS_USB
 	bool "zlrs USB 设备栈（usbd context + devicetree 里的全部 CDC）"
 	depends on USB_DEVICE_STACK_NEXT && USBD_CDC_ACM_CLASS
 	help
-	  Zephyr 的 device_next 栈里，devicetree 的 `zephyr,cdc-acm-uart` 节点只是
-	  "要几块 CDC"，不会让设备自己上线：应用要建 usbd context、把类注册进配置、
-	  再 usbd_enable()。这个库就把这件事做掉（lib/usb/usb_dev.c），一次注册
-	  devicetree 里全部的 CDC 实例。
-
-	  不要用 Zephyr 自带的 CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT：它只注册
-	  第一块 CDC，没注册的那块没有 context，第一次往它写日志就是 NULL 解引用
-	  （usbd_ep_buf_allocate() → uds_ctx->dev），整机当场停住。
-
-	  应用镜像（三块 CDC：CRSF / 数据口 / 控制台）与 MCUboot 镜像（两块：
-	  恢复口 / 控制台）都用这一份代码，差别只在下面的字符串与 VID/PID。
+	  device_next 栈里 `zephyr,cdc-acm-uart` 节点只表达"要几块 CDC"，设备要自己
+	  建 context、注册类、再 usbd_enable()；Zephyr 自带的
+	  CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT 只注册第一块 CDC，其余没有 context，
+	  第一次写日志就 NULL 解引用。这份代码一次注册 devicetree 里全部 CDC，
+	  应用与 MCUboot 镜像共用，差别只在下面的字符串与 VID/PID。
 
 if ZLRS_USB
 

@@ -1,14 +1,7 @@
 /*
- * 配置协议：设备在配置模式下跑在数据通路上，规则见 doc/02-security.md 第 10 节
- * 与 doc/01-system.md 2.1。
- *
- * 帧形状：
- *
- *   [0xA5][0x5A][ver][cmd][len][payload ...][crc8]
- *     ver = 1，len = 载荷长度，crc8 覆盖 ver..payload（与 CRSF 同一个多项式）
- *
- * 这个库是纯 C 的"协议 + 命令分发"，落盘与链路动作通过 backend 回调交给应用：
- * 主机侧拿一个假 backend 就能把每条命令跑一遍（见 tests/host）。
+ * 配置协议：配置模式下跑在数据通路上，帧格式与命令见 doc/03-protocol.md。
+ * 纯 C 的"协议 + 分发"，落盘与链路动作由 backend 回调交给应用——主机侧拿假
+ * backend 就能把每条命令跑一遍（tests/host）。
  *
  * SPDX-License-Identifier: Apache-2.0
  */

@@ -1,21 +1,11 @@
 /*
- * zlrs 的 USB 设备栈：把 devicetree 里那几块 CDC 组成一个复合设备。应用镜像是
- * 三块（CRSF / 数据口 / 控制台，见 doc/01-system.md 2.1），bootloader 镜像是两块
- * （恢复口 / 控制台，见同文档 2.4）——差别只在配置里的字符串与 VID/PID，代码同一份。
+ * zlrs 的 USB 设备栈：把 devicetree 里的 CDC 组成复合设备（应用三块、bootloader
+ * 两块，代码同一份，只有字符串与 VID/PID 不同）。产品名要留成 ZLRS / ZLRS MCUBOOT，
+ * 升级脚本按 /dev/serial/by-id 里的名字找端口。
  *
- * 为什么非要这份代码：Zephyr 的 device_next 栈里，devicetree 里的
- * `zephyr,cdc-acm-uart` 节点只是"要几块 CDC"，本身不会让设备上线——镜像要自己
- * 建 usbd context、把类注册进配置、再 usbd_enable()。
- *
- * 不能用 CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT 那个辅助实现：它只注册**第一块**
- * CDC（源码里写明了 "This code only registers the first CDC-ACM instance"），
- * 而两个镜像的 CDC 都在用。没注册的那块没有 context，第一次往它写日志就是
- * NULL 解引用（usbd_ep_buf_alloc() → uds_ctx->dev），整机当场停住、USB 也会掉
- * ——上板第一次跑就是这个现象。所以这里用 usbd_register_all_classes() 一次注册
- * 全部 CDC，并把那个辅助开关关掉（app/prj.conf 与 app/sysbuild/mcuboot.conf）。
- *
- * 名字随角色走：升级脚本按 /dev/serial/by-id/...ZLRS... 找端口（应用模式
- * "ZLRS"、bootloader 模式 "ZLRS MCUBOOT"，见 scripts/zlrs-update.py）。
+ * device_next 栈里 `zephyr,cdc-acm-uart` 节点只表达"要几块 CDC"，不会让设备上线；
+ * 而 CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT 只注册第一块 CDC，其余没有 context，
+ * 第一次往它们写日志就 NULL 解引用。所以这里自己注册全部 CDC。
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -83,11 +73,8 @@ static int zlrs_usb_init(void)
 	int err;
 
 	/*
-	 * USB 是**可裁**的（doc/01-system.md 2.2：轻量版没有原生 USB），所以这里
-	 * 一律不把失败往上抛——SYS_INIT 返回非零会让 Zephyr 判初始化失败并停住整机，
-	 * 而"USB 起不来"不该让一块只能跑串口/空口的板子陪葬。失败只报警，端口层
-	 * 会发现端点不可用并退回 UART（见 app/src/ports.c 的 port_active）。
-	 * 代价是 USB 挂了就没有控制台日志，所以这里的警告要写清楚。
+	 * USB 可裁（doc/01-system.md 2.2）：失败只报警不住手——SYS_INIT 返回非零会
+	 * 让 Zephyr 停住整机，而 USB 起不来不该拖死只能跑串口/空口的板子。
 	 */
 	err = zlrs_usb_add_descriptors();
 	if (err != 0) {

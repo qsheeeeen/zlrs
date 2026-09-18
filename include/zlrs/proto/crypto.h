@@ -1,13 +1,7 @@
 /*
- * 协议核心用到的密码学原语：HKDF-SHA256 派生与每包 4 字节截断标签。
- *
- * 实现在 lib/proto/crypto_soft.c，纯 C、无外部依赖：
- *   - 上层（lib/link）只看到这里的接口，不知道底层实现
- *   - 标签长度、域分离标签、KDF 的上下文拼接方式在这里统一
- *   - 将来要换 PSA Crypto / 硬件加速，替换这一个 .c 文件即可
- * 设备侧与主机侧测试编译同一份源码，见 tests/host/Makefile。
- *
- * 算法选型见 doc/02-security.md。
+ * 密码学原语接口：HKDF-SHA256 派生与每包 4 字节截断标签。标签长度、域分离与
+ * KDF 上下文拼接都集中在这里，换后端（PSA / 硬件加速）只换 .c，见
+ * lib/proto/crypto_psa.c 与 doc/02-security.md。
  *
  * SPDX-License-Identifier: Apache-2.0
  */

@@ -9,17 +9,9 @@
 #include <stddef.h>
 
 /*
- * 功率与速率上限取该地区常见子频段的保守值（上板前还要按当地法规核对，
- * 见 doc/05-roadmap.md 的 M6）：
- *   - FCC 15.247：902–928 MHz 允许 1 W 传导功率，取模块能力上限 22 dBm；
- *     频带宽，速率不受限
- *   - ETSI EN 300 220：868 MHz 多数子频段 25 mW（14 dBm）+ 1% 占空比；
- *     信道 500 kHz 间隔，只放得下 300 kHz 带宽的窄带档
- *   - CN 470–510 MHz：取 50 mW（17 dBm），不设占空比；300 kHz 间隔 → 窄带档
- *   - CN 433.05–434.79 MHz：微功率短距离设备，取 10 mW（10 dBm）；1.74 MHz
- *     宽、5 个信道，只能窄带档
- *
- * band 是硬件属性：FCC915/EU868 要 HF SKU，CN470/CN433 要 LF SKU。
+ * 功率与速率上限取各地区常见子频段的保守值（还要按当地法规核对，见 roadmap M6）：
+ * FCC 15.247 取模块上限 22 dBm；ETSI EN 300 220 取 14 dBm + 1%；CN470 取 17 dBm；
+ * CN433 微功率取 10 dBm。band 是硬件属性：FCC915/EU868 要 HF SKU，其余要 LF SKU。
  */
 static const zlrs_region_t regions[ZLRS_REGION_COUNT] = {
 	[ZLRS_REGION_FCC915] = { .name = "FCC915",

@@ -68,15 +68,8 @@ static int write_record(uint16_t id, const void *data, size_t len)
 	}
 
 	rc = nvs_write(&fs, id, data, len);
-	/*
-	 * nvs_write() 的返回（见 zephyr/kvss/nvs.h）：
-	 *   len  成功写入
-	 *   0    内容与已存的一致，没动 flash（也算成功）
-	 *   < 0  errno
-	 * 只判 <0 是不够的：长度对不上的正常返回（比如写了一半）会被当成成功。
-	 * 所以两种成功都放行，其余一律按失败上报——上板那次"storage error"就是
-	 * 这里把 len 当成了错误（数据其实写进去了）。
-	 */
+	/* 成功有两种返回：写入 len 字节，或内容一致没动 flash（0）。只判符号会把
+	 * 前者当失败、把长度不符当成功（见 zephyr/kvss/nvs.h）。 */
 	if (rc == 0 || rc == (ssize_t)len) {
 		return 0;
 	}

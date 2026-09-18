@@ -1,10 +1,6 @@
 /*
- * 跳频序列，见 doc/03-protocol.md 第 5 节。
- *
- *   - 种子来自 pair_key 的派生值 fhss_seed，两端各自算出同一张表
- *   - 每块的第 0 个时隙固定落在同步信道，其余位置块内洗牌，
- *     因此每个频点出现次数相同（法规的等概率使用）
- *   - 频点以 Hz 表示，直接喂给 LR2021 的 SetRfFrequency
+ * 跳频序列，见 doc/03-protocol.md 第 5 节：两端由 fhss_seed 各自算出同一张表，
+ * 每块第 0 个时隙固定落在同步信道，其余块内洗牌（等概率使用）。
  *
  * SPDX-License-Identifier: Apache-2.0
  */

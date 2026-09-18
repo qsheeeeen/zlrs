@@ -16,11 +16,8 @@ config ZLRS_APP_CORE
 	select ZLRS_REGION
 	select ZLRS_CRSF
 	help
-	  应用永远需要协议核心、链路层、地区配置层与 CRSF 编解码：超帧、配对与会话、
-	  法规门、失控值默认值都在这些层里。库层的开关（lib/*/Kconfig）是给别的
-	  消费者用的，应用这边由"需要哪一项功能"反选出来，避免出现"把库关掉、应用
-	  却还在调用它"的组合；CRSF 端口、配置模式、状态灯关掉时，对应的库才可以
-	  跟着裁掉。
+	  应用永远需要的四层：超帧、配对与会话、法规门、失控值默认值都在里面。
+	  库层开关由功能开关反选，避免"库关掉、应用还在调用"的组合。
 
 config ZLRS_APP_ROLE_TX
 	bool "构建成 TX 角色"
@@ -102,9 +99,7 @@ config ZLRS_APP_STATS_LOG
 	bool "每秒在控制台打一条链路状态（上板调试用）"
 	default n
 	help
-	  每秒四行：收发计数、串口/空口丢弃、LQ、地区与占空比、当前功率。
-	  上板调试建议开（控制台直接看出链路在干什么），量产关掉——每秒四行
-	  日志挨着 150 Hz 的链路纯属噪声。
+	  每秒四行收发计数/丢弃/LQ/功率，上板调试开着，量产关掉（噪声）。
 	  只影响打不打日志：速率档与动态功率的每秒评估不受影响。
 
 config ZLRS_APP_BOOT_DELAY_MS
@@ -112,25 +107,17 @@ config ZLRS_APP_BOOT_DELAY_MS
 	default 0
 	range 0 30000
 	help
-	  上板调试用：USB 设备栈一上线就在这里等一会儿，让主机来得及打开控制台
-	  端口（CDC 的 TX 要主机打开端口才收），然后再往下走。这样"初始化中途
-	  崩了"的那一刻，panic 日志能真的打到控制台上，而不是丢在没人开的口上。
-	  生产构建保持 0。
+	  上板调试用：等一会儿再往下走，好让主机打开控制台端口（CDC 的 TX 要主机
+	  打开才收），这样"初始化中途崩了"的 panic 日志才看得到。生产保持 0。
 
 config ZLRS_APP_WATCHDOG
 	bool "看门狗：崩溃或卡死自动复位（回滚的助力，不是回滚本身）"
 	default n
 	depends on WATCHDOG
 	help
-	  在 PRE_KERNEL_1 就把板上的看门狗装好（app/src/watchdog.c），超时后复位
-	  整颗芯片；喂狗只在主循环与配置模式的轮询循环里做，所以"主循环卡住"
-	  也算死。
-
-	  注意它和镜像确认是两件事：回滚只发生在**复位**时，而"确认标志"才是
-	  MCUboot 判断该不该回滚的依据（ZLRS_APP_MCUBOOT_CONFIRM）。没有看门狗
-	  也能回滚——只要应用崩了之后有人复位它（手动按键/断电，或别处有看门狗）；
-	  打开这个开关只是让"崩在初始化里、自己停住"的设备能自己回来，上板调试
-	  时不用按 BOOTSEL。
+	  PRE_KERNEL_1 就装好（app/src/watchdog.c），喂狗只在会阻塞的循环里做，
+	  "主循环卡住"也算死。它只把卡死变成复位；回滚的判据是镜像确认位
+	  （ZLRS_APP_MCUBOOT_CONFIRM），打开它只是省掉"崩了按 BOOTSEL"。
 
 config ZLRS_APP_WATCHDOG_TIMEOUT_MS
 	int "看门狗超时（毫秒）"
@@ -138,8 +125,7 @@ config ZLRS_APP_WATCHDOG_TIMEOUT_MS
 	range 100 10000
 	depends on ZLRS_APP_WATCHDOG
 	help
-	  要能给最慢的一次喂狗间隔留足余量（配置模式里 PBKDF2 会跑一会儿），
-	  又不能长到"崩了要等半天才回来"。8 秒是两边都舒服的值。
+	  要盖住最慢的一次喂狗间隔（配置模式里的 PBKDF2），又不能太长。
 
 config ZLRS_APP_MCUBOOT_CONFIRM
 	bool "初始化跑完就确认镜像（配合 MCUboot 的 test/revert 回滚）"
@@ -150,13 +136,8 @@ config ZLRS_APP_MCUBOOT_CONFIRM
 	select STREAM_FLASH
 	select IMG_MANAGER
 	help
-	  应用把该初始化的都初始化完（端口、NVS、链路、USB 都起来了）之后调
-	  boot_write_img_confirmed()，把当前镜像标成"已确认"——这一位就是
-	  "应用跑起来了、不是坏镜像"的标志。
-
-	  升级走 test 语义（scripts/zlrs-update.py 用的 smpmgr upgrade 默认就是）：
-	  新镜像换进来后如果**没跑到这一步**就崩了，下一次复位时 MCUboot 直接
-	  回滚到上一版；没有上一版就停在串口恢复（BOOT_SERIAL_NO_APPLICATION）。
+	  初始化跑完就调 boot_write_img_confirmed()。升级走 test 语义，新镜像没跑到
+	  这一步就崩的话，复位时 MCUboot 直接回滚（没有上一版就停在串口恢复）。
 
 config ZLRS_APP_MCUBOOT_CONFIRM_MS
 	int "初始化完成后还要再跑多久才确认（毫秒，0 = 立刻）"
@@ -164,31 +145,23 @@ config ZLRS_APP_MCUBOOT_CONFIRM_MS
 	range 0 600000
 	depends on ZLRS_APP_MCUBOOT_CONFIRM
 	help
-	  0 = 初始化一结束就确认（默认，按"跑完初始化就算正常"的判据）。
-	  想更保守可以给一段观察窗口：这段时间里崩掉仍然算"没通过"，
-	  复位后照样回滚。
+	  0 = 初始化一结束就确认；给一段观察窗口的话，这段时间里崩掉照样回滚。
 
 config ZLRS_APP_USB
 	bool "USB 设备栈（三块 CDC：CRSF / 数据口 / 控制台）"
 	default y
 	select ZLRS_USB
 	help
-	  用 lib/usb 那份设备栈：自己建 usbd context、把 devicetree 里的三块 CDC
-	  一次注册进去，再 usbd_enable()。Zephyr 的
-	  CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT 只注册第一块 CDC，本应用用不了，
-	  所以那个开关保持关着（见 app/prj.conf）。
-	  轻量硬件（没有原生 USB）把 devicetree 里的 usbd 与别名删掉即可，这里关掉
-	  则连设备栈都不建。
+	  用 lib/usb 那份设备栈（应用自己建 context 并注册全部 CDC）。轻量硬件把
+	  devicetree 里的 usbd 与别名删掉即可；这里关掉则连设备栈都不建。
 
 config ZLRS_APP_RADIO
 	bool "射频（USP/RAC + LR2021）"
 	default y
 	help
-	  关掉以后整条射频都不参与：不初始化 USP/RAC，也不提交任何事务——每次
-	  事务当场按"发出去、这一轮没收到回音"收尾，链路层的状态机、加密与组帧
-	  照常跑，端口、配置模式、按键、状态灯、NVS 都不受影响。
-	  Core2021 还没接上时用它先验证射频以外的部分：LR20xx 的 HAL 等不到
-	  BUSY 会 k_oops，模块没接上整机就起不来。见 doc/01-system.md 2.3。
+	  关掉后整条射频不参与（走 app/src/radio_null.c），链路状态机与其余功能照常。
+	  Core2021 没接时用它验证射频以外的部分：LR20xx 的 HAL 等不到 BUSY 会 k_oops。
+	  见 doc/01-system.md 2.3。
 
 config ZLRS_APP_LINK_CONTROL
 	bool "控制链路（sub-G：RC + 遥测 + 配对）"
@@ -221,13 +194,10 @@ config ZLRS_APP_CONFIG_MAGIC
 	default n
 	select ZLRS_CONFIG
 	help
-	  数据口字节流里出现 16 字节 `zlrs!configmode!` 就进配置模式（与
-	  ZLRS_APP_UPDATE_TRIGGER 的 `zlrs!bootloader!` 同一套匹配：不是魔数就原样
-	  透传，不丢字节）。命令 EXIT 或超时后回正常模式。
+	  数据口收到 16 字节 `zlrs!configmode!` 就进配置模式（EXIT/超时回正常），
+	  与 `zlrs!bootloader!` 共用一套逐字节匹配（不是魔数的字节原样透传）。
 
-	  为什么需要它：板子上没有可编程按键时（只有 BOOTSEL 与 RESET），
-	  "开机按住按键进配置"没有入口；轻量版 RX 也常常没有按键。上板调试默认关，
-	  需要时打开。
+	  给没有用户按键的板子（本板只有 BOOTSEL/RESET）和轻量版 RX 用。
 
 config ZLRS_APP_SHELL
 	bool "控制台 CDC 上的调试 shell"
@@ -235,14 +205,8 @@ config ZLRS_APP_SHELL
 	select SHELL
 	select SHELL_BACKEND_SERIAL
 	help
-	  在 `zephyr,shell-uart`（本板是 USB 第三块 CDC，跟控制台同一个口）上开一个
-	  shell，带几条命令：
-
-	    zlrs status      角色、SKU、地区、链路状态
-	    zlrs config      进配置模式（EXIT 回正常）
-	    zlrs recovery    进 MCUboot 串口恢复（等同数据口的 `zlrs!bootloader!`）
-
-	  上板调试用；量产关掉（省 flash，也少一个入口）。
+	  在控制台口上开 shell：`zlrs status` / `zlrs ports` / `zlrs config` /
+	  `zlrs recovery`。上板调试用，量产关掉。
 
 config ZLRS_APP_PAIRING_BUTTON
 	bool "长按按键触发配对"
@@ -450,11 +414,6 @@ config ZLRS_APP_ENTROPY_TRNG
 	default n
 	select ENTROPY_RPI_PICO_RNG
 	help
-	  默认关：这个驱动打开后 USB 会死掉（上板实测：应用还在跑、灯还在闪，但
-	  主机侧"设备描述符请求失败"）。原因在 pico-sdk 的实现里——
-	  modules/hal/rpi_pico/src/rp2_common/pico_rand/rand.c 的 TRNG 采样是
-	  "拿住自旋锁 + 关中断 + `while (trng_hw->trng_busy);`"的忙等，USB 的
-	  中断/工作队列在这期间得不到服务。
-	  关掉之后 CSPRNG 走 Zephyr 的退化路径（bring-up 够用，量产必须换回来）：
-	  要么修好 TRNG 的取数路径（有界超时 + 不长时间关中断），要么换别的熵源。
-	  见 doc/05-roadmap.md 的 M0/M1"TRNG 与 USB"。
+	  默认关：打开后 USB 会死（pico-sdk 的 TRNG 采样是"关中断 + 忙等
+	  trng_busy"，USB 得不到服务）。CSPRNG 退到 Zephyr 默认路径，bring-up 够用；
+	  量产前必须改成安全取数或换熵源，见 doc/05-roadmap.md 的 M0/M1。

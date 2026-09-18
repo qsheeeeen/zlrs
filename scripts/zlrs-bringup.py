@@ -3,16 +3,9 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# 上板自检：一条命令把"不依赖射频"的那一档验一遍（roadmap M1/M3 里能在板子上
-# 独立跑的部分）。不做射频相关的事——射频那档要等 Core2021 接上。
-#
-# 验什么：
-#   1. 应用模式的三块 CDC 都在（CRSF / 数据口 / 控制台，按 by-id 名字认）
-#   2. 数据口魔数 `zlrs!configmode!` 能把应用切进配置模式
-#   3. 配置协议：status（读状态）→ set-phrase（写短语，PBKDF2 落 NVS）→
-#      set-failsafe → status（确认 key 位变 yes）
-#   4. EXIT 回正常模式
-#   5. 再进一次配置模式，status 里 key 仍是 yes —— NVS 持久化
+# 上板自检：一条命令验完"不依赖射频"那一档（roadmap M1/M3 的软件侧）：
+# 三块 CDC → 数据口魔数进配置模式 → 配置协议读写（含 PBKDF2 落 NVS）→
+# 退出后再进一次确认 NVS 持久化。射频相关的一律不碰。
 #
 # 用法：
 #   python3 scripts/zlrs-bringup.py                # 自动按 by-id 找端口

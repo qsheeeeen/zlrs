@@ -1,14 +1,6 @@
 /*
- * 射频移植层：把 zlrs 链路层的射频抽象（zlrs_radio_ops_t）落到具体后端，
- * 回调契约见 doc/01-system.md 第 7.2 节。
- *
- * 两个后端，由 CONFIG_ZLRS_APP_RADIO 二选一：
- *
- *   radio_rac.c   射频在（默认）：两条链路各占一个 RAC 客户端（控制 HIGH、
- *                 数据 MEDIUM），事务提交后由 RAC 线程回调，链路线程用
- *                 zlrs_radio_port_wait_us() 等结果，再由 ..._drain() 回填。
- *   radio_null.c  射频关：Core2021 还没接上时用的空后端——不碰 SPI/BUSY，
- *                 每次事务当场按"发出去、没收到回音"收尾，其余部分照常跑。
+ * 射频移植层：zlrs_radio_ops_t 的具体后端，回调契约见 doc/01-system.md 7.2。
+ * 由 CONFIG_ZLRS_APP_RADIO 二选一：radio_rac.c（RAC/LR2021）或 radio_null.c。
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -20,11 +12,11 @@
 
 #include "zlrs/link/link.h"
 
-/* 射频操作表：传给 zlrs_link_init() 用 */
+/* 传给 zlrs_link_init() 的操作表 */
 const zlrs_radio_ops_t *zlrs_radio_control_ops(void);
 const zlrs_radio_ops_t *zlrs_radio_data_ops(void);
 
-/* 打开两条链路的射频后端，并把完成结果接到这两条链路上 */
+/* 打开后端并把完成结果接到两条链路上（失败返回负值） */
 int zlrs_radio_port_init(zlrs_link_t *control, zlrs_link_t *data);
 
 /*

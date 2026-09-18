@@ -1,13 +1,8 @@
 /*
- * 空口遥测载荷：RX 把本侧测到的链路质量回报给 TX，见 doc/01-system.md 第 3 节。
- *
- * 为什么不用 CRSF 的链路统计帧直接当载荷：CRSF 是地面侧格式（含地址与 CRC），
- * 空口上多带这些没意义；这里用 8 字节的定长载荷，两端版本一致才解析。
- * TX 收到后再组装成给手台看的 CRSF 帧（0x14）。
- *
- * 方向语义（与 CRSF 的 uplink/downlink 对齐）：
- *   - 载荷里的数字是"RX 测到的 TX → RX 方向"，即手台看到的 uplink
- *   - 手台看到的 downlink 由 TX 自己测量，不走这个载荷
+ * 空口遥测载荷：RX 回报本侧测到的链路质量，TX 再组装成 CRSF 统计帧（0x14）。
+ * 不复用 CRSF 帧当载荷：那是地面侧格式（含地址与 CRC），空口上多带没意义。
+ * 载荷数字是 uplink 方向（RX 测 TX→RX），downlink 由 TX 自己测，见
+ * doc/01-system.md 第 3 节。
  *
  * SPDX-License-Identifier: Apache-2.0
  */

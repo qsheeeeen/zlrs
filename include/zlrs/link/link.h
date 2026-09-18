@@ -1,19 +1,8 @@
 /*
- * 链路层：一条链路一份实例，跑文档定义的状态机与超帧时隙。
- * 见 doc/03-protocol.md 第 3、4 节。
+ * 链路层：一条链路一份实例，跑状态机与超帧时隙，见 doc/03-protocol.md 第 3、4 节。
  *
- *   控制链路（sub-GHz）：RC 下行 + TLM 上行，另负责 BEACON 与配对
- *   数据链路（2.4G）：DATA_UP / DATA_DOWN，best-effort 透传
- *
- * 调用顺序（一个超帧内）：
- *
- *   for (slot = ...) {
- *           req = zlrs_link_slot(link, slot, now_ms);
- *           if (req) radio.submit(&req);   // 完成后回调 zlrs_link_complete()
- *   }
- *   zlrs_link_tick(link, now_ms);          // 超时与状态迁移
- *
- * 本层不依赖 Zephyr，也不直接碰射频芯片。
+ * 每个超帧：zlrs_link_slot() 取事务 → radio.submit() → 完成后 zlrs_link_complete()，
+ * 帧尾再 zlrs_link_tick() 走超时与状态迁移。本层不依赖 Zephyr，也不碰射频芯片。
  *
  * SPDX-License-Identifier: Apache-2.0
  */

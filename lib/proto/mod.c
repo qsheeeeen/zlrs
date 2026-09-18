@@ -27,13 +27,8 @@ static uint32_t flrc_airtime_us(uint32_t rate_bps, uint16_t frame_len)
 }
 
 /*
- * LoRa 载荷符号数（Semtech 的经典公式）：
- *
- *   n = 8 + max(ceil((8*PL - 4*SF + 28 + 16*CRC - 20*IH) / (4*(SF - 2*DE)))
- *               * (CR + 4), 0)
- *
- * CRC = 1（LR2021 硬件生成 CRC）、IH = 0（显式头），DE 只在 SF11/SF12 配 125 kHz
- * 时置 1（低速率优化）。CR 用 1..4 表示 4/5..4/8。
+ * LoRa 载荷符号数（Semtech 公式）：CRC=1（硬件生成）、IH=0（显式头）、DE 只在
+ * SF11/SF12 配 125 kHz 时置 1、CR 用 1..4 表示 4/5..4/8。
  */
 static uint32_t lora_payload_symbols(const zlrs_mod_cfg_t *mod, uint16_t frame_len)
 {

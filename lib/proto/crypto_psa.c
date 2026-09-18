@@ -1,18 +1,12 @@
 /*
  * SPDX-License-Identifier: Apache-2.0
  *
- * 密码学实现（设备侧默认）：原语走 Zephyr 的 PSA Crypto。provider 通常是 mbedTLS，
- * 换成带硬件加速的 provider 不用改这里——Zephyr 的 PSA 提供者由 Kconfig 选。
+ * 设备侧密码学实现：原语走 Zephyr 的 PSA Crypto（provider 由 Kconfig 选，换实现
+ * 不用改这里）。必须与 crypto_soft.c 给出同一串字节——主机侧用例跑的是那份，
+ * 两边不一致就等于配不出同一把钥匙。接口见 zlrs/proto/crypto.h。
  *
- * 接口与语义见 zlrs/proto/crypto.h，必须和 crypto_soft.c 给出同一串字节：主机侧
- * 用例跑的是那份软件实现（tests/host），设备侧跑的是这里，两边不一致就等于配不出
- * 同一把钥匙。
- *
- * 两处刻意的选择：
- *   - HKDF 用 PSA 的算法。空盐写成 32 个 0：HMAC 会把短 key 补零到分组长，空盐与
- *     HashLen 个 0 是同一个 HMAC key，所以与软件实现一致（主机上逐字节比对过）。
- *   - PBKDF2 用 PSA 的 HMAC 按 RFC 8018 组合，不用 PSA_ALG_PBKDF2_HMAC：不是每个
- *     provider/配置都提供它，而 PBKDF2 只是 HMAC 的循环。
+ * 两处刻意选择：空盐写成 32 个 0（HMAC 补零后与空盐等价，与软件实现逐字节一致）；
+ * PBKDF2 用 HMAC 按 RFC 8018 组合，因为不是每个 provider 都提供 PBKDF2 算法。
  */
 
 #include <psa/crypto.h>

@@ -1,11 +1,6 @@
 /*
- * 空口帧格式，见 doc/03-protocol.md 第 2 节：
- *
- *   header(1) | seq(2) | payload(0..N) | tag(0/4)
- *   header: 高 6 位 = 类型，低 2 位 = 标志
- *
- * 前导码、同步字、CRC 与长度字段由 LR2021 的 FLRC 硬件负责，帧里不重复携带。
- * 多字节字段一律小端。
+ * 空口帧格式，见 doc/03-protocol.md 第 2 节。前导码、同步字、CRC 与长度由
+ * LR2021 的 FLRC 硬件负责，帧里不重复携带；多字节字段小端。
  *
  * SPDX-License-Identifier: Apache-2.0
  */

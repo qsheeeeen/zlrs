@@ -1,14 +1,9 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 
-# RP2350 的 SoC Kconfig 默认给**每个**镜像都编 ROM bootloader 跳转钩子
-# （`rp2_bootloader_check_boot_init()`，PRE_KERNEL_2：看到 boot mode 标志就清掉、
-# 跳进 ROM 的 USB bootloader = U 盘模式）。留在 bootloader 镜像里的话，应用置好
-# 标志重启后是它先执行，MCUboot 里那段"停在串口恢复"（io_detect_boot_mode）永远
-# 轮不到——现象就是"触发 recovery 结果进了 U 盘模式（2e8a:000f）"。
-#
-# 应用镜像保留这个钩子：没有 MCUboot 的轻量构建里，它是"砖机进 U 盘"的兜底。
-# 这个符号没有 prompt，只能在模块 Kconfig 里追加一个 default 覆盖 SoC 的默认。
+# SoC 默认给每个镜像都编 ROM bootloader 跳转钩子（看到 boot mode 标志就跳进
+# ROM 的 U 盘模式），在 bootloader 镜像里它会抢在 MCUboot 的串口恢复之前执行。
+# 应用镜像保留它作为"砖机进 U 盘"的兜底；这个符号没有 prompt，只能追加 default。
 config RPI_PICO_ROM_BOOTLOADER
 	default n if IS_BOOTLOADER
 
@@ -17,15 +12,8 @@ config ZLRS_BOOTGUARD
 	default y if IS_BOOTLOADER
 	depends on WATCHDOG
 	help
-	  MCUboot 起来后第一件事就是把看门狗关掉。
-
-	  为什么需要：应用侧的 ZLRS_APP_WATCHDOG 崩溃时复位芯片，而 RP2350 的
-	  看门狗在"看门狗复位"之后 ENABLE 位通常仍然是 1（它会一直按周期复位，
-	  直到软件清掉）。于是 MCUboot 刚起来跑换槽/回滚，8 秒后又被复位打断——
-	  回滚永远做不完，现象是设备在"USB 描述符请求失败 / 掉线"之间反复。
-	  护栏把这一环掐断：不管上一轮谁把看门狗点着的，bootloader 先关掉它，
-	  换槽与回滚都在没有看门狗的环境里跑完；进应用后再由应用自己决定要不要
-	  重新武装（见 app/Kconfig 的 ZLRS_APP_WATCHDOG）。
+	  MCUboot 起来先关掉看门狗：RP2350 的看门狗在复位后可能还开着，会把换槽/
+	  回滚打断。进应用后再由应用自己决定要不要重新武装（ZLRS_APP_WATCHDOG）。
 
 module = ZLRS_BOOTGUARD
 module-str = zlrs_bootguard

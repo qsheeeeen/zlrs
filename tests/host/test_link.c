@@ -610,11 +610,8 @@ static void test_intruder_without_pair_salt(void)
 }
 
 /*
- * 三节点之三：组内成员**听过**那次配对（salt 正确、dev_id 照抄）。它能算出同一
- * 套钥匙，于是趁真 TX 沉默时与 RX 完成握手并注入 RC。
- *
- * 这是 doc/02 第 7.2 节已声明的固有代价（没有逐设备身份），用例把它钉住——
- * 别哪天以为它被修掉了。要真挡住得靠逐设备密钥/证书。
+ * 听过配对的组内成员能算出同一套钥匙，于是能冒充真 TX 注入 RC——这是
+ * doc/02 7.2 声明的固有代价（没有逐设备身份），用例把它钉住。
  */
 static void test_group_member_impersonates(void)
 {

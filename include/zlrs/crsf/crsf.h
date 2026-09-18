@@ -1,16 +1,6 @@
 /*
- * CRSF（Crossfire）串口帧编解码：地面侧接口，不走空口。
- *
- * 帧形状（CRSF 惯例，长度字段按"地址与长度字节之后"计）：
- *
- *   [addr][len][type][payload ...][crc8]
- *     len = type(1) + payload(n) + crc(1) = n + 2
- *     crc8 = DVB-S2 多项式 0xD5，覆盖 type 与 payload
- *
- * 只实现 zlrs 用到的两种帧：
- *
- *   0x16 RC_CHANNELS_PACKED  16 通道 × 11 bit = 22 字节
- *   0x14 LINK_STATISTICS     10 字节（RSSI / LQ / SNR / 速率档 / 功率档）
+ * CRSF 帧编解码（地面侧接口，不走空口）：帧与 CRC 按 CRSF 惯例（DVB-S2 多项式
+ * 0xD5），只实现 zlrs 用到的 RC_CHANNELS_PACKED 与 LINK_STATISTICS 两种。
  *
  * 取舍：CRSF 在我们的方案里只是端口格式（手台 ↔ 模块、接收机 ↔ 飞控），
  * 与 ExpressLRS 的空口协议无关；地址字段解析时不校验（手台与飞控用的地址

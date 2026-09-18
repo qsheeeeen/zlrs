@@ -1,14 +1,8 @@
 /*
- * 端口层：CRSF 端口、数据口（透传）与配置模式，以及两条链路各自的端点选择。
+ * 端口层：CRSF 端口、数据口（透传）与配置模式，含两条链路的端点二选一。
  *
- * 板级用别名给出每条链路挂在哪块端点上（doc/01-system.md 2.1）：
- *
- *   CRSF：`zlrs-crsf-uart`（UART0 = GP0/GP1）、`zlrs-crsf-cdc`
- *   数据：`zlrs-data-uart`（UART1 = GP8/GP9）、`zlrs-data-cdc`
- *
- * 选择规则：USB 上的主机把该链路的 CDC 打开（DTR 有效）就走 USB，否则走 UART；
- * 别名缺失的端点在编译期裁掉（2.2）。控制台不经过这一层：板级 chosen 的
- * `zephyr,console` 指向 USB 的第三个 CDC。
+ * 端点由板级别名给出，选择规则与裁剪方式见 doc/01-system.md 2.1/2.2；控制台不走
+ * 这一层（板级 chosen 的 `zephyr,console`）。
  *
  * SPDX-License-Identifier: Apache-2.0
  */

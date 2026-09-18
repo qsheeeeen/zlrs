@@ -19,15 +19,9 @@ LOG_MODULE_REGISTER(zlrs_bootguard, CONFIG_ZLRS_BOOTGUARD_LOG_LEVEL);
 static const struct device *const wdt = DEVICE_DT_GET(DT_ALIAS(watchdog0));
 
 /*
- * 为什么不用 wdt_disable()：RP2350 的看门狗驱动里那个函数是
- *
- *     if (data->enabled == false) { return -EFAULT; }   // 什么都不做
- *
- * 而复位之后驱动状态是全新的一局（enabled = false），硬件却可能还在跑——上一轮
- * 应用用 ZLRS_APP_WATCHDOG 点着的看门狗不会因为 SYSRESETREQ 就停。于是"护栏"
- * 调用 wdt_disable() 会被它自己拒绝（-EFAULT），硬件继续倒数：MCUboot 刚进串口
- * 恢复，几秒后就被复位打断——现象是"恢复口闪现一下又回到应用"。所以这里直接清
- * 硬件使能位（pico-sdk 的 register 定义，看门狗驱动自己也用它）。
+ * 不能用 wdt_disable()：它在 data->enabled == false 时直接 -EFAULT 返回，而复位后
+ * 驱动状态正是"没使能"（硬件可能还在跑），于是护栏形同虚设、MCUboot 的串口恢复被
+ * 看门狗打断。这里直接清硬件使能位（pico-sdk 寄存器定义）。
  */
 static void bootguard_clear_wdt_enable(void)
 {

@@ -1,8 +1,6 @@
 /*
- * 分片重组，规则见 doc/03-protocol.md 2.5：
- *   - MORE 置位表示后面还有分片
- *   - 严格按 seq 顺序重组，出现缺口即丢弃整段
- *   - 超过 ZLRS_FRAG_TIMEOUT_MS 未收齐也丢弃整段
+ * 分片重组：严格按 seq 顺序，出现缺口或超时即丢弃整段，见
+ * doc/03-protocol.md 2.5。
  *
  * SPDX-License-Identifier: Apache-2.0
  */
