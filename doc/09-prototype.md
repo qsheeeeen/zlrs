@@ -1,12 +1,12 @@
 # 原型：RP2350-Zero + Core2021
 
-状态：**桌上原型**——主控与射频两块模块用线连起来，还没有载板。载板 v1
-（J1/J2 接插件、机械尺寸）是 [07-carrier.md](07-carrier.md)，仍是草稿。
+状态：**桌上原型**——RP2350-Zero 与 Core2021 两块模块用线连起来。对外的接口
+只有 USB-C（供电、三条 CDC、烧写）；CRSF 与数据是模块焊盘上的两路 UART，原型上
+没接外设，要用就自己引线。
 
-本文是**现在手里这套硬件**的总览：有哪些物理接口、软件在各种模式下怎么用它们、
-烧写与分区怎么走。引脚、SKU 标定与分区表的权威定义在
-[板级 README](../boards/zlrs/rp2350_zero_core2021/README.md)，软件模式的设计在
-[01-system.md](01-system.md) 2.1/2.4。
+本文记录这套原型的物理接线与软件在各种模式下怎么用它。引脚、SKU 标定与分区表的
+权威定义在 [板级 README](../boards/zlrs/rp2350_zero_core2021/README.md)，软件模式
+的设计在 [01-system.md](01-system.md) 2.1/2.4。
 
 ## 1. 实物构成
 
@@ -16,23 +16,24 @@
 | 射频 | 微雪 Core2021（Semtech LR2021） | 单颗分时双频：sub-G + 2.4G |
 | SKU | **LF**（410–510 MHz） | 地区 CN470(2) / CN433(3)；与 SKU 不匹配时红灯告警且不发射频 |
 | 天线 | 433 MHz，接模块天线座 | 2.4G 那一路的实走线按模块图纸核对 |
-| 供电 | USB-C 或 5V 输入脚 | Core2021 的 3V3 由 Zero 供 |
+| 供电 | USB-C | Core2021 的 3V3 由 Zero 供，两块模块共地 |
 | 模块时钟 | 无源晶振，不是 TCXO | 所以 DT 里 `tcxo-*` 保持关断，`reg-mode` 用 DC/DC |
 | 现状 | Core2021 还没接上 | 跑 `CONFIG_ZLRS_APP_RADIO=n` 的 bring-up 档：端口、配置模式、升级链已验，射频未验 |
 
 ## 2. 物理接口
 
-### 2.1 对外的口
+### 2.1 对外：USB-C
 
-| 接口 | 位置 | 电气 | 软件里的名字 |
-| --- | --- | --- | --- |
-| USB-C | RP2350-Zero 模块 | 原生 USB 全速，兼供电 | `usbd` + 3 块 CDC；ROM 的 UF2 口 |
-| J1（CRSF） | 载板草稿：JST-GH 1.25 6P | DS-009 Telemetry 线序，pin2/3 = RX/TX；pin1 经二极管取 5V；pin4/5 悬空 | `uart0` |
-| J2（数据） | 载板草稿：JST-GH 1.25 6P | 同一套线序，pin2/3 = GP9/GP8 | `uart1` |
-| 天线座 | Core2021 模块 | sub-G 射频收发 | `lora_core2021` |
-| BOOTSEL / RESET | RP2350-Zero 模块 | 芯片级按钮，不是 GPIO | bootrom / 复位 |
-| 按键 SW1 | 载板草稿：GP12 ↔ GND | 对地、内部上拉；**本板没接** | `zlrs-button` |
-| WS2812B | GP16（板上自带） | 单像素 RGB，PIO0 驱动 | `zlrs-led` |
+只有一个口，按运行模式以三种面孔出现：
+
+| 模式 | USB 上是什么 |
+| --- | --- |
+| 应用 | 3 块 CDC：CRSF / 数据 / 控制台（`/dev/ttyACM0/1/2`） |
+| MCUboot 恢复 | 2 块 CDC：恢复 + 控制台（CRSF 那块被裁掉） |
+| ROM BOOTSEL | `RPI-RP2` 大容量盘（拖 UF2），没有 CDC |
+
+两种模式在 USB 上自报的名字不同：应用是 `ZLRS`、bootloader 是 `ZLRS MCUBOOT`。
+主机脚本按 `/dev/serial/by-id/...` 找口，不写死 `ttyACM*` 编号。
 
 ### 2.2 板内连线（Zero ↔ Core2021）
 
@@ -50,23 +51,31 @@
 
 ### 2.3 GPIO 占用总表
 
-| GPIO | 用途 | 引出到 |
+| GPIO | 用途 | 接到哪 |
 | --- | --- | --- |
-| GP0 / GP1 | UART0 TX / RX，CRSF，420000 | J1 pin3 / pin2 |
+| GP0 / GP1 | UART0 TX / RX，CRSF，420000 | 模块焊盘，原型没接 |
 | GP4 / GP5 / GP6 / GP7 | SPI0 MISO / CS / SCK / MOSI | Core2021 |
-| GP8 / GP9 | UART1 TX / RX，数据口，默认 115200（NVS 可改） | J2 pin3 / pin2 |
-| GP12 | 按键（预留，本板没接） | 载板 SW1 |
+| GP8 / GP9 | UART1 TX / RX，数据口，默认 115200（NVS 可改） | 模块焊盘，原型没接 |
+| GP12 | 按键（开机进配置 / 长按配对） | 没接，要用就自己引一根对地的按键 |
 | GP16 | WS2812B 状态灯 | 板上 |
 | GP20 / GP21 / GP22 | BUSY / NRESET / DIO8 | Core2021 |
 
-其余 GPIO 未用。USB 不占 GPIO（原生 USB 控制器），但它是三条链路的第二组端点与
-唯一控制台，见下节。
+其余 GPIO 未用。USB 不占 GPIO（原生 USB 控制器），但它是原型唯一对外的口。
+
+### 2.4 板上的器件
+
+| 器件 | 位置 | 用途 |
+| --- | --- | --- |
+| BOOTSEL 按键 | RP2350-Zero | 芯片级：按住插 USB 进 ROM 的 UF2 模式 |
+| RESET 按键 | RP2350-Zero | 复位；复位后 300 ms 内收到合法 mcumgr 帧会停在恢复模式 |
+| WS2812B | RP2350-Zero（GP16） | 状态灯，语义见 [06-ui.md](06-ui.md) |
+| 天线座 | Core2021 | 接 433 MHz 天线 |
 
 ## 3. 软件模式 × 接口用法
 
 | 接口 | 应用模式 | 配置模式 | MCUboot 恢复 | ROM BOOTSEL |
 | --- | --- | --- | --- | --- |
-| USB-C | 3 块 CDC：CRSF / 数据 / 控制台 | 同左；控制台可敲 shell | 2 块 CDC：恢复 + 控制台，CRSF 那块删掉 | `RPI-RP2` 大容量盘，无 CDC |
+| USB-C | 3 块 CDC：CRSF / 数据 / 控制台 | 同左；控制台可敲 shell | 2 块 CDC：恢复 + 控制台 | `RPI-RP2` 大容量盘 |
 | UART0 GP0/1 | CRSF 收发 420000 | 端口映射不变，但超帧停，不转发 | 不初始化 | 不跑固件 |
 | UART1 GP8/9 | 字节透传 | 改跑配置协议 | **不用**（恢复走 USB） | 不跑固件 |
 | 射频 SPI / BUSY / DIO8 | 每帧四个时隙收发 | 不发事务 | 不碰 | 不跑固件 |
@@ -92,9 +101,9 @@
 `EXIT` 或空闲超时（默认 300 s）退出；写进去的密钥与失控值当场生效。三个入口、
 各自一个 Kconfig：
 
-| 入口 | 开关 | 默认 | 本板能不能用 |
+| 入口 | 开关 | 默认 | 本原型能不能用 |
 | --- | --- | --- | --- |
-| 开机按住按键 | `CONFIG_ZLRS_APP_CONFIG_MODE` | y | 不能：GP12 没接按键 |
+| 开机按住按键 | `CONFIG_ZLRS_APP_CONFIG_MODE` | y | 不能：GP12 没接 |
 | 数据口魔数 | `CONFIG_ZLRS_APP_CONFIG_MAGIC` | n | 能，上板验证走的就是这条 |
 | 控制台 shell `zlrs config` | `CONFIG_ZLRS_APP_SHELL` | n | 能（`zlrs status` / `zlrs ports` / `zlrs recovery` 同在此开关下） |
 
@@ -132,20 +141,19 @@ PBKDF2，会被 8 s 看门狗复位），退出再武装。
 | --- | --- | --- |
 | flash 布局 | code 1 MB @ 0x0 + storage 3 MB @ 0x100000 | mcuboot 128 KB @ 0x0 + slot0 832 KB @ 0x20000 + slot1 832 KB @ 0xF0000 + storage 2.25 MB @ 0x1C0000 |
 | 启动链 | RP2350 bootrom → 应用 | RP2350 bootrom → MCUboot（验签）→ slot0 |
-| 升级 | BOOTSEL 拖 `zephyr.uf2`，或 SWD | 第一次两轮 BOOTSEL；之后串口恢复，不用按键 |
+| 升级 | ROM 的 UF2（按住 BOOTSEL），或 SWD | 第一次两轮 BOOTSEL；之后串口恢复，不用按键 |
 | 回滚 | 无 | 没确认的镜像下次复位换回去；没有可启动镜像就停在恢复模式 |
 
-USB 上两种模式自报的名字不同：应用是 `ZLRS`、bootloader 是 `ZLRS MCUBOOT`，脚本按
-`/dev/serial/by-id/...` 找口，不写死 `ttyACM*` 编号。一条命令升级：
-`python3 scripts/zlrs-update.py --port /dev/ttyACM1`。
+一条命令升级：`python3 scripts/zlrs-update.py --port /dev/ttyACM1`。
 
-## 5. 电气与布局约束（原型阶段）
+## 5. 接线与摆放注意
 
-- Core2021 的 3V3 由 Zero 供；两块模块共地。
-- SPI 走线尽量短（载板目标 < 20 mm）；GP16 被板载 WS2812B 占着，所以射频 SPI 用
-  GP4–GP7 而不是 Pico 默认的 GP16–19。
-- 天线净空：载板草稿要求在模块天线座那一侧留 15–20 mm，不铺铜、不走线、不放大件。
-- J1/J2 的 5V 各自经肖特基二极管或在一起，两个口同时接电源不反灌（载板草稿）。
+- 3V3 由 Zero 供 Core2021，两块模块共地。
+- SPI 跳线尽量短；GP16 被板载 WS2812B 占着，所以射频 SPI 用 GP4–GP7 而不是 Pico
+  默认的 GP16–19。
+- 天线座那一侧留 15–20 mm 净空（不贴金属、不过线）。
+- 按键要自己接：GP12 对地、内部上拉（DT 里配好了），不接就只有魔数 / shell 两个
+  配置入口。
 - hf / lf 两套标定表按 SKU 分家，功率表与标定频点不能共用；上板后要按 Core2021 的
   PA 网络重标，验收标准见 [05-roadmap.md](05-roadmap.md) 的 M0。
 
@@ -156,7 +164,7 @@ USB 上两种模式自报的名字不同：应用是 `ZLRS`、bootloader 是 `ZL
 | RP2350 TRNG 会让 USB 死掉 | 默认关（`CONFIG_ENTROPY_RPI_PICO_RNG=n`，`ZLRS_APP_ENTROPY_TRNG` 才开） | **量产前必修**；CSPRNG 暂走 Zephyr 默认路径 |
 | MCUboot 换槽（`swap using offset`）没走通 | 调试期用 `zlrs-update.py --confirm`（直接写 slot0，无回滚） | 换槽现场要上 SWD 看，见 [05-roadmap.md](05-roadmap.md) M1 |
 | 多块 CDC 的接收端装死 | `CONFIG_USBD_CDC_ACM_BUF_POOL=y`（每块 CDC 自己的池） | 不加就是"只能发不能收"且无提示 |
-| 本板没有用户按键 | 配置只能走数据口魔数或控制台 shell | 配好 `CONFIG_ZLRS_APP_CONFIG_MAGIC` / `..._SHELL` 才有无按键入口 |
+| 原型没有用户按键 | 配置只能走数据口魔数或控制台 shell | 配好 `CONFIG_ZLRS_APP_CONFIG_MAGIC` / `..._SHELL` 才有无按键入口 |
 
 ## 7. 相关文档
 
@@ -165,5 +173,4 @@ USB 上两种模式自报的名字不同：应用是 `ZLRS`、bootloader 是 `ZL
 | 引脚、SKU 标定、分区表的权威定义 | [板级 README](../boards/zlrs/rp2350_zero_core2021/README.md) |
 | 模式设计、端点二选一、启动链与升级 | [01-system.md](01-system.md) 2.1 / 2.4 |
 | 按键与状态灯语义 | [06-ui.md](06-ui.md) |
-| 载板 v1 的接插件与机械规格（草稿） | [07-carrier.md](07-carrier.md) |
 | LR2021 的速率、时序与 SPI/IRQ 摘要 | [04-lr2021.md](04-lr2021.md) |
