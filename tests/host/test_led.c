@@ -71,6 +71,36 @@ static void test_link_states(void)
 	CHECK(!is_off(zlrs_led_frame(&in, 2000U)));
 }
 
+static void test_failsafe_while_connected(void)
+{
+	zlrs_led_input_t in;
+
+	printf("led: failsafe wins over connected\n");
+
+	/* TX 连着链路但没有手台输入：红压过绿 */
+	memset(&in, 0, sizeof(in));
+	in.uptime_ms = 10000U;
+	in.link_state = ZLRS_STATE_CONNECTED;
+	in.lq_percent = 100U;
+	in.failsafe = true;
+	{
+		const zlrs_led_rgb_t f = zlrs_led_frame(&in, 0U);
+
+		CHECK(f.r > f.g);
+		CHECK(f.r > 0U);
+	}
+
+	/* 没连上过就不该由调用方置 failsafe：未配对显示黄（r、g 都有、b 最低） */
+	memset(&in, 0, sizeof(in));
+	in.uptime_ms = 10000U;
+	in.link_state = ZLRS_STATE_UNPAIRED;
+	{
+		const zlrs_led_rgb_t f = zlrs_led_frame(&in, 0U);
+
+		CHECK(f.r > 0U && f.g > 0U && f.b == 0U);
+	}
+}
+
 static void test_connected_lq(void)
 {
 	zlrs_led_input_t in;
@@ -192,6 +222,7 @@ void test_led(void)
 	test_boot_role();
 	test_config_mode_wins();
 	test_link_states();
+	test_failsafe_while_connected();
 	test_connected_lq();
 	test_drop_overlay();
 }

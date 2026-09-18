@@ -118,6 +118,8 @@ static bool rc_input_seen;
 static uint32_t crsf_bad_input;
 static uint32_t last_report_ms;
 static uint32_t led_drop_seen;
+/* 连上过才算"失控"：从没连上的设备该显示未配置/未配对/搜索，而不是红灯 */
+static bool ever_connected;
 static uint32_t led_drop_ms;
 
 /*
@@ -939,10 +941,19 @@ static void led_tick(uint32_t now_ms)
 	in.lq_percent = link_control.stats.lq_percent;
 	in.uptime_ms = now_ms;
 	in.drop_recent = (drops > 0U) && (uint32_t)(now_ms - led_drop_ms) < 1000U;
-	/* TX 没有手台输入时就是在发失控值；RX 未连接时在往飞控输出失控值 */
-	in.failsafe = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX)
-			      ? !rc_input_seen
-			      : (link_control.state != ZLRS_STATE_CONNECTED);
+	/* 发射端没有遥控器输入时就是在发失控值；接收端未连接时在往飞控输出失控值 */
+	if (link_control.state == ZLRS_STATE_CONNECTED) {
+		ever_connected = true;
+	}
+	/*
+	 * 失控保护只在"连上过"之后才有意义：发射端连上过、但从遥控器收不到通道数据
+	 * （在发失控值），或接收端连上过又掉线（在往飞控输出失控值）。从没连上过的
+	 * 设备按普通链路状态显示——未配置紫、未配对黄、搜索青，别用红灯盖掉该做的动作。
+	 */
+	in.failsafe = ever_connected &&
+		      (IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX)
+			       ? !rc_input_seen
+			       : (link_control.state != ZLRS_STATE_CONNECTED));
 
 	zlrs_led_port_update(&in, now_ms);
 }

@@ -95,7 +95,7 @@ zlrs_led_rgb_t zlrs_led_frame(const zlrs_led_input_t *in, uint32_t now_ms)
 	}
 
 	/* 3. 失控保护：红，5 Hz 快闪——"没有可用链路"最要紧 */
-	if (in->failsafe && in->link_state != ZLRS_STATE_CONNECTED) {
+	if (in->failsafe) {
 		return blink(scale(red, 60U), now_ms, 1000U, 800U);
 	}
 
