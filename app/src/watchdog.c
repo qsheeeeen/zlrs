@@ -33,7 +33,7 @@ static const struct device *const wdt = DEVICE_DT_GET(DT_ALIAS(watchdog0));
 
 static int wdt_channel = -1;
 
-static int watchdog_arm(void)
+void zlrs_watchdog_arm(void)
 {
 	const struct wdt_timeout_cfg cfg = {
 		.window = { .min = 0U, .max = CONFIG_ZLRS_APP_WATCHDOG_TIMEOUT_MS },
@@ -42,27 +42,30 @@ static int watchdog_arm(void)
 	};
 	int err;
 
+	if (wdt_channel >= 0) {
+		return; /* 已经武装着 */
+	}
+
 	if (!device_is_ready(wdt)) {
 		LOG_ERR("watchdog device not ready");
-		return -ENODEV;
+		return;
 	}
 
 	wdt_channel = wdt_install_timeout(wdt, &cfg);
 	if (wdt_channel < 0) {
 		LOG_ERR("watchdog timeout install failed (%d)", wdt_channel);
-		return wdt_channel;
+		wdt_channel = -1;
+		return;
 	}
 
 	err = wdt_setup(wdt, 0U);
 	if (err != 0) {
 		LOG_ERR("watchdog setup failed (%d)", err);
 		wdt_channel = -1;
-		return err;
+		return;
 	}
 
 	LOG_INF("watchdog armed: %d ms", CONFIG_ZLRS_APP_WATCHDOG_TIMEOUT_MS);
-
-	return 0;
 }
 
 /*
@@ -71,7 +74,14 @@ static int watchdog_arm(void)
  * 我们排它后面。优先级必须写字面量：SYS_INIT 拿它拼 section 名，写 "50 + 1"
  * 会被链接器当成未定义的初始化层（Undefined initialization levels used）。
  */
-SYS_INIT(watchdog_arm, PRE_KERNEL_1, 51);
+static int watchdog_arm_init(void)
+{
+	zlrs_watchdog_arm();
+
+	return 0;
+}
+
+SYS_INIT(watchdog_arm_init, PRE_KERNEL_1, 51);
 
 void zlrs_watchdog_feed(void)
 {
@@ -94,6 +104,11 @@ void zlrs_watchdog_disarm(void)
 }
 
 #else /* !CONFIG_ZLRS_APP_WATCHDOG */
+
+void zlrs_watchdog_arm(void)
+{
+	/* 看门狗没开：没什么可武装的 */
+}
 
 void zlrs_watchdog_feed(void)
 {

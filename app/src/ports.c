@@ -667,6 +667,14 @@ int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 	LOG_INF("config mode: %u s idle timeout, exit on EXIT command",
 		(unsigned int)CONFIG_ZLRS_APP_CONFIG_TIMEOUT_S);
 
+	/*
+	 * 配置会话期间先关掉看门狗：写短语那条命令要做 100000 轮 PBKDF2（M33 上
+	 * 十几秒到几十秒），8 秒看门狗会把整个会话复位掉——上板实测就是
+	 * "status 能应答，set-phrase 一按设备就重启"。配置是有人值守的操作，
+	 * 退出时再武装回来。
+	 */
+	zlrs_watchdog_disarm();
+
 	while (!exit_requested &&
 	       (uint32_t)(k_uptime_get_32() - last_activity_ms) < timeout_ms) {
 		uint8_t chunk[CFG_RX_CHUNK];
@@ -687,13 +695,15 @@ int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 		zlrs_led_port_update(&led_in, led_in.uptime_ms);
 
 		/* 每一轮重新选端点：配置到一半插上 USB 也会跟着切过去 */
-		const struct device *const dev = port_active(&data_pair);
+		const uint16_t got = zlrs_data_port_read(chunk, sizeof(chunk));
 
-		/* 一轮最多取 CFG_RX_CHUNK 字节，抽出空来照顾超时与状态灯 */
-		for (uint32_t i = 0U; dev != NULL && i < sizeof(chunk); i++) {
-			if (uart_poll_in(dev, &chunk[i]) != 0) {
-				break;
-			}
+		/*
+		 * 收发都走端口层（中断收 + 中断发），不要用 uart_poll_in/out：
+		 * 数据口的 ISR 已经在把驱动环形缓冲里的字节搬进端点缓冲，
+		 * poll_in 只会看到空缓冲（上板实测：能进配置模式，但一条命令都不应答）；
+		 * poll_out 同理也不会触发 USB/串口的实际发送。
+		 */
+		for (uint16_t i = 0U; i < got; i++) {
 			any = true;
 
 			const int result = zlrs_cfg_feed(&cfg_parser, chunk[i]);
@@ -712,9 +722,7 @@ int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 				&cfg_backend, cfg_parser.cmd, ZLRS_CFG_PAYLOAD(&cfg_parser),
 				cfg_parser.payload_len, cfg_tx_line, sizeof(cfg_tx_line));
 
-			for (uint8_t b = 0U; b < len; b++) {
-				uart_poll_out(dev, cfg_tx_line[b]);
-			}
+			(void)zlrs_data_port_write(cfg_tx_line, len);
 		}
 
 		if (!any) {
@@ -723,6 +731,8 @@ int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 	}
 
 	LOG_INF("config mode finished");
+
+	zlrs_watchdog_arm();
 
 	return exit_requested ? 0 : 1;
 }

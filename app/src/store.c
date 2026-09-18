@@ -60,11 +60,25 @@ static int read_record(uint16_t id, void *out, size_t len)
 
 static int write_record(uint16_t id, const void *data, size_t len)
 {
+	int rc;
+
 	if (!ready) {
+		LOG_ERR("store not ready; write of id %u dropped", id);
 		return -1;
 	}
 
-	return nvs_write(&fs, id, data, len);
+	rc = nvs_write(&fs, id, data, len);
+	if (rc < 0) {
+		LOG_ERR("nvs_write(id %u, len %u) failed: %d", id, (unsigned int)len, rc);
+		return rc;
+	}
+
+	/*
+	 * 成功时 nvs_write() 返回的是写入的字节数（见 zephyr/kvss/nvs.h），不是 0。
+	 * 上层按 0/负判断成功失败，所以这里归一一下——不归一的话每次写都会被当成
+	 * "storage error"（上板就是：工具报错、其实数据写进去了）。
+	 */
+	return 0;
 }
 
 int zlrs_store_load_root_key(uint8_t out[ZLRS_KEY_LEN])

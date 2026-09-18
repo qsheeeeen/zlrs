@@ -78,8 +78,12 @@ def send_magic(port: str, baud: int = DEFAULT_BAUD) -> int:
 
 
 def run_config(*args: str) -> tuple[int, str]:
+    """
+    跑一条配置命令。超时给足：写短语那条要在设备侧做 100000 轮 PBKDF2，
+    M33 上十几秒起步；默认 1 秒一定会误判成"设备不应答"。
+    """
     tool = repo_root() / "scripts" / "zlrs-config.py"
-    proc = subprocess.run([sys.executable, str(tool), *args], check=False,
+    proc = subprocess.run([sys.executable, str(tool), "--timeout", "120", *args], check=False,
                           capture_output=True, text=True)
     return proc.returncode, (proc.stdout + proc.stderr).strip()
 

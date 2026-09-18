@@ -18,4 +18,10 @@ void zlrs_watchdog_feed(void);
  */
 void zlrs_watchdog_disarm(void);
 
+/*
+ * 重新武装（配置会话这类"要阻塞很久但有人在旁边"的操作结束后调用）。
+ * 没开看门狗时是空实现。
+ */
+void zlrs_watchdog_arm(void);
+
 #endif /* ZLRS_APP_WATCHDOG_H_ */
