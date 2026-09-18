@@ -185,19 +185,9 @@ config ZLRS_APP_CRSF_PORT
 	  输出。适合只验证空口、不接手台/飞控的台架。
 
 config ZLRS_APP_CONFIG_MODE
-	bool "开机按住按键进配置模式"
+	bool "配置协议可以进配置模式"
 	default y
 	select ZLRS_CONFIG
-
-config ZLRS_APP_CONFIG_MAGIC
-	bool "数据口收到魔数就进配置模式（板上没有用户按键时用）"
-	default n
-	select ZLRS_CONFIG
-	help
-	  数据口收到 16 字节 `zlrs!configmode!` 就进配置模式（EXIT/超时回正常），
-	  与 `zlrs!bootloader!` 共用一套逐字节匹配（不是魔数的字节原样透传）。
-
-	  给没有用户按键的板子（本板只有 BOOTSEL/RESET）和轻量版 RX 用。
 
 config ZLRS_APP_SHELL
 	bool "控制台 CDC 上的调试 shell"
@@ -220,7 +210,7 @@ config ZLRS_APP_STATUS_LED
 	select ZLRS_LED
 
 config ZLRS_APP_UPDATE_TRIGGER
-	bool "数据口触发进 MCUboot 串口恢复"
+	bool "配置协议可以进 MCUboot 串口恢复"
 	default y
 	depends on BOOTLOADER_MCUBOOT
 	select RETENTION
@@ -228,12 +218,12 @@ config ZLRS_APP_UPDATE_TRIGGER
 	select RETAINED_MEM
 	select REBOOT
 	help
-	  数据口收到 16 字节魔数（`zlrs!bootloader!`）就置 boot mode 并重启：
-	  MCUboot 读到这个标志后停在串口恢复，等主机上传签名镜像。这样升级一台
-	  健康设备不用拔插 USB 也不用按复位键。见 doc/08-firmware.md 第 6 节。
+	  配置工具在配置口上发"进恢复"命令，设备置 boot mode 并重启：MCUboot
+	  读到这个标志后停在串口恢复，等主机上传签名镜像。这样升级一台健康设备
+	  不用拔插 USB 也不用按复位键；调试构建里 shell 的 `zlrs recovery` 走同
+	  一条路。见 doc/08-firmware.md 第 6 节。
 
-	  魔数是文本串，正常透传数据里几乎不会出现；万一撞上，只有匹配到前缀的那
-	  几个字节会被当魔数处理，不会重复投递给上层。量产/竞速构建可以关掉它。
+	  量产/竞速构建可以关掉它（关掉后只能靠复位进 bootloader 的启动窗口）。
 
 choice ZLRS_APP_BAND_ROLE
 	prompt "频段角色"

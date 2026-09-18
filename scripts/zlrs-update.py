@@ -7,7 +7,7 @@
 # 等应用回来。省掉"拔插 USB / 按复位键"和"手动两步"。
 #
 # 流程（见 doc/08-firmware.md 第 5 节）：
-#   1. 往应用模式的数据口发 16 字节魔数（复用 scripts/zlrs-recovery.py），
+#   1. 往应用模式的配置口发"进恢复"命令（复用 scripts/zlrs-recovery.py），
 #      应用置 boot mode 后重启；
 #   2. MCUboot 停在串口恢复，USB 重新枚举成 "ZLRS MCUBOOT"（两块 CDC：
 #      第 1 块恢复、第 2 块日志），脚本按 /dev/serial/by-id 里的名字找恢复口；
@@ -150,7 +150,7 @@ def self_test() -> int:
     if "--confirm" not in cmd_confirm or cmd_confirm[-1] != "zephyr.signed.bin":
         problems.append(f"--confirm 上传命令不对：{cmd_confirm}")
 
-    # 触发那一步必须存在，且魔数与应用侧一致（交给它自己的 self-test 查）
+    # 触发那一步必须存在，且组帧与设备侧一致（交给它自己的 self-test 查）
     recovery = repo_root() / "scripts" / "zlrs-recovery.py"
     if not recovery.is_file():
         problems.append(f"缺少 {recovery}")
@@ -173,7 +173,7 @@ def self_test() -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="触发恢复并升级设备上的固件")
-    parser.add_argument("--port", help="应用模式的数据口（触发用），如 /dev/ttyACM1")
+    parser.add_argument("--port", help="应用模式的配置口（触发用），如 /dev/ttyACM2")
     parser.add_argument("--recovery-port", help="bootloader 的恢复口；给了就跳过查找")
     parser.add_argument("--image", help="签名镜像路径（默认找 <workspace>/build/app/zephyr/zephyr.signed.bin）")
     parser.add_argument("--baud", type=int, default=DEFAULT_BAUD, help=f"串口波特率（默认 {DEFAULT_BAUD}）")
@@ -200,10 +200,10 @@ def main() -> int:
         if args.port is None:
             ports = find_by_id(APP_PORT_HINT, exclude=RECOVERY_PORT_HINT)
             if not ports:
-                parser.error("没找到应用模式的数据口（/dev/serial/by-id 里没有 ZLRS）——用 --port 指明")
-            args.port = ports[0]
+                parser.error("没找到应用模式的配置口（...-if04）——用 --port 指明")
+            args.port = next((p for p in ports if p.endswith("-if04")), ports[0])
         if run_trigger(args.port, args.baud) != 0:
-            print("触发失败：设备没有回应数据口", file=sys.stderr)
+            print("触发失败：设备没有回应配置口", file=sys.stderr)
             return 1
     else:
         print("[1/4] 跳过触发（--no-trigger）")

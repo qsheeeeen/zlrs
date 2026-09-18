@@ -38,7 +38,7 @@
 
 | 文档 | 范围 |
 | --- | --- |
-| [12-debug](12-debug.md) | debug overlay、分层调试开关、魔数入口、上板调试方法 |
+| [12-debug](12-debug.md) | debug overlay、分层调试开关、上板调试方法 |
 | [13-roadmap](13-roadmap.md) | 待办与验收标准 |
 
 ## 阅读路径

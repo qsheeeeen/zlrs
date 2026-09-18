@@ -76,7 +76,7 @@ python3 scripts/zlrs-config.py --port /dev/ttyACM2 exit
 | `CONFIG_ZLRS_APP_DATA_ARQ` | 见 [doc/13-roadmap.md](doc/13-roadmap.md) | 数传可靠重传；目标默认开启 |
 | `CONFIG_ZLRS_APP_RATE_ADAPT` | n | 按 LQ 自动升降速率档；阈值待实测标定 |
 | `CONFIG_ZLRS_APP_DYNAMIC_POWER` | y | 动态功率；下限 `CONFIG_ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM` |
-| `CONFIG_ZLRS_APP_CONFIG_MODE` | y | 配置模式；调试构建另有数据口魔数与 shell 入口（[doc/12-debug.md](doc/12-debug.md)） |
+| `CONFIG_ZLRS_APP_CONFIG_MODE` | y | 配置模式；调试构建另有 shell 入口（[doc/12-debug.md](doc/12-debug.md)） |
 | `CONFIG_ZLRS_APP_ROOT_KEY_HEX` | 空 | 台架测试用：直接内置一个根密钥，省去配置步骤（正式流程仍走配置工具） |
 
 ## 能编什么

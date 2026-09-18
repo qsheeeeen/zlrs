@@ -55,13 +55,6 @@ def pick_port(ports: list[str], iface: str) -> str | None:
     return None
 
 
-def send_magic(port: str, baud: int = DEFAULT_BAUD) -> int:
-    """兼容旧流程的空实现：配置工具现在自己会先发"进配置模式"。"""
-    del port, baud
-
-    return 0
-
-
 def run_config(*args: str) -> tuple[int, str]:
     """
     跑一条配置命令。超时给足：写短语那条要在设备侧做 100000 轮 PBKDF2，

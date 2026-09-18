@@ -513,43 +513,11 @@ static void run_slot(uint8_t slot)
 	zlrs_radio_port_drain();
 }
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_UPDATE_TRIGGER) || IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MAGIC)
-
-/*
- * 数据口上的控制魔数：`zlrs!bootloader!` 重启进串口恢复、`zlrs!configmode!`
- * 当场进配置模式。逐字节匹配，不匹配的字节原样交回透传队列（不丢不重）。
- * 两个魔数共用一份前缀状态：它们开头相同，各扣一份会把字节吐两遍。
- */
-enum control_magic {
-	CONTROL_MAGIC_BOOTLOADER,
-	CONTROL_MAGIC_CONFIG,
-};
-
-static const struct {
-	const char *text;
-	uint8_t id;
-} control_magics[] = {
 #if IS_ENABLED(CONFIG_ZLRS_APP_UPDATE_TRIGGER)
-	{ "zlrs!bootloader!", CONTROL_MAGIC_BOOTLOADER },
-#endif
-#if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MAGIC)
-	{ "zlrs!configmode!", CONTROL_MAGIC_CONFIG },
-#endif
-};
-
-/* 最长魔数的长度（不含结尾的 '\0'） */
-#define CONTROL_MAGIC_MAX 16U
-
-static uint8_t magic_held[CONTROL_MAGIC_MAX];
-static uint8_t magic_len;
-
-static void enter_config_mode(void);
-#if IS_ENABLED(CONFIG_ZLRS_APP_UPDATE_TRIGGER)
-static void enter_serial_recovery(void);
-
 /*
  * 重启进 MCUboot 的串口恢复：置 boot mode 标志（retained SRAM，重启不丢），
- * MCUboot 读到就停在恢复里等签名镜像。见 doc/08-firmware.md 第 6 节。
+ * MCUboot 读到就停在恢复里等签名镜像。入口只有配置协议的"进恢复"命令与
+ * （调试构建的）shell，见 doc/10-security.md 第 10 节。
  */
 static void enter_serial_recovery(void)
 {
@@ -569,68 +537,6 @@ static void enter_serial_recovery(void)
 }
 #endif
 
-/* held[0..len) 是不是某个魔数的前缀；是就返回它的下标，否则 -1 */
-static int magic_prefix(uint8_t len)
-{
-	for (size_t i = 0U; i < ARRAY_SIZE(control_magics); i++) {
-		if (strncmp((const char *)magic_held, control_magics[i].text, len) == 0) {
-			return (int)i;
-		}
-	}
-
-	return -1;
-}
-
-static void magic_fire(size_t index)
-{
-#if IS_ENABLED(CONFIG_ZLRS_APP_UPDATE_TRIGGER)
-	if (control_magics[index].id == CONTROL_MAGIC_BOOTLOADER) {
-		enter_serial_recovery(); /* 不会返回 */
-		return;
-	}
-#endif
-
-#if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
-	enter_config_mode();
-#endif
-}
-
-static void feed_serial(const uint8_t *data, uint16_t len)
-{
-	for (uint16_t i = 0U; i < len; i++) {
-		const uint8_t byte = data[i];
-
-		if (magic_len < CONTROL_MAGIC_MAX) {
-			magic_held[magic_len] = byte;
-
-			const int hit = magic_prefix((uint8_t)(magic_len + 1U));
-
-			if (hit >= 0) {
-				magic_len++;
-				if (magic_len == (uint8_t)strlen(control_magics[hit].text)) {
-					magic_len = 0U;
-					magic_fire((size_t)hit);
-				}
-				continue;
-			}
-		}
-
-		/* 不匹配：把扣住的这半截还回去，再拿当前字节重新起头 */
-		if (magic_len > 0U) {
-			(void)zlrs_link_write(&link_data, magic_held, magic_len);
-			magic_len = 0U;
-		}
-
-		magic_held[0] = byte;
-		if (magic_prefix(1U) >= 0) {
-			magic_len = 1U;
-		} else {
-			(void)zlrs_link_write(&link_data, &byte, 1U);
-		}
-	}
-}
-#endif /* 控制魔数 */
-
 static void pump_serial(void)
 {
 	uint8_t chunk[SERIAL_CHUNK_LEN];
@@ -643,11 +549,8 @@ static void pump_serial(void)
 	got = zlrs_data_port_read(chunk, sizeof(chunk));
 
 	if (got > 0U) {
-#if IS_ENABLED(CONFIG_ZLRS_APP_UPDATE_TRIGGER)
-		feed_serial(chunk, got); /* 命中魔数就直接重启，不会走到下面 */
-#else
 		(void)zlrs_link_write(&link_data, chunk, got); /* 队列满就丢尾巴 */
-#endif
+
 	}
 }
 

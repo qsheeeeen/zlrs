@@ -18,16 +18,14 @@ west build -b "$ZLRS_BOARD" "$ZLRS_APP" -- \
   -DEXTRA_CONF_FILE=debug.conf -DDTC_OVERLAY_FILE=debug.overlay
 ```
 
-量产固件里没有 console CDC、没有 shell、没有魔数入口；三块 CDC 是 CRSF / 数据 / 配置（见 [08-firmware](08-firmware.md) 第 1 节）。
+量产固件里没有 console CDC，也没有 shell；三块 CDC 是 CRSF / 数据 / 配置（见 [08-firmware](08-firmware.md) 第 1 节）。
 
-## 2. 临时入口
+## 2. 调试入口
 
 这些只存在于调试构建，正式方案见 [10-security](10-security.md) 第 10 节与 [08-firmware](08-firmware.md) 第 2 节：
 
 | 入口 | 用法 |
 | --- | --- |
-| 数据口魔数 `zlrs!configmode!` | 开关 `CONFIG_ZLRS_APP_CONFIG_MAGIC`；数据口收到 16 字节就进配置模式（与 `zlrs!bootloader!` 共用前缀匹配，正常字节不丢） |
-| 数据口魔数 `zlrs!bootloader!` | 开关 `CONFIG_ZLRS_APP_UPDATE_TRIGGER`；重启进 MCUboot 串口恢复（`scripts/zlrs-recovery.py`） |
 | shell `zlrs config` / `status` / `ports` / `recovery` | 开关 `CONFIG_ZLRS_APP_SHELL`；在 console CDC 上执行 |
 
 ## 3. 分层调试开关
