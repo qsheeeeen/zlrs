@@ -87,11 +87,47 @@ static bool sync_frame(const zlrs_link_t *link)
  * 这一帧该用哪个频点：重同步帧与"会话确认还欠着"的帧都退回同步信道，
  * 其余按跳频表。
  */
-static uint32_t slot_freq_hz(const zlrs_link_t *link)
+/* 时隙种类：子带迁移顺序用（遥测 → 数传 → RC，见 doc/09-protocol.md 5.1） */
+enum slot_kind {
+	SLOT_RC = 0,
+	SLOT_TLM,
+	SLOT_DATA,
+};
+
+/*
+ * 这个时隙要不要落 sub-G：混合比四档 → 每 4 个时隙挪 0/1/2/4 个，
+ * 顺序固定为先遥测、再数传、最后才动 RC 下行。
+ */
+static bool slot_in_subg(const zlrs_link_t *link, uint8_t kind)
 {
-	return (sync_frame(link) || link->sess_cfm_due)
-		       ? sync_freq_hz(link)
-		       : zlrs_fhss_current_hz(&link->fhss);
+	const uint8_t k = zlrs_fhss_mix_slots(link->sub_mix);
+
+	if (k == 0U || !zlrs_fhss_sub_ready(&link->fhss)) {
+		return false;
+	}
+	if (k >= 4U) {
+		return true; /* 100%：整条链路退到 sub-G */
+	}
+	if (kind == SLOT_TLM) {
+		return true; /* 25%：先挪遥测 */
+	}
+	if (k >= 2U && kind == SLOT_DATA) {
+		return true; /* 50%：再挪数传 */
+	}
+
+	return false; /* RC 下行只在 100% 时挪 */
+}
+
+static uint32_t slot_freq_hz(const zlrs_link_t *link, uint8_t kind)
+{
+	if (sync_frame(link) || link->sess_cfm_due) {
+		return sync_freq_hz(link);
+	}
+	if (slot_in_subg(link, kind)) {
+		return zlrs_fhss_sub_current_hz(&link->fhss);
+	}
+
+	return zlrs_fhss_current_hz(&link->fhss);
 }
 
 static void set_state(zlrs_link_t *link, uint8_t state, uint32_t now_ms)
@@ -495,7 +531,7 @@ static const zlrs_radio_req_t *send_rc(zlrs_link_t *link)
 	uint16_t len = build_frame(link, ZLRS_PKT_RC, 0U, link->rc_payload, link->rc_len,
 				   tag_key_for(link, ZLRS_PKT_RC, true));
 
-	return submit_tx(link, len, slot_freq_hz(link), link->cfg.sync_slot,
+	return submit_tx(link, len, slot_freq_hz(link, SLOT_RC), link->cfg.sync_slot,
 			 link->sync_word);
 }
 
@@ -504,7 +540,7 @@ static const zlrs_radio_req_t *send_tlm(zlrs_link_t *link)
 	uint16_t len = build_frame(link, ZLRS_PKT_TLM, 0U, link->tlm_payload, link->tlm_len,
 				   tag_key_for(link, ZLRS_PKT_TLM, true));
 
-	return submit_tx(link, len, slot_freq_hz(link), link->cfg.sync_slot,
+	return submit_tx(link, len, slot_freq_hz(link, SLOT_TLM), link->cfg.sync_slot,
 			 link->sync_word);
 }
 
@@ -578,7 +614,7 @@ static const zlrs_radio_req_t *arq_send_slot(zlrs_link_t *link, uint8_t index,
 	/* ARQ 的字节要等 ACK 才提交，这里不要让完成回调动队列 */
 	link->pending_data_len = 0U;
 
-	return submit_tx(link, frame_len, slot_freq_hz(link),
+	return submit_tx(link, frame_len, slot_freq_hz(link, SLOT_DATA),
 			 link->cfg.sync_slot, link->sync_word);
 }
 
@@ -666,7 +702,7 @@ static const zlrs_radio_req_t *send_arq_ack(zlrs_link_t *link, uint16_t value,
 		return NULL;
 	}
 
-	return submit_tx(link, frame_len, slot_freq_hz(link),
+	return submit_tx(link, frame_len, slot_freq_hz(link, SLOT_DATA),
 			 link->cfg.sync_slot, link->sync_word);
 }
 
@@ -747,7 +783,7 @@ static const zlrs_radio_req_t *send_data(zlrs_link_t *link, uint32_t now_ms)
 	len = build_frame(link, type, flags, payload, take, tag_key_for(link, type, true));
 	link->pending_data_len = take;
 
-	return submit_tx(link, len, slot_freq_hz(link), link->cfg.sync_slot,
+	return submit_tx(link, len, slot_freq_hz(link, SLOT_DATA), link->cfg.sync_slot,
 			 link->sync_word);
 }
 
@@ -1321,6 +1357,10 @@ static void advance_hop(zlrs_link_t *link)
 
 	if (link->state == ZLRS_STATE_CONNECTED) {
 		(void)zlrs_fhss_next_hz(&link->fhss);
+		/* 子带表有自己的索引：每帧推进一次，用没用它都保持两端一致 */
+		if (zlrs_fhss_sub_ready(&link->fhss)) {
+			(void)zlrs_fhss_sub_next_hz(&link->fhss);
+		}
 	}
 }
 
@@ -1434,7 +1474,7 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot,
 			}
 			return send_rc(link);
 		}
-		return submit_rx(link, slot_freq_hz(link),
+		return submit_rx(link, slot_freq_hz(link, SLOT_RC),
 				 link->cfg.sync_slot, link->sync_word,
 				 link->cfg.rx_timeout_ms);
 	}
@@ -1485,7 +1525,7 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot,
 	}
 
 	if (tx_side) {
-		return submit_rx(link, slot_freq_hz(link), link->cfg.sync_slot,
+		return submit_rx(link, slot_freq_hz(link, SLOT_TLM), link->cfg.sync_slot,
 				 link->sync_word, link->cfg.rx_timeout_ms);
 	}
 
@@ -1605,7 +1645,7 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot,
 		}
 	}
 
-	return submit_rx(link, slot_freq_hz(link), link->cfg.sync_slot,
+	return submit_rx(link, slot_freq_hz(link, SLOT_DATA), link->cfg.sync_slot,
 			 link->sync_word, link->cfg.rx_timeout_ms);
 }
 
