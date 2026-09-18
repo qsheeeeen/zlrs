@@ -248,6 +248,8 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="只打印帧，不连设备")
     parser.add_argument("--no-enter", action="store_true",
                         help="不先发'进配置模式'（设备已经在配置模式里时用）")
+    parser.add_argument("--keep", action="store_true",
+                        help="命令跑完不退出配置模式（默认退出，配置模式会停射频）")
     parser.add_argument("--self-test", action="store_true", help="校验组帧后退出")
 
     sub = parser.add_subparsers(dest="command")
@@ -330,7 +332,15 @@ def main() -> int:
     if args.command not in ("enter", "recovery") and not args.no_enter:
         prelude = encode(CMD_ENTER)
 
-    return talk(args.port, args.baud, frame, expect, args.timeout, prelude)
+    rc = talk(args.port, args.baud, frame, expect, args.timeout, prelude)
+
+    # 一次性命令跑完就退出配置模式：配置模式会停射频，工具退出后设备不该
+    # 一直停在那个状态（想连续操作就用 --keep）。
+    if rc == 0 and args.command not in ("enter", "exit", "recovery") and not args.keep:
+        if talk(args.port, args.baud, encode(CMD_EXIT), True, args.timeout, None) == 0:
+            print("已退出配置模式")
+
+    return rc
 
 
 if __name__ == "__main__":
