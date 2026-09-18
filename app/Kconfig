@@ -445,3 +445,16 @@ endmenu
 module = APP
 module-str = app
 source "subsys/logging/Kconfig.template.log_config"
+config ZLRS_APP_ENTROPY_TRNG
+	bool "RP2350 硬件 TRNG 当熵源（暂时默认关，见 roadmap）"
+	default n
+	select ENTROPY_RPI_PICO_RNG
+	help
+	  默认关：这个驱动打开后 USB 会死掉（上板实测：应用还在跑、灯还在闪，但
+	  主机侧"设备描述符请求失败"）。原因在 pico-sdk 的实现里——
+	  modules/hal/rpi_pico/src/rp2_common/pico_rand/rand.c 的 TRNG 采样是
+	  "拿住自旋锁 + 关中断 + `while (trng_hw->trng_busy);`"的忙等，USB 的
+	  中断/工作队列在这期间得不到服务。
+	  关掉之后 CSPRNG 走 Zephyr 的退化路径（bring-up 够用，量产必须换回来）：
+	  要么修好 TRNG 的取数路径（有界超时 + 不长时间关中断），要么换别的熵源。
+	  见 doc/05-roadmap.md 的 M0/M1"TRNG 与 USB"。

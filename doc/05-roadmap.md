@@ -29,6 +29,8 @@
 - 已修（上板发现）：**三块 CDC 的接收端装死**。全速设备上 `CONFIG_USBD_CDC_ACM_BUF_POOL` 默认关，三块 CDC 都去抢 UDC 那个 `UDC_BUF_POOL_SIZE=1024` 的公共池；枚举刚完成时池子还被控制传输与控制台 TX 占着，CDC 的 RX 工作项（`rx_fifo_work`）一旦 `cdc_acm_buf_alloc()` 失败就直接 return，而 `CDC_ACM_RX_FIFO_BUSY` 位不清——之后永不重试，**接收端从此收不到任何字节**（TX 照常，因为 TX 是发送时才分配）。更坑的是 CDC 驱动自己的日志因为"控制台挂在 CDC 上"被编译期强制成 `LOG_LEVEL_NONE`，所以毫无提示：数据口魔数、配置工具、CRSF 输入全都"发出去没反应"。修法是让每块 CDC 用自己的池（`CONFIG_USBD_CDC_ACM_BUF_POOL=y`，见 app/prj.conf 的注释）
 - 待查（上板发现）：**换槽（`BOOT_SWAP_USING_OFFSET`）这条路还没走通**。用 test 语义（`smpmgr upgrade`，不带 `--confirm`）刷过一次之后，设备停在"USB 描述符请求失败"——芯片在跑但控制传输没人应答，只能按 BOOTSEL 捞回来。怀疑是换槽写 flash 期间 XIP 取指/中断被打断（也可能是别的），要上 SWD 看现场。**调试期先用 `--confirm`**（`scripts/zlrs-update.py --confirm`）：直接写 slot0、标记永久，不走换槽，代价是没有回滚兜底
 - 已修（上板发现）：**看门狗把串口恢复打断了**。RP2350 的看门狗在 `SYSRESETREQ` 之后还在跑（`ENABLE` 位不清），于是应用重启进恢复时，上轮点着的 8 秒看门狗跟着进了 bootloader，MCUboot 的串口恢复**只活 ~1.5 s** 就被复位——主机侧现象是"恢复口闪现一下、镜像永远传不完"。两边都补了：应用在重启前 `zlrs_watchdog_disarm()`（应用侧驱动状态是 enabled，`wdt_disable()` 有效）；bootloader 护栏改成直接清硬件 `ENABLE` 位（驱动的 `wdt_disable()` 在复位后的新一局里会直接 `-EFAULT` 返回、什么都不做）。见 [01](01-system.md) 2.4
+- 已修（上板发现，非射频那一档的三个拦路虎）：① **`nvs_write()` 成功时返回写入字节数**，不是 0——`write_record()` 直接透传返回值、上层按 `!= 0` 判错，于是每次写 NVS 工具都报 `storage error`（数据其实写进去了）；② **配置模式用 `uart_poll_in/out`**，而数据口的 ISR 同时在搬字节，`poll_in` 永远读到空——能进配置模式但一条命令都不应答；③ **写短语要 100000 轮 PBKDF2**（M33 上十几秒），8 秒看门狗会把配置会话复位掉——会话开始先 `zlrs_watchdog_disarm()`、结束再武装。三条都在 `77b36b1`，上板自检（`scripts/zlrs-bringup.py`：端口 → 魔数进配置 → 协议读写 → NVS 持久化）已全绿
+- 待修（上板发现，**RP2350 的 TRNG 会让 USB 死掉**）：打开 `CONFIG_ENTROPY_RPI_PICO_RNG`（SoC 默认 y）之后，应用照常跑、状态灯照常闪，但主机侧"设备描述符请求失败"——数据口、控制台、升级全断。根因在 pico-sdk 的取数路径（`modules/hal/rpi_pico/src/rp2_common/pico_rand/rand.c`）：TRNG 采样是"拿住自旋锁 `spin_lock_blocking` + 关中断 + `while (trng_hw->trng_busy);`"的忙等，USB 的中断与工作队列在这期间得不到服务。**当前对策**：默认关（`app/prj.conf` 的 `CONFIG_ENTROPY_RPI_PICO_RNG=n`，用 `ZLRS_APP_ENTROPY_TRNG` 才打开），CSPRNG 退到 Zephyr 的默认路径——bring-up 够用，**量产前必须解决**：要么给 TRNG 写一个"有界超时 + 不长时间关中断"的取数路径，要么换别的熵源
 - 已做（软件侧）：**MCUboot 启动链与两槽分区**——`.../m33/{hf,lf}/mcuboot` 变体（sysbuild），镜像 ECDSA-P256 签名、`swap using offset` 可回滚、bootloader 串口恢复走数据口 UART1；第一次烧写拖两个 UF2 即可，之后升级不用按键。见 [01](01-system.md) 第 2.4 节
 - 已做（软件侧，升级入口）：**恢复只走 USB CDC**——bootloader 模式下 USB 留两块 CDC（第 1 块恢复、第 2 块内核日志），CRSF 那块由 per-image overlay 裁掉；插板载 USB-C 就能升级，不需要 UART 转接。见 [01](01-system.md) 2.4
 - 已做（软件侧，升级入口）：**应用侧触发进串口恢复**——数据口收到 16 字节魔数（`scripts/zlrs-recovery.py`）就置 boot mode 并重启，MCUboot 停在串口恢复等上传；升级一台健康设备不用拔插、不用按键。标志放在 SRAM 起始的 4 字节 retained 区（Zephyr 树里 RP2350 专用覆盖），应用与 bootloader 共用同一份 DT。见 [01](01-system.md) 2.4
@@ -51,6 +53,7 @@
 目标：不用改固件就能配好一台设备。
 
 - 已做：配置模式（开机按住按键进入，数据口轮询跑配置协议，无操作 300 秒或 EXIT 退出）、命令集（读状态、触发配对、写根密钥、写短语、写失控值、改波特率）、短语 → PBKDF2 → 根密钥（salt 与迭代次数固定在设备侧）落 NVS
+- 已做（上板验证，软件侧能验的部分）：**非射频自检全绿**（`python3 scripts/zlrs-bringup.py`）——三块 CDC 都在、数据口魔数进配置模式、`status`/`set-phrase`（PBKDF2 落 NVS）/`set-failsafe`/`exit` 全部 ack ok、退出后再进配置模式 `key=yes` 仍在（NVS 持久化）。板上没有用户按键，入口用 `CONFIG_ZLRS_APP_CONFIG_MAGIC` 的数据口魔数（也可以用 `CONFIG_ZLRS_APP_SHELL` 的 `zlrs config`）
 - 待验收：拿一台空片 RX，只用配置工具（`scripts/zlrs-config.py`）与一根串口线配到能配对
 - 验收：一台空片 RX 到能配对，只用配置工具与一根串口线
 
