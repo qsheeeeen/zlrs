@@ -62,7 +62,7 @@ static uint32_t link_random(const zlrs_link_t *link, uint32_t salt)
 
 /*
  * 同步信道频率。配对时还没派生密钥、跳频表还没生成，所以直接查频段表；
- * 这个频点是配对与 BEACON 的固定落脚点。
+ * 这个频点是配对与 SYNC 的固定落脚点。
  */
 static uint32_t sync_freq_hz(const zlrs_link_t *link)
 {
@@ -74,10 +74,10 @@ static uint32_t sync_freq_hz(const zlrs_link_t *link)
 
 /*
  * 这一帧是不是"重同步帧"（见 doc/09-protocol.md 5.1）：连接态下每
- * cfg.resync_every_n 帧来一次，整帧都停在同步信道上——下行发 BEACON，上行让
+ * cfg.resync_every_n 帧来一次，整帧都停在同步信道上——下行发 SYNC，上行让
  * 对端有机会回 SESS_RESP。两端用同一个 frame_index 推，节奏天然一致。
  */
-static bool beacon_frame(const zlrs_link_t *link)
+static bool sync_frame(const zlrs_link_t *link)
 {
 	return link->cfg.resync_every_n > 0U &&
 	       (link->frame_index % link->cfg.resync_every_n) == 0U;
@@ -89,7 +89,7 @@ static bool beacon_frame(const zlrs_link_t *link)
  */
 static uint32_t slot_freq_hz(const zlrs_link_t *link)
 {
-	return (beacon_frame(link) || link->sess_cfm_due)
+	return (sync_frame(link) || link->sess_cfm_due)
 		       ? sync_freq_hz(link)
 		       : zlrs_fhss_current_hz(&link->fhss);
 }
@@ -113,8 +113,8 @@ static void set_state(zlrs_link_t *link, uint8_t state, uint32_t now_ms)
 	/* TX 是链路的权威方：每次回到 SEARCHING 就换一个会话 nonce */
 	if (state == ZLRS_STATE_SEARCHING && link->cfg.role == ZLRS_ROLE_TX) {
 		roll_session(link, now_ms);
-		/* 立刻发一次 BEACON，不等一个周期，缩短重连时间 */
-		link->last_beacon_ms = (uint32_t)(now_ms - link->cfg.beacon_period_ms);
+		/* 立刻发一次 SYNC，不等一个周期，缩短重连时间 */
+		link->last_sync_ms = (uint32_t)(now_ms - link->cfg.sync_period_ms);
 	}
 }
 
@@ -264,7 +264,7 @@ static void derive_pair(zlrs_link_t *link)
 	link->sess_cfm_due = false;
 	/*
 	 * 简化握手（只在上板调试时关）：不派生会话钥匙，配对级的 link_auth 直接
-	 * 当会话钥匙用，BEACON 之后只回一条 SESS_RESP，见 doc/10-security.md 第 3 节。
+	 * 当会话钥匙用，SYNC 之后只回一条 SESS_RESP，见 doc/10-security.md 第 3 节。
 	 */
 	if (link->cfg.handshake == 0U) {
 		memcpy(link->session_key_out, link->link_auth_out, ZLRS_KEY_LEN);
@@ -366,7 +366,7 @@ static const uint8_t *tag_key_for(const zlrs_link_t *link, uint8_t type, bool ou
 	case ZLRS_PKT_PAIR_RESP:
 	case ZLRS_PKT_PAIR_CFM:
 		return link->auth_key;
-	case ZLRS_PKT_BEACON:
+	case ZLRS_PKT_SYNC:
 	/* 会话响应要在会话钥匙生效前就能验，用配对级钥匙 */
 	case ZLRS_PKT_SESS_RESP:
 		return link_auth;
@@ -424,7 +424,7 @@ static const zlrs_radio_req_t *submit_rx(zlrs_link_t *link, uint32_t freq_hz,
 
 /* ---- 发送：各帧类型 ------------------------------------------------------ */
 
-static const zlrs_radio_req_t *send_beacon(zlrs_link_t *link, uint32_t now_ms)
+static const zlrs_radio_req_t *send_sync(zlrs_link_t *link, uint32_t now_ms)
 {
 	uint8_t payload[8];
 	uint16_t len;
@@ -435,17 +435,17 @@ static const zlrs_radio_req_t *send_beacon(zlrs_link_t *link, uint32_t now_ms)
 	payload[3] = (uint8_t)(link->fhss.index >> 8);
 	wr32(&payload[4], link->sess_nonce_t);
 
-	len = build_frame(link, ZLRS_PKT_BEACON, 0U, payload, sizeof(payload),
-			  tag_key_for(link, ZLRS_PKT_BEACON, true));
-	link->last_beacon_ms = now_ms;
+	len = build_frame(link, ZLRS_PKT_SYNC, 0U, payload, sizeof(payload),
+			  tag_key_for(link, ZLRS_PKT_SYNC, true));
+	link->last_sync_ms = now_ms;
 
-	/* BEACON 固定发在同步信道 */
+	/* SYNC 固定发在同步信道 */
 	return submit_tx(link, len, sync_freq_hz(link), link->cfg.sync_slot,
 			 link->sync_word);
 }
 
 /*
- * RX 对 BEACON 的应答：报 nonce_r、回带 nonce_t，用配对级钥匙认证（会话钥匙还没
+ * RX 对 SYNC 的应答：报 nonce_r、回带 nonce_t，用配对级钥匙认证（会话钥匙还没
  * 生效）。简化握手（handshake=0）下它同时是"我在"报到帧：nonce_r 填 0。
  */
 static const zlrs_radio_req_t *send_sess_resp(zlrs_link_t *link)
@@ -466,7 +466,7 @@ static const zlrs_radio_req_t *send_sess_resp(zlrs_link_t *link)
 
 /*
  * TX 的会话确认：用刚定下来的会话钥匙打 tag、回带 nonce_r，等于告诉 RX
- * "我算出了同一把钥匙"。丢了不要紧：RX 会在下一个 BEACON 重发同一条响应，
+ * "我算出了同一把钥匙"。丢了不要紧：RX 会在下一个 SYNC 重发同一条响应，
  * 这里就再发一次确认。
  */
 static const zlrs_radio_req_t *send_sess_cfm(zlrs_link_t *link)
@@ -477,7 +477,7 @@ static const zlrs_radio_req_t *send_sess_cfm(zlrs_link_t *link)
 	wr32(&payload[0], link->sess_nonce_r);
 	/*
 	 * 回带当前的跳频索引：重新握手可能发生在连接态（对端重启），这时对端
-	 * 拿到的索引就是本端此刻在用的那个，不用再从 BEACON 里猜。
+	 * 拿到的索引就是本端此刻在用的那个，不用再从 SYNC 里猜。
 	 */
 	payload[4] = (uint8_t)(link->fhss.index & 0xFFU);
 	payload[5] = (uint8_t)(link->fhss.index >> 8);
@@ -888,12 +888,12 @@ static void pairing_complete(zlrs_link_t *link, uint32_t now_ms)
 	link->last_rx_ms = now_ms;
 }
 
-static void handle_beacon(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
+static void handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
 {
 	uint32_t nonce;
 	uint16_t hop_index;
 
-	/* BEACON 只对已配对的两端有意义 */
+	/* SYNC 只对已配对的两端有意义 */
 	if (!link->paired) {
 		return;
 	}
@@ -910,18 +910,18 @@ static void handle_beacon(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t
 
 	if (link->state == ZLRS_STATE_CONNECTED) {
 		/*
-		 * 连接态的周期 BEACON（doc/09-protocol.md 5.1）。
+		 * 连接态的周期 SYNC（doc/09-protocol.md 5.1）。
 		 */
 		if (link->cfg.resync_every_n == 0U) {
-			/* 没开周期重同步：会话建立后不再听 BEACON（老行为） */
+			/* 没开周期重同步：会话建立后不再听 SYNC（老行为） */
 			return;
 		}
-		link->stats.rx_beacons++;
+		link->stats.rx_syncs++;
 
 		if (link->session_valid && nonce == link->sess_nonce_t) {
 			/*
 			 * 同一段会话：只校正跳频索引，把两端晶振差抹掉。
-			 * 序号必须更新——BEACON 用的是同一个序号空间，录下来的
+			 * 序号必须更新——SYNC 用的是同一个序号空间，录下来的
 			 * 旧帧不能拿来把索引带偏。
 			 */
 			if ((int16_t)(frame->seq - link->last_rx_seq) <= 0) {
@@ -940,10 +940,10 @@ static void handle_beacon(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t
 
 		/*
 		 * 换了会话（对端重启或重新配对）。这一条要拿"最近完全听不到对端"
-		 * 当前提：BEACON 的 tag 是配对级的，录下来的旧 BEACON 也能验过，
+		 * 当前提：SYNC 的 tag 是配对级的，录下来的旧 SYNC 也能验过，
 		 * 只要还在正常收帧就不该被它带到 SEARCHING 去。
 		 */
-		if ((uint32_t)(now_ms - link->last_rx_ms) <= link->cfg.beacon_period_ms) {
+		if ((uint32_t)(now_ms - link->last_rx_ms) <= link->cfg.sync_period_ms) {
 			link->stats.rx_dup++;
 			return;
 		}
@@ -959,7 +959,7 @@ static void handle_beacon(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t
 
 	if (link->cfg.handshake == 0U) {
 		/*
-		 * 简化握手：这条 BEACON 已经用配对级钥匙验过，采用它报告的跳频索引
+		 * 简化握手：这条 SYNC 已经用配对级钥匙验过，采用它报告的跳频索引
 		 * 就算会话成立——钥匙是静态的，没有 nonce 要交换。接下来用 SESS_RESP
 		 * 反复报到，直到听见对端的第一帧，见 send_announce()。
 		 */
@@ -974,7 +974,7 @@ static void handle_beacon(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t
 	}
 
 	/*
-	 * 同一个 nonce_t 的 BEACON 是重发（TX 还没收到我们的回应）：把上次那条
+	 * 同一个 nonce_t 的 SYNC 是重发（TX 还没收到我们的回应）：把上次那条
 	 * 回应再发一遍，nonce_r 不能换，换了对端算出的钥匙就跟我们对不上。
 	 */
 	if (link->session_pending && nonce == link->sess_nonce_t) {
@@ -983,7 +983,7 @@ static void handle_beacon(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t
 	}
 
 	/*
-	 * 谁都可能录下 BEACON 再重放，所以这一步只是"答应谈"：抽一个自己的 nonce_r
+	 * 谁都可能录下 SYNC 再重放，所以这一步只是"答应谈"：抽一个自己的 nonce_r
 	 * 把钥匙预备好，等 TX 用这把钥匙确认（SESS_CFM）才算会话成立。
 	 */
 	link->sess_nonce_t = nonce;
@@ -1131,7 +1131,7 @@ static int handle_sess_cfm(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_
 	link->stats.rx_frames++;
 	/*
 	 * 采用哪一帧的跳频索引：确认帧里带了就用它（连接态重新握手时这就是
-	 * 对端此刻的索引），旧固件不带就退回 BEACON 里那个。
+	 * 对端此刻的索引），旧固件不带就退回 SYNC 里那个。
 	 */
 	session_activate(link, (frame->payload_len >= 6U)
 				      ? (uint16_t)(frame->payload[4] |
@@ -1179,7 +1179,7 @@ static bool handle_sess_resp(zlrs_link_t *link, const zlrs_frame_t *frame, uint3
 	}
 
 	/*
-	 * CONNECTED 下收到 SESS_RESP：对端重启后听见了本端的周期 BEACON，正在
+	 * CONNECTED 下收到 SESS_RESP：对端重启后听见了本端的周期 SYNC，正在
 	 * 要求重新握手。本端就用新的 nonce_r 换一套会话钥匙，再回一次确认。
 	 */
 	if (link->state != ZLRS_STATE_SEARCHING && link->state != ZLRS_STATE_CONNECTED) {
@@ -1236,8 +1236,8 @@ static int handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 		return handle_pair_frame(link, &frame, now_ms) ? 0 : -1;
 	}
 
-	if (frame.type == ZLRS_PKT_BEACON) {
-		handle_beacon(link, &frame, now_ms);
+	if (frame.type == ZLRS_PKT_SYNC) {
+		handle_sync(link, &frame, now_ms);
 		return 0;
 	}
 
@@ -1371,12 +1371,12 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot,
 				 * 对端如果还在 CONNECTED，它只在这些帧上开着同步
 				 * 信道的窗口，不然它听不见"我换了会话"。
 				 */
-				if ((uint32_t)(now_ms - link->last_beacon_ms) <
-					    link->cfg.beacon_period_ms &&
-				    !beacon_frame(link)) {
+				if ((uint32_t)(now_ms - link->last_sync_ms) <
+					    link->cfg.sync_period_ms &&
+				    !sync_frame(link)) {
 					return NULL;
 				}
-				return send_beacon(link, now_ms);
+				return send_sync(link, now_ms);
 			}
 
 			/* 发起方在上行时隙等对端遥测 */
@@ -1408,11 +1408,11 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot,
 				return send_sess_cfm(link);
 			}
 			/*
-			 * 重同步帧：发一条 BEACON，把自己的跳频索引摆出来。
+			 * 重同步帧：发一条 SYNC，把自己的跳频索引摆出来。
 			 * 对端据此校正漂移；对端若换了会话（重启），也据此重握手。
 			 */
-			if (beacon_frame(link)) {
-				return send_beacon(link, now_ms);
+			if (sync_frame(link)) {
+				return send_sync(link, now_ms);
 			}
 			return send_rc(link);
 		}
@@ -1434,7 +1434,7 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot,
 	 * 重同步帧的上行时隙也留在同步信道：TX 在这里等对端可能发来的 SESS_RESP
 	 * （对端重启时就是这条路），RX 把遥测发在同一个信道上，不然这一帧白过。
 	 */
-	if (beacon_frame(link)) {
+	if (sync_frame(link)) {
 		if (tx_side) {
 			return submit_rx(link, sync_freq_hz(link), link->cfg.sync_slot,
 					 link->sync_word, link->cfg.rx_timeout_ms);
@@ -1506,12 +1506,12 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot,
 				 * 对端如果还在 CONNECTED，它只在这些帧上开着同步
 				 * 信道的窗口，不然它听不见"我换了会话"。
 				 */
-				if ((uint32_t)(now_ms - link->last_beacon_ms) <
-					    link->cfg.beacon_period_ms &&
-				    !beacon_frame(link)) {
+				if ((uint32_t)(now_ms - link->last_sync_ms) <
+					    link->cfg.sync_period_ms &&
+				    !sync_frame(link)) {
 					return NULL;
 				}
-				return send_beacon(link, now_ms);
+				return send_sync(link, now_ms);
 			}
 			/* 发起方在上行时隙等对端的第一帧 */
 			return submit_rx(link, sync_freq_hz(link),
@@ -1539,7 +1539,7 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot,
 	 * 重同步帧与会话确认不参与稀疏：它们的节奏要能整除剩下的每一帧，
 	 * 否则（比如 333 帧与 5 帧互质）会几乎永远撞不上。
 	 */
-	if (!beacon_frame(link) && !link->sess_cfm_due &&
+	if (!sync_frame(link) && !link->sess_cfm_due &&
 	    (link->frame_index % link->cfg.data_every_n) != 0U) {
 		return NULL;
 	}
@@ -1552,12 +1552,12 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot,
 	}
 
 	if (tx_side == a) {
-		/* 会话确认优先，其次才是重同步 BEACON（两者都走同步信道） */
+		/* 会话确认优先，其次才是重同步 SYNC（两者都走同步信道） */
 		if (link->sess_cfm_due) {
 			return send_sess_cfm(link);
 		}
-		if (beacon_frame(link)) {
-			return send_beacon(link, now_ms);
+		if (sync_frame(link)) {
+			return send_sync(link, now_ms);
 		}
 	}
 

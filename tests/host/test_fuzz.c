@@ -167,7 +167,7 @@ static void fx_link_init(zlrs_link_t *link, uint8_t arq)
 		.mod = { .modulation = ZLRS_MOD_FLRC, .rate_bps = 2600000U },
 		.tx_power_dbm = 10,
 		.rx_timeout_ms = 2U,
-		.beacon_period_ms = 2000U,
+		.sync_period_ms = 2000U,
 		.peer_timeout_ms = 0U,
 		.pair_period_ms = 100U,
 		.pair_window_ms = 30000U,

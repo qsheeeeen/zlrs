@@ -73,7 +73,7 @@ config ZLRS_APP_SESSION_HANDSHAKE
 	bool "会话三次握手（每次会话换一把钥匙）"
 	default y
 	help
-	  关掉以后直接用配对级的 link_auth 当会话钥匙：RX 收到 BEACON 就算建立，
+	  关掉以后直接用配对级的 link_auth 当会话钥匙：RX 收到 SYNC 就算建立，
 	  再回 SESS_RESP 报到，少一段钥匙派生、少一条确认消息。代价是没有逐会话的
 	  钥匙轮换，录下来的旧帧在换会话后仍能重放——只用于上板调试，
 	  见 doc/10-security.md 第 3 节。
@@ -87,11 +87,11 @@ config ZLRS_APP_TELEMETRY
 	  会因为收不到东西而反复重建会话。
 
 config ZLRS_APP_RESYNC_PERIOD_MS
-	int "连接态周期 BEACON 的间隔（毫秒，0 = 关）"
-	default 1000
+	int "连接态周期 SYNC 的间隔（毫秒，0 = 关）"
+	default 5000
 	range 0 10000
 	help
-	  连上以后每隔这么久用同步信道发一次 BEACON：对端据此校正跳频索引（两端
+	  连上以后每隔这么久用同步信道发一次 SYNC：对端据此校正跳频索引（两端
 	  晶振差会累积成"踩空"），也据此发现对端重启或重新配对，自动重新握手。
 	  见 doc/09-protocol.md 3.6。间隔按帧数换算，至少 1 帧。
 
@@ -327,10 +327,6 @@ config ZLRS_APP_DATA_RATE_BPS
 	int "数据链路速率（bps）"
 	default 2600000
 
-config ZLRS_APP_DATA_MTU
-	int "数据链路单帧载荷上限（字节）"
-	default 128
-
 config ZLRS_APP_FLRC_PREAMBLE_BITS
 	int "FLRC 前导码长度（bit）"
 	default 32
@@ -357,11 +353,12 @@ config ZLRS_APP_CONFIG_TIMEOUT_S
 	  配置模式这么久没有命令就退出，见 doc/08-firmware.md 第 2 节。
 
 config ZLRS_APP_DATA_ARQ
-	bool "透传走 ARQ profile（长度前缀 + 序号 + 累计 ACK + 重传）"
-	default n
+	bool "数传走可靠重传（ARQ）"
+	default y
 	help
-	  默认是 best-effort：缓冲满就丢，只计数。ARQ 适合不能丢的透传数据，
-	  代价是延迟与内存（窗口 4 帧）。见 doc/09-protocol.md 4.3。
+	  默认开启：接收方对每个载荷回确认，发送方重发当前载荷直到确认（停等）；
+	  代价是延迟与内存。关掉退回 best-effort（缓冲满就丢，只计数）。
+	  见 doc/09-protocol.md 4.3。
 
 config ZLRS_APP_RATE_ADAPT
 	bool "按链路质量自动升降速率档"

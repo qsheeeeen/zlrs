@@ -59,6 +59,8 @@ static uint32_t slot_budget_us;
 static uint8_t tlm_every_n;
 static uint8_t data_every_n;
 static uint8_t resync_every_n;
+/* 数据帧载荷上限：跟着帧格式与速率档算出来（不是配置项） */
+static uint16_t data_mtu;
 
 /* 控制帧的空中时间粗估：22 B RC + 3 B 头 + 4 B 标签 + 2 B CRC */
 #define CTL_FRAME_LEN 31U
@@ -275,11 +277,28 @@ static void plan_init(void)
 	req.mod = &control_mod;
 
 	/*
+	 * MTU 跟着帧格式与速率档走（doc/09-protocol.md 4.3）：取"数据窗口单向
+	 * 预算"（四分之一帧周期）内装得下的最大载荷，再受帧格式载荷上限约束。
+	 */
+	{
+		const uint32_t budget_us =
+			(1000000U / (uint32_t)CONFIG_ZLRS_APP_CONTROL_RATE_HZ) / 4U;
+		uint16_t len = (uint16_t)(ZLRS_PAYLOAD_MAX_LEN - 2U);
+
+		while (len > 16U &&
+		       zlrs_mod_airtime_us(&data_mod, (uint16_t)(len + 7U)) > budget_us) {
+			len = (uint16_t)(len - 8U);
+		}
+
+		data_mtu = len;
+	}
+
+	/*
 	 * 超帧周期由最慢的那条链路决定：数据链路那两个窗口按"每 data_every_n
 	 * 帧跑一次"摊到每一帧里，计划内部迭代到自洽（见 lib/region/region.c）。
 	 */
 	req.other_mod = ZLRS_DATA_ENABLED ? &data_mod : NULL;
-	req.other_frame_len = (uint16_t)(CONFIG_ZLRS_APP_DATA_MTU + 7U);
+	req.other_frame_len = (uint16_t)(data_mtu + 7U);
 	zlrs_region_control_plan(&req, &plan);
 
 	control_rate_hz = plan.rate_hz;
@@ -299,7 +318,7 @@ static void plan_init(void)
 			(unsigned int)plan.rate_hz);
 	}
 
-	/* 连接态周期 BEACON 按帧数换算（见 doc/09-protocol.md 5.1）：1000 ms 在
+	/* 连接态周期 SYNC 按帧数换算（见 doc/09-protocol.md 5.1）：1000 ms 在
 	 * 常见帧周期下装得进 uint8，更短的帧周期由 MAX 压到 255 帧以内 */
 	if (CONFIG_ZLRS_APP_RESYNC_PERIOD_MS > 0) {
 		const uint32_t frames = ((uint32_t)CONFIG_ZLRS_APP_RESYNC_PERIOD_MS * 1000U) /
@@ -317,7 +336,7 @@ static void plan_init(void)
 		(unsigned int)control_mod.modulation, control_mod.sf,
 		(unsigned int)control_mod.bw_hz, (unsigned int)data_mod.modulation,
 		(unsigned int)data_mod.rate_bps);
-	LOG_INF("connected-state beacon every %u frame(s) (resync, doc/09-protocol.md 5.1)",
+	LOG_INF("connected-state sync every %u frame(s) (resync, doc/09-protocol.md 5.1)",
 		(unsigned int)resync_every_n);
 }
 
@@ -344,7 +363,7 @@ static void build_links(void)
 					      region->max_tx_power_dbm)
 					: tx_power_dbm,
 		.rx_timeout_ms = 2U,
-		.beacon_period_ms = 1000U,
+		.sync_period_ms = 1000U,
 		/*
 		 * 遥测是 TX 侧的活证：关掉遥测就没东西可听，失联判定得一起关，
 		 * 否则每一帧都会把 TX 拉回 SEARCHING 重建会话。
@@ -359,7 +378,7 @@ static void build_links(void)
 		/* 节奏稀疏化：见 plan_init()，两端同固件所以一致 */
 		.tlm_every_n = tlm_every_n,
 		.data_every_n = 1U, /* 控制链路不用这个字段 */
-		/* 连接态周期 BEACON：跳频索引重同步 + 对端重启后自动重连 */
+		/* 连接态周期 SYNC：跳频索引重同步 + 对端重启后自动重连 */
 		.resync_every_n = resync_every_n,
 	};
 	zlrs_link_cfg_t data_cfg = ctl_cfg;
@@ -391,15 +410,15 @@ static void build_links(void)
 	 */
 	data_cfg.arq_timeout_ms = (uint16_t)MAX(
 		ZLRS_ARQ_TIMEOUT_MS,
-		2U * zlrs_mod_airtime_ms(&data_mod, CONFIG_ZLRS_APP_DATA_MTU + 7U));
+		2U * zlrs_mod_airtime_ms(&data_mod, data_mtu + 7U));
 	/*
 	 * 数据链路尽力而为：空闲不发空帧，所以不判失联——判了会在空闲时反复重建
 	 * 会话。代价是对端重启后要等这一侧重启或重配，见 doc/09-protocol.md 3.7。
 	 */
 	data_cfg.peer_timeout_ms = 0U;
-	data_cfg.data_mtu = CONFIG_ZLRS_APP_DATA_MTU;
-	/* 数据链路的重建可以慢一点：BEACON 2 s，见 doc/09-protocol.md 3.7 */
-	data_cfg.beacon_period_ms = 2000U;
+	data_cfg.data_mtu = data_mtu;
+	/* 数据链路的重建可以慢一点：SYNC 2 s，见 doc/09-protocol.md 3.7 */
+	data_cfg.sync_period_ms = 2000U;
 	data_cfg.tlm_every_n = 1U; /* 数据链路没有遥测时隙 */
 	data_cfg.data_every_n = data_every_n;
 

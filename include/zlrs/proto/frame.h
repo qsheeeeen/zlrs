@@ -23,7 +23,7 @@ typedef enum {
 	ZLRS_PKT_DATA_UP = 2,  /* TX -> RX：透传数据 */
 	ZLRS_PKT_DATA_DOWN = 3,/* RX -> TX：透传数据 */
 	ZLRS_PKT_ACK = 4,      /* 双向：透传确认（ARQ profile） */
-	ZLRS_PKT_BEACON = 5,   /* TX -> RX：会话建立 */
+	ZLRS_PKT_SYNC = 5,   /* TX -> RX：会话建立 */
 	ZLRS_PKT_PAIR_REQ = 6, /* TX -> RX：配对 */
 	ZLRS_PKT_PAIR_RESP = 7,/* RX -> TX：配对 */
 	ZLRS_PKT_PAIR_CFM = 8, /* TX -> RX：配对 */

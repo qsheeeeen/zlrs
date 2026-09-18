@@ -60,7 +60,7 @@ typedef struct {
 	zlrs_mod_cfg_t mod;
 	int8_t tx_power_dbm;
 	uint16_t rx_timeout_ms;     /* 单次接收窗口 */
-	uint16_t beacon_period_ms;  /* SEARCHING 下 BEACON 周期 */
+	uint16_t sync_period_ms;  /* SEARCHING 下 SYNC 周期 */
 	uint16_t peer_timeout_ms;   /* 失联判定 */
 	uint16_t pair_period_ms;    /* PAIR_REQ 重发周期 */
 	uint16_t pair_window_ms;    /* 配对窗口 */
@@ -74,7 +74,7 @@ typedef struct {
 	 */
 	uint8_t hopping;
 	/*
-	 * 会话三次握手。0 = 直接用配对级的 link_auth 当会话钥匙：BEACON 之后的
+	 * 会话三次握手。0 = 直接用配对级的 link_auth 当会话钥匙：SYNC 之后的
 	 * 应答只需要 SESS_RESP，对端用第一条数据帧当确认。少一段钥匙派生、少一条
 	 * 消息，代价是没有逐会话的钥匙轮换——只用于上板调试，见 doc/10-security.md
 	 * 第 3 节。
@@ -89,8 +89,8 @@ typedef struct {
 	uint8_t tlm_every_n;
 	uint8_t data_every_n;
 	/*
-	 * 连接态周期 BEACON 的间隔（帧）。0 = 不周期重同步（只在建链时对齐跳频
-	 * 索引）；>0 = 每这么多帧用同步信道发一次 BEACON，对端据此校正跳频索引，
+	 * 连接态周期 SYNC 的间隔（帧）。0 = 不周期重同步（只在建链时对齐跳频
+	 * 索引）；>0 = 每这么多帧用同步信道发一次 SYNC，对端据此校正跳频索引，
 	 * 也据此发现"对端换了会话"（重启/重新配对）并自动重新握手。
 	 */
 	uint8_t resync_every_n;
@@ -118,8 +118,8 @@ typedef struct {
 	uint32_t tx_retries;      /* ARQ：重传次数 */
 	uint32_t tx_arq_drop;     /* ARQ：重传用尽后放弃的帧数 */
 	uint32_t rx_frag_drop;
-	uint32_t rx_beacons;      /* 连接态收到的 BEACON 数 */
-	uint32_t hop_resync;      /* 跳频索引被 BEACON 校正过的次数 */
+	uint32_t rx_syncs;      /* 连接态收到的 SYNC 数 */
+	uint32_t hop_resync;      /* 跳频索引被 SYNC 校正过的次数 */
 	uint32_t radio_fail;
 	int16_t last_rssi;
 	int8_t last_snr; /* FLRC 下射频栈给不出，见 doc/06-radio.md */
@@ -135,7 +135,7 @@ typedef struct {
 #define ZLRS_LINK_TLM_MAX_LEN 32U
 
 /*
- * ARQ profile（数据链路可选档，见 doc/09-protocol.md 4.3）：累计 ACK + 固定窗口
+ * ARQ profile（数据链路默认档，见 doc/09-protocol.md 4.3）：累计 ACK + 固定窗口，重传直到确认
  * + 超时重传。窗口是"从队首开始连续的若干帧"，只有收到 ACK 才把对应字节从
  * 队列里提交出去，所以重传不需要额外缓存。
  */
@@ -181,9 +181,9 @@ typedef struct {
 	 * 会话建立与配对同一个形状（见 doc/09-protocol.md 3.5）：发起方出 nonce_t，
 	 * 响应方出 nonce_r，两个 nonce 一起进 KDF，最后一条消息带着 nonce_r 证明
 	 * 对端算出了同一把钥匙。RX 只在收到这条证明之后才采用会话，所以重放旧
-	 * BEACON 拿不到任何旧会话的钥匙。
+	 * SYNC 拿不到任何旧会话的钥匙。
 	 */
-	bool session_pending;    /* RX：已回应 BEACON，等对端用新钥匙确认 */
+	bool session_pending;    /* RX：已回应 SYNC，等对端用新钥匙确认 */
 	bool sess_resp_due;      /* RX：上行时隙要发 SESS_RESP */
 	bool sess_cfm_due;       /* TX：下行时隙要发 SESS_CFM */
 	uint32_t sess_nonce_t;   /* 发起方（TX）的 nonce */
@@ -196,12 +196,12 @@ typedef struct {
 	uint8_t state;
 	uint32_t state_ms;
 	uint32_t last_rx_ms;
-	uint32_t last_beacon_ms;
+	uint32_t last_sync_ms;
 	uint32_t last_pair_tx_ms;
 	bool pair_cfm_pending;  /* TX 收到 PAIR_RESP，下一个下行时隙发 PAIR_CFM */
 	bool pair_wait_cfm;     /* RX 已回 PAIR_RESP，等 PAIR_CFM */
 	/*
-	 * 简化握手（cfg.handshake = 0）：RX 收到 BEACON 就进 CONNECTED，但要反复
+	 * 简化握手（cfg.handshake = 0）：RX 收到 SYNC 就进 CONNECTED，但要反复
 	 * 回 SESS_RESP 直到收到对端的第一帧——否则对端可能还在 SEARCHING。
 	 */
 	bool announce;
