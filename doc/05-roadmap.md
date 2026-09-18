@@ -22,6 +22,7 @@
 目标：两块板子跑通"配对 → 会话 → 透传"。
 
 - 待验收：全部。这一条没有任何"先在主机上做"的空间
+- 已做（上板验证，"除射频外全开"那一档）：灯带/状态灯（紫=未配置根密钥 → 写完短语后按文档变绿）、PM_DEVICE、SPI + USP/LBM 都跑得起来；三块 CDC、配置模式（数据口魔数 `zlrs!configmode!` 与 shell 的 `zlrs config` 两个不依赖按键的入口）、配置协议、NVS 持久化、shell（status/ports/config/recovery）全部通过。**按钮-free 升级链路也验证了**：数据口魔数/SHELL 触发 → MCUboot 串口恢复 → `smpmgr` 上传 → 应用自确认 → 起来，全程不用按 BOOTSEL。唯一没开的是 **RP2350 TRNG**（见下面的"待修"）
 - 已做（软件侧）：上板调试的分层开关——不带 tag（P0）、不跳频、不握手、不发遥测都能单独关，关掉后链路照常工作且有主机侧用例；**整块射频也能关**（`CONFIG_ZLRS_APP_RADIO=n`，走 `app/src/radio_null.c`）：Core2021 还没接上时先验证端口、配置模式、按键、状态灯与 NVS，见 [01](01-system.md) 第 2.3 节
 - 已做（软件侧，上板发现并修）：**USB 设备栈由镜像自己建**（`lib/usb`，应用侧 `CONFIG_ZLRS_APP_USB`）。Zephyr 的 `CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT` 只注册第一块 CDC，而本板应用三块、bootloader 两块——没注册的那块没有 context，第一次往它写日志就是 NULL 解引用、整机停住（上板第一次跑就是这个现象：USB 直接掉线）。现在应用与 bootloader 各自建 context、注册 devicetree 里全部 CDC。上板已验证：bootloader 枚举出两块 CDC、应用出三块。见 [01](01-system.md) 第 2.2 节
 - 已做（软件侧，上板发现并补）：**"起来就崩"的镜像别再要 BOOTSEL**——镜像确认位（`CONFIG_ZLRS_APP_MCUBOOT_CONFIRM`：初始化跑完调 `boot_write_img_confirmed()`）配上 MCUboot 的 test/revert：没确认的新镜像崩掉、复位后自动回滚；没有上一版就停在串口恢复。另外预埋了 `CONFIG_ZLRS_APP_WATCHDOG`（默认关，调试期开），把"崩溃停在原地"变成"超时复位"，这样回滚才真的会发生。见 [01](01-system.md) 第 2.4 节
