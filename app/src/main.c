@@ -1063,7 +1063,18 @@ static void enter_config_mode(void)
 {
 	LOG_WRN("entering config mode");
 
-	(void)zlrs_config_mode_run(&link_control, failsafe_payload);
+	/*
+	 * 返回 0 = 收到 EXIT，1 = 空闲超时，-1 = 板上没有可用数据口。
+	 * 三种都不影响继续跑，但日志里要能分辨——"按了 EXIT 没退"和
+	 * "根本没进配置模式"是完全不同的问题。
+	 */
+	{
+		const int rc = zlrs_config_mode_run(&link_control, failsafe_payload);
+
+		if (rc != 0) {
+			LOG_WRN("config mode ended without EXIT (rc %d)", rc);
+		}
+	}
 	memcpy(rc_payload, failsafe_payload, sizeof(rc_payload));
 	zlrs_link_set_rc(&link_control, rc_payload, sizeof(rc_payload));
 
@@ -1246,7 +1257,13 @@ int main(void)
 	SMTC_SW_PLATFORM_VOID(smtc_rac_init());
 #endif
 
-	(void)zlrs_store_init();
+	/*
+	 * NVS 挂了不至于不能跑，但必须说清楚后果：密钥/配对/失控值都读不出来也
+	 * 存不下去，设备会停在"未配置"（不发射频）。store 自己也会打一条错误。
+	 */
+	if (zlrs_store_init() != 0) {
+		LOG_ERR("store unavailable: keys, pairing and failsafe will not persist");
+	}
 	plan_init();
 	build_links();
 	crypto_init();

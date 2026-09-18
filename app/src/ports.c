@@ -271,7 +271,21 @@ int zlrs_data_port_init(uint32_t baud)
 		data_eps[i].ready = true;
 		data_ready_ports++;
 
-		uart_irq_callback_user_data_set(dev, data_isr, &data_eps[i]);
+		/*
+		 * 装回调这一步必须判：驱动不支持 IRQ 收发时它返回 -ENOSYS/-ENOTSUP，
+		 * 忽略掉就是"能发不能收"甚至完全没反应，而且不会有任何迹象——
+		 * 上板踩过一次（CDC 抢占缓冲池让 RX 工作项静默失败）。
+		 * 失败就把这块端点标成不可用，让上层走"这块端点不存在"的路径，
+		 * 而不是假装在收。
+		 * （uart_irq_rx_enable() 在这个 Zephyr 版本里返回 void，没法判，
+		 *   所以能不能收只能靠回调装上 + 上层的超时/计数去暴露。）
+		 */
+		if (uart_irq_callback_user_data_set(dev, data_isr, &data_eps[i]) != 0) {
+			LOG_ERR("data port %s: RX setup failed; endpoint disabled", dev->name);
+			data_eps[i].ready = false;
+			data_ready_ports--;
+			continue;
+		}
 		uart_irq_rx_enable(dev);
 
 		LOG_INF("data port ready (%s)", dev->name);
@@ -318,6 +332,8 @@ uint16_t zlrs_data_port_write(const uint8_t *buf, uint16_t len)
 	const uint32_t written = ring_buf_put(&ep->tx, buf, len);
 
 	if (written > 0U) {
+		/* uart_irq_tx_enable() 返回 void，开不了也没法当场知道；
+		 * 真没发出去的话，上层会从对端的超时/重传看出来 */
 		uart_irq_tx_enable(ep->dev);
 	}
 
@@ -460,7 +476,12 @@ int zlrs_crsf_port_init(void)
 		crsf_eps[i].ready = true;
 		crsf_ready = true;
 
-		uart_irq_callback_user_data_set(dev, crsf_isr, &crsf_eps[i]);
+		if (uart_irq_callback_user_data_set(dev, crsf_isr, &crsf_eps[i]) != 0) {
+			LOG_ERR("CRSF endpoint %s: RX setup failed; endpoint disabled",
+				dev->name);
+			crsf_eps[i].ready = false;
+			continue;
+		}
 		uart_irq_rx_enable(dev);
 
 		LOG_INF("CRSF endpoint ready (%s)", dev->name);

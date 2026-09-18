@@ -69,7 +69,12 @@ static int zlrs_usb_add_descriptors(void)
 /* 类码放接口描述符里（CDC 的接口级类码），设备级给 0 */
 static void zlrs_usb_class_codes(const enum usbd_speed speed)
 {
-	(void)usbd_device_set_code_triple(&zlrs_usbd, speed, 0U, 0U, 0U);
+	const int err = usbd_device_set_code_triple(&zlrs_usbd, speed, 0U, 0U, 0U);
+
+	if (err != 0) {
+		/* 不致命：主机多半还是照常枚举，只是设备级类码不是 0/0/0 */
+		LOG_WRN("usb device code triple not set (%d)", err);
+	}
 }
 
 static int zlrs_usb_init(void)
@@ -77,9 +82,17 @@ static int zlrs_usb_init(void)
 	enum usbd_speed speed = USBD_SPEED_FS;
 	int err;
 
+	/*
+	 * USB 是**可裁**的（doc/01-system.md 2.2：轻量版没有原生 USB），所以这里
+	 * 一律不把失败往上抛——SYS_INIT 返回非零会让 Zephyr 判初始化失败并停住整机，
+	 * 而"USB 起不来"不该让一块只能跑串口/空口的板子陪葬。失败只报警，端口层
+	 * 会发现端点不可用并退回 UART（见 app/src/ports.c 的 port_active）。
+	 * 代价是 USB 挂了就没有控制台日志，所以这里的警告要写清楚。
+	 */
 	err = zlrs_usb_add_descriptors();
 	if (err != 0) {
-		return err;
+		LOG_ERR("usb init failed at descriptors (%d); continuing without USB", err);
+		return 0;
 	}
 
 	/*
@@ -94,29 +107,29 @@ static int zlrs_usb_init(void)
 		err = usbd_add_configuration(&zlrs_usbd, speed, &zlrs_usb_fs_config);
 	}
 	if (err != 0) {
-		LOG_ERR("configuration add failed (%d)", err);
-		return err;
+		LOG_ERR("usb configuration add failed (%d); continuing without USB", err);
+		return 0;
 	}
 
 	/* devicetree 里那几块 CDC 都是 usbd_class 段里的实例，一次全注册 */
 	err = usbd_register_all_classes(&zlrs_usbd, speed, 1U, NULL);
 	if (err != 0) {
-		LOG_ERR("class registration failed (%d)", err);
-		return err;
+		LOG_ERR("usb class registration failed (%d); continuing without USB", err);
+		return 0;
 	}
 
 	zlrs_usb_class_codes(speed);
 
 	err = usbd_init(&zlrs_usbd);
 	if (err != 0) {
-		LOG_ERR("usbd init failed (%d)", err);
-		return err;
+		LOG_ERR("usbd init failed (%d); continuing without USB", err);
+		return 0;
 	}
 
 	err = usbd_enable(&zlrs_usbd);
 	if (err != 0) {
-		LOG_ERR("usbd enable failed (%d)", err);
-		return err;
+		LOG_ERR("usbd enable failed (%d); continuing without USB", err);
+		return 0;
 	}
 
 	LOG_INF("usb device up: %s %s (%s)", CONFIG_ZLRS_USB_MANUFACTURER,

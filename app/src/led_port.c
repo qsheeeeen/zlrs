@@ -53,6 +53,7 @@ void zlrs_led_port_update(const zlrs_led_input_t *in, uint32_t now_ms)
 
 static bool ready;
 static uint32_t last_update_ms;
+static bool led_error_logged;
 static struct led_rgb pixels[ZLRS_LED_PIXELS];
 
 int zlrs_led_port_init(void)
@@ -86,7 +87,15 @@ void zlrs_led_port_update(const zlrs_led_input_t *in, uint32_t now_ms)
 	pixels[0].g = color.g;
 	pixels[0].b = color.b;
 
-	(void)led_strip_update_rgb(strip, pixels, ZLRS_LED_PIXELS);
+	/*
+	 * 刷灯失败要说话：状态灯是板上唯一的本地反馈，灯带驱动（PIO）真出问题
+	 * 时"S 灯不亮"很容易被当成"状态就是没到"，而上层还在照常跑。
+	 * 20 Hz 调用，所以只报一次，免得刷屏。
+	 */
+	if (led_strip_update_rgb(strip, pixels, ZLRS_LED_PIXELS) != 0 && !led_error_logged) {
+		led_error_logged = true;
+		LOG_ERR("led strip update failed (%s); status led is stale", strip->name);
+	}
 }
 
 #endif /* CONFIG_ZLRS_LED */
