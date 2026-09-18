@@ -679,7 +679,7 @@ static void adopt_pairing(void)
 }
 
 /*
- * 按键只有一个动作：长按（按住到阈值）触发配对，见 doc/07-ui.md。
+ * 按键只有一个动作：长按（按住到阈值）触发配对，见 doc/07-ux.md。
  * 没有短按，也没有按键解绑——要换绑就直接长按重新配对，新记录会顶掉旧的。
  */
 static void handle_button(uint32_t now_ms)
@@ -920,7 +920,7 @@ static void report(uint32_t now_ms)
 }
 
 /*
- * 状态灯：把链路状态翻译成 lib/led 的输入，见 doc/07-ui.md。
+ * 状态灯：把链路状态翻译成 lib/led 的输入，见 doc/07-ux.md。
  * 每 20 Hz 刷一次（zlrs_led_port_update 内部限速）。
  */
 /*

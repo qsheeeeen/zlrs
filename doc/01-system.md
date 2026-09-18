@@ -68,7 +68,7 @@
 
 物理接口清单与各模式下的完整用法见 [05-prototype.md](05-prototype.md)；板级别名与引脚见 [板级 README](../boards/zlrs/rp2350_zero_core2021/README.md)。
 
-**按键的时机决定行为**（语义见 [07-ui.md](07-ui.md)）：
+**按键的时机决定行为**（语义见 [07-ux.md](07-ux.md)）：
 
 | 时机 | 行为 |
 | --- | --- |

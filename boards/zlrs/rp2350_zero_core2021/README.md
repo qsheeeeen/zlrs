@@ -18,7 +18,7 @@
 | UART0 TX / RX | GP0 / GP1 | `zlrs-crsf-uart` = `uart0` | CRSF，420000，接手台/飞控 |
 | UART1 TX / RX | GP8 / GP9 | `zlrs-data-uart` = `uart1` | 透传/配置口，默认 115200（NVS 可改） |
 | 按键 | GP12 | `zlrs-button`、`smtc-user-button` | 对地，内部上拉；本板没焊，留给自接按键 |
-| WS2812B | GP16 | `zlrs-led`、`led-strip` | 板上自带，PIO0 驱动，语义见 [doc/07-ui.md](../../../doc/07-ui.md) |
+| WS2812B | GP16 | `zlrs-led`、`led-strip` | 板上自带，PIO0 驱动，语义见 [doc/07-ux.md](../../../doc/07-ux.md) |
 | USB-C（原生 USB） | — | `zephyr_udc0` = `usbd` | 三块 CDC：`cdc_acm_uart0`（`zlrs-crsf-cdc`）、`cdc_acm_uart1`（`zlrs-data-cdc`）、`cdc_acm_uart2`（控制台，`zephyr,console`） |
 | 看门狗 | — | `watchdog0` = `wdt0` | 应用侧 `CONFIG_ZLRS_APP_WATCHDOG` 打开才武装 |
 

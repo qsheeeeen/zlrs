@@ -401,7 +401,7 @@ config ZLRS_APP_PAIR_HOLD_MS
 	int "长按配对需要按住的时间（ms）"
 	default 1000
 	help
-	  按键只有这一个动作：按住到这个时长就触发配对（见 doc/07-ui.md）。
+	  按键只有这一个动作：按住到这个时长就触发配对（见 doc/07-ux.md）。
 	  开机时按住不放则是进配置模式。
 
 endmenu

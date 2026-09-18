@@ -51,7 +51,7 @@
 | --- | --- | --- |
 | BOOTSEL 按键 | RP2350-Zero | 芯片级：按住插 USB 进 ROM 的 UF2 模式 |
 | RESET 按键 | RP2350-Zero | 复位；复位后 300 ms 内收到合法 mcumgr 帧会停在恢复模式 |
-| WS2812B | RP2350-Zero（GP16） | 状态灯，语义见 [07-ui.md](07-ui.md) |
+| WS2812B | RP2350-Zero（GP16） | 状态灯，语义见 [07-ux.md](07-ux.md) |
 | 天线座 | Core2021 | 接 433 MHz 天线 |
 
 ## 3. 软件模式 × 接口用法
@@ -63,7 +63,7 @@
 | UART1 GP8/9 | 字节透传 | 改跑配置协议 | **不用**（恢复走 USB） | 不跑固件 |
 | 射频 SPI / BUSY / DIO8 | 每帧四个时隙收发 | 不发事务 | 不碰 | 不跑固件 |
 | 按键 GP12 | 运行中长按 ≥1 s 配对 | 会话里不看按键 | 刻意不用（`BOOT_SERIAL_ENTRANCE_GPIO=n`） | BOOTSEL 是另一颗芯片级按钮 |
-| 状态灯 | 颜色 + 节奏见 [07-ui.md](07-ui.md) | 白灯 0.5 Hz | MCUboot 不驱动，保持复位前最后一帧颜色 | 不驱动 |
+| 状态灯 | 颜色 + 节奏见 [07-ux.md](07-ux.md) | 白灯 0.5 Hz | MCUboot 不驱动，保持复位前最后一帧颜色 | 不驱动 |
 | 看门狗 wdt0 | 默认关；开了主循环喂 | 会话期间 `disarm`，退出再 `arm` | `lib/bootguard` 先清硬件 `ENABLE` 位 | — |
 
 ### 3.1 应用模式（正常收发）
@@ -132,4 +132,4 @@
 | 引脚、别名、SKU 标定、分区表的权威定义 | [板级 README](../boards/zlrs/rp2350_zero_core2021/README.md) |
 | 模式设计、端点二选一、启动链与升级 | [01-system.md](01-system.md) 2.1 / 2.4 |
 | 进度与待办 | [08-roadmap.md](08-roadmap.md) |
-| 按键与状态灯语义 | [07-ui.md](07-ui.md) |
+| 按键与状态灯语义 | [07-ux.md](07-ux.md) |
