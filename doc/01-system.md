@@ -1,6 +1,6 @@
 # zlrs 系统设计
 
-基于 Zephyr 自研的低延迟遥控 + 串口透传链路，射频芯片为 Semtech LR2021。
+基于 Zephyr 自研的低延迟遥控 + 串口透传链路，射频芯片为 Semtech LR2021。本文是系统级设计：目标与边界、平台基线、架构、时序预算、分层与线程。协议细节见 [03-protocol.md](03-protocol.md)，安全见 [02-security.md](02-security.md)，硬件实物见 [09-prototype.md](09-prototype.md)。
 
 ## 1. 目标与边界
 
@@ -47,8 +47,8 @@
 | 项目 | 选择 |
 | --- | --- |
 | 射频 | Semtech LR2021（QFN32），SPI + BUSY + DIO |
-| 参考硬件 | 微雪 RP2350-Zero（RP2350A，4 MB flash）+ 微雪 Core2021（LR2021）。sub-G 是两个 SKU：HF 850–930M（868/915）、LF 410–510M（470/433），板级做成 hf / lf 两个变体 |
-| 板级定义 | 本仓库 `boards/zlrs/rp2350_zero_core2021/`，接线、flash 分区与两个 SKU 的标定表都在这里 |
+| 参考硬件 | 微雪 RP2350-Zero（RP2350A，4 MB flash）+ 微雪 Core2021（LR2021）。sub-G 分 HF（850–930 MHz）与 LF（410–510 MHz）两个 SKU，板级做成 hf / lf 两个变体 |
+| 板级定义 | 本仓库 `boards/zlrs/rp2350_zero_core2021/`：引脚与别名、两个 SKU 的标定表、flash 分区与构建目标 |
 | 射频栈 | `usp_zephyr` + `usp` v1.1.2-feature-202604，使用 RAC/RALF 层 |
 | Zephyr | v4.4.0（RP2350 的 TRNG 驱动从这一版起在树内） |
 | 仓库拓扑 | T2，zlrs 自己当 manifest 仓库并存放应用 |
@@ -57,45 +57,38 @@
 
 ### 2.1 端口与工作模式
 
-**TX 与 RX 是同一套硬件、同一份固件**，差别只在角色配置。
+**TX 与 RX 是同一套硬件、同一份固件**，差别只在角色配置。这是全项目最重要的一条简化：用户只需要记一套操作，文档、脚本与主机侧用例都只有一份。
 
-| 端口 | 正常模式 | 配置模式 |
-| --- | --- | --- |
-| CRSF UART | CRSF | 不变 |
-| 数据 UART | 透传字节流 | **改跑配置协议** |
-| USB CDC（CRSF） | CRSF | 不变 |
-| USB CDC（数据） | 透传字节流 | **改跑配置协议** |
-| PWM | 不做 | — |
+端口与运行模式的设计有两条：
 
-**没有专门的控制口**：配置和透传复用同一条数据通路，靠工作模式区分。
-
-每条链路有两块端点，二选一——主机把该链路的 CDC 打开（DTR 有效）就走 USB，否则走 UART。端口分配：CRSF = UART0（GP0/GP1，`zlrs-crsf-uart`）+ `cdc_acm_uart0`，数据 = UART1（GP8/GP9，`zlrs-data-uart`）+ `cdc_acm_uart1`；控制台在 USB 的第三个 CDC 上（`cdc_acm_uart2`，`zephyr,console`）。别名按端点种类命名（`-uart` / `-cdc`）。
+1. **没有专门的控制口。** 配置和透传复用同一条数据通路，靠工作模式区分：正常模式数据口是透传字节流，配置模式改跑配置协议。CRSF 端口在两种模式下都不变。
+2. **每条链路两块端点，二选一。** CRSF 与数据各有一路 UART 加一块 USB CDC。主机把这链路的 CDC 打开（DTR 有效）就走 USB，否则走 UART；控制台固定在 USB 第三块 CDC（`zephyr,console`）上，不参与二选一。
 
 "主机在用这块端点"有两条证据：CDC 的 **DTR**（标准做法），以及**这块端点收到过主机字节**。第二条是上板补的：`SET_CONTROL_LINE_STATE` 在 USB/IP 转发（usbipd）与部分虚拟化场景里不一定送得到设备，只看 DTR 的话 CDC 永远选不中，主机发来的字节会被当"非当前端点"静静丢掉——配置协议、透传、CRSF 输入全都收不到，而且没有任何报错。ISR 在判断当前端点**之前**先记下"收到过字节"，所以第一帧不会被端点选择的滞后吃掉（见 `app/src/ports.c` 的 `port_active()`）。
 
-按键的**时机**决定行为：
+物理接口清单与各模式下的完整用法见 [09-prototype.md](09-prototype.md)；板级别名与引脚见 [板级 README](../boards/zlrs/rp2350_zero_core2021/README.md)。
+
+**按键的时机决定行为**（语义见 [06-ui.md](06-ui.md)）：
 
 | 时机 | 行为 |
 | --- | --- |
 | **开机时按住按键** | 进入配置模式 |
-| **开机后按按键** | 配对 |
+| **开机后长按按键** | 配对 |
 
-配置模式在超时（建议 5 分钟）或收到明确的退出指令后结束。
+配置模式在超时（默认 300 s）或收到明确的退出指令后结束。
 
-**板上没有用户按键时**（本板就是：只有 BOOTSEL 与 RESET，GP12 那个
-`zlrs-button` 节点是留给自接按键的），配置模式还有两条不依赖按键的入口，
-各自一个开关、默认关（上板调试时打开）：
+**板上没有用户按键时**（例如现在这块原型：只有 BOOTSEL 与 RESET，GP12 留给自接按键），配置模式还有两条不依赖按键的入口，各自一个开关、默认关：
 
 | 入口 | 开关 | 用法 |
 | --- | --- | --- |
 | 数据口魔数 | `CONFIG_ZLRS_APP_CONFIG_MAGIC` | 数据口收到 16 字节 `zlrs!configmode!` 就进配置模式，`EXIT`/超时回正常模式（与 `zlrs!bootloader!` 共用一套前缀匹配，正常字节不丢） |
-| 控制台 shell | `CONFIG_ZLRS_APP_SHELL` | 控制台 CDC（USB 第三块）上敲 `zlrs config`；另有 `zlrs status` 与 `zlrs recovery` |
+| 控制台 shell | `CONFIG_ZLRS_APP_SHELL` | 控制台 CDC（USB 第三块）上敲 `zlrs config`；另有 `zlrs status` / `ports` / `recovery` |
 
 三个入口进的是同一个会话，而且都在主循环里跑（shell 只置一个请求，主循环看到才开会话）：会话期间超帧暂停，数据口不会被透传抢字节，也不会出现"边透传边配置"。
 
 配对同理：没有按键时用配置工具的 `pair` 命令触发（`scripts/zlrs-config.py`）。
 
-这样做的好处是 TX 和 RX 用**完全相同的流程**，用户只需要记一套操作。代价是 TX 也不能在运行时边透传边配置——进配置会话就暂停收发，`EXIT` 或超时后继续。
+代价是 TX 也不能在运行时边透传边配置——进配置会话就暂停收发，`EXIT` 或超时后继续。换来的是 TX/RX 完全相同的流程，以及配置模式**不可能被远程触发**（对安全有实际价值，见 [02-security.md](02-security.md) 第 10 节）。
 
 轻量硬件可以裁掉 USB，那时配置只能走数据 UART。这是下一节"特性可裁剪"的一个具体例子。
 
@@ -107,9 +100,9 @@
 - 数据 UART 也应是可选的
 - 用 Kconfig 与 devicetree 表达能力，应用层靠 DT 探测，**不要到处 `#ifdef`**
 
-本板（RP2350-Zero）每条链路都是 UART + CDC 两块端点，控制台在 USB 第三个 CDC。轻量板把 `zlrs-data-cdc`（或整个 `&usbd`）删掉即可；别名一个都不挂就是 "这条链路的端口不存在"，一样编得过。
+本板每条链路都是 UART + CDC 两块端点，控制台在 USB 第三个 CDC。轻量板把 `zlrs-data-cdc`（或整个 `&usbd`）删掉即可；别名一个都不挂就是"这条链路的端口不存在"，一样编得过。
 
-**USB 设备栈由镜像自己建**（`lib/usb/usb_dev.c`，开关 `CONFIG_ZLRS_USB`，应用侧是 `CONFIG_ZLRS_APP_USB`）。Zephyr 的 device_next 栈里 devicetree 的 `zephyr,cdc-acm-uart` 节点只表达"要几块 CDC"，设备不会自己上线：镜像得建 usbd context、把类注册进配置、再 `usbd_enable()`。Zephyr 自带的 `CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT` 只注册**第一块** CDC，本板有三块（bootloader 两块），没注册的那块没有 context，第一次往它写日志就是 NULL 解引用、整机停住——所以那个开关保持关着。应用与 bootloader 共用这一份代码，差别只在字符串与 VID/PID（`zlrs` / `ZLRS` 与 `zlrs` / `ZLRS MCUBOOT`）。
+**USB 设备栈由镜像自己建**（`lib/usb/usb_dev.c`，开关 `CONFIG_ZLRS_USB`，应用侧是 `CONFIG_ZLRS_APP_USB`）。Zephyr 的 device_next 栈里 devicetree 的 `zephyr,cdc-acm-uart` 节点只表达"要几块 CDC"，设备不会自己上线：镜像得建 usbd context、把类注册进配置、再 `usbd_enable()`。Zephyr 自带的 `CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT` 只注册**第一块** CDC，本板应用三块（bootloader 两块），没注册的那块没有 context，第一次往它写日志就是 NULL 解引用、整机停住——所以那个开关保持关着。应用与 bootloader 共用这一份代码，差别只在字符串与 VID/PID（`zlrs` / `ZLRS` 与 `zlrs` / `ZLRS MCUBOOT`）。
 
 **CDC 的接收端要用自己的缓冲池**（`CONFIG_USBD_CDC_ACM_BUF_POOL=y`）。全速设备上这个开关默认是关的，多块 CDC 会去抢 UDC 的公共池；RX 工作项一旦分配失败就再也不重试（`CDC_ACM_RX_FIFO_BUSY` 位不清），表现是"串口只能发不能收"，而 CDC 驱动的日志又因为控制台挂在 CDC 上被强制关掉、一点提示都没有——上板第一次就是这么被坑的，见 [05-roadmap.md](05-roadmap.md) 的 M1。
 
@@ -141,76 +134,49 @@
 
 ### 2.4 启动链与固件升级
 
-板级有两个目标家族：`.../m33/hf`、`.../m33/lf`（应用直接放在 flash 里）与
-`.../m33/hf/mcuboot`、`.../m33/lf/mcuboot`（多一个 bootloader 与两槽固件分区）。
-两者共用同一份应用代码，差别只在分区表与是否带 bootloader；具体分区数字见
-[板级 README](../boards/zlrs/rp2350_zero_core2021/README.md#分区与启动)。
+板级有两个目标家族：`.../m33/hf`、`.../m33/lf`（应用直接放在 flash 里）与 `.../m33/hf/mcuboot`、`.../m33/lf/mcuboot`（多一个 bootloader 与两槽固件分区）。两者共用同一份应用代码，差别只在分区表与是否带 bootloader；分区数字见 [板级 README](../boards/zlrs/rp2350_zero_core2021/README.md#4-分区与启动)。
 
 | | 不带 bootloader | 带 MCUboot |
 | --- | --- | --- |
 | 启动链 | RP2350 bootrom → 应用 | RP2350 bootrom → MCUboot（校验签名）→ slot0 里的应用 |
-| flash 布局 | code 1 MB + storage 3 MB | mcuboot 128 KB + slot0/slot1 各 832 KB + storage 2.25 MB |
-| 升级 | 按住 BOOTSEL 拖 `zephyr.uf2`（或 SWD） | 第一次两轮 BOOTSEL（先 bootloader、再 `zephyr.signed.uf2`，bootloader 起来后 ROM 的 U 盘模式不再回来）；之后走串口恢复，不用按键 |
+| 升级 | 按住 BOOTSEL 拖 `zephyr.uf2`（或 SWD） | 第一次两轮 BOOTSEL（先 bootloader、再 `zephyr.signed.uf2`）；之后走串口恢复，不用按键 |
 | 回滚 | 无 | `swap using offset`：升级失败可以退回上一版 |
 
-**为什么上 MCUboot。** 三件事：① 现场升级不需要拆机、不需要调试器；② 镜像签名
-（ECDSA-P256）+ 启动校验，坏了能回滚；③ 砖机也能救——bootloader 起来后没有可启动的
-镜像就停在串口恢复里。
+**为什么上 MCUboot。** 三件事：① 现场升级不需要拆机、不需要调试器；② 镜像签名（ECDSA-P256）+ 启动校验，坏了能回滚；③ 砖机也能救——bootloader 起来后没有可启动的镜像就停在串口恢复里。
 
-**升级通道：MCUboot 串口恢复，只走 USB。** bootloader 自己收 mcumgr 帧，写进 slot
-后由 MCUboot 换槽。USB 上只留两块 CDC（应用是三块）：
+**升级通道：MCUboot 串口恢复，只走 USB。** bootloader 自己收 mcumgr 帧，写进 slot 后由 MCUboot 换槽。USB 上只留两块 CDC（应用是三块）：
 
 | bootloader 模式 | 对应应用的哪一块 | 用途 |
 | --- | --- | --- |
 | 第 1 块 CDC | 数据口（`cdc_acm_uart1`） | 串口恢复：mcumgr 帧走这里（chosen `zephyr,uart-mcumgr`） |
 | 第 2 块 CDC | 控制台（`cdc_acm_uart2`） | 内核日志（chosen `zephyr,console`） |
 
-CRSF 那块 CDC 在 bootloader 里没有用处，直接从 DT 里删掉（`app/sysbuild/mcuboot.overlay`）。
-好处是升级只需要插板载 USB-C，不用 UART 转接；代价是**端口号会变**：应用模式是
-`ttyACM0/1/2`（CRSF/数据/控制台），bootloader 模式只有两块。两种模式在 USB 上自报的
-名字不同——应用是 `ZLRS`、bootloader 是 `ZLRS MCUBOOT`（`CONFIG_CDC_ACM_SERIAL_PRODUCT_STRING`），
-所以脚本按 `/dev/serial/by-id/...` 里的名字找端口，不写死编号。
+CRSF 那块 CDC 在 bootloader 里没有用处，直接从 DT 里删掉（`app/sysbuild/mcuboot.overlay`）。好处是升级只需要插板载 USB-C，不用 UART 转接；代价是**端口号会变**：应用模式是三块 CDC（CRSF/数据/控制台），bootloader 模式只有两块。两种模式在 USB 上自报的名字不同——应用是 `ZLRS`、bootloader 是 `ZLRS MCUBOOT`（`CONFIG_ZLRS_USB_PRODUCT`）——所以脚本按 `/dev/serial/by-id/...` 里的名字找端口，不写死 `ttyACM*` 编号。
 
 进恢复模式有四条入口，都不碰 BOOTSEL：
 
 | 入口 | 什么时候生效 | 说明 |
 | --- | --- | --- |
-| 应用侧触发 | 设备正常运行中 | 数据口收到 16 字节魔数 `zlrs!bootloader!`（`scripts/zlrs-recovery.py`）→ 应用置 boot mode 并重启 → bootloader 读到标志就停在恢复模式。**升级一台健康设备不用碰设备本身** |
+| 应用侧触发 | 设备正常运行中 | 数据口收到 16 字节魔数 `zlrs!bootloader!`（`scripts/zlrs-recovery.py`）或 shell 的 `zlrs recovery` → 应用置 boot mode 并重启 → bootloader 读到标志就停在恢复模式。**升级一台健康设备不用碰设备本身** |
 | 启动窗口 | 每次复位后 300 ms | 窗口里收到**合法的 mcumgr 帧**就停下来升级——主机脚本先开始发 `image list`，再让设备复位（拔插 USB 或按复位键） |
 | 没有可启动镜像 | 砖机 | 校验失败/镜像为空时停在恢复模式，永远不会"转圈" |
 | 按键 | 不用 | bootloader 不占板上按键：它在应用里有"开机按住进配置"的语义，抢占会让两边都变歧义 |
 
-boot mode 那块标志放在 SRAM 起始处的 4 字节里（Zephyr 树里 RP2350 专用的
-`rp2350-boot-mode-retention.dtsi`，`sram0` 相应让开 4 字节），由 `RETENTION_BOOT_MODE`
-读写，应用与 bootloader 看到的是同一份 DT。魔数匹配是逐字节的：只有当前缀的那几个
-字节会被扣住，一旦不匹配就原样交回透传队列，所以正常数据既不丢也不重复。这个入口
-在 Kconfig 里是 `CONFIG_ZLRS_APP_UPDATE_TRIGGER`，量产/竞速构建可以关掉。
+boot mode 那块标志放在 SRAM 起始处的 4 字节里（Zephyr 树里 RP2350 专用的 `rp2350-boot-mode-retention.dtsi`，`sram0` 相应让开 4 字节），由 `RETENTION_BOOT_MODE` 读写，应用与 bootloader 看到的是同一份 DT。魔数匹配是逐字节的：只有当前缀的那几个字节会被扣住，一旦不匹配就原样交回透传队列，所以正常数据既不丢也不重复。这个入口在 Kconfig 里是 `CONFIG_ZLRS_APP_UPDATE_TRIGGER`，量产/竞速构建可以关掉。
 
-`CONFIG_BOOT_SERIAL_PIN_RESET`（"复位由引脚引起就进恢复"）**故意没开**：RP2350 的
-hwinfo 把 POWMAN 的 `HAD_RUN` 位映射成 `RESET_PIN`，这一位在"芯片跑过"这件事上的
-语义比"按了复位键"宽，没上板确认之前开它就有"每次上电都停在恢复模式"的风险。
+`CONFIG_BOOT_SERIAL_PIN_RESET`（"复位由引脚引起就进恢复"）**故意没开**：RP2350 的 hwinfo 把 POWMAN 的 `HAD_RUN` 位映射成 `RESET_PIN`，这一位在"芯片跑过"这件事上的语义比"按了复位键"宽，没上板确认之前开它就有"每次上电都停在恢复模式"的风险。
 
-主机侧一条命令就够：
+主机侧一条命令就够（[README](../README.md) 有完整用法）：
 
 ```shell
 python3 scripts/zlrs-update.py --port /dev/ttyACM1
 ```
 
-它按顺序做四件事：① 跑 `scripts/zlrs-recovery.py` 触发；② 等 bootloader 的恢复口
-（按 USB 名字找，`--recovery-port` 可指定）；③ 用 `smpmgr upgrade` 上传
-`zephyr.signed.bin`、标记下次启动并重启（`--client none` 只打印命令）；
-④ 等应用的 `ZLRS` 端口回来报成功。要看底层两步就分别用 `zlrs-recovery.py`
-和你的 mcumgr 客户端（Go 版 `mcumgr` 或 Python 的 `smpmgr`）。
+它按顺序做四件事：① 跑 `scripts/zlrs-recovery.py` 触发；② 等 bootloader 的恢复口（按 USB 名字找，`--recovery-port` 可指定）；③ 用 `smpmgr upgrade` 上传 `zephyr.signed.bin`、标记下次启动并重启（`--client none` 只打印命令）；④ 等应用的 `ZLRS` 端口回来报成功。要看底层两步就分别用 `zlrs-recovery.py` 和你的 mcumgr 客户端（Go 版 `mcumgr` 或 Python 的 `smpmgr`）。
 
-**密钥。** 开发期用 MCUboot 自带的测试密钥（`bootloader/mcuboot/root-ec-p256.pem`），
-bootloader 校验与应用签名用的是同一把——由 sysbuild 统一设置，两边不会不一致。
-量产前生成自己的密钥（`imgtool genkey -t ecdsa-p256`），私钥不进仓库，并且**要重新烧
-一次 bootloader**：公钥在 bootloader 里。
+**密钥。** 开发期用 MCUboot 自带的测试密钥（`bootloader/mcuboot/root-ec-p256.pem`），bootloader 校验与应用签名用的是同一把——由 sysbuild 统一设置，两边不会不一致。量产前生成自己的密钥（`imgtool genkey -t ecdsa-p256`），私钥不进仓库，并且**要重新烧一次 bootloader**：公钥在 bootloader 里。
 
-**和 2.3 的调试开关怎么配合。** 带 bootloader 的构建同样支持那批分层开关：第一次上板
-建议先烧"最简形态"（P0 + 关跳频 + 关握手 + 关遥测）确认启动链与日志，再逐层打开。
-注意 bootloader **不使用板上那颗按键**（按键在应用里已经有"开机按住进配置"的语义），
-所以它不会和配置模式抢。
+**和 2.3 的调试开关怎么配合。** 带 bootloader 的构建同样支持那批分层开关：第一次上板建议先烧"最简形态"（P0 + 关跳频 + 关握手 + 关遥测）确认启动链与日志，再逐层打开。注意 bootloader **不使用板上那颗按键**，所以它不会和配置模式抢。
 
 **镜像什么时候算"好"：确认位 + 复位。** 回滚的判据只有一位——镜像有没有被确认：
 
@@ -220,30 +186,16 @@ bootloader 校验与应用签名用的是同一把——由 sysbuild 统一设�
 | 回滚 | 升级用 test 语义（`smpmgr upgrade` 默认，我们的 `scripts/zlrs-update.py` 就是这么传的）：换进来的镜像没确认就崩，**下一次复位**时 MCUboot 回滚到上一版；没有上一版就停在串口恢复（`BOOT_SERIAL_NO_APPLICATION`） | bootloader 侧，不用配 |
 | 让复位发生 | 应用崩了是 CPU 停住（这块板上 Zephyr 没有 `RESET_ON_FATAL_ERROR`），所以要么手动复位/断电，要么打开看门狗让它自己复位 | `CONFIG_ZLRS_APP_WATCHDOG`（默认**关**，调试期建议开；`..._TIMEOUT_MS` 默认 8 s） |
 
-看门狗和回滚是两件事：看门狗只负责"把卡死变成复位"，判据始终是那个确认位。
-打开时它在 `PRE_KERNEL_1` 就武装（紧跟 wdt 驱动），所以连**驱动初始化阶段**的挂死
-也能被复位；喂狗只在主循环与配置模式的轮询循环里做，主循环卡住同样算死。
-上板调试开着的实际好处：刷坏的镜像自己复位 → MCUboot 回滚 → 停在串口恢复 →
-直接再从 USB 上传，全程不用按 BOOTSEL。
+看门狗和回滚是两件事：看门狗只负责"把卡死变成复位"，判据始终是那个确认位。打开时它在 `PRE_KERNEL_1` 就武装（紧跟 wdt 驱动），所以连**驱动初始化阶段**的挂死也能被复位；喂狗只在主循环与配置模式的轮询循环里做，主循环卡住同样算死。上板调试开着的实际好处：刷坏的镜像自己复位 → MCUboot 回滚 → 停在串口恢复 → 直接再从 USB 上传，全程不用按 BOOTSEL。
 
-Bootloader 侧有个对应的护栏（`lib/bootguard`，`CONFIG_ZLRS_BOOTGUARD`，bootloader
-镜像默认开）：MCUboot 起来第一件事就是把看门狗**关掉**。原因是 RP2350 的看门狗在
-一次看门狗复位之后 `ENABLE` 位通常还是 1（它会按周期一直复位，直到软件清掉），
-那样 MCUboot 刚跑换槽/回滚就被 8 秒后的下一次复位打断——回滚永远做不完，现象是
-设备在"USB 描述符请求失败 / 掉线"之间反复。护栏先把这一环掐断，进应用后再由应用
-自己决定要不要重新武装。
+Bootloader 侧有个对应的护栏（`lib/bootguard`，`CONFIG_ZLRS_BOOTGUARD`，bootloader 镜像默认开）：MCUboot 起来第一件事就是把看门狗**关掉**。原因是 RP2350 的看门狗在一次看门狗复位之后 `ENABLE` 位通常还是 1（它会按周期一直复位，直到软件清掉），那样 MCUboot 刚跑换槽/回滚就被 8 秒后的下一次复位打断——回滚永远做不完，现象是设备在"USB 描述符请求失败 / 掉线"之间反复。护栏先把这一环掐断，进应用后再由应用自己决定要不要重新武装。
 
 **看门狗与串口恢复。** 两处必须一起做，缺一个都会踩坑（上板各踩过一次）：
 
-1. **应用侧**：`zlrs recovery` / 数据口魔数触发时，重启前先
-   `zlrs_watchdog_disarm()`（`app/src/watchdog.c`）。这时驱动状态里看门狗是
-   enabled，`wdt_disable()` 真的有效；不关的话它会跟着重启跑进 bootloader。
-2. **bootloader 侧**：护栏**不能**用 `wdt_disable()`——驱动的实现是
-   `if (data->enabled == false) return -EFAULT;`（复位后驱动状态是全新一局，硬件
-   却还开着），所以 `lib/bootguard` 直接清 `watchdog_hw->ctrl` 的 `ENABLE` 位。
+1. **应用侧**：`zlrs recovery` / 数据口魔数触发时，重启前先 `zlrs_watchdog_disarm()`（`app/src/watchdog.c`）。这时驱动状态里看门狗是 enabled，`wdt_disable()` 真的有效；不关的话它会跟着重启跑进 bootloader。
+2. **bootloader 侧**：护栏**不能**用 `wdt_disable()`——驱动的实现是 `if (data->enabled == false) return -EFAULT;`（复位后驱动状态是全新一局，硬件却还开着），所以 `lib/bootguard` 直接清 `watchdog_hw->ctrl` 的 `ENABLE` 位。
 
-漏掉任一侧的现象都一样：MCUboot 进了串口恢复、**几秒后被看门狗复位打断**（上板实测
-只有 ~1.5 s 窗口），主机这边就是"恢复口闪现一下、镜像永远传不完"。
+漏掉任一侧的现象都一样：MCUboot 进了串口恢复、**几秒后被看门狗复位打断**（上板实测只有 ~1.5 s 窗口），主机这边就是"恢复口闪现一下、镜像永远传不完"。
 
 ### 2.5 错误处理的分层约定
 
@@ -269,7 +221,7 @@ Bootloader 侧有个对应的护栏（`lib/bootguard`，`CONFIG_ZLRS_BOOTGUARD`�
 | 链路 | 默认频段 | 调制 | 承载 | 优化目标 |
 | --- | --- | --- | --- | --- |
 | 控制链路 | sub-GHz | FLRC | CRSF（通道下行 + 遥测上行） | 距离与稳定性 |
-| 数据链路 | 2.4GHz | FLRC | 串口透传字节流 | 帧率与吞吐 |
+| 数据链路 | 2.4 GHz | FLRC | 串口透传字节流 | 帧率与吞吐 |
 
 两条链路各跑一份相同的状态机，**互相独立**：一条断了不影响另一条。但要注意它们共用一颗射频、一个 MCU、一路供电——**这不是真正的冗余链路**，只是在干扰层面互为备份。射频芯片或电源故障会让两条一起失效。
 
@@ -281,7 +233,7 @@ Bootloader 侧有个对应的护栏（`lib/bootguard`，`CONFIG_ZLRS_BOOTGUARD`�
 
 | 模式 | 控制链路 | 数据链路 |
 | --- | --- | --- |
-| **远距模式** | sub-GHz（2 km） | 2.4G（近距离内可用） |
+| **远距模式**（默认） | sub-GHz（2 km） | 2.4G（近距离内可用） |
 | **竞速模式** | 2.4G 独占（高帧率、低延迟） | 让出时隙，或关闭 |
 
 这一条来自"一套方案覆盖所有载体"：远距要 sub-GHz 的灵敏度和覆盖，而 FPV 竞速要 2.4G 的短空口时间。两者对频段角色的要求是相反的。
@@ -293,11 +245,11 @@ Bootloader 侧有个对应的护栏（`lib/bootguard`，`CONFIG_ZLRS_BOOTGUARD`�
 - **远距模式**（默认，`..._SUBG_CONTROL=y`）：控制链路跑本地区域的 sub-G 频段（由 SKU 与地区表决定，见 `lib/region`），数据链路跑 2.4G。控制链路吃法规门（功率/速率上限、占空比）。
 - **竞速模式**（`..._SUBG_DATA=y`）：控制链路独占 2.4G（`CONFIG_ZLRS_APP_RACING_CONTROL_RATE_BPS/_HZ`，默认 2.6 Mbps / 500 Hz），数据链路让到 sub-G 并受地区法规约束；不想留数据链路就直接 `CONFIG_ZLRS_APP_LINK_DATA=n`。法规门只作用在 sub-G 那条链路上——2.4G 没有地区表。
 
-超帧周期在两边的算法一样：数据链路的窗口按 `data_every_n` 摊进每一帧，控制帧率被它拖下来多少由计划算出来（例如 2.4G 控制 500 Hz + sub-G 数据 0.325 Mbps 的 128 B 帧 → 420 Hz，见主机侧用例 `region: racing plan`）。
+超帧周期在两边的算法一样：数据链路的窗口按 `data_every_n` 摊进每一帧，控制帧率被它拖下来多少由时间计划算出来（例如 2.4G 控制 500 Hz + sub-G 数据 0.325 Mbps 的 128 B 帧 → 420 Hz，见主机侧用例 `region: racing plan`）。
 
 ### 3.3 分时
 
-分时不自己写调度器，而是把两条链路注册成两个 RAC 客户端，用优先级让 radio planner 仲裁——线程与回调的做法见第 7 节。超帧的具体形状见 [03-protocol.md](03-protocol.md) 第 4 节。跳频采用逐包跳频，见 [03-protocol.md](03-protocol.md) 第 5 节；法规约束同节 5.2。
+分时不自己写调度器，而是把两条链路注册成两个 RAC 客户端，用优先级让 radio planner 仲裁——线程与回调的做法见第 7 节。超帧的具体形状见 [03-protocol.md](03-protocol.md) 第 4 节；跳频采用逐包跳频，见 [03-protocol.md](03-protocol.md) 第 5 节；法规约束同节 5.2。
 
 两条链路默认都用 FLRC。改调制类型（FLRC ↔ LoRa）在射频侧比单纯改频率贵得多，共用调制能让每次切换只改频率。LoRa 只作远距兜底档。
 
@@ -383,7 +335,7 @@ doc/                  设计文档
 
 采用协作式多线程（`CONFIG_USP_MAIN_THREAD=y`、`CONFIG_USP_THREADS_MUTEXES=n`，优先级见 `app/prj.conf`）：RAC API 直调，没有互斥锁开销；链路逻辑全是 I/O 驱动、会频繁让出。代价是串口突发处理太久会推迟射频事件，所以串口收发切成小块并及时让出。USP 的另外两种线程模式与 `SMTC_SW_PLATFORM()` 的展开见 usp_zephyr 的 `doc/THREAD_MANAGEMENT.md`。
 
-**配置模式不在这套线程里**：它在 `main()` 里阻塞跑（数据口轮询收发，不跑超帧、不做透传），退出后继续正常启动。按键的时机把"配置"和"配对"分开，见 2.1。
+**配置模式不在这套线程里**：它在 `main()` 里阻塞跑（数据口轮询收发，不跑超帧、不做透传），退出后继续正常启动。三个入口的语义与按键的时机区分见 2.1。
 
 ### 7.2 回调契约
 

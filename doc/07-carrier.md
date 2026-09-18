@@ -4,6 +4,8 @@
 
 定位：只解决连线与接插口——把两颗模块的连线固定在一块 PCB 上，对外给 J1/J2 两个接插件；不引 RF、不自带 USB、不加端口、不加器件（只有去耦、输入保护、二极管或与一颗按键）。端口按 Pixhawk 规范引到 J1/J2（见第 6 节），两层板足够，没有射频布局约束。
 
+原型（两模块直接连线、只靠 USB）见 [09-prototype.md](09-prototype.md)；本文是它的下一步硬件形态。
+
 ## 0. 符合 Pixhawk 接口规范
 
 对齐的是 **DS-009 Pixhawk Connector Standard**（连接器与串口线序）：
@@ -20,7 +22,7 @@
 | 口 | 型号 | 内容 |
 | --- | --- | --- |
 | J1（CRSF） | JST-GH **1.25 mm**，6P，卧式 | Pixhawk Telemetry Port 线序，见 1.1；`5V_IN` + CRSF |
-| J2（数据） | JST-GH **1.25 mm**，6P，卧式 | 同一套线序；GND + 数据口 UART1 |
+| J2（数据） | JST-GH **1.25 mm**，6P，卧式 | 同一套线序；`5V_IN` + 数据口 UART1 |
 | USB-C | RP2350-Zero 模块自带 | 控制台（USB CDC）+ BOOTSEL 烧写；USB 不引到 PCB |
 | SW1 按键 | SMD 轻触 3×4 mm | GP12 ↔ GND：长按配对、开机按住进配置模式 |
 | 状态灯 | 模块自带 WS2812（GP16） | PCB 上不引 |
@@ -88,10 +90,10 @@ J2 用同一套线序，第 2/3 针接数据口：**RX = GP9、TX = GP8**；第 
 
 ## 6. 固件
 
-CRSF = UART0 / GP0-GP1 → J1，数据 = UART1 / GP8-GP9 → J2，控制台在 USB 第三个 CDC；主机把某块 CDC 打开时该端口走 USB（见 01 第 2.1 节）。USB-C 同时是 BOOTSEL 烧写口。hf / lf 两个 SKU 变体按手上的 Core2021 选。
+CRSF = UART0 / GP0-GP1 → J1，数据 = UART1 / GP8-GP9 → J2，控制台在 USB 第三个 CDC；主机把某块 CDC 打开时该端口走 USB（见 [01](01-system.md) 2.1）。USB-C 同时是 BOOTSEL 烧写口。hf / lf 两个 SKU 变体按手上的 Core2021 选。
 
 ## 7. 待确认
 
 - 两块模块的实际外形尺寸、邮票孔坐标与天线座位置（按实物量）
 - PCB 最终轮廓尺寸与两个安装孔的位置
-- J2 第 1 针：接 5V（二极管或）还是留空（我按"二极管或"写的，两颗肖特基）
+- J2 第 1 针：接 5V（二极管或）还是留空（现按"二极管或"写的，两颗肖特基）
