@@ -17,9 +17,7 @@ static const zlrs_led_rgb_t white = { 255U, 255U, 255U };
 static const zlrs_led_rgb_t purple = { 160U, 0U, 200U };
 static const zlrs_led_rgb_t yellow = { 255U, 180U, 0U };
 static const zlrs_led_rgb_t blue = { 0U, 90U, 255U };
-static const zlrs_led_rgb_t cyan = { 0U, 200U, 200U };
 static const zlrs_led_rgb_t green = { 0U, 255U, 0U };
-static const zlrs_led_rgb_t amber = { 255U, 120U, 0U };
 static const zlrs_led_rgb_t red = { 255U, 0U, 0U };
 static const zlrs_led_rgb_t orange = { 255U, 80U, 0U };
 
@@ -52,26 +50,40 @@ static bool single_flash(uint32_t now_ms, uint32_t period_ms, uint32_t on_ms)
 	return (now_ms % period_ms) < on_ms;
 }
 
+/*
+ * 主题色：TX 蓝、RX 绿。链路正常时只出现主题色，用节奏与亮度区分状态。
+ * 性能退化（LQ 低）不换色——那只是"变得不那么好"，不是异常。
+ */
+static zlrs_led_rgb_t theme_color(const zlrs_led_input_t *in)
+{
+	return in->role_tx ? blue : green;
+}
+
 /* 链路状态 → 颜色与节奏；只有 CONNECTED 会用到 LQ */
 static zlrs_led_rgb_t link_state_frame(const zlrs_led_input_t *in, uint32_t now_ms)
 {
+	const zlrs_led_rgb_t theme = theme_color(in);
+
 	switch (in->link_state) {
 	case ZLRS_STATE_CONNECTED:
+		/* 主题色常亮，LQ 只改亮度：>=80 亮 30%，50–79 亮 18%，<50 亮 10% */
 		if (in->lq_percent >= 80U) {
-			return scale(green, 30U);
+			return scale(theme, 30U);
 		}
 		if (in->lq_percent >= 50U) {
-			return scale(green, 15U);
+			return scale(theme, 18U);
 		}
-		return scale(amber, 30U);
+		return scale(theme, 10U);
 	case ZLRS_STATE_PAIRING:
-		return blink(scale(blue, 60U), now_ms, 1000U, 300U);
+		return blink(scale(theme, 60U), now_ms, 1000U, 300U);
 	case ZLRS_STATE_SEARCHING:
-		return blink(scale(cyan, 40U), now_ms, 2000U, 150U);
+		return blink(scale(theme, 40U), now_ms, 2000U, 150U);
 	case ZLRS_STATE_UNPAIRED:
+		/* 异常色之一（TX/RX 共用）：等你配对 */
 		return blink(scale(yellow, 40U), now_ms, 1000U, 120U);
 	case ZLRS_STATE_UNCONFIGURED:
 	default:
+		/* 异常色之一（TX/RX 共用）：等你写根密钥 */
 		return blink(scale(purple, 40U), now_ms, 2000U, 200U);
 	}
 }
@@ -89,9 +101,9 @@ zlrs_led_rgb_t zlrs_led_frame(const zlrs_led_input_t *in, uint32_t now_ms)
 		return blink(scale(white, 30U), now_ms, 1000U, 500U);
 	}
 
-	/* 2. 开机自检：前 1.5 秒用角色色（蓝 = TX，绿 = RX），两块板子分得清 */
+	/* 2. 开机自检：前 1.5 秒主题色常亮（蓝 = TX，绿 = RX），一眼分得出角色 */
 	if (in->uptime_ms < 1500U) {
-		return scale(in->role_tx ? blue : green, 30U);
+		return scale(theme_color(in), 30U);
 	}
 
 	/* 3. 失控保护：红，5 Hz 快闪——"没有可用链路"最要紧 */

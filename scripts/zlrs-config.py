@@ -240,9 +240,61 @@ def talk(port: str, baud: int, frame: bytes, expect: bool, timeout: float,
         return 1
 
 
+def app_ports() -> list[str]:
+    """当前插着的应用模式模块（按 by-id，排除 bootloader 模式）。"""
+    import glob
+    from pathlib import Path
+
+    out = []
+
+    for path in sorted(glob.glob("/dev/serial/by-id/*")):
+        name = Path(path).name.upper()
+
+        if "ZLRS" not in name or "MCUBOOT" in name:
+            continue
+        # 每块模块有多块 CDC，工具只跟配置口说话（if04）
+        if not name.endswith("-IF04"):
+            continue
+        out.append(path)
+
+    return out
+
+
+def pick_targets(args, parser) -> list[str]:
+    """决定这条命令发给哪些模块：显式 --port > --serial > --all > 唯一一块。"""
+    if args.port:
+        return [args.port]
+
+    ports = app_ports()
+
+    if args.serial:
+        hit = [p for p in ports if args.serial in p]
+
+        if not hit:
+            parser.error(f"没找到序列号含 {args.serial!r} 的模块；当前：{ports}")
+        return hit
+
+    if args.all:
+        if not ports:
+            parser.error("没找到 ZLRS 模块")
+        return ports
+
+    if not ports:
+        parser.error("没找到 ZLRS 模块（/dev/serial/by-id 里没有 ZLRS）")
+    if len(ports) > 1:
+        parser.error(
+            "同时插着多块模块，必须用 --serial / --port 指定目标，或 --all 全都发：\n  "
+            + "\n  ".join(ports))
+    return ports[0]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="zlrs 配置工具")
     parser.add_argument("--port", help="配置口设备（应用模式的第三块 CDC，如 /dev/ttyACM2）")
+    parser.add_argument("--serial", help="按 USB 序列号子串选模块（多块同时插着时用）")
+    parser.add_argument("--all", action="store_true",
+                        help="对所有 ZLRS 模块执行这条命令（多块同时插着时用）")
+    parser.add_argument("--list", action="store_true", help="列出当前插着的模块，然后退出")
     parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument("--timeout", type=float, default=1.0)
     parser.add_argument("--dry-run", action="store_true", help="只打印帧，不连设备")
@@ -278,6 +330,16 @@ def main() -> int:
 
     if args.self_test:
         return self_test()
+
+    if args.list:
+        ports = app_ports()
+
+        if not ports:
+            print("没有插着的 ZLRS 模块")
+            return 1
+        for i, path in enumerate(ports):
+            print(f"{i}: {path}")
+        return 0
 
     if args.command is None:
         parser.print_help()
@@ -324,21 +386,24 @@ def main() -> int:
             print(f"cmd  : {frame.hex()}")
         return 0
 
-    if not args.port:
-        print("要连设备得给 --port；只想看帧就用 --dry-run", file=sys.stderr)
-        return 2
-
     prelude = None
     if args.command not in ("enter", "recovery") and not args.no_enter:
         prelude = encode(CMD_ENTER)
 
-    rc = talk(args.port, args.baud, frame, expect, args.timeout, prelude)
+    # 多块模块同时插着时，先决定这条命令发给谁（--serial / --port / --all）。
+    targets = pick_targets(args, parser)
 
-    # 一次性命令跑完就退出配置模式：配置模式会停射频，工具退出后设备不该
-    # 一直停在那个状态（想连续操作就用 --keep）。
-    if rc == 0 and args.command not in ("enter", "exit", "recovery") and not args.keep:
-        if talk(args.port, args.baud, encode(CMD_EXIT), True, args.timeout, None) == 0:
-            print("已退出配置模式")
+    rc = 0
+    for port in targets:
+        if len(targets) > 1:
+            print(f"-- {port}")
+        this = talk(port, args.baud, frame, expect, args.timeout, prelude)
+        if this != 0:
+            rc = this
+            continue
+        if args.command not in ("enter", "exit", "recovery") and not args.keep:
+            if talk(port, args.baud, encode(CMD_EXIT), True, args.timeout, None) == 0:
+                print("已退出配置模式")
 
     return rc
 

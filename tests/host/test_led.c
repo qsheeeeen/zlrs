@@ -107,8 +107,10 @@ static void test_connected_lq(void)
 	zlrs_led_rgb_t strong;
 	zlrs_led_rgb_t weak;
 	zlrs_led_rgb_t bad;
-	const zlrs_led_rgb_t green30 = { 0U, 76U, 0U };
-	const zlrs_led_rgb_t green15 = { 0U, 38U, 0U };
+	const zlrs_led_rgb_t rx_green30 = { 0U, 76U, 0U };
+	const zlrs_led_rgb_t rx_green18 = { 0U, 45U, 0U };
+	const zlrs_led_rgb_t rx_green10 = { 0U, 25U, 0U };
+	const zlrs_led_rgb_t tx_blue10 = { 0U, 9U, 25U };
 
 	printf("led: connected and lq\n");
 
@@ -118,26 +120,33 @@ static void test_connected_lq(void)
 	in.paired = true;
 	in.link_state = ZLRS_STATE_CONNECTED;
 
-	/* 常亮：不同时刻颜色一样 */
+	/* RX（绿是主题色）：常亮，不同时刻颜色一样 */
 	in.lq_percent = 90U;
 	strong = zlrs_led_frame(&in, 0U);
 	CHECK(!is_off(strong));
-	CHECK(memcmp(&strong, &green30, sizeof(strong)) == 0); /* 绿 255 × 30% */
+	CHECK(memcmp(&strong, &rx_green30, sizeof(strong)) == 0); /* 绿 255 × 30% */
 	{
 		const zlrs_led_rgb_t later = zlrs_led_frame(&in, 777U);
 
 		CHECK(memcmp(&strong, &later, sizeof(strong)) == 0);
 	}
 
-	/* LQ 掉档：亮度降一档 */
+	/* LQ 掉档：亮度降一档，颜色不变（性能退化不是异常） */
 	in.lq_percent = 60U;
 	weak = zlrs_led_frame(&in, 0U);
-	CHECK(memcmp(&weak, &green15, sizeof(weak)) == 0); /* 15% */
+	CHECK(memcmp(&weak, &rx_green18, sizeof(weak)) == 0); /* 18% */
 
-	/* LQ 很差：转琥珀色（不是暗绿） */
+	/* LQ 很差：还是主题色，只是更暗——不换红/琥珀 */
 	in.lq_percent = 20U;
 	bad = zlrs_led_frame(&in, 0U);
-	CHECK(bad.r > bad.g);
+	CHECK(memcmp(&bad, &rx_green10, sizeof(bad)) == 0);
+	CHECK(bad.r == 0U);
+
+	/* TX 的主题色是蓝：同样的链路状态换成蓝色系 */
+	in.role_tx = true;
+	bad = zlrs_led_frame(&in, 0U);
+	CHECK(memcmp(&bad, &tx_blue10, sizeof(bad)) == 0);
+	CHECK(bad.r == 0U);
 }
 
 static void test_drop_overlay(void)
@@ -172,7 +181,8 @@ static void test_drop_overlay(void)
 		CHECK(memcmp(&quiet, &base, sizeof(base)) == 0);
 	}
 
-	/* 未连接时不叠加：t=50 时搜索态是亮的青色，而不是丢弃提示的橙色 */
+	/* 未连接时不叠加：t=50 时是搜索态的主题色（这台是 TX → 蓝），不是丢弃的橙色 */
+	in.role_tx = true;
 	in.link_state = ZLRS_STATE_SEARCHING;
 	in.drop_recent = true;
 	{
