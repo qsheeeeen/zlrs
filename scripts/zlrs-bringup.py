@@ -143,8 +143,8 @@ def main() -> int:
     print("1) 端口")
     for p in ports:
         print(f"    {p}")
-    if console is None:
-        print("    警告：没找到控制台口（...-if04），继续")
+    if console is not None:
+        print(f"    调试控制台：{console}")
 
     print("2) 配置口进配置模式")
     if not enter_config_mode(config):
