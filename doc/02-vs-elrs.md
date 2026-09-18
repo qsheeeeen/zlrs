@@ -24,7 +24,7 @@ ELRS 侧的数字全部来自其官方文档与源码，链接见文末；对比
 | --- | --- | --- |
 | 定位与形态 | 遥控链路生态：TX 模块、接收机、SPI 接收机、Backpack，几百个 target | 一条链路：RP2350-Zero + Core2021 板，hf/lf 两个 SKU 变体 |
 | 频段与调制 | 900M：LoRa 25–250 Hz，另有 K1000；2.4G：LoRa、FLRC `F500`/`F1000`、DVDA；双频模块可跨频段 | 控制链路可 FLRC（2.6/1.3/0.65/0.325 Mbps）或 LoRa（SF5–12），数传固定 2.4G FLRC；单颗射频分时，调制按链路各自选 |
-| 控制帧率 | 25–1000 Hz | 150 / 500 Hz 已实现，1000 Hz 是目标（纯 2.4G 形态） |
+| 控制帧率 | 25–1000 Hz | 150 / 500 Hz 已实现，1000 Hz 是目标（全 2.4G，`r=0`） |
 | 控制协议 | CRSF 输入/输出，16 通道；手台侧 Lua 参数 | CRSF 输入/输出，16 通道；无 Lua |
 | 接收机输出 | CRSF / SBUS / SUMD / DJI RS2 / HoTT / PWM / SPI | 只有 CRSF（UART 或 USB CDC） |
 | 数传 | AirPort（空口透明串口）；MAVLink 透传（几百 bps～几 kbps） | 专用 2.4G 链路，~97 kB/s 量级；默认可靠重传（ARQ），可选 best-effort |
@@ -36,7 +36,7 @@ ELRS 侧的数字全部来自其官方文档与源码，链接见文末；对比
 | 升级 | WiFi OTA、Betaflight passthrough、DFU、串口 | UF2（BOOTSEL）+ SWD；带 MCUboot 的变体支持串口恢复 DFU（签名 + 回滚），无无线 OTA |
 | 法规 | 编译期预设 | 运行期四张地区表 + SKU/band 一致性校验 + 占空比记账 + 速率/帧率压档 |
 | 外设集成 | Serial VTX、Team Racing、Trainer、Sentinel、Backpack、BLE | 无 |
-| 双频用法 | Gemini 双发分集；Xrossband 双频冗余 | 两个频段分工（sub-G 控制 + 2.4G 数传），不冗余 |
+| 双频用法 | Gemini 双发分集；Xrossband 双频冗余（**两个射频同时发**） | 一颗射频**跨子带跳频**：两个频段共同构成一条链路，按 `r` 混合，不冗余也不分集 |
 | 固件与角色 | TX 与 RX 是不同 target | 同一份固件，角色一个 Kconfig |
 
 ## 差距（按优先级）

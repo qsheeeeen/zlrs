@@ -10,7 +10,7 @@
 | **载板** | 把两模块的连线做成 PCB，对外给 USB-C、按键与两路 6P 串口，见 [05-carrier](05-carrier.md) |
 | **轻量版** | 裁掉 USB 与数据口，只留控制链路，见 [08-firmware](08-firmware.md) 第 4 节 |
 
-三种形态共用同一份固件与同一套板级定义，差别只在 devicetree 与 Kconfig。
+三个形态（原型 / 载板 / 轻量版）共用同一份固件与同一套板级定义，差别只在 devicetree 与 Kconfig。
 
 ## 2. 板级
 
