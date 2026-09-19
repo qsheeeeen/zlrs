@@ -2,12 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 config ZLRS_LINK
-	bool "zlrs link layer"
+	bool "链路层（状态机 / 配对与会话 / 超帧时隙）"
 	select ZLRS_PROTO
 	help
-	  Link layer: state machine, pairing and session handling, superframe
-	  slots and the radio abstraction the application port implements on
-	  top of USP/RAC. No Zephyr dependency, see tests/host.
+	  链路状态机、配对与会话、超帧时隙，以及对射频的抽象（应用侧用 USP/RAC
+	  实现那个抽象）。纯 C，不依赖 Zephyr，见 tests/host。
 
 module = ZLRS_LINK
 module-str = zlrs_link

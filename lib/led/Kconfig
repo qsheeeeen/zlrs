@@ -2,12 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 config ZLRS_LED
-	bool "zlrs status led patterns"
+	bool "状态灯灯语（状态 → 颜色与节奏）"
 	select ZLRS_LINK
 	help
-	  Maps the link state (and alerts) to the colour and cadence of a single
-	  status pixel. Pure C, see tests/host; the LED strip driver lives in the
-	  application.
+	  把链路状态与告警映射到单个像素的颜色与节奏（灯语表见 doc/11-ux.md）。
+	  纯 C，见 tests/host；灯带驱动在应用侧（app/src/led_port.c）。
 
 module = ZLRS_LED
 module-str = zlrs_led

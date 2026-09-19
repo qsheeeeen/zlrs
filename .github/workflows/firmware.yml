@@ -98,8 +98,9 @@ jobs:
               -DCONFIG_ZLRS_APP_RADIO=n
           done
 
-      # 单链路裁剪：只跑数据链路（控制链路、CRSF、配置模式、按键、状态灯全关，
-      # 对应的库也跟着裁掉）
+      # 单链路裁剪：只跑数据链路（控制链路、CRSF 端口、配置模式、按键、状态灯
+      # 全关）。配置协议与灯语两个库不写 CONFIG_ZLRS_*=n，跟着应用开关走——
+      # 这样这一档顺带验证"应用开关真的把库裁掉了"。
       - name: build (data link only, both skus)
         run: |
           set -x
@@ -110,9 +111,7 @@ jobs:
               -DCONFIG_ZLRS_APP_CRSF_PORT=n \
               -DCONFIG_ZLRS_APP_CONFIG_MODE=n \
               -DCONFIG_ZLRS_APP_PAIRING_BUTTON=n \
-              -DCONFIG_ZLRS_APP_STATUS_LED=n \
-              -DCONFIG_ZLRS_CONFIG=n \
-              -DCONFIG_ZLRS_LED=n
+              -DCONFIG_ZLRS_APP_STATUS_LED=n
           done
 
       # LoRa 远距档的控制链路：设备侧的 radio_params.lora 那条路只有编译能验

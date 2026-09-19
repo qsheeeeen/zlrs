@@ -2,11 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 config ZLRS_CRSF
-	bool "zlrs CRSF port codec"
+	bool "CRSF 编解码（通道打包 / 链路统计帧）"
 	help
-	  CRSF frame codec for the ground-side ports (handset <-> module and
-	  receiver -> flight controller): RC channel packing and the link
-	  statistics frame. Pure C, no Zephyr dependency, see tests/host.
+	  地面侧那两个端口用的 CRSF 帧编解码（手台 ↔ 模块、接收机 → 飞控）：
+	  16 通道打包与链路统计帧。纯 C，不依赖 Zephyr，见 tests/host。
 
 module = ZLRS_CRSF
 module-str = zlrs_crsf
