@@ -1,5 +1,5 @@
 /*
- * 端口层实现，见 ports.h：端点选择 → 数据口 → CRSF 端口 → 配置模式。
+ * Port layer, see ports.h: endpoint choice, data port, CRSF port, config mode.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -30,13 +30,13 @@
 
 LOG_MODULE_REGISTER(zlrs_ports, CONFIG_APP_LOG_LEVEL);
 
-/* ===== 1. 端点选择 ======================================================= */
+/* ===== 1. endpoint choice ================================================= */
 
-/* 一个逻辑端口最多两块端点：UART + USB CDC */
+/* A logical port has at most two endpoints: UART + USB CDC */
 #define PORT_MAX 2
 
 struct port_pair {
-	const struct device *uart; /* NULL = 板上没挂这条别名 */
+	const struct device *uart; /* NULL = this alias is not wired on the board */
 	const struct device *cdc;
 };
 
@@ -58,13 +58,13 @@ static const struct port_pair data_pair = {
 #endif
 };
 
-/* 端点顺序固定：0 = UART，1 = USB CDC */
+/* Endpoint order is fixed: 0 = UART, 1 = USB CDC */
 static const struct device *port_ep_dev(const struct port_pair *pair, size_t idx)
 {
 	return (idx == 0U) ? pair->uart : pair->cdc;
 }
 
-/* "USB 连上"取主机真正打开 CDC 那一刻：枚举完没人读算不上在用 */
+/* "USB is in use" means the host really opened the CDC: enumeration alone does not count */
 static bool cdc_opened(const struct device *dev)
 {
 	uint32_t dtr = 0U;
@@ -81,10 +81,10 @@ static bool cdc_opened(const struct device *dev)
 }
 
 /*
- * "主机在用这块端点"的证据。标准做法是 CDC 的 DTR，但 USB/IP 转发等路径上
- * SET_CONTROL_LINE_STATE 不一定送到设备，只认 DTR 会导致端点永远选不中（收到的
- * 字节被当"非当前端点"丢掉）。所以再认一条：**收到过主机字节**——ISR 在判断当前
- * 端点之前先记这笔（见 data_isr / crsf_isr），第一帧不会被选择滞后吃掉。
+ * Evidence that the host is using this endpoint. The textbook answer is the CDC's DTR, but
+ * over USB/IP forwarding SET_CONTROL_LINE_STATE may never arrive, and trusting DTR alone
+ * leaves the endpoint unselected (its bytes are dropped as "not the active one"). So a second
+ * signal counts: host bytes seen. The ISRs record it before checking the active endpoint.
  */
 #define HOST_SEEN_MAX PORT_MAX * 2
 static const struct device *host_seen_devs[HOST_SEEN_MAX];
@@ -113,7 +113,7 @@ static bool host_seen_any(const struct device *dev)
 	return false;
 }
 
-/* 两块都在时 USB 在用就选 USB；都没有返回 NULL */
+/* With both present USB wins while it is in use; NULL when there is neither */
 static const struct device *port_active(const struct port_pair *pair)
 {
 	const bool uart_ok = (pair->uart != NULL) && device_is_ready(pair->uart);
@@ -132,12 +132,12 @@ static const struct device *port_active(const struct port_pair *pair)
 	return cdc_ok ? pair->cdc : NULL;
 }
 
-/* ===== 2. 数据口：透传 =================================================== */
+/* ===== 2. data port: passthrough ========================================== */
 
 #define DATA_RX_RING_LEN 1024U
 #define DATA_TX_RING_LEN 1024U
 
-/* 一块端点一套缓冲；dev == NULL 表示板上没挂这条别名 */
+/* One buffer set per endpoint; dev == NULL means the alias is not wired */
 struct data_ep {
 	const struct device *dev;
 	struct ring_buf rx;
@@ -145,7 +145,7 @@ struct data_ep {
 	uint8_t rx_mem[DATA_RX_RING_LEN];
 	uint8_t tx_mem[DATA_TX_RING_LEN];
 	uint32_t rx_dropped;
-	uint32_t rx_total; /* 收到过多少字节（端点二选一的证据之一） */
+	uint32_t rx_total; /* bytes received (one of the endpoint-choice inputs) */
 	bool ready;
 };
 
@@ -173,14 +173,14 @@ static void data_isr(const struct device *dev, void *user_data)
 			const int n = uart_fifo_read(dev, chunk, sizeof(chunk));
 
 			if (n > 0) {
-				/* 先记证据：端点选择的判据，见 port_active() */
+				/* Record the evidence first: endpoint choice depends on it, see port_active() */
 				host_seen_mark(dev);
 				ep->rx_total += (uint32_t)n;
 			}
 
 			if (n > 0 &&
 			    ring_buf_put(&ep->rx, chunk, (uint32_t)n) != (uint32_t)n) {
-				ep->rx_dropped++; /* 透传是 best-effort，满了就丢 */
+				ep->rx_dropped++; /* passthrough is best-effort: drop when full */
 			}
 		}
 
@@ -200,7 +200,7 @@ static void data_isr(const struct device *dev, void *user_data)
 	}
 }
 
-/* 不是当前端点的进账直接丢掉：留着的话，切回来会送出陈旧的字节 */
+/* Drop bytes from the inactive endpoint: keeping them would send stale data after a switch */
 static void data_ep_drop_rx(struct data_ep *const ep)
 {
 	uint8_t scratch[32];
@@ -247,7 +247,7 @@ int zlrs_data_port_init(uint32_t baud)
 		const struct device *const dev = port_ep_dev(&data_pair, i);
 
 		if (dev == NULL) {
-			continue; /* 板上没挂这条别名 */
+			continue; /* alias not wired on this board */
 		}
 
 		if (!device_is_ready(dev)) {
@@ -273,9 +273,9 @@ int zlrs_data_port_init(uint32_t baud)
 		data_ready_ports++;
 
 		/*
-		 * 必须判：驱动不支持 IRQ 收发时返回 -ENOSYS/-ENOTSUP，忽略就是
-		 * "能发不能收"且毫无迹象。失败即把端点标成不可用，让上层走
-		 * "端点不存在"路径。rx_enable 返回 void，判不了。
+		 * Must be checked: a driver without IRQ transfers returns -ENOSYS/-ENOTSUP, and ignoring
+		 * that means TX works while RX is silently dead. On failure the endpoint is marked
+		 * unusable so the layers above take the "no such endpoint" path. rx_enable returns void.
 		 */
 		if (uart_irq_callback_user_data_set(dev, data_isr, &data_eps[i]) != 0) {
 			LOG_ERR("data port %s: RX setup failed; endpoint disabled", dev->name);
@@ -312,7 +312,7 @@ uint16_t zlrs_data_port_read(uint8_t *buf, uint16_t len)
 			continue;
 		}
 
-		data_ep_drop_rx(&data_eps[i]); /* 非当前端点的进账丢弃 */
+		data_ep_drop_rx(&data_eps[i]); /* drop bytes that arrived on the inactive endpoint */
 	}
 
 	return got;
@@ -329,7 +329,7 @@ uint16_t zlrs_data_port_write(const uint8_t *buf, uint16_t len)
 	const uint32_t written = ring_buf_put(&ep->tx, buf, len);
 
 	if (written > 0U) {
-		/* tx_enable 返回 void，发不出去只能靠对端超时/重传暴露 */
+		/* tx_enable returns void; a failed send only shows up as a peer timeout or retransmit */
 		uart_irq_tx_enable(ep->dev);
 	}
 
@@ -347,14 +347,14 @@ uint32_t zlrs_data_port_dropped(void)
 	return dropped;
 }
 
-/* ===== 3. CRSF 端口 ====================================================== */
+/* ===== 3. CRSF port ======================================================= */
 
-/* 帧缓冲按"1 字节长度 + 1 字节类型 + 载荷"存放 */
+/* Frame records are stored as 1 byte length + 1 byte type + payload */
 #define CRSF_FRAME_SLOT_LEN (2U + ZLRS_CRSF_PAYLOAD_MAX_LEN)
 #define CRSF_FRAME_RING_LEN 512U
 #define CRSF_TX_RING_LEN 1024U
 
-/* 一块端点一套发送缓冲；dev == NULL 表示板上没挂这条别名 */
+/* One TX buffer per endpoint; dev == NULL means the alias is not wired */
 struct crsf_ep {
 	const struct device *dev;
 	struct ring_buf tx;
@@ -366,7 +366,7 @@ static uint8_t crsf_frame_ring_mem[CRSF_FRAME_RING_LEN];
 static struct ring_buf crsf_frame_ring;
 static struct crsf_ep crsf_eps[PORT_MAX];
 static zlrs_crsf_parser_t crsf_parser;
-static const struct device *crsf_rx_source; /* 上一次喂解析器的端点 */
+static const struct device *crsf_rx_source; /* endpoint that last fed the parser */
 static uint32_t crsf_rx_dropped;
 static bool crsf_ready;
 
@@ -391,17 +391,17 @@ static void crsf_isr(const struct device *dev, void *user_data)
 			const int n = uart_fifo_read(dev, chunk, sizeof(chunk));
 
 			if (n > 0) {
-				/* 先记证据：端点选择的判据，见 port_active() */
+				/* Record the evidence first: endpoint choice depends on it, see port_active() */
 				host_seen_mark(dev);
 			}
 
-			/* 记完证据再判断当前端点：第一帧不该被选择滞后吃掉 */
+			/* Check the active endpoint after recording: the first frame must not be lost to lag */
 			if (dev != port_active(&crsf_pair)) {
-				continue; /* 不是当前端点：收进来也不做数 */
+				continue; /* not the active endpoint: incoming bytes do not count */
 			}
 
 			if (dev != crsf_rx_source) {
-				/* 切换端点：作废半截帧，免得把两块端点的字节拼成一帧 */
+				/* Endpoint switch: void the partial frame instead of stitching two endpoints together */
 				zlrs_crsf_parser_init(&crsf_parser);
 				crsf_rx_source = dev;
 			}
@@ -438,7 +438,7 @@ static void crsf_isr(const struct device *dev, void *user_data)
 			}
 
 			if (dev != port_active(&crsf_pair)) {
-				uart_irq_tx_disable(dev); /* 排队中的字节等切回来再发 */
+				uart_irq_tx_disable(dev); /* queued bytes wait for the endpoint to come back */
 				continue;
 			}
 
@@ -458,7 +458,7 @@ int zlrs_crsf_port_init(void)
 		const struct device *const dev = port_ep_dev(&crsf_pair, i);
 
 		if (dev == NULL) {
-			continue; /* 板上没挂这条别名 */
+			continue; /* alias not wired on this board */
 		}
 
 		if (!device_is_ready(dev)) {
@@ -510,7 +510,7 @@ uint8_t zlrs_crsf_port_write(uint8_t type, const uint8_t *payload, uint8_t paylo
 	}
 
 	if (ring_buf_put(&ep->tx, frame, len) != len) {
-		return 0U; /* 发送缓冲满：CRSF 是尽力而为，丢帧并计数交给调用方 */
+		return 0U; /* TX buffer full: CRSF is best-effort, the caller counts the drop */
 	}
 
 	uart_irq_tx_enable(ep->dev);
@@ -531,7 +531,7 @@ uint8_t zlrs_crsf_port_read(uint8_t *type, uint8_t *payload, uint8_t max_len)
 		return 0U;
 	}
 	if (header[0] > max_len) {
-		/* 载荷缓冲区太小：整帧丢弃，避免缓冲错位 */
+		/* Payload buffer too small: drop the whole frame rather than misalign the buffer */
 		uint8_t scratch[CRSF_FRAME_SLOT_LEN];
 
 		(void)ring_buf_get(&crsf_frame_ring, scratch, (uint32_t)header[0] + 2U);
@@ -554,7 +554,7 @@ uint32_t zlrs_crsf_port_rx_dropped(void)
 	return crsf_rx_dropped;
 }
 
-/* ===== 4. 配置模式 ======================================================= */
+/* ===== 4. config mode ===================================================== */
 
 #if IS_ENABLED(CONFIG_ZLRS_CONFIG)
 
@@ -562,13 +562,13 @@ uint32_t zlrs_crsf_port_rx_dropped(void)
 #define CFG_EXIT_POLL_MS 50U
 
 /*
- * 白灯要露脸多久才算"真在配置"。升级工具与 `zlrs-config.py` 都是一条命令开一次
- * 会话、百来毫秒就退，这种瞬时会话闪一下白反而像故障（黄 → 白 → 蓝 看着就是
- * "乱闪"），所以会话真持续下来才切白，短会话保持原来的状态灯语。
+ * How long the white LED has to show before this counts as "really configuring". The update
+ * tool and `zlrs-config.py` open a session per command and leave within ~100 ms; flashing
+ * white for that looks like a fault, so the pattern only switches once a session lasts.
  */
 #define CFG_LED_DELAY_MS 500U
 
-/* ---- 配置口：专用的 CDC，常驻在 USB 上 -------------------------------- */
+/* ---- config port: a dedicated CDC that is always on USB ------------------ */
 
 #define CFG_PORT_RX_RING_LEN 512U
 #define CFG_PORT_TX_RING_LEN 512U
@@ -585,7 +585,7 @@ struct cfg_port {
 
 static struct cfg_port cfg_port;
 static const zlrs_config_ops_t *cfg_ops;
-/* 上位机发过"确认这一版"的命令（只在主线程里读写：配置会话与主循环同一个线程） */
+/* The host sent its confirm command (touched from the main thread only) */
 static bool cfg_image_confirmed;
 
 void zlrs_config_set_ops(const zlrs_config_ops_t *ops)
@@ -642,7 +642,7 @@ int zlrs_config_port_init(void)
 	ring_buf_init(&cfg_port.tx, sizeof(cfg_port.tx_mem), cfg_port.tx_mem);
 	cfg_port.dev = dev;
 
-	/* 判返回值：驱动不支持 IRQ 收发时返回 -ENOSYS/-ENOTSUP，忽略就是收不到命令 */
+	/* Check it: without IRQ support it is -ENOSYS/-ENOTSUP, and ignoring that loses commands */
 	if (uart_irq_callback_user_data_set(dev, cfg_port_isr, &cfg_port) != 0) {
 		LOG_ERR("config port %s: RX setup failed", dev->name);
 		cfg_port.dev = NULL;
@@ -724,7 +724,7 @@ bool zlrs_config_port_poll_enter(void)
 			enter = true;
 		}
 
-		/* 进恢复不需要先配置：确认后直接重启，主循环不再返回 */
+		/* Recovery needs no configuration: reboot once acknowledged, the main loop never returns */
 		if (cmd == ZLRS_CFG_CMD_RECOVERY && cfg_ops != NULL &&
 		    cfg_ops->enter_recovery != NULL) {
 			payload[0] = cmd;
@@ -735,7 +735,7 @@ bool zlrs_config_port_poll_enter(void)
 			(void)cfg_ops->enter_recovery();
 		}
 
-		/* 会话外的其它命令一律回"状态不对"；EXIT 当空操作 */
+		/* Outside a session everything answers "wrong state"; EXIT is a no-op */
 		payload[0] = cmd;
 		payload[1] = (cmd == ZLRS_CFG_CMD_ENTER || cmd == ZLRS_CFG_CMD_EXIT)
 				     ? ZLRS_CFG_OK
@@ -749,13 +749,13 @@ bool zlrs_config_port_poll_enter(void)
 	return enter;
 }
 
-/* ---- 会话 -------------------------------------------------------------- */
+/* ---- session ------------------------------------------------------------- */
 
 static zlrs_cfg_parser_t cfg_parser;
 static uint8_t cfg_tx_line[ZLRS_CFG_FRAME_MAX_LEN];
-static zlrs_link_t *cfg_link; /* 配置模式作用的链路（控制链路） */
+static zlrs_link_t *cfg_link; /* the link config mode acts on (the control link) */
 static uint8_t *cfg_failsafe_out;
-/* ---- backend：把命令落到 NVS 与链路层 ---------------------------------- */
+/* ---- backend: land commands in NVS and the link layer --------------------- */
 
 static int cfg_save_root_key(void *ctx, const uint8_t key[ZLRS_KEY_LEN])
 {
@@ -765,7 +765,7 @@ static int cfg_save_root_key(void *ctx, const uint8_t key[ZLRS_KEY_LEN])
 		return ZLRS_CFG_E_STORE;
 	}
 
-	/* 立刻生效，不必等重启 */
+	/* Takes effect immediately, no reboot needed */
 	zlrs_link_set_root_key(cfg_link, key, k_uptime_get_32());
 
 	LOG_INF("root key written");
@@ -795,7 +795,7 @@ static int cfg_read_status(void *ctx, zlrs_cfg_status_t *out)
 	out->lq_percent = cfg_link->stats.lq_percent;
 	out->band = ZLRS_SUBG_BAND;
 	{
-		/* 先报 NVS 里的值（刚写过还没重启时它是"待生效"的那个），没写过再报运行值 */
+		/* Report the stored value first (just written, not yet live), the runtime one otherwise */
 		uint8_t stored_region;
 		int8_t stored_power;
 
@@ -834,7 +834,7 @@ static int cfg_save_failsafe(void *ctx, const uint8_t channels[ZLRS_CFG_FAILSAFE
 	if (cfg_failsafe_out != NULL) {
 		memcpy(cfg_failsafe_out, channels, ZLRS_CFG_FAILSAFE_LEN);
 	}
-	/* 下次配对时把新值下发给对端 */
+	/* The new values travel to the peer with the next pairing */
 	zlrs_link_set_failsafe(cfg_link, channels, ZLRS_CFG_FAILSAFE_LEN);
 
 	LOG_INF("failsafe values written");
@@ -923,7 +923,7 @@ static int cfg_enter_recovery(void *ctx)
 	return cfg_ops->enter_recovery();
 }
 
-/* 上位机确认这一版升级成功；升级流程靠它决定去留（见 doc/08-firmware.md 第 6 节） */
+/* Host confirms this upgrade; the whole flow depends on it (see doc/08-firmware.md 6) */
 static int cfg_confirm_image(void *ctx)
 {
 	(void)ctx;
@@ -934,7 +934,7 @@ static int cfg_confirm_image(void *ctx)
 	return ZLRS_CFG_OK;
 }
 
-/* 固件版本串传给上位机，升级后用它核对"现在跑的到底是哪一版" */
+/* Hand the build string to the host so it can check which version is running */
 static int cfg_read_build(void *ctx, char *out, size_t out_len)
 {
 	(void)ctx;
@@ -949,9 +949,9 @@ static int cfg_read_build(void *ctx, char *out, size_t out_len)
 }
 
 /*
- * 当前镜像的 MCUboot 哈希：从自己这一份镜像的 TLV 区里读 IMAGE_TLV_SHA256。
- * 升级工具用它判断"跑的是我刚传的那版"还是"已经回滚到旧版"——版本串可能一样，
- * 哈希一定不一样。这里只用到 MCUboot 的公开格式，不引 MCUboot 的内部头文件。
+ * MCUboot hash of the running image: read IMAGE_TLV_SHA256 from this image's TLV area.
+ * The update tool tells "the image I just sent" from "already rolled back": build strings
+ * can match, hashes cannot. Only MCUboot's public format is used, no internal headers.
  */
 static int cfg_read_image_hash(void *ctx, uint8_t out[ZLRS_CFG_IMAGE_HASH_LEN])
 {
@@ -980,7 +980,7 @@ static int cfg_read_image_hash(void *ctx, uint8_t out[ZLRS_CFG_IMAGE_HASH_LEN])
 		return ZLRS_CFG_E_STATE;
 	}
 
-	/* TLV 区开头是 info 头：magic(0x6907) + 整段长度（含这 4 字节） */
+	/* The TLV area starts with an info header: magic(0x6907) + length (including these 4 bytes) */
 	off = (uint32_t)hdr.hdr_size + hdr.img_size + hdr.protect_tlv_size;
 
 	{
@@ -1024,7 +1024,7 @@ static int cfg_read_image_hash(void *ctx, uint8_t out[ZLRS_CFG_IMAGE_HASH_LEN])
 			return (rc == 0) ? ZLRS_CFG_OK : ZLRS_CFG_E_STATE;
 		}
 
-		/* 最后一个 TLV 后面是 0xFF 填充；type=0xFF 就收工 */
+		/* 0xFF padding follows the last TLV; type=0xFF means stop */
 		if (type == 0xFFU) {
 			break;
 		}
@@ -1053,7 +1053,7 @@ static const zlrs_cfg_backend_t cfg_backend = {
 	.read_image_hash = cfg_read_image_hash,
 };
 
-/* ---- 会话 -------------------------------------------------------------- */
+/* ---- session ------------------------------------------------------------- */
 
 int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 {
@@ -1071,14 +1071,14 @@ int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 		return -1;
 	}
 
-	/* 这里没有超帧要抢时间，逻辑越直白越好 */
+	/* No superframe to race here, so keep the logic as plain as possible */
 	zlrs_cfg_parser_init(&cfg_parser);
 
 	LOG_INF("config mode: %u s idle timeout, exit on EXIT command",
 		(unsigned int)CONFIG_ZLRS_APP_CONFIG_TIMEOUT_S);
 
-	/* 会话期间关狗：写短语要 100000 轮 PBKDF2（几十秒），会被 8 秒看门狗复位。
-	 * 配置是有人值守的操作，退出时再武装回来。 */
+	/* Disarm the watchdog for the session: writing a phrase runs 100000 PBKDF2 rounds (tens of
+	 * seconds) and an 8 s watchdog would reset mid-way. Config is attended; re-arm on exit. */
 	zlrs_watchdog_disarm();
 
 	while (!exit_requested &&
@@ -1090,7 +1090,7 @@ int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 
 		zlrs_watchdog_feed();
 
-		/* 白灯慢闪 = 不是正常工作状态 */
+		/* Slow white = not in the normal working state */
 		memset(&led_in, 0, sizeof(led_in));
 		led_in.config_mode = (uint32_t)(now_ms - started_ms) >= CFG_LED_DELAY_MS;
 		led_in.configured = cfg_link->configured;
@@ -1101,7 +1101,7 @@ int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 		led_in.uptime_ms = now_ms;
 		zlrs_led_port_update(&led_in, led_in.uptime_ms);
 
-		/* 配置模式期间射频停：数据口收到的东西直接丢，只计数 */
+		/* Radio stopped in config mode: data port bytes are dropped and counted */
 		zlrs_data_port_discard_rx();
 
 		const uint16_t got = cfg_port_read(chunk, sizeof(chunk));
@@ -1143,7 +1143,7 @@ int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 
 #else /* !CONFIG_ZLRS_CONFIG */
 
-/* 配置协议被裁掉：应用照旧调用，这里直接说"没有配置模式" */
+/* Config protocol compiled out: the application still calls in, this says "no config mode" */
 int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 {
 	(void)control;
