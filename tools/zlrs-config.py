@@ -18,7 +18,7 @@ import argparse
 import sys
 
 SOF = b"\xa5\x5a"
-VERSION = 2
+VERSION = 3
 
 CMD_ENTER = 0x00
 CMD_STATUS = 0x01
@@ -30,6 +30,8 @@ CMD_SET_FAILSAFE = 0x20
 CMD_SET_BAUD = 0x21
 CMD_SET_REGION = 0x22
 CMD_SET_POWER = 0x23
+CMD_SET_ROLE = 0x24
+CMD_SET_PROFILE = 0x25
 CMD_EXIT = 0x30
 CMD_FACTORY_RESET = 0x40
 CMD_RECOVERY = 0x41
@@ -117,7 +119,7 @@ def parse_channels(text: str):
 
 
 def status_text(payload: bytes) -> str:
-    if len(payload) < 20:
+    if len(payload) < 21:
         return f"status payload too short: {payload.hex()}"
     flags = payload[3]
     dev = payload[4:8].hex()
@@ -132,28 +134,30 @@ def status_text(payload: bytes) -> str:
         f"session={'yes' if flags & 0x04 else 'no'} "
         f"dev_id={dev} peer_id={peer} lq={payload[12]}% "
         f"region={payload[14]} power={payload[15] - 256 if payload[15] > 127 else payload[15]}dBm "
-        f"baud={baud or 115200}"
+        f"baud={baud or 115200} profile=P{payload[20]}"
     )
 
 
 def self_test() -> int:
     """Frames must match the output of zlrs_cfg_encode() on the C side byte for byte."""
     cases = [
-        ("enter", CMD_ENTER, b"", "a55a020000d3"),
-        ("status", CMD_STATUS, b"", "a55a020100d8"),
-        ("pair", CMD_PAIR, b"", "a55a020200c5"),
-        ("erase-pair", CMD_ERASE_PAIR, b"", "a55a020300ce"),
-        ("set-phrase", CMD_SET_PHRASE, b"hello", "a55a02110568656c6c6fb4"),
+        ("enter", CMD_ENTER, b"", "a55a03000050"),
+        ("status", CMD_STATUS, b"", "a55a0301005b"),
+        ("pair", CMD_PAIR, b"", "a55a03020046"),
+        ("erase-pair", CMD_ERASE_PAIR, b"", "a55a0303004d"),
+        ("set-phrase", CMD_SET_PHRASE, b"hello", "a55a03110568656c6c6ff7"),
         ("set-key-hex", CMD_SET_KEY_HEX, b"00" * 32, None),
-        ("set-baud", CMD_SET_BAUD, bytes([0x00, 0x25, 0x06, 0x00]), "a55a02210400250600c2"),
-        ("set-region", CMD_SET_REGION, bytes([3]), "a55a02220103ca"),
-        ("set-power", CMD_SET_POWER, bytes([20]), "a55a022301144f"),
-        ("factory-reset", CMD_FACTORY_RESET, b"", "a55a0240006c"),
-        ("recovery", CMD_RECOVERY, b"", "a55a02410067"),
-        ("build", CMD_BUILD, b"", "a55a02120075"),
-        ("image-hash", CMD_IMAGE_HASH, b"", "a55a0213007e"),
-        ("confirm", CMD_CONFIRM, b"", "a55a0242007a"),
-        ("exit", CMD_EXIT, b"", "a55a023000d6"),
+        ("set-baud", CMD_SET_BAUD, bytes([0x00, 0x25, 0x06, 0x00]), "a55a0321040025060056"),
+        ("set-region", CMD_SET_REGION, bytes([3]), "a55a032201038f"),
+        ("set-power", CMD_SET_POWER, bytes([20]), "a55a032301140a"),
+        ("set-role", CMD_SET_ROLE, bytes([1]), "a55a0324010150"),
+        ("set-profile", CMD_SET_PROFILE, bytes([2]), "a55a0325010279"),
+        ("factory-reset", CMD_FACTORY_RESET, b"", "a55a034000ef"),
+        ("recovery", CMD_RECOVERY, b"", "a55a034100e4"),
+        ("build", CMD_BUILD, b"", "a55a031200f6"),
+        ("image-hash", CMD_IMAGE_HASH, b"", "a55a031300fd"),
+        ("confirm", CMD_CONFIRM, b"", "a55a034200f9"),
+        ("exit", CMD_EXIT, b"", "a55a03300055"),
     ]
 
     failures = 0
@@ -172,7 +176,7 @@ def self_test() -> int:
             failures += 1
 
     # One-way check: decode that frame again
-    cmd, payload = decode(bytes.fromhex("a55a02110568656c6c6fb4"))
+    cmd, payload = decode(bytes.fromhex("a55a03110568656c6c6ff7"))
     if cmd != CMD_SET_PHRASE or payload != b"hello":
         print("  FAIL decode round trip")
         failures += 1
@@ -355,6 +359,12 @@ def main() -> int:
                         help="0=FCC915 1=EU868 2=CN470 3=CN433")
     power = sub.add_parser("set-power")
     power.add_argument("dbm", type=int, help="TX power ceiling (dBm)")
+    role = sub.add_parser("set-role")
+    role.add_argument("role", choices=["tx", "rx"], help="build this device as TX or RX")
+    profile = sub.add_parser("set-profile")
+    profile.add_argument("profile", choices=["p0", "p1", "p2"],
+                         help="P0 has no tag (debug images only), P1 is the production profile, "
+                              "P2 is not implemented yet")
     sub.add_parser("factory-reset")
     sub.add_parser("recovery")
     sub.add_parser("build", help="read the build string")
@@ -408,6 +418,12 @@ def main() -> int:
         expect = True
     elif args.command == "set-power":
         frame = encode(CMD_SET_POWER, bytes([args.dbm & 0xFF]))
+        expect = True
+    elif args.command == "set-role":
+        frame = encode(CMD_SET_ROLE, bytes([0 if args.role == "tx" else 1]))
+        expect = True
+    elif args.command == "set-profile":
+        frame = encode(CMD_SET_PROFILE, bytes([int(args.profile[1])]))
         expect = True
     elif args.command == "factory-reset":
         frame, expect = encode(CMD_FACTORY_RESET), True

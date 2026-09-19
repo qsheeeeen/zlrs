@@ -775,6 +775,7 @@ static int cfg_read_status(void *ctx, zlrs_cfg_status_t *out)
 
 	out->version = ZLRS_CFG_VERSION;
 	out->role = cfg_link->cfg.role;
+	out->profile = cfg_link->cfg.profile;
 	out->state = cfg_link->state;
 	out->flags = 0U;
 	if (cfg_link->configured) {
@@ -882,6 +883,28 @@ static int cfg_save_power(void *ctx, int8_t dbm)
 	}
 
 	return cfg_ops->save_power(dbm);
+}
+
+static int cfg_save_role(void *ctx, uint8_t role)
+{
+	(void)ctx;
+
+	if (cfg_ops == NULL || cfg_ops->save_role == NULL) {
+		return ZLRS_CFG_E_STATE;
+	}
+
+	return cfg_ops->save_role(role);
+}
+
+static int cfg_save_profile(void *ctx, uint8_t profile)
+{
+	(void)ctx;
+
+	if (cfg_ops == NULL || cfg_ops->save_profile == NULL) {
+		return ZLRS_CFG_E_STATE;
+	}
+
+	return cfg_ops->save_profile(profile);
 }
 
 static int cfg_erase_pair(void *ctx)
@@ -1037,6 +1060,8 @@ static const zlrs_cfg_backend_t cfg_backend = {
 	.save_baud = cfg_save_baud,
 	.save_region = cfg_save_region,
 	.save_power = cfg_save_power,
+	.save_role = cfg_save_role,
+	.save_profile = cfg_save_profile,
 	.pair = cfg_pair,
 	.erase_pair = cfg_erase_pair,
 	.factory_reset = cfg_factory_reset,
@@ -1086,7 +1111,7 @@ int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 		led_in.config_mode = (uint32_t)(now_ms - started_ms) >= CFG_LED_DELAY_MS;
 		led_in.configured = cfg_link->configured;
 		led_in.paired = cfg_link->paired;
-		led_in.role_tx = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX);
+		led_in.role_tx = (cfg_link->cfg.role == ZLRS_ROLE_TX);
 		led_in.link_state = cfg_link->state;
 		led_in.lq_percent = cfg_link->stats.lq_percent;
 		led_in.uptime_ms = now_ms;

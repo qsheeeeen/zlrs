@@ -46,10 +46,12 @@ While in config mode:
 | data port baud rate | effective on the next boot |
 | region | 0 = FCC915, 1 = EU868, 2 = CN470, 3 = CN433; a fresh board starts on its radio design's `default-region`, and writes are checked against that design (band and frequency coverage) and refused on a mismatch (see [09-protocol](09-protocol.md) 5.2); **effective on the next boot** |
 | TX power ceiling | never above the chosen region's limit; **effective on the next boot** |
+| role TX / RX | one firmware runs either end; **effective on the next boot** |
+| security profile | `p0` has no tag at all and is refused unless this is a debug image, `p1` is the production profile, `p2` is not implemented yet; **effective on the next boot** |
 | pairing | start pairing (immediately), erase pairing (next boot) |
-| factory reset | wipes NVS (keys, pairing, failsafe, baud, region, power); effective on the next boot |
+| factory reset | wipes NVS (keys, pairing, failsafe, baud, region, power, role, profile); effective on the next boot |
 
-The role (TX or RX), the band shape and the modulation stay compile-time settings (`CONFIG_ZLRS_APP_ROLE_TX`, `BAND_ROLE_*`, `CONTROL_MODULATION_*`): they decide which timing the firmware runs and are not user parameters.
+What stays compile-time is the band shape and the modulation (`BAND_ROLE_*`, `CONTROL_MODULATION_*`): they decide which timing the firmware runs. A build also carries the *defaults* for role and profile (`CONFIG_ZLRS_APP_ROLE_TX`, the security-profile choice); the stored value wins once the tool writes one.
 
 ## 4. Feature trimming
 

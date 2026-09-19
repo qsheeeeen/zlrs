@@ -20,6 +20,8 @@ LOG_MODULE_REGISTER(zlrs_store, CONFIG_APP_LOG_LEVEL);
 #define NVS_ID_PAIRING  6U
 #define NVS_ID_REGION   7U
 #define NVS_ID_POWER    8U
+#define NVS_ID_ROLE     9U
+#define NVS_ID_PROFILE  10U
 
 #define NVS_SECTOR_SIZE 4096U
 
@@ -152,11 +154,32 @@ int zlrs_store_save_power(int8_t dbm)
 	return write_record(NVS_ID_POWER, &dbm, sizeof(dbm));
 }
 
+int zlrs_store_load_role(uint8_t *out)
+{
+	return read_record(NVS_ID_ROLE, out, sizeof(*out));
+}
+
+int zlrs_store_load_profile(uint8_t *out)
+{
+	return read_record(NVS_ID_PROFILE, out, sizeof(*out));
+}
+
+int zlrs_store_save_role(uint8_t role)
+{
+	return write_record(NVS_ID_ROLE, &role, sizeof(role));
+}
+
+int zlrs_store_save_profile(uint8_t profile)
+{
+	return write_record(NVS_ID_PROFILE, &profile, sizeof(profile));
+}
+
 int zlrs_store_erase_all(void)
 {
 	static const uint16_t ids[] = {
 		NVS_ID_ROOT_KEY, NVS_ID_DEV_ID, NVS_ID_FAILSAFE, NVS_ID_BAUD,
-		NVS_ID_PAIRING,  NVS_ID_REGION, NVS_ID_POWER,
+		NVS_ID_PAIRING,  NVS_ID_REGION, NVS_ID_POWER,    NVS_ID_ROLE,
+		NVS_ID_PROFILE,
 	};
 
 	if (!ready) {

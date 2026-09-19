@@ -50,6 +50,8 @@ void zlrs_data_port_discard_rx(void);
 typedef struct {
 	int (*save_region)(uint8_t region);
 	int (*save_power)(int8_t dbm);
+	int (*save_role)(uint8_t role);
+	int (*save_profile)(uint8_t profile);
 	int (*erase_pair)(void);
 	int (*factory_reset)(void);
 	int (*enter_recovery)(void);

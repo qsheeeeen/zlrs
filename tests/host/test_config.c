@@ -21,6 +21,10 @@ typedef struct {
 	uint32_t baud;
 	bool baud_saved;
 	uint32_t pair_count;
+	uint8_t role;
+	bool role_saved;
+	uint8_t profile;
+	bool profile_saved;
 	int store_rc; /* error code save_root_key should return */
 	bool image_confirmed;
 } fake_dev_t;
@@ -52,6 +56,7 @@ static int fake_read_status(void *ctx, zlrs_cfg_status_t *out)
 	out->dev_id[3] = 0xBBU;
 	out->peer_id[0] = 0x11U;
 	out->lq_percent = 97U;
+	out->profile = 1U;
 
 	return ZLRS_CFG_OK;
 }
@@ -117,11 +122,38 @@ static int fake_pair(void *ctx)
 	return ZLRS_CFG_OK;
 }
 
+static int fake_save_role(void *ctx, uint8_t role)
+{
+	fake_dev_t *dev = ctx;
+
+	dev->role = role;
+	dev->role_saved = true;
+
+	return ZLRS_CFG_OK;
+}
+
+static int fake_save_profile(void *ctx, uint8_t profile)
+{
+	fake_dev_t *dev = ctx;
+
+	/* Pretend this build is production-shaped: P0 is refused, like the application does */
+	if (profile == 0U) {
+		return ZLRS_CFG_E_PARAM;
+	}
+
+	dev->profile = profile;
+	dev->profile_saved = true;
+
+	return ZLRS_CFG_OK;
+}
+
 static const zlrs_cfg_backend_t backend = {
 	.save_root_key = fake_save_key,
 	.read_status = fake_read_status,
 	.save_failsafe = fake_save_failsafe,
 	.save_baud = fake_save_baud,
+	.save_role = fake_save_role,
+	.save_profile = fake_save_profile,
 	.pair = fake_pair,
 	.confirm_image = fake_confirm_image,
 	.read_build = fake_read_build,
@@ -237,6 +269,7 @@ static void test_dispatch(void)
 		CHECK((status.flags & ZLRS_CFG_FLAG_PAIRED) != 0U);
 		CHECK(zlrs_test_hex_eq(status.dev_id, ZLRS_DEV_ID_LEN, "aa0000bb"));
 		CHECK(status.lq_percent == 97U);
+		CHECK(status.profile == 1U);
 	}
 
 	/* BUILD: the build string comes back unchanged */
@@ -358,6 +391,39 @@ static void test_dispatch(void)
 	CHECK(ZLRS_CFG_PAYLOAD(&parser)[1] == ZLRS_CFG_OK);
 	CHECK(fake.baud_saved);
 	CHECK(fake.baud == 0x00062500U);
+
+	/* SET_ROLE: 0 = TX, 1 = RX; anything else is a parameter error */
+	payload[0] = 1U;
+	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_SET_ROLE, payload, 1U, resp, sizeof(resp));
+	CHECK(parse_response(resp, len, &parser));
+	CHECK(ZLRS_CFG_PAYLOAD(&parser)[1] == ZLRS_CFG_OK);
+	CHECK(fake.role_saved && fake.role == 1U);
+
+	payload[0] = 2U;
+	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_SET_ROLE, payload, 1U, resp, sizeof(resp));
+	CHECK(parse_response(resp, len, &parser));
+	CHECK(ZLRS_CFG_PAYLOAD(&parser)[1] == ZLRS_CFG_E_PARAM);
+
+	/* SET_PROFILE: P1 goes through, P0 is refused by the backend (production-shaped build) */
+	payload[0] = 1U;
+	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_SET_PROFILE, payload, 1U, resp,
+				sizeof(resp));
+	CHECK(parse_response(resp, len, &parser));
+	CHECK(ZLRS_CFG_PAYLOAD(&parser)[1] == ZLRS_CFG_OK);
+	CHECK(fake.profile_saved && fake.profile == 1U);
+
+	payload[0] = 0U;
+	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_SET_PROFILE, payload, 1U, resp,
+				sizeof(resp));
+	CHECK(parse_response(resp, len, &parser));
+	CHECK(ZLRS_CFG_PAYLOAD(&parser)[1] == ZLRS_CFG_E_PARAM);
+
+	/* Out-of-range profile ids never reach the backend */
+	payload[0] = 3U;
+	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_SET_PROFILE, payload, 1U, resp,
+				sizeof(resp));
+	CHECK(parse_response(resp, len, &parser));
+	CHECK(ZLRS_CFG_PAYLOAD(&parser)[1] == ZLRS_CFG_E_PARAM);
 
 	/* EXIT and an unknown command */
 	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_EXIT, NULL, 0U, resp, sizeof(resp));

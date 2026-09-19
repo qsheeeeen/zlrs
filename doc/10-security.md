@@ -160,7 +160,7 @@ Command set (covering every user parameter, see [08-firmware](08-firmware.md) 3)
 
 | Command | Notes |
 | --- | --- |
-| read status | role, link state, flags, `dev_id`, `peer_id`, LQ, local sub-G hardware, region, power ceiling, data port baud rate |
+| read status | role, link state, flags, `dev_id`, `peer_id`, LQ, local sub-G hardware, region, security profile, power ceiling, data port baud rate |
 | enter config mode | the formal entry |
 | start pairing | enters the pairing window at once |
 | erase pairing | effective on the next boot |
@@ -170,6 +170,8 @@ Command set (covering every user parameter, see [08-firmware](08-firmware.md) 3)
 | set data port baud rate | effective on the next boot |
 | set region | validated against the board's radio design on write, refused on mismatch; effective on the next boot |
 | set power ceiling | never above the chosen region's limit; effective on the next boot |
+| set role | `tx` or `rx`; one firmware runs either end, effective on the next boot |
+| set profile | `p0` (no tag; debug images only), `p1` (production), `p2` (not implemented yet); the peer has to run the same one, declared in `SYNC`; effective on the next boot |
 | factory reset | wipes NVS, effective on the next boot |
 | enter recovery | sets the boot-mode flag and reboots into MCUboot serial recovery |
 | read build string | checks which version is running after an upgrade |

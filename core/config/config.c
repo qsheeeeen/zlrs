@@ -10,6 +10,7 @@
 
 #include "zlrs/proto/crc.h"
 #include "zlrs/proto/crypto.h"
+#include "zlrs/proto/frame.h"
 
 static uint8_t hex_nibble(char c, bool *ok)
 {
@@ -151,6 +152,7 @@ void zlrs_cfg_status_encode(uint8_t out[ZLRS_CFG_STATUS_LEN], const zlrs_cfg_sta
 	out[17] = (uint8_t)((status->data_baud >> 8) & 0xFFU);
 	out[18] = (uint8_t)((status->data_baud >> 16) & 0xFFU);
 	out[19] = (uint8_t)((status->data_baud >> 24) & 0xFFU);
+	out[20] = status->profile;
 }
 
 bool zlrs_cfg_status_decode(const uint8_t *in, uint8_t len, zlrs_cfg_status_t *status)
@@ -171,6 +173,7 @@ bool zlrs_cfg_status_decode(const uint8_t *in, uint8_t len, zlrs_cfg_status_t *s
 	status->tx_power_dbm = (int8_t)in[15];
 	status->data_baud = (uint32_t)in[16] | ((uint32_t)in[17] << 8) | ((uint32_t)in[18] << 16) |
 			    ((uint32_t)in[19] << 24);
+	status->profile = in[20];
 
 	return true;
 }
@@ -356,6 +359,20 @@ uint8_t zlrs_cfg_dispatch(const zlrs_cfg_backend_t *backend, uint8_t cmd, const 
 		}
 		return ack_frame(out, out_len, cmd,
 				 (uint8_t)backend->save_power(backend->ctx, (int8_t)payload[0]));
+	case ZLRS_CFG_CMD_SET_ROLE:
+		/* 0 = TX, 1 = RX; the application decides whether the value is usable */
+		if (payload_len != 1U || payload[0] > ZLRS_ROLE_RX || backend->save_role == NULL) {
+			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_PARAM);
+		}
+		return ack_frame(out, out_len, cmd, (uint8_t)backend->save_role(backend->ctx, payload[0]));
+	case ZLRS_CFG_CMD_SET_PROFILE:
+		/* 0 = P0, 1 = P1, 2 = P2; whether a profile may be selected is the application's call */
+		if (payload_len != 1U || payload[0] > ZLRS_PROFILE_P2 ||
+		    backend->save_profile == NULL) {
+			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_PARAM);
+		}
+		return ack_frame(out, out_len, cmd,
+				 (uint8_t)backend->save_profile(backend->ctx, payload[0]));
 	case ZLRS_CFG_CMD_EXIT:
 		/* The application handles the exit (usually a reboot), here we only acknowledge it */
 		return ack_frame(out, out_len, cmd, ZLRS_CFG_OK);

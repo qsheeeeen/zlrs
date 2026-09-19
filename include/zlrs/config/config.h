@@ -20,7 +20,7 @@ extern "C" {
 
 #define ZLRS_CFG_SOF0            0xA5U
 #define ZLRS_CFG_SOF1            0x5AU
-#define ZLRS_CFG_VERSION         2U
+#define ZLRS_CFG_VERSION         3U
 #define ZLRS_CFG_FRAME_MAX_LEN   96U
 #define ZLRS_CFG_PAYLOAD_MAX_LEN (ZLRS_CFG_FRAME_MAX_LEN - 6U)
 
@@ -37,6 +37,8 @@ extern "C" {
 #define ZLRS_CFG_CMD_SET_BAUD      0x21U /* 4-byte little-endian baud rate */
 #define ZLRS_CFG_CMD_SET_REGION    0x22U /* 1-byte region id (0..3) */
 #define ZLRS_CFG_CMD_SET_POWER     0x23U /* 1-byte signed dBm */
+#define ZLRS_CFG_CMD_SET_ROLE      0x24U /* 1-byte role (0 = TX, 1 = RX) */
+#define ZLRS_CFG_CMD_SET_PROFILE   0x25U /* 1-byte profile (0 = P0, 1 = P1, 2 = P2) */
 #define ZLRS_CFG_CMD_EXIT          0x30U /* leave config mode */
 #define ZLRS_CFG_CMD_FACTORY_RESET 0x40U /* wipe NVS */
 #define ZLRS_CFG_CMD_RECOVERY      0x41U /* reboot into MCUboot serial recovery */
@@ -55,8 +57,8 @@ extern "C" {
 #define ZLRS_CFG_E_STORE   3U
 #define ZLRS_CFG_E_UNKNOWN 4U
 
-/* Status response: a fixed 20 bytes; changing the field order means bumping the version */
-#define ZLRS_CFG_STATUS_LEN     20U
+/* Status response: a fixed 21 bytes; changing the field order means bumping the version */
+#define ZLRS_CFG_STATUS_LEN     21U
 #define ZLRS_CFG_PHRASE_MAX_LEN 32U
 #define ZLRS_CFG_BUILD_MAX_LEN  32U
 #define ZLRS_CFG_IMAGE_HASH_LEN 32U
@@ -71,6 +73,7 @@ typedef struct {
 	uint8_t lq_percent;
 	uint8_t band;        /* local sub-G hardware: 0 = LF (470/433), 1 = HF (868/915) */
 	uint8_t region;      /* current region id (0..3) */
+	uint8_t profile;     /* active security profile (ZLRS_PROFILE_*) */
 	int8_t tx_power_dbm; /* current TX power ceiling */
 	uint32_t data_baud;  /* data port baud rate (effective on the next boot) */
 } zlrs_cfg_status_t;
@@ -90,6 +93,9 @@ typedef struct {
 	int (*save_baud)(void *ctx, uint32_t baud);
 	int (*save_region)(void *ctx, uint8_t region);
 	int (*save_power)(void *ctx, int8_t dbm);
+	/* Role and security profile are runtime settings too; both take effect on the next boot */
+	int (*save_role)(void *ctx, uint8_t role);
+	int (*save_profile)(void *ctx, uint8_t profile);
 	int (*pair)(void *ctx);
 	int (*erase_pair)(void *ctx);
 	int (*factory_reset)(void *ctx);

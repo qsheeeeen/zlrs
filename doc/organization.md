@@ -158,9 +158,12 @@ Two properties follow from this split and are worth stating explicitly:
 | NVS | keys, pairing, failsafe, baud rate, region, power | **required**: builds without NVS are rejected, security and regulation need persistence |
 | a hardware watchdog | reset on a hang, rollback assistance | — |
 
-The configuration protocol grows three commands to match section 4:
-`set-role tx|rx`, `set-profile p0|p1|p2` and, on single-port hardware,
-`set-port-role control|data`. All three take effect on the next boot.
+The configuration protocol carries the runtime settings from section 4:
+`set-role tx|rx` and `set-profile p0|p1|p2` exist, both effective on the next
+boot and stored in NVS. Single-port hardware still needs `set-port-role
+control|data`, and the remaining parameters (rate tier, frame rate, ARQ,
+telemetry period) still need their commands; until then they are compile-time
+defaults.
 
 ## 6. Gates that keep the tree honest
 

@@ -30,6 +30,8 @@ int zlrs_store_load_failsafe(uint8_t out[ZLRS_CFG_FAILSAFE_LEN]);
 int zlrs_store_load_baud(uint32_t *out);
 int zlrs_store_load_region(uint8_t *out);
 int zlrs_store_load_power(int8_t *out);
+int zlrs_store_load_role(uint8_t *out);
+int zlrs_store_load_profile(uint8_t *out);
 
 int zlrs_store_save_root_key(const uint8_t key[ZLRS_KEY_LEN]);
 int zlrs_store_save_dev_id(const uint8_t id[ZLRS_DEV_ID_LEN]);
@@ -38,8 +40,10 @@ int zlrs_store_save_failsafe(const uint8_t channels[ZLRS_CFG_FAILSAFE_LEN]);
 int zlrs_store_save_baud(uint32_t baud);
 int zlrs_store_save_region(uint8_t region);
 int zlrs_store_save_power(int8_t dbm);
+int zlrs_store_save_role(uint8_t role);
+int zlrs_store_save_profile(uint8_t profile);
 
-/* Factory reset: wipe every record (keys, pairing, failsafe, baud, region, power) */
+/* Factory reset: wipe every record (keys, pairing, failsafe, baud, region, power, role, profile) */
 int zlrs_store_erase_all(void);
 
 /* Erase the pairing record only (device id and keys stay) */

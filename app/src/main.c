@@ -103,6 +103,30 @@ static uint8_t region_id;
 static int8_t tx_power_dbm;
 static zlrs_duty_t duty;
 
+/*
+ * Role and security profile: runtime settings with a compile-time default (set-role /
+ * set-profile, doc/organization.md 4). Loaded once at boot, before the links are built.
+ */
+static bool role_tx;
+static uint8_t active_profile;
+
+/* The profile a build starts on, and which ones it may run: P1 is the production profile, P0
+ * carries no tag at all so only a debug image may select it, P2 is not implemented yet. */
+#define ZLRS_PROFILE_DEFAULT                                                                       \
+	(IS_ENABLED(CONFIG_ZLRS_APP_SECURITY_PROFILE_P0) ? ZLRS_PROFILE_P0 : ZLRS_PROFILE_P1)
+
+static bool profile_allowed(uint8_t profile)
+{
+	if (profile == ZLRS_PROFILE_P1) {
+		return true;
+	}
+	if (profile == ZLRS_PROFILE_P0) {
+		return IS_ENABLED(CONFIG_ZLRS_APP_DEBUG);
+	}
+
+	return false;
+}
+
 static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(DT_ALIAS(zlrs_button), gpios);
 static bool button_down;
 static bool button_fired; /* pairing already fired for this press */
@@ -375,13 +399,12 @@ static void build_links(void)
 {
 	zlrs_link_cfg_t ctl_cfg = {
 		.kind = ZLRS_LINK_CONTROL,
-		.role = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? ZLRS_ROLE_TX : ZLRS_ROLE_RX,
+		.role = role_tx ? ZLRS_ROLE_TX : ZLRS_ROLE_RX,
 		/* Band role: control on sub-G by default, swapped in racing mode (doc/01-product.md 3.2) */
 		.domain = CONTROL_ON_SUBG ? region->domain : ZLRS_DOMAIN_ISM2400,
 		.second_domain = CONTROL_ON_SUBG ? ZLRS_DOMAIN_ISM2400 : region->domain,
 		.sync_slot = ZLRS_SYNC_SLOT_CONTROL,
-		.profile = IS_ENABLED(CONFIG_ZLRS_APP_SECURITY_PROFILE_P0) ? ZLRS_PROFILE_P0
-									   : ZLRS_PROFILE_P1,
+		.profile = active_profile,
 		/* Bench switches, each can be turned off, see doc/12-debug.md 3 */
 		.hopping = IS_ENABLED(CONFIG_ZLRS_APP_FHSS) ? 1U : 0U,
 		.handshake = IS_ENABLED(CONFIG_ZLRS_APP_SESSION_HANDSHAKE) ? 1U : 0U,
@@ -396,10 +419,10 @@ static void build_links(void)
 		 * Telemetry is the TX-side liveness proof: with it off there is nothing to hear, so the
 		 * peer-loss check has to go too, or every frame drags the TX back into SEARCHING.
 		 */
-		.peer_timeout_ms = (IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) &&
+		.peer_timeout_ms = (role_tx &&
 				    IS_ENABLED(CONFIG_ZLRS_APP_TELEMETRY))
 					   ? 250U
-					   : (IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? 0U : 100U),
+					   : (role_tx ? 0U : 100U),
 		.pair_period_ms = 100U,
 		.pair_window_ms = 30000U,
 		.data_mtu = 0U,
@@ -808,7 +831,7 @@ static void pump_crsf(uint32_t now_ms)
 		crsf_handle_input(type, payload, len);
 	}
 
-	if (IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX)) {
+	if (role_tx) {
 		/* Handset unplugged or powered off: switch to the preset failsafe values at once */
 		if (rc_input_seen &&
 		    (uint32_t)(now_ms - last_rc_input_ms) > CONFIG_ZLRS_APP_CRSF_TIMEOUT_MS) {
@@ -906,7 +929,7 @@ static void report(uint32_t now_ms)
 	}
 
 	LOG_INF("%s ctl=%u tlm=%u data=%u serial_drop=%u",
-		IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? "TX" : "RX", counters.rc_rx, counters.tlm_rx,
+		role_tx ? "TX" : "RX", counters.rc_rx, counters.tlm_rx,
 		counters.data_rx, zlrs_data_port_dropped());
 	/* Frames that really went out: only transactions that completed count (see core/link) */
 	LOG_INF("air: ctl_tx=%u ctl_rx=%u data_tx=%u data_rx=%u fail=%u+%u",
@@ -958,7 +981,7 @@ static void fault_loop(void)
 	memset(&in, 0, sizeof(in));
 	in.failsafe = true; /* fast red blink */
 	in.link_state = ZLRS_STATE_SEARCHING;
-	in.role_tx = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX);
+	in.role_tx = role_tx;
 	in.uptime_ms = 60000U; /* past the boot self-test window, so the alarm shows at once */
 
 	LOG_ERR("fault state: not transmitting; config port stays available for flashing");
@@ -1009,7 +1032,7 @@ static void led_tick(uint32_t now_ms)
 	memset(&in, 0, sizeof(in));
 	in.configured = link_control.configured;
 	in.paired = link_control.paired;
-	in.role_tx = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX);
+	in.role_tx = role_tx;
 	in.link_state = link_control.state;
 	in.lq_percent = link_control.stats.lq_percent;
 	in.uptime_ms = now_ms;
@@ -1023,7 +1046,7 @@ static void led_tick(uint32_t now_ms)
 	 * the handset (sending failsafe), or the RX was connected and dropped (outputting failsafe).
 	 * A device that never connected shows its normal state (purple/yellow/cyan), never red.
 	 */
-	in.failsafe = ever_connected && (IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX)
+	in.failsafe = ever_connected && (role_tx
 						 ? !rc_input_seen
 						 : (link_control.state != ZLRS_STATE_CONNECTED));
 
@@ -1131,6 +1154,36 @@ static int cfg_op_save_power(int8_t dbm)
 	return ZLRS_CFG_OK;
 }
 
+static int cfg_op_save_role(uint8_t role)
+{
+	if (role > ZLRS_ROLE_RX) {
+		return ZLRS_CFG_E_PARAM;
+	}
+	if (zlrs_store_save_role(role) != 0) {
+		return ZLRS_CFG_E_STORE;
+	}
+
+	LOG_INF("role set to %s (takes effect on next boot)", (role == ZLRS_ROLE_TX) ? "TX" : "RX");
+
+	return ZLRS_CFG_OK;
+}
+
+static int cfg_op_save_profile(uint8_t profile)
+{
+	/* Refusing an unavailable profile here is the second gate: the boot path also falls back
+	 * when a stored value cannot be run (P0 outside debug images, P2 not implemented) */
+	if (!profile_allowed(profile)) {
+		return ZLRS_CFG_E_PARAM;
+	}
+	if (zlrs_store_save_profile(profile) != 0) {
+		return ZLRS_CFG_E_STORE;
+	}
+
+	LOG_INF("security profile set to P%u (takes effect on next boot)", (unsigned int)profile);
+
+	return ZLRS_CFG_OK;
+}
+
 static int cfg_op_erase_pair(void)
 {
 	if (zlrs_store_erase_pairing() != 0) {
@@ -1175,6 +1228,8 @@ static int8_t cfg_op_power(void)
 static const zlrs_config_ops_t cfg_ops = {
 	.save_region = cfg_op_save_region,
 	.save_power = cfg_op_save_power,
+	.save_role = cfg_op_save_role,
+	.save_profile = cfg_op_save_profile,
 	.erase_pair = cfg_op_erase_pair,
 	.factory_reset = cfg_op_factory_reset,
 #if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
@@ -1191,7 +1246,7 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
 
-	shell_print(sh, "role   : %s", IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? "TX" : "RX");
+	shell_print(sh, "role   : %s", role_tx ? "TX" : "RX");
 	shell_print(sh, "sub-G  : %s (band %d)", ZLRS_RF_BAND == ZLRS_BAND_SUBG_LF ? "LF" : "HF",
 		    ZLRS_RF_BAND);
 	shell_print(sh, "region : %s (max %d dBm)", (region != NULL) ? region->name : "?",
@@ -1410,19 +1465,8 @@ int main(void)
 
 	LOG_INF("zlrs %s", APP_VERSION_STRING);
 
-	/* Bench switches: with these off the link is no longer production-shaped, so say so at boot */
-	if (!IS_ENABLED(CONFIG_ZLRS_APP_SECURITY_PROFILE_P1)) {
-		LOG_WRN("bring-up: security profile P0, frames carry no tag");
-	}
-	if (!IS_ENABLED(CONFIG_ZLRS_APP_FHSS)) {
-		LOG_WRN("bring-up: hopping off, every frame stays on the sync channel");
-	}
-	if (!IS_ENABLED(CONFIG_ZLRS_APP_SESSION_HANDSHAKE)) {
-		LOG_WRN("bring-up: session handshake off, pairing keys are session keys");
-	}
-	if (!IS_ENABLED(CONFIG_ZLRS_APP_TELEMETRY)) {
-		LOG_WRN("bring-up: telemetry off, control link is RC-only");
-	}
+	/* What the build is, and what this board has: ports and peripherals come from devicetree,
+	 * so a missing one is reported without being an error (app/src/caps.h) */
 	if (!ZLRS_CONTROL_ENABLED) {
 		LOG_WRN("bring-up: control link off, only the data link runs "
 			"(pairing needs the control link)");
@@ -1436,10 +1480,10 @@ int main(void)
 	if (!ZLRS_CONFIG_ENABLED) {
 		LOG_WRN("no config port on this board, parameters can only come from the defaults");
 	}
-	if (!IS_ENABLED(CONFIG_ZLRS_APP_RADIO)) {
-		LOG_WRN("bring-up: radio off, no USP/RAC and no LR2021 traffic");
-	}
 
+	/*
+	 * Bring NVS up first: region, power, keys, pairing, failsafe values and baud all come from
+	 * it. A broken NVS is survivable, but the consequences are worth spelling out: nothing can
 	/*
 	 * Bring NVS up first: region, power, keys, pairing, failsafe values and baud all come from
 	 * it. A broken NVS is survivable, but the consequences are worth spelling out: nothing can
@@ -1498,6 +1542,48 @@ int main(void)
 		ZLRS_HAS_BUTTON ? 'y' : 'n', ZLRS_HAS_LED ? 'y' : 'n', ZLRS_HAS_WDT ? 'y' : 'n',
 		ZLRS_RF_BAND == ZLRS_BAND_SUBG_LF ? "LF" : "HF", ZLRS_RF_LOW_HZ / 1000000U,
 		ZLRS_RF_HIGH_HZ / 1000000U);
+
+	/*
+	 * Role and profile: stored value wins, build default otherwise, and a stored value this
+	 * image cannot run falls back to the default rather than going on air with something else.
+	 */
+	role_tx = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX);
+	active_profile = ZLRS_PROFILE_DEFAULT;
+	{
+		uint8_t stored_role;
+		uint8_t stored_profile;
+
+		if (zlrs_store_load_role(&stored_role) == (int)sizeof(stored_role) &&
+		    stored_role <= ZLRS_ROLE_RX) {
+			role_tx = (stored_role == ZLRS_ROLE_TX);
+		}
+		if (zlrs_store_load_profile(&stored_profile) == (int)sizeof(stored_profile)) {
+			if (profile_allowed(stored_profile)) {
+				active_profile = stored_profile;
+			} else {
+				LOG_WRN("stored profile P%u is not available in this image, using P%u",
+					(unsigned int)stored_profile, (unsigned int)ZLRS_PROFILE_DEFAULT);
+			}
+		}
+	}
+	LOG_INF("role %s, profile P%u", role_tx ? "TX" : "RX", (unsigned int)active_profile);
+
+	/* Bench switches: with these off the link is no longer production-shaped, so say so at boot */
+	if (active_profile != ZLRS_PROFILE_P1) {
+		LOG_WRN("bring-up: security profile P0, frames carry no tag");
+	}
+	if (!IS_ENABLED(CONFIG_ZLRS_APP_FHSS)) {
+		LOG_WRN("bring-up: hopping off, every frame stays on the sync channel");
+	}
+	if (!IS_ENABLED(CONFIG_ZLRS_APP_SESSION_HANDSHAKE)) {
+		LOG_WRN("bring-up: session handshake off, pairing keys are session keys");
+	}
+	if (!IS_ENABLED(CONFIG_ZLRS_APP_TELEMETRY)) {
+		LOG_WRN("bring-up: telemetry off, control link is RC-only");
+	}
+	if (!IS_ENABLED(CONFIG_ZLRS_APP_RADIO)) {
+		LOG_WRN("bring-up: radio off, no USP/RAC and no LR2021 traffic");
+	}
 	{
 		const int rc = zlrs_region_validate(region, ZLRS_RF_DESIGN, tx_power_dbm);
 
@@ -1558,7 +1644,7 @@ int main(void)
 	LOG_INF("entering superframe loop: %u Hz, %s / %s (%s)", (unsigned int)control_rate_hz,
 		ZLRS_CONTROL_ENABLED ? "control on" : "control off",
 		ZLRS_DATA_ENABLED ? "data on" : "data off",
-		IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? "TX" : "RX");
+		role_tx ? "TX" : "RX");
 
 	/*
 	 * Init is done at this point (ports, NVS, links, USB). Image confirmation does not happen

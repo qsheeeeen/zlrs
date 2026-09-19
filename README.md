@@ -55,6 +55,8 @@ python3 tools/zlrs-config.py --self-test
 python3 tools/zlrs-config.py --port /dev/ttyACM2 status
 python3 tools/zlrs-config.py --port /dev/ttyACM2 set-phrase "correct horse battery staple"
 python3 tools/zlrs-config.py --port /dev/ttyACM2 set-region 3
+python3 tools/zlrs-config.py --port /dev/ttyACM2 set-role rx
+python3 tools/zlrs-config.py --port /dev/ttyACM2 set-profile p1
 python3 tools/zlrs-config.py --port /dev/ttyACM2 set-failsafe @default
 python3 tools/zlrs-config.py --port /dev/ttyACM2 exit
 ```
@@ -63,11 +65,12 @@ The command set is in [doc/10-security.md](doc/10-security.md) 10 and the firmwa
 
 ### Compile-time configuration
 
-The role and link shape decide which timing the firmware runs and are compile-time settings (every other user parameter is set at runtime):
+The link shape and the timing parameters are compile-time settings; the role and the security profile are runtime settings (config protocol, NVS), and what is listed for them here is only the default of a fresh build:
 
 | Switch | Default | Effect |
 | --- | --- | --- |
-| `CONFIG_ZLRS_APP_ROLE_TX` | y | off means RX; TX and RX are one firmware |
+| `CONFIG_ZLRS_APP_ROLE_TX` | y | **default** role: y = TX, n = RX; change it at runtime with `set-role` |
+| security profile choice | P1 | **default** profile (`P0` is selectable in debug images only, `P2` is still to come); change it at runtime with `set-profile` |
 | `CONFIG_ZLRS_APP_BAND_ROLE_SUBG_CONTROL` / `..._SUBG_DATA` | the former | dual-band mixing (sub-G control plus 2.4G data) or the all-2.4G racing shape |
 | `CONFIG_ZLRS_APP_LINK_CONTROL` / `CONFIG_ZLRS_APP_LINK_DATA` | both on | turn one off to run the other alone |
 | `CONFIG_ZLRS_APP_CONTROL_RATE_HZ` | 150 | control rate tier (50-500); the regional duty cap and airtime clamp the effective value |
