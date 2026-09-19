@@ -1,13 +1,19 @@
 # LR2021 key parameters
 
-Source: Semtech LR2021 Final Datasheet Rev. 1.1 (DS.LR2021, 2025-10-14, 236 pages). Only what zlrs uses is excerpted here: rates and sensitivity, mode-switch timing, the SPI/IRQ interface and the pins. How those numbers are used: [07-architecture](07-architecture.md) and [09-protocol](09-protocol.md); board calibration: the [board README](../boards/zlrs/rp2350_zero_core2021/README.md).
+Source: Semtech LR2021 Final Datasheet Rev. 1.1 (DS.LR2021, 2025-10-14, 236 pages). Only what
+zlrs uses is excerpted here: rates and sensitivity, mode-switch timing, the SPI/IRQ interface
+and the pins. How those numbers are used: [07-architecture](07-architecture.md) and
+[09-protocol](09-protocol.md); board calibration: the
+[board README](../boards/zlrs/rp2350_zero_core2021/README.md).
 
 ## Where the part sits
 
 - The first chip of the LoRa Plus family, with the fourth generation of LoRa IP.
-- A **half-duplex** transceiver with a single switchless front end and separate LF/HF PA and LNA paths.
+- A **half-duplex** transceiver with a single switchless front end and separate LF/HF PA and LNA
+  paths.
 - 150-2500 MHz: sub-GHz 150-960 MHz on the LF path, S-band and 2.4 GHz ISM on the HF path.
-- Backwards compatible with the SX126x / SX127x / SX128x / LR11xx families; FLRC matches the SX128x.
+- Backwards compatible with the SX126x / SX127x / SX128x / LR11xx families; FLRC matches the
+  SX128x.
 - One band at a time, but switching between them is cheap.
 
 ## Modulation and rates
@@ -56,7 +62,7 @@ Source: Semtech LR2021 Final Datasheet Rev. 1.1 (DS.LR2021, 2025-10-14, 236 page
 
 ### LoRa sensitivity (64-byte payload, 1% PER, CR 4/5)
 
-| SF | sub-GHz @1000 kHz BW | 2.4 GHz @200 kHz BW |
+| SF | sub-GHz @125 kHz BW | 2.4 GHz @200 kHz BW |
 | --- | --- | --- |
 | 5 | -113.5 dBm | -117.5 dBm |
 | 6 | -116 dBm | -120.5 dBm |
@@ -67,11 +73,13 @@ Source: Semtech LR2021 Final Datasheet Rev. 1.1 (DS.LR2021, 2025-10-14, 236 page
 | 11 | -130 dBm | -134.5 dBm |
 | 12 | -132.5 dBm | -137.5 dBm |
 
-LoRa symbol rate = `BW / 2^SF`. The datasheet suggests at least 12 preamble symbols for SF5/SF6 and at least 8 otherwise.
+LoRa symbol rate = `BW / 2^SF`. The datasheet suggests at least 12 preamble symbols for SF5/SF6
+and at least 8 otherwise; the firmware's LoRa tier defaults to SF7 / BW125 / CR 4/5 / 8 symbols.
 
 ## Mode switch times (Table 3-23, typical)
 
-Defined as the time from the NSS rising edge that ends the mode-switch SPI transaction to BUSY going low.
+Defined as the time from the NSS rising edge that ends the mode-switch SPI transaction to BUSY
+going low.
 
 | Symbol | Description | typ |
 | --- | --- | --- |
@@ -98,7 +106,8 @@ How the superframe uses these numbers: [07-architecture](07-architecture.md) 4.
 
 ## SPI and the host interface
 
-- Two kinds of command: **normal commands** (raise BUSY and have to be waited for) and **direct read/write** (executed at once, no BUSY). Low-latency FIFO access uses the latter.
+- Two kinds of command: **normal commands** (raise BUSY and have to be waited for) and **direct
+  read/write** (executed at once, no BUSY). Low-latency FIFO access uses the latter.
 - BUSY goes high on the NSS falling edge and low once the command is done.
 - `SetPacketType` only works in Standby RC, Standby XOSC or FS mode.
 - Command space: `0x01xx` for system configuration, `0x02xx` for radio configuration.
@@ -145,4 +154,6 @@ How the superframe uses these numbers: [07-architecture](07-architecture.md) 4.
 - `RFO_HF`: HF PA output (2.4 GHz)
 - `VTCXO`: can power an external TCXO, with the voltage set by `SetTcxoMode`
 
-The switchless front end needs matching networks for LF and HF to coexist. The Core2021 module used here carries them, and it uses a crystal rather than a TCXO (`tcxo-*` stays off, `reg-mode` uses DC/DC); see the [board README](../boards/zlrs/rp2350_zero_core2021/README.md).
+The switchless front end needs matching networks for LF and HF to coexist. The Core2021 module
+used here carries them, and it uses a crystal rather than a TCXO (`tcxo-*` stays off, `reg-mode`
+uses DC/DC); see the [board README](../boards/zlrs/rp2350_zero_core2021/README.md).

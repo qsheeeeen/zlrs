@@ -1,38 +1,54 @@
 # Development and debugging
 
-For developers only: how to build a debug image, how the layered bench switches work, which provisional entries exist and how to chase problems on hardware. User-facing documents never contain this material (see the writing rules in [README](README.md)).
+For developers only: how to build a debug image, which switches exist to isolate a layer, and
+how to chase problems on real hardware. User-facing documents never contain this material.
 
-## 1. Debug overlay
+## 1. Debug image
 
-A debug build is a normal build plus two files:
+A debug image is a normal build plus two files:
 
 | File | Contents |
 | --- | --- |
-| `app/debug.conf` | sets `CONFIG_ZLRS_APP_DEBUG=y`, then enables the console CDC, the shell and the watchdog (see 3) |
-| `app/debug.overlay` | adds a console CDC to the devicetree (`zephyr,console` / `zephyr,shell-uart`) and fills in the nodes the debug entries need |
-
-Attach them at build time:
+| `app/debug.conf` | sets `CONFIG_ZLRS_APP_DEBUG=y`, then enables the console CDC, the shell, immediate logging, asserts and the watchdog |
+| `app/debug.overlay` | adds a console CDC (`cdc_acm_uart3`) to the devicetree and points `zephyr,console` / `zephyr,shell-uart` at it |
 
 ```shell
 west build -b "$ZLRS_BOARD" "$ZLRS_APP" -- \
-  -DEXTRA_CONF_FILE=debug.conf -DDTC_OVERLAY_FILE=debug.overlay
+  -DEXTRA_CONF_FILE="$ZLRS_REPO_ROOT/app/debug.conf" \
+  -DDTC_OVERLAY_FILE="$ZLRS_REPO_ROOT/app/debug.overlay"
 ```
 
-Production firmware has no console CDC and no shell; its three CDCs are CRSF, data and config (see [08-firmware](08-firmware.md) 1).
+Production firmware has no console CDC and no shell; its three CDCs are control, data and
+config (see [08-firmware](08-firmware.md) 1).
 
-`CONFIG_ZLRS_APP_DEBUG` is the marker for "this image is a development image": the options named `ZLRS_APP_DEBUG_*` depend on it, and shipped configurations (`app/prj.conf`, everything under `boards/`) may not mention it or any `DEBUG_` option. `tools/gates.sh` enforces that, so a bench-only switch cannot quietly end up in a released image.
+`CONFIG_ZLRS_APP_DEBUG` is the marker for "this image is for the bench": the options named
+`ZLRS_APP_DEBUG_*` depend on it, and shipped configurations (`app/prj.conf`, everything under
+`boards/`) may not mention it. `tools/gates.sh` enforces that, so a bench-only switch cannot
+quietly end up in a released image.
 
 ## 2. Debug entries
 
-These exist in debug builds only; the supported paths are in [10-security](10-security.md) 10 and [08-firmware](08-firmware.md) 2:
-
 | Entry | How to use it |
 | --- | --- |
-| shell `zlrs config` / `status` / `ports` / `recovery` | gated by `CONFIG_ZLRS_APP_DEBUG_SHELL`, run on the console CDC |
+| shell `zlrs status` | role, band, region, link states, data port state |
+| shell `zlrs ports` | per-endpoint `ready / active / rx_total / rx_dropped` for the data port |
+| shell `zlrs config` | enter config mode (EXIT returns) |
+| shell `zlrs recovery` | reboot into MCUboot serial recovery |
+| shell `zlrs entropy` | entropy self-test (two 32-byte TRNG blocks) |
+| shell `zlrs mcuboot` | image state as MCUboot sees it (slot headers, confirm bit, copy state) |
+| `CONFIG_ZLRS_APP_DEBUG_STATS_LOG` | 1 Hz `stats:` line (counters, LQ, duty, dynamic power) and `air:` line (completed transactions per link) |
+| `CONFIG_ZLRS_APP_DEBUG_BOOT_DELAY_MS` | wait that long after USB is up before continuing init, so a panic during init is visible on an open console |
 
-## 3. Layered bench switches
+The shell is gated by `CONFIG_ZLRS_APP_DEBUG_SHELL` and runs on the console CDC; the supported
+configuration paths are in [10-security](10-security.md) 9 and [08-firmware](08-firmware.md) 3.
 
-Do not bring everything up at once: turn one layer off at a time, and if the rest still works the fault is not in that layer. Every disabled switch prints a `bring-up:` warning at boot and has a matching host test (`tests/host`).
+## 3. Switches for isolating a layer
+
+Do not bring everything up at once: turn one layer off at a time, and if the rest still works
+the fault is not in that layer. Every disabled isolation switch prints a `bring-up:` warning at
+boot, and each has a matching host test.
+
+**Isolation (debug images only — a production configuration cannot reach them):**
 
 | Switch | With it off | Host test |
 | --- | --- | --- |
@@ -41,19 +57,26 @@ Do not bring everything up at once: turn one layer off at a time, and if the res
 | `CONFIG_ZLRS_APP_SESSION_HANDSHAKE=n` | the pairing key becomes the session key | `link: bring-up without session handshake` |
 | `CONFIG_ZLRS_APP_TELEMETRY=n` | the control link carries downlink RC only (the TX peer-loss check goes too) | `link: bring-up without telemetry` |
 | `CONFIG_ZLRS_APP_DATA_ARQ=n` | the data link falls back to best-effort | `link: arq *`, `link: backpressure` |
-| `CONFIG_ZLRS_APP_RATE_ADAPT=n` | one fixed rate tier | `link: rate adapt` |
-| `CONFIG_ZLRS_APP_DYNAMIC_POWER=n` | fixed TX power | `power: *` |
-| `CONFIG_ZLRS_APP_LINK_CONTROL=n` / `ZLRS_APP_LINK_DATA=n` | one link only | compile check (both SKUs are in CI) |
-| `CONFIG_ZLRS_APP_RADIO=n` | the radio sits out (`app/src/radio_null.c`): no USP/RAC init, no transactions, each one finishes at once as "sent, nothing heard"; ports, config, button, LED and NVS work as usual. Only settable in a debug image: every production build has its radio, a `.conf` that tries to turn it off is ignored | compile check plus on-board USB, ports and config |
+| `CONFIG_ZLRS_APP_SUB_BAND_MIX=n` | one hop table, no sub-G migration | `link: sub-band mix *` |
+| `CONFIG_ZLRS_APP_RADIO=n` | the radio sits out (`app/src/radio_null.c`): no USP/RAC init, every transaction finishes at once as "sent, nothing heard"; ports, config, button, LED and NVS work as usual | compile check plus on-board USB, ports and config |
 
-Two kinds of switch live here. **Shape**: which links a build carries and which band role it runs — a real product decision, settable in any image ([01-product](01-product.md)). **Isolation**: P0, hopping off, session handshake off, telemetry off, ARQ off, sub-band mixing off, dynamic power off, radio off — those exist to find a fault layer by layer and are settable in a debug image only (`if ZLRS_APP_DEBUG` in app/Kconfig); a production image always runs the whole stack. Whether a *port* or a *peripheral* exists is neither: that is devicetree, and there is no switch for it (app/src/caps.h). Features whose default is still open are the ledger in [13-roadmap](13-roadmap.md), under "Pending defaults".
+**Shape (any image may set these — they cut the product):**
 
-Suggested order: `P0` with hopping, handshake and telemetry off, confirming that we hear our own frames; then turn tags on (`P1`); then hopping; then telemetry and the peer-loss check; rate adaptation and dynamic power come last, since their thresholds wait for measured curves.
+| Switch | Effect |
+| --- | --- |
+| `CONFIG_ZLRS_APP_LINK_CONTROL=n` / `ZLRS_APP_LINK_DATA=n` | one link only (compile check; both SKUs are in CI) |
+| `CONFIG_ZLRS_APP_BAND_ROLE_*` | control on sub-G (long range) or on 2.4G (racing) |
+| `CONFIG_ZLRS_APP_CONTROL_MODULATION_LORA` | LoRa control tier instead of FLRC |
+
+**Features whose default is still open** (rate adaptation, dynamic power, watchdog) are not
+switches to hide but debts: `doc/13-roadmap.md`, "Pending defaults".
 
 ## 4. Debugging on the board
 
-- **Turn the radio off first** (`ZLRS_APP_RADIO=n`, debug images only) to check USB, ports, config mode and NVS: `python3 tools/zlrs-bringup.py` does the lot in one command (ports, config mode, config protocol reads and writes, NVS persistence).
-  With no module attached, use the ready-made config file:
+- **Turn the radio off first** (`CONFIG_ZLRS_APP_RADIO=n`, debug images only) to check USB,
+  ports, config mode and NVS: `python3 tools/zlrs-bringup.py` does the lot in one command
+  (ports, config mode, config protocol reads and writes, NVS persistence). With no module
+  attached, use the ready-made file:
 
   ```shell
   west build -b "$ZLRS_BOARD" "$ZLRS_APP" -- \
@@ -61,26 +84,61 @@ Suggested order: `P0` with hopping, handshake and telemetry off, confirming that
     -DDTC_OVERLAY_FILE="$ZLRS_REPO_ROOT/app/debug.overlay"
   ```
 
-  **Radio on with no Core2021 attached means a dark board**: the vendored `lr20xx_hal_wait_on_busy()` spins waiting for BUSY (its `k_usleep` is commented out) with a 600 s default timeout and a `k_oops()` when it expires; it runs on the main thread at the highest priority, so the USB stack never gets the CPU and you see no LED, no USB enumeration and an application reset by the 8 s watchdog over and over. Nothing to do with the application: attach the module and it works.
-- **Leave the watchdog on** while debugging (`CONFIG_ZLRS_APP_WATCHDOG=y`): a bad image resets itself and MCUboot's test/revert rolls it back, parking in serial recovery without touching BOOTSEL.
-- **To catch the boot log** use `CONFIG_ZLRS_APP_DEBUG_BOOT_DELAY_MS` (0 by default): it waits that long after USB is up before continuing init, giving the host time to open the console port. Otherwise a panic during init lands on a port nobody has open and you see nothing.
-- **Find ports by name**: the application is `ZLRS`, the bootloader `ZLRS MCUBOOT`; use `/dev/serial/by-id/...`, not `ttyACM*`.
-- **To see whether the radio really transmits, watch the `air:` line** (`CONFIG_ZLRS_APP_DEBUG_STATS_LOG=y`): `ctl_tx` and `data_tx` count only transactions that finished, `fail` counts the failures. With a single board the only thing that goes on air is pairing: after `pair` on the config port a `PAIR_REQ` leaves every 100 ms for a 30 s window, so `ctl_tx` should climb to about 300 with `fail` at 0.
-- **Do not read the console with `cat`**: it goes quiet after a moment and it turns on tty echo, which feeds the device's own log back in as shell input. Read continuously with pyserial instead (a small tool of your own outside `tools/`).
-- **Over USB/IP forwarding** (usbipd) the CDC's DTR may never arrive, so endpoint choice falls back to "host bytes seen"; `zlrs ports` shows `ready/active/rx_total` for both endpoints when that needs chasing.
-- **Under usbipd a re-enumerating device disappears from WSL entirely** (`/dev/serial/by-id/` goes away): this happens when the application resets into the bootloader or reboots after a slot swap. Re-attach from the Windows side (detach then attach to WSL) and carry on; the update tool stops at "waiting for the recovery or application port", and once the device is back `--recovery-port <port> --no-trigger` continues without starting over.
-- **Radio numbers** (callback latency, frequency-switch cost, packet error rate, throughput) can only be measured on the board, and Semtech's `packet_error_rate_flrc` sample is a ready-made baseline.
+  **Radio on with no Core2021 attached means a dark board**: the vendored
+  `lr20xx_hal_wait_on_busy()` spins waiting for BUSY (600 s default, then `k_oops()`), on the
+  main thread at the highest priority, so the USB stack never gets the CPU and you see no LED,
+  no USB enumeration and an application reset by the watchdog over and over. Nothing to do with
+  the application: attach the module and it works.
+- **Leave the watchdog on** while debugging (`CONFIG_ZLRS_APP_WATCHDOG=y`): a bad image resets
+  itself and MCUboot's test/revert rolls it back, without touching BOOTSEL.
+- **Find ports by name**: the application is `ZLRS`, the bootloader `ZLRS MCUBOOT`; use
+  `/dev/serial/by-id/...`, not `ttyACM*`.
+- **To see whether the radio really transmits, watch the `air:` line** (`stats:` logging above):
+  `ctl_tx` and `data_tx` count only transactions that finished, `fail` counts the failures. With
+  a single board the only thing that goes on air is pairing: after `pair` on the config port a
+  `PAIR_REQ` leaves every 100 ms through the 30 s window, so `ctl_tx` should climb to about 300
+  with `fail=0`.
+- **Do not read the console with `cat`**: it goes quiet after a moment and it turns on tty echo,
+  which feeds the device's own log back in as shell input. Read continuously with pyserial.
+- **Over USB/IP forwarding** (usbipd) the CDC's DTR may never arrive, so endpoint choice falls
+  back to "host bytes seen"; `zlrs ports` shows `ready / active / rx_total` when that needs
+  chasing.
+- **Under usbipd a re-enumerating device disappears from WSL entirely** (`/dev/serial/by-id/`
+  goes away): this happens when the application resets into the bootloader or reboots after a
+  slot swap. Re-attach from the Windows side and carry on; the update tool stops at "waiting for
+  the recovery or application port", and `--recovery-port <port> --no-trigger` resumes without
+  starting over.
+- **Radio numbers** (callback latency, frequency-switch cost, packet error rate, throughput) can
+  only be measured on the board; Semtech's `packet_error_rate_flrc` sample is a ready-made
+  baseline.
 
-## 5. Traps we have hit (one line each; details live in code comments)
+## 5. Traps we have hit
 
-- Several CDCs on a full-speed device fight over the UDC's shared pool, and a failed `cdc_acm_buf_alloc()` kills RX silently (`CONFIG_USBD_CDC_ACM_BUF_POOL=y`).
-- `CDC_ACM_SERIAL_INITIALIZE_AT_BOOT` registers only the first CDC, so logging on the others NULL-dereferences (we build our own USB stack).
+One line each; details live in code comments.
+
+- Several CDCs on a full-speed device fight over the UDC's shared pool, and a failed
+  `cdc_acm_buf_alloc()` kills RX silently (`CONFIG_USBD_CDC_ACM_BUF_POOL=y`).
+- `CDC_ACM_SERIAL_INITIALIZE_AT_BOOT` registers only the first CDC, so logging on the others
+  NULL-dereferences; we build our own USB stack.
 - Misreading `nvs_write()`'s return value turns success into failure (check `rc == 0 || rc == len`).
-- Using `uart_poll_in/out` in config mode answers no command at all (go through the port layer's ISR buffers).
-- PBKDF2 for a passphrase takes tens of seconds, so the watchdog has to be disarmed for the session.
-- RP2350's watchdog is still armed after `SYSRESETREQ`, leaving serial recovery alive for about 1.5 s (the application disarms before resetting, the bootloader clears the hardware enable bit).
-- A custom devicetree node in `/chosen` cannot be read (only `zephyr,`-prefixed properties are exported), so the radio design lives in its own node.
-- Long interrupt masking while reading the RP2350 TRNG kills USB (off by default; see [13-roadmap](13-roadmap.md)).
-- A radio transaction submits fine and no frame ever leaves: the RAC planner needs someone to pump `smtc_rac_run_engine()` in the main loop, and without it the transaction sits in `RP_STATUS_TASK_INIT` forever **without reporting an error**; the symptom is `air: ctl_tx=0` and `fail=0`. Every vendor sample's main loop has that call.
-- Pairing triggered from the config port expires at once: the main loop's `now_ms` is taken **before** the config session, and anything stamped inside it (the pairing press) is later, so `now_ms - state_ms` goes negative, the unsigned subtraction underflows and the first tick calls the window expired. Re-read the clock after the session.
-- Stretching the bootloader's recovery window (`app/sysbuild/mcuboot-debug.conf`) lets the host enumerate the bootloader's USB first, and it will not re-enumerate when the application takes over: the application never comes up, the watchdog resets it and it looks like a broken image. The normal 2 s window never hits this; the application also holds the USB controller in reset for 100 ms in `subsys/usb/usb_dev.c` to force a fresh enumeration.
+- Using `uart_poll_in/out` in config mode answers no command at all; go through the port layer's
+  ISR buffers.
+- PBKDF2 for a passphrase takes tens of seconds, so the watchdog has to be disarmed for the
+  session.
+- RP2350's watchdog is still armed after `SYSRESETREQ`, leaving serial recovery alive for about
+  1.5 s (the application disarms before resetting, the bootloader clears the hardware enable
+  bit).
+- A custom devicetree node in `/chosen` cannot be read (only `zephyr,`-prefixed properties are
+  exported), so the radio design lives in its own node.
+- Long interrupt masking while reading the RP2350 TRNG kills USB; the driver never masks them.
+- A radio transaction submits fine and no frame ever leaves: the RAC planner needs someone to
+  pump `smtc_rac_run_engine()` in the main loop, and without it the transaction sits in
+  `RP_STATUS_TASK_INIT` forever **without reporting an error**; the symptom is `air: ctl_tx=0`
+  and `fail=0`.
+- Pairing triggered from the config port expires at once if the session's clock is captured
+  before the session runs: the pairing press is stamped later, the unsigned subtraction
+  underflows, and the first tick calls the window expired. Re-read the clock after the session.
+- Stretching the bootloader's recovery window (`app/sysbuild/mcuboot-debug.conf`) lets the host
+  enumerate the bootloader's USB first, and it will not re-enumerate when the application takes
+  over, so the application never comes up and the watchdog resets it; it looks like a broken
+  image. The normal 2 s window never hits this.

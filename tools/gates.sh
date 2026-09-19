@@ -2,7 +2,7 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# Tree checks that need no build (doc/organization.md 6):
+# Tree checks that need no build (README.md, "Gates"):
 #
 #   1. core/ and its public headers stay free of Zephyr. They compile on the host; that is
 #      what makes the protocol testable and keeps the platform out of the link layer.

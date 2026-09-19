@@ -1,312 +1,204 @@
 # Over-the-air protocol
 
-The zlrs over-the-air protocol: what the physical layer hands us, what a frame looks like, how the link state machine moves, how sessions and sync are set up, how reliable transfer works, how the superframe is laid out, and how hopping and the regulations land in code. Identity and keys: [10-security](10-security.md); timing budget: [07-architecture](07-architecture.md) 4; chip parameters: [06-radio](06-radio.md).
+The zlrs protocol: the frame format, how the link state machine moves, how pairing and sessions
+are set up, how the superframe is laid out, how reliable transfer and fragmentation work, and
+how hopping and regulation land in code. Identity and keys: [10-security](10-security.md);
+timing budget: [07-architecture](07-architecture.md) 4; chip parameters:
+[06-radio](06-radio.md).
 
-## 1. What the physical layer already provides
+Protocol version: `ZLRS_PROTO_VERSION` (1 today), carried in `SYNC` and checked by the RX.
 
-| Capability | From hardware | What we do |
+## 1. Frame format
+
+Preamble, sync word, length and CRC belong to the LR2021 hardware and are not repeated in the
+frame. What the protocol adds is:
+
+| Field | Size | Purpose |
 | --- | --- | --- |
-| Preamble | yes (`agc_pbl_len`) | values in 5.3 |
-| Sync word | yes (FLRC, three slots of 2 or 4 bytes) | used as the first filter, see 1.1 |
-| CRC | yes (`SetFlrcPacketParams`) | **no CRC of our own** |
-| Length field | yes (variable-length packets) | we carry no length |
+| header | 1 B | 6-bit packet type, 2-bit flags |
+| `seq` | 2 B | increases within a session; replay protection, reassembly and ARQ use it |
+| payload | 0-248 B | type-specific |
+| tag | 0 or 4 B | truncated HMAC-SHA256, depending on the security profile |
 
-Conclusion: **frames do not repeat the CRC or the length**; both belong to the radio link layer.
+Multi-byte fields are little-endian. The tag covers the header, `seq` and the payload. The
+largest payload is `255 - 3 - 4 = 248` bytes; the data link's usable payload (`data_mtu`) is
+derived at boot from the frame format and the rate tier, not from a Kconfig knob.
 
-### 1.1 Pairing filtering uses the sync word
+Flags: `MORE` (more fragments follow) and `ACK_REQ` (acknowledgement requested).
 
-**No `pair_id` in the frame: the radio's sync word does the filtering.** Matching is done in hardware, so a non-matching packet is dropped by the radio and never wakes the MCU.
+## 2. Packet types
 
-| Slot | Value | Used for |
-| --- | --- | --- |
-| 1 | `KDF(pair_key, "zlrs/sync/control")[:4]` | the sub-GHz control link |
-| 2 | `KDF(pair_key, "zlrs/sync/data")[:4]` | the 2.4G data link |
-| 3 | a public constant | pairing mode |
-
-After pairing, this device cannot hear other pairs at the physical layer, spending no MCU time and no air bytes on them. The sync word is always 4 bytes (32 bits) and the rate tier is not encoded into it. The cost: changing band means reconfiguring the sync word too, and a new pairing has to derive a fresh one.
-
-## 2. Frame format
-
-| Field | Length | Notes |
-| --- | --- | --- |
-| `header` | 1 B | top 6 bits = type (64 of them), low 2 bits = flags |
-| `seq` | 2 B | increases within a session; replay protection, reassembly and reliable transfer use it |
-| `payload` | 0..N B | type dependent |
-| `tag` | 0 or 4 B | truncated HMAC over header + seq + payload |
-| `crc` | appended by hardware | generated and checked by the radio link layer |
-
-**The MTU is not a separate parameter**: it is the largest data payload the current frame format allows and moves with the rate tier and packet format. Whether a `tag` is present and whether the payload is encrypted are decided by the profile, not by flags.
-
-### 2.1 Header flags
-
-| Bit | Name | Meaning |
-| --- | --- | --- |
-| 0 | `MORE` | more fragments follow |
-| 1 | `ACK_REQ` | asks the peer to acknowledge (used by the reliable mode) |
-
-### 2.2 Packet types
-
-| Value | Type | Direction | Notes |
+| # | Type | Direction | Purpose |
 | --- | --- | --- | --- |
-| 0 | `RC` | TX to RX | RC channels |
-| 1 | `TLM` | RX to TX | telemetry |
+| 0 | `RC` | TX to RX | CRSF channel payload (22 B) |
+| 1 | `TLM` | RX to TX | uplink telemetry (8 B, see [tlm.h] layout below) |
 | 2 | `DATA_UP` | TX to RX | passthrough data |
 | 3 | `DATA_DOWN` | RX to TX | passthrough data |
-| 4 | `ACK` | both ways | reliable-transfer acknowledgement (see 4.3) |
-| 5 | `SYNC` | TX to RX | session setup, hop sync, profile declaration |
+| 4 | `ACK` | both | cumulative ARQ acknowledgement |
+| 5 | `SYNC` | TX to RX | session setup, hop alignment, profile and mix declaration |
 | 6 | `PAIR_REQ` | TX to RX | pairing |
 | 7 | `PAIR_RESP` | RX to TX | pairing |
 | 8 | `PAIR_CFM` | TX to RX | pairing |
 | 9 | `SESS_RESP` | RX to TX | session response carrying `nonce_r` |
-| 10 | `SESS_CFM` | TX to RX | session confirmation tagged with the new session key |
-| 11-63 | reserved | - | - |
+| 10 | `SESS_CFM` | TX to RX | session confirmation, tagged with the new session key |
 
-### 2.3 Security profiles
-
-| Profile | tag | Encryption | Used for |
-| --- | --- | --- | --- |
-| `P0` | none | none | **maximum performance**: least overhead and the shortest frames, good for racing; no authentication, so it can be injected into |
-| `P1` | 4 B | none | **the default**: every frame authenticated, nothing encrypted |
-| `P2` | 4 B | AES-CTR | authenticated encryption with the MAC over the ciphertext (encrypt-then-MAC) |
-
-- `tag` = HMAC-SHA256 truncated to 4 B over `header` + `seq` + `payload`; the key is directional, see [10-security](10-security.md) 3.
-- HMAC-SHA256 keeps the identity layer on a single primitive: PBKDF2, HKDF and the MAC all sit in one function family.
-- **P2 comes last**: encryption is implemented once everything else is done.
-- The profile is configuration (the build carries only the default), a production image refuses `P0`, and the profile declared in `SYNC` has to match the local one.
-
-### 2.4 Control payload and rate tiers
-
-| Item | Default | Other tiers |
-| --- | --- | --- |
-| Control rate | 150 Hz | 500 Hz for close-in racing; 1000 Hz is the target (`r=0`, all 2.4G) |
-| Channels | 16 | - |
-| Bits per channel | 11 | - |
-| `RC` payload | 22 B | - |
-
-The `RC` payload carries CRSF's 22 bytes of channel data verbatim (16 channels packed at 11 bits) and the RX rebuilds CRSF's header and CRC8. At 150 Hz with a 22 B payload, a 27-byte frame takes about 222 us at 0.975 Mbps, 3.3% of a 6.67 ms frame.
-
-### 2.5 Fragmentation
-
-- `MORE` set means more fragments follow.
-- The receiver reassembles strictly in `seq` order; a gap or more than 100 ms without completion drops the whole run.
-- No out-of-order reassembly: an explicit fragment header would cost 2 B per frame, more than it buys.
-
-### 2.6 Overhead on air
-
-With a 22-byte payload at FLRC 1.3 Mbps (0.975 Mbps effective):
-
-| Composition | Bytes | Airtime (estimate) |
-| --- | --- | --- |
-| header + seq + payload | 25 | about 205 us |
-| plus a 4 B tag (P1/P2) | 29 | about 238 us |
-| preamble and sync word | - | another few tens of us |
-
-The tag costs about 16%; P0 carries none and is therefore shorter and faster.
-
-### 2.7 Link quality and diagnostics
-
-**No separate diagnostics channel: CRSF's existing link statistics frame** (`0x14` LINK_STATISTICS) is reused:
-
-| CRSF field | Where our value comes from |
-| --- | --- |
-| uplink RSSI / LQ / SNR | measured by the RX and sent back in telemetry |
-| downlink RSSI / LQ / SNR | measured by the TX |
-| RF mode | the current rate tier |
-
-The `TLM` payload therefore carries exactly what CRSF's link statistics frame wants (whatever ELRS sends, we send). Rate adaptation takes the LQ from it and dynamic power takes RSSI and LQ, with no second measurement path. The data link's overflow and drops do not go into CRSF; only the config protocol's `STATUS` counts them.
+The telemetry payload is 8 bytes: LQ percent, uplink RSSI (as negated dBm, CRSF convention),
+SNR (0 under FLRC, which cannot measure it), the RX's rate tier id, the RX's power tier id, the
+RX link state and a flags word (paired / session).
 
 ## 3. Link state machine
 
-### 3.1 How the two links relate
-
-The control link and the data link each run a copy of the same state machine and are independent. System-level "online" is the control link's call; losing the data link only costs throughput.
-
-### 3.2 States
+### 3.1 States
 
 | State | Meaning |
 | --- | --- |
-| `UNCONFIGURED` | no `root_key`, nothing happens |
-| `UNPAIRED` | a `root_key` but no pairing record |
-| `PAIRING` | the user held the button, pairing is under way |
+| `UNCONFIGURED` | no root key: the device stays off the air |
+| `UNPAIRED` | key present, no peer record |
+| `PAIRING` | pairing window open |
 | `SEARCHING` | paired, trying to bring a session up |
 | `CONNECTED` | session up, traffic flowing |
 
-### 3.3 Transitions on the TX
+### 3.2 Transitions
 
-| From | Event | To | Action |
+| From | Event | To | Notes |
 | --- | --- | --- | --- |
-| `UNCONFIGURED` | `root_key` written | `UNPAIRED` | generate and store `dev_id` |
-| `UNPAIRED` | long press | `PAIRING` | lower power, switch to the pairing sync word, send `PAIR_REQ` periodically |
-| `PAIRING` | pairing succeeds | `SEARCHING` | store the peer's `dev_id` and both nonces, restore power, switch to the normal sync word |
-| `PAIRING` | 30 s timeout | `UNPAIRED` | restore power and sync word |
-| `SEARCHING` | `SYNC` sent periodically; a `SESS_RESP` derives the session and `SESS_CFM` goes out | `CONNECTED` | normal traffic starts |
-| `CONNECTED` | 250 ms with no valid frame | `SEARCHING` | keep sending `SYNC` |
+| `UNCONFIGURED` | root key written | `UNPAIRED` | immediate, no reboot |
+| `UNPAIRED` | button held 1 s, or the `pair` command | `PAIRING` | 30 s window, `PAIR_REQ` every 100 ms |
+| `PAIRING` | pairing succeeds | `SEARCHING` | peer id and both nonces stored, normal sync word adopted |
+| `PAIRING` | window expires | `UNPAIRED` | |
+| `SEARCHING` | `SYNC` answered with `SESS_RESP`, then `SESS_CFM` verifies | `CONNECTED` | hop index aligned from `SYNC` |
+| `CONNECTED` | peer timeout (250 ms on the TX, 100 ms on the RX), or the TX loses its RC input | `SEARCHING` | |
+| any | `erase-pair`, `factory-reset` (both next boot) | `UNCONFIGURED` / `UNPAIRED` | |
 
-### 3.4 Transitions on the RX
+### 3.3 Pairing
 
-| From | Event | To | Action |
-| --- | --- | --- | --- |
-| `UNCONFIGURED` | `root_key` written | `UNPAIRED` | generate and store `dev_id` |
-| `UNPAIRED` | long press | `PAIRING` | switch to the pairing sync word and listen for `PAIR_REQ` |
-| `PAIRING` | pairing succeeds | `SEARCHING` | store the peer's `dev_id` and both nonces, switch to the normal sync word |
-| `SEARCHING` | a `SYNC` is answered with `SESS_RESP`, then a `SESS_CFM` tagged with this session's key arrives | `CONNECTED` | align on the hop index from `SYNC` |
-| `CONNECTED` | 100 ms with no valid frame | `SEARCHING` | output failsafe values |
-
-Failsafe is an **output behaviour** outside `CONNECTED`, not a link state: while `SEARCHING` the RX has to keep feeding the configured failsafe values to the flight controller. The TX configures them and ships them during pairing for the RX to store; the default is throttle at zero and the other channels centred.
-
-Pairing payload (shared by `PAIR_REQ`, `PAIR_RESP` and `PAIR_CFM`):
+Three messages carry one nonce from each end:
 
 ```
-[dev_a(4)][dev_b(4)][nonce_a(4)][nonce_b(4)][flags(1)][failsafe(22)]
+PAIR_REQ  {dev_a, dev_b=0, nonce_a, nonce_b=0, flags, [failsafe 22 B]}
+PAIR_RESP {dev_a, dev_b, nonce_a, nonce_b, flags}
+PAIR_CFM  {dev_a, dev_b, nonce_a, nonce_b, flags}
 ```
 
-Only the initiator (TX) fills in `failsafe`: when it has values it sets bit0 of `flags` and the responder stores exactly what it received, NVS included; without the bit the responder keeps its own.
+The TX (initiator) sends `PAIR_REQ` and ships its failsafe channel values when it has them; the
+RX answers `PAIR_RESP` with its own id and a fresh `nonce_b`, and the TX finishes with
+`PAIR_CFM`. Both ends keep `nonce_a || nonce_b` as the pair salt, from which the pairing-level
+keys derive ([10-security](10-security.md) 3). Pairing messages are tagged with the shared
+`auth_key` and the pairing sync word; once it succeeds both ends switch to their link's normal
+sync word and derived keys.
 
-### 3.5 Session setup (a three-way handshake)
+### 3.4 Sessions
 
-The same shape as pairing: one nonce from each end, both feeding the KDF, and a last message tagged with the new key that echoes the other end's nonce. What differs is the key material and its lifetime: pairing uses the long-lived shared `root_key`, a session uses the `pair_key` that pairing established.
+1. TX to RX: `SYNC{version, profile, mix, hop, nonce_t}`, authenticated with the pairing-level
+   `link_auth`.
+2. RX to TX: `SESS_RESP{nonce_t, nonce_r}`, also authenticated with `link_auth`; the RX draws
+   `nonce_r` now.
+3. TX to RX: `SESS_CFM{nonce_r, hop}` tagged with the **new session key**; the RX adopts the
+   session only after it verifies.
 
-The TX sends `SYNC` periodically on the sync channel carrying:
+Session key: `KDF(pair_key, "zlrs/session", nonce_t || nonce_r || sender id || receiver id)`,
+one per direction. Sequence numbers restart at 0 for the session.
 
-| Content | Purpose |
-| --- | --- |
-| `nonce_t` | this session's random number |
-| channel and hop index | what the RX aligns to |
-| profile | rate tier, tag on or off, encryption on or off |
-| sub-band | mix ratio `r` and hop table version (chosen by the TX, effective on the RX from the next sync frame) |
+**Why the second nonce is mandatory**: with `nonce_t` alone the key would come entirely from a
+value the TX puts on air, which anyone can replay; mixing in the RX's fresh `nonce_r` means a
+replay only earns a candidate session under a brand new key, and adopting it needs the TX to
+confirm with that same key. Retransmits repeat the same response/confirmation, so losing one
+message costs a single `SYNC` period.
 
-The three steps:
+### 3.5 Sync and resync
 
-1. TX to RX: `SYNC{version, profile, hop, nonce_t}`, authenticated with the pairing-level `link_auth`.
-2. RX to TX: `SESS_RESP{nonce_t, nonce_r}`, also authenticated with `link_auth`; the RX draws `nonce_r` now.
-3. TX to RX: `SESS_CFM{nonce_r, hop}` tagged with the **new session key**, echoing the hop index this end is on right now; the RX adopts the session only after it verifies.
+- **SEARCHING**: `SYNC` goes out every 100-600 ms depending on the modulation (faster rates
+  tolerate a tighter cadence), each one carrying the hop index the sender is on.
+- **CONNECTED**: a sparse `SYNC` every 5 s (`ZLRS_APP_RESYNC_PERIOD_MS`, converted to frames)
+  wipes out the hop-index error that crystal drift accumulates and spots a peer that changed
+  sessions (reboot or re-pair), so the handshake restarts by itself.
+- **Replay gate**: a `SYNC` is accepted as a session change only after recent total silence
+  (`now - last_rx > beacon period`); an old `SYNC` replayed inside a live session is dropped.
+  That same rule is how a peer reboot reconnects by itself.
 
-Session key `KDF(pair_key, "zlrs/session", nonce_t || nonce_r || sender id || receiver id)`: one per direction, out for what we send and in for what the peer sends (see [10-security](10-security.md) 3). Sequence numbers start at 0.
+## 4. Superframe and transfer
 
-**Why the second step is mandatory**: with `nonce_t` alone the key would come entirely from a value the TX puts on air and anyone can replay; mixing in the RX's fresh `nonce_r` means a replay only earns a candidate session under a brand new key, and adopting it needs the TX to confirm with that same key.
+### 4.1 Slots
 
-**Retransmits**: for the same `nonce_t` the RX repeats the same response and the TX repeats its confirmation when a duplicate response arrives. Losing any one message costs a single `SYNC` period.
+One superframe is four slots, walked by the application in order:
 
-**When the link counts as up**: the TX enters `CONNECTED` as soon as the confirmation leaves, the RX only after it verifies one. If the peer never hears the confirmation, the peer-loss check pulls the TX back to `SEARCHING`.
-
-### 3.6 Sync cadence
-
-`SYNC` only ever goes out on the sync channel, at state-dependent intervals (following ELRS):
-
-| State | Interval |
-| --- | --- |
-| searching or disconnected | 100-600 ms depending on the rate tier, with the RX scanning the sync channel |
-| connected | **5 s** |
-
-The sparse `SYNC` while connected does two jobs: it wipes out the hop-index error that crystal drift accumulates, and it notices a peer that changed sessions (a reboot or re-pair) so the handshake restarts by itself. A peer reboot is therefore noticed within 5 s at worst. Each link sends its own `SYNC` and sets up its own session.
-
-### 3.7 Timers
-
-| Item | Control link | Data link |
+| Slot | Direction | Content |
 | --- | --- | --- |
-| pairing window | 30 s | 30 s |
-| reassembly | 100 ms | 100 ms |
-| peer loss | 100 ms for RX failsafe, 250 ms for the TX | none: best-effort sends no idle frames |
-| `SYNC` period | 5 s connected, 100-600 ms searching | the same |
+| 0 `CTL_DOWN` | TX to RX | RC frame (the RX side is a receive window) |
+| 1 `CTL_UP` | RX to TX | telemetry frame (the TX side is a receive window) |
+| 2 `DATA_A` | TX to RX | first half of the data window |
+| 3 `DATA_B` | RX to TX | second half of the data window |
 
-Reassembly gets 100 ms because reliable transfer retransmits every 30 ms: anything shorter would throw away half-finished messages in mid-retransmit. Every timer is defined in time rather than frames, so changing the frame rate changes no parameter.
+The frame rate, per-slot budget and the telemetry/data thinning factors (`tlm_every_n`,
+`data_every_n`) come from the control time plan in `core/region`: the plan starts from the
+configured rate, clamps it by the region's duty cap and by the airtime the two links need, and
+amortises the data window over the frames in between.
 
-## 4. Superframe and link policy
+### 4.2 Fragmentation
 
-### 4.1 A fixed superframe
+Messages larger than one frame are split with `MORE` and reassembled strictly in `seq` order; a
+gap, an oversize message or a 100 ms timeout drops the whole run (the reassembly buffer is
+512 B). The receiver is told to void a half-finished run when the sender gives up, so the layer
+above never sees a stream at the wrong offset.
 
-**Every control period has exactly the same shape.** Allocating slots dynamically would save about 3% of switching cost, at the price of an uncomputable latency bound and problems that are hard to localise; the "deterministic latency, predictable and detectable failures" of [01-product](01-product.md) is worth more than those 3%.
+### 4.3 Reliable transfer (ARQ)
 
-One period (150 Hz, 6.67 ms) looks like this:
+The data link's default mode:
 
-| Leg | Content | Roughly |
-| --- | --- | --- |
-| 1 | sub-GHz: the TX sends an `RC` frame | 238 us |
-| 2 | sub-GHz: switch to receive, the RX sends telemetry (**mandatory answer**) | 91 + 238 us |
-| 3 | switch to 2.4G | - |
-| 4 | 2.4G: the data window, TX to RX first, RX to TX second | about 5.7 ms |
-| 5 | switch back to sub-GHz | - |
+- a sliding window of **4 frames**, each carrying a 2-byte data sequence number before the
+  payload;
+- the receiver answers with a **cumulative ACK** (2-byte sequence plus a flags byte whose bit 0
+  asks for a resync);
+- the sender retransmits the window after 30 ms (`ZLRS_ARQ_TIMEOUT_MS`, raised to twice the
+  airtime when a frame is slow) and gives up after 6 retries;
+- giving up counts the run as dropped, clears the window, restarts the sequence and tells the
+  receiver to void the half message;
+- the first frame of a session has to start at sequence 0: dropping a run is better than
+  handing the layer above a stream at the wrong offset.
 
-The control link plus the band switches comes to about 924 us, 14% of the period (a rough figure for the 1.3 Mbps tier with 29-byte frames). **The frame rate is a tier**: 150 Hz by default, 500 Hz for racing, 1000 Hz the target; the effective value comes from the time plan (`zlrs_region_control_plan()`, with airtime from `zlrs_mod_airtime_us()`), clamped by the regional duty cap and airtime, with the telemetry and data windows thinned into each frame (1/3 and 1/5 at the 500 Hz tier).
-
-1000 Hz needs the control link to own the radio and drive frames from IRQs: RAC's FLRC burst is a one-way batch transfer whose start still comes from a millisecond-granularity planner, so 1 ms frames are out of reach. At `r=0` a 31 B frame at 2.6 Mbps takes 108 us and the slot budget is 308 us, which separates the four slots cleanly.
-
-### 4.2 Telemetry window
-
-**The RX must answer**, sending a minimal empty frame (about 7 B) even with nothing to report: the TX decides the link is alive by whether something arrived this period, and without the answer it cannot tell "the link is down" from "there is nothing to say yet".
-
-### 4.3 Data window and reliable transfer
-
-The data window splits in half: TX to RX first, RX to TX second. That keeps the timing maximally predictable; an idle direction wastes half of it, which the data link accepts as a secondary channel.
-
-The data link has **two modes** and defaults to reliable transfer:
-
-| Mode | Behaviour |
-| --- | --- |
-| **reliable (ARQ, the default)** | the receiver sends cumulative ACKs ("this is the highest in-order sequence number"), the sender retransmits unacknowledged frames in the window (4 frames, 30 ms timeout, at most 6 tries); the receiver dedups, delivers in order and counts sequence gaps |
-| best-effort | a raw byte stream that drops when the buffer is full and counts the overflow; the lowest latency, for upper layers that retransmit themselves and do not mind loss |
-
-Reliable transfer follows ELRS's AirPort/MAVLink idea (acknowledge and resend until acknowledged) but uses a separate cumulative ACK frame instead of a single header bit: an ELRS receiver always has a frame to ride along in, while our RX direction may have no data at all, so a dedicated ack frame is needed. Narrowing that to a piggybacked bit is on [13-roadmap](13-roadmap.md).
-
-When retries run out the run is counted as dropped (visibly), the window clears, sequence numbers restart and the receiver is told to void the half message. The first frame of a session has to start at sequence 0: dropping a run is better than handing the layer above a stream at the wrong offset.
-
-Frame length is dynamic and capped by the largest payload the current frame format fits (the MTU), and **a frame has to finish inside its window, never spanning two**: at low rates a long frame no longer fits, so the cap follows the rate tier.
-
-### 4.4 Rate adaptation
-
-Both links adapt, with different objectives:
-
-| Link | Objective | When quality drops |
-| --- | --- | --- |
-| Control | distance and stability | drop a rate tier for sensitivity and accept a lower frame rate |
-| Data | rate and throughput | keep the rate and frame rate, never trade speed for distance |
-
-A tier is therefore a combination of band, rate and frame rate. The data link's rate ceiling is derived from the configured serial baud rate (115200 has to carry about 11.5 kB/s, 921600 about 92 kB/s) and the config tool checks that it is reachable.
-
-The verdict: each tier has a minimum LQ, moving up needs a further 10 percentage points of margin, three consecutive windows (1 s each, judged in `report()` at 1 Hz) have to agree, and nothing is judged for 2 s after a change. RSSI plays no part in the rate decision.
-
-### 4.5 Dynamic power
-
-Power also sets the link budget and changing it costs no airtime. The decision uses the uplink RSSI and LQ the RX reports, judged once a second:
-
-| Condition | Action |
-| --- | --- |
-| RSSI below the floor (-95 dBm by default) or LQ below it (90%) | after 3 consecutive judgements, up one step (3 dB) |
-| RSSI above the ceiling (-70 dBm) and LQ above it (98%) | after 3 consecutive judgements, down one step |
-| in between | nothing moves, this is the hysteresis band |
-| no telemetry for a second | straight back to the ceiling |
-
-The ceiling is the smaller of the configured power and the regional limit (the regulation wins) and the floor is a setting (0 dBm by default). On by default.
+Without ARQ (`CONFIG_ZLRS_APP_DATA_ARQ=n`, debug images) the data link is best-effort: bytes are
+dropped and counted when the port rings are full.
 
 ## 5. Hopping and regulation
 
-**Per-frame hopping**: every frame changes frequency, the index comes from the table derived from `fhss_seed`, the TX carries the index in `SYNC` and the RX stays in lockstep. That buys interference resistance, coexistence with other zlrs links and the channel count and dwell time the hopping rules want, at the price of the RX having to open a specific frequency at a specific moment.
+### 5.1 Hop tables and sub-band mixing
 
-### 5.1 Preconditions and resync
+- Each link derives a **256-entry hop table** from `fhss_seed`; every block of `channel_count`
+  entries holds the sync channel in position 0, and the block is shuffled with the same PRNG on
+  both ends, so no table is ever transmitted.
+- **Sub-band mixing** adds a second table: each link has a main table and a sub-band table with
+  its own index. The mix level is one of four values (0 / 1 / 2 / 4 slots of every four land on
+  sub-G = 0 / 25 / 50 / 100 %).
+- The TX moves the mix and a 2-bit table version through `SYNC`; the RX adopts both while
+  handling that frame, and falls back to the default mix when it misses several versions.
+- The migration order is fixed: telemetry first, then data, then the RC downlink; recovery
+  moves them back in reverse.
 
-| Precondition | Where it comes from |
-| --- | --- |
-| a shared frequency table | derived from `fhss_seed + r + table version` on each end: one table holding both 2.4G and sub-G frequencies |
-| a shared slot length | decided by the rate tier |
-| a shared index | carried by `SYNC`, aligned when the link comes up and again every 5 s while connected |
-| clock drift | the periodic `SYNC` while connected pulls the index back; searching relies on dense `SYNC` plus a scan of the sync channel |
+Channel plans:
 
-A `SYNC` on a resync frame is tagged with the pairing-level `link_auth`, so an old frame verifies too; accepting one therefore needs two gates: **the sequence number must be new** (one sequence space per session) and **switching sessions needs recent total silence** (a new `nonce_t` is believed only when `now - last_rx > beacon_period`, otherwise it is a replay and dropped). That same rule is how a peer reboot reconnects by itself.
+| Region | Band | Plan |
+| --- | --- | --- |
+| FCC915 | 902-928 MHz | 50 channels, 500 kHz apart, from 902.5 MHz |
+| EU868 | 863-870 MHz | 13 channels, 500 kHz apart, from 863.25 MHz |
+| CN470 | 470-510 MHz | 96 channels, 300 kHz apart, from 470.3 MHz |
+| CN433 | 433.05-434.79 MHz | 5 channels, 300 kHz apart, from 433.3 MHz |
+| ISM2400 | 2400-2483.5 MHz | 79 channels, 1 MHz apart, from 2402 MHz |
 
-### 5.2 Regulation
+### 5.2 Region, power and duty
 
-- FCC 15.247's hopping rules want at least 50 channels, a dwell time of 400 ms or less and equal use of every channel; per-frame hopping satisfies them.
-- Some sub-bands of ETSI EN 300 220 carry duty limits (1% or 10%) that directly bound the control rate and the share of slots the data link may use.
-- 2.4G ISM has no hopping requirement.
+`core/region` holds the four region tables. A region carries a power ceiling, an optional duty
+cap and a maximum rate implied by its band width:
 
-This lives in `core/region`: four tables (FCC915 with no duty limit, EU868 at 1% per 60 s, CN470, CN433), and `zlrs_region_validate()` checks a region against the board's radio design — the design has to be the band the region needs (HF for 868/915, LF for 470/433) and its frequency range has to cover the region's band edges. A mismatch means a red alert and no radio, whether it is found at boot or rejected when the configuration tries to set it. Every transmission is booked against the duty budget, and a slot with none left is given up and counted.
+| Region | Power ceiling | Duty | Rate ceiling |
+| --- | --- | --- | --- |
+| FCC915 | 22 dBm | none | 2.6 Mbps |
+| EU868 | 14 dBm | 1 % per 60 s | 0.325 Mbps |
+| CN470 | 17 dBm | none | 0.325 Mbps |
+| CN433 | 10 dBm | none | 0.325 Mbps |
 
-Channel spacing follows the modulation bandwidth: CN470 uses 300 kHz spacing (96 channels) while CN433 is only 1.74 MHz wide and fits five 300 kHz channels. Narrow-band regions carry a `max_rate_bps`, and a configuration above it is clamped to 0.325 Mbps narrow-band FLRC.
-
-**LoRa is the trade-rate-for-distance option and applies to the control link only**: the default is narrow-band FLRC (0.325 Mbps in 300 kHz, which fits narrow regions); LoRa buys sensitivity (SF7 is -118 dBm on sub-G) and costs tens of times the airtime, 72 ms for a 31 B frame. EU868's 1% duty cannot feed that tier (0.14 frames per second), so it stays on narrow-band FLRC.
-
-### 5.3 Preamble and sync words
-
-- FLRC: sync words are 4 bytes and the three slots (1 control, 2 data, 3 pairing) are derived from the pairing key by role (`derive_pair()`).
-- LoRa: the sync word is one byte derived separately (`zlrs/sync/lora/control` and friends) with the top bit set as the private bit, satisfying the rule that `0x0X` values are not allowed; pairing frames always use the private sync word `0x12`.
-- Preamble lengths leave margin over the datasheet minimum (8 symbols for LoRa by default, 12 or more suggested for SF5/SF6).
+Validation happens in two places and is deliberately separate: at boot the region is checked
+against the board's radio design (band and coverage), the channel plan and the configured
+power — a mismatch shows the alarm and keeps the radio off; before every transmission the duty
+accounting decides whether there is airtime budget left, and a slot with none left is given up
+and counted. The configured rate and the LoRa bandwidth are clamped to the region's limits, and
+the mix ceiling for sub-G slots is derived from the duty cap.

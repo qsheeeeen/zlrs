@@ -1,31 +1,45 @@
 # Product design
 
-zlrs is a point-to-point radio link: **it carries both telemetry and control**, time-sharing one Semtech LR2021. TX and RX run the same firmware.
+zlrs is a point-to-point radio link. It carries **control** (CRSF channels down, telemetry
+up) and **data** (a byte stream) at the same time, over one half-duplex Semtech LR2021. TX and
+RX run the same firmware; which end a device is, is configuration.
 
-## 1. Link shapes
+## 1. The two links
 
-**Two bands make up one link**: the hop table spans both sub-bands and mixes them by slot ratio.
+| Link | Carries | Optimised for |
+| --- | --- | --- |
+| Control | CRSF: 16 channels down, telemetry up, pairing | distance and stability |
+| Data | a passthrough byte stream | rate and throughput |
 
-| Sub-band | Character |
-| --- | --- |
-| 2.4G | the fast sub-band: 2.6 Mbps FLRC, best latency and throughput |
-| sub-G | the long-range sub-band: 0.325 Mbps narrow-band FLRC (or LoRa), best distance and penetration |
+The links are independent state machines sharing one radio: losing one does not take the other
+down, and each has its own hop table and its own sub-band mix. They are not redundant radios —
+a supply or radio failure takes both.
 
-**Mix ratio `r`** is the share of slots that land on sub-G: four levels, **0 / 25 / 50 / 100%**, chosen by the TX and followed by the RX (see [09-protocol](09-protocol.md) 5.1).
+## 2. Bands and shapes
 
-- **Racing**: normally `r = 0` (all 2.4G); as the link degrades, slots move to sub-G in the order **telemetry, then data, then RC**, and in the end the whole link falls back to the long-range tier. There is always a floor.
-- **Long range**: normally `r = 100` (all sub-G); closing in or improving quality lowers `r` again and buys the rate back.
+Both bands form one link per direction of travel: the hop table spans 2.4G and sub-G, and the
+mix ratio `r` (0 / 25 / 50 / 100 %) decides how many slots land on sub-G. The TX decides `r`
+and carries it in `SYNC`; the RX follows. The migration order is telemetry, then data, then the
+RC downlink, so latency steps down instead of jittering.
 
-The two bands never transmit together: one half-duplex radio sends one frame per slot, and `r` decides which of the two hop tables that frame's frequency comes from.
+Two band roles:
+
+- **Long range** (default): control owns sub-G, data owns 2.4G. Sub-G is what carries the link
+  far; 2.4G gives the data link its throughput.
+- **Racing**: control owns 2.4G alone — short airtime, high frame rate — and the data link
+  moves to sub-G under the regional rules (or is switched off).
 
 Two port shapes:
 
-- **Two UARTs**: a control port and a data port; the two links time-share the radio and stay independent, each with its own mix ratio;
+- **Two UARTs**: a control port and a data port; the two links time-share the radio and stay
+  independent, each with its own mix ratio;
 - **One UART**: control or data, whichever the configuration says.
 
-## 2. Targets
+## 3. Targets
 
-**Distance and rate are two ends of one thing**: changing band or rate changes reach, so the targets are written as shape, band, rate and distance together rather than as two independent figures.
+**Distance and rate are two ends of one thing**: changing band or rate changes reach, so the
+targets are written as shape, band, rate and distance together rather than as two independent
+figures.
 
 | Scenario | Sub-band mix | Rate | Order of distance |
 | --- | --- | --- | --- |
@@ -34,11 +48,13 @@ Two port shapes:
 | Long range (`r=100`) | all sub-G | 1.3 Mbps down to 0.325 Mbps FLRC, or LoRa SF7/BW125 | **2 km and beyond** |
 | Long range, sped up (`r` lowered) | mostly sub-G plus 2.4G slots | mixed, the 2.4G slots run 2.6 Mbps | close in |
 
-**Control latency stays qualitative**: it has to fly a quadcopter and aim at FPV racing levels. **A 1000 Hz control rate is the target** and should be reachable at `r=0` (all 2.4G).
+**Control latency stays qualitative**: it has to fly a quadcopter and aim at FPV racing levels.
+**A 1000 Hz control rate is the target** and should be reachable at `r=0` (all 2.4G).
 
-## 3. Performance figures (benchmarked against ELRS)
+## 4. Performance figures (benchmarked against ELRS)
 
-Performance is measured against ExpressLRS v4.1's published numbers (details in [02-vs-elrs](02-vs-elrs.md)):
+Measured against ExpressLRS v4.1's published numbers; the comparison itself is in
+[02-vs-elrs](02-vs-elrs.md).
 
 | Figure | ELRS v4.1 | zlrs target |
 | --- | --- | --- |
@@ -51,24 +67,18 @@ Performance is measured against ExpressLRS v4.1's published numbers (details in 
 
 Full chip figures are in [06-radio](06-radio.md).
 
-## 4. Quality requirements
+## 5. Quality requirements
 
-**Stable, deterministic latency, failures that are predictable and detectable, and no degradation over long runs.** No test exists for these on their own, but every design choice has to survive them: a fixed superframe, errors that cannot hide, and failures graded by consequence.
+**Stable, deterministic latency, failures that are predictable and detectable, and no
+degradation over long runs.** Every design choice has to survive them: a fixed superframe,
+errors that cannot hide, failures graded by consequence (a regulatory problem keeps the radio
+off but leaves the device configurable and flashable).
 
-## 5. Who it is for
+## 6. Who it is for
 
-- Fixed-wing, multirotor, car and boat: one design covers them all
-- Serious DIY users who solder their own boards, flash their own firmware and configure it themselves
-- Industrial and CNC work is the long-term goal; nothing is designed specifically for it today, but the architecture must not block it
+- Fixed-wing, multirotor, car and boat: one design covers them all;
+- anything that wants a serial link and a control link over the same small module;
+- builders who want to see the numbers and change the behaviour without a compiler.
 
-## 6. Boundaries
-
-**The link only** (a module, firmware and reference hardware), never a finished product. Deliberately out of scope:
-
-- no compatibility with stock ExpressLRS (see [02-vs-elrs](02-vs-elrs.md))
-- no chasing 20 km links, which belong to cellular
-- no video
-- no production line and no factory key injection
-- no defence against L3 attackers (see [10-security](10-security.md) 7)
-
-Why build it: control, extensibility (off-the-shelf links cannot bend to future projects) and security: per-frame authentication, session keys and replay protection are things stock RC links do not have.
+What it deliberately is not: no Lua scripting, no WiFi, no OTA, no handset ecosystem and no
+byte-compatibility with another protocol. See [02-vs-elrs](02-vs-elrs.md).

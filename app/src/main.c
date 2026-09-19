@@ -105,7 +105,7 @@ static zlrs_duty_t duty;
 
 /*
  * Role and security profile: runtime settings with a compile-time default (set-role /
- * set-profile, doc/organization.md 4). Loaded once at boot, before the links are built.
+ * set-profile, doc/08-firmware.md 3). Loaded once at boot, before the links are built.
  */
 static bool role_tx;
 static uint8_t active_profile;

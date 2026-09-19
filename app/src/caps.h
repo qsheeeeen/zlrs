@@ -1,5 +1,5 @@
 /*
- * What this hardware is, derived from devicetree (doc/organization.md 2).
+ * What this hardware is, derived from devicetree (doc/08-firmware.md 4).
  *
  * This header is the only place in the application that reads aliases and the
  * radio-design node, and the only place that may name them. Everything else
