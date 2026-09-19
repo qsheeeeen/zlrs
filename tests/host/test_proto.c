@@ -13,7 +13,7 @@
 #include "zlrs/proto/frame.h"
 #include "zlrs/proto/tlm.h"
 
-/* ---- KDF 与每包 tag ------------------------------------------------------ */
+/* ---- KDF and per-frame tag ----------------------------------------------- */
 
 static void test_kdf(void)
 {
@@ -27,13 +27,13 @@ static void test_kdf(void)
 
 	memset(key, 0x42, sizeof(key));
 
-	/* 固定向量由 Python 的 hashlib/hmac 独立算出（HKDF 空盐） */
+	/* Fixed vectors computed independently with Python hashlib/hmac (empty HKDF salt) */
 	zlrs_kdf(key, sizeof(key), "zlrs/sync/control", NULL, 0U, a, sizeof(a));
 	CHECK(zlrs_test_hex_eq(a, sizeof(a), "c7f3da8b"));
 	zlrs_kdf(key, sizeof(key), "zlrs/session", ctx, sizeof(ctx), b, sizeof(b));
 	CHECK(zlrs_test_hex_eq(b, sizeof(b), "89e0e3e0"));
 
-	/* 同输入可重复；换标签或换上下文都必须换结果（域分离） */
+	/* Repeatable for the same input; a new label or context must change the result (domain separation) */
 	zlrs_kdf(key, sizeof(key), "zlrs/sync/control", NULL, 0U, b, sizeof(b));
 	CHECK(memcmp(a, b, sizeof(a)) == 0);
 	zlrs_kdf(key, sizeof(key), "zlrs/sync/data", NULL, 0U, b, sizeof(b));
@@ -42,12 +42,12 @@ static void test_kdf(void)
 	zlrs_kdf(key, sizeof(key), "zlrs/session", NULL, 0U, b, sizeof(b));
 	CHECK(memcmp(a, b, sizeof(a)) != 0);
 
-	/* 每包 tag：HMAC-SHA256 截断到 4 字节 */
+	/* Per-frame tag: HMAC-SHA256 truncated to 4 bytes */
 	zlrs_tag(key, sizeof(key), ctx, sizeof(ctx), tag);
 	CHECK(zlrs_test_hex_eq(tag, sizeof(tag), "e1c2dd24"));
 }
 
-/* ---- 帧格式 -------------------------------------------------------------- */
+/* ---- frame format -------------------------------------------------------- */
 
 static void test_frame(void)
 {
@@ -75,7 +75,7 @@ static void test_frame(void)
 	len = zlrs_frame_encode(&in, buf, sizeof(buf));
 	CHECK(len == ZLRS_FRAME_HDR_LEN + sizeof(payload) + ZLRS_TAG_LEN);
 	CHECK(buf[0] == (uint8_t)((ZLRS_PKT_RC << 2) | ZLRS_FLAG_MORE | ZLRS_FLAG_ACK_REQ));
-	CHECK(buf[1] == 0x02U && buf[2] == 0x01U); /* 小端 */
+	CHECK(buf[1] == 0x02U && buf[2] == 0x01U); /* little-endian */
 	CHECK(buf[3] == 0x5aU);
 	CHECK(memcmp(&buf[ZLRS_FRAME_HDR_LEN + sizeof(payload)], tag, sizeof(tag)) == 0);
 
@@ -86,17 +86,17 @@ static void test_frame(void)
 	CHECK(out.tag != NULL && memcmp(out.tag, tag, sizeof(tag)) == 0);
 	CHECK(zlrs_frame_mac_len(&out) == ZLRS_FRAME_HDR_LEN + sizeof(payload));
 
-	/* P0：不带 tag */
+	/* P0: no tag */
 	CHECK(zlrs_frame_decode(&out, buf, ZLRS_FRAME_HDR_LEN + sizeof(payload), 0U));
 	CHECK(out.tag == NULL && out.payload_len == sizeof(payload));
 
-	/* 长度与容量边界 */
+	/* length and capacity edges */
 	CHECK(!zlrs_frame_decode(&out, buf, 2U, 0U));
 	CHECK(!zlrs_frame_decode(&out, buf, len, (uint8_t)(ZLRS_TAG_LEN + 1U)));
 	CHECK(zlrs_frame_encode(&in, buf, 4U) == 0U);
 }
 
-/* ---- 分片重组 ------------------------------------------------------------ */
+/* ---- reassembly ---------------------------------------------------------- */
 
 static void push_chunk(zlrs_reasm_t *reasm, uint16_t seq, uint8_t flags,
 		       const char *text, uint32_t now_ms, int *result)
@@ -120,13 +120,13 @@ static void test_frag(void)
 
 	printf("frag\n");
 
-	/* 单帧消息 */
+	/* single-frame message */
 	zlrs_reasm_init(&reasm, buf, sizeof(buf));
 	push_chunk(&reasm, 10U, 0U, "solo", 0U, &r);
 	CHECK(r == ZLRS_REASM_DONE);
 	CHECK(reasm.len == 4U && memcmp(buf, "solo", 4U) == 0);
 
-	/* 三段拼接 */
+	/* three fragments */
 	zlrs_reasm_init(&reasm, buf, sizeof(buf));
 	push_chunk(&reasm, 20U, ZLRS_FLAG_MORE, "abc", 0U, &r);
 	CHECK(r == ZLRS_REASM_NONE);
@@ -136,7 +136,7 @@ static void test_frag(void)
 	CHECK(r == ZLRS_REASM_DONE);
 	CHECK(reasm.len == 9U && memcmp(buf, "abcdefghi", 9U) == 0);
 
-	/* 序列缺口：整段丢弃 */
+	/* sequence gap: drop the whole run */
 	zlrs_reasm_init(&reasm, buf, sizeof(buf));
 	push_chunk(&reasm, 30U, ZLRS_FLAG_MORE, "abc", 0U, &r);
 	CHECK(r == ZLRS_REASM_NONE);
@@ -144,7 +144,7 @@ static void test_frag(void)
 	CHECK(r == ZLRS_REASM_DROPPED);
 	CHECK(!reasm.active && reasm.len == 0U);
 
-	/* 超时：残留丢弃，新的分片从头开始 */
+	/* timeout: the leftovers go, a new run starts from scratch */
 	zlrs_reasm_init(&reasm, buf, sizeof(buf));
 	push_chunk(&reasm, 40U, ZLRS_FLAG_MORE, "abc", 0U, &r);
 	CHECK(r == ZLRS_REASM_NONE);
@@ -152,7 +152,7 @@ static void test_frag(void)
 	CHECK(r == ZLRS_REASM_NONE);
 	CHECK(reasm.len == 3U && memcmp(buf, "xyz", 3U) == 0);
 
-	/* 超过缓冲：丢弃 */
+	/* over the buffer: drop */
 	zlrs_reasm_init(&reasm, buf, 8U);
 	push_chunk(&reasm, 50U, ZLRS_FLAG_MORE, "123456", 0U, &r);
 	CHECK(r == ZLRS_REASM_NONE);
@@ -160,7 +160,7 @@ static void test_frag(void)
 	CHECK(r == ZLRS_REASM_DROPPED);
 }
 
-/* ---- 跳频表 -------------------------------------------------------------- */
+/* ---- hop tables ---------------------------------------------------------- */
 
 static void test_fhss(void)
 {
@@ -172,7 +172,7 @@ static void test_fhss(void)
 
 	printf("fhss\n");
 
-	/* 双表：主表 2.4G + 子带 sub-G，同一 seed 两端一致 */
+	/* Two tables (main 2.4G plus sub-G) from one seed, identical on both ends */
 	{
 		zlrs_fhss_t dual;
 		zlrs_fhss_t dual2;
@@ -189,19 +189,19 @@ static void test_fhss(void)
 		CHECK(zlrs_fhss_sub_current_hz(&dual) == zlrs_fhss_sub_current_hz(&dual2) ||
 		      dual.sub_index == 3U);
 
-		/* 混合比四档 → 每 4 个时隙落在 sub-G 的个数 */
+		/* Four mix levels map to how many of every 4 slots land on sub-G */
 		CHECK(zlrs_fhss_mix_slots(0U) == 0U);
 		CHECK(zlrs_fhss_mix_slots(1U) == 1U);
 		CHECK(zlrs_fhss_mix_slots(2U) == 2U);
 		CHECK(zlrs_fhss_mix_slots(3U) == 4U);
 
-		/* 没配子带时子表不可用 */
+		/* Without a sub-band the second table is unusable */
 		zlrs_fhss_init(&dual, ZLRS_DOMAIN_ISM2400, 0x1U);
 		CHECK(!zlrs_fhss_sub_ready(&dual));
 		CHECK(zlrs_fhss_sub_current_hz(&dual) == 0U);
 	}
 
-	/* EU868：13 个信道，256 / 13 = 19 块 */
+	/* EU868: 13 channels, 256 / 13 = 19 blocks */
 	zlrs_fhss_init(&fhss, ZLRS_DOMAIN_EU868, 0x1234abcdU);
 	CHECK(fhss.domain->channel_count == 13U);
 	CHECK(fhss.sequence_count == 247U);
@@ -212,21 +212,21 @@ static void test_fhss(void)
 		CHECK(fhss.sequence[i] < 13U);
 		seen[fhss.sequence[i]]++;
 		if ((i % 13U) == 0U) {
-			CHECK(fhss.sequence[i] == fhss.sync_channel); /* 每块首位是同步信道 */
+			CHECK(fhss.sequence[i] == fhss.sync_channel); /* slot 0 of every block is the sync channel */
 		}
 	}
 	for (uint8_t ch = 0; ch < 13U; ch++) {
-		CHECK(seen[ch] == 19U); /* 等概率使用 */
+		CHECK(seen[ch] == 19U); /* every channel used equally often */
 	}
 
-	/* 同种子两端算出同一张表；换种子换表 */
+	/* One seed gives one table on both ends; a new seed gives a new table */
 	zlrs_fhss_init(&again, ZLRS_DOMAIN_EU868, 0x1234abcdU);
 	CHECK(memcmp(fhss.sequence, again.sequence, fhss.sequence_count) == 0);
 	zlrs_fhss_init(&again, ZLRS_DOMAIN_EU868, 0x1234abceU);
 	CHECK(memcmp(fhss.sequence, again.sequence, fhss.sequence_count) != 0);
 
 	zlrs_fhss_init(&fhss, ZLRS_DOMAIN_ISM2400, 0x1234abcdU);
-	CHECK(fhss.sequence_count == 237U); /* 256 / 79 = 3 块 */
+	CHECK(fhss.sequence_count == 237U); /* 256 / 79 = 3 blocks */
 	CHECK(fhss.domain->channel_count == 79U);
 	CHECK(fhss.sequence[fhss.index] == fhss.sync_channel);
 
@@ -240,7 +240,7 @@ static void test_fhss(void)
 	CHECK(zlrs_fhss_current_hz(&fhss) == first);
 }
 
-/* 空口遥测载荷：定长、字段顺序固定，长度不对就拒收 */
+/* Telemetry payload: fixed length, fixed field order, wrong length is rejected */
 static void test_tlm(void)
 {
 	zlrs_tlm_t in;
@@ -264,7 +264,7 @@ static void test_tlm(void)
 	CHECK(zlrs_tlm_decode(buf, sizeof(buf), &out));
 	CHECK(memcmp(&in, &out, sizeof(in)) == 0);
 
-	/* 短载荷拒收，且不改动出参 */
+	/* A short payload is rejected and the outputs stay untouched */
 	memset(&out, 0, sizeof(out));
 	CHECK(!zlrs_tlm_decode(short_buf, sizeof(short_buf), &out));
 	CHECK(out.lq_percent == 0U);

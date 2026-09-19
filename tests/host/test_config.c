@@ -2,8 +2,8 @@
  * Copyright (c) 2026 zlrs contributors
  * SPDX-License-Identifier: Apache-2.0
  *
- * 配置协议测试：帧编解码用构造帧 + 逐字节解析，命令分发用假 backend 把每条
- * 命令跑一遍（含错误路径）。短语派生用 Python hashlib 算出的固定向量。
+ * Config protocol tests: framing with built frames and byte-at-a-time parsing, and command
+ * dispatch run against a fake backend, error paths included. Fixed PBKDF2 vectors from Python.
  */
 
 #include "test.h"
@@ -21,7 +21,7 @@ typedef struct {
 	uint32_t baud;
 	bool baud_saved;
 	uint32_t pair_count;
-	int store_rc; /* save_root_key 想返回的错误码 */
+	int store_rc; /* error code save_root_key should return */
 	bool image_confirmed;
 } fake_dev_t;
 
@@ -129,7 +129,7 @@ static const zlrs_cfg_backend_t backend = {
 	.ctx = &fake,
 };
 
-/* 把响应帧喂回解析器，取出 cmd 与 payload */
+/* Feed a response frame back into the parser and pull out cmd and payload */
 static bool parse_response(const uint8_t *frame, uint8_t len, zlrs_cfg_parser_t *parser)
 {
 	int result = 0;
@@ -148,7 +148,7 @@ static void test_phrase_vector(void)
 
 	printf("config: phrase derivation\n");
 
-	/* 向量由 Python 的 hashlib.pbkdf2_hmac('sha256', phrase, b'zlrs/kdf/v1', 1e5, 32) 算出 */
+	/* Vector from Python hashlib.pbkdf2_hmac('sha256', phrase, b'zlrs/kdf/v1', 1e5, 32) */
 	zlrs_root_key_from_phrase("correct horse battery staple", key);
 	CHECK(zlrs_test_hex_eq(key, sizeof(key),
 			       "039690ebe7c3c9f237d80555d083e7a48f781b7a537156a6d0e501f49d60f726"));
@@ -157,7 +157,7 @@ static void test_phrase_vector(void)
 	CHECK(zlrs_test_hex_eq(key, sizeof(key),
 			       "7e7363b218016d1f319a6389fa20aaf53d2fe21056ffe30566cc3b874e6073f8"));
 
-	/* 同一个短语必须每次派生一样的结果（配置工具与设备各算一次） */
+	/* The same phrase must derive the same key every time (tool and device each do it once) */
 	zlrs_root_key_from_phrase("hello", key);
 	CHECK(zlrs_test_hex_eq(key, sizeof(key),
 			       "7e7363b218016d1f319a6389fa20aaf53d2fe21056ffe30566cc3b874e6073f8"));
@@ -186,7 +186,7 @@ static void test_frame_codec(void)
 	CHECK(memcmp(ZLRS_CFG_PAYLOAD(&parser), payload, sizeof(payload)) == 0);
 	CHECK(parser.frames_ok == 1U);
 
-	/* 坏 CRC */
+	/* bad CRC */
 	zlrs_cfg_parser_init(&parser);
 	for (uint8_t i = 0U; i < len; i++) {
 		const uint8_t byte = (i + 1U == len) ? (uint8_t)(frame[i] ^ 0xFFU) : frame[i];
@@ -198,12 +198,12 @@ static void test_frame_codec(void)
 	}
 	CHECK(parser.frames_ok == 0U);
 
-	/* 版本不对、载荷过长、垃圾前置都要能拒绝并重新同步 */
+	/* Wrong version, oversized payload and leading garbage all have to resynchronise */
 	zlrs_cfg_parser_init(&parser);
 	CHECK(zlrs_cfg_feed(&parser, 0x5AU) == -1);
 	CHECK(zlrs_cfg_feed(&parser, ZLRS_CFG_SOF0) == 0);
 	CHECK(zlrs_cfg_feed(&parser, ZLRS_CFG_SOF1) == 0);
-	CHECK(zlrs_cfg_feed(&parser, 0x7FU) == -1); /* 版本不支持 */
+	CHECK(zlrs_cfg_feed(&parser, 0x7FU) == -1); /* unsupported version */
 	CHECK(parse_response(frame, len, &parser));
 
 	CHECK(zlrs_cfg_encode(frame, sizeof(frame), ZLRS_CFG_CMD_STATUS, payload,
@@ -239,7 +239,7 @@ static void test_dispatch(void)
 		CHECK(status.lq_percent == 97U);
 	}
 
-	/* BUILD：版本串原样回 */
+	/* BUILD: the build string comes back unchanged */
 	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_BUILD, NULL, 0U, resp, sizeof(resp));
 	CHECK(len > 0U);
 	CHECK(parse_response(resp, len, &parser));
@@ -247,7 +247,7 @@ static void test_dispatch(void)
 	CHECK(parser.payload_len == 7U);
 	CHECK(memcmp(ZLRS_CFG_PAYLOAD(&parser), "0.1.0-t", 7U) == 0);
 
-	/* IMAGE_HASH：32 字节原样回 */
+	/* IMAGE_HASH: 32 bytes come back unchanged */
 	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_IMAGE_HASH, NULL, 0U, resp, sizeof(resp));
 	CHECK(len > 0U);
 	CHECK(parse_response(resp, len, &parser));
@@ -257,7 +257,7 @@ static void test_dispatch(void)
 	CHECK(ZLRS_CFG_PAYLOAD(&parser)[ZLRS_CFG_IMAGE_HASH_LEN - 1U] ==
 	      ZLRS_CFG_IMAGE_HASH_LEN - 1U);
 
-	/* CONFIRM：必须真的调到后端回调（升级去留就看它） */
+	/* CONFIRM: the backend callback must really fire (the upgrade hangs on it) */
 	fake.image_confirmed = false;
 	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_CONFIRM, NULL, 0U, resp, sizeof(resp));
 	CHECK(len > 0U);
@@ -267,7 +267,7 @@ static void test_dispatch(void)
 	CHECK(ZLRS_CFG_PAYLOAD(&parser)[1] == ZLRS_CFG_OK);
 	CHECK(fake.image_confirmed);
 
-	/* SET_KEY_HEX：合法 64 字符 */
+	/* SET_KEY_HEX: a valid 64-character key */
 	for (uint8_t i = 0U; i < ZLRS_KEY_LEN; i++) {
 		static const char hex[] = "0123456789abcdef";
 
@@ -283,7 +283,7 @@ static void test_dispatch(void)
 	CHECK(fake.key_saved);
 	CHECK(fake.saved_key[0] == 0x00U && fake.saved_key[1] == 0x10U);
 
-	/* SET_KEY_HEX：长度不对 / 非法字符 */
+	/* SET_KEY_HEX: wrong length, illegal characters */
 	fake.key_saved = false;
 	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_SET_KEY_HEX, payload, 63U, resp,
 				sizeof(resp));
@@ -291,14 +291,14 @@ static void test_dispatch(void)
 	CHECK(ZLRS_CFG_PAYLOAD(&parser)[1] == ZLRS_CFG_E_PARAM);
 	CHECK(!fake.key_saved);
 
-	payload[3] = (uint8_t)'z'; /* 非法十六进制字符 */
+	payload[3] = (uint8_t)'z'; /* not a hex digit */
 	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_SET_KEY_HEX, payload, 64U, resp,
 				sizeof(resp));
 	CHECK(parse_response(resp, len, &parser));
 	CHECK(ZLRS_CFG_PAYLOAD(&parser)[1] == ZLRS_CFG_E_PARAM);
 	CHECK(!fake.key_saved);
 
-	/* 落盘失败要如实回报 */
+	/* A failing store has to be reported honestly */
 	fake.store_rc = ZLRS_CFG_E_STORE;
 	payload[3] = (uint8_t)'1';
 	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_SET_KEY_HEX, payload, 64U, resp,
@@ -307,7 +307,7 @@ static void test_dispatch(void)
 	CHECK(ZLRS_CFG_PAYLOAD(&parser)[1] == ZLRS_CFG_E_STORE);
 	fake.store_rc = ZLRS_CFG_OK;
 
-	/* SET_PHRASE：设备侧派生出上面那个向量 */
+	/* SET_PHRASE: the device derives the vector above */
 	{
 		static const char phrase[] = "hello";
 
@@ -320,7 +320,7 @@ static void test_dispatch(void)
 				       "7e7363b218016d1f319a6389fa20aaf53d2fe21056ffe30566cc3b874e6073f8"));
 	}
 
-	/* 空短语拒绝 */
+	/* An empty phrase is rejected */
 	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_SET_PHRASE, NULL, 0U, resp,
 				sizeof(resp));
 	CHECK(parse_response(resp, len, &parser));
@@ -332,7 +332,7 @@ static void test_dispatch(void)
 	CHECK(ZLRS_CFG_PAYLOAD(&parser)[1] == ZLRS_CFG_OK);
 	CHECK(fake.pair_count == 1U);
 
-	/* SET_FAILSAFE：22 字节通道载荷 */
+	/* SET_FAILSAFE: a 22-byte channel payload */
 	for (uint8_t i = 0U; i < 22U; i++) {
 		payload[i] = (uint8_t)(0x40U + i);
 	}
@@ -343,16 +343,16 @@ static void test_dispatch(void)
 	CHECK(fake.failsafe_saved);
 	CHECK(memcmp(fake.failsafe, payload, 22U) == 0);
 
-	/* 长度不对要拒 */
+	/* A wrong length is rejected */
 	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_SET_FAILSAFE, payload, 21U, resp,
 				sizeof(resp));
 	CHECK(parse_response(resp, len, &parser));
 	CHECK(ZLRS_CFG_PAYLOAD(&parser)[1] == ZLRS_CFG_E_PARAM);
 
-	/* SET_BAUD：4 字节小端 */
+	/* SET_BAUD: 4 bytes little-endian */
 	payload[0] = 0x00U;
 	payload[1] = 0x25U;
-	payload[2] = 0x06U; /* 0x00062500 = 400000？见下：0x25 0x06 → 0x062500 */
+	payload[2] = 0x06U; /* 0x00062500 = 400000? see below: 0x25 0x06 -> 0x062500 */
 	payload[3] = 0x00U;
 	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_SET_BAUD, payload, 4U, resp,
 				sizeof(resp));
@@ -361,7 +361,7 @@ static void test_dispatch(void)
 	CHECK(fake.baud_saved);
 	CHECK(fake.baud == 0x00062500U);
 
-	/* EXIT 与未知命令 */
+	/* EXIT and an unknown command */
 	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_EXIT, NULL, 0U, resp, sizeof(resp));
 	CHECK(parse_response(resp, len, &parser));
 	CHECK(ZLRS_CFG_PAYLOAD(&parser)[1] == ZLRS_CFG_OK);
