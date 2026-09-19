@@ -31,7 +31,7 @@
 		/*
 		 * MCUboot serial recovery is USB only: it points at the data port CDC (`cdc_acm_uart1`, the
 		 * second port the on-board USB-C enumerates). One USB cable is enough to upgrade, no UART
-		 * adapter needed, and the GP8/GP9 UART stays with the application. */
+		 * adapter needed, and the GP8/GP9 UART stays with the application.
 		 */
 		zephyr,uart-mcumgr = &cdc_acm_uart1;
 	};

@@ -312,8 +312,11 @@ static void plan_init(void)
 	 * that fits the one-way data window budget (a quarter frame), capped by the format.
 	 */
 	{
-		const uint32_t budget_us =
-			(1000000U / (uint32_t)CONFIG_ZLRS_APP_CONTROL_RATE_HZ) / 4U;
+		/*
+		 * Budget the data window against the frame rate this build actually asks for: the
+		 * rate knob differs per mode (racing, LoRa, plain FLRC), and only req.want_hz knows.
+		 */
+		const uint32_t budget_us = (1000000U / req.want_hz) / 4U;
 		uint16_t len = (uint16_t)(ZLRS_PAYLOAD_MAX_LEN - 2U);
 
 		while (len > 16U &&
@@ -572,7 +575,10 @@ static void run_slot(uint8_t slot)
 		bool done = false;
 
 		while (waited_us < slot_budget_us) {
+#if IS_ENABLED(CONFIG_ZLRS_APP_RADIO)
+			/* Only the RAC backend needs pumping; the null backend completes inline. */
 			SMTC_SW_PLATFORM_VOID(smtc_rac_run_engine());
+#endif
 
 			if (zlrs_radio_port_wait_us(ZLRS_RADIO_PUMP_STEP_US) == 0) {
 				done = true;
