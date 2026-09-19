@@ -43,7 +43,7 @@ Some knobs are on or off today only because they have not been accepted on hardw
 | `ZLRS_APP_FHSS`, `ZLRS_APP_SESSION_HANDSHAKE`, `ZLRS_APP_TELEMETRY` | on | the first two-module session (pairing, session, telemetry round trip) | stay on |
 | role TX/RX and the security profile | compile time, P1 | `set-role` / `set-profile` in the config protocol ([organization](organization.md) 4) | runtime, stored in NVS |
 
-The bench switches that exist to isolate these (`…=n` forms, P0, `RADIO=n`, one link at a time) are *not* debt: they are part of the product's shape and stay, see [12-debug](12-debug.md) 3.
+The switches that exist to isolate a layer (`…=n` forms, P0, one link at a time) are *not* debt either: they cut the product's shape and stay, see [12-debug](12-debug.md) 3. The ones that only make sense on the bench — a build whose radio sits out, for a board with no module attached — are gated by `CONFIG_ZLRS_APP_DEBUG` and cannot be reached from a shipped configuration.
 
 ## Acceptance criteria
 

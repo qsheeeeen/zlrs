@@ -38,12 +38,15 @@ config ZLRS_APP_ROLE_TX
 	  The TX sends control frames and receives telemetry, the RX does the opposite. Both ends run
 
 config ZLRS_APP_RADIO
-	bool "Radio (USP/RAC + LR2021)"
+	# Prompt only in debug images: a shipped module always has its radio, and a production
+	# configuration that tries to turn it off is ignored (Kconfig keeps the default).
+	bool "Radio (USP/RAC + LR2021)" if ZLRS_APP_DEBUG
 	default y
 	help
-	  Off: the radio sits out entirely (app/src/radio_null.c) while the link state machines and
-	  everything else keep running. Use it with no Core2021 attached: the LR20xx HAL k_oops()es
-	  when BUSY never arrives. See doc/12-debug.md 3.
+	  On in every production build. A debug image may turn it off: the radio then sits out
+	  entirely (app/src/radio_null.c) while the link state machines and everything else keep
+	  running, which is how the software is brought up with no Core2021 attached — the LR20xx
+	  HAL k_oops()es when BUSY never arrives. See doc/12-debug.md 3.
 
 config ZLRS_APP_LINK_CONTROL
 	bool "Control link (RC + telemetry + pairing)"

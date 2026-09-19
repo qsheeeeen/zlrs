@@ -44,7 +44,7 @@ Do not bring everything up at once: turn one layer off at a time, and if the res
 | `CONFIG_ZLRS_APP_RATE_ADAPT=n` | one fixed rate tier | `link: rate adapt` |
 | `CONFIG_ZLRS_APP_DYNAMIC_POWER=n` | fixed TX power | `power: *` |
 | `CONFIG_ZLRS_APP_LINK_CONTROL=n` / `ZLRS_APP_LINK_DATA=n` | one link only | compile check (both SKUs are in CI) |
-| `CONFIG_ZLRS_APP_RADIO=n` | the radio sits out (`app/src/radio_null.c`): no USP/RAC init, no transactions, each one finishes at once as "sent, nothing heard"; ports, config, button, LED and NVS work as usual | compile check plus on-board USB, ports and config |
+| `CONFIG_ZLRS_APP_RADIO=n` | the radio sits out (`app/src/radio_null.c`): no USP/RAC init, no transactions, each one finishes at once as "sent, nothing heard"; ports, config, button, LED and NVS work as usual. Only settable in a debug image: every production build has its radio, a `.conf` that tries to turn it off is ignored | compile check plus on-board USB, ports and config |
 
 These switches cut *shape*, not a feature that is merely unproven: they are part of the product definition (the shapes in [01-product](01-product.md)) and stay. Features that are on or off only because they have not been accepted on hardware yet are listed as a ledger in [13-roadmap](13-roadmap.md), under "Pending defaults".
 | `CONFIG_ZLRS_APP_CRSF_PORT=n` | the CRSF port stays uninitialised: the TX sends only the configured failsafe values | compile check |

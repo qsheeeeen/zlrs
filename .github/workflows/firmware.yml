@@ -99,12 +99,15 @@ jobs:
 
       # Radio off (CONFIG_ZLRS_APP_RADIO=n): the profile for a board without a Core2021 attached,
       # running ports, config mode, button, LED and NVS only, through app/src/radio_null.c.
+      # RADIO is only settable in a debug image (app/bringup-noradio.conf), so the marker goes
+      # with it here.
       - name: build (radio off, both skus)
         run: |
           set -x
           . zlrs/tools/zephyr-env.sh
           for board in rp2350_zero_core2021/rp2350a/m33/hf rp2350_zero_core2021/rp2350a/m33/lf; do
             ZLRS_BOARD="$board" zlrs-build -d "build-noradio-${board##*/}" -- \
+              -DCONFIG_ZLRS_APP_DEBUG=y \
               -DCONFIG_ZLRS_APP_RADIO=n
           done
 
