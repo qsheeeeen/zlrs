@@ -1,12 +1,12 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# 固件构建：按 README 的流程把 west 工作区（~5 GB）和 Zephyr SDK 装起来，
-# 再把 hf / lf 两个 sub-G SKU 各构建一次。约 10 分钟，所以跟快速的
-# host-tests 分开，失败时也不拖累每次 push 的状态。
+# Firmware build: install the west workspace (~5 GB) and the Zephyr SDK the way the README
+# describes, then build both sub-G SKUs. It takes about 10 minutes, so it stays separate
+# from the fast host tests and never blocks a push on its own.
 #
-# 现在标了 continue-on-error：构建还在这台机器上验证不了，先让它报错但不拦
-# 提交；跑绿之后去掉这一行，变成硬门禁。
+# Marked continue-on-error: the build could not be validated on a runner yet, so let it report
+# without blocking; drop the line once it runs green and make it a hard gate.
 
 name: firmware
 
@@ -44,7 +44,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build device-tree-compiler
 
-      # 直接用仓库里的脚本搭工作区：CI 顺带验证 README 里写的那条流程
+      # Build the workspace with the repository's own script: CI also validates the README flow
       - name: workspace (venv + west init/update + requirements)
         run: |
           set -x
@@ -72,7 +72,7 @@ jobs:
           . zlrs/scripts/zephyr-env.sh
           ZLRS_BOARD=rp2350_zero_core2021/rp2350a/m33/lf zlrs-build -d build-lf
 
-      # 上板调试档：把所有复杂功能都关掉，验证裁剪组合也编得过（见 01 第 2.3 节）
+      # Bench profile: turn every complex feature off so the trimmed combination still compiles
       - name: build (bring-up toggles off, both skus)
         run: |
           set -x
@@ -87,8 +87,8 @@ jobs:
               -DCONFIG_ZLRS_APP_RESYNC_PERIOD_MS=0
           done
 
-      # 射频整块关掉（CONFIG_ZLRS_APP_RADIO=n）：Core2021 还没接上时的档，
-      # 只跑端口 / 配置模式 / 按键 / 状态灯 / NVS，走 app/src/radio_null.c。
+      # Radio off (CONFIG_ZLRS_APP_RADIO=n): the profile for a board without a Core2021 attached,
+      # running ports, config mode, button, LED and NVS only, through app/src/radio_null.c.
       - name: build (radio off, both skus)
         run: |
           set -x
@@ -98,9 +98,9 @@ jobs:
               -DCONFIG_ZLRS_APP_RADIO=n
           done
 
-      # 单链路裁剪：只跑数据链路（控制链路、CRSF 端口、配置模式、按键、状态灯
-      # 全关）。配置协议与灯语两个库不写 CONFIG_ZLRS_*=n，跟着应用开关走——
-      # 这样这一档顺带验证"应用开关真的把库裁掉了"。
+      # Single-link cut: the data link alone (control link, CRSF port, config mode, button and LED
+      # all off). The config-protocol and LED libraries are not pinned with CONFIG_ZLRS_*=n but
+      # follow their application switches, so this profile also proves the switches really cut them.
       - name: build (data link only, both skus)
         run: |
           set -x
@@ -114,7 +114,7 @@ jobs:
               -DCONFIG_ZLRS_APP_STATUS_LED=n
           done
 
-      # LoRa 远距档的控制链路：设备侧的 radio_params.lora 那条路只有编译能验
+      # LoRa long-range control link: radio_params.lora on the device side can only be compile-checked
       - name: build (lora control link, both skus)
         run: |
           set -x
@@ -125,7 +125,7 @@ jobs:
               -DCONFIG_ZLRS_APP_CONTROL_MODULATION_FLRC=n
           done
 
-      # 竞速模式：控制链路独占 2.4G，数据链路让到 sub-G
+      # Racing mode: control owns 2.4G and the data link moves to sub-G
       - name: build (racing band role, both skus)
         run: |
           set -x
@@ -136,8 +136,8 @@ jobs:
               -DCONFIG_ZLRS_APP_BAND_ROLE_SUBG_CONTROL=n
           done
 
-      # MCUboot：sysbuild 把 bootloader 与应用（签名）一起编出来，两个 SKU 各一次，
-      # 并顺手验证"签名镜像打 UF2"那条脚本（第一次拖盘要用它）
+      # MCUboot: sysbuild builds the bootloader together with the signed application for both SKUs,
+      # and also exercises the script that wraps a signed image into a UF2 for the first flash
       - name: build (mcuboot, both skus)
         run: |
           set -x

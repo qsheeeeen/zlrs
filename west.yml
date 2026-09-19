@@ -20,7 +20,7 @@ manifest:
   projects:
     - name: zephyr
       url: https://github.com/zephyrproject-rtos/zephyr
-      # v4.4.0 起 RP2350 的 TRNG 驱动（raspberrypi,pico-rng）才在树内
+      # The RP2350 TRNG driver (raspberrypi,pico-rng) only exists in-tree from v4.4.0
       revision: v4.4.0
       import: true
     - name: usp_zephyr

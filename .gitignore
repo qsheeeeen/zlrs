@@ -54,11 +54,11 @@ dkms.conf
 # debug information files
 *.dwo
 
-# Zephyr 构建输出（工作区在仓库的上一级目录，这里只做兜底）
+# Zephyr build output (the workspace sits one level above the repository; this is a fallback)
 build/
 compile_commands.json
 
-# 主机侧测试（build = 普通构建，build-san = ASan/UBSan）
+# Host-side tests (build = plain build, build-san = ASan/UBSan)
 tests/host/build/
 tests/host/build-san/
 
