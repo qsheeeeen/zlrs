@@ -2,8 +2,8 @@
  * Copyright (c) 2026 zlrs contributors
  * SPDX-License-Identifier: Apache-2.0
  *
- * 地区配置层测试：三张表的信道表都要落在频段边界内、功率不超上限；
- * 占空比按滑动窗口记账，超了就拦下来并计数。
+ * Region layer tests: every channel plan stays inside its band edges, power within the ceiling,
+ * duty is accounted over a sliding window and overruns are refused and counted.
  */
 
 #include "test.h"
@@ -17,16 +17,16 @@ static void test_tables(void)
 
 		CHECK(region != NULL);
 		CHECK(region->name != NULL);
-		/* 本机 band 一致、功率在上限内：必须通过 */
+		/* Matching band, power within the ceiling: must pass */
 		CHECK(zlrs_region_validate(region, region->band,
 					   region->max_tx_power_dbm) == 0);
-		/* 功率超一点就该被拦 */
+		/* A little over the ceiling has to be refused */
 		if (region->max_tx_power_dbm < 22) {
 			CHECK(zlrs_region_validate(region, region->band,
 						   (int8_t)(region->max_tx_power_dbm + 1)) !=
 			      0);
 		}
-		/* band 不匹配就该被拦：LF 板跑不了 915，HF 板跑不了 470/433 */
+		/* A band mismatch has to be refused: an LF board cannot do 915, an HF one cannot do 470/433 */
 		CHECK(zlrs_region_validate(region,
 					   (region->band == ZLRS_BAND_SUBG_HF)
 						   ? ZLRS_BAND_SUBG_LF
@@ -37,7 +37,7 @@ static void test_tables(void)
 	CHECK(zlrs_region_get(ZLRS_REGION_COUNT) == NULL);
 	CHECK(zlrs_region_validate(NULL, ZLRS_BAND_SUBG_HF, 0) != 0);
 
-	/* 具体到原型：HF 板只认 FCC915/EU868，LF 板只认 CN470/CN433 */
+	/* On the prototype: the HF board accepts FCC915/EU868, the LF board CN470/CN433 */
 	CHECK(zlrs_region_validate(zlrs_region_get(ZLRS_REGION_FCC915), ZLRS_BAND_SUBG_HF,
 				   10) == 0);
 	CHECK(zlrs_region_validate(zlrs_region_get(ZLRS_REGION_FCC915), ZLRS_BAND_SUBG_LF,
@@ -50,7 +50,7 @@ static void test_tables(void)
 				   10) == -5);
 }
 
-/* 速率上限：频段窄的地区要把配置的速率压下来 */
+/* Rate ceiling: narrow bands pull the configured rate down */
 static void test_rate_limit(void)
 {
 	printf("region: rate limit\n");
@@ -59,14 +59,14 @@ static void test_rate_limit(void)
 	      2600000U);
 	CHECK(zlrs_region_clamp_rate(zlrs_region_get(ZLRS_REGION_FCC915), 1300000U) ==
 	      1300000U);
-	/* EU868 / CN470 / CN433 放不下宽带档 */
+	/* EU868, CN470 and CN433 cannot fit the wideband tiers */
 	CHECK(zlrs_region_clamp_rate(zlrs_region_get(ZLRS_REGION_EU868), 1300000U) ==
 	      325000U);
 	CHECK(zlrs_region_clamp_rate(zlrs_region_get(ZLRS_REGION_CN470), 2600000U) ==
 	      325000U);
 	CHECK(zlrs_region_clamp_rate(zlrs_region_get(ZLRS_REGION_CN433), 650000U) ==
 	      325000U);
-	/* 本来就低于上限的不动 */
+	/* Anything already below the ceiling stays put */
 	CHECK(zlrs_region_clamp_rate(zlrs_region_get(ZLRS_REGION_CN433), 325000U) ==
 	      325000U);
 	CHECK(zlrs_region_clamp_rate(NULL, 1300000U) == 1300000U);
@@ -76,36 +76,36 @@ static void test_airtime(void)
 {
 	printf("region: airtime\n");
 
-	/* 128 字节 @ 1.3 Mbps：(128+4)*8 bit = 812.3 µs，向上取整 813 µs */
+	/* 128 bytes at 1.3 Mbps: (128+4)*8 bit = 812.3 us, rounded up to 813 us */
 	CHECK(zlrs_airtime_us(128U, 1300000U) == 813U);
-	/* 同样的帧在 0.325 Mbps 上约 3.25 ms */
+	/* The same frame at 0.325 Mbps is about 3.25 ms */
 	CHECK(zlrs_airtime_us(128U, 325000U) == 3250U);
-	/* 128 字节 @ 1.3 Mbps：(128+4)*8 bit ≈ 812 µs，向上取整到 1 ms */
+	/* 128 bytes at 1.3 Mbps: (128+4)*8 bit ~ 812 us, rounded up to 1 ms */
 	CHECK(zlrs_airtime_ms(128U, 1300000U) == 1U);
-	/* 同样的帧在 0.325 Mbps 上约 3.25 ms */
+	/* The same frame at 0.325 Mbps is about 3.25 ms */
 	CHECK(zlrs_airtime_ms(128U, 325000U) == 4U);
-	/* 速率未知时不记账 */
+	/* No accounting when the rate is unknown */
 	CHECK(zlrs_airtime_ms(128U, 0U) == 0U);
 	CHECK(zlrs_airtime_us(128U, 0U) == 0U);
 }
 
-/* 地区占空比 → 控制帧率上限：EU868 的 1% 撑不起 150 Hz，FCC/CN 不限 */
+/* Region duty -> control rate ceiling: EU868's 1% cannot feed 150 Hz, FCC/CN are unlimited */
 static void test_max_frames(void)
 {
-	/* 31 字节控制帧 @1.3 Mbps：(31+4)*8/1.3e6 = 215.4 µs，向上取整 216 µs */
+	/* 31-byte control frame at 1.3 Mbps: (31+4)*8/1.3e6 = 215.4 us, rounded up to 216 us */
 	printf("region: max control rate\n");
 
 	CHECK(zlrs_airtime_us(31U, 1300000U) == 216U);
 
-	/* 1% → 10000 µs/s → 10000/216 = 46 帧/秒 */
+	/* 1% -> 10000 us/s -> 10000/216 = 46 frames per second */
 	CHECK(zlrs_region_max_frames_per_s(zlrs_region_get(ZLRS_REGION_EU868), 1300000U,
 					   31U) == 46U);
-	/* 不限占空比的地区：想跑多少跑多少 */
+	/* Unlimited-duty regions: as fast as you like */
 	CHECK(zlrs_region_max_frames_per_s(zlrs_region_get(ZLRS_REGION_FCC915), 1300000U,
 					   31U) == UINT32_MAX);
 	CHECK(zlrs_region_max_frames_per_s(zlrs_region_get(ZLRS_REGION_CN470), 1300000U,
 					   31U) == UINT32_MAX);
-	/* 速率未知时不设限（交给上层） */
+	/* No ceiling when the rate is unknown (the layer above decides) */
 	CHECK(zlrs_region_max_frames_per_s(zlrs_region_get(ZLRS_REGION_EU868), 0U, 31U) ==
 	      UINT32_MAX);
 }
@@ -119,16 +119,16 @@ static void test_duty(void)
 
 	printf("region: duty cycle\n");
 
-	/* EU868：1% / 60 秒 = 600 ms 预算 */
+	/* EU868: 1% of 60 s = 600 ms of budget */
 	zlrs_duty_init(&duty, eu, now);
 	CHECK(duty.limited);
 	CHECK(zlrs_duty_remaining_ms(&duty, now) == 600U);
 
-	/* 一次 4 ms 的发射后还剩 596 ms */
+	/* One 4 ms transmission leaves 596 ms */
 	CHECK(zlrs_duty_reserve(&duty, 4U, now));
 	CHECK(zlrs_duty_remaining_ms(&duty, now) == 596U);
 
-	/* 把剩下的额度用光（每次 100 ms 的长时间发射），再发就被拦下并计数 */
+	/* Spend the rest in 100 ms chunks; the next attempt is refused and counted */
 	for (uint8_t i = 0U; i < 5U; i++) {
 		CHECK(zlrs_duty_reserve(&duty, 100U, now));
 	}
@@ -137,14 +137,14 @@ static void test_duty(void)
 	CHECK(zlrs_duty_reserve(&duty, 96U, now));
 	CHECK(zlrs_duty_remaining_ms(&duty, now) == 0U);
 	CHECK(!zlrs_duty_reserve(&duty, 1U, now));
-	CHECK(duty.denied == 2U); /* 刚才那次 100 ms 也被拦过 */
+	CHECK(duty.denied == 2U); /* that 100 ms attempt was refused too */
 
-	/* 窗口翻篇：额度回来 */
+	/* New window: the budget is back */
 	now += 60001U;
 	CHECK(zlrs_duty_remaining_ms(&duty, now) == 600U);
 	CHECK(zlrs_duty_reserve(&duty, 4U, now));
 
-	/* FCC915 不限制占空比：随便发，计数器也不动 */
+	/* FCC915 has no duty limit: transmit freely, no counter moves */
 	zlrs_duty_init(&duty, fcc, now);
 	CHECK(!duty.limited);
 	for (uint8_t i = 0U; i < 5U; i++) {
@@ -154,7 +154,7 @@ static void test_duty(void)
 	CHECK(duty.denied == 0U);
 }
 
-/* 控制计划：帧率受占空比与空中时间双重约束，节奏系数跟着帧率折算 */
+/* Control plan: rate is bounded by duty and airtime, the cadence factors follow the rate */
 static void test_control_plan(void)
 {
 	zlrs_control_plan_t plan;
@@ -167,7 +167,7 @@ static void test_control_plan(void)
 
 	printf("region: control plan\n");
 
-	/* 默认档：FCC915 + 1.3 Mbps，150 Hz 原样跑 */
+	/* Default tier: FCC915 at 1.3 Mbps runs 150 Hz unchanged */
 	req.region = zlrs_region_get(ZLRS_REGION_FCC915);
 	req.want_hz = 150U;
 	zlrs_region_control_plan(&req, &plan);
@@ -178,38 +178,38 @@ static void test_control_plan(void)
 	CHECK(plan.data_every_n == 1U);
 	CHECK(!plan.clamped_by_duty && !plan.clamped_by_airtime);
 
-	/* 500 Hz 档：FCC915 不限占空比，1.3 Mbps 的空中时间也撑得住 */
+	/* 500 Hz tier: FCC915 has no duty limit and 1.3 Mbps airtime keeps up */
 	req.want_hz = 500U;
 	zlrs_region_control_plan(&req, &plan);
 	CHECK(plan.rate_hz == 500U);
 	CHECK(plan.frame_period_us == 2000U);
 	CHECK(plan.slot_budget_us == 500U);
-	CHECK(plan.tlm_every_n == 3U);  /* ≈167 次/秒 */
-	CHECK(plan.data_every_n == 5U); /* =100 次/秒 */
+	CHECK(plan.tlm_every_n == 3U);  /* about 167 times per second */
+	CHECK(plan.data_every_n == 5U); /* 100 times per second */
 	CHECK(!plan.clamped_by_duty && !plan.clamped_by_airtime);
 
-	/* EU868 的 1% 占空比把 500 Hz 压到 46 Hz */
+	/* EU868's 1% duty pulls 500 Hz down to 46 Hz */
 	req.region = zlrs_region_get(ZLRS_REGION_EU868);
 	zlrs_region_control_plan(&req, &plan);
 	CHECK(plan.rate_hz == 46U);
 	CHECK(plan.clamped_by_duty);
 	CHECK(!plan.clamped_by_airtime);
-	CHECK(plan.tlm_every_n == 1U); /* 帧率已经低于目标速率：每帧都发 */
+	CHECK(plan.tlm_every_n == 1U); /* the rate is below the target, so every frame carries telemetry */
 
-	/* 窄带速率（CN470 被压到 0.325 Mbps）下，帧率受空中时间限制 */
+	/* At the narrow-band rate (CN470 clamps to 0.325 Mbps) airtime bounds the frame rate */
 	req.region = zlrs_region_get(ZLRS_REGION_CN470);
 	req.mod = &narrow;
 	zlrs_region_control_plan(&req, &plan);
 	CHECK(plan.clamped_by_airtime);
-	/* 空中时间 862 µs + 200 µs 余量 → 一帧两个控制时隙 ≈ 470 Hz */
+	/* Airtime 862 us plus 200 us of headroom -> two control slots per frame ~ 470 Hz */
 	CHECK(plan.rate_hz == 470U);
-	/* 四分之一帧（531 µs）装不下 1062 µs 的时隙，预算按实际需要给 */
+	/* A quarter frame (531 us) cannot hold a 1062 us slot, so the budget follows the real need */
 	CHECK(plan.slot_budget_us == 1062U);
 }
 
 /*
- * LoRa 远距档（doc/07-architecture.md 第 3 节）：一帧就是几十毫秒，帧率由空中时间
- * 定，不再是配置里写多少就是多少。
+ * LoRa long-range tier (doc/07-architecture.md 3): a frame is tens of ms, so airtime decides
+ * the frame rate, not the configured number.
  */
 static void test_lora_plan(void)
 {
@@ -217,7 +217,7 @@ static void test_lora_plan(void)
 	const zlrs_mod_cfg_t sub_g_slow = zlrs_mod_flrc(325000U);
 	zlrs_control_plan_t plan;
 	zlrs_plan_req_t req = {
-		.region = NULL, /* FCC915：不限占空比 */
+		.region = NULL, /* FCC915: no duty limit */
 		.mod = &lora,
 		.want_hz = 10U,
 		.frame_len = 31U,
@@ -229,22 +229,22 @@ static void test_lora_plan(void)
 	req.region = zlrs_region_get(ZLRS_REGION_FCC915);
 	zlrs_region_control_plan(&req, &plan);
 
-	/* 10 Hz 装不下（72 + 36 + 余量 = 108 ms），压到 9 Hz */
+	/* 10 Hz does not fit (72 + 36 + headroom = 108 ms), so it clamps to 9 Hz */
 	CHECK(plan.clamped_by_airtime);
 	CHECK(!plan.clamped_by_duty);
 	CHECK(plan.rate_hz == 9U);
 	CHECK(plan.frame_period_us == 111111U);
-	/* 时隙预算要容得下 72 ms 的 RC 帧——FLRC 的 2 ms 上限在这里不适用 */
+	/* The slot budget has to hold a 72 ms RC frame: FLRC's 2 ms ceiling does not apply here */
 	CHECK(plan.slot_budget_us >= 71936U + 200U);
 
-	/* 数据链路在 sub-G 跑窄带：两个 135 B 的窗口摊进来，帧率再掉一点 */
+	/* The data link runs narrow-band on sub-G: two 135 B windows amortise in and trim the rate */
 	req.other_mod = &sub_g_slow;
 	req.other_frame_len = 135U;
 	zlrs_region_control_plan(&req, &plan);
 	CHECK(plan.rate_hz == 8U);
 	CHECK(plan.frame_period_us >= 108432U + 2U * 3622U);
 
-	/* EU868 的 1% 占空比撑不住 LoRa：告警归告警，帧率兜底到 1 Hz */
+	/* EU868's 1% duty cannot feed LoRa: it warns and the rate falls back to 1 Hz */
 	req.region = zlrs_region_get(ZLRS_REGION_EU868);
 	req.other_mod = NULL;
 	req.other_frame_len = 0U;
@@ -254,9 +254,9 @@ static void test_lora_plan(void)
 }
 
 /*
- * 竞速模式（doc/07-architecture.md 第 2 节）：控制链路独占 2.4G——它没有地区表，占空比
- * 门不作用在它身上；让到 sub-G 的那条链路（数据）才受法规约束，它的窗口按
- * data_every_n 摊进超帧，峰值帧率被拖下来一点。
+ * Racing mode (doc/07-architecture.md 2): control owns 2.4G, has no region table and the duty
+ * gate does not touch it; the link that moved to sub-G (data) is the regulated one, and its
+ * windows amortise into the superframe through data_every_n, trimming the peak rate.
  */
 static void test_racing_plan(void)
 {
@@ -264,7 +264,7 @@ static void test_racing_plan(void)
 	const zlrs_mod_cfg_t sub_g_slow = zlrs_mod_flrc(325000U);
 	zlrs_control_plan_t plan;
 	zlrs_plan_req_t req = {
-		.region = NULL, /* 2.4G：没有地区表 */
+		.region = NULL, /* 2.4G: no region table */
 		.mod = &ctl,
 		.want_hz = 500U,
 		.frame_len = 31U,
@@ -277,26 +277,26 @@ static void test_racing_plan(void)
 
 	zlrs_region_control_plan(&req, &plan);
 
-	/* 不受占空比限制，但 sub-G 数据窗口的预留把峰值压到 420 Hz */
+	/* No duty limit, but the sub-G data window reservation pulls the peak to 420 Hz */
 	CHECK(!plan.clamped_by_duty);
 	CHECK(plan.clamped_by_airtime);
 	CHECK(plan.rate_hz == 420U);
-	/* 数据窗口每 4 帧一次：7204 µs 的预留摊到每帧 1811 µs，和帧率自洽 */
+	/* Data every 4 frames: 7204 us of reservation spreads to 1811 us per frame, which is consistent */
 	CHECK(plan.data_every_n == 4U);
 	CHECK(plan.frame_period_us == 2380U);
 }
 
 /*
- * 1000 Hz 档的时间预算（doc/09-protocol.md 4.1）：2.6 Mbps 下 31 B 的 RC 帧是
- * 108 µs，一帧 1000 µs，四个时隙分得开——协议侧没问题，跑不跑得起来取决于射频
- * 侧是不是直调驱动（RAC 的排期粒度是毫秒）。
+ * 1000 Hz timing budget (doc/09-protocol.md 4.1): at 2.6 Mbps a 31 B RC frame takes 108 us and
+ * a frame is 1000 us, so the four slots separate cleanly. The protocol side is fine; whether it
+ * runs depends on driving the radio directly (RAC schedules in whole milliseconds).
  */
 static void test_plan_1000hz(void)
 {
 	const zlrs_mod_cfg_t fast = zlrs_mod_flrc(2600000U);
 	zlrs_control_plan_t plan;
 	zlrs_plan_req_t req = {
-		.region = NULL, /* FCC915：不限占空比 */
+		.region = NULL, /* FCC915: no duty limit */
 		.mod = &fast,
 		.want_hz = 1000U,
 		.frame_len = 31U,
@@ -312,10 +312,10 @@ static void test_plan_1000hz(void)
 
 	CHECK(plan.rate_hz == 1000U);
 	CHECK(plan.frame_period_us == 1000U);
-	/* 时隙预算 = 空中时间 108 µs + 200 µs 余量 */
+	/* Slot budget = 108 us of airtime plus 200 us of headroom */
 	CHECK(plan.slot_budget_us == 308U);
-	CHECK(plan.tlm_every_n == 6U);   /* ≈167 次/秒 */
-	CHECK(plan.data_every_n == 10U); /* =100 次/秒 */
+	CHECK(plan.tlm_every_n == 6U);   /* about 167 times per second */
+	CHECK(plan.data_every_n == 10U); /* 100 times per second */
 	CHECK(!plan.clamped_by_airtime && !plan.clamped_by_duty);
 }
 
@@ -326,21 +326,21 @@ static void test_mix_limit(void)
 
 	printf("region: sub-band mix limit\n");
 
-	/* 不限占空比：直接 100%（档位 3 = 4 个时隙） */
+	/* No duty limit: 100% straight away (level 3 = all 4 slots) */
 	CHECK(zlrs_region_mix_level(fcc, 24U, 1000U) == 3U);
 	CHECK(zlrs_region_mix_level(NULL, 24U, 1000U) == 3U);
 
-	/* EU868 1%：24 ms 窗口里只允许 0.24 ms 的 sub-G 发射
-	 * 1 ms/时隙 → 一个都放不下（0/25/50/100 全超） */
+	/* EU868 1%: a 24 ms window allows 0.24 ms of sub-G airtime,
+	 * so 1 ms per slot fits none of the levels */
 	CHECK(zlrs_region_mix_level(eu, 24U, 1000U) == 0U);
-	/* 时隙短一点（200 us）：0.24 ms 允许 1 个 → 25% */
+	/* Shorter slots (200 us): 0.24 ms allows one -> 25% */
 	CHECK(zlrs_region_mix_level(eu, 24U, 200U) == 1U);
-	/* 100 us/时隙：允许 2 个 → 50% */
+	/* 100 us per slot: two allowed -> 50% */
 	CHECK(zlrs_region_mix_level(eu, 24U, 100U) == 2U);
-	/* 窗口拉长到 400 ms：1% = 4 ms，够 4 个 1 ms 的时隙 → 100% */
+	/* Window stretched to 400 ms: 1% = 4 ms, enough for four 1 ms slots -> 100% */
 	CHECK(zlrs_region_mix_level(eu, 400U, 1000U) == 3U);
 
-	/* 非法参数不崩 */
+	/* Invalid arguments do not crash */
 	CHECK(zlrs_region_mix_level(eu, 0U, 100U) == 3U);
 	CHECK(zlrs_region_mix_level(eu, 24U, 0U) == 3U);
 }
