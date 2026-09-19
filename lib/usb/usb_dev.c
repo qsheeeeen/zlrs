@@ -1,11 +1,11 @@
 /*
- * zlrs 的 USB 设备栈：把 devicetree 里的 CDC 组成复合设备（应用三块、bootloader
- * 两块，代码同一份，只有字符串与 VID/PID 不同）。产品名要留成 ZLRS / ZLRS MCUBOOT，
- * 升级脚本按 /dev/serial/by-id 里的名字找端口。
+ * zlrs USB device stack: compose the devicetree CDCs into one device (three in the
+ * application, two in the bootloader; same code, different strings and VID/PID). The product
+ * names stay ZLRS / ZLRS MCUBOOT because the update tool finds ports by those names.
  *
- * device_next 栈里 `zephyr,cdc-acm-uart` 节点只表达"要几块 CDC"，不会让设备上线；
- * 而 CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT 只注册第一块 CDC，其余没有 context，
- * 第一次往它们写日志就 NULL 解引用。所以这里自己注册全部 CDC。
+ * In the device_next stack a `zephyr,cdc-acm-uart` node only says how many CDCs exist; it does
+ * not bring the device up. CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT registers only the first
+ * CDC, so the rest have no context and NULL-dereference on their first log write. We register all.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -35,7 +35,7 @@ USBD_DESC_CONFIG_DEFINE(zlrs_usb_fs_cfg_desc, "zlrs");
 USBD_CONFIGURATION_DEFINE(zlrs_usb_fs_config, 0, CONFIG_ZLRS_USB_MAX_POWER,
 			  &zlrs_usb_fs_cfg_desc);
 
-/* 高速那份只在支持它的控制器上用：定义先留着，选哪份由 usbd_caps_speed() 定 */
+/* The high-speed descriptors exist for capable controllers: which one is used depends on caps */
 USBD_DESC_CONFIG_DEFINE(zlrs_usb_hs_cfg_desc, "zlrs HS");
 USBD_CONFIGURATION_DEFINE(zlrs_usb_hs_config, 0, CONFIG_ZLRS_USB_MAX_POWER,
 			  &zlrs_usb_hs_cfg_desc);
@@ -61,13 +61,13 @@ static int zlrs_usb_add_descriptors(void)
 	return 0;
 }
 
-/* 类码放接口描述符里（CDC 的接口级类码），设备级给 0 */
+/* The class code belongs in the interface descriptor (CDC); device level stays 0 */
 static void zlrs_usb_class_codes(const enum usbd_speed speed)
 {
 	const int err = usbd_device_set_code_triple(&zlrs_usbd, speed, 0U, 0U, 0U);
 
 	if (err != 0) {
-		/* 不致命：主机多半还是照常枚举，只是设备级类码不是 0/0/0 */
+		/* Not fatal: the host still enumerates, the device-level class code is just not 0/0/0 */
 		LOG_WRN("usb device code triple not set (%d)", err);
 	}
 }
@@ -78,10 +78,10 @@ static int zlrs_usb_init(void)
 	int err;
 
 	/*
-	 * 先让主机看见一次真正的断连：bootloader（MCUboot 的串口恢复口）可能已经把
-	 * 这个控制器拉起来、让主机枚举过一遍了。UDC 驱动 enable 时虽然也会复位控制器，
-	 * 但那一下太快，主机当作没有断连，于是端口名一直停在 bootloader 上，应用这边
-	 * 的 CDC 根本不会被重新认识。这里把复位按住 100 ms，保证主机重新枚举。
+	 * Show the host a real disconnect first: the bootloader (MCUboot serial recovery) may already
+	 * have brought this controller up and enumerated once. The UDC driver reset on enable is too
+	 * quick for the host to notice, so the port names would stay with the bootloader and the
+	 * application's CDCs would never appear. Holding reset for 100 ms forces a re-enumeration.
 	 */
 	if (device_is_ready(usbctrl_reset.dev)) {
 		(void)reset_line_assert(usbctrl_reset.dev, usbctrl_reset.id);
@@ -90,8 +90,8 @@ static int zlrs_usb_init(void)
 	}
 
 	/*
-	 * USB 可裁（doc/08-firmware.md 第 4 节）：失败只报警不住手——SYS_INIT 返回非零会
-	 * 让 Zephyr 停住整机，而 USB 起不来不该拖死只能跑串口/空口的板子。
+	 * USB is optional (doc/08-firmware.md 4): on failure warn but carry on — a non-zero SYS_INIT
+	 * stops the whole system, and a board that only needs UART or the air should survive it.
 	 */
 	err = zlrs_usb_add_descriptors();
 	if (err != 0) {
@@ -100,8 +100,8 @@ static int zlrs_usb_init(void)
 	}
 
 	/*
-	 * 速度按控制器的能力选：RP2350 是全速，HS 只在支持它的控制器上出现。
-	 * 注册必须放在 usbd_init() 之前，否则配置是空的。
+	 * The speed follows the controller: RP2350 is full speed, HS only shows up where supported.
+	 * Registration has to happen before usbd_init() or the configuration comes up empty.
 	 */
 	if (USBD_SUPPORTS_HIGH_SPEED && usbd_caps_speed(&zlrs_usbd) == USBD_SPEED_HS) {
 		speed = USBD_SPEED_HS;
@@ -115,7 +115,7 @@ static int zlrs_usb_init(void)
 		return 0;
 	}
 
-	/* devicetree 里那几块 CDC 都是 usbd_class 段里的实例，一次全注册 */
+	/* The devicetree CDCs are instances in the usbd_class section: register them all at once */
 	err = usbd_register_all_classes(&zlrs_usbd, speed, 1U, NULL);
 	if (err != 0) {
 		LOG_ERR("usb class registration failed (%d); continuing without USB", err);

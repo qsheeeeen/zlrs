@@ -1,6 +1,6 @@
 /*
- * 地区配置层：把"在哪儿用"翻译成信道表、功率上限与占空比上限，法规约束见
- * doc/09-protocol.md 5.2。校验（启动时）与限制（发射前）分开。
+ * Region layer: turns "where is this used" into a channel plan, power ceiling and duty
+ * cap (doc/09-protocol.md 5.2). Validation at boot and limiting before TX are separate.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -20,16 +20,16 @@ extern "C" {
 typedef struct {
 	const char *name;
 	uint8_t domain;      /* ZLRS_DOMAIN_* */
-	uint8_t band;        /* ZLRS_BAND_*：这个地区要哪种 sub-G 硬件 */
-	uint32_t low_hz;     /* 频段边界，校验信道表用 */
+	uint8_t band;        /* ZLRS_BAND_*: which sub-G hardware this region needs */
+	uint32_t low_hz;     /* band edge, used to validate the channel plan */
 	uint32_t high_hz;
 	int8_t max_tx_power_dbm;
-	uint8_t duty_percent;    /* 0 = 不限制 */
-	uint32_t duty_window_ms; /* 占空比统计窗口 */
-	uint32_t max_rate_bps;   /* 频段宽度决定的速率上限 */
+	uint8_t duty_percent;    /* 0 = unlimited */
+	uint32_t duty_window_ms; /* duty accounting window */
+	uint32_t max_rate_bps;   /* rate ceiling implied by the band width */
 } zlrs_region_t;
 
-/* sub-G 硬件：LF 是 410–510 MHz，HF 是 850–930 MHz（两个 SKU） */
+/* sub-G hardware: LF covers 410-510 MHz, HF covers 850-930 MHz (two SKUs) */
 typedef enum {
 	ZLRS_BAND_SUBG_LF = 0,
 	ZLRS_BAND_SUBG_HF = 1,
@@ -46,97 +46,97 @@ enum {
 const zlrs_region_t *zlrs_region_get(uint8_t id);
 
 /*
- * 校验"地区 + 本机 sub-G 硬件 + 信道表 + 发射功率"是否自洽：
- * 地区要的 band 得跟板子一致、信道全在边界内、功率不超上限。
- * 返回 0 表示没问题，负值表示有问题（具体值只用于日志）。
+ * Check that region, local sub-G hardware, channel plan and TX power agree with each other:
+ * the band has to match the board, every channel has to fit the band, power has to respect
+ * the ceiling. Returns 0 when fine, negative otherwise (the value only feeds the log).
  */
 int zlrs_region_validate(const zlrs_region_t *region, uint8_t band, int8_t tx_power_dbm);
 
-/* 地区带宽决定的速率上限：配置超过上限就压下来，返回实际可用的速率 */
+/* Rate ceiling from the band width: clamp the configured value, return what is usable */
 uint32_t zlrs_region_clamp_rate(const zlrs_region_t *region, uint32_t rate_bps);
 
-/* 调制档也要过地区门：FLRC 压速率，LoRa 把带宽压到地区宽度以内 */
+/* Modulation goes through the same gate: FLRC clamps the rate, LoRa clamps the bandwidth */
 zlrs_mod_cfg_t zlrs_region_clamp_mod(const zlrs_region_t *region, zlrs_mod_cfg_t mod);
 
-/* 占空比记账：窗口内累计发射的空中时间，超过上限就不再允许发射 */
+/* Duty accounting: airtime accumulates per window and TX is denied past the cap */
 typedef struct {
 	uint32_t window_ms;
 	uint32_t window_start_ms;
 	uint32_t used_ms;
 	uint8_t limit_percent;
 	bool limited;
-	uint32_t denied; /* 因为占空比被拦下的次数，便于观测 */
+	uint32_t denied; /* denied transmissions, kept for observability */
 } zlrs_duty_t;
 
 void zlrs_duty_init(zlrs_duty_t *duty, const zlrs_region_t *region, uint32_t now_ms);
 
-/* 申请 airtime_ms 的发射机会；允许返回 true 并记账，否则 false（并计数） */
+/* Ask for airtime_ms of transmit budget: true books it, false counts a denial */
 bool zlrs_duty_reserve(zlrs_duty_t *duty, uint32_t airtime_ms, uint32_t now_ms);
 
-/* 当前窗口还剩多少空中时间（ms）；不限制时返回 UINT32_MAX（会顺带翻窗口） */
+/* Remaining airtime in this window (ms); UINT32_MAX when unlimited (may roll the window) */
 uint32_t zlrs_duty_remaining_ms(zlrs_duty_t *duty, uint32_t now_ms);
 
-/* 按帧长与速率估算空中时间（µs，向上取整）；用于占空比记账与帧率规划 */
+/* Estimate airtime from frame length and rate (us, rounded up), used for duty and planning */
 uint32_t zlrs_airtime_us(uint16_t frame_len, uint32_t rate_bps);
 
-/* 同一笔账按毫秒给（向上取整到 ms），占空比记账用 */
+/* Same estimate in milliseconds (rounded up), used by the duty accounting */
 uint32_t zlrs_airtime_ms(uint16_t frame_len, uint32_t rate_bps);
 
-/* 调制感知版本：FLRC 与上面两个等价，LoRa 走 lib/proto/mod.c 的模型 */
+/* Modulation-aware: equivalent for FLRC, LoRa uses the model in lib/proto/mod.c */
 uint32_t zlrs_airtime_mod_us(const zlrs_mod_cfg_t *mod, uint16_t frame_len);
 uint32_t zlrs_airtime_mod_ms(const zlrs_mod_cfg_t *mod, uint16_t frame_len);
 
 /*
- * 这个地区在给定帧长/速率下，每秒最多允许发多少帧。
- * 不限制占空比时返回 UINT32_MAX。
+ * How many frames per second this region allows at the given frame length and rate.
+ * UINT32_MAX when the duty cycle is not limited.
  */
 uint32_t zlrs_region_max_frames_per_s(const zlrs_region_t *region, uint32_t rate_bps,
 				      uint16_t frame_len);
 
 /*
- * 子带混合比的法规上限（doc/09-protocol.md 5.1）：一个 4 时隙的窗口里最多几个
- * 时隙可以落 sub-G。duty_percent = 0 的地区不限（返回 3 = 100%）；有占空比的
- * 地区按"窗口时长 × 占空比"折算，落到四档（0/1/2/4 个时隙）里不超过上限的
- * 那一档。
- *   window_ms            —— 4 个时隙的总时长
- *   subg_slot_airtime_us —— 一个 sub-G 时隙的空中时间
+ * Regulatory ceiling for the sub-band mix (doc/09-protocol.md 5.1): how many of the 4 slots
+ * may land on sub-G. Regions without a duty limit (duty_percent = 0) return 3 = 100%; the
+ * others are folded as window length x duty into the four levels (0/1/2/4 slots) and get the
+ * highest one that still fits.
+ *   window_ms            - total length of the 4 slots
+ *   subg_slot_airtime_us - airtime of one sub-G slot
  */
 uint8_t zlrs_region_mix_level(const zlrs_region_t *region, uint32_t window_ms,
 			      uint32_t subg_slot_airtime_us);
 
-/* 同上，按调制档算（LoRa 的一帧比 FLRC 长得多，占空比压得更狠） */
+/* Same for a modulation (a LoRa frame is far longer than FLRC, so duty bites harder) */
 uint32_t zlrs_region_max_frames_per_s_mod(const zlrs_region_t *region,
 					  const zlrs_mod_cfg_t *mod, uint16_t frame_len);
 
 /*
- * 控制链路的"时间计划"：帧率、帧周期、每个时隙的预算，以及遥测/数据窗口的
- * 稀疏系数。帧率受两件事约束：地区的占空比上限、以及一帧里至少装得下
- * "发一帧 RC + 收一帧遥测"的空中时间。
+ * The control link's time plan: frame rate, frame period, per-slot budget and the telemetry
+ * and data thinning factors. Two things bound the rate: the regional duty cap, and a frame
+ * having to fit one RC frame out plus one telemetry frame in.
  */
 typedef struct {
-	uint32_t rate_hz;        /* 实际生效的控制帧率 */
+	uint32_t rate_hz;        /* effective control frame rate */
 	uint32_t frame_period_us;
-	uint32_t slot_budget_us; /* 每个时隙的等待预算 */
-	uint8_t tlm_every_n;     /* 遥测每 n 帧一次 */
-	uint8_t data_every_n;    /* 数据窗口每 n 帧一次 */
-	bool clamped_by_duty;    /* 帧率被地区占空比压过 */
-	bool clamped_by_airtime; /* 帧率被空中时间压过 */
+	uint32_t slot_budget_us; /* wait budget per slot */
+	uint8_t tlm_every_n;     /* telemetry every n frames */
+	uint8_t data_every_n;    /* data window every n frames */
+	bool clamped_by_duty;    /* the regional duty cap lowered the rate */
+	bool clamped_by_airtime; /* airtime lowered the rate */
 } zlrs_control_plan_t;
 
 /*
- * 控制链路时间计划的输入。框成一族而不是一串位置参数，是因为"调制档 + 两个帧长
- * + 给另一条链路的预留"这四件事都会随硬件与地区变。
+ * Inputs to the control time plan. Grouped rather than positional because the modulation and
+ * the two frame lengths plus the other link's reservation all change with hardware and region.
  */
 typedef struct {
 	const zlrs_region_t *region;
-	const zlrs_mod_cfg_t *mod; /* 控制链路的调制档 */
-	uint32_t want_hz;          /* 配置档位 */
-	uint16_t frame_len;        /* RC 帧字节数（含头与标签） */
-	uint16_t tlm_len;          /* 遥测帧字节数；0 = 就用 frame_len */
+	const zlrs_mod_cfg_t *mod; /* control link modulation */
+	uint32_t want_hz;          /* configured tier */
+	uint16_t frame_len;        /* RC frame bytes, header and tag included */
+	uint16_t tlm_len;          /* telemetry frame bytes; 0 = use frame_len */
 	/*
-	 * 另一条链路的窗口预留：给它的调制档与帧长，计划自己按"每 data_every_n
-	 * 帧跑一次"把它摊到每一帧里（见 zlrs_control_plan_t 的 data_every_n）。
-	 * NULL = 不预留（只有控制链路的形状）。
+	 * Reservation for the other link: give it its modulation and frame length and the plan
+	 * amortises it per frame through data_every_n (see zlrs_control_plan_t).
+	 * NULL = no reservation (control only).
 	 */
 	const zlrs_mod_cfg_t *other_mod;
 	uint16_t other_frame_len;

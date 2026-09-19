@@ -1,5 +1,5 @@
 /*
- * 地区配置与占空比记账，见 include/zlrs/region/region.h。
+ * Regions and duty accounting, see include/zlrs/region/region.h.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -9,9 +9,9 @@
 #include <stddef.h>
 
 /*
- * 功率与速率上限取各地区常见子频段的保守值（还要按当地法规核对，见 roadmap M6）：
- * FCC 15.247 取模块上限 22 dBm；ETSI EN 300 220 取 14 dBm + 1%；CN470 取 17 dBm；
- * CN433 微功率取 10 dBm。band 是硬件属性：FCC915/EU868 要 HF SKU，其余要 LF SKU。
+ * Power and rate ceilings are conservative values for the usual sub-bands (check local rules):
+ * FCC 15.247 uses the module ceiling of 22 dBm, ETSI EN 300 220 uses 14 dBm at 1%, CN470 17 dBm,
+ * CN433 (low power) 10 dBm. The band is a hardware property: FCC915/EU868 need HF, the rest LF.
  */
 static const zlrs_region_t regions[ZLRS_REGION_COUNT] = {
 	[ZLRS_REGION_FCC915] = { .name = "FCC915",
@@ -63,8 +63,8 @@ uint32_t zlrs_region_clamp_rate(const zlrs_region_t *region, uint32_t rate_bps)
 
 zlrs_mod_cfg_t zlrs_region_clamp_mod(const zlrs_region_t *region, zlrs_mod_cfg_t mod)
 {
-	/* 窄频段地区的步进是按 FLRC 的带宽定的（见 lib/proto/fhss.c），
-	   LoRa 的带宽也得塞进地区边界里 */
+	/* The step in narrow-band regions follows the FLRC bandwidth (see lib/proto/fhss.c), and a
+	      LoRa bandwidth has to fit inside the band edges as well */
 	static const uint32_t bws[] = { 500000U, 250000U, 125000U };
 
 	if (region == NULL) {
@@ -80,7 +80,7 @@ zlrs_mod_cfg_t zlrs_region_clamp_mod(const zlrs_region_t *region, zlrs_mod_cfg_t
 		return mod;
 	}
 
-	/* 从宽到窄找一个既不超过申请值、又塞得进地区边界的带宽 */
+	/* Widest to narrowest: pick a bandwidth that fits both the request and the band edges */
 	for (uint8_t i = 0U; i < sizeof(bws) / sizeof(bws[0]); i++) {
 		if (bws[i] <= mod.bw_hz && bws[i] <= (region->high_hz - region->low_hz)) {
 			mod.bw_hz = bws[i];
@@ -88,7 +88,7 @@ zlrs_mod_cfg_t zlrs_region_clamp_mod(const zlrs_region_t *region, zlrs_mod_cfg_t
 		}
 	}
 
-	/* 一个都放不下：原样返回，让启动校验去喊 */
+	/* Nothing fits: return it as-is and let the boot check complain */
 	return mod;
 }
 
@@ -110,7 +110,7 @@ int zlrs_region_validate(const zlrs_region_t *region, uint8_t band, int8_t tx_po
 	if (region == NULL || region->domain >= ZLRS_DOMAIN_COUNT) {
 		return -1;
 	}
-	/* 地区与本机 sub-G 硬件必须匹配：LF 板跑不了 915，HF 板跑不了 470/433 */
+	/* Region and local sub-G hardware must match: an LF board cannot do 915, an HF one cannot do 470/433 */
 	if (region->band != band) {
 		return -5;
 	}
@@ -140,7 +140,7 @@ uint32_t zlrs_airtime_us(uint16_t frame_len, uint32_t rate_bps)
 		return 0U;
 	}
 
-	/* 只算载荷与开销的净时间，前导码/同步字按 32 bit 粗算 */
+	/* Net payload plus overhead; preamble and sync word are approximated at 32 bits */
 	bits = ((uint64_t)frame_len + 4U) * 8U;
 
 	return (uint32_t)((bits * 1000000U + rate_bps - 1U) / rate_bps);
@@ -163,7 +163,7 @@ uint32_t zlrs_airtime_mod_ms(const zlrs_mod_cfg_t *mod, uint16_t frame_len)
 	return zlrs_mod_airtime_ms(mod, frame_len);
 }
 
-/* 每秒能发多少帧：额度按占空比给，一帧的代价是它的空中时间 */
+/* Frames per second: the budget comes from the duty cap, each frame costs its airtime */
 static uint32_t max_frames_for_airtime(const zlrs_region_t *region, uint32_t airtime_us)
 {
 	uint64_t budget_us;
@@ -172,7 +172,7 @@ static uint32_t max_frames_for_airtime(const zlrs_region_t *region, uint32_t air
 		return UINT32_MAX;
 	}
 
-	/* 1% = 每秒钟 10000 µs 的发射额度 */
+	/* 1% = 10000 us of transmit budget per second */
 	budget_us = (uint64_t)region->duty_percent * 10000U;
 
 	return (uint32_t)(budget_us / airtime_us);
@@ -190,13 +190,13 @@ uint32_t zlrs_region_max_frames_per_s_mod(const zlrs_region_t *region,
 	return max_frames_for_airtime(region, zlrs_mod_airtime_us(mod, frame_len));
 }
 
-/* 每个时隙除了空中时间，还要留出 RAC 调度、模式翻转与 SPI 的余量 */
+/* A slot needs headroom beyond airtime for RAC scheduling, mode flips and SPI */
 #define SLOT_OVERHEAD_US 200U
-/* 时隙预算封顶：再长也只是等一个回不来的事务 */
+/* Slot budget ceiling: waiting longer only waits for a transaction that never returns */
 #define SLOT_BUDGET_MAX_US 2000U
-/* 帧率下限：再低就没法飞了（占空比压过头时按它兜底，但不会超过空中时间允许的上限） */
+/* Rate floor: below this the link is unflyable (used when duty clamps too hard, capped by airtime) */
 #define MIN_CONTROL_HZ 10U
-/* 遥测与数据窗口的目标速率（每秒多少次） */
+/* Target rates for the telemetry and data windows (times per second) */
 #define TLM_TARGET_HZ 150U
 #define DATA_TARGET_HZ 100U
 
@@ -209,7 +209,7 @@ void zlrs_region_control_plan(const zlrs_plan_req_t *req, zlrs_control_plan_t *o
 							(req != NULL) ? req->frame_len : 0U);
 	const uint32_t tlm_airtime_us = zlrs_mod_airtime_us((req != NULL) ? req->mod : NULL,
 							    tlm_len);
-	/* 一帧至少要装下两个控制时隙：发 RC + 收遥测，外加另一条链路的预留 */
+	/* A frame fits at least two control slots (RC out, telemetry in) plus the other link's share */
 	const uint32_t per_slot_us =
 		((airtime_us > tlm_airtime_us) ? airtime_us : tlm_airtime_us) +
 		SLOT_OVERHEAD_US;
@@ -222,8 +222,8 @@ void zlrs_region_control_plan(const zlrs_plan_req_t *req, zlrs_control_plan_t *o
 	out->clamped_by_airtime = false;
 
 	/*
-	 * 另一条链路的预留取决于"数据窗口每 n 帧跑一次"，而 n 又取决于帧率——
-	 * 迭代几轮让它收敛。不收敛的极端情况（帧率掉档）也只会多做一两轮。
+	 * The other link's share depends on the data window running every n frames, and n depends on
+	 * the frame rate, so iterate a few times. Even the worst case only needs an extra round or two.
 	 */
 	for (uint8_t iter = 0U; iter < 4U; iter++) {
 		const uint32_t per_frame_us = airtime_us + tlm_airtime_us +
@@ -248,10 +248,10 @@ void zlrs_region_control_plan(const zlrs_plan_req_t *req, zlrs_control_plan_t *o
 		}
 
 		/*
-		 * 兜底：不让帧率掉到 0。占空比或空中时间只够几赫兹时，压到
-		 * MIN_CONTROL_HZ，但不会超过空中时间允许的上限——否则每一帧都会
-		 * 超预算。LoRa 远距档在 EU868 上就是这个下场（1% 占空比撑不住
-		 * 几十毫秒的帧）。
+		 * Fallback: never let the rate reach 0. When duty or airtime only allow a few hertz, clamp to
+		 * MIN_CONTROL_HZ but never above what airtime allows, or every frame would overrun its
+		 * budget. That is what the LoRa tier does on EU868 (1% duty cannot feed tens of ms per
+		 * frame).
 		 */
 		if (hz < MIN_CONTROL_HZ) {
 			hz = MIN_CONTROL_HZ;
@@ -270,7 +270,7 @@ void zlrs_region_control_plan(const zlrs_plan_req_t *req, zlrs_control_plan_t *o
 			break;
 		}
 
-		/* 另一条链路的两个窗口，按 data_every_n 摊到每帧 */
+		/* The other link's two windows, amortised per frame through data_every_n */
 		{
 			const uint32_t other_us =
 				zlrs_mod_airtime_us(req->other_mod, req->other_frame_len);
@@ -290,14 +290,14 @@ void zlrs_region_control_plan(const zlrs_plan_req_t *req, zlrs_control_plan_t *o
 	out->rate_hz = hz;
 	out->frame_period_us = 1000000U / hz;
 	out->slot_budget_us = out->frame_period_us / 4U;
-	/* 窄带速率下空中时间本身就超过四分之一帧，按实际需要给预算 */
+	/* At narrow-band rates airtime alone exceeds a quarter frame, so budget what it needs */
 	if (out->slot_budget_us < per_slot_us) {
 		out->slot_budget_us = per_slot_us;
 	}
 	/*
-	 * 上限跟着调制档走：FLRC 的亚毫秒帧等超过 2 ms 就是卡住了，LoRa 的一帧
-	 * 本来就要几十毫秒，压到 2 ms 等于每帧都超时——上限取"实际需要的时间"与
-	 * "FLRC 的经验上限"里的较大者。
+	 * The ceiling follows the modulation: a sub-millisecond FLRC frame stuck past 2 ms is wedged,
+	 * while a LoRa frame legitimately takes tens of ms, so a 2 ms cap would time out every single
+	 * one. Take the larger of the real need and the FLRC rule of thumb.
 	 */
 	{
 		const uint32_t cap = (per_slot_us > SLOT_BUDGET_MAX_US) ? per_slot_us
@@ -308,7 +308,7 @@ void zlrs_region_control_plan(const zlrs_plan_req_t *req, zlrs_control_plan_t *o
 		}
 	}
 
-	/* 遥测/数据窗口按"每秒大约多少次"折算成"每 n 帧一次" */
+	/* Telemetry and data windows: convert times per second into every n frames */
 	out->tlm_every_n = (uint8_t)((hz / TLM_TARGET_HZ) > 0U ? (hz / TLM_TARGET_HZ) : 1U);
 	out->data_every_n = (uint8_t)((hz / DATA_TARGET_HZ) > 0U ? (hz / DATA_TARGET_HZ) : 1U);
 }
@@ -363,13 +363,13 @@ uint8_t zlrs_region_mix_level(const zlrs_region_t *region, uint32_t window_ms,
 
 	if (region == NULL || region->duty_percent == 0U || window_ms == 0U ||
 	    subg_slot_airtime_us == 0U) {
-		return 3U; /* 不限占空比：100% */
+		return 3U; /* no duty limit: 100% */
 	}
 
-	/* 窗口内允许的发射时间 = 窗口时长 × 占空比 */
+	/* Allowed airtime per window = window length x duty cycle */
 	allowed_us = ((uint64_t)window_ms * 1000U * region->duty_percent) / 100U;
 
-	/* 从最高档往下找第一个装得下的（四档的顺序是 0/1/2/4 个时隙） */
+	/* Highest to lowest: first level that fits (the four levels are 0/1/2/4 slots) */
 	for (int i = 3; i >= 0; i--) {
 		if ((uint64_t)slots[i] * subg_slot_airtime_us <= allowed_us) {
 			level = (uint8_t)i;
