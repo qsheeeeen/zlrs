@@ -37,7 +37,7 @@ Every ELRS figure comes from its official documentation and source, linked at th
 | Regulation | compile-time presets | four runtime region tables plus radio-design checks, duty accounting and rate/frame-rate clamping |
 | Peripheral integration | Serial VTX, Team Racing, Trainer, Sentinel, Backpack, BLE | none |
 | Dual-band use | Gemini dual-transmit diversity; Xrossband dual-band redundancy (**two radios transmitting at once**) | one radio **hops across sub-bands**: the two bands form one link mixed by `r`, neither redundant nor diversity |
-| Firmware and roles | separate TX and RX targets | one firmware, the role is a Kconfig option |
+| Firmware and roles | separate TX and RX targets | one firmware; the role is runtime configuration (`set-role`), the build only carries the default |
 
 ## Gaps, in priority order
 
@@ -52,7 +52,7 @@ Every ELRS figure comes from its official documentation and source, linked at th
 - **Per-frame authentication**: ELRS states that its binding phrase is not a key; every one of our frames carries an HMAC tag, session keys and replay protection.
 - **The data link is a first-class citizen**: a dedicated 2.4G link with reliable transfer by default, two to three orders of magnitude above AirPort/MAVLink.
 - **Regulation in software**: radio-design checks, duty accounting and rate clamping all take effect at runtime.
-- **Runtime configuration**: region and power ceiling need no firmware rebuild.
+- **Runtime configuration**: region, power ceiling, role and security profile need no firmware rebuild (rate tier and frame rate follow).
 
 ## Sources
 

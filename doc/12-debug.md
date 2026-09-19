@@ -52,7 +52,7 @@ Suggested order: `P0` with hopping, handshake and telemetry off, confirming that
 
 ## 4. Debugging on the board
 
-- **Turn the radio off first** (`ZLRS_APP_RADIO=n`) to check USB, ports, config mode and NVS: `python3 tools/zlrs-bringup.py` does the lot in one command (three CDCs, config mode, config protocol reads and writes, NVS persistence).
+- **Turn the radio off first** (`ZLRS_APP_RADIO=n`, debug images only) to check USB, ports, config mode and NVS: `python3 tools/zlrs-bringup.py` does the lot in one command (ports, config mode, config protocol reads and writes, NVS persistence).
   With no module attached, use the ready-made config file:
 
   ```shell

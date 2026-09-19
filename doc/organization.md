@@ -64,6 +64,7 @@ zlrs_rf: zlrs-rf {
 	band = <0>;              /* 0 = LF (410-510 MHz), 1 = HF (850-930 MHz) */
 	low-hz = <410000000>;
 	high-hz = <510000000>;
+	default-region = <2>;    /* CN470: what a fresh board boots with */
 };
 ```
 
@@ -83,8 +84,6 @@ have" is written down, and no capability is selected by hand in Kconfig.
 /* ports */
 #define ZLRS_PORT_CTRL_FIXED   (DT_NODE_EXISTS(DT_ALIAS(zlrs_control_uart)) || DT_NODE_EXISTS(DT_ALIAS(zlrs_control_cdc)))
 #define ZLRS_PORT_DATA_FIXED   (DT_NODE_EXISTS(DT_ALIAS(zlrs_data_uart))    || DT_NODE_EXISTS(DT_ALIAS(zlrs_data_cdc)))
-#define ZLRS_PORT_LINK         (DT_NODE_EXISTS(DT_ALIAS(zlrs_link_uart))    || DT_NODE_EXISTS(DT_ALIAS(zlrs_link_cdc)))
-#define ZLRS_PORT_LINK_DEFAULT_ROLE  DT_ENUM_IDX(DT_NODELABEL(zlrs_link), zlrs_default_role)
 #define ZLRS_PORT_CONFIG       DT_NODE_EXISTS(DT_ALIAS(zlrs_config_cdc))
 
 /* peripherals */
@@ -98,13 +97,17 @@ have" is written down, and no capability is selected by hand in Kconfig.
 #define ZLRS_RF_BAND           DT_PROP(DT_NODELABEL(zlrs_rf), band)
 #define ZLRS_RF_LOW_HZ         DT_PROP(DT_NODELABEL(zlrs_rf), low_hz)
 #define ZLRS_RF_HIGH_HZ        DT_PROP(DT_NODELABEL(zlrs_rf), high_hz)
+#define ZLRS_DEFAULT_REGION    DT_PROP(DT_NODELABEL(zlrs_rf), default_region)
 ```
+
+The `ZLRS_PORT_LINK*` macros arrive with the single-port form (section 1.1): no
+board has one yet, so `app/src/caps.h` does not define them.
 
 Three consequences:
 
 1. Feature switches are gated by capabilities, and a contradiction is a build
    error, not a runtime surprise:
-   `#if IS_ENABLED(CONFIG_ZLRS_LINK_DATA) && !ZLRS_PORT_DATA_FIXED && !ZLRS_PORT_LINK → #error`.
+   `#if IS_ENABLED(CONFIG_ZLRS_APP_LINK_DATA) && !ZLRS_PORT_DATA_FIXED → #error`.
 2. The firmware prints one capability line at boot — `caps: ports=ctrl,data,cfg
    usb=y btn=y led=y rf=LF(410-510M)` — so the user and CI can see what the
    build believes the hardware is.
@@ -115,10 +118,11 @@ Three consequences:
 | Directory | Contains | Must not |
 | --- | --- | --- |
 | `core/` | pure C feature core: protocol, link layer, CRSF, config protocol, region tables, LED patterns | include Zephyr headers, know about boards |
-| `app/` | the Zephyr application: capability header, ports, radio adaptation, USB device stack, NVS storage, watchdog, button, LED output, superframe, reporting, shell | contain protocol logic that belongs in `core/`, branch on board names |
+| `app/` | the Zephyr application: capability header, ports, radio adaptation, NVS storage, watchdog, button, LED output, superframe, reporting, shell | contain protocol logic that belongs in `core/`, branch on board names |
+| `subsys/` | Zephyr subsystems that belong to the platform rather than to one feature: the USB device stack (`subsys/usb`) and the bootloader-side watchdog handling (`subsys/bootguard`) | hold feature logic that belongs in `core/` |
 | `drivers/` | Zephyr drivers we own, bound through devicetree | be a place for application logic |
-| `boot/` | code that runs inside the bootloader image | depend on application code |
 | `boards/` | one directory per hardware combination: devicetree, defconfig, README with the pin/alias table | contain C |
+| `dts/bindings/` | bindings for the zlrs-specific devicetree nodes (`zlrs,rf-design`) | describe vendor nodes that already have a binding |
 | `tools/` | host-side helpers: config, recovery, update, bring-up self-test, UF2 packaging | be needed to build firmware |
 | `tests/host/` | host build of `core/` plus the two-node radio simulation | need hardware |
 | `doc/` | design documents and the documentation index | duplicate facts owned by another document |
@@ -137,7 +141,8 @@ enforced mechanically (section 6).
 | Security profile `P0` / `P1` / `P2` | runtime, default at compile time | config protocol, stored in NVS; declared in `SYNC`, both ends must agree |
 | USB, config port, LED, button, watchdog, radio design | devicetree | `app/src/caps.h`; there is no Kconfig switch to disagree with the board |
 | Bench isolation (radio off, hopping off, P0, …) | compile time, debug images only | `ZLRS_APP_DEBUG_*`, see [12-debug](12-debug.md) 3 |
-| Region, power ceiling, rate tier, frame rate, ARQ, baud rate, failsafe values, pairing | runtime | config protocol, stored in NVS |
+| Region, power ceiling, role, security profile, baud rate, failsafe values, pairing | runtime | config protocol, stored in NVS |
+| Rate tier, frame rate, ARQ, telemetry period | compile time today | slated to become runtime: the ledger in [13-roadmap](13-roadmap.md) tracks the missing commands |
 
 Two properties follow from this split and are worth stating explicitly:
 
@@ -155,7 +160,7 @@ Two properties follow from this split and are worth stating explicitly:
 | a config CDC | configuration protocol, config mode, recovery entry | using it as a link endpoint |
 | a button | long press to pair | pairing without configuration access when there is no button |
 | a status LED | the LED language | — |
-| NVS | keys, pairing, failsafe, baud rate, region, power | **required**: builds without NVS are rejected, security and regulation need persistence |
+| NVS | keys, pairing, failsafe, baud rate, region, power, role, profile | **required**: builds without NVS are rejected, security and regulation need persistence |
 | a hardware watchdog | reset on a hang, rollback assistance | — |
 
 The configuration protocol carries the runtime settings from section 4:

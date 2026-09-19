@@ -39,31 +39,31 @@ python3 tools/make-signed-uf2.py
 The first flash needs two BOOTSEL rounds: drag `build/mcuboot/zephyr/zephyr.uf2`, then enter BOOTSEL again and drag `build/app/zephyr/zephyr.signed.uf2`. After that one command upgrades it:
 
 ```shell
-python3 tools/zlrs-update.py --port /dev/ttyACM1
+python3 tools/zlrs-update.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04
 ```
 
-The two modes announce different USB names (the application `ZLRS`, the bootloader `ZLRS MCUBOOT`) and scripts find ports under `/dev/serial/by-id/...` rather than hard-coding `ttyACM*`. Boot chain, recovery entries and rollback: [doc/08-firmware.md](doc/08-firmware.md) 6.
+The port named here is the application's **config** CDC (that is where the trigger goes); the tool finds the bootloader's recovery port by itself. The two modes announce different USB names (the application `ZLRS`, the bootloader `ZLRS MCUBOOT`) and scripts find ports under `/dev/serial/by-id/...` rather than hard-coding `ttyACM*`. Boot chain, recovery entries and rollback: [doc/08-firmware.md](doc/08-firmware.md) 6.
 
 `tools/zephyr-env.sh` exports `ZLRS_WS` (the workspace root), `ZLRS_APP`, `ZLRS_BOARD` (hf by default, use `.../lf` for LF) and `ZLRS_SDK_DIR` (`~/zephyr-sdk-1.0.0` by default).
 
 ## Configuration
 
-USB shows three CDCs: **CRSF, data and config**. The tool sends the enter-config-mode command on the config CDC; the radio stops entirely until it exits. Every user parameter is set at runtime with no firmware rebuild:
+USB shows three CDCs: **control (CRSF), data and config** (debug images add a console, see [doc/12-debug.md](doc/12-debug.md)). The tool sends the enter-config-mode command on the config CDC; the radio stops entirely until it exits. Every user parameter is set at runtime with no firmware rebuild:
 
 ```shell
 python3 tools/zlrs-config.py --self-test
-python3 tools/zlrs-config.py --port /dev/ttyACM2 status
-python3 tools/zlrs-config.py --port /dev/ttyACM2 set-phrase "correct horse battery staple"
-python3 tools/zlrs-config.py --port /dev/ttyACM2 set-region 3
-python3 tools/zlrs-config.py --port /dev/ttyACM2 set-role rx
-python3 tools/zlrs-config.py --port /dev/ttyACM2 set-profile p1
-python3 tools/zlrs-config.py --port /dev/ttyACM2 set-failsafe @default
-python3 tools/zlrs-config.py --port /dev/ttyACM2 exit
+python3 tools/zlrs-config.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 status
+python3 tools/zlrs-config.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 set-phrase "correct horse battery staple"
+python3 tools/zlrs-config.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 set-region 3
+python3 tools/zlrs-config.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 set-role rx
+python3 tools/zlrs-config.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 set-profile p1
+python3 tools/zlrs-config.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 set-failsafe @default
+python3 tools/zlrs-config.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 exit
 ```
 
 The command set is in [doc/10-security.md](doc/10-security.md) 10 and the firmware behaviour in [doc/08-firmware.md](doc/08-firmware.md) 3.
 
-### Compile-time configuration
+### Build-time configuration
 
 The link shape and the timing parameters are compile-time settings; the role and the security profile are runtime settings (config protocol, NVS), and what is listed for them here is only the default of a fresh build:
 

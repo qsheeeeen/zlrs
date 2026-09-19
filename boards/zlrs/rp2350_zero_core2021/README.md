@@ -19,7 +19,7 @@ The board is `rp2350_zero_core2021` rather than `rp2350_zero` because the Zephyr
 | UART1 TX / RX | GP8 / GP9 | `zlrs-data-uart` = `uart1` | passthrough, 115200 by default (changeable in NVS) |
 | Button | GP12 | `zlrs-button`, `smtc-user-button` | to ground with an internal pull-up; none fitted, for your own switch |
 | WS2812B | GP16 | `zlrs-led`, `led-strip` | on the module, driven through PIO0; semantics in [doc/11-ux.md](../../../doc/11-ux.md) |
-| USB-C (native USB) | - | `zephyr_udc0` = `usbd` | three CDCs: `cdc_acm_uart0` (`zlrs-control-cdc`), `cdc_acm_uart1` (`zlrs-data-cdc`), `cdc_acm_uart2` (console, `zephyr,console`) |
+| USB-C (native USB) | - | `zephyr_udc0` = `usbd` | three CDCs: `cdc_acm_uart0` (`zlrs-control-cdc`), `cdc_acm_uart1` (`zlrs-data-cdc`), `cdc_acm_uart2` (`zlrs-config-cdc`); the debug overlay adds a fourth, the console `cdc_acm_uart3` |
 | Watchdog | - | `watchdog0` = `wdt0` | armed only when `CONFIG_ZLRS_APP_WATCHDOG` is on |
 
 The radio bus and the three control lines all sit at **GP15 or below**: GP16 drives the RP2350-Zero's on-board WS2812B (kept for the status LED) and the pins above it are awkward to wire on the prototype, so SPI uses GP4-GP7 and the control lines GP13-GP15. `smtc-user-button` is the alias the vendor USP samples want; with it in place `usp_zephyr/samples/usp/**` builds for this board as-is.
@@ -48,7 +48,7 @@ west build -b rp2350_zero_core2021/rp2350a/m33/lf app   # 470 / 433
 
 ### Declaring the SKU
 
-The board declares its sub-G radio design through the DT node `zlrs_rf` (`compatible = "zlrs,rf-design"`, binding in `dts/bindings/zlrs,rf-design.yaml`): `band = <0>` for LF, `<1>` for HF, plus the frequency range the matching network actually covers (`low-hz`/`high-hz`, 410–510 MHz on LF, 850–930 MHz on HF). At boot the application checks the region against that design — right band *and* the region's edges inside the range — and on a mismatch shows a **red alert and keeps the radio off**: regulatory mistakes do not get approximated.
+The board declares its sub-G radio design through the DT node `zlrs_rf` (`compatible = "zlrs,rf-design"`, binding in `dts/bindings/zlrs,rf-design.yaml`): `band = <0>` for LF, `<1>` for HF, plus the frequency range the matching network actually covers (`low-hz`/`high-hz`, 410–510 MHz on LF, 850–930 MHz on HF) and the region a fresh board boots with (`default-region`, CN470 on LF and FCC915 on HF). At boot the application checks the region against that design — right band *and* the region's edges inside the range — and on a mismatch shows a **red alert and keeps the radio off**: regulatory mistakes do not get approximated.
 
 This value must **not** live in `/chosen`: Zephyr's DT macros only export `zephyr,`-prefixed chosen properties, a custom prefix reads back as nothing and silently falls back to the HF default, so an LF board would never pass the check (exactly what happened on the first bring-up, see [doc/12-debug.md](../../../doc/12-debug.md) 5).
 

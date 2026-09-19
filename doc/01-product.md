@@ -21,7 +21,7 @@ The two bands never transmit together: one half-duplex radio sends one frame per
 Two port shapes:
 
 - **Two UARTs**: a control port and a data port; the two links time-share the radio and stay independent, each with its own mix ratio;
-- **One UART**: only one link (control or data, picked at build time); the other is not compiled in.
+- **One UART**: the same port carries one link at a time, and which one is **runtime configuration** (`set-port-role`, stored in NVS, default from devicetree); both links stay compiled in, so one image serves either role.
 
 ## 2. Targets
 

@@ -17,7 +17,7 @@ This document holds **to-dos and acceptance criteria** only. Finished work gets 
 ### Hardware
 
 - **Carrier board spin**: the two-layer board from [05-carrier](05-carrier.md).
-- **Lightweight variant**: USB and the data port trimmed, control link only.
+- **Lightweight variant**: no USB, one UART port whose link role is configured at runtime (needs `set-port-role` in the config protocol, see [organization](organization.md) 4).
 - **RP2350 TRNG** (verified on hardware, on by default): Zephyr's `entropy_rpi_pico` is unusable (pico-sdk reads with interrupts off and busy waits, which stops USB dead; reproduced on the board). `drivers/entropy/` is zlrs's own driver: probe soft-resets, configures and pre-fetches, reads come from a two-block pool, **interrupts stay on and no spinlock is taken**, and a timeout or failed check is an error rather than something to paper over. Register timing follows datasheet 12.12 and the bootrom; the sample count is 100 because the datasheet's suggested 20-25 fails the internal Von Neumann check on RP2350 (measured: runs of 32 zeroes or ones), while ten blocks at 100 came out clean. Verified on the board: `entropy self-test ok` at boot, 25 consecutive `zlrs entropy` runs and over 150 s of uptime without a watchdog reset.
 
 ### Update path
@@ -41,7 +41,7 @@ Some knobs are on or off today only because they have not been accepted on hardw
 | `ZLRS_APP_DYNAMIC_POWER` | on | thresholds and hysteresis from measured RSSI/SNR | stays on, thresholds replaced |
 | `ZLRS_APP_SUB_BAND_MIX` | on | switching cost and interference benefit, with two modules | stays on |
 | `ZLRS_APP_FHSS`, `ZLRS_APP_SESSION_HANDSHAKE`, `ZLRS_APP_TELEMETRY` | on | the first two-module session (pairing, session, telemetry round trip) | stay on |
-| rate tier, frame rate, ARQ, telemetry period | compile time | config-protocol commands to match [organization](organization.md) 4 | runtime, stored in NVS (role and security profile already are) |
+| rate tier and frame-rate values, telemetry period | compile time | config-protocol commands to match [organization](organization.md) 4 | runtime, stored in NVS (role and security profile already are) |
 
 The switches that cut the product's *shape* (which links, which band role) are not debt: they stay and any image may set them. The ones that only exist to isolate a layer on the bench — P0, hopping off, session handshake off, telemetry off, ARQ off, sub-band mixing off, radio off — are gated by `CONFIG_ZLRS_APP_DEBUG`, so a shipped configuration cannot reach them; see [12-debug](12-debug.md) 3.
 

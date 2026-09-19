@@ -17,7 +17,7 @@ There is no automatic band failover: calibrating the trigger needs real interfer
 
 Each link has one **cross-sub-band hop table**: 2.4G and sub-G frequencies in the same table, interleaved by the mix ratio `r` (four levels: 0 / 25 / 50 / 100%). The TX decides `r` and carries a table version in `SYNC`; the RX hops on the new table from the next sync frame. In essence it is "a frequency hop, just a bigger one", so no extra rendezvous protocol is needed.
 
-The two links (control and data) time-share the radio and stay independent, each with its own `r`; a single-UART board compiles only one of them.
+The two links (control and data) time-share the radio and stay independent, each with its own `r`. A single-port board carries one link at a time and both links stay compiled in: which one the port serves is runtime configuration with a devicetree default (see [organization](organization.md) 1.1).
 
 The migration order is fixed: **telemetry, then data, then the RC downlink**. `r` moves the least critical traffic first and the RC last, so latency steps down instead of jittering.
 

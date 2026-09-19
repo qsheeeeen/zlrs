@@ -8,7 +8,7 @@ The firmware presents three CDCs by default:
 
 | CDC | Purpose | Its UART endpoint |
 | --- | --- | --- |
-| CRSF | the CRSF RC link | UART0 (GP0/GP1, 420000) |
+| control (CRSF) | the RC link: channels down, telemetry up | UART0 (GP0/GP1, 420000) |
 | data | the passthrough link | UART1 (GP8/GP9, 115200 by default) |
 | **config** | the config protocol: enter config mode, read and write parameters | - |
 
@@ -58,8 +58,8 @@ What stays compile-time is the band shape and the modulation (`BAND_ROLE_*`, `CO
 One firmware has to fit several hardware configurations; that is a hard requirement:
 
 - **USB must be trimmable**: the lightweight variant has no native USB;
-- the data UART has to be optional too;
-- express it with Kconfig and devicetree so the application probes DT instead of drowning in `#ifdef`s.
+- the data UART and the button have to be optional too;
+- express it with devicetree and the capability macros (`app/src/caps.h`) so the application probes DT instead of drowning in `#ifdef`s.
 
 The approach: the application only knows aliases (`zlrs-control-uart`, `zlrs-control-cdc`, `zlrs-data-uart`, `zlrs-data-cdc`, `zlrs-config-cdc`, `zlrs-button`, `zlrs-led`); a missing alias means "this board has no such port / no such peripheral" and everything still builds. Whether there is a CRSF port, a config port, a button or a status LED is therefore a devicetree fact (`app/src/caps.h`), not a switch — the one thing a switch would add is a way for the build to disagree with the board. `ZLRS_APP_CORE` enables the pure C libraries every image carries (`ZLRS_PROTO`, `ZLRS_LINK`, `ZLRS_REGION`, `ZLRS_CRSF`, `ZLRS_CONFIG`, `ZLRS_LED`): a few hundred bytes of code is cheaper than a knob that can be wrong.
 

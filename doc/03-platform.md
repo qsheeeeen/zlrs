@@ -8,7 +8,7 @@ What zlrs runs on: target shapes, board, build targets, toolchain, image layout 
 | --- | --- |
 | **Prototype** | a Waveshare RP2350-Zero and a Waveshare Core2021 wired together, exposing USB-C only; see [04-prototype](04-prototype.md) |
 | **Carrier board** | the same wiring turned into a PCB exposing USB-C, a button and two 6P serial ports; see [05-carrier](05-carrier.md) |
-| **Lightweight** | USB and the data port trimmed away, control link only; see [08-firmware](08-firmware.md) 4 |
+| **Lightweight** | no native USB; one UART port whose link role (control or data) is runtime configuration, default declared in devicetree; see [08-firmware](08-firmware.md) 4 |
 
 All three shapes share one firmware and one board definition; only devicetree and Kconfig differ.
 
@@ -62,6 +62,6 @@ The host tests need no workspace: `make -C tests/host run` compiles the very sam
 ## 6. Flashing
 
 - Without a bootloader: BOOTSEL plus UF2 (`west flash --runner uf2`) or SWD.
-- With MCUboot: two BOOTSEL rounds the first time (the bootloader, then `zephyr.signed.uf2`); afterwards serial recovery does it in one command, `python3 tools/zlrs-update.py --port /dev/ttyACM1`.
+- With MCUboot: two BOOTSEL rounds the first time (the bootloader, then `zephyr.signed.uf2`); afterwards serial recovery does it in one command, `python3 tools/zlrs-update.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04` (the config port).
 
 Recovery ports, image confirmation and rollback are described in [08-firmware](08-firmware.md) 6.
