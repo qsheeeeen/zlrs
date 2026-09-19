@@ -1,8 +1,8 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# 板级公共默认值：三个目标（不带变体 / hf / lf）都适用，各变体的 _defconfig
-# 里只放自己那点差异（目前就是地区默认值）。
+# Board-wide defaults, shared by every target (bare, hf, lf); each variant's _defconfig
+# only carries its own difference, which today is the default region.
 
 if BOARD_RP2350_ZERO_CORE2021
 
@@ -24,15 +24,15 @@ config RESET
 config SERIAL
 	default y
 
-# 控制台默认不在（cdc_acm_uart3 是 disabled，chosen 指过去但只有 debug overlay
-# 会打开它），所以板级不给 CONSOLE / UART_CONSOLE 默认值；调试构建由
-# app/debug.conf + app/debug.overlay 打开（doc/12-debug.md 第 1 节）。
+# No console by default (cdc_acm_uart3 is disabled; chosen points at it but only the debug
+# overlay enables it), so the board sets no CONSOLE / UART_CONSOLE default. Debug builds get
+# it from app/debug.conf + app/debug.overlay (doc/12-debug.md 1).
 #
-# USB 设备栈与 CDC ACM 类默认打开：应用三块 CDC（CRSF / 数据 / 配置），
-# bootloader 两块（恢复 / 控制台）。
+# USB device stack and CDC ACM class on by default: three CDCs in the application (CRSF,
+# data, config) and two in the bootloader (recovery, console).
 #
-# 注意这里不给 CDC_ACM_SERIAL_INITIALIZE_AT_BOOT 默认值：那个辅助实现只注册
-# 第一块 CDC，应用侧要用 lib/usb 自己建 context 并注册全部 CDC。
+# Note there is no default for CDC_ACM_SERIAL_INITIALIZE_AT_BOOT: that helper registers
+# only the first CDC, while lib/usb builds its own context and registers them all.
 config USB_DEVICE_STACK_NEXT
 	default y
 
@@ -45,8 +45,8 @@ config UART_LINE_CTRL
 config UART_INTERRUPT_DRIVEN
 	default y
 
-# 链接进 devicetree 里的 code 分区（1 MB），见 rp2350_zero_core2021.dtsi：
-# 镜像不能长过它，否则会压掉后面存密钥的 storage 分区
+# Link into the devicetree code partition (1 MB), see rp2350_zero_core2021.dtsi: the image
+# must not outgrow it or it would run into the storage partition that holds the keys
 config USE_DT_CODE_PARTITION
 	default y
 

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 config ZLRS_PROTO
-	bool "协议核心（帧编解码 / 跳频序列 / 分片重组 / CRC）"
+	bool "Protocol core (framing, FHSS sequence, reassembly, CRC)"
 	select PSA_CRYPTO
 	select PSA_WANT_ALG_HKDF
 	select PSA_WANT_ALG_HMAC
@@ -10,10 +10,10 @@ config ZLRS_PROTO
 	select PSA_WANT_KEY_TYPE_DERIVE
 	select PSA_WANT_KEY_TYPE_HMAC
 	help
-	  纯 C，不依赖 Zephyr。密码学那部分依赖具体实现：目标上是 Zephyr 的
-	  PSA Crypto（lib/proto/crypto_psa.c，所以上面 select 了那几个算法），
-	  主机侧测试改用一份自带的软件实现（tests/host/crypto_soft.c），
-	  两边出的字节必须一致。
+	  Pure C, no Zephyr dependency. The crypto part depends on the backend: on target it is
+	  Zephyr's PSA Crypto (lib/proto/crypto_psa.c, which is why the algorithms above are
+	  selected). The host tests use a self-contained software implementation instead
+	  (tests/host/crypto_soft.c); both must produce identical bytes.
 
 module = ZLRS_PROTO
 module-str = zlrs_proto

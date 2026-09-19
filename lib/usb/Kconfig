@@ -4,41 +4,41 @@
 menu "zlrs usb device"
 
 config ZLRS_USB
-	bool "USB 设备栈（自建 usbd context + devicetree 里的全部 CDC）"
+	bool "USB device stack (own usbd context, every CDC in devicetree)"
 	depends on USB_DEVICE_STACK_NEXT && USBD_CDC_ACM_CLASS
 	help
-	  应用镜像与 MCUboot 镜像共用这份代码，差别只在下面的字符串与 VID/PID。
+	  Shared by the application and the MCUboot image; only the strings and VID/PID below differ.
 
-	  device_next 栈里 `zephyr,cdc-acm-uart` 节点只表达"要几块 CDC"，设备要自己
-	  建 context、注册类、再 usbd_enable()；Zephyr 自带的
-	  CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT 只注册第一块 CDC，其余没有 context，
-	  第一次写日志就 NULL 解引用。这份代码一次注册 devicetree 里全部 CDC。
+	  In the device_next stack a `zephyr,cdc-acm-uart` node only says how many CDCs exist; the
+	  image has to build a context, register the classes and call usbd_enable() itself.
+	  Zephyr's CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT registers only the first CDC; the rest
+	  have no context and NULL-dereference on the first log write. This code registers them all.
 
 if ZLRS_USB
 
 config ZLRS_USB_VID
-	hex "USB 厂商 ID（VID）"
+	hex "USB vendor ID (VID)"
 	default 0x2fe3
 	help
-	  0x2fe3 是 Zephyr 项目给自己示例留的 VID。做产品要换成自己的。
+	  0x2fe3 is the VID Zephyr reserves for its own samples. A product needs its own.
 
 config ZLRS_USB_PID
-	hex "USB 产品 ID（PID）"
+	hex "USB product ID (PID)"
 	default 0x0004
 
 config ZLRS_USB_MANUFACTURER
-	string "USB 厂商字符串"
+	string "USB manufacturer string"
 	default "zlrs"
 
 config ZLRS_USB_PRODUCT
-	string "USB 产品字符串"
+	string "USB product string"
 	default "ZLRS"
 	help
-	  升级脚本按 /dev/serial/by-id 里的名字找端口：应用模式是 "ZLRS"，
-	  bootloader 模式是 "ZLRS MCUBOOT"（见 scripts/zlrs-update.py）。
+	  The update tool finds its ports by name in /dev/serial/by-id: the application is "ZLRS",
+	  the bootloader is "ZLRS MCUBOOT" (see scripts/zlrs-update.py).
 
 config ZLRS_USB_MAX_POWER
-	int "USB bMaxPower（单位 2 mA）"
+	int "USB bMaxPower (units of 2 mA)"
 	default 125
 	range 0 250
 

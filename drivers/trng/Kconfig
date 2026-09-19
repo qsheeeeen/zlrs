@@ -4,16 +4,16 @@
 menu "zlrs RP2350 TRNG"
 
 config ZLRS_RP2350_TRNG
-	bool "zlrs 的 RP2350 TRNG 熵源驱动"
+	bool "zlrs RP2350 TRNG entropy driver"
 	default y
-	# 只在启用了熵子系统的镜像里编（bootloader 没有 ENTROPY_GENERATOR）
+	# Only built into images with the entropy subsystem (the bootloader has no ENTROPY_GENERATOR)
 	depends on DT_HAS_ZLRS_RP2350_TRNG_ENABLED && ENTROPY_GENERATOR
 	select ENTROPY_HAS_DRIVER
 	help
-	  按 RP2350 datasheet 12.12 直接操作 TRNG 寄存器：每块 192 bit 读满 6 个
-	  EHR 字，取数走小池子、等待有界，不关中断、不拿自旋锁。Zephyr 自带的
-	  entropy_rpi_pico 走 pico-sdk get_rand_64()，取数时关中断忙等，会让 USB
-	  停摆——所以这台上不用它，见 doc/13-roadmap.md。
+	  Drives the TRNG registers directly per RP2350 datasheet 12.12: 6 EHR words per 192-bit
+	  block, reads from a small pool, bounded waits, interrupts and spinlocks left alone.
+	  Zephyr's entropy_rpi_pico goes through pico-sdk get_rand_64(), which spins with interrupts
+	  off and kills USB, so it is not used here. See doc/13-roadmap.md.
 
 if ZLRS_RP2350_TRNG
 

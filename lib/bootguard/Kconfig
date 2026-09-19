@@ -1,19 +1,19 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 
-# SoC 默认给每个镜像都编 ROM bootloader 跳转钩子（看到 boot mode 标志就跳进
-# ROM 的 U 盘模式），在 bootloader 镜像里它会抢在 MCUboot 的串口恢复之前执行。
-# 应用镜像保留它作为"砖机进 U 盘"的兜底；这个符号没有 prompt，只能追加 default。
+# The SoC compiles a ROM-bootloader jump hook into every image by default (it jumps into the
+# ROM mass-storage mode when it sees the boot-mode flag); inside the bootloader image it runs
+# before MCUboot's serial recovery. The application keeps it as a bricked-device escape hatch.
 config RPI_PICO_ROM_BOOTLOADER
 	default n if IS_BOOTLOADER
 
 config ZLRS_BOOTGUARD
-	bool "bootloader 里的启动护栏（先把看门狗 disarm 掉）"
+	bool "Boot guard in the bootloader (disarm the watchdog first)"
 	default y if IS_BOOTLOADER
 	depends on WATCHDOG
 	help
-	  MCUboot 起来先关掉看门狗：RP2350 的看门狗在复位后可能还开着，会把换槽/
-	  回滚打断。进应用后再由应用自己决定要不要重新武装（ZLRS_APP_WATCHDOG）。
+	  MCUboot disarms the watchdog first: on RP2350 it can still be armed after a reset and would
+	  cut a swap or rollback short. The application decides whether to arm it again (ZLRS_APP_WATCHDOG).
 
 module = ZLRS_BOOTGUARD
 module-str = zlrs_bootguard

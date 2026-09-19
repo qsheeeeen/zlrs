@@ -2,13 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 config ZLRS_CONFIG
-	bool "配置协议（配置 CDC 上跑的帧格式与命令分发）"
+	bool "Config protocol (framing and dispatch on the config CDC)"
 	select ZLRS_PROTO
 	help
-	  配置模式下跑在配置 CDC 上的帧格式与命令分发（进配置模式的入口见
-	  doc/08-firmware.md 第 2 节，命令表见 doc/10-security.md 第 10 节）。
-	  纯 C：命令只通过 backend 回调碰设备，主机侧用假 backend 就能把每条命令
-	  跑一遍，见 tests/host。
+	  Framing and command dispatch for the config CDC while the device is in config mode
+	  (entries: doc/08-firmware.md 2, command table: doc/10-security.md 10).
+	  Pure C: commands only touch the device through backend callbacks, so the host tests
+	  can run every one of them against a fake backend, see tests/host.
 
 module = ZLRS_CONFIG
 module-str = zlrs_config

@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 config ZLRS_REGION
-	bool "地区表（信道计划 / 功率上限 / 占空比）"
+	bool "Region tables (channel plan, power ceiling, duty cycle)"
 	select ZLRS_PROTO
 	help
-	  各地区的信道计划、功率上限、占空比上限，以及每次发射前过的占空比记账。
-	  纯 C，见 tests/host。
+	  Per-region channel plans, power ceilings, duty caps and the duty accounting every TX goes through.
+	  Pure C, see tests/host.
 
 module = ZLRS_REGION
 module-str = zlrs_region

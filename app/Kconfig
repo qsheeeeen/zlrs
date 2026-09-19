@@ -16,199 +16,199 @@ config ZLRS_APP_CORE
 	select ZLRS_REGION
 	select ZLRS_CRSF
 	help
-	  应用永远需要的四层：帧格式与跳频、超帧与配对、法规门、CRSF 编解码。
-	  它没有可见开关，只负责把这几个库 select 上——可选的功能库（配置协议、
-	  状态灯、USB）由各自的功能开关 select，避免"库关掉、应用还在调用"的组合。
+	  The four layers the application always needs: framing and hopping, superframe and
+	  pairing, the regulatory gate, the CRSF codec. It has no visible switch, it only selects
+	  them. Optional libraries (config protocol, status LED, USB) are selected by their own knobs.
 
 config ZLRS_APP_ROLE_TX
-	bool "构建成 TX 角色"
+	bool "Build as the TX role"
 	default y
 	help
-	  TX 发控制帧、收遥测，RX 相反。两端是同一份固件，只差这个开关。
+	  The TX sends control frames and receives telemetry, the RX does the opposite. Both ends run
 
 config ZLRS_APP_REGION
-	int "地区（0 = FCC915，1 = EU868，2 = CN470，3 = CN433）"
-	# 默认值按板级变体的 SKU 给：HF 模块跑 868/915，LF 模块跑 470/433。
-	# 放在应用侧而不是板级 defconfig 里，是因为 bootloader 镜像也读同一份板级
-	# defconfig，而 ZLRS_APP_* 是应用自己的符号（bootloader 里没有它们，
-	# Kconfig 会报"给未定义符号赋值"）。
+	int "Region (0 = FCC915, 1 = EU868, 2 = CN470, 3 = CN433)"
+	# The default follows the board SKU: HF modules run 868/915, LF modules run 470/433.
+	# This lives here rather than in the board defconfig because the bootloader image reads
+	# the same board defconfig while ZLRS_APP_* symbols exist only in the application
+	# (assigning them in the bootloader would be an undefined-symbol warning).
 	default 2 if BOARD_RP2350_ZERO_CORE2021_RP2350A_M33_LF
 	default 2 if BOARD_RP2350_ZERO_CORE2021_RP2350A_M33_LF_MCUBOOT
 	default 0
 	range 0 3
 	help
-	  地区决定控制链路的频段、发射功率上限与占空比上限（见 doc/09-protocol.md
-	  5.2 和 lib/region）：EU868 是 1% 占空比，FCC915 / CN470 不限制。
-	  HF SKU 只能选 0/1，LF SKU 只能选 2/3——选错的话启动校验会红灯告警并且
-	  不发射频（法规相关的不凑合）。
+	  The region picks the control link's band, power ceiling and duty cap (doc/09-protocol.md
+	  5.2 and lib/region): EU868 caps duty at 1%, FCC915 and CN470 do not.
+	  HF SKUs accept 0/1, LF SKUs accept 2/3; a mismatch trips the boot check, shows red and
+	  keeps the radio off: regulatory settings do not get to be approximate.
 
 config ZLRS_APP_TX_POWER_DBM
-	int "发射功率（dBm）"
+	int "TX power (dBm)"
 	default 10
 	range -10 22
 
 choice ZLRS_APP_SECURITY_PROFILE
-	prompt "空口安全 profile"
+	prompt "Over-the-air security profile"
 	default ZLRS_APP_SECURITY_PROFILE_P1
 	help
-	  P1 是生产档：每帧 4 字节 tag。P0 不带 tag，只用于台架——先把收发时序
-	  跑通，再打开 tag 看密钥路径。见 doc/10-security.md 第 8 节。
+	  P1 is the production profile: a 4-byte tag on every frame. P0 carries no tag and is for
+	  the bench only. See doc/10-security.md 8.
 
 config ZLRS_APP_SECURITY_PROFILE_P0
-	bool "P0：不带 tag（仅调试）"
+	bool "P0: no tag (debug only)"
 
 config ZLRS_APP_SECURITY_PROFILE_P1
-	bool "P1：4 字节 tag（默认）"
+	bool "P1: 4-byte tag (default)"
 
 endchoice
 
 config ZLRS_APP_FHSS
-	bool "逐包跳频"
+	bool "Per-frame frequency hopping"
 	default y
 	help
-	  关掉以后所有帧都落在同步信道上（跳频表的第 0 个位置），上板调试时先把
-	  收发时序与跳频表分开看。固定信道不满足 FCC 15.247 的跳频条款，只能用于
-	  台架，见 doc/09-protocol.md 5.2。
+	  With this off every frame stays on the sync channel (entry 0 of the hop table), which is
+	  how bring-up separates timing from the hop table. A fixed channel does not satisfy the
+	  FCC 15.247 hopping rules, so bench only, see doc/09-protocol.md 5.2.
 
 config ZLRS_APP_SESSION_HANDSHAKE
-	bool "会话三次握手（每次会话换一把钥匙）"
+	bool "Session handshake (fresh key per session)"
 	default y
 	help
-	  关掉以后直接用配对级的 link_auth 当会话钥匙：RX 收到 SYNC 就算建立，
-	  再回 SESS_RESP 报到，少一段钥匙派生、少一条确认消息。代价是没有逐会话的
-	  钥匙轮换，录下来的旧帧在换会话后仍能重放——只用于上板调试，
-	  见 doc/10-security.md 第 3 节。
+	  Off: the pairing-level link_auth doubles as the session key. The RX counts a SYNC as
+	  established and reports back with SESS_RESP, saving a derivation and one confirm message.
+	  The cost is no per-session key rotation: recorded frames stay replayable across sessions.
+	  Bench only, see doc/10-security.md 3.
 
 config ZLRS_APP_TELEMETRY
-	bool "控制链路上行遥测"
+	bool "Uplink telemetry on the control link"
 	default y
 	help
-	  关掉以后 RX 不在上行时隙发遥测、TX 也不开那个接收窗口：控制链路退化成
-	  "只下行 RC"，适合上板先只验证遥控通道。TX 的失联判定会一并关掉，否则它
-	  会因为收不到东西而反复重建会话。
+	  Off: the RX sends no telemetry in the uplink slot and the TX opens no receive window, so
+	  the control link degrades to downlink RC only, which is how the RC path gets proven
+	  first. The TX peer-loss check goes with it, or it would rebuild the session with nothing to hear.
 
 config ZLRS_APP_RESYNC_PERIOD_MS
-	int "连接态周期 SYNC 的间隔（毫秒，0 = 关）"
+	int "Periodic SYNC interval while connected (ms, 0 = off)"
 	default 5000
 	range 0 10000
 	help
-	  连上以后每隔这么久用同步信道发一次 SYNC：对端据此校正跳频索引（两端
-	  晶振差会累积成"踩空"），也据此发现对端重启或重新配对，自动重新握手。
-	  见 doc/09-protocol.md 3.6。间隔按帧数换算，至少 1 帧。
+	  Once connected, send a SYNC on the sync channel this often: the peer re-aligns its hop
+	  index (crystal drift accumulates into missed hops) and spots a peer reboot or re-pair.
+	  See doc/09-protocol.md 3.6. Converted to frames, at least one.
 
 config ZLRS_APP_STATS_LOG
-	bool "每秒在控制台打一条链路状态（上板调试用）"
+	bool "Status lines once a second on the console (bench debugging)"
 	default n
 	help
-	  每秒打几条：收发计数、空口收发与事务失败数、CRSF/数据口丢弃、LQ、
-	  地区与占空比、动态功率。上板调试开着，量产关掉（噪声）。只影响打不打
-	  日志：速率档与动态功率的每秒评估不受影响。
+	  A few lines a second: frame counters, air-side counters and transaction failures, CRSF and
+	  data port drops, LQ, region and duty, dynamic power. On for the bench, off in production
+	  (it is noise). Logging only: the 1 Hz rate and power verdicts are unaffected.
 
 config ZLRS_APP_BOOT_DELAY_MS
-	int "USB 起来后、继续初始化之前先等一会儿（毫秒，0 = 不等）"
+	int "Wait after USB comes up before continuing init (ms, 0 = no wait)"
 	default 0
 	range 0 30000
 	help
-	  上板调试用：等一会儿再往下走，好让主机打开控制台端口（CDC 的 TX 要主机
-	  打开才收），这样"初始化中途崩了"的 panic 日志才看得到。生产保持 0。
+	  Bench only: give the host time to open the console port (a CDC only transmits once the
+	  host has opened it), so a panic during init is actually visible. Keep 0 in production.
 
 config ZLRS_APP_WATCHDOG
-	bool "看门狗：崩溃或卡死自动复位（回滚的助力，不是回滚本身）"
+	bool "Watchdog: reset on a crash or a stuck loop (helps rollback, is not rollback)"
 	default n
 	depends on WATCHDOG
 	help
-	  PRE_KERNEL_1 就装好（app/src/watchdog.c），喂狗只在会阻塞的循环里做，
-	  "主循环卡住"也算死。它只把卡死变成复位；回滚的判据是镜像确认位
-	  （ZLRS_APP_MCUBOOT_CONFIRM），打开它只是省掉"崩了按 BOOTSEL"。
+	  Armed in PRE_KERNEL_1 (app/src/watchdog.c); feeding happens in the blocking loops, so a
+	  stuck main loop counts as dead too. It only turns a hang into a reset; the rollback verdict
+	  is the image confirm bit (ZLRS_APP_MCUBOOT_CONFIRM). This saves reaching for BOOTSEL.
 
 config ZLRS_APP_WATCHDOG_TIMEOUT_MS
-	int "看门狗超时（毫秒）"
+	int "Watchdog timeout (ms)"
 	default 8000
 	range 100 10000
 	depends on ZLRS_APP_WATCHDOG
 	help
-	  要盖住最慢的一次喂狗间隔（配置模式里的 PBKDF2），又不能太长。
+	  Has to cover the slowest feed interval (PBKDF2 inside config mode) without being too long.
 
 config ZLRS_APP_MCUBOOT_CONFIRM
-	bool "升级后由上位机确认镜像（配合 MCUboot 的 test/revert 回滚）"
+	bool "Host confirms the image after an upgrade (MCUboot test/revert rollback)"
 	default y
 	depends on BOOTLOADER_MCUBOOT
-	# IMG_MANAGER 下面那个 choice 只有一项（MCUBOOT_IMG_MANAGER），
-	# 选择项不能 select，所以打开 IMG_MANAGER 就等于选中它
+	# The choice under IMG_MANAGER has a single entry (MCUBOOT_IMG_MANAGER); a choice
+	# symbol cannot be selected, so enabling IMG_MANAGER is what picks it
 	select STREAM_FLASH
 	select IMG_MANAGER
 	help
-	  升级走 test 语义，新镜像先当"待确认"跑：必须由上位机在超时前发一条组帧
-	  正确的配置命令、并且真的收到应答，才调 boot_write_img_confirmed() 把它
-	  标成永久。没等到就复位让 MCUboot 回滚；起不来（崩、卡死被看门狗复位）
-	  同样回滚。没有上一版时停在串口恢复里，照样能刷。判据只有这一位，
-	  见 doc/08-firmware.md 第 6 节。
+	  Upgrades run with test semantics: a new image starts unconfirmed and only an explicit,
+	  well-formed confirm command from the host, answered by the device, makes the application
+	  call boot_write_img_confirmed(). No confirm means a reset and rollback; an image that never
+	  comes up rolls back the same way, and with nothing to roll back to MCUboot stays in serial
+	  recovery, which is still flashable. See doc/08-firmware.md 6.
 
 config ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS
-	int "等上位机确认的超时（毫秒）"
+	int "Host confirm timeout (ms)"
 	default 60000
 	range 0 600000
 	depends on ZLRS_APP_MCUBOOT_CONFIRM
 	help
-	  这段时间里没收到上位机的合法配置命令就复位回滚。要留够"主机枚举 USB +
-	  升级工具跑起来"的时间。0 = 不等（升级后必须立刻有上位机，否则回滚）。
+	  No valid confirm command within this window means a reset and rollback. Leave enough time
+	  for USB enumeration plus the tool. 0 = no wait (a host has to confirm immediately).
 
 config ZLRS_APP_RADIO
-	bool "射频（USP/RAC + LR2021）"
+	bool "Radio (USP/RAC + LR2021)"
 	default y
 	help
-	  关掉后整条射频不参与（走 app/src/radio_null.c），链路状态机与其余功能照常。
-	  Core2021 没接时用它验证射频以外的部分：LR20xx 的 HAL 等不到 BUSY 会 k_oops。
-	  见 doc/12-debug.md 第 3 节。
+	  Off: the radio sits out entirely (app/src/radio_null.c) while the link state machines and
+	  everything else keep running. Use it with no Core2021 attached: the LR20xx HAL k_oops()es
+	  when BUSY never arrives. See doc/12-debug.md 3.
 
 config ZLRS_APP_LINK_CONTROL
-	bool "控制链路（sub-G：RC + 遥测 + 配对）"
+	bool "Control link (RC + telemetry + pairing)"
 	default y
 	help
-	  关掉以后只有数据链路在跑：适合先把 2.4G 透传单独调通。注意配对走控制
-	  链路，所以关掉它以后只能靠 NVS 里已有的配对记录工作。
+	  Off: only the data link runs, which is how the passthrough gets proven on its own. Pairing
+	  happens on the control link, so only an existing NVS pairing record can be used.
 
 config ZLRS_APP_LINK_DATA
-	bool "数据链路（2.4G：串口透传）"
+	bool "Data link (serial passthrough)"
 	default y
 	help
-	  关掉以后只有控制链路在跑：适合先把遥控与遥测单独调通。
+	  Off: only the control link runs, which is how RC and telemetry get proven on their own.
 
 config ZLRS_APP_CRSF_PORT
-	bool "CRSF 端口（手台 ↔ 模块、接收机 → 飞控）"
+	bool "CRSF port (handset <-> module, receiver -> flight controller)"
 	default y
 	select ZLRS_CRSF
 	help
-	  关掉以后不初始化 CRSF 端口：TX 一直发配置好的失控值，RX 也不往飞控
-	  输出。适合只验证空口、不接手台/飞控的台架。
+	  Off: the CRSF port is never initialised, so the TX always sends the configured failsafe
+	  values and the RX does not drive a flight controller. For air-only bench runs.
 
 config ZLRS_APP_CONFIG_MODE
-	bool "配置协议可以进配置模式"
+	bool "Config protocol can enter config mode"
 	default y
 	select ZLRS_CONFIG
 
 config ZLRS_APP_SHELL
-	bool "控制台 CDC 上的调试 shell"
+	bool "Debug shell on the console CDC"
 	default n
 	select SHELL
 	select SHELL_BACKEND_SERIAL
 	help
-	  在控制台口上开 shell：`zlrs status` / `zlrs ports` / `zlrs config` /
-	  `zlrs recovery`。上板调试用，量产关掉。
+	  Opens a shell on the console port: `zlrs status` / `zlrs ports` / `zlrs config` /
+	  `zlrs recovery`. Bench debugging only, off in production.
 
 config ZLRS_APP_PAIRING_BUTTON
-	bool "长按按键触发配对"
+	bool "Long press the button to pair"
 	default y
 	help
-	  关掉以后按键整个不用（配对只能从配置工具或调试入口触发）。
+	  Off: the button is unused entirely and pairing can only come from the config tool.
 
 config ZLRS_APP_STATUS_LED
-	bool "状态灯"
+	bool "Status LED"
 	default y
 	select ZLRS_LED
 
 config ZLRS_APP_UPDATE_TRIGGER
-	bool "配置协议可以进 MCUboot 串口恢复"
+	bool "Config protocol can enter MCUboot serial recovery"
 	default y
 	depends on BOOTLOADER_MCUBOOT
 	select RETENTION
@@ -216,185 +216,185 @@ config ZLRS_APP_UPDATE_TRIGGER
 	select RETAINED_MEM
 	select REBOOT
 	help
-	  配置工具在配置口上发"进恢复"命令，设备置 boot mode 并重启：MCUboot
-	  读到这个标志后停在串口恢复，等主机上传签名镜像。这样升级一台健康设备
-	  不用拔插 USB 也不用按复位键；调试构建里 shell 的 `zlrs recovery` 走同
-	  一条路。见 doc/08-firmware.md 第 6 节。
+	  The tool sends a recovery command on the config port; the device sets the boot-mode flag
+	  and reboots into MCUboot serial recovery, waiting for a signed image. That is how a healthy
+	  device gets upgraded without unplugging USB or pressing reset; the debug shell's
+	  `zlrs recovery` takes the same path. See doc/08-firmware.md 6.
 
-	  量产/竞速构建可以关掉它（关掉后只能靠复位进 bootloader 的启动窗口）。
+	  Production builds may turn it off; then only the boot window after a reset gets you in.
 
 choice ZLRS_APP_BAND_ROLE
-	prompt "频段角色"
+	prompt "Band role"
 	default ZLRS_APP_BAND_ROLE_SUBG_CONTROL
 	help
-	  远距模式（默认）：控制链路占 sub-G（距离），数据链路占 2.4G（吞吐）。
-	  竞速模式：对调——控制链路独占 2.4G（短空口时间、高帧率），数据链路让到
-	  sub-G 并受地区法规约束（也可以直接关掉数据链路）。见 doc/07-architecture.md 第 2 节。
+	  Long-range mode (default): control owns sub-G (distance), data owns 2.4G (throughput).
+	  Racing mode swaps them: control takes 2.4G alone (short airtime, high frame rate) and data
+	  moves to sub-G under the regional rules (or is turned off). See doc/07-architecture.md 2.
 
 config ZLRS_APP_BAND_ROLE_SUBG_CONTROL
-	bool "远距模式：控制 sub-G / 数据 2.4G"
+	bool "Long range: control on sub-G, data on 2.4G"
 
 config ZLRS_APP_BAND_ROLE_SUBG_DATA
-	bool "竞速模式：控制 2.4G / 数据 sub-G"
+	bool "Racing: control on 2.4G, data on sub-G"
 
 endchoice
 
 choice ZLRS_APP_CONTROL_MODULATION
-	prompt "控制链路调制"
+	prompt "Control link modulation"
 	default ZLRS_APP_CONTROL_MODULATION_FLRC
 	depends on ZLRS_APP_BAND_ROLE_SUBG_CONTROL
 	help
-	  调制按链路各自选（doc/07-architecture.md 第 3 节）：数据链路始终留在 2.4G 跑
-	  FLRC，控制链路可以改跑 LoRa 远距档——窄带地区（868/470/433）放不下
-	  宽带 FLRC 时就是这条路。超帧周期由最慢的那条链路决定。
+	  Modulation is per link (doc/07-architecture.md 3): data always runs FLRC on 2.4G, while
+	  control can move to the LoRa long-range tier, the way out when the narrow band
+	  (868/470/433) cannot fit wide FLRC. The superframe period follows the slower link.
 
 config ZLRS_APP_CONTROL_MODULATION_FLRC
-	bool "FLRC（宽带，默认）"
+	bool "FLRC (wideband, default)"
 
 config ZLRS_APP_CONTROL_MODULATION_LORA
-	bool "LoRa（窄带远距档）"
+	bool "LoRa (narrow-band long range)"
 
 endchoice
 
 config ZLRS_APP_RACING_CONTROL_RATE_BPS
-	int "竞速模式控制链路速率（bps）"
+	int "Racing mode control rate (bps)"
 	default 2600000
 	depends on ZLRS_APP_BAND_ROLE_SUBG_DATA
 	help
-	  竞速模式下控制链路独占 2.4G：这里只填 FLRC 的速率档，不受 sub-G 地区
-	  的速率上限约束。
+	  In racing mode control owns 2.4G: this is a plain FLRC rate tier, not limited by the
+	  sub-G region's rate cap.
 
 config ZLRS_APP_RACING_CONTROL_RATE_HZ
-	int "竞速模式控制帧率（Hz）"
+	int "Racing mode control frame rate (Hz)"
 	default 500
 	range 50 500
 	depends on ZLRS_APP_BAND_ROLE_SUBG_DATA
 	help
-	  2.4G 的帧可以更密（默认 500），但超帧周期仍然要装得下让到 sub-G 的
-	  数据链路那两个窗口（见 doc/07-architecture.md 第 2 节）。
+	  2.4G frames can be denser (500 by default), but the superframe still has to fit the two
+	  data windows that moved to sub-G (see doc/07-architecture.md 2).
 
 config ZLRS_APP_LORA_CONTROL_RATE_HZ
-	int "LoRa 控制帧率（Hz）"
+	int "LoRa control frame rate (Hz)"
 	default 10
 	range 1 50
 	depends on ZLRS_APP_CONTROL_MODULATION_LORA
 	help
-	  LoRa 的一帧就是几十毫秒，10 Hz 已经是"每秒 100 ms"的量级；实际生效值
-	  还会被空中时间压档（例如 SF7/BW125、31 B 帧只能到 9 Hz）。
+	  A LoRa frame takes tens of ms, so 10 Hz already means ~100 ms per second on air; the
+	  effective value is clamped by airtime (SF7/BW125 with a 31 B frame tops out near 9 Hz).
 
 config ZLRS_APP_CONTROL_LORA_SF
-	int "LoRa 扩频因子（5–12）"
+	int "LoRa spreading factor (5-12)"
 	default 7
 	range 5 12
 	depends on ZLRS_APP_CONTROL_MODULATION_LORA
 
 config ZLRS_APP_CONTROL_LORA_BW_HZ
-	int "LoRa 带宽（Hz：125000 / 250000 / 500000）"
+	int "LoRa bandwidth (Hz: 125000 / 250000 / 500000)"
 	default 125000
 	depends on ZLRS_APP_CONTROL_MODULATION_LORA
 
 config ZLRS_APP_CONTROL_LORA_CR
-	int "LoRa 编码率（1–4 表示 4/5–4/8）"
+	int "LoRa coding rate (1-4 means 4/5-4/8)"
 	default 1
 	range 1 4
 	depends on ZLRS_APP_CONTROL_MODULATION_LORA
 
 config ZLRS_APP_CONTROL_LORA_PREAMBLE
-	int "LoRa 前导码长度（符号数）"
+	int "LoRa preamble length (symbols)"
 	default 8
 	range 4 32
 	depends on ZLRS_APP_CONTROL_MODULATION_LORA
 
 config ZLRS_APP_CONTROL_RATE_BPS
-	int "控制链路速率（bps）"
+	int "Control link rate (bps)"
 	default 1300000
 	depends on ZLRS_APP_CONTROL_MODULATION_FLRC
 
 config ZLRS_APP_CONTROL_RATE_HZ
-	int "控制链路帧率（Hz）"
+	int "Control link frame rate (Hz)"
 	default 150
 	range 50 500
 	depends on ZLRS_APP_CONTROL_MODULATION_FLRC
 	help
-	  150 = 通用档（远距/默认），500 = 近距离竞速档。
-	  500 Hz 时每个时隙只有几百微秒预算，而且只有不限占空比的地区跑得动；
-	  实际生效的帧率会被地区占空比压档（见 lib/region 与 doc/09-protocol.md 4.1）。
-	  上限 500 是当前架构的限制：RAC 的排期粒度是毫秒，再高要改用 FLRC burst。
+	  150 = general tier (long range, default), 500 = close-in racing.
+	  At 500 Hz each slot has only a few hundred microseconds and only unlimited-duty regions
+	  can sustain it; the effective rate is clamped by the duty cap (lib/region, 09-protocol 4.1).
+	  The 500 Hz ceiling is architectural: RAC schedules in whole milliseconds, higher needs burst.
 
 config ZLRS_APP_DATA_RATE_BPS
-	int "数据链路速率（bps）"
+	int "Data link rate (bps)"
 	default 2600000
 
 config ZLRS_APP_FLRC_PREAMBLE_BITS
-	int "FLRC 前导码长度（bit）"
+	int "FLRC preamble length (bits)"
 	default 32
 
 config ZLRS_APP_ROOT_KEY_HEX
-	string "根密钥（64 个十六进制字符，空 = 从 NVS 读）"
+	string "Root key (64 hex characters, empty = read from NVS)"
 	default ""
 
 config ZLRS_APP_CRSF_TIMEOUT_MS
-	int "TX 收不到 CRSF 输入后转失控值的超时（ms）"
+	int "Timeout before the TX switches to failsafe values (ms)"
 	default 100
 	help
-	  手台拔线或关机后，TX 在这段时间内没有收到 RC 帧就把空口载荷换成预设
-	  失控值。见 doc/09-protocol.md 3.4。
+	  With the handset unplugged or powered off, the TX swaps in the preset failsafe payload
+	  when no RC frame arrives within this window. See doc/09-protocol.md 3.4.
 
 config ZLRS_APP_TLM_PERIOD_MS
-	int "RX 上报遥测的周期（ms）"
+	int "RX telemetry period (ms)"
 	default 100
 
 config ZLRS_APP_CONFIG_TIMEOUT_S
-	int "配置模式无操作超时（秒）"
+	int "Config mode idle timeout (s)"
 	default 300
 	help
-	  配置模式这么久没有命令就退出，见 doc/08-firmware.md 第 2 节。
+	  Config mode exits after this long without a command, see doc/08-firmware.md 2.
 
 config ZLRS_APP_DATA_ARQ
-	bool "数传走可靠重传（ARQ）"
+	bool "Reliable data transfer (ARQ)"
 	default y
 	help
-	  默认开启：接收方对每个载荷回确认，发送方重发当前载荷直到确认（停等）；
-	  代价是延迟与内存。关掉退回 best-effort（缓冲满就丢，只计数）。
-	  见 doc/09-protocol.md 4.3。
+	  On by default: the receiver acknowledges payloads and the sender retransmits the window
+	  until it is acked. Costs latency and RAM; off means best-effort (drop when full, count it).
+	  See doc/09-protocol.md 4.3.
 
 config ZLRS_APP_SUB_BAND_MIX
-	bool "子带混合自适应（按 LQ 在 2.4G 与 sub-G 之间挪时隙）"
+	bool "Sub-band mixing (move slots between 2.4G and sub-G by LQ)"
 	default y
 	help
-	  LQ 掉了先把遥测时隙挪到 sub-G，再挪数传，最后才动 RC 下行；LQ 好了反向
-	  挪回。上限受地区占空比约束（zlrs_region_mix_level）。见
-	  doc/09-protocol.md 5.1。
+	  When LQ drops, telemetry slots move to sub-G first, then the data link, and only then the
+	  RC downlink; recovery moves them back in reverse. The duty cap bounds it; see
+	  doc/09-protocol.md 5.1.
 
 config ZLRS_APP_RATE_ADAPT
-	bool "按链路质量自动升降速率档"
+	bool "Adapt the rate tier to link quality"
 	default n
 	depends on ZLRS_APP_CONTROL_MODULATION_FLRC
 	help
-	  阈值要按实测曲线标定（见 doc/13-roadmap.md），所以默认关着；
-	  打开后用 app/src/main.c 里的档位表与滞回参数。
+	  Thresholds need measured curves (see doc/13-roadmap.md), so this is off by default;
+	  turn it on and the tier table and hysteresis in app/src/main.c take over.
 
 config ZLRS_APP_DYNAMIC_POWER
-	bool "按对端回报的信号质量自动升降发射功率"
+	bool "Adapt TX power to the quality the peer reports"
 	default y
 	depends on ZLRS_APP_TELEMETRY
 	help
-	  信号富余就降功率（省电、少干扰），信号吃力就升回来；收不到遥测直接回到
-	  上限（那一头多半掉线了）。判据每秒评估一次，阈值与滞回见
-	  lib/link/power.c，上板后按实测曲线标定。
+	  With signal to spare, drop power (saves energy, less interference); when it gets tight, come
+	  back up. Losing telemetry means the ceiling (the other end is probably gone). Evaluated
+	  once a second; thresholds and hysteresis live in lib/link/power.c and wait for measurements.
 
 config ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM
-	int "动态功率的下限（dBm）"
+	int "Dynamic power floor (dBm)"
 	default 0
 	range -10 22
 	depends on ZLRS_APP_DYNAMIC_POWER
 
 config ZLRS_APP_PAIR_HOLD_MS
-	int "长按配对需要按住的时间（ms）"
+	int "Hold time needed to start pairing (ms)"
 	default 1000
 	help
-	  按键只有这一个动作：按住到这个时长就触发配对（见 doc/11-ux.md）。
-	  开机时按住不放则是进配置模式。
+	  The button has exactly one action: holding it this long starts pairing (doc/11-ux.md).
+	  There is no press-and-hold-at-boot gesture; config mode comes from the config port.
 
 endmenu
 
@@ -402,11 +402,11 @@ module = APP
 module-str = app
 source "subsys/logging/Kconfig.template.log_config"
 config ZLRS_APP_ENTROPY_TRNG
-	bool "RP2350 硬件 TRNG 当熵源（zlrs 自己的驱动）"
+	bool "RP2350 hardware TRNG as the entropy source (zlrs driver)"
 	default y
 	select ZLRS_RP2350_TRNG
 	help
-	  驱动在 drivers/trng：probe 里复位并预取，取数走池子，不关中断、等待有界、
-	  失败不兜底（读不出来就报错，开机自检进故障态）。Zephyr 自带的
-	  ENTROPY_RPI_PICO_RNG 不能用：pico-sdk 的取数关中断忙等，USB 直接停摆。
-	  见 doc/13-roadmap.md。
+	  The driver lives in drivers/trng: probe resets and pre-fetches, reads come from a small
+	  pool, interrupts stay on, waits are bounded and failures are reported, never papered over.
+	  Zephyr's ENTROPY_RPI_PICO_RNG is unusable here: pico-sdk spins with interrupts off and USB dies.
+	  See doc/13-roadmap.md.
