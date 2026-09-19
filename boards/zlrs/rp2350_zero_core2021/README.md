@@ -77,7 +77,7 @@ Boot chain: RP2350 bootrom to the application (drag `zephyr.uf2` onto the ROM's 
 
 **hf/mcuboot and lf/mcuboot with MCUboot** (`rp2350_zero_core2021_partitions_mcuboot.dtsi`):
 
-| 分区 | 偏移 | 大小 | 用途 |
+| Partition | Offset | Size | Purpose |
 | --- | --- | --- | --- |
 | mcuboot | 0x000000 | 128 KB | the bootloader (61.6 KB measured, leaving room for USB CDC recovery) |
 | image-0 (slot0) | 0x020000 | 832 KB | the application image (signed, `zephyr,code-partition`) |
