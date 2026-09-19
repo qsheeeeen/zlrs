@@ -20,7 +20,7 @@ extern "C" {
 
 /*
  * KDF(key, label[, ctx]): HKDF-SHA256 with an empty salt and info = label || ctx.
- * The derived values map one to one onto the derivation tree in doc/10-security.md 3.
+ * The derived values map one to one onto the derivation tree in docs/design/10-security.md 3.
  */
 void zlrs_kdf(const uint8_t *key, size_t key_len, const char *label, const uint8_t *ctx,
 	      size_t ctx_len, uint8_t *out, size_t out_len);
@@ -31,7 +31,7 @@ void zlrs_tag(const uint8_t *key, size_t key_len, const uint8_t *data, size_t le
 
 /*
  * Passphrase -> root key: PBKDF2-HMAC-SHA256.
- * The salt carries the KDF version (doc/10-security.md 8) and the caller passes the iteration
+ * The salt carries the KDF version (docs/design/10-security.md 8) and the caller passes the iteration
  * count; the derivation rule is fixed on the device and the config tool cannot change it.
  */
 void zlrs_pbkdf2_sha256(const char *phrase, const uint8_t *salt, size_t salt_len,

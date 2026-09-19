@@ -2,7 +2,7 @@
  * Null radio backend (CONFIG_ZLRS_APP_RADIO=n, interface in radio_port.h):
  * it touches no SPI or BUSY (the LR20xx HAL k_oops()es without BUSY, so an unplugged module
  * would never boot). Transactions finish as "sent, no answer": the state machine still runs.
- * Use cases: doc/12-debug.md 3.
+ * Use cases: docs/design/12-debug.md 3.
  *
  * SPDX-License-Identifier: Apache-2.0
  */

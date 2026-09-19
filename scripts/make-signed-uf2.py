@@ -18,7 +18,7 @@
 # First flash (no debugger):
 #   1. hold BOOTSEL while plugging USB in, drop <build>/mcuboot/zephyr/zephyr.uf2 on RPI-RP2
 #   2. then drop the <build>/<app>/zephyr/zephyr.signed.uf2 this script produces on RPI-RP2
-# Later upgrades go through MCUboot serial recovery, see the README and doc/08-firmware.md.
+# Later upgrades go through MCUboot serial recovery, see the README and docs/design/08-firmware.md.
 
 import argparse
 import os

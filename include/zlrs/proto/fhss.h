@@ -1,5 +1,5 @@
 /*
- * Hopping sequence, see doc/09-protocol.md 5: both ends derive the same table from fhss_seed,
+ * Hopping sequence, see docs/design/09-protocol.md 5: both ends derive the same table from fhss_seed,
  * slot 0 of every block stays on the sync channel and the rest are shuffled within the block.
  *
  * SPDX-License-Identifier: Apache-2.0
@@ -43,7 +43,7 @@ typedef struct {
 	uint8_t sync_channel;
 
 	/*
-	 * Sub-band mixing (doc/09-protocol.md 5.1): a second table (usually sub-G) hangs beside the
+	 * Sub-band mixing (docs/design/09-protocol.md 5.1): a second table (usually sub-G) hangs beside the
 	 * main one, each with its own index; the link layer decides which slot lands on which.
 	 */
 	const zlrs_fhss_domain_t *sub_domain;

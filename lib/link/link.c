@@ -73,7 +73,7 @@ static uint32_t sync_freq_hz(const zlrs_link_t *link)
 }
 
 /*
- * Is this frame a resync frame (doc/09-protocol.md 5.1)? While connected one arrives
+ * Is this frame a resync frame (docs/design/09-protocol.md 5.1)? While connected one arrives
  * every cfg.resync_every_n frames and the whole frame stays on the sync channel: SYNC
  * goes out downlink, the uplink leaves room for a SESS_RESP. Both ends count frame_index.
  */
@@ -156,7 +156,7 @@ static void set_state(zlrs_link_t *link, uint8_t state, uint32_t now_ms)
 
 /*
  * Every time the TX enters SEARCHING it draws a new nonce_t and drops the old session.
- * The session key only exists once the RX answers with nonce_r (doc/09-protocol.md 3.5).
+ * The session key only exists once the RX answers with nonce_r (docs/design/09-protocol.md 3.5).
  */
 static void roll_session(zlrs_link_t *link, uint32_t now_ms)
 {
@@ -251,7 +251,7 @@ static void derive_pair(zlrs_link_t *link)
 	/*
 	 * Both ids plus the two pairing nonces, sorted and concatenated: both ends get the same
 	 * pair_key, and re-pairing changes the nonces, which replaces the whole subtree below
-	 * (see doc/10-security.md 3).
+	 * (see docs/design/10-security.md 3).
 	 */
 	ordered_ids(link, ctx);
 	ordered_pair_salt(link, &ctx[2U * ZLRS_DEV_ID_LEN]);
@@ -539,7 +539,7 @@ static const zlrs_radio_req_t *send_tlm(zlrs_link_t *link)
 			 link->sync_word);
 }
 
-/* ---- ARQ (optional data-link mode, see doc/09-protocol.md 4.3) ------------- */
+/* ---- ARQ (optional data-link mode, see docs/design/09-protocol.md 4.3) ------------- */
 
 static uint16_t arq_inflight_bytes(const zlrs_link_t *link)
 {
@@ -929,7 +929,7 @@ static void handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 	}
 
 	/*
-	 * Sub-band mix and table version (doc/09-protocol.md 5.1): the TX moves them unilaterally
+	 * Sub-band mix and table version (docs/design/09-protocol.md 5.1): the TX moves them unilaterally
 	 * and the RX adopts them while handling this SYNC — that moment is the frame boundary for
 	 * both ends, so nobody ends up half on the old table.
 	 */
@@ -950,7 +950,7 @@ static void handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 
 	if (link->state == ZLRS_STATE_CONNECTED) {
 		/*
-		 * Periodic SYNC while connected (doc/09-protocol.md 5.1).
+		 * Periodic SYNC while connected (docs/design/09-protocol.md 5.1).
 		 */
 		if (link->cfg.resync_every_n == 0U) {
 			/* Periodic resync off: no SYNC is expected once the session is up (the old behaviour) */

@@ -26,7 +26,7 @@ config SERIAL
 
 # No console by default (cdc_acm_uart3 is disabled; chosen points at it but only the debug
 # overlay enables it), so the board sets no CONSOLE / UART_CONSOLE default. Debug builds get
-# it from app/debug.conf + app/debug.overlay (doc/12-debug.md 1).
+# it from app/debug.conf + app/debug.overlay (docs/design/12-debug.md 1).
 #
 # USB device stack and CDC ACM class on by default: three CDCs in the application (CRSF,
 # data, config) and two in the bootloader (recovery, console).

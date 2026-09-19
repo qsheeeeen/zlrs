@@ -1,7 +1,7 @@
 /*
  * Port layer: CRSF port, data port (passthrough) and config mode, including endpoint choice.
  *
- * Endpoints come from board aliases; selection and trimming: doc/08-firmware.md 1, 4. The
+ * Endpoints come from board aliases; selection and trimming: docs/design/08-firmware.md 1, 4. The
  * console does not go through here (it is the board's chosen `zephyr,console`).
  *
  * SPDX-License-Identifier: Apache-2.0
@@ -60,7 +60,7 @@ typedef struct {
 void zlrs_config_set_ops(const zlrs_config_ops_t *ops);
 
 /*
- * The host sent its confirm command (see the upgrade flow in doc/08-firmware.md 6).
+ * The host sent its confirm command (see the upgrade flow in docs/design/08-firmware.md 6).
  * It is the only verdict on whether this image stays: without a confirm after an upgrade,
  * the next reset lets MCUboot roll back.
  */
@@ -85,7 +85,7 @@ uint8_t zlrs_crsf_port_read(uint8_t *type, uint8_t *payload, uint8_t max_len);
 /* Port statistics: frames dropped because the RX buffer was full */
 uint32_t zlrs_crsf_port_rx_dropped(void);
 
-/* ---- config port: a dedicated CDC (doc/08-firmware.md 1) ------------------ */
+/* ---- config port: a dedicated CDC (docs/design/08-firmware.md 1) ------------------ */
 
 int zlrs_config_port_init(void);
 bool zlrs_config_port_ready(void);

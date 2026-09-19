@@ -6,7 +6,7 @@ config ZLRS_CONFIG
 	select ZLRS_PROTO
 	help
 	  Framing and command dispatch for the config CDC while the device is in config mode
-	  (entries: doc/08-firmware.md 2, command table: doc/10-security.md 10).
+	  (entries: docs/design/08-firmware.md 2, command table: docs/design/10-security.md 10).
 	  Pure C: commands only touch the device through backend callbacks, so the host tests
 	  can run every one of them against a fake backend, see tests/host.
 

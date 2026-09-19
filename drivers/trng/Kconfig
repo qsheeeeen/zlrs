@@ -13,7 +13,7 @@ config ZLRS_RP2350_TRNG
 	  Drives the TRNG registers directly per RP2350 datasheet 12.12: 6 EHR words per 192-bit
 	  block, reads from a small pool, bounded waits, interrupts and spinlocks left alone.
 	  Zephyr's entropy_rpi_pico goes through pico-sdk get_rand_64(), which spins with interrupts
-	  off and kills USB, so it is not used here. See doc/13-roadmap.md.
+	  off and kills USB, so it is not used here. See docs/design/13-roadmap.md.
 
 if ZLRS_RP2350_TRNG
 

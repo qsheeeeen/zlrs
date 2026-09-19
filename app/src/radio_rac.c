@@ -1,6 +1,6 @@
 /*
  * Radio port layer (RAC backend), used when CONFIG_ZLRS_APP_RADIO=y.
- * Interface and contract: radio_port.h; callback timing: doc/07-architecture.md 6.2.
+ * Interface and contract: radio_port.h; callback timing: docs/design/07-architecture.md 6.2.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -63,7 +63,7 @@ const zlrs_radio_ops_t *zlrs_radio_data_ops(void)
 	return &data_ops;
 }
 
-/* Rate tiers: since v1.1 the raw rate and bandwidth share one enum, see doc/06-radio.md */
+/* Rate tiers: since v1.1 the raw rate and bandwidth share one enum, see docs/design/06-radio.md */
 static ral_flrc_raw_bit_rate_t raw_bit_rate(uint32_t rate_bps)
 {
 	switch (rate_bps) {
@@ -277,7 +277,7 @@ static int port_submit(void *ctx, const zlrs_radio_req_t *req)
 
 	/*
 	 * Modulation is per link: control may run the LoRa long-range tier, data is always FLRC.
-	 * See doc/07-architecture.md 3.
+	 * See docs/design/07-architecture.md 3.
 	 */
 	if (req->mod.modulation == (uint8_t)ZLRS_MOD_LORA) {
 		rac->modulation_type = SMTC_RAC_MODULATION_LORA;

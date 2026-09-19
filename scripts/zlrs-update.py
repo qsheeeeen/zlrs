@@ -6,7 +6,7 @@
 # One command upgrades a healthy device: trigger recovery, wait for the bootloader's recovery
 # port, upload the signed image and wait for the application to come back. No replugging, no
 #
-# Flow (see doc/08-firmware.md 6):
+# Flow (see docs/design/08-firmware.md 6):
 #   1. send the recovery command to the application's config port (scripts/zlrs-recovery.py),
 #      the application sets the boot-mode flag and reboots;
 #   2. MCUboot stops in serial recovery and enumerates as "ZLRS MCUBOOT" (two CDCs: recovery
@@ -101,7 +101,7 @@ def upload_command(client: str, port: str, image: Path, baud: int) -> list[str]:
     inactive_slot() works out which slot to write (serial recovery defaults to the primary slot,
     which would overwrite the running image; naming the inactive one is what gives A/B).
     The marker is pending, never permanent: the application decides the outcome, and without a
-    confirm command before the timeout the next reset rolls back (doc/08-firmware.md 6).
+    confirm command before the timeout the next reset rolls back (docs/design/08-firmware.md 6).
 
     This script **never** passes `--confirm` to smpmgr: that marks the image permanent inside the
     bootloader before the image has ever run, cutting rollback off. Only the application marks it
@@ -324,7 +324,7 @@ def main() -> int:
         args.recovery_port = wait_for_by_id(RECOVERY_PORT_HINT, args.timeout)
         if args.recovery_port is None:
             print("no recovery port appeared. Device up but not in recovery? Check the boot-mode flag "
-                      "(doc/08-firmware.md 6), "
+                      "(docs/design/08-firmware.md 6), "
                   "or name the port with --recovery-port", file=sys.stderr)
             return 1
     print(f"    recovery port: {args.recovery_port}")

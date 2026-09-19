@@ -27,13 +27,13 @@ extern "C" {
 #define ZLRS_LINK_CONTROL 0U
 #define ZLRS_LINK_DATA    1U
 
-/* Superframe slots, see doc/09-protocol.md 4.1 */
+/* Superframe slots, see docs/design/09-protocol.md 4.1 */
 #define ZLRS_SLOT_CTL_DOWN 0U /* TX -> RX: RC frame (the RX side is a receive window) */
 #define ZLRS_SLOT_CTL_UP   1U /* RX -> TX: TLM frame (the TX side is a receive window) */
 #define ZLRS_SLOT_DATA_A   2U /* first half of the data window: TX -> RX */
 #define ZLRS_SLOT_DATA_B   3U /* second half of the data window: RX -> TX */
 
-/* Link states, see doc/09-protocol.md 3.2 */
+/* Link states, see docs/design/09-protocol.md 3.2 */
 typedef enum {
 	ZLRS_STATE_UNCONFIGURED = 0,
 	ZLRS_STATE_UNPAIRED,
@@ -51,7 +51,7 @@ typedef struct {
 	uint8_t role;   /* ZLRS_ROLE_TX / ZLRS_ROLE_RX */
 	uint8_t domain; /* ZLRS_DOMAIN_*: the main hop table */
 	/*
-	 * Second table (sub-band mixing, doc/09-protocol.md 5.1): 0xFF = not configured, the link
+	 * Second table (sub-band mixing, docs/design/09-protocol.md 5.1): 0xFF = not configured, the link
 	 * only hops the main table; otherwise each sub-band gets one and sub_mix splits the slots.
 	 */
 	uint8_t second_domain;
@@ -59,7 +59,7 @@ typedef struct {
 	zlrs_profile_t profile;
 	/*
 	 * Modulation: an FLRC rate tier or LoRa SF/bandwidth/coding rate/preamble, see
-	 * doc/07-architecture.md 3. LoRa sync words derive from the pairing key, and the link layer
+	 * docs/design/07-architecture.md 3. LoRa sync words derive from the pairing key, and the link layer
 	 * fills in mod.sync_byte itself (callers pass 0).
 	 */
 	zlrs_mod_cfg_t mod;
@@ -75,13 +75,13 @@ typedef struct {
 	uint16_t arq_timeout_ms;
 	/*
 	 * Per-frame hopping. 0 = stay on the sync channel (entry 0 of the hop table), which is how
-	 * bring-up looks at timing and the hop table separately, see doc/12-debug.md 3.
+	 * bring-up looks at timing and the hop table separately, see docs/design/12-debug.md 3.
 	 */
 	uint8_t hopping;
 	/*
 	 * Session handshake. 0 = the pairing-level link_auth doubles as the session key: after a SYNC
 	 * only a SESS_RESP is needed and the first data frame is the confirmation. Saves a derivation
-	 * and a message, costs per-session key rotation: bench only, see doc/10-security.md
+	 * and a message, costs per-session key rotation: bench only, see docs/design/10-security.md
 	 * 3.
 	 */
 	uint8_t handshake;
@@ -95,7 +95,7 @@ typedef struct {
 	uint8_t data_every_n;
 	/*
 	 * Sub-band mix (0..3 -> 0/1/2/4 of every 4 slots on sub-G): the initial value, which the TX
-	 * advances at runtime through the SYNC table version, see doc/09-protocol.md 5.1.
+	 * advances at runtime through the SYNC table version, see docs/design/09-protocol.md 5.1.
 	 */
 	uint8_t mix;
 	/*
@@ -134,7 +134,7 @@ typedef struct {
 	uint32_t hop_resync;    /* hop-index corrections received through SYNC */
 	uint32_t radio_fail;
 	int16_t last_rssi;
-	int8_t last_snr; /* the radio stack cannot provide it under FLRC, see doc/06-radio.md */
+	int8_t last_snr; /* the radio stack cannot provide it under FLRC, see docs/design/06-radio.md */
 	/* Uplink quality: frames really received in the last window vs. what the sequence predicts */
 	uint8_t lq_percent;
 	uint16_t lq_rx;
@@ -147,7 +147,7 @@ typedef struct {
 #define ZLRS_LINK_TLM_MAX_LEN  32U
 
 /*
- * ARQ profile (the data-link default, see doc/09-protocol.md 4.3): cumulative ACKs over a
+ * ARQ profile (the data-link default, see docs/design/09-protocol.md 4.3): cumulative ACKs over a
  * fixed window, retransmit until acked or timed out. The window is a run of frames from the
  * head; bytes are only committed to the queue on ACK, so retransmits need no extra buffer.
  */
@@ -171,7 +171,7 @@ typedef struct {
 	/*
 	 * The two nonces exchanged while pairing (initiator first) feed the pair_key derivation and
 	 * are stored with the pairing record: every pairing replaces them, so old captures can no
-	 * longer reproduce a session. See doc/10-security.md 3.
+	 * longer reproduce a session. See docs/design/10-security.md 3.
 	 */
 	uint8_t pair_salt[ZLRS_PAIR_SALT_LEN];
 	uint8_t pair_key[ZLRS_KEY_LEN];
@@ -179,18 +179,18 @@ typedef struct {
 	 * Per-frame tag keys are direction-split (sender -> receiver) with both dev_ids as context:
 	 * out tags our frames (local id first), in verifies the peer's (peer id first).
 	 * Each end derives both with no negotiation and no roles. One shared key would let our own
-	 * frames pass verification when reflected, see doc/10-security.md 3.
+	 * frames pass verification when reflected, see docs/design/10-security.md 3.
 	 */
 	uint8_t link_auth_out[ZLRS_KEY_LEN];
 	uint8_t link_auth_in[ZLRS_KEY_LEN];
 	uint8_t sync_word[ZLRS_SYNC_WORD_LEN];
-	/* LoRa sync words are one byte plus a private bit, see doc/09-protocol.md 5.3 */
+	/* LoRa sync words are one byte plus a private bit, see docs/design/09-protocol.md 5.3 */
 	uint8_t lora_sync;
 	uint8_t session_key_out[ZLRS_KEY_LEN];
 	uint8_t session_key_in[ZLRS_KEY_LEN];
 	bool session_valid;
 	/*
-	 * Session setup mirrors pairing (doc/09-protocol.md 3.5): the initiator offers nonce_t, the
+	 * Session setup mirrors pairing (docs/design/09-protocol.md 3.5): the initiator offers nonce_t, the
 	 * responder answers with nonce_r, both feed the KDF, and the last message carries nonce_r
 	 * to prove the peer derived the same key. The RX only adopts the session after that proof,
 	 * so replaying an old SYNC yields no old session key.

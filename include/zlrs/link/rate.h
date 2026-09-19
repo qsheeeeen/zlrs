@@ -1,6 +1,6 @@
 /*
  * Rate adaptation framework: how tiers move up and down (windows, hold time, up-margin).
- * The tier table and thresholds come from measured curves, see doc/13-roadmap.md.
+ * The tier table and thresholds come from measured curves, see docs/design/13-roadmap.md.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -19,7 +19,7 @@ extern "C" {
 typedef struct {
 	/*
 	 * A tier is a full set of modulation parameters: an FLRC rate or LoRa SF/bandwidth/coding rate.
-	 * See doc/07-architecture.md 3: this is where the tier table stops being "one rate" and becomes
+	 * See docs/design/07-architecture.md 3: this is where the tier table stops being "one rate" and becomes
 	 * "a modulation plus its parameters".
 	 */
 	zlrs_mod_cfg_t mod;

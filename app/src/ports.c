@@ -917,7 +917,7 @@ static int cfg_enter_recovery(void *ctx)
 	return cfg_ops->enter_recovery();
 }
 
-/* Host confirms this upgrade; the whole flow depends on it (see doc/08-firmware.md 6) */
+/* Host confirms this upgrade; the whole flow depends on it (see docs/design/08-firmware.md 6) */
 static int cfg_confirm_image(void *ctx)
 {
 	(void)ctx;

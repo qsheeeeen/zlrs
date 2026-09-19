@@ -31,7 +31,7 @@ LOG_MODULE_REGISTER(zlrs_led_port, CONFIG_APP_LOG_LEVEL);
 
 /*
  * The pattern engine (lib/led) is trimmable too: with it off this port becomes a no-op and the
- * application never has to care whether a LED exists (see doc/08-firmware.md 4).
+ * application never has to care whether a LED exists (see docs/design/08-firmware.md 4).
  */
 #if !IS_ENABLED(CONFIG_ZLRS_LED) || !LED_AVAILABLE
 int zlrs_led_port_init(void)

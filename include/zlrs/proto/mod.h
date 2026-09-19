@@ -1,5 +1,5 @@
 /*
- * Modulation tiers and the airtime model, see doc/07-architecture.md 3. With LoRa "how long
+ * Modulation tiers and the airtime model, see docs/design/07-architecture.md 3. With LoRa "how long
  * a frame takes" is no longer a division: SF, bandwidth, coding rate and preamble decide it.
  * The superframe, slot budgets, ARQ timeouts and duty accounting all take their time from here.
  *

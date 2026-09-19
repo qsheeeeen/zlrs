@@ -46,7 +46,7 @@ zlrs-build() {
 }
 
 # MCUboot builds add a /mcuboot qualifier and need --sysbuild to pull the bootloader in
-# (doc/08-firmware.md 6). LF SKU: ZLRS_BOARD=.../lf zlrs-build-mcuboot
+# (docs/design/08-firmware.md 6). LF SKU: ZLRS_BOARD=.../lf zlrs-build-mcuboot
 zlrs-build-mcuboot() {
 	(cd "${ZLRS_WS}" && west build --sysbuild -b "${ZLRS_BOARD}/mcuboot" "${ZLRS_APP}" "$@")
 }

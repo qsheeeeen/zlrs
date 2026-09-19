@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * zlrs application entry point: runs the superframe and wires both links to the radio
- * and the serial ports. Threading model and init order: doc/07-architecture.md 6.
+ * and the serial ports. Threading model and init order: docs/design/07-architecture.md 6.
  */
 
 #include <zephyr/app_version.h>
@@ -70,7 +70,7 @@ static uint16_t data_mtu;
 #define CTL_TLM_LEN          15U
 /*
  * Bench bring-up: the two links can each run alone. Control carries RC and pairing,
- * data carries the passthrough; prove them one at a time before combining (doc/12-debug.md 3).
+ * data carries the passthrough; prove them one at a time before combining (docs/design/12-debug.md 3).
  */
 #define ZLRS_CONTROL_ENABLED IS_ENABLED(CONFIG_ZLRS_APP_LINK_CONTROL)
 #define ZLRS_DATA_ENABLED    IS_ENABLED(CONFIG_ZLRS_APP_LINK_DATA)
@@ -87,7 +87,7 @@ static zlrs_mod_cfg_t control_mod;
 static zlrs_mod_cfg_t data_mod;
 
 /*
- * Band role (doc/07-architecture.md 2): control owns sub-G by default, data owns 2.4G;
+ * Band role (docs/design/07-architecture.md 2): control owns sub-G by default, data owns 2.4G;
  * racing mode swaps them. The regulatory gate (power, rate, duty) applies to the sub-G link.
  */
 #if IS_ENABLED(CONFIG_ZLRS_APP_BAND_ROLE_SUBG_DATA)
@@ -130,7 +130,7 @@ static uint32_t led_drop_ms;
 
 /*
  * Rate adaptation tiers, fastest first. Thresholds wait for measured PER curves,
- * see doc/13-roadmap.md; the numbers here are placeholders, the mechanism ignores them.
+ * see docs/design/13-roadmap.md; the numbers here are placeholders, the mechanism ignores them.
  */
 #if IS_ENABLED(CONFIG_ZLRS_APP_RATE_ADAPT)
 static const zlrs_rate_tier_t rate_tiers[] = {
@@ -181,7 +181,7 @@ static void on_tlm(void *ctx, const uint8_t *payload, uint16_t len)
 		crsf_send_link_stats(&tlm);
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)
-		/* Just stash it: the verdict runs in report() at 1 Hz, see doc/09-protocol.md 4.5 */
+		/* Just stash it: the verdict runs in report() at 1 Hz, see docs/design/09-protocol.md 4.5 */
 		tlm_latest.rssi_dbm = -(int16_t)tlm.rssi_neg_dbm;
 		tlm_latest.lq = tlm.lq_percent;
 		tlm_latest.fresh = true;
@@ -243,7 +243,7 @@ static void on_failsafe(void *ctx, const uint8_t *payload, uint16_t len)
  * warn: the regulation wins, but the user gets to see it.
  */
 /*
- * SEARCHING sync period follows the modulation (doc/09-protocol.md 3.6):
+ * SEARCHING sync period follows the modulation (docs/design/09-protocol.md 3.6):
  * the slower the rate the longer a frame takes, so the interval widens to 100-600 ms.
  */
 static uint16_t sync_period_for_mod(const zlrs_mod_cfg_t *mod)
@@ -277,7 +277,7 @@ static void plan_init(void)
 	};
 
 	/*
-	 * Modulation is per link (doc/07-architecture.md 3): where the band cannot fit wide
+	 * Modulation is per link (docs/design/07-architecture.md 3): where the band cannot fit wide
 	 * FLRC the control link falls back to the LoRa tier; data always stays on 2.4G FLRC.
 	 */
 #if IS_ENABLED(CONFIG_ZLRS_APP_BAND_ROLE_SUBG_DATA)
@@ -302,7 +302,7 @@ static void plan_init(void)
 	req.mod = &control_mod;
 
 	/*
-	 * MTU follows the frame format and rate tier (doc/09-protocol.md 4.3): the largest payload
+	 * MTU follows the frame format and rate tier (docs/design/09-protocol.md 4.3): the largest payload
 	 * that fits the one-way data window budget (a quarter frame), capped by the format.
 	 */
 	{
@@ -346,7 +346,7 @@ static void plan_init(void)
 			(unsigned int)plan.rate_hz);
 	}
 
-	/* CONNECTED sync period converted to frames (doc/09-protocol.md 5.1): 1000 ms fits an
+	/* CONNECTED sync period converted to frames (docs/design/09-protocol.md 5.1): 1000 ms fits an
 	 * uint8 at common frame periods, shorter periods get clamped to 255 frames. */
 	if (CONFIG_ZLRS_APP_RESYNC_PERIOD_MS > 0) {
 		const uint32_t frames =
@@ -364,7 +364,7 @@ static void plan_init(void)
 		(unsigned int)control_mod.modulation, control_mod.sf,
 		(unsigned int)control_mod.bw_hz, (unsigned int)data_mod.modulation,
 		(unsigned int)data_mod.rate_bps);
-	LOG_INF("connected-state sync every %u frame(s) (resync, doc/09-protocol.md 5.1)",
+	LOG_INF("connected-state sync every %u frame(s) (resync, docs/design/09-protocol.md 5.1)",
 		(unsigned int)resync_every_n);
 }
 
@@ -375,13 +375,13 @@ static void build_links(void)
 	zlrs_link_cfg_t ctl_cfg = {
 		.kind = ZLRS_LINK_CONTROL,
 		.role = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? ZLRS_ROLE_TX : ZLRS_ROLE_RX,
-		/* Band role: control on sub-G by default, swapped in racing mode (doc/01-product.md 3.2) */
+		/* Band role: control on sub-G by default, swapped in racing mode (docs/design/01-product.md 3.2) */
 		.domain = CONTROL_ON_SUBG ? region->domain : ZLRS_DOMAIN_ISM2400,
 		.second_domain = CONTROL_ON_SUBG ? ZLRS_DOMAIN_ISM2400 : region->domain,
 		.sync_slot = ZLRS_SYNC_SLOT_CONTROL,
 		.profile = IS_ENABLED(CONFIG_ZLRS_APP_SECURITY_PROFILE_P0) ? ZLRS_PROFILE_P0
 									   : ZLRS_PROFILE_P1,
-		/* Bench switches, each can be turned off, see doc/12-debug.md 3 */
+		/* Bench switches, each can be turned off, see docs/design/12-debug.md 3 */
 		.hopping = IS_ENABLED(CONFIG_ZLRS_APP_FHSS) ? 1U : 0U,
 		.handshake = IS_ENABLED(CONFIG_ZLRS_APP_SESSION_HANDSHAKE) ? 1U : 0U,
 		.telemetry = IS_ENABLED(CONFIG_ZLRS_APP_TELEMETRY) ? 1U : 0U,
@@ -438,7 +438,7 @@ static void build_links(void)
 						2U * zlrs_mod_airtime_ms(&data_mod, data_mtu + 7U));
 	/*
 	 * The data link is best-effort: it sends nothing when idle, so it has no peer-loss check,
-	 * which would otherwise rebuild the session over and over while idle (doc/09-protocol.md 3.7).
+	 * which would otherwise rebuild the session over and over while idle (docs/design/09-protocol.md 3.7).
 	 */
 	data_cfg.peer_timeout_ms = 0U;
 	data_cfg.data_mtu = data_mtu;
@@ -489,7 +489,7 @@ static void load_identity(void)
 		have_root_key = true;
 	}
 
-	/* Device id: generated on first boot and stored in NVS, see doc/10-security.md 2 */
+	/* Device id: generated on first boot and stored in NVS, see docs/design/10-security.md 2 */
 	if (zlrs_store_load_dev_id(dev_id) != (int)ZLRS_DEV_ID_LEN) {
 		const uint32_t rnd = sys_rand32_get();
 
@@ -500,7 +500,7 @@ static void load_identity(void)
 	zlrs_link_set_dev_id(&link_data, dev_id);
 
 	if (!have_root_key) {
-		LOG_WRN("no root key: staying off air until one is written (doc/10-security.md)");
+		LOG_WRN("no root key: staying off air until one is written (docs/design/10-security.md)");
 		return;
 	}
 
@@ -592,7 +592,7 @@ static void run_slot(uint8_t slot)
 /*
  * Reboot into MCUboot serial recovery: set the boot-mode flag (retained SRAM, survives a reset),
  * which makes MCUboot wait for a signed image. The only entries are the config protocol's
- * recovery command and the debug shell, see doc/10-security.md 10.
+ * recovery command and the debug shell, see docs/design/10-security.md 10.
  */
 static void enter_serial_recovery(void)
 {
@@ -659,7 +659,7 @@ static void adopt_pairing(void)
 }
 
 /*
- * The button has exactly one action: hold it to the threshold to start pairing (doc/11-ux.md).
+ * The button has exactly one action: hold it to the threshold to start pairing (docs/design/11-ux.md).
  * No short press and no unpair gesture: hold again to re-pair, the new record replaces the old.
  */
 static void handle_button(uint32_t now_ms)
@@ -853,7 +853,7 @@ static void report(uint32_t now_ms)
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_SUB_BAND_MIX)
 	/*
-	 * Sub-band mixing (doc/09-protocol.md 5.1): when LQ drops, move slots to sub-G (the link
+	 * Sub-band mixing (docs/design/09-protocol.md 5.1): when LQ drops, move slots to sub-G (the link
 	 * layer picks the order: telemetry, then data, then RC) and move them back when LQ recovers.
 	 * The region duty cap (zlrs_region_mix_level) bounds it; at most one step per second.
 	 */
@@ -932,7 +932,7 @@ static void report(uint32_t now_ms)
 }
 
 /*
- * Status LED: translate the link state into lib/led inputs, see doc/11-ux.md.
+ * Status LED: translate the link state into lib/led inputs, see docs/design/11-ux.md.
  * Refreshed at 20 Hz (zlrs_led_port_update rate-limits internally).
  */
 #if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
@@ -1040,7 +1040,7 @@ static void led_tick(uint32_t now_ms)
  * Image confirmation: an upgrade counts as successful only when the host really connected,
  * sent the explicit confirm command and got an answer — that flag is the whole test/revert
  * verdict. Upgrades run with test semantics: if the host never confirms, or the image never
- * comes up at all, the reset makes MCUboot roll back. See doc/08-firmware.md 6.
+ * comes up at all, the reset makes MCUboot roll back. See docs/design/08-firmware.md 6.
  */
 static void confirm_image(void)
 {
@@ -1520,7 +1520,7 @@ int main(void)
 		(void)zlrs_led_port_init();
 	}
 
-	/* Wait for the USP/RAC thread, then init RAC (see doc/07-architecture.md 6) */
+	/* Wait for the USP/RAC thread, then init RAC (see docs/design/07-architecture.md 6) */
 #if IS_ENABLED(CONFIG_ZLRS_APP_RADIO)
 	SMTC_SW_PLATFORM_INIT();
 	SMTC_SW_PLATFORM_VOID(smtc_rac_init());

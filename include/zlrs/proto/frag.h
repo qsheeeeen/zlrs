@@ -1,6 +1,6 @@
 /*
  * Reassembly: strictly in seq order, a gap or a timeout drops the whole run, see
- * doc/09-protocol.md 2.5.
+ * docs/design/09-protocol.md 2.5.
  *
  * SPDX-License-Identifier: Apache-2.0
  */

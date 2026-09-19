@@ -1,5 +1,5 @@
 /*
- * Config protocol: runs on the config CDC while in config mode (table: doc/10-security.md 10).
+ * Config protocol: runs on the config CDC while in config mode (table: docs/design/10-security.md 10).
  * Pure C framing and dispatch: persistence and link actions go to the application through
  * backend callbacks, so the host tests can run every command against a fake one.
  *

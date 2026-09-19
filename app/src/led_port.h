@@ -1,6 +1,6 @@
 /*
  * Status LED driver side: write the colour lib/led computes to the on-board WS2812 (needs the
- * `zlrs-led` alias and degrades to a no-op without it). See doc/11-ux.md.
+ * `zlrs-led` alias and degrades to a no-op without it). See docs/design/11-ux.md.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
