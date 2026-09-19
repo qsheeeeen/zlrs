@@ -404,10 +404,11 @@ module = APP
 module-str = app
 source "subsys/logging/Kconfig.template.log_config"
 config ZLRS_APP_ENTROPY_TRNG
-	bool "RP2350 硬件 TRNG 当熵源（暂时默认关，见 roadmap）"
+	bool "RP2350 硬件 TRNG 当熵源（zlrs 自己的驱动，取数时序未验证）"
 	default n
-	select ENTROPY_RPI_PICO_RNG
+	select ZLRS_RP2350_TRNG
 	help
-	  默认关：打开后 USB 会死（pico-sdk 的 TRNG 采样是"关中断 + 忙等
-	  trng_busy"，USB 得不到服务）。CSPRNG 退到 Zephyr 默认路径，bring-up 够用；
-	  量产前必须改成安全取数或换熵源，见 doc/13-roadmap.md。
+	  驱动在 drivers/trng：不关中断、等待有界、失败不兜底（读不出来就报错）。
+	  但**取数时序还没对上**：板上打开会卡在开机自检（两块数据相同/超时），
+	  所以默认关。Zephyr 自带的 ENTROPY_RPI_PICO_RNG 也不能用（pico-sdk 的取数
+	  关中断忙等，USB 直接停摆）。见 doc/13-roadmap.md。

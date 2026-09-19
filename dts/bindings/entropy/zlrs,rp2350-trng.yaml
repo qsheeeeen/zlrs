@@ -1,0 +1,8 @@
+# Copyright (c) 2026 zlrs contributors
+# SPDX-License-Identifier: Apache-2.0
+
+description: zlrs 的 RP2350 TRNG 熵源（有界等待、不关中断）
+
+compatible: "zlrs,rp2350-trng"
+
+include: base.yaml

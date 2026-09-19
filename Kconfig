@@ -5,3 +5,4 @@
 # Zephyr -> Modules -> zlrs.
 
 rsource "lib/Kconfig"
+rsource "drivers/Kconfig"

@@ -21,6 +21,8 @@
 		zephyr,console = &cdc_acm_uart3;
 		zephyr,shell-uart = &cdc_acm_uart3;
 		zephyr,lorawan-transceiver = &lora_core2021;
+		/* 熵源用 zlrs 自己的 TRNG 驱动（有界等待、不关中断，见 drivers/trng） */
+		zephyr,entropy = &zlrs_trng;
 		/* zephyr,code-partition 由各变体自己给：不带 bootloader 的是 code，
 		 * 带 MCUboot 的是 slot0（见同目录 README 的分区表） */
 	};
@@ -45,6 +47,16 @@
 		zlrs_button: zlrs-button {
 			gpios = <&gpio0 12 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
 		};
+	};
+
+	/*
+	 * RP2350 TRNG。Zephyr 树里那个 `raspberrypi,pico-rng` 驱动走 pico-sdk 的
+	 * 关中断忙等取数，会让 USB 停摆；这里换成 zlrs 自己的驱动，读的还是同一组
+	 * TRNG 寄存器（drivers/trng/rp2350_trng.c）。
+	 */
+	zlrs_trng: trng {
+		compatible = "zlrs,rp2350-trng";
+		status = "okay";
 	};
 };
 

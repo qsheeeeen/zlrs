@@ -1,0 +1,25 @@
+# Copyright (c) 2026 zlrs contributors
+# SPDX-License-Identifier: Apache-2.0
+
+menu "zlrs RP2350 TRNG"
+
+config ZLRS_RP2350_TRNG
+	bool "zlrs 的 RP2350 TRNG 熵源驱动"
+	default y
+	# 只在启用了熵子系统的镜像里编（bootloader 没有 ENTROPY_GENERATOR）
+	depends on DT_HAS_ZLRS_RP2350_TRNG_ENABLED && ENTROPY_GENERATOR
+	select ENTROPY_HAS_DRIVER
+	help
+	  直接读 RP2350 TRNG 寄存器：不关中断、等待有界（超时退化成软件熵）。
+	  Zephyr 自带的 entropy_rpi_pico 走 pico-sdk get_rand_64()，取数时关中断
+	  忙等，会让 USB 停摆——所以这台上不用它，见 doc/13-roadmap.md。
+
+if ZLRS_RP2350_TRNG
+
+module = ZLRS_TRNG
+module-str = zlrs_trng
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # ZLRS_RP2350_TRNG
+
+endmenu

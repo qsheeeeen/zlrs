@@ -16,7 +16,7 @@
 
 - **载板打样**：[05-carrier](05-carrier.md) 的两层板。
 - **轻量版**：裁掉 USB 与数据口，只留控制链路。
-- **RP2350 TRNG**（已在板上复现）：打开 `CONFIG_ENTROPY_RPI_PICO_RNG=y` 刷进去后，Windows 侧还能看到 VID:PID `2fe3:0004`，但 CDC 接口起不来、WSL 重挂也拿不到 tty——USB 功能死了，只能按 BOOTSEL 刷回。pico-sdk 的取数路径长时间关中断是根因；要么写"有界超时 + 不长时间关中断"的取数路径，要么换熵源。当前默认关闭（`CONFIG_ENTROPY_RPI_PICO_RNG=n`）。
+- **RP2350 TRNG**（进行中，默认关）：Zephyr 的 `entropy_rpi_pico` 走 pico-sdk 的关中断忙等，打开后 USB 枚举不出来（板上复现过，只能 BOOTSEL 抢救）。`drivers/trng/` 里已经写了 zlrs 自己的驱动（不关中断、等待有界、失败不兜底、退出时报错），但**取数时序还没对上**：直接读 `ehr_data[0]` 会连续拿到同一份数据，照 pico-sdk 改成"等 `trng_busy` 清零后读全部 4 个 EHR 字"后仍然过不了开机自检（设备 halt、USB 消失）。下一步要么把 pico-sdk 的采样时序逐行对齐（含 `sample_cnt1`/`trng_debug_control` 与再次采样的等待条件），要么换熵源（ROSC 随机位）。默认必须保持关（`CONFIG_ZLRS_APP_ENTROPY_TRNG=n`），CSPRNG 走 Zephyr 默认路径。
 
 ### 升级链路
 

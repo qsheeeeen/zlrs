@@ -8,6 +8,7 @@
 
 #include <zephyr/app_version.h>
 #include <zephyr/devicetree.h>
+#include <zephyr/drivers/entropy.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -109,6 +110,11 @@ static uint32_t button_since_ms;
 /* CRSF 端口的收发（定义在下面，链路回调里要用） */
 static void crsf_send_rc(const uint8_t *payload, uint8_t len);
 static void crsf_send_link_stats(const zlrs_tlm_t *tlm);
+
+#if IS_ENABLED(CONFIG_ZLRS_APP_ENTROPY_TRNG)
+/* 熵源自检（定义在 main 之前），shell 命令与开机自检都用它 */
+static int entropy_selftest(void);
+#endif
 
 static uint8_t rc_payload[ZLRS_RC_PAYLOAD_LEN];
 static uint8_t failsafe_payload[ZLRS_CRSF_RC_PAYLOAD_LEN];
@@ -1194,6 +1200,23 @@ static int cmd_recovery(const struct shell *sh, size_t argc, char **argv)
 }
 #endif
 
+#if IS_ENABLED(CONFIG_ZLRS_APP_ENTROPY_TRNG)
+static int cmd_entropy(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	if (entropy_selftest() != 0) {
+		shell_print(sh, "entropy: FAIL");
+		return -1;
+	}
+
+	shell_print(sh, "entropy: ok");
+
+	return 0;
+}
+#endif
+
 SHELL_STATIC_SUBCMD_SET_CREATE(
 	zlrs_cmds,
 	SHELL_CMD(status, NULL, "角色 / SKU / 地区 / 链路状态", cmd_status),
@@ -1204,10 +1227,47 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 #if IS_ENABLED(CONFIG_ZLRS_APP_UPDATE_TRIGGER)
 	SHELL_CMD(recovery, NULL, "重启进 MCUboot 串口恢复", cmd_recovery),
 #endif
+#if IS_ENABLED(CONFIG_ZLRS_APP_ENTROPY_TRNG)
+	SHELL_CMD(entropy, NULL, "熵源自检（TRNG 读两块 32 字节）", cmd_entropy),
+#endif
 	SHELL_SUBCMD_SET_END);
 
 SHELL_CMD_REGISTER(zlrs, &zlrs_cmds, "zlrs 调试命令", NULL);
 #endif /* CONFIG_ZLRS_APP_SHELL */
+
+#if IS_ENABLED(CONFIG_ZLRS_APP_ENTROPY_TRNG)
+/*
+ * 熵源自检：连续读两块 32 字节，必须成功且互不相同。
+ * 失败就报错——**不做软件兜底**：硬件熵源坏了就是坏了，宁可停机也不用假熵，
+ * 否则密钥、设备标识、配对全都建立在"看起来能跑"的随机数上。
+ */
+static int entropy_selftest(void)
+{
+	const struct device *const dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_entropy));
+	uint8_t a[32];
+	uint8_t b[32];
+
+	if (!device_is_ready(dev)) {
+		LOG_ERR("entropy device not ready");
+		return -1;
+	}
+
+	if (entropy_get_entropy(dev, a, sizeof(a)) != 0 ||
+	    entropy_get_entropy(dev, b, sizeof(b)) != 0) {
+		LOG_ERR("entropy self-test failed: TRNG read error");
+		return -1;
+	}
+
+	if (memcmp(a, b, sizeof(a)) == 0) {
+		LOG_ERR("entropy self-test failed: two identical blocks");
+		return -1;
+	}
+
+	LOG_INF("entropy self-test ok");
+
+	return 0;
+}
+#endif /* CONFIG_ZLRS_APP_ENTROPY_TRNG */
 
 int main(void)
 {
@@ -1263,6 +1323,13 @@ int main(void)
 	if (zlrs_store_init() != 0) {
 		LOG_ERR("store unavailable: keys, pairing and failsafe will not persist");
 	}
+
+#if IS_ENABLED(CONFIG_ZLRS_APP_ENTROPY_TRNG)
+	/* 熵源坏了就别往下走：后面的密钥生成与设备标识全依赖它 */
+	if (entropy_selftest() != 0) {
+		fault_loop();
+	}
+#endif
 
 	/*
 	 * 地区与功率上限是运行期参数（配置协议可写）：NVS 里有就用它，没有就用
