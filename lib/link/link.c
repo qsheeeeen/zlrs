@@ -6,10 +6,10 @@
 
 #include <string.h>
 
-/* 配对模式下使用的公开同步字，槽 3 */
+/* Public sync word used while pairing, slot 3 */
 static const uint8_t pairing_sync_word[ZLRS_SYNC_WORD_LEN] = { 'Z', 'L', 'R', 'S' };
 
-/* 派生标签 */
+/* Derivation labels */
 #define LABEL_PAIR "zlrs/pair"
 #define LABEL_AUTH "zlrs/auth"
 #define LABEL_FHSS "zlrs/fhss"
@@ -20,11 +20,11 @@ static const uint8_t pairing_sync_word[ZLRS_SYNC_WORD_LEN] = { 'Z', 'L', 'R', 'S
 #define LABEL_LINK_AUTH "zlrs/link-auth"
 #define LABEL_SESSION "zlrs/session"
 
-/* 配对帧载荷长度：dev_a(4) + dev_b(4) + nonce_a(4) + nonce_b(4) */
+/* Pairing payload length: dev_a(4) + dev_b(4) + nonce_a(4) + nonce_b(4) */
 /*
- * 配对载荷：两侧 dev_id(8) + 两个 nonce(8) + 标志(1) + 失控值(22)。
- * 失控值只有发起方（TX）填：设过就置 FLAG_FAILSAFE，响应方照单存下来；
- * 没设过就不置位，响应方保持自己那份，免得被一串 0 覆盖。
+ * Pairing payload: both dev_ids (8) + two nonces (8) + flags (1) + failsafe values (22).
+ * Only the initiator (TX) fills in the failsafe values: it sets FLAG_FAILSAFE when it has
+ * any and the responder stores them; without the flag the responder keeps its own instead
  */
 #define PAIR_PAYLOAD_LEN (17U + ZLRS_RC_PAYLOAD_LEN)
 #define PAIR_FLAGS_OFFSET 16U
@@ -56,13 +56,13 @@ static uint32_t link_random(const zlrs_link_t *link, uint32_t salt)
 		return link->radio.random(link->radio.ctx);
 	}
 
-	/* 没有随机源时用时间与序号凑一个非零值，仅够跑通流程 */
+	/* Without a random source, mix time and a counter into a non-zero value: enough to exercise the flow */
 	return (salt * 2654435761U) ^ 0x9e3779b9U;
 }
 
 /*
- * 同步信道频率。配对时还没派生密钥、跳频表还没生成，所以直接查频段表；
- * 这个频点是配对与 SYNC 的固定落脚点。
+ * Sync channel frequency. While pairing there is no derived key and no hop table yet, so
+ * look the band table up directly: this is the fixed meeting point for pairing and SYNC.
  */
 static uint32_t sync_freq_hz(const zlrs_link_t *link)
 {
@@ -73,9 +73,9 @@ static uint32_t sync_freq_hz(const zlrs_link_t *link)
 }
 
 /*
- * 这一帧是不是"重同步帧"（见 doc/09-protocol.md 5.1）：连接态下每
- * cfg.resync_every_n 帧来一次，整帧都停在同步信道上——下行发 SYNC，上行让
- * 对端有机会回 SESS_RESP。两端用同一个 frame_index 推，节奏天然一致。
+ * Is this frame a resync frame (doc/09-protocol.md 5.1)? While connected one arrives
+ * every cfg.resync_every_n frames and the whole frame stays on the sync channel: SYNC
+ * goes out downlink, the uplink leaves room for a SESS_RESP. Both ends count frame_index.
  */
 static bool sync_frame(const zlrs_link_t *link)
 {
@@ -84,10 +84,10 @@ static bool sync_frame(const zlrs_link_t *link)
 }
 
 /*
- * 这一帧该用哪个频点：重同步帧与"会话确认还欠着"的帧都退回同步信道，
- * 其余按跳频表。
+ * Which frequency this frame uses: resync frames and frames that still owe a session
+ * confirm fall back to the sync channel, everything else follows the hop table.
  */
-/* 时隙种类：子带迁移顺序用（遥测 → 数传 → RC，见 doc/09-protocol.md 5.1） */
+/* Slot kinds, used to order sub-band moves (telemetry, then data, then RC; 09-protocol 5.1) */
 enum slot_kind {
 	SLOT_RC = 0,
 	SLOT_TLM,
@@ -95,8 +95,8 @@ enum slot_kind {
 };
 
 /*
- * 这个时隙要不要落 sub-G：混合比四档 → 每 4 个时隙挪 0/1/2/4 个，
- * 顺序固定为先遥测、再数传、最后才动 RC 下行。
+ * Should this slot land on sub-G? Four mix levels move 0/1/2/4 of every 4 slots, always in
+ * the same order: telemetry first, then data, the RC downlink last.
  */
 static bool slot_in_subg(const zlrs_link_t *link, uint8_t kind)
 {
@@ -106,16 +106,16 @@ static bool slot_in_subg(const zlrs_link_t *link, uint8_t kind)
 		return false;
 	}
 	if (k >= 4U) {
-		return true; /* 100%：整条链路退到 sub-G */
+		return true; /* 100%: the whole link falls back to sub-G */
 	}
 	if (kind == SLOT_TLM) {
-		return true; /* 25%：先挪遥测 */
+		return true; /* 25%: telemetry moves first */
 	}
 	if (k >= 2U && kind == SLOT_DATA) {
-		return true; /* 50%：再挪数传 */
+		return true; /* 50%: data moves next */
 	}
 
-	return false; /* RC 下行只在 100% 时挪 */
+	return false; /* the RC downlink only moves at 100% */
 }
 
 static uint32_t slot_freq_hz(const zlrs_link_t *link, uint8_t kind)
@@ -138,7 +138,7 @@ static void set_state(zlrs_link_t *link, uint8_t state, uint32_t now_ms)
 
 	link->state = state;
 	link->state_ms = now_ms;
-	/* 简化握手的"我在"只在 CONNECTED 有意义 */
+	/* The simplified handshake's "I am here" only means something while CONNECTED */
 	if (state != ZLRS_STATE_CONNECTED) {
 		link->announce = false;
 	}
@@ -146,17 +146,17 @@ static void set_state(zlrs_link_t *link, uint8_t state, uint32_t now_ms)
 		link->ev.on_state(link->ev.ctx, state);
 	}
 
-	/* TX 是链路的权威方：每次回到 SEARCHING 就换一个会话 nonce */
+	/* The TX is the authority: every return to SEARCHING rolls a new session nonce */
 	if (state == ZLRS_STATE_SEARCHING && link->cfg.role == ZLRS_ROLE_TX) {
 		roll_session(link, now_ms);
-		/* 立刻发一次 SYNC，不等一个周期，缩短重连时间 */
+		/* Send a SYNC right away instead of waiting a full period, to shorten the reconnect */
 		link->last_sync_ms = (uint32_t)(now_ms - link->cfg.sync_period_ms);
 	}
 }
 
 /*
- * TX 侧每次进入 SEARCHING 抽一个新的 nonce_t，并丢掉上一次的会话。会话钥匙要等
- * RX 回了 nonce_r 才算得出来（见 doc/09-protocol.md 3.5）。
+ * Every time the TX enters SEARCHING it draws a new nonce_t and drops the old session.
+ * The session key only exists once the RX answers with nonce_r (doc/09-protocol.md 3.5).
  */
 static void roll_session(zlrs_link_t *link, uint32_t now_ms)
 {
@@ -168,7 +168,7 @@ static void roll_session(zlrs_link_t *link, uint32_t now_ms)
 	link->announce = false;
 }
 
-/* 本机与对端 dev_id 按数值排序后拼接，保证两端算出同一个 pair_key */
+/* Concatenate the two dev_ids in numeric order so both ends derive the same pair_key */
 static void ordered_ids(const zlrs_link_t *link, uint8_t out[2U * ZLRS_DEV_ID_LEN])
 {
 	const uint8_t *a = link->dev_id;
@@ -190,7 +190,7 @@ static void ordered_ids(const zlrs_link_t *link, uint8_t out[2U * ZLRS_DEV_ID_LE
 	}
 }
 
-/* 配对的两个 nonce 同样按数值排序：谁发起都不影响派生结果 */
+/* The pairing nonces are sorted numerically too, so who initiated does not matter */
 static void ordered_pair_salt(const zlrs_link_t *link, uint8_t out[ZLRS_PAIR_SALT_LEN])
 {
 	uint32_t a = rd32(&link->pair_salt[0]);
@@ -213,9 +213,9 @@ static void derive_auth(zlrs_link_t *link)
 }
 
 /*
- * 钥匙按方向分：KDF(pair_key, label, ctx || 本机 || 对端) 用于发出去的帧，两个 id
- * 调过来用于校验对端的帧——顺序本身编码方向，两端各算一次即可配对。
- * 不区分方向的话，把自己发的帧原样打回来就会被当成对端的帧收下（反射攻击）。
+ * Keys are directional: KDF(pair_key, label, ctx || local || peer) tags outgoing frames and
+ * the swapped order verifies incoming ones. The order encodes direction; each end derives both.
+ * Without that, our own frame echoed back would be taken for the peer's (reflection attack).
  */
 static void derive_by_endpoints(const zlrs_link_t *link, const char *label,
 				const uint8_t *ctx, size_t ctx_len,
@@ -231,12 +231,12 @@ static void derive_by_endpoints(const zlrs_link_t *link, const char *label,
 		memcpy(ids_ctx, ctx, ctx_len);
 	}
 
-	/* 本机发：本机在前 */
+	/* Outgoing: local id first */
 	memcpy(&ids_ctx[ctx_len], link->dev_id, ZLRS_DEV_ID_LEN);
 	memcpy(&ids_ctx[ctx_len + ZLRS_DEV_ID_LEN], link->peer_id, ZLRS_DEV_ID_LEN);
 	zlrs_kdf(link->pair_key, ZLRS_KEY_LEN, label, ids_ctx, len, out, ZLRS_KEY_LEN);
 
-	/* 对端发：对端在前 */
+	/* Incoming: peer id first */
 	memcpy(&ids_ctx[ctx_len], link->peer_id, ZLRS_DEV_ID_LEN);
 	memcpy(&ids_ctx[ctx_len + ZLRS_DEV_ID_LEN], link->dev_id, ZLRS_DEV_ID_LEN);
 	zlrs_kdf(link->pair_key, ZLRS_KEY_LEN, label, ids_ctx, len, in, ZLRS_KEY_LEN);
@@ -251,9 +251,9 @@ static void derive_pair(zlrs_link_t *link)
 	uint32_t hop_seed;
 
 	/*
-	 * 双方 id 与配对时的两个 nonce，排序后拼接：两端算出同一个 pair_key，
-	 * 而换一次配对就换一份 nonce，等于换掉下面整棵子树（见 doc/10-security.md
-	 * 第 3 节）。
+	 * Both ids plus the two pairing nonces, sorted and concatenated: both ends get the same
+	 * pair_key, and re-pairing changes the nonces, which replaces the whole subtree below
+	 * (see doc/10-security.md 3).
 	 */
 	ordered_ids(link, ctx);
 	ordered_pair_salt(link, &ctx[2U * ZLRS_DEV_ID_LEN]);
@@ -281,9 +281,9 @@ static void derive_pair(zlrs_link_t *link)
 	       ZLRS_SYNC_WORD_LEN);
 
 	/*
-	 * LoRa 的同步字是 1 字节 + private bit，不能沿用上面那 4 字节，所以另开
-	 * 一条派生标签（还是按角色命名，不按频段）。最高位当 private bit，用来
-	 * 区分"我们这一组"与公开的同步字。见 doc/09-protocol.md 5.3。
+	 * LoRa sync words are one byte plus a private bit, so the 4-byte one above cannot be
+	 * reused: a separate label derives them (still named by role, not by band). The top bit
+	 * is the private bit separating our group from public sync words (09-protocol 5.3).
 	 */
 	{
 		const char *label = (link->cfg.kind == ZLRS_LINK_CONTROL)
@@ -304,8 +304,8 @@ static void derive_pair(zlrs_link_t *link)
 	link->sess_resp_due = false;
 	link->sess_cfm_due = false;
 	/*
-	 * 简化握手（只在上板调试时关）：不派生会话钥匙，配对级的 link_auth 直接
-	 * 当会话钥匙用，SYNC 之后只回一条 SESS_RESP，见 doc/10-security.md 第 3 节。
+	 * Simplified handshake (only disabled for bench work): no session key is derived, the
+	 * pairing-level link_auth is the session key and one SESS_RESP answers a SYNC (10-security 3).
 	 */
 	if (link->cfg.handshake == 0U) {
 		memcpy(link->session_key_out, link->link_auth_out, ZLRS_KEY_LEN);
@@ -316,7 +316,7 @@ static void derive_pair(zlrs_link_t *link)
 	link->fhss.index = 0U;
 }
 
-/* 会话钥匙 = KDF(pair_key, "zlrs/session", nonce_t || nonce_r || 双方 id) */
+/* Session key = KDF(pair_key, "zlrs/session", nonce_t || nonce_r || both ids) */
 static void derive_session_keys(zlrs_link_t *link, uint32_t nonce_t, uint32_t nonce_r)
 {
 	uint8_t ctx[2U * sizeof(uint32_t)];
@@ -328,8 +328,8 @@ static void derive_session_keys(zlrs_link_t *link, uint32_t nonce_t, uint32_t no
 }
 
 /*
- * 采用这次会话：钥匙即刻生效，序号、ARQ 与 LQ 窗口都从头开始（上一段会话在飞的
- * 数据作废）。TX 发出 SESS_CFM 前调用，RX 验过 SESS_CFM 后调用。
+ * Adopt this session: the key takes effect now and sequence numbers, ARQ and the LQ window
+ * restart (in-flight data from the old session is void). TX calls it before SESS_CFM, RX after.
  */
 static void session_activate(zlrs_link_t *link, uint16_t hop_index)
 {
@@ -338,11 +338,11 @@ static void session_activate(zlrs_link_t *link, uint16_t hop_index)
 	link->sess_resp_due = false;
 	link->last_rx_seq = 0xFFFFU;
 	link->tx_seq = 0U;
-	/* 新会话的序号从头开始，LQ 窗口不能跨会话累计 */
+	/* Sequence numbers restart per session; the LQ window must not span sessions */
 	link->lq_last_seq = 0U;
 	link->stats.lq_rx = 0U;
 	link->stats.lq_expected = 0U;
-	/* ARQ 窗口也是会话状态：在飞的帧作废，字节留在队列里重发 */
+	/* The ARQ window is session state too: in-flight frames are void, their bytes stay queued */
 	link->arq_used = 0U;
 	link->arq_retries = 0U;
 	link->arq_seq = 0U;
@@ -359,7 +359,7 @@ static uint16_t build_frame(zlrs_link_t *link, uint8_t type, uint8_t flags,
 	uint16_t total;
 
 	if (link->cfg.profile == ZLRS_PROFILE_P2) {
-		return 0U; /* P2 的载荷加密不在链路层做，配置成 P2 就不发包 */
+		return 0U; /* P2 payload encryption is not done here, so a P2 link sends nothing */
 	}
 	if (len > ZLRS_PAYLOAD_MAX_LEN) {
 		return 0U;
@@ -377,7 +377,7 @@ static uint16_t build_frame(zlrs_link_t *link, uint8_t type, uint8_t flags,
 	frame.payload_len = len;
 	frame.tag = NULL;
 
-	/* encode 只写 header + payload，tag 由这里补在后面 */
+	/* encode writes header + payload only; the tag is appended here */
 	if (zlrs_frame_encode(&frame, link->tx_buf, sizeof(link->tx_buf)) !=
 	    (uint16_t)(ZLRS_FRAME_HDR_LEN + len)) {
 		return 0U;
@@ -395,8 +395,8 @@ static uint16_t build_frame(zlrs_link_t *link, uint8_t type, uint8_t flags,
 	return total;
 }
 
-/* 取一帧的 tag 钥匙：outbound 用 out，否则用 in。配对握手是例外——它靠角色门禁
- * 与类型标签分方向，两端同一把 auth_key（见 doc/10-security.md 第 4 节）。 */
+/* Tag key for a frame: outbound uses out, otherwise in. The pairing handshake is the
+ * exception: role gating and type labels carry direction, both ends share one auth_key. */
 static const uint8_t *tag_key_for(const zlrs_link_t *link, uint8_t type, bool outbound)
 {
 	const uint8_t *link_auth = outbound ? link->link_auth_out : link->link_auth_in;
@@ -408,10 +408,10 @@ static const uint8_t *tag_key_for(const zlrs_link_t *link, uint8_t type, bool ou
 	case ZLRS_PKT_PAIR_CFM:
 		return link->auth_key;
 	case ZLRS_PKT_SYNC:
-	/* 会话响应要在会话钥匙生效前就能验，用配对级钥匙 */
+	/* SESS_RESP must verify before the session key exists, so it uses the pairing-level key */
 	case ZLRS_PKT_SESS_RESP:
 		return link_auth;
-	/* 确认帧必须用它确认的那把会话钥匙打 tag */
+	/* The confirm frame must be tagged with the very session key it confirms */
 	case ZLRS_PKT_SESS_CFM:
 		return session;
 	default:
@@ -463,7 +463,7 @@ static const zlrs_radio_req_t *submit_rx(zlrs_link_t *link, uint32_t freq_hz,
 	return make_req(link, false, 0U, freq_hz, sync_slot, sync_word, timeout_ms);
 }
 
-/* ---- 发送：各帧类型 ------------------------------------------------------ */
+/* ---- transmit: one builder per frame type -------------------------------- */
 
 static const zlrs_radio_req_t *send_sync(zlrs_link_t *link, uint32_t now_ms)
 {
@@ -481,14 +481,14 @@ static const zlrs_radio_req_t *send_sync(zlrs_link_t *link, uint32_t now_ms)
 			  tag_key_for(link, ZLRS_PKT_SYNC, true));
 	link->last_sync_ms = now_ms;
 
-	/* SYNC 固定发在同步信道 */
+	/* SYNC always goes out on the sync channel */
 	return submit_tx(link, len, sync_freq_hz(link), link->cfg.sync_slot,
 			 link->sync_word);
 }
 
 /*
- * RX 对 SYNC 的应答：报 nonce_r、回带 nonce_t，用配对级钥匙认证（会话钥匙还没
- * 生效）。简化握手（handshake=0）下它同时是"我在"报到帧：nonce_r 填 0。
+ * RX answers a SYNC with its nonce_r and echoes nonce_t, authenticated with the pairing key
+ * (the session key does not exist yet). With handshake=0 it is also the "I am here" report.
  */
 static const zlrs_radio_req_t *send_sess_resp(zlrs_link_t *link)
 {
@@ -501,15 +501,15 @@ static const zlrs_radio_req_t *send_sess_resp(zlrs_link_t *link)
 			  tag_key_for(link, ZLRS_PKT_SESS_RESP, true));
 	link->sess_resp_due = false;
 
-	/* 仍发在同步信道：TX 还在 SEARCHING，正在那里等回应 */
+	/* Still on the sync channel: the TX is in SEARCHING and listens there */
 	return submit_tx(link, len, sync_freq_hz(link), link->cfg.sync_slot,
 			 link->sync_word);
 }
 
 /*
- * TX 的会话确认：用刚定下来的会话钥匙打 tag、回带 nonce_r，等于告诉 RX
- * "我算出了同一把钥匙"。丢了不要紧：RX 会在下一个 SYNC 重发同一条响应，
- * 这里就再发一次确认。
+ * The TX's session confirm: tagged with the freshly derived session key and echoing nonce_r,
+ * which tells the RX the key matches. Losing it is fine: the RX repeats its response on the
+ * next SYNC and the confirm goes out again.
  */
 static const zlrs_radio_req_t *send_sess_cfm(zlrs_link_t *link)
 {
@@ -518,8 +518,8 @@ static const zlrs_radio_req_t *send_sess_cfm(zlrs_link_t *link)
 
 	wr32(&payload[0], link->sess_nonce_r);
 	/*
-	 * 回带当前的跳频索引：重新握手可能发生在连接态（对端重启），这时对端
-	 * 拿到的索引就是本端此刻在用的那个，不用再从 SYNC 里猜。
+	 * Echo the current hop index: a re-handshake can happen mid-session (peer reboot), and then
+	 * the peer gets exactly the index this end is using instead of guessing from SYNC.
 	 */
 	payload[4] = (uint8_t)(link->fhss.index & 0xFFU);
 	payload[5] = (uint8_t)(link->fhss.index >> 8);
@@ -549,7 +549,7 @@ static const zlrs_radio_req_t *send_tlm(zlrs_link_t *link)
 			 link->sync_word);
 }
 
-/* ---- ARQ（数据链路可选档，见 doc/09-protocol.md 4.3） ------------------- */
+/* ---- ARQ (optional data-link mode, see doc/09-protocol.md 4.3) ------------- */
 
 static uint16_t arq_inflight_bytes(const zlrs_link_t *link)
 {
@@ -563,9 +563,9 @@ static uint16_t arq_inflight_bytes(const zlrs_link_t *link)
 }
 
 /*
- * 把队首那帧从窗口里拿掉，同时把它的字节从队列里提交（delivered）或丢掉
- * （重传用尽）。后面几帧的字节在队列里是紧跟着的，所以队首一前移，
- * arq_len[] 跟着左移就对得上了。
+ * Drop the head frame from the window and either commit its bytes in the queue (delivered)
+ * or discard them (retries exhausted). The next frames' bytes sit right behind it, so moving
+ * the head and shifting arq_len[] left keeps them aligned.
  */
 static void arq_release_oldest(zlrs_link_t *link, bool delivered)
 {
@@ -589,7 +589,7 @@ static void arq_release_oldest(zlrs_link_t *link, bool delivered)
 	link->arq_retries = 0U;
 }
 
-/* 发窗口里的第 index 帧：载荷是 2 字节数据序号 + 数据 */
+/* Send frame `index` of the window: payload is a 2-byte data sequence number plus data */
 static const zlrs_radio_req_t *arq_send_slot(zlrs_link_t *link, uint8_t index,
 					     uint16_t seq, uint16_t len, bool more)
 {
@@ -616,7 +616,7 @@ static const zlrs_radio_req_t *arq_send_slot(zlrs_link_t *link, uint8_t index,
 		return NULL;
 	}
 
-	/* ARQ 的字节要等 ACK 才提交，这里不要让完成回调动队列 */
+	/* ARQ bytes are committed on ACK, so keep the completion callback out of the queue */
 	link->pending_data_len = 0U;
 
 	return submit_tx(link, frame_len, slot_freq_hz(link, SLOT_DATA),
@@ -635,9 +635,9 @@ static const zlrs_radio_req_t *send_data_arq(zlrs_link_t *link, uint32_t now_ms)
 	if (timeout) {
 		if (link->arq_retries >= ZLRS_ARQ_MAX_RETRIES) {
 			/*
-			 * 重传用尽：这一段放弃（计数），窗口清空、序号回到 0，
-			 * 并发一次重同步，让接收端把半截消息作废、从新的一段开始。
-			 * 不这么做的话，后面的数据会被拼到带洞的流上。
+			 * Retries exhausted: give this run up (count it), clear the window, reset the sequence
+			 * number and fire a resync so the receiver drops the half message and starts over.
+			 * Without this, later data would be stitched onto a stream full of holes.
 			 */
 			arq_release_oldest(link, false);
 			link->arq_used = 0U;
@@ -651,16 +651,16 @@ static const zlrs_radio_req_t *send_data_arq(zlrs_link_t *link, uint32_t now_ms)
 		link->stats.tx_retries++;
 		link->arq_sent_ms = now_ms;
 
-		/* 重传队首那帧：数据序号与长度都不变，MORE 按队列里后面还有没有数据算 */
+		/* Retransmit the head frame: same sequence number and length, MORE reflects what is left */
 		return arq_send_slot(link, 0U, link->arq_seq, link->arq_len[0],
 				     link->queue_count > link->arq_len[0]);
 	}
 
 	if (link->arq_used >= ZLRS_ARQ_WINDOW) {
-		return NULL; /* 窗口满，等 ACK */
+		return NULL; /* window full, wait for an ACK */
 	}
 	if (link->queue_count <= inflight) {
-		return NULL; /* 没有新数据 */
+		return NULL; /* no new data */
 	}
 
 	{
@@ -685,7 +685,7 @@ static const zlrs_radio_req_t *send_data_arq(zlrs_link_t *link, uint32_t now_ms)
 	}
 }
 
-/* ACK 帧：2 字节累计序号 + 1 字节标志（bit0 = 重同步） */
+/* ACK frame: 2-byte cumulative sequence number + 1 byte flags (bit0 = resync) */
 #define ZLRS_ARQ_ACK_RESYNC 0x01U
 
 static const zlrs_radio_req_t *send_arq_ack(zlrs_link_t *link, uint16_t value,
@@ -713,13 +713,13 @@ static const zlrs_radio_req_t *send_arq_ack(zlrs_link_t *link, uint16_t value,
 
 static const zlrs_radio_req_t *send_ack(zlrs_link_t *link)
 {
-	/* 还没按序收下任何帧时回 0xFFFF：发送方看到它不会放掉任何一段 */
+	/* Before any in-order frame, answer 0xFFFF: the sender then releases nothing */
 	const uint16_t value = link->arq_rx_started ? link->arq_rx_seq : 0xFFFFU;
 
 	return send_arq_ack(link, value, 0U);
 }
 
-/* 累计 ACK：一次确认可以放掉窗口里连续的好几帧 */
+/* Cumulative ACK: one confirmation can release several consecutive frames */
 static void handle_ack(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
 {
 	uint16_t ack;
@@ -736,7 +736,7 @@ static void handle_ack(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t no
 	}
 
 	if ((flags & ZLRS_ARQ_ACK_RESYNC) != 0U) {
-		/* 对端重传用尽、要重开一段：丢掉半截消息，回一次"还没有进度" */
+		/* The peer gave up and restarts: drop the half message, answer "no progress yet" */
 		zlrs_reasm_init(&link->reasm, link->reasm_buf, sizeof(link->reasm_buf));
 		link->arq_rx_started = false;
 		link->arq_rx_seq = 0U;
@@ -745,7 +745,7 @@ static void handle_ack(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t no
 	}
 
 	if (link->arq_resync) {
-		/* 等对端确认它已经复位（0xFFFF = 没有进度）才算同步上 */
+		/* Wait until the peer confirms its reset (0xFFFF = no progress) before resyncing */
 		if (ack == 0xFFFFU) {
 			link->arq_resync = false;
 		}
@@ -756,7 +756,7 @@ static void handle_ack(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t no
 		arq_release_oldest(link, true);
 	}
 
-	/* 窗口前移，重传计时从这次确认重新起算 */
+	/* Window moves forward; retransmit timing restarts from this confirmation */
 	link->arq_sent_ms = now_ms;
 }
 
@@ -793,8 +793,8 @@ static const zlrs_radio_req_t *send_data(zlrs_link_t *link, uint32_t now_ms)
 }
 
 /*
- * 配对载荷字段固定为 dev_a(发起方) | dev_b(响应方) | nonce_a | nonce_b，
- * 两端按自己的角色填，字段顺序不随角色变化。
+ * The pairing payload is fixed as dev_a (initiator) | dev_b (responder) | nonce_a | nonce_b:
+ * both ends fill their own role, the field order never changes.
  */
 static void pair_payload_fill(const zlrs_link_t *link, uint8_t out[PAIR_PAYLOAD_LEN],
 			      uint32_t nonce_a, uint32_t nonce_b)
@@ -809,7 +809,7 @@ static void pair_payload_fill(const zlrs_link_t *link, uint8_t out[PAIR_PAYLOAD_
 	wr32(&out[2U * ZLRS_DEV_ID_LEN], nonce_a);
 	wr32(&out[2U * ZLRS_DEV_ID_LEN + 4U], nonce_b);
 
-	/* 发起方把本地失控值一起带过去，响应方存本地 */
+	/* The initiator ships its failsafe values along, the responder stores them */
 	if (initiator && link->failsafe_len == ZLRS_RC_PAYLOAD_LEN) {
 		out[PAIR_FLAGS_OFFSET] = PAIR_FLAG_FAILSAFE;
 		memcpy(&out[PAIR_FAILSAFE_OFFSET], link->failsafe, ZLRS_RC_PAYLOAD_LEN);
@@ -838,12 +838,12 @@ static const zlrs_radio_req_t *pair_rx(zlrs_link_t *link, uint16_t timeout_ms)
 			 timeout_ms);
 }
 
-/* ---- 接收：分发 ---------------------------------------------------------- */
+/* ---- receive: dispatch --------------------------------------------------- */
 
 static void handle_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
 {
 	if (link->cfg.arq) {
-		/* ARQ：载荷头 2 字节是数据序号，重组器按这个序号对齐 */
+		/* ARQ: the first 2 payload bytes are the sequence number the reassembler aligns on */
 		uint16_t seq;
 		zlrs_frame_t inner;
 
@@ -855,14 +855,14 @@ static void handle_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 		seq = (uint16_t)((uint16_t)frame->payload[0] |
 				 ((uint16_t)frame->payload[1] << 8));
 
-		/* 不管新旧都回一次累计 ACK，发送方才能收敛 */
+		/* ACK every frame, old or new, or the sender never converges */
 		link->arq_ack_pending = true;
 
 		if (!link->arq_rx_started) {
 			/*
-			 * 会话里的第一帧必须从序号 0 开始：半截流按错位投递比丢一段
-			 * 更糟（上层拿到的是错位的数据）。不满足就只回 ACK、不投递，
-			 * 让发送方重传。
+			 * The first frame of a session must start at sequence 0: delivering a half stream at the
+			 * wrong offset is worse than dropping it (the layer above sees shifted data). If it does
+			 * not, answer with an ACK only and let the sender retransmit.
 			 */
 			if (seq != 0U) {
 				link->stats.rx_out_of_order++;
@@ -871,10 +871,10 @@ static void handle_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 			link->arq_rx_started = true;
 		} else if ((int16_t)(seq - link->arq_rx_seq) <= 0) {
 			link->stats.rx_dup++;
-			return; /* 重传导致的重复帧：ACK 已置位，不重复投递 */
+			return; /* duplicate from a retransmit: the ACK is set, do not deliver twice */
 		} else if (seq != (uint16_t)(link->arq_rx_seq + 1U)) {
 			link->stats.rx_out_of_order++;
-			return; /* 缺口：等发送方重传，投递顺序由它保证 */
+			return; /* gap: wait for the sender's retransmit, it guarantees the order */
 		}
 
 		link->arq_rx_seq = seq;
@@ -918,9 +918,9 @@ static void handle_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 
 static void pairing_complete(zlrs_link_t *link, uint32_t now_ms)
 {
-	/* 握手交换的两个 nonce 就是这对设备的配对材料：存下来用于重算 pair_key */
-	wr32(&link->pair_salt[0], link->pair_nonce);    /* nonce_a：发起方 */
-	wr32(&link->pair_salt[4], link->pair_nonce_b); /* nonce_b：响应方 */
+	/* The two handshake nonces are this pair's material: keep them to recompute pair_key */
+	wr32(&link->pair_salt[0], link->pair_nonce);    /* nonce_a: initiator */
+	wr32(&link->pair_salt[4], link->pair_nonce_b); /* nonce_b: responder */
 
 	derive_pair(link);
 	link->paired = true;
@@ -935,7 +935,7 @@ static void handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 	uint32_t nonce;
 	uint16_t hop_index;
 
-	/* SYNC 只对已配对的两端有意义 */
+	/* SYNC only means something to a paired pair */
 	if (!link->paired) {
 		return;
 	}
@@ -948,9 +948,9 @@ static void handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 	}
 
 	/*
-	 * 子带混合比与表版本（doc/09-protocol.md 5.1）：TX 单方面推进，RX 在处理
-	 * 这条 SYNC 时采用——处理同步帧这一刻就是两端的"帧边界"，不会一半用旧表
-	 * 一半用新表。
+	 * Sub-band mix and table version (doc/09-protocol.md 5.1): the TX moves them unilaterally
+	 * and the RX adopts them while handling this SYNC — that moment is the frame boundary for
+	 * both ends, so nobody ends up half on the old table.
 	 */
 	{
 		const uint8_t mix = (uint8_t)((frame->payload[1] >> 4) & 0x03U);
@@ -969,19 +969,19 @@ static void handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 
 	if (link->state == ZLRS_STATE_CONNECTED) {
 		/*
-		 * 连接态的周期 SYNC（doc/09-protocol.md 5.1）。
+		 * Periodic SYNC while connected (doc/09-protocol.md 5.1).
 		 */
 		if (link->cfg.resync_every_n == 0U) {
-			/* 没开周期重同步：会话建立后不再听 SYNC（老行为） */
+			/* Periodic resync off: no SYNC is expected once the session is up (the old behaviour) */
 			return;
 		}
 		link->stats.rx_syncs++;
 
 		if (link->session_valid && nonce == link->sess_nonce_t) {
 			/*
-			 * 同一段会话：只校正跳频索引，把两端晶振差抹掉。
-			 * 序号必须更新——SYNC 用的是同一个序号空间，录下来的
-			 * 旧帧不能拿来把索引带偏。
+			 * Same session: only re-align the hop index, erasing crystal drift between the ends.
+			 * The sequence number must be updated: SYNC shares the same sequence space, and a
+			 * recorded frame must not be able to drag the index off.
 			 */
 			if ((int16_t)(frame->seq - link->last_rx_seq) <= 0) {
 				link->stats.rx_dup++;
@@ -998,9 +998,9 @@ static void handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 		}
 
 		/*
-		 * 换了会话（对端重启或重新配对）。这一条要拿"最近完全听不到对端"
-		 * 当前提：SYNC 的 tag 是配对级的，录下来的旧 SYNC 也能验过，
-		 * 只要还在正常收帧就不该被它带到 SEARCHING 去。
+		 * A different session (peer reboot or re-pair). Only trust this when the peer has gone
+		 * completely quiet: the SYNC tag is pairing-level, so a recorded SYNC still verifies and
+		 * must not drag a working link back to SEARCHING.
 		 */
 		if ((uint32_t)(now_ms - link->last_rx_ms) <= link->cfg.sync_period_ms) {
 			link->stats.rx_dup++;
@@ -1018,9 +1018,9 @@ static void handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 
 	if (link->cfg.handshake == 0U) {
 		/*
-		 * 简化握手：这条 SYNC 已经用配对级钥匙验过，采用它报告的跳频索引
-		 * 就算会话成立——钥匙是静态的，没有 nonce 要交换。接下来用 SESS_RESP
-		 * 反复报到，直到听见对端的第一帧，见 send_announce()。
+		 * Simplified handshake: this SYNC already verified with the pairing key, so adopting its hop
+		 * index is enough to count the session as up (the key is static, no nonces to exchange).
+		 * SESS_RESP keeps reporting until the peer's first frame arrives, see send_announce().
 		 */
 		link->sess_nonce_t = nonce;
 		link->sess_hop = hop_index;
@@ -1033,8 +1033,8 @@ static void handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 	}
 
 	/*
-	 * 同一个 nonce_t 的 SYNC 是重发（TX 还没收到我们的回应）：把上次那条
-	 * 回应再发一遍，nonce_r 不能换，换了对端算出的钥匙就跟我们对不上。
+	 * A SYNC with the same nonce_t is a retransmit (the TX never got our answer): repeat the
+	 * previous answer. nonce_r must stay put or the peer derives a different key than we do.
 	 */
 	if (link->session_pending && nonce == link->sess_nonce_t) {
 		link->sess_resp_due = true;
@@ -1042,8 +1042,8 @@ static void handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 	}
 
 	/*
-	 * 谁都可能录下 SYNC 再重放，所以这一步只是"答应谈"：抽一个自己的 nonce_r
-	 * 把钥匙预备好，等 TX 用这把钥匙确认（SESS_CFM）才算会话成立。
+	 * Anyone can record a SYNC and replay it, so this step only agrees to talk: draw a nonce_r,
+	 * prepare the key, and only let the TX's SESS_CFM make the session real.
 	 */
 	link->sess_nonce_t = nonce;
 	link->sess_nonce_r = link_random(link, now_ms);
@@ -1052,7 +1052,7 @@ static void handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 	link->session_pending = true;
 	link->sess_resp_due = true;
 	link->last_rx_ms = now_ms;
-	link->stats.last_rssi = link->stats.last_rssi; /* rssi 由移植层写入 */
+	link->stats.last_rssi = link->stats.last_rssi; /* rssi is written by the port layer */
 }
 
 static bool handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame,
@@ -1073,7 +1073,7 @@ static bool handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame,
 
 	switch (frame->type) {
 	case ZLRS_PKT_PAIR_REQ:
-		/* 响应方：记下发起方 id 与 nonce，下一时隙回 PAIR_RESP */
+		/* Responder: remember the initiator's id and nonce, answer PAIR_RESP next slot */
 		if (initiator) {
 			return false;
 		}
@@ -1082,7 +1082,7 @@ static bool handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame,
 		link->pair_nonce_b = link_random(link, now_ms);
 		link->pair_wait_cfm = true;
 
-		/* 失控值由 TX 下发（它设过才带标志），存本地并交给应用 */
+		/* The TX ships failsafe values (the flag is set only if it has them): store and hand over */
 		if ((frame->payload[PAIR_FLAGS_OFFSET] & PAIR_FLAG_FAILSAFE) != 0U) {
 			memcpy(link->failsafe, &frame->payload[PAIR_FAILSAFE_OFFSET],
 			       ZLRS_RC_PAYLOAD_LEN);
@@ -1095,7 +1095,7 @@ static bool handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame,
 		return true;
 
 	case ZLRS_PKT_PAIR_RESP:
-		/* 发起方：确认自己的 id 与 nonce 都被回带 */
+		/* Initiator: confirm both its id and its nonce came back */
 		if (!initiator) {
 			return false;
 		}
@@ -1109,7 +1109,7 @@ static bool handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame,
 		return true;
 
 	case ZLRS_PKT_PAIR_CFM:
-		/* 响应方：两个 nonce 都回来了，配对完成 */
+		/* Responder: both nonces are back, pairing is done */
 		if (initiator) {
 			return false;
 		}
@@ -1128,8 +1128,8 @@ static bool handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame,
 }
 
 /*
- * 上行链路质量：按序号差算这段窗口里"应该收到多少帧"，够一个窗口就更新一次
- * 百分比。只在会话内、序号严格递增的帧上累计（重复帧与配对帧不算）。
+ * Uplink quality: the sequence-number gap says how many frames should have arrived; once a
+ * full window has passed, update the percentage. Only in-session, increasing frames count.
  */
 #define ZLRS_LQ_WINDOW_FRAMES 128U
 
@@ -1138,7 +1138,7 @@ static void lq_account(zlrs_link_t *link, uint16_t seq)
 	uint16_t delta = (uint16_t)(seq - link->lq_last_seq);
 
 	if (link->stats.lq_rx == 0U && link->stats.lq_expected == 0U) {
-		/* 第一个样本：不把上次断链留下的空档算成本次丢包 */
+		/* First sample: do not charge this run for the gap the last disconnection left */
 		delta = 1U;
 	}
 
@@ -1156,8 +1156,8 @@ static void lq_account(zlrs_link_t *link, uint16_t seq)
 }
 
 /*
- * RX 收到会话确认：用候选会话钥匙验 tag（不走"按状态选钥匙"那条路），验过才算
- * 会话成立。重放的确认对不上——它绑的是这次现抽的 nonce_r。
+ * RX receives the session confirm: verify the tag with the candidate session key (not the
+ * state-based path). Only then is the session real; a replayed confirm cannot match.
  */
 static int handle_sess_cfm(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
 {
@@ -1172,8 +1172,8 @@ static int handle_sess_cfm(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_
 	}
 
 	/*
-	 * P0（无 tag）下这条确认没有任何东西可以验——P0 本来就是"不做身份校验"的
-	 * 调试档，只能靠回带的 nonce_r 对号。生产档没有这个分支。
+	 * Under P0 (no tag) there is nothing to verify: P0 is the no-authentication debug profile
+	 * and only the echoed nonce_r can be checked. Production builds never take this branch.
 	 */
 	if (tag_len > 0U) {
 		zlrs_tag(link->session_key_in, ZLRS_KEY_LEN, link->rx_buf,
@@ -1189,14 +1189,14 @@ static int handle_sess_cfm(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_
 
 	link->stats.rx_frames++;
 	/*
-	 * 采用哪一帧的跳频索引：确认帧里带了就用它（连接态重新握手时这就是
-	 * 对端此刻的索引），旧固件不带就退回 SYNC 里那个。
+	 * Which hop index to adopt: use the one in the confirm when present (during a mid-session
+	 * re-handshake that is the peer's current index), otherwise fall back to the SYNC's.
 	 */
 	session_activate(link, (frame->payload_len >= 6U)
 				      ? (uint16_t)(frame->payload[4] |
 						   ((uint16_t)frame->payload[5] << 8))
 				      : link->sess_hop);
-	link->last_rx_seq = frame->seq; /* 确认帧本身占掉序号 0 起的第一个位置 */
+	link->last_rx_seq = frame->seq; /* the confirm frame itself takes the first slot from 0 */
 	link->last_rx_ms = now_ms;
 	set_state(link, ZLRS_STATE_CONNECTED, now_ms);
 
@@ -1204,16 +1204,16 @@ static int handle_sess_cfm(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_
 }
 
 /*
- * TX 收到会话响应：回带的 nonce_t 必须是当前这一次请求的（旧响应、重放的响应
- * 一律丢），然后算钥匙、发确认。RX 没收到确认时会重发同一条响应，所以这里允许
- * 同一对 nonce 反复触发，等于给确认帧做重传。
+ * TX receives the session response: the echoed nonce_t must belong to this request (stale or
+ * replayed ones are dropped), then derive the key and confirm. The RX repeats its response
+ * when the confirm is lost, so the same nonce pair may trigger this again and again.
  */
 static bool handle_sess_resp(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
 {
 	uint32_t nonce_t;
 	uint32_t nonce_r;
 
-	/* SESS_RESP 是响应方回给发起方的，角色不对直接丢 */
+	/* SESS_RESP goes responder -> initiator; drop it if the role does not fit */
 	if (link->cfg.role != ZLRS_ROLE_TX ||
 	    frame->payload_len < 2U * sizeof(uint32_t)) {
 		return false;
@@ -1226,8 +1226,8 @@ static bool handle_sess_resp(zlrs_link_t *link, const zlrs_frame_t *frame, uint3
 	}
 
 	/*
-	 * 简化握手：对端说的是"我听见你了"。钥匙是静态的，没有确认帧要发——
-	 * 本端接下来的数据帧就是确认。CONNECTED 下收到它只当"对端还在"。
+	 * Simplified handshake: the peer is saying "I heard you". The key is static and there is no
+	 * confirm to send — our next data frame is it. While CONNECTED it only means "still there".
 	 */
 	if (link->cfg.handshake == 0U) {
 		link->last_rx_ms = now_ms;
@@ -1238,8 +1238,8 @@ static bool handle_sess_resp(zlrs_link_t *link, const zlrs_frame_t *frame, uint3
 	}
 
 	/*
-	 * CONNECTED 下收到 SESS_RESP：对端重启后听见了本端的周期 SYNC，正在
-	 * 要求重新握手。本端就用新的 nonce_r 换一套会话钥匙，再回一次确认。
+	 * A SESS_RESP while CONNECTED means the peer rebooted, heard our periodic SYNC and is now
+	 * asking to re-handshake: adopt its nonce_r, derive a fresh session key and confirm.
 	 */
 	if (link->state != ZLRS_STATE_SEARCHING && link->state != ZLRS_STATE_CONNECTED) {
 		return false;
@@ -1251,7 +1251,7 @@ static bool handle_sess_resp(zlrs_link_t *link, const zlrs_frame_t *frame, uint3
 		session_activate(link, link->fhss.index);
 	}
 	link->sess_cfm_due = true;
-	/* 会话刚建立：别让失联判定拿着 SEARCHING 期间的旧时间戳把这一侧踢回去 */
+	/* Session just came up: keep the peer-loss check from kicking us out on a stale timestamp */
 	link->last_rx_ms = now_ms;
 
 	return true;
@@ -1268,7 +1268,7 @@ static int handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 		return -1;
 	}
 
-	/* 会话确认得先用候选钥匙验，不能走下面"按会话状态选钥匙"那套 */
+	/* The confirm verifies with the candidate key first, not the state-based path below */
 	if (frame.type == ZLRS_PKT_SESS_CFM) {
 		return handle_sess_cfm(link, &frame, now_ms);
 	}
@@ -1304,7 +1304,7 @@ static int handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 		return handle_sess_resp(link, &frame, now_ms) ? 0 : -1;
 	}
 
-	/* 发起方收到对端的会话帧即认为链路建立 */
+	/* For the initiator any session frame from the peer means the link is up */
 	if (link->state == ZLRS_STATE_SEARCHING && link->cfg.role == ZLRS_ROLE_TX &&
 	    (frame.type == ZLRS_PKT_TLM || frame.type == ZLRS_PKT_DATA_UP ||
 	     frame.type == ZLRS_PKT_DATA_DOWN)) {
@@ -1315,14 +1315,14 @@ static int handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 		return -1;
 	}
 
-	/* 防重放：同一会话内序列号必须严格递增 */
+	/* Replay protection: sequence numbers must strictly increase within a session */
 	if ((int16_t)(frame.seq - link->last_rx_seq) <= 0) {
 		link->stats.rx_dup++;
 		return -1;
 	}
 	link->last_rx_seq = frame.seq;
 	link->last_rx_ms = now_ms;
-	/* 对端活着：简化握手的"我在"报到不用再发了 */
+	/* The peer is alive: stop sending the simplified handshake's "I am here" */
 	link->announce = false;
 	lq_account(link, frame.seq);
 
@@ -1351,18 +1351,18 @@ static int handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 	return 0;
 }
 
-/* ---- 时隙 ---------------------------------------------------------------- */
+/* ---- slots --------------------------------------------------------------- */
 
 static void advance_hop(zlrs_link_t *link)
 {
 	if (link->cfg.hopping == 0U) {
-		/* 固定在同步信道（跳频表第 0 个位置就是它） */
+		/* Pinned to the sync channel (entry 0 of the hop table) */
 		return;
 	}
 
 	if (link->state == ZLRS_STATE_CONNECTED) {
 		(void)zlrs_fhss_next_hz(&link->fhss);
-		/* 子带表有自己的索引：每帧推进一次，用没用它都保持两端一致 */
+		/* The sub-G table has its own index: advance it every frame so both ends stay aligned */
 		if (zlrs_fhss_sub_ready(&link->fhss)) {
 			(void)zlrs_fhss_sub_next_hz(&link->fhss);
 		}
@@ -1375,7 +1375,7 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot,
 	const bool down = (slot == ZLRS_SLOT_CTL_DOWN);
 	const bool tx_side = (link->cfg.role == ZLRS_ROLE_TX);
 
-	/* 每帧的主时隙（下行）过一次计数，两端步调一致 */
+	/* The main (downlink) slot counts once per frame, keeping both ends in step */
 	if (down) {
 		link->frame_index++;
 	}
@@ -1418,9 +1418,9 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot,
 			if (down) {
 				if (link->sess_cfm_due) {
 					/*
-					 * 确认发出去就进 CONNECTED：这样双方从下一
-					 * 帧起一起推进跳频，索引不会错开。对端没
-					 * 收到确认的话，失联判定会把我们拉回来。
+					 * Enter CONNECTED as soon as the confirm goes out, so both ends advance the hop table from
+					 * the same frame and the indices cannot drift. If the peer never hears the confirm, the
+					 * peer-loss check pulls us back.
 					 */
 					const zlrs_radio_req_t *req = send_sess_cfm(link);
 
@@ -1430,9 +1430,9 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot,
 					return req;
 				}
 				/*
-				 * 时间到了就发；另外在重同步帧的位置多补一发——
-				 * 对端如果还在 CONNECTED，它只在这些帧上开着同步
-				 * 信道的窗口，不然它听不见"我换了会话"。
+				 * Send when the period is up, and add one on every resync frame: a peer that is still
+				 * CONNECTED only opens a window on the sync channel for those, so otherwise it would never
+				 * hear that we changed sessions.
 				 */
 				if ((uint32_t)(now_ms - link->last_sync_ms) <
 					    link->cfg.sync_period_ms &&
@@ -1442,7 +1442,7 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot,
 				return send_sync(link, now_ms);
 			}
 
-			/* 发起方在上行时隙等对端遥测 */
+			/* The initiator listens for the peer's telemetry in the uplink slot */
 			return submit_rx(link, sync_freq_hz(link),
 					 link->cfg.sync_slot, link->sync_word,
 					 link->cfg.rx_timeout_ms);
@@ -1466,13 +1466,13 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot,
 	if (down) {
 		advance_hop(link);
 		if (tx_side) {
-			/* 会话确认还欠着：先补确认，这一帧整帧停在同步信道上 */
+			/* Owing a session confirm: send it, and this whole frame stays on the sync channel */
 			if (link->sess_cfm_due) {
 				return send_sess_cfm(link);
 			}
 			/*
-			 * 重同步帧：发一条 SYNC，把自己的跳频索引摆出来。
-			 * 对端据此校正漂移；对端若换了会话（重启），也据此重握手。
+			 * Resync frame: send a SYNC that states our hop index. The peer uses it to correct drift,
+			 * and if it changed sessions (a reboot) that is how it re-handshakes.
 			 */
 			if (sync_frame(link)) {
 				return send_sync(link, now_ms);
@@ -1484,7 +1484,7 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot,
 				 link->cfg.rx_timeout_ms);
 	}
 
-	/* 会话确认还欠着：对端（SEARCHING）会在同步信道上重发 SESS_RESP */
+	/* Owing a confirm: the peer (in SEARCHING) repeats SESS_RESP on the sync channel */
 	if (link->sess_cfm_due) {
 		if (tx_side) {
 			return submit_rx(link, sync_freq_hz(link), link->cfg.sync_slot,
@@ -1494,8 +1494,8 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot,
 	}
 
 	/*
-	 * 重同步帧的上行时隙也留在同步信道：TX 在这里等对端可能发来的 SESS_RESP
-	 * （对端重启时就是这条路），RX 把遥测发在同一个信道上，不然这一帧白过。
+	 * The uplink slot of a resync frame stays on the sync channel too: the TX waits there for a
+	 * possible SESS_RESP (the peer-reboot path), and the RX puts telemetry on it as well.
 	 */
 	if (sync_frame(link)) {
 		if (tx_side) {
@@ -1509,8 +1509,8 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot,
 	}
 
 	/*
-	 * 简化握手的报到帧优先：对端可能还在 SEARCHING，正守在同步信道上。
-	 * 关掉遥测以后这个信道上就只剩报到帧了。
+	 * The simplified handshake's report frame wins: the peer may still be in SEARCHING,
+	 * listening on the sync channel. With telemetry off that channel carries nothing else.
 	 */
 	if (link->announce) {
 		if (tx_side) {
@@ -1524,7 +1524,7 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot,
 		return NULL;
 	}
 
-	/* 上行时隙：遥测按 tlm_every_n 节流（两端同节奏，跳频不受影响） */
+	/* Uplink slot: telemetry is throttled by tlm_every_n (both ends agree, hopping is unaffected) */
 	if ((link->frame_index % link->cfg.tlm_every_n) != 0U) {
 		return NULL;
 	}
@@ -1543,7 +1543,7 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot,
 	const bool a = (slot == ZLRS_SLOT_DATA_A);
 	const bool tx_side = (link->cfg.role == ZLRS_ROLE_TX);
 
-	/* 每帧的主时隙（A）过一次计数 */
+	/* The main slot (A) counts once per frame */
 	if (a) {
 		link->frame_index++;
 	}
@@ -1553,9 +1553,8 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot,
 			if (a) {
 				if (link->sess_cfm_due) {
 					/*
-					 * 数据链路没有遥测可等，确认发出去就当
-					 * 会话成立；对端没收到的话，失联判定会
-					 * 把这一侧拉回 SEARCHING 重来。
+					 * The data link has no telemetry to wait for, so sending the confirm counts as established;
+					 * if the peer never hears it, the peer-loss check drags this side back to SEARCHING.
 					 */
 					const zlrs_radio_req_t *req = send_sess_cfm(link);
 
@@ -1565,9 +1564,9 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot,
 					return req;
 				}
 				/*
-				 * 时间到了就发；另外在重同步帧的位置多补一发——
-				 * 对端如果还在 CONNECTED，它只在这些帧上开着同步
-				 * 信道的窗口，不然它听不见"我换了会话"。
+				 * Send when the period is up, and add one on every resync frame: a peer that is still
+				 * CONNECTED only opens a window on the sync channel for those, so otherwise it would never
+				 * hear that we changed sessions.
 				 */
 				if ((uint32_t)(now_ms - link->last_sync_ms) <
 					    link->cfg.sync_period_ms &&
@@ -1576,7 +1575,7 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot,
 				}
 				return send_sync(link, now_ms);
 			}
-			/* 发起方在上行时隙等对端的第一帧 */
+			/* The initiator waits for the peer's first frame in the uplink slot */
 			return submit_rx(link, sync_freq_hz(link),
 					 link->cfg.sync_slot, link->sync_word,
 					 link->cfg.rx_timeout_ms);
@@ -1598,9 +1597,9 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot,
 	}
 
 	/*
-	 * 控制帧率拉高以后，数据窗口按 data_every_n 稀疏（两端同节奏）。
-	 * 重同步帧与会话确认不参与稀疏：它们的节奏要能整除剩下的每一帧，
-	 * 否则（比如 333 帧与 5 帧互质）会几乎永远撞不上。
+	 * At high control rates the data windows thin out by data_every_n (both ends agree).
+	 * Resync frames and session confirms stay out of that: their cadence has to divide the
+	 * remaining frames, or (333 frames against 5, say) they would almost never line up.
 	 */
 	if (!sync_frame(link) && !link->sess_cfm_due &&
 	    (link->frame_index % link->cfg.data_every_n) != 0U) {
@@ -1609,13 +1608,13 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot,
 
 	advance_hop(link);
 
-	/* 简化握手的报到帧：数据链路在自己的那个半窗口里发，走同步信道 */
+	/* Simplified handshake report: the data link sends it in its own half window, sync channel */
 	if (link->announce && (tx_side == a)) {
 		return send_sess_resp(link);
 	}
 
 	if (tx_side == a) {
-		/* 会话确认优先，其次才是重同步 SYNC（两者都走同步信道） */
+		/* Session confirm first, resync SYNC second (both use the sync channel) */
 		if (link->sess_cfm_due) {
 			return send_sess_cfm(link);
 		}
@@ -1627,7 +1626,7 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot,
 	if (tx_side == a) {
 		const zlrs_radio_req_t *req;
 
-		/* ARQ 重同步：先让对端把半截消息作废，再发新的一段 */
+		/* ARQ resync: let the peer void the half message before the next run starts */
 		if (link->cfg.arq && link->arq_resync) {
 			req = send_arq_ack(link, 0xFFFFU, ZLRS_ARQ_ACK_RESYNC);
 			if (req != NULL) {
@@ -1635,7 +1634,7 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot,
 			}
 		}
 
-		/* ARQ：待发的累计 ACK 优先于数据，越早确认越省重传 */
+		/* ARQ: a pending cumulative ACK outranks data; the earlier it goes, the fewer retransmits */
 		if (link->cfg.arq && link->arq_ack_pending) {
 			req = send_ack(link);
 			if (req != NULL) {
@@ -1654,21 +1653,21 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot,
 			 link->sync_word, link->cfg.rx_timeout_ms);
 }
 
-/* ---- 对外接口 ------------------------------------------------------------ */
+/* ---- public API ---------------------------------------------------------- */
 
 void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
 		    const zlrs_radio_ops_t *radio, const zlrs_link_events_t *events)
 {
 	memset(link, 0, sizeof(*link));
 	link->cfg = *cfg;
-	/* 节奏参数缺省当 1（每帧都跑），0 是非法值 */
+	/* Cadence fields default to 1 (every frame); 0 is not a legal value */
 	if (link->cfg.tlm_every_n == 0U) {
 		link->cfg.tlm_every_n = 1U;
 	}
 	if (link->cfg.data_every_n == 0U) {
 		link->cfg.data_every_n = 1U;
 	}
-	/* 子带混合：初始比例来自配置，TX 后续用 SYNC 的表版本推进 */
+	/* Sub-band mix: the initial level comes from config, the TX advances it via SYNC versions */
 	link->sub_mix = (uint8_t)(link->cfg.mix & 0x03U);
 	link->sub_mix_default = link->sub_mix;
 	link->sub_mix_version = 0U;
@@ -1710,7 +1709,7 @@ void zlrs_link_set_mix(zlrs_link_t *link, uint8_t mix)
 {
 	link->sub_mix_default = (uint8_t)(mix & 0x03U);
 
-	/* TX 立即推进（下一条 SYNC 带新版本）；RX 只更新回退目标 */
+	/* The TX advances at once (the next SYNC carries the version); the RX only moves its fallback */
 	if (link->cfg.role == ZLRS_ROLE_TX) {
 		link->sub_mix = link->sub_mix_default;
 		link->sub_mix_version = (uint8_t)((link->sub_mix_version + 1U) & 0x03U);
@@ -1724,7 +1723,7 @@ void zlrs_link_set_mod(zlrs_link_t *link, const zlrs_mod_cfg_t *mod)
 	}
 
 	link->cfg.mod = *mod;
-	/* LoRa 的同步字是派生出来的，外面给 0 时不覆盖现用的那个 */
+	/* LoRa sync words are derived; a caller passing 0 must not clobber the current one */
 	if (link->cfg.mod.modulation == (uint8_t)ZLRS_MOD_LORA && link->cfg.mod.sync_byte == 0U) {
 		link->cfg.mod.sync_byte = link->lora_sync;
 	}
@@ -1782,7 +1781,7 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 	if (status != ZLRS_RADIO_OK) {
 		link->stats.radio_fail++;
 		if (was_tx) {
-			/* 发送失败时把已经摘掉的字节放回队列 */
+			/* On a failed send, push the bytes we already took back into the queue */
 			link->queue_count =
 				(uint16_t)(link->queue_count + link->pending_data_len);
 			link->pending_data_len = 0U;
@@ -1825,8 +1824,8 @@ void zlrs_link_rx(zlrs_link_t *link, const uint8_t *buf, uint16_t len, int16_t r
 void zlrs_link_tick(zlrs_link_t *link, uint32_t now_ms)
 {
 	/*
-	 * 子带混合的回退：TX 改了比例而 RX 没跟上时，RX 在默认比例上继续收；
-	 * 连续 3 个 SYNC 周期没听到新版就退回默认比例，避免卡在错的子带上。
+	 * Sub-band fallback: when the TX changed the mix and the RX did not follow, the RX keeps
+	 * receiving and returns to the default level after 3 sync periods without a new version.
 	 */
 	if (link->state == ZLRS_STATE_CONNECTED && link->sub_mix != link->sub_mix_default &&
 	    link->cfg.sync_period_ms > 0U &&
