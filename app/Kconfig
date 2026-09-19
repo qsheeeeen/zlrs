@@ -108,16 +108,18 @@ config ZLRS_APP_ENTROPY_TRNG
 	  Zephyr's ENTROPY_RPI_PICO_RNG is unusable here: pico-sdk spins with interrupts off and USB dies.
 	  See doc/13-roadmap.md.
 
+# Not a switch: an application running under MCUboot is always confirmed by the host before it
+# counts as this build's firmware. Turning the mechanism off would mean every upgrade rolls back
+# on the next reset, which is a different product, not a configuration (doc/08-firmware.md 6).
 config ZLRS_APP_MCUBOOT_CONFIRM
-	bool "Host confirms the image after an upgrade (MCUboot test/revert rollback)"
-	default y
-	depends on BOOTLOADER_MCUBOOT
+	def_bool BOOTLOADER_MCUBOOT
 	# The choice under IMG_MANAGER has a single entry (MCUBOOT_IMG_MANAGER); a choice
 	# symbol cannot be selected, so enabling IMG_MANAGER is what picks it
 	select STREAM_FLASH
 	select IMG_MANAGER
 	help
-	  Upgrades run with test semantics: a new image starts unconfirmed and only an explicit,
+	  This only says whether the image runs under MCUboot; it is not user selectable. Upgrades
+	  run with test semantics: a new image starts unconfirmed and only an explicit,
 	  well-formed confirm command from the host, answered by the device, makes the application
 	  call boot_write_img_confirmed(). No confirm means a reset and rollback; an image that never
 	  comes up rolls back the same way, and with nothing to roll back to MCUboot stays in serial
@@ -127,7 +129,7 @@ config ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS
 	int "Host confirm timeout (ms)"
 	default 60000
 	range 0 600000
-	depends on ZLRS_APP_MCUBOOT_CONFIRM
+	depends on BOOTLOADER_MCUBOOT
 	help
 	  No valid confirm command within this window means a reset and rollback. Leave enough time
 	  for USB enumeration plus the tool. 0 = no wait (a host has to confirm immediately).

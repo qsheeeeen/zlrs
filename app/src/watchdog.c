@@ -2,7 +2,7 @@
  * Hardware watchdog (RP2350 wdt0), active only when CONFIG_ZLRS_APP_WATCHDOG is on.
  *
  * It does not roll back by itself, it turns a hang into a reset (rollback is decided by the
- * image confirm bit, see ZLRS_APP_MCUBOOT_CONFIRM in app/Kconfig). Zephyr has no
+ * image confirm bit, see doc/08-firmware.md 6). Zephyr has no
  * RESET_ON_FATAL_ERROR on this board, so a crash just stops the CPU and nothing else resets it.
  *
  * Armed at PRE_KERNEL_1, so even a hang in the POST_KERNEL driver init gets reset.
