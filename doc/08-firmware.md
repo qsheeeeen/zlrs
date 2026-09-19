@@ -1,143 +1,143 @@
-# 固件行为
+# Firmware behaviour
 
-本文写固件对外表现出的行为：USB 与端口、工作模式、运行期配置、特性裁剪、启动与升级、错误处理约定。架构见 [07-architecture](07-architecture.md)，协议见 [09-protocol](09-protocol.md)，安全见 [10-security](10-security.md)，调试相关见 [12-debug](12-debug.md)。
+What the firmware looks like from outside: USB and ports, operating modes, runtime configuration, feature trimming, boot and updates, and the error-handling rules. Architecture: [07-architecture](07-architecture.md); protocol: [09-protocol](09-protocol.md); security: [10-security](10-security.md); debugging: [12-debug](12-debug.md).
 
-## 1. USB 与端口
+## 1. USB and ports
 
-固件默认输出三块 CDC：
+The firmware presents three CDCs by default:
 
-| CDC | 用途 | 对应 UART 端点 |
+| CDC | Purpose | Its UART endpoint |
 | --- | --- | --- |
-| CRSF | CRSF 遥控链路 | UART0（GP0/GP1，420000） |
-| 数据 | 数传透传 | UART1（GP8/GP9，默认 115200） |
-| **配置** | 配置协议：进配置模式、读写参数 | — |
+| CRSF | the CRSF RC link | UART0 (GP0/GP1, 420000) |
+| data | the passthrough link | UART1 (GP8/GP9, 115200 by default) |
+| **config** | the config protocol: enter config mode, read and write parameters | - |
 
-调试构建再多一块 **console**（内核日志 + shell，见 [12-debug](12-debug.md)）。
+Debug builds add one more **console** CDC (kernel log plus shell, see [12-debug](12-debug.md)).
 
-两种模式在 USB 上自报的名字由 `CONFIG_ZLRS_USB_PRODUCT` 决定：应用是 `ZLRS`、bootloader 是 `ZLRS MCUBOOT`，主机脚本按 `/dev/serial/by-id/...` 找口。
+The name each mode announces over USB comes from `CONFIG_ZLRS_USB_PRODUCT`: `ZLRS` for the application and `ZLRS MCUBOOT` for the bootloader, and host scripts find ports under `/dev/serial/by-id/...`.
 
-**每条链路两块端点，二选一**：主机把这链路的 CDC 打开（DTR 有效）**或**该端点收到过主机字节，就走 USB；否则走 UART。第二条判据是给 USB/IP 转发（usbipd）与虚拟化场景补的——`SET_CONTROL_LINE_STATE` 不一定送得到设备，只认 DTR 的话 CDC 永远选不中，主机发来的字节会被当"非当前端点"静静丢掉，而且没有任何报错。ISR 在判断当前端点**之前**先记下"收到过字节"，所以第一帧不会被端点选择的滞后吃掉（`app/src/ports.c` 的 `port_active()`）。
+**Each link has two endpoints and picks one**: the CDC is used when the host has it open (DTR asserted) **or** it has ever received a host byte, otherwise the UART. The second rule exists for USB/IP forwarding (usbipd) and virtualised setups where `SET_CONTROL_LINE_STATE` may never arrive: trusting DTR alone would leave the CDC unselected and host bytes would be dropped silently as "not the active endpoint", with nothing logged. The ISR records "a byte arrived" **before** checking the active endpoint, so the first frame is never lost to that lag (`port_active()` in `app/src/ports.c`).
 
-两条链路的端点二选一互相独立；配置 CDC 不参与透传，只跑配置协议。
+The two links choose their endpoints independently; the config CDC carries no passthrough traffic, only the config protocol.
 
-## 2. 工作模式
+## 2. Operating modes
 
-| 模式 | 链路 | 配置 CDC | 说明 |
+| Mode | Links | Config CDC | Notes |
 | --- | --- | --- | --- |
-| **应用** | 正常收发 | 空闲 | 常态 |
-| **配置** | **射频完全停**（不收不发） | 跑配置协议 | 由配置工具发命令进入，`EXIT` / 超时退出 |
-| 串口恢复 | 不跑应用 | — | bootloader 模式，见第 6 节 |
+| **application** | normal traffic | idle | the usual state |
+| **config** | **radio stopped entirely** (no RX, no TX) | runs the config protocol | entered by a tool command, left on `EXIT` or timeout |
+| serial recovery | no application | - | bootloader mode, see 6 |
 
-配置模式期间：
+While in config mode:
 
-- 射频不收也不发，链路状态冻结；
-- 数据口收到的字节**直接丢弃并计数**，不做缓存；退出后恢复正常收发；
-- 状态灯白灯 1 Hz（见 [11-ux](11-ux.md)）；
-- 看门狗在会话期间 `disarm`（写短语要几十秒 PBKDF2，会被 8 s 看门狗复位），退出后重新武装。
+- the radio neither receives nor transmits and the link state freezes;
+- bytes arriving on the data port are **dropped and counted**, never buffered, and normal traffic resumes on exit;
+- the status LED shows white at 1 Hz (see [11-ux](11-ux.md));
+- the watchdog is disarmed for the session (PBKDF2 on a passphrase takes tens of seconds and an 8 s watchdog would reset it) and armed again on exit.
 
-## 3. 运行期配置
+## 3. Runtime configuration
 
-**所有用户可见的设置都在运行期配置，不需要重编固件**：
+**Every user-visible setting is configured at runtime, with no firmware rebuild**:
 
-| 参数 | 说明 |
+| Parameter | Notes |
 | --- | --- |
-| 根密钥 / 短语 | 短语在设备侧走 PBKDF2 派生根密钥；也可以直接写 64 位 hex 根密钥 |
-| 失控值 | 22 字节 CRSF 通道载荷，配对时下发给对端 |
-| 数据口波特率 | 下次启动生效 |
-| 地区 | 0 = FCC915、1 = EU868、2 = CN470、3 = CN433；写入时校验本机 SKU，不匹配拒绝（见 [09-protocol](09-protocol.md) 5.2）；**下次启动生效** |
-| 发射功率上限 | 不超过所选地区的法规上限；**下次启动生效** |
-| 配对 | 触发配对（立即）；擦除配对（下次启动生效） |
-| 恢复出厂 | 清 NVS（密钥、配对、失控值、波特率、地区、功率）；下次启动生效 |
+| root key / passphrase | the device derives the root key from a passphrase with PBKDF2, or you can write a 64-character hex key directly |
+| failsafe values | a 22-byte CRSF channel payload, shipped to the peer during pairing |
+| data port baud rate | effective on the next boot |
+| region | 0 = FCC915, 1 = EU868, 2 = CN470, 3 = CN433; checked against the local SKU on write and refused on a mismatch (see [09-protocol](09-protocol.md) 5.2); **effective on the next boot** |
+| TX power ceiling | never above the chosen region's limit; **effective on the next boot** |
+| pairing | start pairing (immediately), erase pairing (next boot) |
+| factory reset | wipes NVS (keys, pairing, failsafe, baud, region, power); effective on the next boot |
 
-角色（TX / RX）、频段形态与调制档仍是编译期配置（`CONFIG_ZLRS_APP_ROLE_TX`、`BAND_ROLE_*`、`CONTROL_MODULATION_*`）：它们决定固件跑哪套时序，不属于"用户参数"。
+The role (TX or RX), the band shape and the modulation stay compile-time settings (`CONFIG_ZLRS_APP_ROLE_TX`, `BAND_ROLE_*`, `CONTROL_MODULATION_*`): they decide which timing the firmware runs and are not user parameters.
 
-## 4. 特性裁剪
+## 4. Feature trimming
 
-一份固件要能适配多种硬件配置，这是硬要求：
+One firmware has to fit several hardware configurations; that is a hard requirement:
 
-- **USB 必须可裁掉**——轻量版没有原生 USB；
-- 数据 UART 也应是可选的；
-- 用 Kconfig 与 devicetree 表达能力，应用层靠 DT 探测，不写满 `#ifdef`。
+- **USB must be trimmable**: the lightweight variant has no native USB;
+- the data UART has to be optional too;
+- express it with Kconfig and devicetree so the application probes DT instead of drowning in `#ifdef`s.
 
-做法：应用只认别名（`zlrs-crsf-uart` / `zlrs-crsf-cdc` / `zlrs-data-uart` / `zlrs-data-cdc` / `zlrs-button` / `zlrs-led`），别名不挂就是"这条链路的端口不存在"，一样编得过。库层开关跟着应用开关走：`ZLRS_APP_CONFIG_MODE` / `ZLRS_APP_STATUS_LED` 一关，对应的 `ZLRS_CONFIG` / `ZLRS_LED` 一起裁掉；`ZLRS_APP_CORE` 打开的是应用永远要的那几个（`ZLRS_PROTO` / `ZLRS_LINK` / `ZLRS_REGION` / `ZLRS_CRSF`），其中 CRSF 编解码是端口层的常编代码——`ZLRS_APP_CRSF_PORT=n` 只是不初始化那个端口，代码与库不跟着掉（纯 C，几百字节）。
+The approach: the application only knows aliases (`zlrs-crsf-uart`, `zlrs-crsf-cdc`, `zlrs-data-uart`, `zlrs-data-cdc`, `zlrs-button`, `zlrs-led`); a missing alias means "this link has no such port" and everything still builds. Library switches follow the application switches: turning off `ZLRS_APP_CONFIG_MODE` or `ZLRS_APP_STATUS_LED` trims `ZLRS_CONFIG` or `ZLRS_LED` with them. `ZLRS_APP_CORE` enables what the application always needs (`ZLRS_PROTO`, `ZLRS_LINK`, `ZLRS_REGION`, `ZLRS_CRSF`); the CRSF codec is compiled in with the port layer, so `ZLRS_APP_CRSF_PORT=n` only skips initialising that port and leaves the code and library in place (a few hundred bytes of pure C).
 
-**USB 设备栈由镜像自己建**（`lib/usb`，`CONFIG_ZLRS_USB`，应用与 bootloader 两份配置各自打开）：devicetree 里的 `zephyr,cdc-acm-uart` 节点只表达"要几块 CDC"，设备不会自己上线——镜像要建 context、注册类、再 `usbd_enable()`。Zephyr 自带的 `CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT` 只注册第一块 CDC，本固件有好几块，所以那个开关保持关着。轻量硬件把 devicetree 里的 `usbd` 与 CDC 别名删掉即可。
+**Each image builds its own USB stack** (`lib/usb`, `CONFIG_ZLRS_USB`, enabled separately by the application and the bootloader configs): a `zephyr,cdc-acm-uart` node in devicetree only says how many CDCs exist, it does not bring the device up — the image builds a context, registers the classes and calls `usbd_enable()`. Zephyr's own `CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT` registers only the first CDC while this firmware has several, so that switch stays off. Lightweight hardware simply deletes `usbd` and the CDC aliases from devicetree.
 
-**每块 CDC 用自己的缓冲池**（`CONFIG_USBD_CDC_ACM_BUF_POOL=y`）：全速设备上多块 CDC 会抢 UDC 的公共池，RX 工作项分配失败后不会重试，表现是"只能发不能收"且无提示。
+**One buffer pool per CDC** (`CONFIG_USBD_CDC_ACM_BUF_POOL=y`): several CDCs on a full-speed device fight over the UDC's shared pool, and a failed RX allocation is never retried, so TX works while RX dies without a word.
 
-## 5. 按键
+## 5. Button
 
-按键只有一个动作：**长按触发配对**（默认 1 s）。按键是标配，载板上有一颗（SW1）；原型上用杜邦线把 GP12 短接到 GND 模拟。语义细节见 [11-ux](11-ux.md)。
+The button has one action: **a long press starts pairing** (1 s by default). It is standard equipment, one switch (SW1) on the carrier board, and a jumper from GP12 to GND on the prototype. Details in [11-ux](11-ux.md).
 
-## 6. 启动、恢复与升级
+## 6. Boot, recovery and updates
 
-启动链与分区见 [03-platform](03-platform.md) 第 4 节。
+The boot chain and partitions are in [03-platform](03-platform.md) 4.
 
-进串口恢复有三条入口（都不用按键）：
+There are three ways into serial recovery, none of them needing the button:
 
-| 入口 | 什么时候生效 |
+| Entry | When it applies |
 | --- | --- |
-| 应用侧触发 | 配置协议里的"进恢复"命令（调试构建也可以用 shell 的 `zlrs recovery`）→ 置 boot mode 并重启 |
-| 启动窗口 | 每次复位后 2 s 内收到合法 mcumgr 帧（`CONFIG_BOOT_SERIAL_WAIT_FOR_DFU_TIMEOUT`） |
-| 没有可启动镜像 | 校验失败 / 镜像为空，停在恢复模式 |
+| from the application | the recovery command in the config protocol (debug builds can also use `zlrs recovery` in the shell), which sets the boot-mode flag and reboots |
+| boot window | a valid mcumgr frame within 2 s of any reset (`CONFIG_BOOT_SERIAL_WAIT_FOR_DFU_TIMEOUT`) |
+| no bootable image | a failed signature check or an empty image parks in recovery |
 
-boot mode 标志放在 SRAM 起始处的 4 字节（retained RAM），应用与 bootloader 共用同一份 DT。`CONFIG_BOOT_SERIAL_PIN_RESET` 故意没开：RP2350 把 POWMAN 的 `HAD_RUN` 位映射成 `RESET_PIN`，语义比"按了复位键"宽。
+The boot-mode flag lives in 4 bytes at the start of SRAM (retained RAM) and both the application and the bootloader use the same DT. `CONFIG_BOOT_SERIAL_PIN_RESET` is deliberately off: on RP2350 POWMAN's `HAD_RUN` bit is mapped to `RESET_PIN`, which is broader than "the reset button was pressed".
 
-窗口取 2 s 而不是更短：应用确认超时或看门狗复位之后，主机靠这一段窗口就能自己重新进恢复刷机。代价是每次启动都等这么久——这条"不用按键"的通道值这个价。
+The window is 2 s rather than something shorter: after a confirm timeout or a watchdog reset that window lets the host get back into recovery and reflash on its own. The cost is that every boot waits that long, which is a fair price for a button-free path.
 
-恢复通道**只走 USB**：bootloader 模式下 USB 只有两块 CDC（第 1 块恢复、第 2 块控制台），CRSF 与配置那块都不在。应用是 `ZLRS`、bootloader 是 `ZLRS MCUBOOT`，脚本按 `/dev/serial/by-id/...` 找口。
+Recovery is **USB only**: in bootloader mode USB shows two CDCs (recovery first, console second) and neither CRSF nor config is present. The application is `ZLRS`, the bootloader `ZLRS MCUBOOT`, and scripts find ports under `/dev/serial/by-id/...`.
 
-**升级**：一次性烧录（BOOTSEL 写 bootloader + 首版应用）之后，后续固件更新**不需要再碰板子**——包括新固件起不来、USB 起不来、上位机没确认、镜像写坏这些情况。四条不变量：
+**Updates**: after the one-off flash (BOOTSEL for the bootloader plus the first application image), later firmware updates **never need the board touched**, including when the new image does not start, USB never comes up, the host never confirms or the image is corrupt. Four invariants:
 
-1. **bootloader 不参与升级**（`0x000000` 那 128 KB 只有 BOOTSEL 能写）。它是固定的恢复入口；要换它就得按键。
-2. **升级一律写非活跃槽**：MCUboot 的串口恢复上传默认写**主槽**（`flash_area_id_from_multi_image_slot()` 的 0 是 PRIMARY），那是直接盖掉正在跑的那一版，没有 pending、不会回滚。所以 `CONFIG_MCUBOOT_SERIAL_DIRECT_IMAGE_UPLOAD=y` 让工具能点名物理槽，而"哪个是非活跃槽"由工具自己查（`image state-read` 里 active 的是当前的，另一个就是要写的；槽号从 1 数）。
-3. **pending 由工具设，permanent 只由应用设**：镜像跑起来、上位机发来确认命令之后，应用才调 `boot_write_img_confirmed()`。
-4. **任何"没确认"的路径都必须能自己复位**：应用活着但没确认 → 应用自己复位；应用挂死（哪怕在 USB 起来之前）→ bootloader 侧的看门狗复位。
+1. **The bootloader never updates itself** (only BOOTSEL writes that 128 KB at `0x000000`). It is the fixed recovery entry; replacing it needs the button.
+2. **Updates always go to the inactive slot**: MCUboot's serial recovery upload defaults to the **primary** slot (`flash_area_id_from_multi_image_slot()` uses 0 for PRIMARY), which overwrites the running image with no pending flag and no rollback. `CONFIG_MCUBOOT_SERIAL_DIRECT_IMAGE_UPLOAD=y` therefore lets the tool name a physical slot, and the tool works out which one is inactive itself (in `image state-read` the active one is current, the other is the target; slot numbers start at 1).
+3. **The tool sets pending, only the application sets permanent**: the application calls `boot_write_img_confirmed()` after the image runs and the host sends its confirm command.
+4. **Every unconfirmed path has to reset on its own**: the application resets when it is alive but unconfirmed, and the bootloader's watchdog resets it when it hangs, even before USB comes up.
 
-升级时序（`scripts/zlrs-update.py` 一条命令走完）：
+The update sequence (`scripts/zlrs-update.py` runs it end to end):
 
-| # | 谁 | 做什么 |
+| # | Who | What |
 | --- | --- | --- |
-| 1 | 工具 | 应用配置口发"进恢复"命令（置 boot mode 标志） |
-| 2 | 应用 | 应答并重启 |
-| 3 | MCUboot | 进串口恢复，起 USB（两块 CDC） |
-| 4 | 工具 | 上传镜像到**非活跃槽**（先查 `image state-read`）并标 pending（test） |
-| 5 | MCUboot | 复位 → 换槽（`swap using move`）→ 跑新镜像，此时仍是"未确认" |
-| 6 | 工具 | 等新镜像配置口回来，比对 `image-hash` 是否就是刚上传的那一版 |
-| 7 | 工具 → 应用 | 发 `confirm` 命令；应用据此调 `boot_write_img_confirmed()`，这一版转正 |
-| 8 | 工具 | 报告"升级成功"以及设备报回的固件版本串（`build` 命令） |
+| 1 | tool | sends the recovery command to the application's config port (sets the boot-mode flag) |
+| 2 | application | answers and reboots |
+| 3 | MCUboot | enters serial recovery and brings USB up (two CDCs) |
+| 4 | tool | uploads the image to the **inactive slot** (after `image state-read`) and marks it pending (test) |
+| 5 | MCUboot | resets, swaps (`swap using move`) and runs the new image, still unconfirmed |
+| 6 | tool | waits for the new image's config port and compares `image-hash` with what it just sent |
+| 7 | tool to application | sends `confirm`; the application calls `boot_write_img_confirmed()` and the image becomes permanent |
+| 8 | tool | reports success plus the build string the device sends back (the `build` command) |
 
-失败模式：
+Failure modes:
 
-| 失败 | 谁发现 | 自动动作 | 需要按键？ |
+| Failure | Found by | Automatic action | Button needed? |
 | --- | --- | --- | --- |
-| 上传中断 / 镜像损坏 | MCUboot 校验 | 不换槽，停在串口恢复 | 否，重传 |
-| 新镜像启动即挂死 | bootloader 看门狗（30 s） | 复位 → 未确认 → 回滚 | 否 |
-| 新镜像跑起来但 USB 没枚举 | 应用确认超时（60 s） | 应用复位 → 回滚 | 否 |
-| 新镜像跑起来、上位机没确认 | 应用确认超时 | 应用复位 → 回滚 | 否 |
-| 工具第 6 步发现跑的不是新镜像 | 工具 | 不确认，等回滚，报"升级失败" | 否 |
-| 两个槽都不可启动 | MCUboot | 停在串口恢复 | 否，工具重传 |
-| bootloader 自己坏 | ROM | — | **是**（设计上接受） |
+| upload interrupted or image corrupt | MCUboot's signature check | no swap, parks in serial recovery | no, just resend |
+| the new image hangs on boot | bootloader watchdog (30 s) | reset, unconfirmed, rollback | no |
+| the new image runs but USB never enumerates | the application's confirm timeout (60 s) | application resets, rollback | no |
+| the new image runs, the host never confirms | the application's confirm timeout | application resets, rollback | no |
+| step 6 finds the device running something else | the tool | no confirm, waits for the rollback, reports failure | no |
+| neither slot boots | MCUboot | parks in serial recovery | no, resend from the tool |
+| the bootloader itself is corrupt | ROM | - | **yes**, accepted by design |
 
-回滚的判据在 MCUboot 的镜像 trailer 里，应用侧只负责"该确认时才确认"：`boot_is_img_confirmed()` 为真就什么都不做，为假才等上位机（`ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS`，默认 60 s）。用 BOOTSEL 直写进去的镜像 trailer 是空的，MCUboot 按"初始镜像"处理，不要求上位机确认——那是第一次烧录。
+The rollback verdict lives in MCUboot's image trailer and the application only "confirms when it should": if `boot_is_img_confirmed()` is true it does nothing, if false it waits for the host (`ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS`, 60 s by default). An image written directly with BOOTSEL has an empty trailer, which MCUboot treats as an initial image and does not require a confirmation for: that is the first flash.
 
-**看门狗**（`CONFIG_ZLRS_APP_WATCHDOG`，默认关）只负责"把卡死变成复位"：应用侧在 `PRE_KERNEL_1` 武装（排在熵源初始化之前，熵源 probe 挂了也复位得回来）、主循环与配置会话里喂；bootloader 侧由 `lib/bootguard`（`CONFIG_ZLRS_BOOTGUARD`）先清掉硬件 `ENABLE` 位（驱动的 `wdt_disable()` 在复位后的新一局里无效，否则串口恢复会被上轮看门狗打断），随后 MCUboot 用 `BOOT_WATCHDOG_TIMEOUT_MS`（30 s）重新武装，跳进应用后这一层还开着——应用连自己的看门狗都没武装就挂住时，靠它复位回滚。
+**The watchdog** (`CONFIG_ZLRS_APP_WATCHDOG`, off by default) only turns a hang into a reset: the application arms it at `PRE_KERNEL_1` (before the entropy source, so a hung entropy probe still resets) and feeds it from the main loop and config sessions, while on the bootloader side `lib/bootguard` (`CONFIG_ZLRS_BOOTGUARD`) clears the hardware enable bit first (the driver's `wdt_disable()` does nothing in the next boot, and without this the previous watchdog would interrupt serial recovery). MCUboot then re-arms it with `BOOT_WATCHDOG_TIMEOUT_MS` (30 s) and leaves it running across the jump into the application, so an application that hangs before arming its own still gets reset and rolled back.
 
-一条命令升级：`python3 scripts/zlrs-update.py --port <应用配置口>`（触发进恢复 → 等恢复口 → 查活跃槽、写另一个槽、标成待试跑 → 等应用回来 → 核对 `image-hash` → 发 `confirm`）。工具写 pending，但**不写永久**：镜像还没跑起来就标永久，等于自己把回滚这条路切掉。救砖走 BOOTSEL + 拖 UF2（见 [12-debug](12-debug.md)）。量产镜像用自己的签名密钥，换密钥要重烧 bootloader。
+One command updates a device: `python3 scripts/zlrs-update.py --port <application config port>` (trigger recovery, wait for the recovery port, read the active slot, write the other one and mark it test, wait for the application, check `image-hash`, send `confirm`). The tool writes pending but **never permanent**: marking an image permanent before it has run cuts off the rollback path. Bricked boards go through BOOTSEL and a UF2 drag (see [12-debug](12-debug.md)). Production images use their own signing key, and changing that key means reflashing the bootloader.
 
-## 7. 错误处理约定
+## 7. Error-handling rules
 
-设备看起来在跑、实际某个端口早就没工作，是最贵的坑，所以：
+A device that looks alive while some port died long ago is the most expensive trap there is, so:
 
-| 层 | 能拿到什么 | 该做什么 |
+| Layer | What it has | What it must do |
 | --- | --- | --- |
-| `lib/`（纯 C，主机可测） | 只有输入输出，没有设备与日志 | 返回错误码/布尔值，**不打印**；密码学一律 fail closed |
-| `app/src/`（Zephyr 胶水） | 设备、日志、策略 | 每个能判的返回值都要判，按后果选策略：退化（端口不可用 → 走另一块端点）、降级（NVS 不可用 → 不发射频）、致命（PSA 初始化失败 → `fault_loop()`） |
-| `lib/usb`、`lib/bootguard` 等镜像级胶水 | 失败影响整机可用性 | 同样判，但默认不致命：USB 是可裁的，起不来就报警继续跑 |
+| `lib/` (pure C, host-testable) | inputs and outputs only, no devices, no logging | return error codes or booleans and **never print**; crypto always fails closed |
+| `app/src/` (the Zephyr glue) | devices, logging, policy | check every return value and pick a response by consequence: degrade (port gone, use the other endpoint), downgrade (no NVS, stay off the air) or fatal (PSA init failed, `fault_loop()`) |
+| image-level glue such as `lib/usb` and `lib/bootguard` | failure affects whether the whole board works | check them too, but default to non-fatal: USB is optional, so warn and keep running |
 
-具体规则：
+Specific rules:
 
-- **返回值判到语义那一步**：`nvs_write()` 成功返回写入字节数、内容一致返回 0、出错返回负 errno——`rc == 0 || rc == len` 才算成功。
-- **忽略返回值要写清理由**：只有 best-effort（透传/CRSF 发送，丢了有计数）与清理路径（`psa_destroy_key`、`wdt_disable`）。
-- **API 返回 void 时要有别的机制暴露失败**：`uart_irq_rx_enable()` 判不了，就靠"回调是否装上"（`uart_irq_callback_user_data_set()` 返回 int，必须判）+ 上层超时/计数。
-- **每帧都在跑的路径不许刷日志**：失败只报一次，或只更新计数器由状态命令呈现。
+- **Check returns down to the semantics**: `nvs_write()` returns the byte count on a write, 0 when the content already matched and a negative errno on failure, so only `rc == 0 || rc == len` is success.
+- **Ignoring a return value needs a stated reason**: best-effort paths (passthrough and CRSF sends, where drops are counted) and cleanup (`psa_destroy_key`, `wdt_disable`).
+- **When an API returns void, something else has to surface the failure**: `uart_irq_rx_enable()` cannot be checked, so rely on whether the callback was installed (`uart_irq_callback_user_data_set()` returns int and must be checked) plus timeouts and counters above.
+- **Per-frame paths must not flood the log**: report a failure once, or only bump a counter that a status command shows.
