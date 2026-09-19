@@ -2,17 +2,17 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# zlrs 配置工具：通过专用的配置 CDC 和设备说话。
+# zlrs config tool: talks to the device over the dedicated config CDC.
 #
 #   scripts/zlrs-config.py --port /dev/ttyACM2 status
 #   scripts/zlrs-config.py --port /dev/ttyACM2 set-phrase "correct horse battery staple"
-#   scripts/zlrs-config.py --self-test          # 不接设备，校验组帧与 C 侧逐字节一致
+#   scripts/zlrs-config.py --self-test          # no device: frame byte-for-byte against the C side
 #
-# 除了 `enter`，每条命令都会先发"进配置模式"；设备确认后才发真正的命令。
-# USB 三个 CDC 依次是 CRSF、数据口、配置口（/dev/ttyACM0/1/2）。
-# 帧格式与命令表见 doc/10-security.md 第 10 节、include/zlrs/config/config.h。
+# Except for `enter`, every command first sends enter-config-mode and waits for the ACK.
+# The three USB CDCs are CRSF, data port and config port (/dev/ttyACM0/1/2).
+# Framing and the command table: doc/10-security.md 10 and include/zlrs/config/config.h.
 #
-# 依赖：只用标准库；真的要连设备时需要 pyserial（pip install pyserial）。
+# Standard library only; talking to a device needs pyserial (pip install pyserial).
 
 import argparse
 import sys
@@ -54,7 +54,7 @@ CHANNEL_MID = 992
 
 
 def crc8(data: bytes) -> int:
-    """DVB-S2 多项式 0xD5，与设备侧 zlrs_crc8() 同一个算法。"""
+    """DVB-S2 polynomial 0xD5, the same algorithm as zlrs_crc8() on the device."""
     crc = 0
     for byte in data:
         crc ^= byte
@@ -71,7 +71,7 @@ def encode(cmd: int, payload: bytes = b"") -> bytes:
 
 
 def decode(frame: bytes):
-    """返回 (cmd, payload)；帧不完整或 CRC 不对时抛 ValueError。"""
+    """Return (cmd, payload); raises ValueError for a short frame or a bad CRC."""
     if len(frame) < 6 or frame[:2] != SOF:
         raise ValueError("bad frame header")
     if frame[2] != VERSION:
@@ -85,7 +85,7 @@ def decode(frame: bytes):
 
 
 def channels_to_payload(channels) -> bytes:
-    """通道值（11 bit）→ 22 字节载荷，与 CRSF 的通道帧同格式。"""
+    """Channel values (11 bit) -> 22-byte payload, the same layout as a CRSF channel frame."""
     acc = 0
     bits = 0
     out = bytearray()
@@ -100,7 +100,7 @@ def channels_to_payload(channels) -> bytes:
 
 
 def parse_channels(text: str):
-    """'172,992,...' 或 '@min' 之类的简写。"""
+    """Shorthands such as '172,992,...' or '@min'."""
     if text.startswith("@"):
         count = 16
         if text != "@default":
@@ -137,7 +137,7 @@ def status_text(payload: bytes) -> str:
 
 
 def self_test() -> int:
-    """组帧结果必须与 C 侧 zlrs_cfg_encode() 的输出逐字节一致。"""
+    """Frames must match the output of zlrs_cfg_encode() on the C side byte for byte."""
     cases = [
         ("enter", CMD_ENTER, b"", "a55a020000d3"),
         ("status", CMD_STATUS, b"", "a55a020100d8"),
@@ -159,7 +159,7 @@ def self_test() -> int:
     failures = 0
     for name, cmd, payload, want in cases:
         if want is None:
-            # 只校验能组出合法帧并能解回
+            # Only check that a legal frame comes out and decodes again
             frame = encode(cmd, payload)
             got_cmd, got_payload = decode(frame)
             if got_cmd != cmd or got_payload != payload:
@@ -171,13 +171,13 @@ def self_test() -> int:
             print(f"  FAIL {name}: got {got} want {want}")
             failures += 1
 
-    # 单向自检：把上面那帧解回来
+    # One-way check: decode that frame again
     cmd, payload = decode(bytes.fromhex("a55a02110568656c6c6fb4"))
     if cmd != CMD_SET_PHRASE or payload != b"hello":
         print("  FAIL decode round trip")
         failures += 1
 
-    # 通道载荷：全 0 应是 22 个 0 字节；默认值给出油门最低 + 其余中位
+    # Channel payload: all zeros gives 22 zero bytes; the default is throttle low, the rest centred
     if channels_to_payload([0] * 16) != bytes(22):
         print("  FAIL channels all zero")
         failures += 1
@@ -191,12 +191,12 @@ def self_test() -> int:
 
 
 def read_response(link):
-    """读一帧：先找 SOF，再按长度字段收满。"""
+    """Read one frame: find SOF, then collect bytes until the length field is satisfied."""
     buf = bytearray()
     while True:
         byte = link.read(1)
         if not byte:
-            raise TimeoutError("等响应超时")
+            raise TimeoutError("timed out waiting for a response")
         buf += byte
         if len(buf) == 1 and buf[0] != 0xA5:
             buf.clear()
@@ -211,7 +211,7 @@ def talk(port: str, baud: int, frame: bytes, expect: bool, timeout: float,
     try:
         import serial  # pyserial
     except ImportError:
-        print("需要 pyserial：pip install pyserial", file=sys.stderr)
+        print("pyserial required: pip install pyserial", file=sys.stderr)
         return 2
 
     with serial.Serial(port, baudrate=baud, timeout=timeout) as link:
@@ -220,12 +220,12 @@ def talk(port: str, baud: int, frame: bytes, expect: bool, timeout: float,
             try:
                 cmd, payload = read_response(link)
             except TimeoutError as exc:
-                print(f"进配置模式失败：{exc}", file=sys.stderr)
+                print(f"entering config mode failed: {exc}", file=sys.stderr)
                 return 1
 
             code = payload[1] if cmd == ACK and len(payload) >= 2 else 0xFF
             if cmd != ACK or code != 0:
-                print(f"进配置模式失败：{STATUS_NAMES.get(code, hex(code))}", file=sys.stderr)
+                print(f"entering config mode failed: {STATUS_NAMES.get(code, hex(code))}", file=sys.stderr)
                 return 1
 
         link.write(frame)
@@ -235,7 +235,7 @@ def talk(port: str, baud: int, frame: bytes, expect: bool, timeout: float,
         try:
             cmd, payload = read_response(link)
         except TimeoutError:
-            print("等响应超时", file=sys.stderr)
+            print("timed out waiting for a response", file=sys.stderr)
             return 1
         if cmd == ACK:
             code = payload[1] if len(payload) >= 2 else 0xFF
@@ -255,7 +255,7 @@ def talk(port: str, baud: int, frame: bytes, expect: bool, timeout: float,
 
 
 def app_ports() -> list[str]:
-    """当前插着的应用模式模块（按 by-id，排除 bootloader 模式）。"""
+    """Application-mode modules currently plugged in (by-id, bootloader mode excluded)."""
     import glob
     from pathlib import Path
 
@@ -266,7 +266,7 @@ def app_ports() -> list[str]:
 
         if "ZLRS" not in name or "MCUBOOT" in name:
             continue
-        # 每块模块有多块 CDC，工具只跟配置口说话（if04）
+        # Each module has several CDCs; the tool only talks to the config port (if04)
         if not name.endswith("-IF04"):
             continue
         out.append(path)
@@ -275,7 +275,7 @@ def app_ports() -> list[str]:
 
 
 def pick_targets(args, parser) -> list[str]:
-    """决定这条命令发给哪些模块：显式 --port > --serial > --all > 唯一一块。"""
+    """Pick the target modules: explicit --port, then --serial, --all, or the only one present."""
     if args.port:
         return [args.port]
 
@@ -285,62 +285,62 @@ def pick_targets(args, parser) -> list[str]:
         hit = [p for p in ports if args.serial in p]
 
         if not hit:
-            parser.error(f"没找到序列号含 {args.serial!r} 的模块；当前：{ports}")
+            parser.error(f"no module with serial {args.serial!r}; present: {ports}")
         return hit
 
     if args.all:
         if not ports:
-            parser.error("没找到 ZLRS 模块")
+            parser.error("no ZLRS module found")
         return ports
 
     if not ports:
-        parser.error("没找到 ZLRS 模块（/dev/serial/by-id 里没有 ZLRS）")
+        parser.error("no ZLRS module found (nothing matching ZLRS under /dev/serial/by-id)")
     if len(ports) > 1:
         parser.error(
-            "同时插着多块模块，必须用 --serial / --port 指定目标，或 --all 全都发：\n  "
+            "several modules are plugged in: pick one with --serial / --port, or use --all:\n  "
             + "\n  ".join(ports))
     return ports[0]
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="zlrs 配置工具")
-    parser.add_argument("--port", help="配置口设备（应用模式的第三块 CDC，如 /dev/ttyACM2）")
-    parser.add_argument("--serial", help="按 USB 序列号子串选模块（多块同时插着时用）")
+    parser = argparse.ArgumentParser(description="zlrs config tool")
+    parser.add_argument("--port", help="config port device (third CDC in application mode, e.g. /dev/ttyACM2)")
+    parser.add_argument("--serial", help="pick a module by USB serial substring (with several plugged in)")
     parser.add_argument("--all", action="store_true",
-                        help="对所有 ZLRS 模块执行这条命令（多块同时插着时用）")
-    parser.add_argument("--list", action="store_true", help="列出当前插着的模块，然后退出")
+                        help="run this command on every ZLRS module (with several plugged in)")
+    parser.add_argument("--list", action="store_true", help="list the modules present, then exit")
     parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument("--timeout", type=float, default=1.0)
-    parser.add_argument("--dry-run", action="store_true", help="只打印帧，不连设备")
+    parser.add_argument("--dry-run", action="store_true", help="print the frame instead of talking to the device")
     parser.add_argument("--no-enter", action="store_true",
-                        help="不先发'进配置模式'（设备已经在配置模式里时用）")
+                        help="skip the enter-config-mode step (when the device is already in it)")
     parser.add_argument("--keep", action="store_true",
-                        help="命令跑完不退出配置模式（默认退出，配置模式会停射频）")
-    parser.add_argument("--self-test", action="store_true", help="校验组帧后退出")
+                        help="stay in config mode after the command (the default leaves it, which restores the radio)")
+    parser.add_argument("--self-test", action="store_true", help="check framing, then exit")
 
     sub = parser.add_subparsers(dest="command")
-    sub.add_parser("enter", help="进配置模式")
+    sub.add_parser("enter", help="enter config mode")
     sub.add_parser("status")
     sub.add_parser("pair")
     sub.add_parser("erase-pair")
     phrase = sub.add_parser("set-phrase")
     phrase.add_argument("phrase")
     key = sub.add_parser("set-key-hex")
-    key.add_argument("hex_key", help="64 个十六进制字符")
+    key.add_argument("hex_key", help="64 hex characters")
     failsafe = sub.add_parser("set-failsafe")
-    failsafe.add_argument("channels", help="16 个通道值，或 @default")
+    failsafe.add_argument("channels", help="16 channel values, or @default")
     baud = sub.add_parser("set-baud")
     baud.add_argument("baud", type=int)
     region = sub.add_parser("set-region")
     region.add_argument("region", type=int, choices=[0, 1, 2, 3],
                         help="0=FCC915 1=EU868 2=CN470 3=CN433")
     power = sub.add_parser("set-power")
-    power.add_argument("dbm", type=int, help="发射功率上限（dBm）")
+    power.add_argument("dbm", type=int, help="TX power ceiling (dBm)")
     sub.add_parser("factory-reset")
     sub.add_parser("recovery")
-    sub.add_parser("build", help="读固件版本串")
-    sub.add_parser("image-hash", help="读当前镜像的 MCUboot 哈希（十六进制）")
-    sub.add_parser("confirm", help="确认本次升级（不确认则超时回滚）")
+    sub.add_parser("build", help="read the build string")
+    sub.add_parser("image-hash", help="read the MCUboot hash of the running image (hex)")
+    sub.add_parser("confirm", help="confirm this upgrade (no confirm means a timeout rollback)")
     sub.add_parser("exit")
 
     args = parser.parse_args()
@@ -352,7 +352,7 @@ def main() -> int:
         ports = app_ports()
 
         if not ports:
-            print("没有插着的 ZLRS 模块")
+            print("no ZLRS module plugged in")
             return 1
         for i, path in enumerate(ports):
             print(f"{i}: {path}")
@@ -375,7 +375,7 @@ def main() -> int:
     elif args.command == "set-key-hex":
         key_bytes = bytes.fromhex(args.hex_key)
         if len(key_bytes) != 32:
-            print("根密钥必须是 64 个十六进制字符（32 字节）", file=sys.stderr)
+            print("the root key must be 64 hex characters (32 bytes)", file=sys.stderr)
             return 2
         frame, expect = encode(CMD_SET_KEY_HEX, args.hex_key.encode()), True
     elif args.command == "set-failsafe":
@@ -413,7 +413,7 @@ def main() -> int:
     if args.command not in ("enter", "recovery") and not args.no_enter:
         prelude = encode(CMD_ENTER)
 
-    # 多块模块同时插着时，先决定这条命令发给谁（--serial / --port / --all）。
+    # With several modules plugged in, decide the targets first (--serial / --port / --all).
     targets = pick_targets(args, parser)
 
     rc = 0
@@ -426,7 +426,7 @@ def main() -> int:
             continue
         if args.command not in ("enter", "exit", "recovery") and not args.keep:
             if talk(port, args.baud, encode(CMD_EXIT), True, args.timeout, None) == 0:
-                print("已退出配置模式")
+                print("left config mode")
 
     return rc
 
