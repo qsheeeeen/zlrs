@@ -1,74 +1,74 @@
-# 产品设计
+# Product design
 
-zlrs 是一条点对点无线链路：**同时支持数传与控制两种链路**，用同一颗 Semtech LR2021 分时收发。TX 与 RX 共用一份固件。
+zlrs is a point-to-point radio link: **it carries both telemetry and control**, time-sharing one Semtech LR2021. TX and RX run the same firmware.
 
-## 1. 链路形态
+## 1. Link shapes
 
-**两个频段共同构成一条链路**：跳频表跨两个子带，按时隙比例混合。
+**Two bands make up one link**: the hop table spans both sub-bands and mixes them by slot ratio.
 
-| 子带 | 特点 |
+| Sub-band | Character |
 | --- | --- |
-| 2.4G | 高速子带：2.6 Mbps FLRC，延迟与吞吐最好 |
-| sub-G | 远距子带：0.325 Mbps 窄带 FLRC（或 LoRa），距离与穿透最好 |
+| 2.4G | the fast sub-band: 2.6 Mbps FLRC, best latency and throughput |
+| sub-G | the long-range sub-band: 0.325 Mbps narrow-band FLRC (or LoRa), best distance and penetration |
 
-**混合比 `r`**＝落在 sub-G 的时隙占比，四档 **0 / 25 / 50 / 100 %**，由 TX 决定、RX 跟随（见 [09-protocol](09-protocol.md) 5.1）。
+**Mix ratio `r`** is the share of slots that land on sub-G: four levels, **0 / 25 / 50 / 100%**, chosen by the TX and followed by the RX (see [09-protocol](09-protocol.md) 5.1).
 
-- **竞速**：常态 `r = 0`（全 2.4G）；链路变差时按 **遥测 → 数传 → RC** 的顺序把时隙挪到 sub-G，最后整链路退成远距档，兜底始终在。
-- **远距**：常态 `r = 100`（全 sub-G）；靠近或质量变好时反向降 `r`，把速率提回来。
+- **Racing**: normally `r = 0` (all 2.4G); as the link degrades, slots move to sub-G in the order **telemetry, then data, then RC**, and in the end the whole link falls back to the long-range tier. There is always a floor.
+- **Long range**: normally `r = 100` (all sub-G); closing in or improving quality lowers `r` again and buys the rate back.
 
-两个频段**不同时发射**——一颗射频、半双工，每个时隙发一帧，只是这一帧的频率在两张子带表里按 `r` 取。
+The two bands never transmit together: one half-duplex radio sends one frame per slot, and `r` decides which of the two hop tables that frame's frequency comes from.
 
-端口的两种形态：
+Two port shapes:
 
-- **双 UART**：控制口 + 数据口，两条链路时分复用同一颗射频、各自独立，混合比按链路各自算；
-- **单 UART**：只有其中一条链路（控制或数传，构建时选定），另一条不编进去。
+- **Two UARTs**: a control port and a data port; the two links time-share the radio and stay independent, each with its own mix ratio;
+- **One UART**: only one link (control or data, picked at build time); the other is not compiled in.
 
-## 2. 目标
+## 2. Targets
 
-**距离与速率是一件事的两端**：换频段或换速率就能换距离，所以目标按"形态 → 频段 → 速率 → 距离"的组合写，不写成两条互相独立的指标。
+**Distance and rate are two ends of one thing**: changing band or rate changes reach, so the targets are written as shape, band, rate and distance together rather than as two independent figures.
 
-| 场景 | 子带组合 | 速率 | 距离量级 |
+| Scenario | Sub-band mix | Rate | Order of distance |
 | --- | --- | --- | --- |
-| 竞速（`r=0`） | 全 2.4G | 2.6 Mbps FLRC、500–1000 Hz | 竞速场地（百米级） |
-| 竞速兜底（`r=100`） | 全 sub-G | 0.325 Mbps 窄带 FLRC | **2 km** |
-| 远距（`r=100`） | 全 sub-G | 1.3 Mbps → 0.325 Mbps FLRC，或 LoRa SF7/BW125 | **2 km+** |
-| 远距提速（`r` 降低） | sub-G 为主 + 2.4G 时隙 | 混合，2.4G 时隙走 2.6 Mbps | 近距离 |
+| Racing (`r=0`) | all 2.4G | 2.6 Mbps FLRC, 500-1000 Hz | a racing course, hundreds of metres |
+| Racing floor (`r=100`) | all sub-G | 0.325 Mbps narrow-band FLRC | **2 km** |
+| Long range (`r=100`) | all sub-G | 1.3 Mbps down to 0.325 Mbps FLRC, or LoRa SF7/BW125 | **2 km and beyond** |
+| Long range, sped up (`r` lowered) | mostly sub-G plus 2.4G slots | mixed, the 2.4G slots run 2.6 Mbps | close in |
 
-**控制延迟保持定性**：支持四旋翼，目标逼近 FPV 竞速级别。**控制帧率 1000 Hz 是目标**，`r=0`（全 2.4G）时应当能做到。
+**Control latency stays qualitative**: it has to fly a quadcopter and aim at FPV racing levels. **A 1000 Hz control rate is the target** and should be reachable at `r=0` (all 2.4G).
 
-## 3. 性能指标（对照 ELRS 写）
+## 3. Performance figures (benchmarked against ELRS)
 
-性能对标 ExpressLRS v4.1 的公开数字（详见 [02-vs-elrs](02-vs-elrs.md)）：
+Performance is measured against ExpressLRS v4.1's published numbers (details in [02-vs-elrs](02-vs-elrs.md)):
 
-| 指标 | ELRS v4.1 | zlrs 目标 |
+| Figure | ELRS v4.1 | zlrs target |
 | --- | --- | --- |
-| 最高控制帧率 | 1000 Hz（2.4G `F1000`，发送时长 388.8 µs） | 1000 Hz（`r=0`） |
-| 2.4G FLRC 灵敏度 | -104 dBm（1000 Hz 档） | -99 dBm（2.6 Mbps）/ -108 dBm（0.325 Mbps），按 LR2021 datasheet |
-| sub-G 灵敏度 | 900M LoRa 25–250 Hz，-112…-123 dBm | LoRa SF7 -118 dBm（sub-G，64 B，1% PER） |
-| 数传吞吐 | MAVLink 模式 ~445–700 B/s（随档位） | ~97 kB/s（2.4G FLRC，量级上高两三个数量级） |
-| 可靠传输 | 1 bit 确认（`stubbornAck`）+ 重发当前载荷；16 条消息缓冲 | 同思路，默认开启 |
-| 法规 | 编译期 Regulatory Domain 预设 | 运行期四张地区表 + SKU 校验 + 占空比记账 |
+| Highest control rate | 1000 Hz (2.4G `F1000`, 388.8 us on air) | 1000 Hz (`r=0`) |
+| 2.4G FLRC sensitivity | -104 dBm at the 1000 Hz tier | -99 dBm at 2.6 Mbps, -108 dBm at 0.325 Mbps, per the LR2021 datasheet |
+| sub-G sensitivity | 900M LoRa at 25-250 Hz, -112 to -123 dBm | LoRa SF7 at -118 dBm (sub-G, 64 B, 1% PER) |
+| Data throughput | about 445-700 B/s in MAVLink mode, tier dependent | about 97 kB/s on 2.4G FLRC, two to three orders of magnitude higher |
+| Reliable transfer | a 1-bit ack (`stubbornAck`) plus resending the current payload, 16 message slots | same idea, on by default |
+| Regulation | compile-time regulatory domain presets | four runtime region tables, SKU checking and duty accounting |
 
-芯片能力的完整数据见 [06-radio](06-radio.md)。
+Full chip figures are in [06-radio](06-radio.md).
 
-## 4. 质量要求
+## 4. Quality requirements
 
-**稳定、确定性延迟、故障可预测可检测、长期运行不退化。** 这四条不做专项验证，但所有设计选择都要经得起它们：超帧固定、错误必须可见、失败按后果分级。
+**Stable, deterministic latency, failures that are predictable and detectable, and no degradation over long runs.** No test exists for these on their own, but every design choice has to survive them: a fixed superframe, errors that cannot hide, and failures graded by consequence.
 
-## 5. 服务对象
+## 5. Who it is for
 
-- 固定翼、多旋翼、车、船——一套方案覆盖
-- 严肃 DIY 用户：自己焊板、自己刷固件、自己配置
-- 工业与数控场景是长远目标，当前不为其做专项设计，但架构不能挡住它
+- Fixed-wing, multirotor, car and boat: one design covers them all
+- Serious DIY users who solder their own boards, flash their own firmware and configure it themselves
+- Industrial and CNC work is the long-term goal; nothing is designed specifically for it today, but the architecture must not block it
 
-## 6. 边界
+## 6. Boundaries
 
-**只做链路**（模块 + 固件 + 参考硬件），不做整机形态。明确不做：
+**The link only** (a module, firmware and reference hardware), never a finished product. Deliberately out of scope:
 
-- 不与官方 ExpressLRS 兼容（见 [02-vs-elrs](02-vs-elrs.md)）
-- 不追求 20 km 级距离（那是 4G 的场景）
-- 不做图传
-- 不做产线，没有出厂密钥注入
-- 不防 L3 级攻击者（见 [10-security](10-security.md) 第 7 节）
+- no compatibility with stock ExpressLRS (see [02-vs-elrs](02-vs-elrs.md))
+- no chasing 20 km links, which belong to cellular
+- no video
+- no production line and no factory key injection
+- no defence against L3 attackers (see [10-security](10-security.md) 7)
 
-为什么自研：可控、可扩展（现成方案难以适配将来的其它项目），以及信息安全——逐包认证、会话密钥与防重放是现成遥控链路没有的。
+Why build it: control, extensibility (off-the-shelf links cannot bend to future projects) and security: per-frame authentication, session keys and replay protection are things stock RC links do not have.
