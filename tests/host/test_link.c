@@ -2,10 +2,10 @@
  * Copyright (c) 2026 zlrs contributors
  * SPDX-License-Identifier: Apache-2.0
  *
- * 双节点链路仿真：
- *   - 两个节点，一个 TX 角色、一个 RX 角色，各开控制链路与数据链路
- *   - "空中"是一次函数调用，可以注入丢包、损坏与重放
- *   - 超帧顺序与 App 里一致：CTL_DOWN -> CTL_UP -> DATA_A -> DATA_B，每帧 6 ms
+ * Two-node link simulation:
+ *   - two nodes, one TX and one RX, each running a control and a data link
+ *   - "the air" is a function call, so drops, corruption and replays are all injectable
+ *   - the superframe order matches the application: CTL_DOWN, CTL_UP, DATA_A, DATA_B, 6 ms each
  */
 
 #include "test.h"
@@ -20,7 +20,7 @@
 #define SIM_RATE_DATA 2600000U
 #define SIM_DATA_MTU 128U
 #define SIM_FRAMES_PER_SEC (1000U / SIM_FRAME_MS)
-#define SIM_MAX_NODES 3U /* 主对两个 + 可选的第三个（同场设备或攻击者） */
+#define SIM_MAX_NODES 3U /* the main pair plus an optional third node (peer or attacker) */
 
 typedef struct node node_t;
 
@@ -37,7 +37,7 @@ struct node {
 	uint32_t rng;
 	uint8_t dev_id[ZLRS_DEV_ID_LEN];
 
-	/* 回调记录 */
+	/* callback records */
 	uint8_t rc[ZLRS_RC_PAYLOAD_LEN];
 	uint16_t rc_len;
 	uint32_t rc_count;
@@ -56,16 +56,16 @@ struct node {
 typedef struct {
 	node_t tx;
 	node_t rx;
-	node_t nth;        /* 第三个节点：同场设备或攻击者，只有三节点用例启用 */
+	node_t nth;        /* third node: bystander or attacker, only the three-node cases use it */
 	bool nth_enabled;
 	uint32_t now_ms;
-	/* 一个超帧多少毫秒：默认 6（≈167 Hz），1000 Hz 的用例把它设成 1 */
+	/* Superframe length in ms: 6 by default (~167 Hz), the 1000 Hz case sets 1 */
 	uint32_t frame_ms;
 	uint8_t root_key[ZLRS_KEY_LEN];
-	int32_t drop_down; /* 还需丢弃多少次 TX->RX 投递 */
-	int32_t drop_up;   /* 还需丢弃多少次 RX->TX 投递 */
-	int32_t drop_data_down; /* 只丢 TX->RX 的数据帧（ARQ 用例用） */
-	bool replay_data_next;  /* 把下一个数据帧在接收端再投一次（去重用例用） */
+	int32_t drop_down; /* how many more TX->RX deliveries to drop */
+	int32_t drop_up;   /* how many more RX->TX deliveries to drop */
+	int32_t drop_data_down; /* drop only TX->RX data frames (ARQ cases) */
+	bool replay_data_next;  /* deliver the next data frame twice (dedup cases) */
 	bool corrupt_next;
 	bool replay_next;
 	uint8_t down[ZLRS_FRAME_MAX_LEN];
@@ -74,13 +74,13 @@ typedef struct {
 	uint16_t up_len;
 	uint8_t sync[ZLRS_FRAME_MAX_LEN];
 	uint16_t sync_len;
-	uint8_t sess_resp[ZLRS_FRAME_MAX_LEN]; /* 会话响应（重放用例用） */
+	uint8_t sess_resp[ZLRS_FRAME_MAX_LEN]; /* session response, kept for replay cases */
 	uint16_t sess_resp_len;
 } sim_t;
 
 /*
- * 上板调试开关：默认全是"生产"档，单个用例可以按需关掉某一项，验证关掉之后
- * 链路仍然工作（见 doc/12-debug.md 第 3 节）。建节点之前设置。
+ * Bench switches: everything defaults to production; a case can turn one off to show that the
+ * link still works without it (doc/12-debug.md 3). Set before the nodes are created.
  */
 typedef struct {
 	uint8_t hopping;
@@ -98,7 +98,7 @@ static const sim_features_t sim_features_default = {
 
 static sim_features_t sim_features;
 
-/* ---- 回调与假射频 -------------------------------------------------------- */
+/* ---- callbacks and the fake radio ---------------------------------------- */
 
 static uint32_t next_random(uint32_t *state)
 {
@@ -190,7 +190,7 @@ static void on_state(void *ctx, uint8_t state)
 	}
 }
 
-/* ---- 节点与仿真环境 ------------------------------------------------------ */
+/* ---- nodes and the simulation --------------------------------------------- */
 
 static void node_init(node_t *node, uint8_t role, const uint8_t *root_key,
 		      const uint8_t dev_id[ZLRS_DEV_ID_LEN], uint32_t rng_seed)
@@ -246,7 +246,7 @@ static void node_init(node_t *node, uint8_t role, const uint8_t *root_key,
 	data_cfg.domain = ZLRS_DOMAIN_ISM2400;
 	data_cfg.sync_slot = ZLRS_SYNC_SLOT_DATA;
 	data_cfg.mod = zlrs_mod_flrc(SIM_RATE_DATA);
-	data_cfg.peer_timeout_ms = 0U; /* 数据链路不判失联，见 doc/09-protocol.md 3.7 */
+	data_cfg.peer_timeout_ms = 0U; /* no peer-loss check on the data link (09-protocol 3.7) */
 	data_cfg.data_mtu = SIM_DATA_MTU;
 
 	zlrs_link_init(&node->ctl, &cfg, &ops, &ctl_ev);
@@ -260,7 +260,7 @@ static void node_init(node_t *node, uint8_t role, const uint8_t *root_key,
 	}
 }
 
-/* features = NULL 用生产档；上板调试档由用例显式传进来 */
+/* features = NULL means production; bench cases pass their switches in */
 static void sim_init_with(sim_t *sim, const sim_features_t *features)
 {
 	static uint8_t root_key[ZLRS_KEY_LEN];
@@ -291,8 +291,8 @@ static zlrs_link_t *link_of(node_t *node, uint8_t slot)
 }
 
 /*
- * 空口上发生的事：只有频段与同步字都对得上的接收方才收得到（射频层过滤）。
- * 比的是事务里实际用的同步字——配对阶段用的是公开常量，不是派生出来的那对。
+ * What happens on air: only a receiver with matching band and sync word hears it (radio filter).
+ * The comparison uses the sync word the transaction really carries: pairing uses the public constant.
  */
 static bool sim_phy_match(const zlrs_radio_req_t *src, const zlrs_radio_req_t *dst,
 			  const zlrs_link_t *src_link, const zlrs_link_t *dst_link)
@@ -301,7 +301,7 @@ static bool sim_phy_match(const zlrs_radio_req_t *src, const zlrs_radio_req_t *d
 	       memcmp(src->sync_word, dst->sync_word, ZLRS_SYNC_WORD_LEN) == 0;
 }
 
-/* 记录主对发出去的帧：sync / 会话响应抓取与上下行缓冲都只认主对 */
+/* Record frames the main pair sends: capture and buffers only care about the main pair */
 static void sim_record_air(sim_t *sim, const zlrs_link_t *src_link, const uint8_t *buf,
 			   uint16_t len)
 {
@@ -325,7 +325,7 @@ static void sim_record_air(sim_t *sim, const zlrs_link_t *src_link, const uint8_
 	}
 }
 
-/* 把一帧交给某个接收请求（等价于射频把这串字节写进它的接收缓冲） */
+/* Hand a frame to a receive request (the radio writing those bytes into its buffer) */
 static void sim_feed(sim_t *sim, zlrs_link_t *dst_link, const zlrs_radio_req_t *dst,
 		     const uint8_t *buf, uint16_t len, bool primary)
 {
@@ -376,7 +376,7 @@ static void sim_slot(sim_t *sim, uint8_t slot)
 		zlrs_link_complete(links[i], ZLRS_RADIO_OK, 0U, 0, 0, sim->now_ms);
 
 		for (uint8_t j = 0U; j < nodes; j++) {
-			/* 主对的丢包开关只作用于主对（0 = TX 节点，1 = RX 节点） */
+			/* The main pair's drop switches only touch the main pair (0 = TX node, 1 = RX node) */
 			const bool primary = (i < 2U && j < 2U);
 			int32_t *drop = NULL;
 
@@ -409,7 +409,7 @@ static void sim_slot(sim_t *sim, uint8_t slot)
 		}
 	}
 
-	/* 没收到东西的接收请求，也要收尾 */
+	/* A receive request that heard nothing still has to be finished off */
 	for (uint8_t j = 0U; j < nodes; j++) {
 		if (reqs[j] != NULL && !reqs[j]->is_tx && !served[j]) {
 			zlrs_link_complete(links[j], ZLRS_RADIO_OK, 0U, 0, 0, sim->now_ms);
@@ -423,7 +423,7 @@ static void sim_run(sim_t *sim, uint32_t frames)
 		sim_slot(sim, ZLRS_SLOT_CTL_DOWN);
 		sim_slot(sim, ZLRS_SLOT_CTL_UP);
 		sim_slot(sim, ZLRS_SLOT_DATA_A);
-		/* 数据帧重放：接收端应该按数据序号去重，不重复投递 */
+		/* Data replay: the receiver dedups on the data sequence number and delivers once */
 		if (sim->replay_data_next && sim->down_len > 0U &&
 		    (sim->down[0] >> 2) == (uint8_t)ZLRS_PKT_DATA_UP) {
 			sim->replay_data_next = false;
@@ -451,7 +451,7 @@ static void sim_run(sim_t *sim, uint32_t frames)
 		}                                         \
 	} while (0)
 
-/* 直接往某个链路的接收缓冲里塞一帧，绕开仿真投递 */
+/* Push a frame straight into a link's receive buffer, bypassing the simulation */
 static void sim_inject(sim_t *sim, zlrs_link_t *link, const uint8_t *frame, uint16_t len)
 {
 	zlrs_link_rx(link, frame, len, -60, 0, sim->now_ms);
@@ -478,7 +478,7 @@ static uint16_t build_data_frame(uint8_t *out, uint8_t type, uint16_t seq, uint8
 	return total;
 }
 
-/* 配对 + 建会话，并把配对记录同步给数据链路（App 侧要做的事） */
+/* Pair, set up the session and copy the pairing record to the data link (what the app does) */
 static void pair_and_connect(sim_t *sim)
 {
 	zlrs_link_press(&sim->tx.ctl, sim->now_ms);
@@ -489,7 +489,7 @@ static void pair_and_connect(sim_t *sim)
 			  sim->rx.ctl.state == ZLRS_STATE_SEARCHING,
 		  2000);
 
-	/* 配对记录（dev_id + 配对 nonce）同步给数据链路，App 侧要做的事 */
+	/* Copy the pairing record (dev_id and nonces) to the data link, as the app does */
 	zlrs_link_set_peer(&sim->tx.data, sim->rx.dev_id, sim->tx.ctl.pair_salt,
 			   sim->now_ms);
 	zlrs_link_set_peer(&sim->rx.data, sim->tx.dev_id, sim->rx.ctl.pair_salt,
@@ -504,10 +504,10 @@ static void pair_and_connect(sim_t *sim)
 }
 
 /*
- * 启用第三个节点。三节点用例共用它，差别只在参数：
- *   - 同场另一对设备：自己的 dev_id / peer / salt
- *   - 攻击者：偷来的 dev_id（主对 TX 的）+ 主对 RX 当 peer；salt 对/错决定它是
- *     "听过那次配对"（能冒充）还是只抓到了同步字（过不了 tag）
+ * Enable the third node. The three-node cases share it, differing only in parameters:
+ *   - a bystander pair: its own dev_id, peer and salt
+ *   - an attacker: a stolen dev_id (the main TX's) with the main RX as peer; a correct salt makes
+ *     it a device that heard the pairing (able to impersonate), otherwise it only has the sync word
  */
 static void sim_enable_nth(sim_t *sim, uint8_t role, const uint8_t dev_id[ZLRS_DEV_ID_LEN],
 			   const uint8_t peer_id[ZLRS_DEV_ID_LEN],
@@ -519,11 +519,11 @@ static void sim_enable_nth(sim_t *sim, uint8_t role, const uint8_t dev_id[ZLRS_D
 	sim->nth_enabled = true;
 }
 
-/* ---- 用例 ---------------------------------------------------------------- */
+/* ---- cases --------------------------------------------------------------- */
 
 /*
- * 三节点之一：同场另一对设备。射频同步字不同，两边在物理层就互相听不到——
- * 这是 doc/09-protocol.md 第 2 节与 doc/10-security.md 7.2"组内其它设备误占链路"那条声明的依据。
+ * Three nodes, first case: a bystander pair. Different radio sync words mean they cannot hear
+ * each other at the physical layer, which is the basis of doc/10-security.md 7.2.
  */
 static void test_third_node_isolation(void)
 {
@@ -540,18 +540,18 @@ static void test_third_node_isolation(void)
 	sim_enable_nth(&sim, ZLRS_ROLE_TX, other_id, other_peer, other_salt);
 	sim_run(&sim, 200U);
 
-	/* 第三节点发得出去，但一帧都听不到主对 */
+	/* The third node transmits but never hears the main pair */
 	CHECK(sim.nth.ctl.stats.tx_frames > 0U);
 	CHECK(sim.nth.ctl.stats.rx_frames == 0U);
 	CHECK(sim.nth.ctl.stats.rx_bad_tag == 0U);
 
-	/* 主对也一帧都没收到它的：连坏 tag 都没有，说明没进射频 */
+	/* And the main pair hears nothing of it either: not even a bad tag, so the radio filtered it */
 	CHECK(sim.tx.ctl.stats.rx_bad_tag == 0U);
 	CHECK(sim.rx.ctl.stats.rx_bad_tag == 0U);
 	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
 
-	/* 主对照常透传 */
+	/* The main pair still passes data through */
 	memset(chunk, 0x5aU, sizeof(chunk));
 	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
 	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(chunk), 400);
@@ -559,9 +559,9 @@ static void test_third_node_isolation(void)
 }
 
 /*
- * 三节点之二：攻击者偷到主对 TX 的 dev_id，也从空中抓到了同步字，但没听过那次
- * 配对（salt 是错的）。帧能进接收机，tag 过不去——这就是 pair_key 掺配对 nonce
- * 换来的东西（doc/10-security.md 第 3 节）。
+ * Three nodes, second case: an attacker has the main TX's dev_id and the sync word from the air,
+ * but never heard the pairing (wrong salt). Its frames reach the receiver and fail the tag: this is
+ * what mixing the pairing nonce into pair_key buys (doc/10-security.md 3).
  */
 static void test_intruder_without_pair_salt(void)
 {
@@ -576,25 +576,25 @@ static void test_intruder_without_pair_salt(void)
 	sim_init(&sim);
 	pair_and_connect(&sim);
 
-	/* 真 TX 先静默，让 RX 掉回 SEARCHING——这正是攻击者要抓的时机 */
+	/* The real TX goes quiet so the RX falls back to SEARCHING: the attacker's moment */
 	sim.drop_down = 1000000;
 	SIM_UNTIL(&sim, sim.rx.ctl.state == ZLRS_STATE_SEARCHING, 400);
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_SEARCHING);
 
 	sim_enable_nth(&sim, ZLRS_ROLE_TX, sim.tx.dev_id, sim.rx.dev_id, wrong_salt);
-	/* 同步字是公开发送的：攻击者抄下来就能把帧送进接收机 */
+	/* Sync words go out in the clear: copying one is enough to get frames into the receiver */
 	memcpy(sim.nth.ctl.sync_word, sim.tx.ctl.sync_word, ZLRS_SYNC_WORD_LEN);
 	memcpy(sim.nth.data.sync_word, sim.tx.data.sync_word, ZLRS_SYNC_WORD_LEN);
 
 	bad_before = sim.rx.ctl.stats.rx_bad_tag;
 	sim_run(&sim, 300U);
 
-	/* 收到了，但一帧都没验过，会话也没被建起来 */
+	/* Received, but nothing verified and no session came up */
 	CHECK(sim.rx.ctl.stats.rx_bad_tag > bad_before);
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_SEARCHING);
 	CHECK(!sim.rx.ctl.session_valid);
 
-	/* 真 TX 回来：主对重新建链，攻击者插不进来 */
+	/* The real TX returns: the main pair rebuilds its link and the attacker cannot get in */
 	sim.drop_down = 0;
 	SIM_UNTIL(&sim,
 		  sim.tx.ctl.state == ZLRS_STATE_CONNECTED &&
@@ -602,7 +602,7 @@ static void test_intruder_without_pair_salt(void)
 		  4000);
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
 
-	/* 主对照常透传 */
+	/* The main pair still passes data through */
 	memset(chunk, 0x6bU, sizeof(chunk));
 	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
 	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(chunk), 400);
@@ -610,8 +610,8 @@ static void test_intruder_without_pair_salt(void)
 }
 
 /*
- * 听过配对的组内成员能算出同一套钥匙，于是能冒充真 TX 注入 RC——这是
- * doc/10-security.md 7.2 声明的固有代价（没有逐设备身份），用例把它钉住。
+ * A group member that heard the pairing derives the same keys and can impersonate the real TX
+ * to inject RC. That is the inherent cost documented in doc/10-security.md 7.2; this case pins it.
  */
 static void test_group_member_impersonates(void)
 {
@@ -622,19 +622,19 @@ static void test_group_member_impersonates(void)
 	sim_init(&sim);
 	pair_and_connect(&sim);
 
-	/* 真 TX 静默：丢光它到 RX 的投递，RX 100 ms 后掉回 SEARCHING */
+	/* Real TX quiet: drop all its deliveries and the RX falls back to SEARCHING after 100 ms */
 	sim.drop_down = 1000000;
 	SIM_UNTIL(&sim, sim.rx.ctl.state == ZLRS_STATE_SEARCHING, 400);
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_SEARCHING);
 
-	/* 冒充者：dev_id 与主对 TX 相同，salt 是它听过的那一份 */
+	/* The impersonator: same dev_id as the main TX, with the salt it heard */
 	sim_enable_nth(&sim, ZLRS_ROLE_TX, sim.tx.dev_id, sim.rx.dev_id,
 		       sim.tx.ctl.pair_salt);
 
 	SIM_UNTIL(&sim, sim.rx.ctl.state == ZLRS_STATE_CONNECTED, 2000);
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
 
-	/* 注入一帧 RC：RX 会当成真 TX 的遥控数据收下 */
+	/* Inject one RC frame: the RX takes it for the real TX's stick data */
 	memset(rc, 0x7bU, sizeof(rc));
 	zlrs_link_set_rc(&sim.nth.ctl, rc, sizeof(rc));
 	SIM_UNTIL(&sim, sim.rx.rc_count > 0U, 400);
@@ -643,7 +643,7 @@ static void test_group_member_impersonates(void)
 	CHECK(memcmp(sim.rx.rc, rc, sizeof(rc)) == 0);
 }
 
-/* 32 位毫秒时间戳回绕：超时与失联判定都按无符号差值算，跨过 0 不能抽风 */
+/* 32-bit ms timestamp wrap: timeouts use unsigned differences and must survive crossing zero */
 static void test_time_wrap(void)
 {
 	sim_t sim;
@@ -651,13 +651,13 @@ static void test_time_wrap(void)
 
 	printf("link: time wrap\n");
 	sim_init(&sim);
-	sim.now_ms = 0xFFFFFF00U; /* 约 42 帧之后翻过 2^32 */
+	sim.now_ms = 0xFFFFFF00U; /* crosses 2^32 after about 42 frames */
 	pair_and_connect(&sim);
 	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
 
 	sim_run(&sim, 200U);
-	CHECK(sim.now_ms < 0x1000U); /* 确实翻过去了 */
+	CHECK(sim.now_ms < 0x1000U); /* it really wrapped */
 	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
 
@@ -667,7 +667,7 @@ static void test_time_wrap(void)
 	CHECK(sim.rx.stream_len == sizeof(chunk));
 }
 
-/* 16 位序号回绕：接收窗口按有符号差值比大小，跨过 0xFFFF 不能把新帧当旧帧 */
+/* 16-bit sequence wrap: the window compares signed differences, so new frames never look old */
 static void test_seq_wrap(void)
 {
 	sim_t sim;
@@ -679,7 +679,7 @@ static void test_seq_wrap(void)
 	sim_init(&sim);
 	pair_and_connect(&sim);
 
-	/* 把游标挪到回绕点前面，省掉 65536 帧的仿真 */
+	/* Move the cursor near the wrap point instead of simulating 65536 frames */
 	sim.tx.ctl.tx_seq = 0xFFF0U;
 	sim.rx.ctl.last_rx_seq = 0xFFF0U;
 	sim.rx.ctl.lq_last_seq = 0xFFF0U;
@@ -687,14 +687,14 @@ static void test_seq_wrap(void)
 	zlrs_link_set_rc(&sim.tx.ctl, rc, sizeof(rc));
 
 	sim_run(&sim, 40U);
-	CHECK(sim.tx.ctl.tx_seq < 0xFFF0U); /* 序号真的翻过去了 */
+	CHECK(sim.tx.ctl.tx_seq < 0xFFF0U); /* the sequence really wrapped */
 
 	rc_before = sim.rx.rc_count;
 	sim_run(&sim, 20U);
 	CHECK(sim.rx.rc_count > rc_before);
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
 
-	/* 数据链路的序号也一样 */
+	/* The data link's sequence numbers wrap the same way */
 	memset(chunk, 0x77U, sizeof(chunk));
 	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
 	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(chunk), 400);
@@ -712,7 +712,7 @@ static void test_pairing(void)
 	printf("link: pairing\n");
 	sim_init(&sim);
 
-	/* 没按键时不参与 */
+	/* Without a press the button does nothing */
 	sim_run(&sim, 50U);
 	CHECK(sim.tx.ctl.state == ZLRS_STATE_UNPAIRED);
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_UNPAIRED);
@@ -735,20 +735,20 @@ static void test_pairing(void)
 	memcpy(word_rx, sim.rx.ctl.sync_word, sizeof(word_rx));
 	memcpy(data_tx, sim.tx.data.sync_word, sizeof(data_tx));
 	memcpy(data_rx, sim.rx.data.sync_word, sizeof(data_rx));
-	CHECK(memcmp(word_tx, word_rx, sizeof(word_tx)) == 0); /* 两端一致 */
+	CHECK(memcmp(word_tx, word_rx, sizeof(word_tx)) == 0); /* both ends agree */
 	CHECK(memcmp(data_tx, data_rx, sizeof(data_tx)) == 0);
-	CHECK(memcmp(word_tx, data_tx, sizeof(word_tx)) != 0); /* 域分离 */
+	CHECK(memcmp(word_tx, data_tx, sizeof(word_tx)) != 0); /* domain separation */
 
-	/* 再跑几个超帧，等 SYNC 出现在空中 */
+	/* Run a few more superframes until a SYNC shows up on air */
 	sim_run(&sim, 5U);
 	CHECK(sim.sync_len > 0U);
 
-	/* 配对窗口到点自动退出 */
+	/* The pairing window expires on its own */
 	sim_init(&sim);
 	zlrs_link_press(&sim.tx.ctl, sim.now_ms);
 	sim_run(&sim, (30000U / SIM_FRAME_MS) + 200U);
 	CHECK(sim.tx.ctl.state == ZLRS_STATE_UNPAIRED);
-	CHECK(sim.tx.ctl.stats.tx_frames > 10U); /* 期间一直在发 PAIR_REQ */
+	CHECK(sim.tx.ctl.stats.tx_frames > 10U); /* PAIR_REQ went out the whole time */
 	CHECK(!sim.tx.ctl.paired);
 }
 
@@ -768,14 +768,14 @@ static void test_session(void)
 	CHECK(sim.tx.data.state == ZLRS_STATE_CONNECTED);
 	CHECK(sim.rx.data.state == ZLRS_STATE_CONNECTED);
 
-	/* 会话密钥按方向分开：本机的 out 就是对端的 in，同一台设备的 out != in */
+	/* Session keys are directional: our out is the peer's in, and out != in on one device */
 	CHECK(memcmp(sim.tx.ctl.session_key_out, sim.rx.ctl.session_key_in,
 		     ZLRS_KEY_LEN) == 0);
 	CHECK(memcmp(sim.tx.ctl.session_key_in, sim.rx.ctl.session_key_out,
 		     ZLRS_KEY_LEN) == 0);
 	CHECK(memcmp(sim.tx.ctl.session_key_out, sim.tx.ctl.session_key_in,
 		     ZLRS_KEY_LEN) != 0);
-	/* 两个 nonce 两端都拿到：TX 出的 nonce_t、RX 出的 nonce_r */
+	/* Both nonces reach both ends: the TX's nonce_t and the RX's nonce_r */
 	CHECK(sim.tx.ctl.sess_nonce_t == sim.rx.ctl.sess_nonce_t);
 	CHECK(sim.tx.ctl.sess_nonce_r == sim.rx.ctl.sess_nonce_r);
 	CHECK(memcmp(sim.tx.data.session_key_out, sim.rx.data.session_key_in,
@@ -783,7 +783,7 @@ static void test_session(void)
 	CHECK(memcmp(sim.tx.ctl.session_key_out, sim.tx.data.session_key_out,
 		     ZLRS_KEY_LEN) != 0);
 
-	/* 会话建立后 RX 不再听 SYNC：重放当前那帧不能动会话 */
+	/* Once connected the RX stops listening for SYNC: replaying the current one changes nothing */
 	nonce = sim.rx.ctl.sess_nonce_t;
 	saved_len = sim.sync_len;
 	CHECK(saved_len > 0U);
@@ -795,8 +795,8 @@ static void test_session(void)
 }
 
 /*
- * 反射：把本机自己发出去的帧原样打回本机。tag 钥匙按方向分开之后，发帧用 out、
- * 校验用 in，这些帧必须停在 tag 这一步，不能算成"对端发来的"。
+ * Reflection: our own frame comes straight back. With directional tag keys (out to send, in to
+ * verify) such frames must die at the tag check, never count as the peer's.
  */
 static void test_reflection(void)
 {
@@ -811,19 +811,19 @@ static void test_reflection(void)
 	sim_init(&sim);
 	pair_and_connect(&sim);
 
-	/* 取空口上真实的一帧 TX -> RX（RC） */
+	/* Grab a real TX -> RX frame off the air (RC) */
 	sim_slot(&sim, ZLRS_SLOT_CTL_DOWN);
 	CHECK(sim.down_len > 0U);
 	CHECK((sim.down[0] >> 2) == (uint8_t)ZLRS_PKT_RC);
 	len = sim.down_len;
 	memcpy(frame, sim.down, len);
 
-	/* 取空口上真实的一帧 RX -> TX（TLM） */
+	/* Grab a real RX -> TX frame off the air (TLM) */
 	sim_slot(&sim, ZLRS_SLOT_CTL_UP);
 	CHECK(sim.up_len > 0U);
 	CHECK((sim.up[0] >> 2) == (uint8_t)ZLRS_PKT_TLM);
 
-	/* TX 收到自己发的 RC：tag 是"本机在前"算的，TX 校验用"对端在前" —— 必须丢 */
+	/* TX hears its own RC: the tag was computed local-first, verification is peer-first: drop it */
 	counter = sim.tx.ctl.stats.rx_frames;
 	bad_tag = sim.tx.ctl.stats.rx_bad_tag;
 	sim_inject(&sim, &sim.tx.ctl, frame, len);
@@ -831,14 +831,14 @@ static void test_reflection(void)
 	CHECK(sim.tx.ctl.stats.rx_frames == counter);
 	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
 
-	/* RX 收到自己发的 TLM：同理，不能当成 TX 的遥测收下 */
+	/* RX hears its own TLM: same, it must not be taken for the TX's telemetry */
 	counter = sim.rx.tlm_count;
 	bad_tag = sim.rx.ctl.stats.rx_bad_tag;
 	sim_inject(&sim, &sim.rx.ctl, sim.up, sim.up_len);
 	CHECK(sim.rx.ctl.stats.rx_bad_tag == bad_tag + 1U);
 	CHECK(sim.rx.tlm_count == counter);
 
-	/* 让 TX 判一次失联、换一个会话 nonce，空口上那帧 SYNC 就"过期"了 */
+	/* Make the TX declare peer loss and roll a new nonce, which ages the SYNC on air */
 	nonce = sim.tx.ctl.sess_nonce_t;
 	sim.drop_up = 500;
 	SIM_UNTIL(&sim,
@@ -848,7 +848,7 @@ static void test_reflection(void)
 	sim.drop_up = 0;
 	CHECK(sim.tx.ctl.sess_nonce_t != nonce);
 
-	/* TX 收到自己发过的旧 SYNC：不能把会话换回旧 nonce 上 */
+	/* TX hears its own old SYNC: it must not drag the session back to the old nonce */
 	CHECK(sim.sync_len > 0U);
 	nonce = sim.tx.ctl.sess_nonce_t;
 	bad_tag = sim.tx.ctl.stats.rx_bad_tag;
@@ -858,8 +858,8 @@ static void test_reflection(void)
 }
 
 /*
- * 换绑（重新配对）要换掉整棵子树：pair_key 掺了配对时的两个 nonce，所以同步字、
- * 跳频表、tag 钥匙全换，旧配对录下来的帧再也验证不过。
+ * Re-pairing replaces the whole subtree: pair_key mixes in the two pairing nonces, so sync words,
+ * hop tables and tag keys all change and frames from the old pairing never verify again.
  */
 static void test_pairing_rotation(void)
 {
@@ -881,7 +881,7 @@ static void test_pairing_rotation(void)
 	memcpy(salt_before, sim.tx.ctl.pair_salt, sizeof(salt_before));
 	memcpy(auth_before, sim.tx.ctl.link_auth_out, sizeof(auth_before));
 
-	/* 再配对一次（换绑走的就是这条路） */
+	/* Pair again (exactly the path a re-bind takes) */
 	zlrs_link_press(&sim.tx.ctl, sim.now_ms);
 	zlrs_link_press(&sim.rx.ctl, sim.now_ms);
 	SIM_UNTIL(&sim,
@@ -889,15 +889,15 @@ static void test_pairing_rotation(void)
 			  sim.rx.ctl.state == ZLRS_STATE_SEARCHING,
 		  2000);
 
-	/* 配对材料换了，下层的同步字与 tag 钥匙跟着换 */
+	/* New pairing material, so the sync words and tag keys change with it */
 	CHECK(memcmp(sim.tx.ctl.pair_salt, salt_before, ZLRS_PAIR_SALT_LEN) != 0);
 	CHECK(memcmp(sim.tx.ctl.link_auth_out, auth_before, ZLRS_KEY_LEN) != 0);
-	/* 两端仍然算出同一套 */
+	/* Both ends still derive the same set */
 	CHECK(memcmp(sim.tx.ctl.sync_word, sim.rx.ctl.sync_word, ZLRS_SYNC_WORD_LEN) == 0);
 	CHECK(memcmp(sim.tx.ctl.link_auth_out, sim.rx.ctl.link_auth_in,
 		     ZLRS_KEY_LEN) == 0);
 
-	/* 旧配对录下的 SYNC：钥匙已经换了，必须被丢掉 */
+	/* A SYNC recorded under the old pairing: the keys changed, so it must be dropped */
 	bad_tag = sim.rx.ctl.stats.rx_bad_tag;
 	nonce = sim.rx.ctl.sess_nonce_t;
 	sim_inject(&sim, &sim.rx.ctl, sync, sync_len);
@@ -907,9 +907,9 @@ static void test_pairing_rotation(void)
 }
 
 /*
- * 旧 SYNC 的重放（原 02 §5.4 那条弱点）：RX 只在收到用新会话钥匙打的确认后才
- * 采用会话，所以重放录下来的旧 SYNC 只能换来一条带全新 nonce_r 的响应——旧会话
- * 的钥匙一条都拿不到。同理，旧 SESS_RESP 打给 TX 也会因为 nonce_t 对不上被忽略。
+ * Replaying an old SYNC (the weakness tracked in 09-protocol): the RX only adopts a session after
+ * a confirm tagged with the new session key, so a replayed SYNC only earns a response carrying a
+ * fresh nonce_r and no old keys. An old SESS_RESP fails at the TX for the same reason.
  */
 static void test_session_replay(void)
 {
@@ -926,7 +926,7 @@ static void test_session_replay(void)
 	pair_and_connect(&sim);
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
 
-	/* 录下第一段会话的 SYNC 与会话响应 */
+	/* Record the first session's SYNC and session response */
 	CHECK(sim.sync_len > 0U);
 	CHECK(sim.sess_resp_len > 0U);
 	sync_len = sim.sync_len;
@@ -934,7 +934,7 @@ static void test_session_replay(void)
 	memcpy(sync, sim.sync, sync_len);
 	memcpy(resp, sim.sess_resp, resp_len);
 
-	/* 让两边都掉回 SEARCHING：这正是重放攻击的时机 */
+	/* Drop both ends back to SEARCHING: exactly the replay window */
 	sim.drop_down = 500;
 	sim.drop_up = 500;
 	SIM_UNTIL(&sim,
@@ -945,21 +945,21 @@ static void test_session_replay(void)
 	sim.drop_up = 0;
 	CHECK(!sim.rx.ctl.session_valid);
 
-	/* 重放旧 SYNC 给 RX：只能武装一个候选，不能采用 */
+	/* Replay the old SYNC to the RX: it may arm a candidate, never adopt it */
 	nonce_r = sim.rx.ctl.sess_nonce_r;
 	sim_inject(&sim, &sim.rx.ctl, sync, sync_len);
 	CHECK(!sim.rx.ctl.session_valid);
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_SEARCHING);
-	CHECK(sim.rx.ctl.sess_nonce_r != nonce_r); /* 现抽的 nonce_r，不是旧会话那把 */
+	CHECK(sim.rx.ctl.sess_nonce_r != nonce_r); /* a fresh nonce_r, not the old session's */
 	CHECK(sim.rx.ctl.session_pending);
 
-	/* 重放旧 SESS_RESP 给 TX：回带的 nonce_t 不是当前请求，必须被忽略 */
+	/* Replay the old SESS_RESP to the TX: the echoed nonce_t is stale, so it must be ignored */
 	memcpy(key_before, sim.tx.ctl.session_key_out, ZLRS_KEY_LEN);
 	sim_inject(&sim, &sim.tx.ctl, resp, resp_len);
 	CHECK(memcmp(sim.tx.ctl.session_key_out, key_before, ZLRS_KEY_LEN) == 0);
 
-	/* 真的 TX 回来时照常建链 */
-	sim.tx.ctl.last_sync_ms = 0U; /* 不等一个 SYNC 周期 */
+	/* When the real TX returns the link comes up as usual */
+	sim.tx.ctl.last_sync_ms = 0U; /* do not wait a whole sync period */
 	SIM_UNTIL(&sim,
 		  sim.tx.ctl.state == ZLRS_STATE_CONNECTED &&
 			  sim.rx.ctl.state == ZLRS_STATE_CONNECTED,
@@ -1050,21 +1050,21 @@ static void test_rx_rejects(void)
 	CHECK(sim.rx.rc_count > 0U);
 	CHECK(sim.down_len > 0U);
 
-	/* 重放同一帧：序列号不新，计入 rx_dup */
+	/* Replay the same frame: the sequence number is not new, so it counts as rx_dup */
 	count_before = sim.rx.rc_count;
 	dup_before = sim.rx.ctl.stats.rx_dup;
 	sim_inject(&sim, &sim.rx.ctl, sim.down, sim.down_len);
 	CHECK(sim.rx.ctl.stats.rx_dup == dup_before + 1U);
 	CHECK(sim.rx.rc_count == count_before);
 
-	/* 改 tag：校验失败 */
+	/* Change the tag: verification fails */
 	tag_before = sim.rx.ctl.stats.rx_bad_tag;
 	memcpy(bad, sim.down, sim.down_len);
 	bad[sim.down_len - 1U] ^= 0xFFU;
 	sim_inject(&sim, &sim.rx.ctl, bad, sim.down_len);
 	CHECK(sim.rx.ctl.stats.rx_bad_tag == tag_before + 1U);
 
-	/* 长度不足：直接拒绝 */
+	/* Too short: rejected outright */
 	frame_before = sim.rx.ctl.stats.rx_bad_frame;
 	sim_inject(&sim, &sim.rx.ctl, tiny, sizeof(tiny));
 	CHECK(sim.rx.ctl.stats.rx_bad_frame == frame_before + 1U);
@@ -1085,10 +1085,10 @@ static void test_frag_drop(void)
 	pair_and_connect(&sim);
 	CHECK(sim.rx.data.state == ZLRS_STATE_CONNECTED);
 
-	key = sim.rx.data.session_key_in; /* RX 校验 TX 发来的帧，用 in */
+	key = sim.rx.data.session_key_in; /* the RX verifies the TX's frames with in */
 	seq = (uint16_t)(sim.rx.data.last_rx_seq + 1U);
 
-	/* 缺口：整段丢弃 */
+	/* Gap: drop the whole run */
 	drop_before = sim.rx.data.stats.rx_frag_drop;
 	len = build_data_frame(frame, ZLRS_PKT_DATA_UP, seq, ZLRS_FLAG_MORE, chunk,
 			       sizeof(chunk), key);
@@ -1104,7 +1104,7 @@ static void test_frag_drop(void)
 	CHECK(sim.rx.data.reasm.len == 0U);
 	CHECK(sim.rx.stream_len == 0U);
 
-	/* 超时：残留丢弃，新分片重新起头 */
+	/* Timeout: the leftovers go and a new run starts */
 	seq = (uint16_t)(seq + 1U);
 	len = build_data_frame(frame, ZLRS_PKT_DATA_UP, seq, ZLRS_FLAG_MORE, chunk,
 			       sizeof(chunk), key);
@@ -1116,7 +1116,7 @@ static void test_frag_drop(void)
 	len = build_data_frame(frame, ZLRS_PKT_DATA_UP, seq, ZLRS_FLAG_MORE, chunk,
 			       sizeof(chunk), key);
 	sim_inject(&sim, &sim.rx.data, frame, len);
-	CHECK(sim.rx.data.reasm.len == sizeof(chunk)); /* 只剩新片 */
+	CHECK(sim.rx.data.reasm.len == sizeof(chunk)); /* only the new fragment is left */
 	CHECK(sim.rx.data.stats.rx_frag_drop == drop_before + 1U);
 }
 
@@ -1129,17 +1129,17 @@ static void test_recovery(void)
 	pair_and_connect(&sim);
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
 
-	/* 断掉双向投递：控制链路按各自超时回到 SEARCHING */
+	/* Cut both directions: the control link falls back to SEARCHING on its timeout */
 	sim.drop_down = 100000;
 	sim.drop_up = 100000;
 	sim_run(&sim, 100U); /* 600 ms */
 
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_SEARCHING);
 	CHECK(sim.tx.ctl.state == ZLRS_STATE_SEARCHING);
-	CHECK(sim.rx.ctl_state == ZLRS_STATE_SEARCHING); /* on_state 通知过（失控保护用） */
-	CHECK(sim.tx.ctl.paired && sim.rx.ctl.paired); /* 配对记录还在 */
+	CHECK(sim.rx.ctl_state == ZLRS_STATE_SEARCHING); /* on_state fired, which drives failsafe */
+	CHECK(sim.tx.ctl.paired && sim.rx.ctl.paired); /* the pairing record survives */
 
-	/* 恢复投递：靠新的 SYNC 重新连上，不需要重新配对 */
+	/* Restore delivery: a new SYNC reconnects, no re-pairing needed */
 	sim.drop_down = 0;
 	sim.drop_up = 0;
 	SIM_UNTIL(&sim,
@@ -1207,7 +1207,7 @@ static void test_sync_rate(void)
 	SIM_UNTIL(&sim, sim.tx.ctl.state == ZLRS_STATE_SEARCHING, 2000);
 	CHECK(sim.tx.ctl.state == ZLRS_STATE_SEARCHING);
 
-	/* 对端收不到：此时 TX 只剩 SYNC 一种发送 */
+	/* The peer hears nothing: at this point a SYNC is the TX's only outgoing frame */
 	sim.drop_down = 100000;
 	before = sim.tx.ctl.stats.tx_frames;
 	sim_run(&sim, 3U * SIM_FRAMES_PER_SEC);
@@ -1215,7 +1215,7 @@ static void test_sync_rate(void)
 	CHECK(sent >= 3U && sent <= 5U);
 }
 
-/* 上行 LQ：按序号算应有帧数，丢包后百分比要掉下来 */
+/* Uplink LQ: the sequence gap gives the expected count, so drops must lower the percentage */
 static void test_link_quality(void)
 {
 	sim_t sim;
@@ -1226,13 +1226,13 @@ static void test_link_quality(void)
 	pair_and_connect(&sim);
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
 
-	/* 一个窗口以上不丢包：LQ 应该是满的 */
+	/* More than a window without drops: LQ has to be full */
 	sim_run(&sim, 200U);
 	CHECK(sim.rx.ctl.stats.lq_percent == 100U);
 
 	/*
-	 * 每 8 个超帧丢 1 个下行投递（连丢 20 个会触发失联重连，那是另一个用例），
-	 * 160 个超帧里够跑满一个 LQ 窗口（128 帧）并结算
+	 * Drop one downlink delivery in eight (twenty in a row would trigger a reconnect, another case),
+	 * which over 160 superframes fills an LQ window (128 frames) and settles it
 	 */
 	for (uint8_t i = 0U; i < 20U; i++) {
 		sim.drop_down = 1;
@@ -1241,12 +1241,12 @@ static void test_link_quality(void)
 	CHECK(sim.rx.ctl.stats.lq_percent < 100U);
 	CHECK(sim.rx.ctl.stats.lq_percent > 50U);
 
-	/* 不再丢包：跑满一个窗口后 LQ 回到满值 */
+	/* No more drops: after a full window LQ returns to full */
 	sim_run(&sim, 200U);
 	CHECK(sim.rx.ctl.stats.lq_percent == 100U);
 }
 
-/* 透传背压：空口队列满了以后丢掉的字节要计数 */
+/* Passthrough backpressure: bytes dropped on a full air queue have to be counted */
 static void test_backpressure(void)
 {
 	sim_t sim;
@@ -1258,7 +1258,7 @@ static void test_backpressure(void)
 	sim_init(&sim);
 	memset(chunk, 0x5AU, sizeof(chunk));
 
-	/* 队列 512 字节：先填满，再多写的部分应该被计成丢弃 */
+	/* A 512-byte queue: fill it, and everything beyond must count as dropped */
 	for (uint8_t i = 0U; i < 4U; i++) {
 		accepted = (uint16_t)(accepted + zlrs_link_write(&sim.tx.data, chunk,
 								 sizeof(chunk)));
@@ -1273,7 +1273,7 @@ static void test_backpressure(void)
 	CHECK(sim.tx.data.stats.data_drop_bytes == 2U * sizeof(chunk));
 }
 
-/* ARQ：丢帧靠重传补齐，接收端按数据序号去重 */
+/* ARQ: drops are filled in by retransmits and the receiver dedups on the data sequence */
 static void test_arq_retransmit(void)
 {
 	sim_t sim;
@@ -1292,7 +1292,7 @@ static void test_arq_retransmit(void)
 	}
 	CHECK(zlrs_link_write(&sim.tx.data, want, sizeof(want)) == sizeof(want));
 
-	/* 每 3 个数据帧丢 1 个：重传必须把 512 字节一个不差地补齐 */
+	/* Drop one data frame in three: retransmits have to deliver all 512 bytes */
 	for (uint8_t round = 0U; round < 10U; round++) {
 		sim.drop_data_down = 1;
 		sim_run(&sim, 8U);
@@ -1307,7 +1307,7 @@ static void test_arq_retransmit(void)
 	CHECK(sim.rx.data.stats.rx_out_of_order > 0U);
 }
 
-/* ARQ：接收端收到重复的数据帧时只投递一次 */
+/* ARQ: a duplicated data frame is delivered exactly once */
 static void test_arq_dedup(void)
 {
 	sim_t sim;
@@ -1334,7 +1334,7 @@ static void test_arq_dedup(void)
 	CHECK(sim.rx.data.stats.rx_dup > 0U);
 }
 
-/* ARQ：重传用尽后放弃这一段，并把它计成丢弃（不阻塞后面的数据） */
+/* ARQ: exhausted retries drop that run and count it, without blocking later data */
 static void test_arq_giveup(void)
 {
 	sim_t sim;
@@ -1350,7 +1350,7 @@ static void test_arq_giveup(void)
 	memset(chunk, 0x33U, sizeof(chunk));
 	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
 
-	/* 下行走不了：第一段（128 字节）重传用尽后必须放弃并计数，而不是永远卡住 */
+	/* Downlink dead: the first 128-byte run must be given up and counted, never wedged forever */
 	sim.drop_data_down = 100000;
 	sim_run(&sim, 400U);
 
@@ -1359,7 +1359,7 @@ static void test_arq_giveup(void)
 	CHECK(sim.tx.data.stats.data_drop_bytes >= 128U);
 	CHECK(sim.tx.data.stats.data_drop_bytes < sizeof(chunk));
 
-	/* 链路恢复：重同步握手之后，剩下的字节要接着送出去 */
+	/* Link restored: after the resync handshake the remaining bytes keep flowing */
 	sim.drop_data_down = 0;
 	SIM_UNTIL(&sim, sim.tx.data.queue_count == 0U, 4000);
 	CHECK(sim.tx.data.queue_count == 0U);
@@ -1371,7 +1371,7 @@ static void test_arq_giveup(void)
 	}
 }
 
-/* 速率自适应：连续窗口 + 保持时间 + 滞回，三个条件缺一不可 */
+/* Rate adaptation: windows, hold time and hysteresis, all three or nothing moves */
 static void test_rate_adapt(void)
 {
 	static const zlrs_rate_tier_t tiers[] = {
@@ -1390,15 +1390,15 @@ static void test_rate_adapt(void)
 
 	printf("link: rate adaptation\n");
 
-	zlrs_rate_init(&ctl, tiers, 4U, 1U, now); /* 从 1.3 Mbps 起 */
+	zlrs_rate_init(&ctl, tiers, 4U, 1U, now); /* start at 1.3 Mbps */
 	CHECK(zlrs_rate_current_bps(&ctl) == 1300000U);
 
-	/* 保持时间内：窗口计数都不算，直接不动 */
+	/* During the hold time no windows count and nothing moves */
 	CHECK(!zlrs_rate_update(&ctl, 20U, now, &next));
 	CHECK(!zlrs_rate_update(&ctl, 20U, now, &next));
 	CHECK(zlrs_rate_current_bps(&ctl) == 1300000U);
 
-	/* 保持时间过了：连续 3 个"差"窗口才降一档（更慢） */
+	/* Hold time over: three bad windows in a row drop one tier (slower) */
 	now += 5000U;
 	CHECK(!zlrs_rate_update(&ctl, 20U, now, &next));
 	CHECK(!zlrs_rate_update(&ctl, 20U, now, &next));
@@ -1406,14 +1406,14 @@ static void test_rate_adapt(void)
 	CHECK(next == 2U);
 	CHECK(zlrs_rate_current_bps(&ctl) == 650000U);
 
-	/* 换档后保持时间内不再动 */
+	/* After a change nothing moves during the hold time */
 	now += 100U;
 	for (uint8_t i = 0U; i < 5U; i++) {
 		CHECK(!zlrs_rate_update(&ctl, 20U, now, &next));
 	}
 	CHECK(zlrs_rate_current_bps(&ctl) == 650000U);
 
-	/* 保持时间过了，连续三个差窗口继续降 */
+	/* Hold time over: three more bad windows drop again */
 	now += 5000U;
 	CHECK(!zlrs_rate_update(&ctl, 20U, now, &next));
 	CHECK(!zlrs_rate_update(&ctl, 20U, now, &next));
@@ -1421,21 +1421,21 @@ static void test_rate_adapt(void)
 	CHECK(next == 3U);
 	CHECK(zlrs_rate_current_bps(&ctl) == 325000U);
 
-	/* 最慢一档：再差也不动了 */
+	/* Slowest tier: no further drop, however bad it gets */
 	now += 5000U;
 	for (uint8_t i = 0U; i < 5U; i++) {
 		CHECK(!zlrs_rate_update(&ctl, 0U, now, &next));
 	}
 	CHECK(zlrs_rate_current_bps(&ctl) == 325000U);
 
-	/* 升档要留滞回余量：升到 0.65M 档要 35+10=45，40% 不够，也不能降 */
+	/* Raising needs the hysteresis margin: 0.65M wants 35+10=45, so 40% neither raises nor drops */
 	now += 5000U;
 	for (uint8_t i = 0U; i < 5U; i++) {
 		CHECK(!zlrs_rate_update(&ctl, 40U, now, &next));
 	}
 	CHECK(zlrs_rate_current_bps(&ctl) == 325000U);
 
-	/* 75% ≥ 当前档-1 的门槛 60 + 滞回 10：连续三个窗口后升档 */
+	/* 75% >= the next tier's 60 plus hysteresis 10: three windows in a row raise it */
 	now += 5000U;
 	CHECK(!zlrs_rate_update(&ctl, 75U, now, &next));
 	CHECK(!zlrs_rate_update(&ctl, 75U, now, &next));
@@ -1444,7 +1444,7 @@ static void test_rate_adapt(void)
 	CHECK(zlrs_rate_current_bps(&ctl) == 650000U);
 }
 
-/* 失控值由 TX 配置、配对时下发：RX 收到并存下来，用于自己的失控输出 */
+/* The TX configures failsafe values and ships them while pairing: the RX stores and emits them */
 static void test_failsafe_push(void)
 {
 	sim_t sim;
@@ -1460,19 +1460,19 @@ static void test_failsafe_push(void)
 
 	pair_and_connect(&sim);
 
-	/* 链路层存下来了 */
+	/* The link layer stored them */
 	CHECK(sim.rx.ctl.failsafe_len == sizeof(want));
 	CHECK(memcmp(sim.rx.ctl.failsafe, want, sizeof(want)) == 0);
-	/* 应用侧的回调也收到了（RX 要写 NVS 并用于输出） */
+	/* The application callback fired too (the RX writes NVS and uses them) */
 	CHECK(sim.rx.failsafe_count == 1U);
 	CHECK(sim.rx.failsafe_len == sizeof(want));
 	CHECK(memcmp(sim.rx.failsafe, want, sizeof(want)) == 0);
 
-	/* 长度不对的值不接收 */
+	/* Values with the wrong length are refused */
 	zlrs_link_set_failsafe(&sim.tx.ctl, want, sizeof(want) - 1U);
 	CHECK(sim.tx.ctl.failsafe_len == sizeof(want));
 
-	/* TX 没设过值时 RX 保持自己那份，不会被一串 0 覆盖 */
+	/* With nothing set on the TX, the RX keeps its own values instead of being zeroed */
 	sim_init(&sim);
 	pair_and_connect(&sim);
 	CHECK(sim.rx.ctl.failsafe_len == 0U);
@@ -1480,9 +1480,9 @@ static void test_failsafe_push(void)
 }
 
 /*
- * 数据链路是尽力而为：空闲时不发空帧，也不判失联（见 doc/09-protocol.md 3.7）。
- * 所以空闲再久也不能反复重建会话——否则一有数据要发就先撞上握手，头几帧白等一个
- * SYNC 周期。
+ * The data link is best-effort: it sends nothing while idle and has no peer-loss check
+ * (doc/09-protocol.md 3.7), so even a long idle period must not rebuild the session repeatedly:
+ * otherwise the first data after idle would hit a handshake and waste a sync period.
  */
 static void test_data_idle(void)
 {
@@ -1497,19 +1497,19 @@ static void test_data_idle(void)
 	CHECK(sim.rx.data.state == ZLRS_STATE_CONNECTED);
 
 	nonce_before = sim.tx.data.sess_nonce_t;
-	sim_run(&sim, 3000U); /* 约 18 s 空闲 */
+	sim_run(&sim, 3000U); /* about 18 s of idling */
 	CHECK(sim.tx.data.sess_nonce_t == nonce_before);
 	CHECK(sim.tx.data.state == ZLRS_STATE_CONNECTED);
 	CHECK(sim.rx.data.state == ZLRS_STATE_CONNECTED);
 
-	/* 空闲之后照样能透传 */
+	/* Data still flows after the idle period */
 	memset(chunk, 0x44U, sizeof(chunk));
 	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
 	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(chunk), 400);
 	CHECK(sim.rx.stream_len == sizeof(chunk));
 }
 
-/* 控制帧率拉高后的节奏稀疏化：遥测每 4 帧、数据窗口每 5 帧，两端仍同步 */
+/* Cadence thinning at a high control rate: telemetry every 4 frames, data every 5, still in step */
 static void test_cadence(void)
 {
 	sim_t sim;
@@ -1520,7 +1520,7 @@ static void test_cadence(void)
 	printf("link: cadence (sparse tlm / data)\n");
 
 	sim_init(&sim);
-	/* 两端必须配一样的节奏：同固件、同配置 */
+	/* Both ends need the same cadence: same firmware, same config */
 	sim.tx.ctl.cfg.tlm_every_n = 4U;
 	sim.rx.ctl.cfg.tlm_every_n = 4U;
 	sim.tx.data.cfg.data_every_n = 5U;
@@ -1530,24 +1530,24 @@ static void test_cadence(void)
 	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
 
-	/* 给 RX 一份遥测载荷：空载荷是保活帧，不会触发 on_tlm */
+	/* Give the RX a telemetry payload: an empty one is a keepalive and does not call on_tlm */
 	{
 		uint8_t tlm[8] = { 1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U };
 
 		zlrs_link_set_tlm(&sim.rx.ctl, tlm, sizeof(tlm));
 	}
 
-	/* 跑 100 个超帧：遥测应该只有约 25 次，而不是 100 次 */
+	/* Run 100 superframes: telemetry should appear about 25 times, not 100 */
 	tlm_before = sim.tx.tlm_count;
 	sim_run(&sim, 100U);
 	tlm_after = sim.tx.tlm_count - tlm_before;
 	CHECK(tlm_after >= 20U && tlm_after <= 30U);
 
-	/* 跳频仍然锁步 */
+	/* Hopping stays in lockstep */
 	CHECK(sim.tx.ctl.fhss.index == sim.rx.ctl.fhss.index);
 	CHECK(sim.tx.data.fhss.index == sim.rx.data.fhss.index);
 
-	/* 数据窗口稀疏了但照样通 */
+	/* The data window thinned out and still carries traffic */
 	memset(chunk, 0x5AU, sizeof(chunk));
 	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
 	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(chunk), 400);
@@ -1555,8 +1555,8 @@ static void test_cadence(void)
 }
 
 /*
- * 上板调试档之零：P0——帧不带 tag。先只确认收发时序与帧格式，把密钥路径整段
- * 排除掉（代价是任何人都能注入，只能台架用）。
+ * Bench switch zero: P0, frames carry no tag. Confirm timing and frame format first and set the
+ * whole key path aside (anyone can inject, so bench only).
  */
 static void test_bringup_no_tag(void)
 {
@@ -1582,11 +1582,11 @@ static void test_bringup_no_tag(void)
 	CHECK(memcmp(sim.rx.rc, rc, sizeof(rc)) == 0);
 	CHECK(sim.rx.ctl.stats.rx_bad_tag == 0U);
 
-	/* 空口上的帧就是 header + 载荷，没有 tag */
+	/* A frame on air is header plus payload, no tag */
 	sim_slot(&sim, ZLRS_SLOT_CTL_DOWN);
 	CHECK(sim.down_len == (uint16_t)(ZLRS_FRAME_HDR_LEN + sizeof(rc)));
 
-	/* 透传照常 */
+	/* Passthrough keeps working */
 	memset(chunk, 0x62U, sizeof(chunk));
 	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
 	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(chunk), 400);
@@ -1594,8 +1594,8 @@ static void test_bringup_no_tag(void)
 }
 
 /*
- * 上板调试档之一：关掉逐包跳频。所有帧都落在同步信道上（跳频表的第 0 个位置），
- * 收发时序与跳频表可以分开看——这一档只应该影响用哪个频点，不影响别的行为。
+ * Bench switch one: hopping off. Every frame stays on the sync channel (entry 0 of the hop
+ * table), so timing and the hop table can be read separately: it may only change frequencies.
  */
 static void test_bringup_fixed_channel(void)
 {
@@ -1619,13 +1619,13 @@ static void test_bringup_fixed_channel(void)
 	zlrs_link_set_rc(&sim.tx.ctl, rc, sizeof(rc));
 	sim_run(&sim, 300U);
 
-	/* 索引一直停在 0（= 同步信道），两端都一样 */
+	/* The index sits at 0 (= the sync channel) on both ends */
 	CHECK(sim.tx.ctl.fhss.index == 0U);
 	CHECK(sim.rx.ctl.fhss.index == 0U);
 	CHECK(zlrs_fhss_current_hz(&sim.tx.ctl.fhss) == sync_hz);
 	CHECK(zlrs_fhss_current_hz(&sim.rx.ctl.fhss) == sync_hz);
 
-	/* 遥控与透传照常 */
+	/* RC and passthrough keep working */
 	CHECK(sim.rx.rc_count > 0U);
 	CHECK(memcmp(sim.rx.rc, rc, sizeof(rc)) == 0);
 	memset(chunk, 0x32U, sizeof(chunk));
@@ -1636,9 +1636,9 @@ static void test_bringup_fixed_channel(void)
 }
 
 /*
- * 上板调试档之二：关掉三次握手。配对级的 link_auth 直接当会话钥匙，RX 收到
- * SYNC 就算建立，再用 SESS_RESP 反复"报到"直到听见对端的第一帧。
- * 报到帧丢掉几次也要能连上——这是这一档唯一的新时序。
+ * Bench switch two: handshake off. The pairing-level link_auth is the session key, the RX
+ * counts a SYNC as established and keeps reporting with SESS_RESP until the peer speaks.
+ * Losing a few report frames must still connect: that is the only new timing here.
  */
 static void test_bringup_no_handshake(void)
 {
@@ -1652,16 +1652,16 @@ static void test_bringup_no_handshake(void)
 	features.handshake = 0U;
 	sim_init_with(&sim, &features);
 
-	/* 报到帧丢两帧：RX 必须继续报到，直到 TX 听见 */
+	/* Drop two report frames: the RX keeps reporting until the TX hears it */
 	sim.drop_up = 2;
 	pair_and_connect(&sim);
 	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
 	CHECK(sim.tx.data.state == ZLRS_STATE_CONNECTED);
 	CHECK(sim.rx.data.state == ZLRS_STATE_CONNECTED);
-	CHECK(sim.sess_resp_len > 0U); /* 用的是 SESS_RESP，不是 SESS_CFM */
+	CHECK(sim.sess_resp_len > 0U); /* SESS_RESP is used, not SESS_CFM */
 
-	/* 会话钥匙就是配对级钥匙：没有逐会话的 nonce 派生 */
+	/* The session key is the pairing key: no per-session nonce derivation */
 	CHECK(memcmp(sim.tx.ctl.session_key_out, sim.tx.ctl.link_auth_out, ZLRS_KEY_LEN) ==
 	      0);
 	CHECK(memcmp(sim.tx.ctl.session_key_in, sim.rx.ctl.link_auth_out, ZLRS_KEY_LEN) ==
@@ -1669,7 +1669,7 @@ static void test_bringup_no_handshake(void)
 	CHECK(!sim.rx.ctl.session_pending);
 	CHECK(!sim.tx.ctl.sess_cfm_due);
 
-	/* 遥控、透传照常 */
+	/* RC and passthrough keep working */
 	memset(rc, 0x41U, sizeof(rc));
 	zlrs_link_set_rc(&sim.tx.ctl, rc, sizeof(rc));
 	sim_run(&sim, 10U);
@@ -1684,8 +1684,8 @@ static void test_bringup_no_handshake(void)
 }
 
 /*
- * 上板调试档之三：关掉上行遥测。控制链路退化成"只下行 RC"：TX 不再开遥测接收
- * 窗口（失联判定由 App 一并关掉，见 doc/12-debug.md 第 3 节），RX 也不再发。
+ * Bench switch three: telemetry off. The control link degrades to downlink RC only: the TX opens
+ * no telemetry window (the app drops peer loss with it, doc/12-debug.md 3) and the RX sends none.
  */
 static void test_bringup_no_telemetry(void)
 {
@@ -1701,7 +1701,7 @@ static void test_bringup_no_telemetry(void)
 	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
 
-	/* App 侧在关掉遥测时把 TX 的失联判定一并关掉：没东西可听 */
+	/* The app turns the TX peer-loss check off with telemetry: there is nothing to hear */
 	sim.tx.ctl.cfg.peer_timeout_ms = 0U;
 	memset(rc, 0x51U, sizeof(rc));
 	zlrs_link_set_rc(&sim.tx.ctl, rc, sizeof(rc));
@@ -1715,8 +1715,8 @@ static void test_bringup_no_telemetry(void)
 }
 
 /*
- * 连接态周期 SYNC（doc/09-protocol.md 5.1）：两端晶振差会让跳频索引慢慢错开，
- * RX 踩空之后靠这个帧把索引拉回来。这里直接把索引挪开 4 格来模拟漂移。
+ * Periodic SYNC while connected (doc/09-protocol.md 5.1): crystal drift slowly pulls the hop
+ * indices apart and this frame pulls the RX back. The case shifts the index by 4 to fake drift.
  */
 static void test_hop_resync(void)
 {
@@ -1742,7 +1742,7 @@ static void test_hop_resync(void)
 	CHECK(sim.rx.rc_count > 0U);
 	CHECK(sim.rx.ctl.fhss.index == sim.tx.ctl.fhss.index);
 
-	/* 制造漂移：RX 的索引偏了 4 格，接下来的帧全都对不上频点 */
+	/* Fake drift: the RX index is off by 4, so the next frames miss the frequency */
 	sim.rx.ctl.fhss.index = (uint16_t)((sim.rx.ctl.fhss.index + 4U) %
 					   sim.rx.ctl.fhss.sequence_count);
 	CHECK(sim.rx.ctl.fhss.index != sim.tx.ctl.fhss.index);
@@ -1753,7 +1753,7 @@ static void test_hop_resync(void)
 	CHECK(sim.rx.ctl.stats.hop_resync > resync_before);
 	CHECK(sim.rx.ctl.stats.rx_syncs > 0U);
 
-	/* 拉回索引之后照常收发 */
+	/* Once the index is pulled back, traffic flows again */
 	memset(chunk, 0x82U, sizeof(chunk));
 	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
 	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(chunk), 400);
@@ -1763,12 +1763,12 @@ static void test_hop_resync(void)
 }
 
 /*
- * 子带混合比（doc/09-protocol.md 5.1）：TX 单方面推进，RX 在处理 SYNC 时采用；
- * 太久没听到新版 SYNC 就退回默认比例。
+ * Sub-band mix (doc/09-protocol.md 5.1): the TX advances it unilaterally, the RX adopts it while
+ * handling a SYNC, and falls back to the default after missing new versions for too long.
  */
 /*
- * 子带混合的端到端：两条链路都配两张表，TX 推到 100% 后 RC 与遥测仍能通过
- * （说明两端在同一个子带上收）——纯 C 侧能验的就是"两端选频一致"。
+ * Sub-band mixing end to end: both links carry two tables, and after the TX moves to 100% RC and
+ * telemetry still get through, which is what the pure C side can prove: both ends pick one band.
  */
 static void test_sub_mix_data_path(void)
 {
@@ -1788,18 +1788,18 @@ static void test_sub_mix_data_path(void)
 	sim.rx.data.cfg.resync_every_n = 5U;
 	pair_and_connect(&sim);
 
-	/* 双表就绪 */
+	/* Both tables are ready */
 	CHECK(zlrs_fhss_sub_ready(&sim.tx.ctl.fhss));
 	CHECK(zlrs_fhss_sub_ready(&sim.rx.ctl.fhss));
 
-	/* TX 推到 100%：整条控制链路退到第二张表（2.4G） */
+	/* TX moves to 100%: the whole control link falls back to the second table (2.4G) */
 	zlrs_link_set_mix(&sim.tx.ctl, 3U);
 	memset(rc, 0x91U, sizeof(rc));
 	zlrs_link_set_rc(&sim.tx.ctl, rc, sizeof(rc));
 	SIM_UNTIL(&sim, sim.rx.ctl.sub_mix == 3U, 400);
 	CHECK(sim.rx.ctl.sub_mix == 3U);
 
-	/* 两端仍在同一频点、RC 照常收到 */
+	/* Both ends sit on the same frequency and RC still arrives */
 	CHECK(zlrs_fhss_sub_current_hz(&sim.tx.ctl.fhss) ==
 	      zlrs_fhss_sub_current_hz(&sim.rx.ctl.fhss));
 	sim_run(&sim, 40U);
@@ -1824,7 +1824,7 @@ static void test_sub_mix(void)
 	CHECK(sim.tx.ctl.sub_mix == 0U);
 	CHECK(sim.rx.ctl.sub_mix == 0U);
 
-	/* TX 推进到 50%，RX 从下一条 SYNC 起采用 */
+	/* TX advances to 50% and the RX adopts it from the next SYNC */
 	zlrs_link_set_mix(&sim.tx.ctl, 2U);
 	CHECK(sim.tx.ctl.sub_mix == 2U);
 	changes_before = sim.rx.ctl.stats.mix_changes;
@@ -1834,12 +1834,12 @@ static void test_sub_mix(void)
 	CHECK(sim.rx.ctl.sub_mix == 2U);
 	CHECK(sim.rx.ctl.stats.mix_changes > changes_before);
 
-	/* RX 侧改默认值只是回退目标，不直接改当前比例 */
+	/* On the RX the default is only the fallback target, not the current level */
 	zlrs_link_set_mix(&sim.rx.ctl, 0U);
 	CHECK(sim.rx.ctl.sub_mix == 2U);
 	CHECK(sim.rx.ctl.sub_mix_default == 0U);
 
-	/* 掐掉 TX 的 SYNC（模拟只改了 TX 一侧）：RX 在 3 个 SYNC 周期后回退 */
+	/* Cut the TX's SYNC (only one side changed): the RX falls back after 3 sync periods */
 	sim.tx.ctl.cfg.resync_every_n = 0U;
 	sim.tx.ctl.sub_mix = 3U;
 	sim.rx.ctl.sub_mix_seen_ms = sim.now_ms;
@@ -1849,9 +1849,9 @@ static void test_sub_mix(void)
 }
 
 /*
- * 对端重启后的自动重连（doc/09-protocol.md 3.5 那条已知限制的解法）：RX 重启
- * 后链路状态全丢，只剩 NVS 里的配对记录；TX 这边还在跑，周期 SYNC 会让它重新
- * 握手。两条链路都要能自己回来。
+ * Automatic reconnect after a peer reboot (the fix for the limitation in doc/09-protocol.md 3.5):
+ * the RX loses all link state and keeps only its NVS pairing record while the TX keeps running,
+ * and the periodic SYNC makes it handshake again. Both links have to come back on their own.
  */
 static void test_peer_restart(void)
 {
@@ -1875,7 +1875,7 @@ static void test_peer_restart(void)
 	memcpy(salt, sim.rx.ctl.pair_salt, sizeof(salt));
 	memcpy(rx_id, sim.rx.dev_id, sizeof(rx_id));
 
-	/* RX 重启：链路状态全丢，只留下"配对记录"（dev_id + 配对 nonce） */
+	/* RX reboot: all link state gone, only the pairing record (dev_id and nonces) survives */
 	node_init(&sim.rx, ZLRS_ROLE_RX, sim.root_key, rx_id, 0x22222222U);
 	sim.rx.ctl.cfg.resync_every_n = 20U;
 	sim.rx.data.cfg.resync_every_n = 20U;
@@ -1894,11 +1894,11 @@ static void test_peer_restart(void)
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
 	CHECK(sim.tx.data.state == ZLRS_STATE_CONNECTED);
 	CHECK(sim.rx.data.state == ZLRS_STATE_CONNECTED);
-	/* 重连之后钥匙仍然配套 */
+	/* After the reconnect the keys still match */
 	CHECK(memcmp(sim.tx.ctl.session_key_out, sim.rx.ctl.session_key_in, ZLRS_KEY_LEN) ==
 	      0);
 
-	/* 遥控与透传照常 */
+	/* RC and passthrough keep working */
 	memset(rc, 0x91U, sizeof(rc));
 	zlrs_link_set_rc(&sim.tx.ctl, rc, sizeof(rc));
 	sim_run(&sim, 4U);
@@ -1911,8 +1911,8 @@ static void test_peer_restart(void)
 }
 
 /*
- * 重放的旧 SYNC 不能动会话：tag 是配对级的，录下来的旧 SYNC 能验过，
- * 所以"换会话"这条路要求最近完全听不到对端，同会话那条要求序号更新。
+ * A replayed old SYNC must not move the session: the tag is pairing-level, so a recorded SYNC
+ * verifies. That is why switching sessions needs recent total silence and staying needs a new seq.
  */
 static void test_sync_replay_guard(void)
 {
@@ -1931,12 +1931,12 @@ static void test_sync_replay_guard(void)
 	pair_and_connect(&sim);
 	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
 
-	/* 录下当前会话的 SYNC，等 TX 换过会话之后再放回去 */
+	/* Record the current session's SYNC and put it back after the TX has changed sessions */
 	CHECK(sim.sync_len > 0U);
 	sync_len = sim.sync_len;
 	memcpy(sync, sim.sync, sync_len);
 
-	/* 掐掉上行，让 TX 判一次失联、换一个 nonce，再重连 */
+	/* Cut the uplink so the TX declares peer loss, rolls a nonce and reconnects */
 	sim.drop_up = 1000000;
 	SIM_UNTIL(&sim, sim.tx.ctl.state == ZLRS_STATE_SEARCHING, 2000);
 	sim.drop_up = 0;
@@ -1947,14 +1947,14 @@ static void test_sync_replay_guard(void)
 		  4000);
 	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
 
-	/* 现在这帧的 nonce 是上一段会话的 */
+	/* This frame's nonce belongs to the previous session */
 	nonce_before = sim.rx.ctl.sess_nonce_t;
 	memcpy(key_before, sim.rx.ctl.session_key_in, ZLRS_KEY_LEN);
 	sync_nonce = (uint32_t)sync[7] | ((uint32_t)sync[8] << 8) |
 		       ((uint32_t)sync[9] << 16) | ((uint32_t)sync[10] << 24);
 	CHECK(sync_nonce != nonce_before);
 
-	/* 会话还在正常跑：旧 SYNC 只能被丢掉 */
+	/* The session is healthy: the old SYNC can only be dropped */
 	sim_inject(&sim, &sim.rx.ctl, sync, sync_len);
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
 	CHECK(sim.rx.ctl.sess_nonce_t == nonce_before);
@@ -1962,9 +1962,9 @@ static void test_sync_replay_guard(void)
 }
 
 /*
- * 调制按链路各自选（doc/07-architecture.md 第 3 节）：控制链路跑 LoRa 远距档，
- * 数据链路留在 2.4G 跑 FLRC。LoRa 的同步字是另派生的 1 字节（最高位当 private
- * bit），不能沿用 FLRC 那 4 字节。
+ * Modulation is per link (doc/07-architecture.md 3): control runs the LoRa long-range tier while
+ * data stays on 2.4G FLRC. LoRa sync words are a separately derived byte (top bit as the private
+ * bit) and cannot reuse FLRC's four bytes.
  */
 static void test_lora_control(void)
 {
@@ -1984,17 +1984,17 @@ static void test_lora_control(void)
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
 	CHECK(sim.tx.data.state == ZLRS_STATE_CONNECTED);
 
-	/* 派生的 1 字节同步字：两端一致，带上 private bit，控制与数据域分离 */
+	/* The derived one-byte sync word: same on both ends, private bit set, control and data separated */
 	CHECK(sim.tx.ctl.lora_sync == sim.rx.ctl.lora_sync);
 	CHECK((sim.tx.ctl.lora_sync & 0x80U) != 0U);
 	CHECK(sim.tx.ctl.lora_sync != sim.tx.data.lora_sync);
 	CHECK(sim.tx.ctl.cfg.mod.sync_byte == sim.tx.ctl.lora_sync);
-	/* LoRa 档没有"速率"这个字段 */
+	/* A LoRa tier has no rate field */
 	CHECK(sim.tx.ctl.cfg.mod.rate_bps == 0U);
-	/* 数据链路没被带着改调制 */
+	/* The data link's modulation is untouched */
 	CHECK(sim.tx.data.cfg.mod.modulation == (uint8_t)ZLRS_MOD_FLRC);
 
-	/* 遥控、遥测与透传照常 */
+	/* RC, telemetry and passthrough keep working */
 	memset(rc, 0xA1U, sizeof(rc));
 	zlrs_link_set_rc(&sim.tx.ctl, rc, sizeof(rc));
 	memset(tlm, 0xB1U, sizeof(tlm));
@@ -2011,9 +2011,9 @@ static void test_lora_control(void)
 }
 
 /*
- * 1000 Hz 的协议侧（doc/09-protocol.md 4.1）：帧周期压到 1 ms 时，超帧、跳频
- * 锁步、遥测/数据窗口的稀疏化、连接态重同步都不能乱。射频侧要直调驱动才能真的
- * 跑到 1000 Hz（RAC 的排期粒度是毫秒），这里只钉协议与时间常数。
+ * The protocol side of 1000 Hz (doc/09-protocol.md 4.1): at a 1 ms frame the superframe, hop
+ * lockstep, window thinning and periodic resync all have to hold. The radio needs direct driver
+ * access to reach 1000 Hz (RAC schedules in ms); this case pins the protocol and time constants.
  */
 static void test_high_frame_rate(void)
 {
@@ -2025,15 +2025,15 @@ static void test_high_frame_rate(void)
 	printf("link: 1000 Hz frame cadence\n");
 
 	sim_init(&sim);
-	sim.frame_ms = 1U; /* 一帧 1 ms */
-	/* 1 ms 一帧只有 2.6 Mbps 档装得下；节奏系数就是计划算出来的那两个 */
+	sim.frame_ms = 1U; /* one frame is 1 ms */
+	/* Only the 2.6 Mbps tier fits a 1 ms frame; the cadence factors come from the plan */
 	sim.tx.ctl.cfg.mod = zlrs_mod_flrc(2600000U);
 	sim.rx.ctl.cfg.mod = zlrs_mod_flrc(2600000U);
-	sim.tx.ctl.cfg.tlm_every_n = 6U; /* ≈167 次/秒 */
+	sim.tx.ctl.cfg.tlm_every_n = 6U; /* about 167 times per second */
 	sim.rx.ctl.cfg.tlm_every_n = 6U;
-	sim.tx.data.cfg.data_every_n = 10U; /* =100 次/秒 */
+	sim.tx.data.cfg.data_every_n = 10U; /* 100 times per second */
 	sim.rx.data.cfg.data_every_n = 10U;
-	sim.tx.ctl.cfg.resync_every_n = 100U; /* 100 ms 一次重同步 */
+	sim.tx.ctl.cfg.resync_every_n = 100U; /* resync every 100 ms */
 	sim.rx.ctl.cfg.resync_every_n = 100U;
 	pair_and_connect(&sim);
 	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
@@ -2046,14 +2046,14 @@ static void test_high_frame_rate(void)
 	zlrs_link_set_tlm(&sim.rx.ctl, tlm, sizeof(tlm));
 	sim_run(&sim, 300U); /* 300 ms */
 
-	/* 300 ms 里 2.6 Mbps 那一档几乎不该丢帧 */
+	/* Over 300 ms the 2.6 Mbps tier should lose almost nothing */
 	CHECK(sim.rx.rc_count > 250U);
 	CHECK(memcmp(sim.rx.rc, rc, sizeof(rc)) == 0);
 	CHECK(sim.tx.tlm_count > 30U);
-	/* 跳频仍然锁步，重同步帧也按 100 帧的节奏出现过 */
+	/* Hopping stays in lockstep and resync frames appeared on their 100-frame cadence */
 	CHECK(sim.tx.ctl.fhss.index == sim.rx.ctl.fhss.index);
 	CHECK(sim.rx.ctl.stats.rx_syncs > 0U);
-	/* 数据窗口稀疏到每 10 帧一次，但透传照常 */
+	/* The data window thins to every 10 frames and the passthrough still works */
 	memset(chunk, 0xD3U, sizeof(chunk));
 	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
 	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(chunk), 400);
