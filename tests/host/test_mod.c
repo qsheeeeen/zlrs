@@ -2,12 +2,12 @@
  * Copyright (c) 2026 zlrs contributors
  * SPDX-License-Identifier: Apache-2.0
  *
- * 调制档与空中时间模型（lib/proto/mod.c）。
+ * Modulation tiers and the airtime model (lib/proto/mod.c).
  *
- * 期望值来源：
- *   - FLRC 与 lib/region 的 zlrs_airtime_us() 必须给出同一个数（同一个模型两处用）
- *   - LoRa 时间按 Semtech 的经典公式手算：Ts = 2^SF/BW，前导码 (n + 4.25) 个符号，
- *     载荷符号数 n_payload = 8 + ceil((8*PL - 4*SF + 28 + 16) / (4*(SF - 2*DE))) * (CR+4)
+ * Where the expected values come from:
+ *   - FLRC and zlrs_airtime_us() in lib/region must agree (one model, two call sites)
+ *   - LoRa timing by hand from Semtech's formula: Ts = 2^SF/BW, preamble (n + 4.25) symbols,
+ *     payload symbols n_payload = 8 + ceil((8*PL - 4*SF + 28 + 16) / (4*(SF - 2*DE))) * (CR+4)
  */
 
 #include "test.h"
@@ -20,7 +20,7 @@
 #include "zlrs/proto/mod.h"
 #include "zlrs/region/region.h"
 
-/* FLRC：与地区层的模型逐点对齐 */
+/* FLRC: point-by-point agreement with the region layer's model */
 static void test_mod_flrc_matches_region(void)
 {
 	static const uint32_t rates[] = { 2600000U, 1300000U, 650000U, 325000U };
@@ -40,18 +40,18 @@ static void test_mod_flrc_matches_region(void)
 		}
 	}
 
-	/* 速率没给（0）算不出来，返回 0 而不是除零 */
+	/* No rate (0) cannot be computed: return 0 instead of dividing by zero */
 	CHECK(zlrs_mod_airtime_us(&no_rate, 31U) == 0U);
 }
 
 /*
- * SF7 / BW125 / CR 4/5 / 前导码 8 个符号：
+ * SF7 / BW125 / CR 4/5 / 8 preamble symbols:
  *   Ts = 128 / 125000 = 1.024 ms
- *   31 B 载荷：ceil((248 - 28 + 44) / 28) = ceil(9.43) = 10 → 10 * 5 + 8 = 58 个符号
- *   72.2 ms？不：前导 (8 + 4.25) * 1.024 = 12.544 ms，载荷 58 * 1.024 = 59.392 ms
- *   合计 71.936 ms
- *   7 B 心跳帧：ceil((56 - 28 + 44) / 28) = 3 → 3 * 5 + 8 = 23 个符号 = 23.552 ms
- *   合计 36.096 ms
+ *   31 B payload: ceil((248 - 28 + 44) / 28) = ceil(9.43) = 10 -> 10 * 5 + 8 = 58 symbols
+ *   72.2 ms? No: preamble (8 + 4.25) * 1.024 = 12.544 ms, payload 58 * 1.024 = 59.392 ms,
+ *   total 71.936 ms
+ *   7 B heartbeat: ceil((56 - 28 + 44) / 28) = 3 -> 3 * 5 + 8 = 23 symbols = 23.552 ms,
+ *   total 36.096 ms
  */
 static void test_mod_lora_reference(void)
 {
@@ -72,27 +72,27 @@ static void test_mod_lora_reference(void)
 	CHECK(tlm_us == 36096U);
 	CHECK(zlrs_mod_airtime_ms(&sf7, 31U) == 72U);
 
-	/* 带宽翻倍 → 时间减半（整数取整允许 1 µs 的差） */
+	/* Double the bandwidth halves the time (integer rounding allows a 1 us difference) */
 	CHECK(zlrs_mod_airtime_us(&sf7_250, 31U) == rc_us / 2U);
 
-	/* 编码率 4/8 比 4/5 慢，但快不过前导码加满：单调即可 */
+	/* CR 4/8 is slower than 4/5 but never slower than a full preamble: monotonic is enough */
 	CHECK(zlrs_mod_airtime_us(&sf7_cr8, 31U) > rc_us);
 
-	/* SF 越大越慢：SF12 比 SF7 慢一个数量级 */
+	/* Higher SF is slower: SF12 is an order of magnitude behind SF7 */
 	CHECK(zlrs_mod_airtime_us(&sf12, 31U) > 10U * rc_us);
 
-	/* 载荷越长越慢（同一条曲线，不给拐点） */
+	/* Longer payloads take longer (one smooth curve, no knees) */
 	CHECK(zlrs_mod_airtime_us(&sf7, 64U) > zlrs_mod_airtime_us(&sf7, 32U));
 
-	/* 参数不合法：给 0 而不是算出一个瞎数 */
+	/* Invalid parameters give 0 rather than a nonsense number */
 	CHECK(zlrs_mod_airtime_us(&no_bw, 31U) == 0U);
 	CHECK(zlrs_mod_airtime_us(&bad_sf, 31U) == 0U);
 	CHECK(zlrs_mod_airtime_us(NULL, 31U) == 0U);
 }
 
 /*
- * 10 Hz 的 LoRa 远距档要装得下"发 RC + 收遥测"：这就是 doc/07-architecture.md 第 3 节 里那句
- * "超帧周期由最慢的那条链路决定"的定量版本。
+ * The 10 Hz LoRa tier has to fit one RC frame out plus one telemetry frame in: the quantitative
+ * version of "the superframe period follows the slower link" (doc/07-architecture.md 3).
  */
 static void test_mod_lora_control_budget(void)
 {
@@ -103,10 +103,10 @@ static void test_mod_lora_control_budget(void)
 
 	printf("mod: lora control-link budget\n");
 
-	/* 100 ms 的周期装得下 72 ms 的 RC 帧，但装不下"72 + 36" */
+	/* A 100 ms period fits a 72 ms RC frame but not 72 + 36 */
 	CHECK(rc_us < period_us);
 	CHECK(rc_us + tlm_us > period_us);
-	/* 所以 10 Hz 档里遥测只能稀疏发：每 2 帧一次刚好放得下 */
+	/* So telemetry thins out at 10 Hz: once every 2 frames just fits */
 	CHECK(rc_us + tlm_us / 2U < period_us);
 }
 
