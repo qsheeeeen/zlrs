@@ -6,15 +6,18 @@
 
 #include "ports.h"
 
+#include <zephyr/app_version.h>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/storage/flash_map.h>
 #include <zephyr/sys/ring_buffer.h>
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "board.h"
@@ -575,10 +578,17 @@ struct cfg_port {
 
 static struct cfg_port cfg_port;
 static const zlrs_config_ops_t *cfg_ops;
+/* 上位机发过"确认这一版"的命令（只在主线程里读写：配置会话与主循环同一个线程） */
+static bool cfg_image_confirmed;
 
 void zlrs_config_set_ops(const zlrs_config_ops_t *ops)
 {
 	cfg_ops = ops;
+}
+
+bool zlrs_config_image_confirmed(void)
+{
+	return cfg_image_confirmed;
 }
 
 static void cfg_port_isr(const struct device *dev, void *user_data)
@@ -906,6 +916,120 @@ static int cfg_enter_recovery(void *ctx)
 	return cfg_ops->enter_recovery();
 }
 
+/* 上位机确认这一版升级成功；升级流程靠它决定去留（见 doc/08-firmware.md 第 6 节） */
+static int cfg_confirm_image(void *ctx)
+{
+	(void)ctx;
+
+	cfg_image_confirmed = true;
+	LOG_INF("host confirmed this build");
+
+	return ZLRS_CFG_OK;
+}
+
+/* 固件版本串传给上位机，升级后用它核对"现在跑的到底是哪一版" */
+static int cfg_read_build(void *ctx, char *out, size_t out_len)
+{
+	(void)ctx;
+
+	if (out == NULL || out_len == 0U) {
+		return ZLRS_CFG_E_PARAM;
+	}
+
+	(void)snprintf(out, out_len, "%s", APP_VERSION_STRING);
+
+	return ZLRS_CFG_OK;
+}
+
+/*
+ * 当前镜像的 MCUboot 哈希：从自己这一份镜像的 TLV 区里读 IMAGE_TLV_SHA256。
+ * 升级工具用它判断"跑的是我刚传的那版"还是"已经回滚到旧版"——版本串可能一样，
+ * 哈希一定不一样。这里只用到 MCUboot 的公开格式，不引 MCUboot 的内部头文件。
+ */
+static int cfg_read_image_hash(void *ctx, uint8_t out[ZLRS_CFG_IMAGE_HASH_LEN])
+{
+#define MCUBOOT_IMAGE_MAGIC     0x96f3b83dU
+#define MCUBOOT_TLV_INFO_MAGIC  0x6907U
+#define MCUBOOT_TLV_SHA256      0x10U
+	struct {
+		uint32_t magic;
+		uint32_t load_addr;
+		uint16_t hdr_size;
+		uint16_t protect_tlv_size;
+		uint32_t img_size;
+	} __packed hdr;
+	const struct flash_area *fa;
+	uint32_t off, tlv_end;
+
+	(void)ctx;
+
+#ifdef CONFIG_BOOTLOADER_MCUBOOT
+	if (flash_area_open(FIXED_PARTITION_ID(slot0_partition), &fa) != 0) {
+		return ZLRS_CFG_E_STATE;
+	}
+
+	if (flash_area_read(fa, 0U, &hdr, sizeof(hdr)) != 0 || hdr.magic != MCUBOOT_IMAGE_MAGIC) {
+		flash_area_close(fa);
+		return ZLRS_CFG_E_STATE;
+	}
+
+	/* TLV 区开头是 info 头：magic(0x6907) + 整段长度（含这 4 字节） */
+	off = (uint32_t)hdr.hdr_size + hdr.img_size + hdr.protect_tlv_size;
+
+	{
+		uint8_t info[4];
+		uint16_t magic;
+		uint16_t total;
+
+		if (flash_area_read(fa, off, info, sizeof(info)) != 0) {
+			flash_area_close(fa);
+			return ZLRS_CFG_E_STATE;
+		}
+
+		magic = (uint16_t)info[0] | ((uint16_t)info[1] << 8);
+		total = (uint16_t)info[2] | ((uint16_t)info[3] << 8);
+
+		if (magic != MCUBOOT_TLV_INFO_MAGIC) {
+			flash_area_close(fa);
+			return ZLRS_CFG_E_STATE;
+		}
+
+		tlv_end = off + total;
+		off += 4U;
+	}
+
+	while (off + 4U + ZLRS_CFG_IMAGE_HASH_LEN <= tlv_end) {
+		uint8_t tlv[4];
+		uint16_t len;
+		uint8_t type;
+
+		if (flash_area_read(fa, off, tlv, sizeof(tlv)) != 0) {
+			break;
+		}
+		type = tlv[0];
+		len = (uint16_t)tlv[2] | ((uint16_t)tlv[3] << 8);
+
+		if (type == MCUBOOT_TLV_SHA256 && len == ZLRS_CFG_IMAGE_HASH_LEN) {
+			const int rc = flash_area_read(fa, off + 4U, out,
+						       ZLRS_CFG_IMAGE_HASH_LEN);
+
+			flash_area_close(fa);
+			return (rc == 0) ? ZLRS_CFG_OK : ZLRS_CFG_E_STATE;
+		}
+
+		/* 最后一个 TLV 后面是 0xFF 填充；type=0xFF 就收工 */
+		if (type == 0xFFU) {
+			break;
+		}
+		off += 4U + len;
+	}
+
+	flash_area_close(fa);
+#endif
+
+	return ZLRS_CFG_E_STATE;
+}
+
 static const zlrs_cfg_backend_t cfg_backend = {
 	.save_root_key = cfg_save_root_key,
 	.read_status = cfg_read_status,
@@ -917,6 +1041,9 @@ static const zlrs_cfg_backend_t cfg_backend = {
 	.erase_pair = cfg_erase_pair,
 	.factory_reset = cfg_factory_reset,
 	.enter_recovery = cfg_enter_recovery,
+	.confirm_image = cfg_confirm_image,
+	.read_build = cfg_read_build,
+	.read_image_hash = cfg_read_image_hash,
 };
 
 /* ---- 会话 -------------------------------------------------------------- */
@@ -988,7 +1115,9 @@ int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 				&cfg_backend, cfg_parser.cmd, ZLRS_CFG_PAYLOAD(&cfg_parser),
 				cfg_parser.payload_len, cfg_tx_line, sizeof(cfg_tx_line));
 
-			(void)cfg_port_write(cfg_tx_line, len);
+			if (len > 0U) {
+				(void)cfg_port_write(cfg_tx_line, len);
+			}
 		}
 
 		if (!any) {

@@ -25,6 +25,7 @@
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_MCUBOOT_CONFIRM)
 #include <zephyr/dfu/mcuboot.h>
+#include <zephyr/storage/flash_map.h>
 #endif
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_SHELL)
@@ -921,10 +922,22 @@ static void enter_config_mode(void);
  * **报警但不锁死**——红灯 + 配置口继续在线，主机仍然能进配置模式、触发串口
  * 恢复、把设备刷回来。法规/安全问题宁可不停发，但要保证"永远刷得动"，
  * 否则一次坏镜像就得拆机按 BOOTSEL。
+ *
+ * 例外：升级后还没被上位机确认过的镜像（test 镜像）出致命错误时直接复位，
+ * 让 MCUboot 回滚到上一版——故障态再"可刷"也不该赖着一版坏固件不放。
  */
 static void fault_loop(void)
 {
 	zlrs_led_input_t in;
+
+#if IS_ENABLED(CONFIG_ZLRS_APP_MCUBOOT_CONFIRM)
+	if (!boot_is_img_confirmed()) {
+		/* 留 2 秒给主机看日志/接手，然后复位回滚 */
+		LOG_ERR("fault on unconfirmed image: rebooting to roll back");
+		k_msleep(2000);
+		sys_reboot(SYS_REBOOT_COLD);
+	}
+#endif
 
 	memset(&in, 0, sizeof(in));
 	in.failsafe = true; /* 红灯快闪 */
@@ -1003,28 +1016,40 @@ static void led_tick(uint32_t now_ms)
 }
 
 /*
- * 镜像确认：初始化跑完就告诉 MCUboot "这一版是好的"——test/revert 的判据只有
- * 这一位，没跑到这里的镜像复位后会被回滚（见 doc/08-firmware.md 第 6 节）。
- * 判据是"初始化跑完"，要观察窗口就用 ZLRS_APP_MCUBOOT_CONFIRM_MS。
+ * 镜像确认：只有"上位机真的连上来、发了一条配置命令、并且收到了应答"才算这一版
+ * 升级成功——test/revert 的判据只有这一位。升级走 test 语义，新镜像等不到上位机
+ * （或干脆起不来、被看门狗复位）时，复位就让 MCUboot 回滚到上一版；没有上一版
+ * 就停在串口恢复里，照样能刷。见 doc/08-firmware.md 第 5 节。
  */
-static void confirm_image(uint32_t now_ms)
+static void confirm_image(void)
 {
 #if IS_ENABLED(CONFIG_ZLRS_APP_MCUBOOT_CONFIRM)
 	static bool confirmed;
 
-	if (confirmed || now_ms < (uint32_t)CONFIG_ZLRS_APP_MCUBOOT_CONFIRM_MS) {
+	if (confirmed) {
 		return;
 	}
 
-	confirmed = true;
+	/* 已经确认过（这次是正常启动，不是升级）：没事情做 */
+	if (boot_is_img_confirmed()) {
+		confirmed = true;
+		return;
+	}
 
-	if (boot_write_img_confirmed() == 0) {
-		LOG_INF("image confirmed: this build stays after a reset");
-	} else {
-		LOG_ERR("image confirm failed; MCUboot will revert on next reset");
+	if (zlrs_config_image_confirmed()) {
+		confirmed = true;
+
+		if (boot_write_img_confirmed() == 0) {
+			LOG_INF("image confirmed by host: this build stays after a reset");
+		} else {
+			LOG_ERR("image confirm failed; MCUboot will revert on next reset");
+		}
+	} else if (k_uptime_get_32() >= (uint32_t)CONFIG_ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS) {
+		/* 这一版没被上位机确认过：别骑着它不放，复位让 MCUboot 回滚 */
+		LOG_ERR("upgrade not confirmed by host: rebooting to roll back");
+		sys_reboot(SYS_REBOOT_COLD);
 	}
 #else
-	ARG_UNUSED(now_ms);
 #endif
 }
 
@@ -1234,6 +1259,76 @@ static int cmd_entropy(const struct shell *sh, size_t argc, char **argv)
 }
 #endif
 
+#if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
+/*
+ * 调试用：把 MCUboot 眼里的镜像状态打出来。升级/回滚出问题时先看这个——
+ * confirmed 为真表示 MCUboot 认为这一版已经定下来了（不会再回滚）。
+ */
+static void mcuboot_dump_slot(const struct shell *sh, const char *name, uint8_t area_id)
+{
+	const struct flash_area *fa;
+	static uint8_t sector[4096];
+
+	if (flash_area_open(area_id, &fa) != 0) {
+		shell_print(sh, "%s: 打不开 flash area %u", name, area_id);
+		return;
+	}
+
+	/*
+	 * MCUboot 的 trailer 落在槽的最后一个扇区里。整扇区扫一遍，把非 0xFF 的
+	 * 位置和值打出来——这样它把 magic / image_ok / copy_done 写在哪一目了然。
+	 */
+	/* 状态可能不在最后一个扇区：从槽尾往前扫 16 个扇区，只列非 0xFF 的位置 */
+	shell_print(sh, "%s：从槽尾往前 64 KB 里非 0xFF 的字节（相对槽尾偏移）:", name);
+
+	uint8_t shown = 0U;
+
+	for (uint32_t back = 1U; back <= 16U && shown < 12U; back++) {
+		const uint32_t off = fa->fa_size - back * sizeof(sector);
+
+		if (flash_area_read(fa, off, sector, sizeof(sector)) != 0) {
+			shell_print(sh, "  读 0x%05x 失败", off);
+			break;
+		}
+
+		for (size_t i = 0U; i < sizeof(sector) && shown < 12U; i++) {
+			if (sector[i] != 0xFFU) {
+				shell_print(sh, "  -0x%05x = 0x%02x", back * 4096U - i,
+					    sector[i]);
+				shown++;
+			}
+		}
+	}
+
+	if (shown == 0U) {
+		shell_print(sh, "  （这 64 KB 里没有任何写入痕迹）");
+	}
+
+	flash_area_close(fa);
+}
+
+static int cmd_mcuboot(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	shell_print(sh, "active slot : %u", boot_fetch_active_slot());
+	/* VTOR 指到哪个槽，就是真正在哪个槽里跑（跟 MCUboot 报的 active slot 对照看） */
+	shell_print(sh, "VTOR        : 0x%08x (slot0=0x%08x, slot1=0x%08x)",
+		    (unsigned int)SCB->VTOR,
+		    (unsigned int)(0x10000000 + FIXED_PARTITION_OFFSET(slot0_partition)),
+		    (unsigned int)(0x10000000 + FIXED_PARTITION_OFFSET(slot1_partition)));
+	shell_print(sh, "confirmed   : %d", (int)boot_is_img_confirmed());
+	shell_print(sh, "swap type   : %d (0=none 1=test 2=revert 3=fail 4=permanent)",
+		    (int)mcuboot_swap_type());
+	shell_print(sh, "confirmed by host: %d", (int)zlrs_config_image_confirmed());
+	mcuboot_dump_slot(sh, "slot0", FIXED_PARTITION_ID(slot0_partition));
+	mcuboot_dump_slot(sh, "slot1", FIXED_PARTITION_ID(slot1_partition));
+
+	return 0;
+}
+#endif
+
 SHELL_STATIC_SUBCMD_SET_CREATE(
 	zlrs_cmds,
 	SHELL_CMD(status, NULL, "角色 / SKU / 地区 / 链路状态", cmd_status),
@@ -1246,6 +1341,9 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 #endif
 #if IS_ENABLED(CONFIG_ZLRS_APP_ENTROPY_TRNG)
 	SHELL_CMD(entropy, NULL, "熵源自检（TRNG 读两块 32 字节）", cmd_entropy),
+#endif
+#if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
+	SHELL_CMD(mcuboot, NULL, "MCUboot 眼里的镜像状态（调试）", cmd_mcuboot),
 #endif
 	SHELL_SUBCMD_SET_END);
 
@@ -1447,17 +1545,16 @@ int main(void)
 		IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? "TX" : "RX");
 
 	/*
-	 * 初始化到这里算跑完了（端口、NVS、链路、USB 都起来了）：确认镜像，
-	 * 让 MCUboot 认这一版。
+	 * 初始化到这里算跑完了（端口、NVS、链路、USB 都起来了）。镜像确认不在这里
+	 * 做：升级后要等上位机真的发一条命令过来才算数（见 confirm_image）。
 	 */
-	confirm_image(zlrs_radio_port_now_ms());
 
 	for (;;) {
 		const int64_t start_us = k_uptime_get() * 1000;
 		const uint32_t now_ms = zlrs_radio_port_now_ms();
 
 		zlrs_watchdog_feed();
-		confirm_image(now_ms);
+		confirm_image();
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
 		/* 进配置模式的三个入口都收敛到这里：配置口命令、shell、调试魔数。

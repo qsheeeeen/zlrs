@@ -31,6 +31,8 @@ extern "C" {
 #define ZLRS_CFG_CMD_ERASE_PAIR 0x03U  /* 擦除配对记录 */
 #define ZLRS_CFG_CMD_SET_KEY_HEX 0x10U /* 64 个十六进制字符的根密钥 */
 #define ZLRS_CFG_CMD_SET_PHRASE 0x11U  /* 短语，设备侧派生根密钥 */
+#define ZLRS_CFG_CMD_BUILD 0x12U       /* 读固件版本串（升级后核对跑的是哪一版） */
+#define ZLRS_CFG_CMD_IMAGE_HASH 0x13U  /* 读当前镜像的 MCUboot 哈希（升级/回滚判据） */
 #define ZLRS_CFG_CMD_SET_FAILSAFE 0x20U /* 22 字节 CRSF 通道载荷 */
 #define ZLRS_CFG_CMD_SET_BAUD 0x21U    /* 4 字节小端波特率 */
 #define ZLRS_CFG_CMD_SET_REGION 0x22U  /* 1 字节地区号（0..3） */
@@ -38,10 +40,13 @@ extern "C" {
 #define ZLRS_CFG_CMD_EXIT 0x30U        /* 退出配置模式 */
 #define ZLRS_CFG_CMD_FACTORY_RESET 0x40U /* 清 NVS */
 #define ZLRS_CFG_CMD_RECOVERY 0x41U    /* 重启进 MCUboot 串口恢复 */
+#define ZLRS_CFG_CMD_CONFIRM 0x42U     /* 上位机确认这一版升级成功（不确认就回滚） */
 
 /* 设备 → 主机 */
 #define ZLRS_CFG_CMD_ACK 0x80U         /* [cmd][status] */
 #define ZLRS_CFG_CMD_STATUS_RESP 0x81U /* 见 zlrs_cfg_status_t */
+#define ZLRS_CFG_CMD_BUILD_RESP 0x82U  /* 固件版本串，最长 ZLRS_CFG_BUILD_MAX_LEN */
+#define ZLRS_CFG_CMD_IMAGE_HASH_RESP 0x83U /* ZLRS_CFG_IMAGE_HASH_LEN 字节镜像哈希 */
 
 /* 状态码 */
 #define ZLRS_CFG_OK 0U
@@ -53,6 +58,8 @@ extern "C" {
 /* 状态响应：固定的 20 字节，字段顺序变了就改版本号 */
 #define ZLRS_CFG_STATUS_LEN 20U
 #define ZLRS_CFG_PHRASE_MAX_LEN 32U
+#define ZLRS_CFG_BUILD_MAX_LEN 32U
+#define ZLRS_CFG_IMAGE_HASH_LEN 32U
 
 typedef struct {
 	uint8_t version;    /* 协议版本 */
@@ -87,6 +94,12 @@ typedef struct {
 	int (*erase_pair)(void *ctx);
 	int (*factory_reset)(void *ctx);
 	int (*enter_recovery)(void *ctx);
+	/* 上位机确认这一版：返回 ZLRS_CFG_OK 表示已记下（升级流程靠它决定去留） */
+	int (*confirm_image)(void *ctx);
+	/* 固件版本串；没实现就回 E_STATE */
+	int (*read_build)(void *ctx, char *out, size_t out_len);
+	/* 当前镜像的 MCUboot 哈希（工具据此判断跑的是新版还是回滚后的旧版） */
+	int (*read_image_hash)(void *ctx, uint8_t out[ZLRS_CFG_IMAGE_HASH_LEN]);
 	void *ctx;
 } zlrs_cfg_backend_t;
 

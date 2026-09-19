@@ -128,7 +128,7 @@ config ZLRS_APP_WATCHDOG_TIMEOUT_MS
 	  要盖住最慢的一次喂狗间隔（配置模式里的 PBKDF2），又不能太长。
 
 config ZLRS_APP_MCUBOOT_CONFIRM
-	bool "初始化跑完就确认镜像（配合 MCUboot 的 test/revert 回滚）"
+	bool "升级后由上位机确认镜像（配合 MCUboot 的 test/revert 回滚）"
 	default y
 	depends on BOOTLOADER_MCUBOOT
 	# IMG_MANAGER 下面那个 choice 只有一项（MCUBOOT_IMG_MANAGER），
@@ -136,16 +136,20 @@ config ZLRS_APP_MCUBOOT_CONFIRM
 	select STREAM_FLASH
 	select IMG_MANAGER
 	help
-	  初始化跑完就调 boot_write_img_confirmed()。升级走 test 语义，新镜像没跑到
-	  这一步就崩的话，复位时 MCUboot 直接回滚（没有上一版就停在串口恢复）。
+	  升级走 test 语义，新镜像先当"待确认"跑：必须由上位机在超时前发一条组帧
+	  正确的配置命令、并且真的收到应答，才调 boot_write_img_confirmed() 把它
+	  标成永久。没等到就复位让 MCUboot 回滚；起不来（崩、卡死被看门狗复位）
+	  同样回滚。没有上一版时停在串口恢复里，照样能刷。判据只有这一位，
+	  见 doc/08-firmware.md 第 5 节。
 
-config ZLRS_APP_MCUBOOT_CONFIRM_MS
-	int "初始化完成后还要再跑多久才确认（毫秒，0 = 立刻）"
-	default 0
+config ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS
+	int "等上位机确认的超时（毫秒）"
+	default 60000
 	range 0 600000
 	depends on ZLRS_APP_MCUBOOT_CONFIRM
 	help
-	  0 = 初始化一结束就确认；给一段观察窗口的话，这段时间里崩掉照样回滚。
+	  这段时间里没收到上位机的合法配置命令就复位回滚。要留够"主机枚举 USB +
+	  升级工具跑起来"的时间。0 = 不等（升级后必须立刻有上位机，否则回滚）。
 
 config ZLRS_APP_USB
 	bool "USB 设备栈（三块 CDC：CRSF / 数据口 / 控制台）"

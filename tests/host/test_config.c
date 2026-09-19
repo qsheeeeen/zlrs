@@ -22,6 +22,7 @@ typedef struct {
 	bool baud_saved;
 	uint32_t pair_count;
 	int store_rc; /* save_root_key 想返回的错误码 */
+	bool image_confirmed;
 } fake_dev_t;
 
 static fake_dev_t fake;
@@ -51,6 +52,38 @@ static int fake_read_status(void *ctx, zlrs_cfg_status_t *out)
 	out->dev_id[3] = 0xBBU;
 	out->peer_id[0] = 0x11U;
 	out->lq_percent = 97U;
+
+	return ZLRS_CFG_OK;
+}
+
+static int fake_confirm_image(void *ctx)
+{
+	fake_dev_t *dev = ctx;
+
+	dev->image_confirmed = true;
+
+	return ZLRS_CFG_OK;
+}
+
+static int fake_read_build(void *ctx, char *out, size_t out_len)
+{
+	(void)ctx;
+
+	if (out == NULL || out_len < 8U) {
+		return ZLRS_CFG_E_PARAM;
+	}
+	memcpy(out, "0.1.0-t", 8U);
+
+	return ZLRS_CFG_OK;
+}
+
+static int fake_read_image_hash(void *ctx, uint8_t out[ZLRS_CFG_IMAGE_HASH_LEN])
+{
+	(void)ctx;
+
+	for (uint8_t i = 0U; i < ZLRS_CFG_IMAGE_HASH_LEN; i++) {
+		out[i] = i;
+	}
 
 	return ZLRS_CFG_OK;
 }
@@ -90,6 +123,9 @@ static const zlrs_cfg_backend_t backend = {
 	.save_failsafe = fake_save_failsafe,
 	.save_baud = fake_save_baud,
 	.pair = fake_pair,
+	.confirm_image = fake_confirm_image,
+	.read_build = fake_read_build,
+	.read_image_hash = fake_read_image_hash,
 	.ctx = &fake,
 };
 
@@ -202,6 +238,34 @@ static void test_dispatch(void)
 		CHECK(zlrs_test_hex_eq(status.dev_id, ZLRS_DEV_ID_LEN, "aa0000bb"));
 		CHECK(status.lq_percent == 97U);
 	}
+
+	/* BUILD：版本串原样回 */
+	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_BUILD, NULL, 0U, resp, sizeof(resp));
+	CHECK(len > 0U);
+	CHECK(parse_response(resp, len, &parser));
+	CHECK(parser.cmd == ZLRS_CFG_CMD_BUILD_RESP);
+	CHECK(parser.payload_len == 7U);
+	CHECK(memcmp(ZLRS_CFG_PAYLOAD(&parser), "0.1.0-t", 7U) == 0);
+
+	/* IMAGE_HASH：32 字节原样回 */
+	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_IMAGE_HASH, NULL, 0U, resp, sizeof(resp));
+	CHECK(len > 0U);
+	CHECK(parse_response(resp, len, &parser));
+	CHECK(parser.cmd == ZLRS_CFG_CMD_IMAGE_HASH_RESP);
+	CHECK(parser.payload_len == ZLRS_CFG_IMAGE_HASH_LEN);
+	CHECK(ZLRS_CFG_PAYLOAD(&parser)[0] == 0U);
+	CHECK(ZLRS_CFG_PAYLOAD(&parser)[ZLRS_CFG_IMAGE_HASH_LEN - 1U] ==
+	      ZLRS_CFG_IMAGE_HASH_LEN - 1U);
+
+	/* CONFIRM：必须真的调到后端回调（升级去留就看它） */
+	fake.image_confirmed = false;
+	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_CONFIRM, NULL, 0U, resp, sizeof(resp));
+	CHECK(len > 0U);
+	CHECK(parse_response(resp, len, &parser));
+	CHECK(parser.cmd == ZLRS_CFG_CMD_ACK);
+	CHECK(parser.payload_len >= 2U);
+	CHECK(ZLRS_CFG_PAYLOAD(&parser)[1] == ZLRS_CFG_OK);
+	CHECK(fake.image_confirmed);
 
 	/* SET_KEY_HEX：合法 64 字符 */
 	for (uint8_t i = 0U; i < ZLRS_KEY_LEN; i++) {

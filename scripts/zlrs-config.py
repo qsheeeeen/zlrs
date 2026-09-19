@@ -33,8 +33,13 @@ CMD_SET_POWER = 0x23
 CMD_EXIT = 0x30
 CMD_FACTORY_RESET = 0x40
 CMD_RECOVERY = 0x41
+CMD_CONFIRM = 0x42
+CMD_BUILD = 0x12
+CMD_IMAGE_HASH = 0x13
 ACK = 0x80
 STATUS_RESP = 0x81
+BUILD_RESP = 0x82
+IMAGE_HASH_RESP = 0x83
 
 STATUS_NAMES = {
     0: "ok",
@@ -145,6 +150,8 @@ def self_test() -> int:
         ("set-power", CMD_SET_POWER, bytes([20]), "a55a022301144f"),
         ("factory-reset", CMD_FACTORY_RESET, b"", "a55a0240006c"),
         ("recovery", CMD_RECOVERY, b"", "a55a02410067"),
+        ("build", CMD_BUILD, b"", None),
+        ("confirm", CMD_CONFIRM, b"", None),
         ("exit", CMD_EXIT, b"", "a55a023000d6"),
     ]
 
@@ -236,6 +243,12 @@ def talk(port: str, baud: int, frame: bytes, expect: bool, timeout: float,
         if cmd == STATUS_RESP:
             print(status_text(payload))
             return 0
+        if cmd == BUILD_RESP:
+            print(payload.decode(errors="replace"))
+            return 0
+        if cmd == IMAGE_HASH_RESP:
+            print(payload.hex())
+            return 0
         print(f"unexpected response 0x{cmd:02x}: {payload.hex()}")
         return 1
 
@@ -324,6 +337,9 @@ def main() -> int:
     power.add_argument("dbm", type=int, help="发射功率上限（dBm）")
     sub.add_parser("factory-reset")
     sub.add_parser("recovery")
+    sub.add_parser("build", help="读固件版本串")
+    sub.add_parser("image-hash", help="读当前镜像的 MCUboot 哈希（十六进制）")
+    sub.add_parser("confirm", help="确认本次升级（不确认则超时回滚）")
     sub.add_parser("exit")
 
     args = parser.parse_args()
@@ -377,6 +393,12 @@ def main() -> int:
         frame, expect = encode(CMD_FACTORY_RESET), True
     elif args.command == "recovery":
         frame, expect = encode(CMD_RECOVERY), False
+    elif args.command == "build":
+        frame, expect = encode(CMD_BUILD), True
+    elif args.command == "image-hash":
+        frame, expect = encode(CMD_IMAGE_HASH), True
+    elif args.command == "confirm":
+        frame, expect = encode(CMD_CONFIRM), True
     else:  # exit
         frame, expect = encode(CMD_EXIT), True
 

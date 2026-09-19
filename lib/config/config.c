@@ -268,6 +268,53 @@ uint8_t zlrs_cfg_dispatch(const zlrs_cfg_backend_t *backend, uint8_t cmd,
 		return zlrs_cfg_encode(out, out_len, ZLRS_CFG_CMD_STATUS_RESP, body,
 				       sizeof(body));
 	}
+	case ZLRS_CFG_CMD_BUILD: {
+		char build[ZLRS_CFG_BUILD_MAX_LEN] = {0};
+
+		if (backend->read_build == NULL) {
+			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_STATE);
+		}
+
+		const int rc = backend->read_build(backend->ctx, build, sizeof(build));
+
+		if (rc != ZLRS_CFG_OK) {
+			return ack_frame(out, out_len, cmd, (uint8_t)rc);
+		}
+
+		/* 版本串按字节发，去掉尾部填充的 0 */
+		uint8_t n = 0U;
+
+		while (n < sizeof(build) && build[n] != '\0') {
+			n++;
+		}
+
+		return zlrs_cfg_encode(out, out_len, ZLRS_CFG_CMD_BUILD_RESP,
+				       (const uint8_t *)build, n);
+	}
+	case ZLRS_CFG_CMD_CONFIRM:
+		if (backend->confirm_image == NULL) {
+			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_STATE);
+		}
+		return ack_frame(out, out_len, cmd,
+				 (uint8_t)backend->confirm_image(backend->ctx));
+	case ZLRS_CFG_CMD_IMAGE_HASH: {
+		uint8_t hash[ZLRS_CFG_IMAGE_HASH_LEN];
+
+		if (backend->read_image_hash == NULL) {
+			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_STATE);
+		}
+
+		memset(hash, 0, sizeof(hash));
+
+		const int rc = backend->read_image_hash(backend->ctx, hash);
+
+		if (rc != ZLRS_CFG_OK) {
+			return ack_frame(out, out_len, cmd, (uint8_t)rc);
+		}
+
+		return zlrs_cfg_encode(out, out_len, ZLRS_CFG_CMD_IMAGE_HASH_RESP, hash,
+				       sizeof(hash));
+	}
 	case ZLRS_CFG_CMD_PAIR:
 		if (backend->pair == NULL) {
 			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_STATE);

@@ -14,12 +14,17 @@
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/drivers/reset.h>
+#include <zephyr/dt-bindings/reset/rp2350_reset.h>
 #include <zephyr/usb/usbd.h>
 
 LOG_MODULE_REGISTER(zlrs_usb, CONFIG_ZLRS_USB_LOG_LEVEL);
 
 USBD_DEVICE_DEFINE(zlrs_usbd, DEVICE_DT_GET(DT_NODELABEL(zephyr_udc0)),
 		   CONFIG_ZLRS_USB_VID, CONFIG_ZLRS_USB_PID);
+
+static const struct reset_dt_spec usbctrl_reset =
+	RESET_DT_SPEC_GET(DT_NODELABEL(zephyr_udc0));
 
 USBD_DESC_LANG_DEFINE(zlrs_usb_lang);
 USBD_DESC_MANUFACTURER_DEFINE(zlrs_usb_mfr, CONFIG_ZLRS_USB_MANUFACTURER);
@@ -71,6 +76,18 @@ static int zlrs_usb_init(void)
 {
 	enum usbd_speed speed = USBD_SPEED_FS;
 	int err;
+
+	/*
+	 * 先让主机看见一次真正的断连：bootloader（MCUboot 的串口恢复口）可能已经把
+	 * 这个控制器拉起来、让主机枚举过一遍了。UDC 驱动 enable 时虽然也会复位控制器，
+	 * 但那一下太快，主机当作没有断连，于是端口名一直停在 bootloader 上，应用这边
+	 * 的 CDC 根本不会被重新认识。这里把复位按住 100 ms，保证主机重新枚举。
+	 */
+	if (device_is_ready(usbctrl_reset.dev)) {
+		(void)reset_line_assert(usbctrl_reset.dev, usbctrl_reset.id);
+		k_msleep(100);
+		(void)reset_line_deassert(usbctrl_reset.dev, usbctrl_reset.id);
+	}
 
 	/*
 	 * USB 可裁（doc/08-firmware.md 第 4 节）：失败只报警不住手——SYS_INIT 返回非零会

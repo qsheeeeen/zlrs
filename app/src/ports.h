@@ -59,6 +59,13 @@ typedef struct {
 
 void zlrs_config_set_ops(const zlrs_config_ops_t *ops);
 
+/*
+ * 上位机发过"确认这一版"的命令（见 doc/08-firmware.md 第 6 节的升级流程）。
+ * 这是"这一版镜像能不能留下"的唯一判据：升级后主机没确认就不算数，
+ * 复位时让 MCUboot 回滚。
+ */
+bool zlrs_config_image_confirmed(void);
+
 /* ---- CRSF 端口：手台 ↔ 模块（TX 侧）、接收机 → 飞控（RX 侧） ------------- */
 
 int zlrs_crsf_port_init(void);

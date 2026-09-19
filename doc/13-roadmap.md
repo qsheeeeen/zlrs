@@ -20,7 +20,8 @@
 
 ### 升级链路
 
-- **MCUboot 换槽（`swap using offset`）**：用 test 语义刷过一次后会停在"USB 描述符请求失败"。倾向怀疑 bootloader 里的 USB 中断与"换槽写 flash 期间 XIP 停摆"相互干扰——安全验证方案：编一个**不带 USB**（只留 UART 串口恢复）的 bootloader，用 test 语义刷一次看是否还会停。这条要在设备上触发换槽，失败时可能仍需 BOOTSEL 捞回，所以先不动。
+- **MCUboot 换槽 + 上位机确认**（进行中）：升级一律写**非活跃槽**——`CONFIG_MCUBOOT_SERIAL_DIRECT_IMAGE_UPLOAD=n`，工具不指定槽（早先为了绕开换槽才开的直写，会让工具指定物理槽、也绕过了标准的 pending 标记）。换槽用 `swap using move`（`swap using offset` 在这块板上换进去能跑、回不来）。待办：验证"上位机没确认 → 复位回滚到上一版"这一半（见 [08-firmware](08-firmware.md) 第 6 节）。
+- **bootloader 的 USB 与恢复窗口**：给 bootloader 把恢复窗口拉长做调试（`app/sysbuild/mcuboot-debug.conf`，15 s）之后，主机先枚举了 bootloader 的 USB，应用再接管时主机不重新枚举、看起来像"应用挂了"。正常 300 ms 窗口碰不到；应用侧另外在 `lib/usb/usb_dev.c` 里把 USB 控制器按住复位 100 ms，逼主机重新枚举。正式形态要不要留更长的窗口，等换槽验证完再定。
 - **应用侧 mcumgr**（可选）：运行中升级，镜像直接写 slot1。
 
 ### 安全
