@@ -1,69 +1,69 @@
-# 原型
+# Prototype
 
-现在的实物是**两块模块用线连起来**：微雪 RP2350-Zero 加微雪 Core2021。对外的接口**只有 USB-C**（供电、数据、配置、烧写）；CRSF 与数据是模块焊盘上的两路 UART，要用就自己引线。按键不焊，用一根杜邦线把 GP12 短接到 GND 模拟。
+Today's hardware is **two modules wired together**: a Waveshare RP2350-Zero and a Waveshare Core2021. The only interface it exposes is **USB-C** (power, data, config, flashing); CRSF and data are two UARTs on the module pads and need wires of your own. No button is fitted: a jumper wire from GP12 to GND stands in for it.
 
-引脚与别名的权威定义见[板级 README](../boards/zlrs/rp2350_zero_core2021/README.md)，端口与模式的设计见 [08-firmware](08-firmware.md) 第 2、5 节。
+Pins and aliases are defined in the [board README](../boards/zlrs/rp2350_zero_core2021/README.md); the port and mode design is in [08-firmware](08-firmware.md) 2 and 5.
 
-## 1. 实物构成
+## 1. What it is made of
 
-| 部件 | 规格 | 备注 |
+| Part | Spec | Notes |
 | --- | --- | --- |
-| 主控 | 微雪 RP2350-Zero：RP2350A（Cortex-M33）、4 MB QSPI flash、原生 USB-C、板载 WS2812B | BOOTSEL 与 RESET 在模块上 |
-| 射频 | 微雪 Core2021（Semtech LR2021），LF SKU | 单颗分时双频：sub-G + 2.4G |
-| 天线 | 433 MHz，接模块天线座 | 2.4G 那一路上板后按模块图纸核对 |
-| 供电 | USB-C | Core2021 的 3V3 由 Zero 供，两块模块共地 |
-| 按键 | 不焊按键：杜邦线把 GP12 短到 GND | DT 里已配内部上拉 |
-| 状态灯 | 模块自带 WS2812（GP16） | 语义见 [11-ux](11-ux.md) |
+| MCU | Waveshare RP2350-Zero: RP2350A (Cortex-M33), 4 MB QSPI flash, native USB-C, on-board WS2812B | BOOTSEL and RESET live on the module |
+| Radio | Waveshare Core2021 (Semtech LR2021), LF SKU | one chip, time-sharing two bands: sub-G and 2.4G |
+| Antenna | 433 MHz on the module's connector | check the 2.4G path against the module drawing once it is on a board |
+| Power | USB-C | the Zero feeds 3V3 to the Core2021 and the two share ground |
+| Button | none fitted: short GP12 to GND with a wire | the devicetree enables the internal pull-up |
+| Status LED | the module's own WS2812 (GP16) | semantics in [11-ux](11-ux.md) |
 
-## 2. 板内连线（Zero ↔ Core2021）
+## 2. Wiring between the modules (Zero to Core2021)
 
-只在 `CONFIG_ZLRS_APP_RADIO=y` 时使用；`=n` 时整块射频不碰（含 SPI 与三根控制线）。
+Only used when `CONFIG_ZLRS_APP_RADIO=y`; with `=n` nothing touches the radio, SPI and the three control lines included.
 
-| 信号 | RP2350-Zero | Core2021 | 说明 |
+| Signal | RP2350-Zero | Core2021 | Notes |
 | --- | --- | --- | --- |
-| SPI0 SCK / MOSI / MISO | GP6 / GP7 / GP4 | 对应脚 | 总线 16 MHz |
-| SPI0 CS | GP5 | 对应脚 | 普通 GPIO 片选（`cs-gpios`），不用硬件 CSN |
-| BUSY | GP13 | BUSY | 高有效，内部上拉 |
-| NRESET | GP14 | NRESET | 低有效 |
-| DIO8（IRQ） | GP15 | DIO8 | 高有效，内部下拉 |
-| 3V3 / GND | 3V3、GND | 3V3、GND | 由 Zero 供 |
+| SPI0 SCK / MOSI / MISO | GP6 / GP7 / GP4 | matching pins | 16 MHz bus |
+| SPI0 CS | GP5 | matching pin | a plain GPIO chip select (`cs-gpios`), not the hardware CSN |
+| BUSY | GP13 | BUSY | active high, internal pull-up |
+| NRESET | GP14 | NRESET | active low |
+| DIO8 (IRQ) | GP15 | DIO8 | active high, internal pull-down |
+| 3V3 / GND | 3V3, GND | 3V3, GND | supplied by the Zero |
 
-七根线全在 **GP15 及以下**（SPI 在 GP4–GP7，控制线在 GP13–GP15）：GP16 是板上 WS2812B 的数据脚，再往上的那段引脚在原型上不好接。
+All seven wires stay at **GP15 or below** (SPI on GP4-GP7, control lines on GP13-GP15): GP16 drives the on-board WS2812B and the pins above it are awkward to reach on the prototype.
 
-两路 UART（GP0/GP1 = CRSF，GP8/GP9 = 数据口）留在模块焊盘上，原型上悬空；控制台不走引脚，只在 USB 上。
+The two UARTs (GP0/GP1 for CRSF, GP8/GP9 for data) stay on the module pads and are unconnected here; the console never uses pins, only USB.
 
-## 3. 接口与模式
+## 3. Interfaces and modes
 
-USB-C 一个口，按运行模式以不同面孔出现：
+One USB-C port that shows up differently depending on the mode:
 
-| 模式 | USB 上是什么 |
+| Mode | What USB shows |
 | --- | --- |
-| 应用 | CRSF / 数据 / 配置 三块 CDC |
-| 串口恢复 | 恢复 + 控制台 两块 CDC |
-| ROM BOOTSEL | `RPI-RP2` 大容量盘（拖 UF2） |
-| 调试 | 上面的基础上多一块 console CDC（日志 + shell），见 [12-debug](12-debug.md) |
+| Application | three CDCs: CRSF, data, config |
+| Serial recovery | two CDCs: recovery and console |
+| ROM BOOTSEL | an `RPI-RP2` mass-storage volume (drag a UF2 onto it) |
+| Debug | the above plus one more console CDC (logs and shell), see [12-debug](12-debug.md) |
 
-| 接口 | 应用 | 配置 | 串口恢复 | ROM BOOTSEL |
+| Interface | Application | Config | Serial recovery | ROM BOOTSEL |
 | --- | --- | --- | --- | --- |
-| USB-C | 三块 CDC | 配置 CDC 跑配置协议，射频停 | 两块 CDC | `RPI-RP2` |
-| UART0 GP0/1 | CRSF 收发 420000 | 不转发（射频停） | 不初始化 | 不跑固件 |
-| UART1 GP8/9 | 数传透传 | 收到的字节丢弃并计数 | 不用 | 不跑固件 |
-| 按键（杜邦线） | 长按 ≥1 s 配对 | 进入后不看按键 | 不用 | BOOTSEL 是芯片级按钮 |
-| 状态灯 | 见 [11-ux](11-ux.md) | 白灯 1 Hz | MCUboot 不驱动 | 不驱动 |
+| USB-C | three CDCs | the config CDC speaks the config protocol, radio stopped | two CDCs | `RPI-RP2` |
+| UART0 GP0/1 | CRSF at 420000 | not forwarded (radio stopped) | not initialised | no firmware |
+| UART1 GP8/9 | passthrough | incoming bytes are dropped and counted | unused | no firmware |
+| Button (jumper) | hold 1 s or more to pair | ignored once config mode is up | unused | BOOTSEL is the chip-level button |
+| Status LED | see [11-ux](11-ux.md) | white at 1 Hz | MCUboot does not drive it | not driven |
 
-配置模式由配置工具在配置 CDC 上发命令进入；细节见 [08-firmware](08-firmware.md) 第 5 节。
+Config mode is entered by a command the config tool sends on the config CDC; details in [08-firmware](08-firmware.md) 2.
 
-## 4. 烧录
+## 4. Flashing
 
-| 变体 | 第一次 | 之后 |
+| Variant | First time | Afterwards |
 | --- | --- | --- |
-| 不带 bootloader | 按住 BOOTSEL 拖 `zephyr.uf2`，或 SWD | 同上 |
-| 带 MCUboot | 两轮 BOOTSEL：先 bootloader，再 `zephyr.signed.uf2` | 应用侧触发进恢复 + `smpmgr` 上传签名镜像 |
+| Without a bootloader | hold BOOTSEL and drag `zephyr.uf2` on, or use SWD | the same |
+| With MCUboot | two BOOTSEL rounds: the bootloader, then `zephyr.signed.uf2` | trigger recovery from the application and upload a signed image with `smpmgr` |
 
-一条命令升级：`python3 scripts/zlrs-update.py --port /dev/ttyACM1`。
+One command upgrades it: `python3 scripts/zlrs-update.py --port /dev/ttyACM1`.
 
-## 5. 接线与摆放
+## 5. Wiring and placement
 
-- 3V3 由 Zero 供 Core2021，两块模块共地。
-- SPI 跳线尽量短；GP16 被板载 WS2812B 占着，射频总线用 GP4–GP7、控制线用 GP13–GP15，都在 GP15 及以下。
-- 天线座那一侧留 15–20 mm 净空（不贴金属、不过线）。
+- The Zero feeds 3V3 to the Core2021 and the two share ground.
+- Keep the SPI jumpers short; GP16 belongs to the on-board WS2812B, so the radio bus uses GP4-GP7 and the control lines GP13-GP15, all at GP15 or below.
+- Leave 15-20 mm of clearance on the antenna side: no metal, no wires.
