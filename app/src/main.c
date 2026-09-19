@@ -2,8 +2,8 @@
  * Copyright (c) 2026 zlrs contributors
  * SPDX-License-Identifier: Apache-2.0
  *
- * zlrs 应用入口：跑超帧，把两条链路接上射频与串口。线程模型与初始化顺序见
- * doc/07-architecture.md 第 6 节。
+ * zlrs application entry point: runs the superframe and wires both links to the radio
+ * and the serial ports. Threading model and init order: doc/07-architecture.md 6.
  */
 
 #include <zephyr/app_version.h>
@@ -54,23 +54,23 @@
 
 LOG_MODULE_REGISTER(app, CONFIG_APP_LOG_LEVEL);
 
-/* 控制帧的时间计划：启动时按 Kconfig 与地区占空比算出来，见 plan_init() */
+/* Control frame plan: derived at boot from Kconfig and the region duty cap, see plan_init() */
 static uint32_t control_rate_hz;
 static uint32_t frame_period_us;
 static uint32_t slot_budget_us;
 static uint8_t tlm_every_n;
 static uint8_t data_every_n;
 static uint8_t resync_every_n;
-/* 数据帧载荷上限：跟着帧格式与速率档算出来（不是配置项） */
+/* Data payload cap: derived from the frame format and rate tier, not a Kconfig knob */
 static uint16_t data_mtu;
 
-/* 控制帧的空中时间粗估：22 B RC + 3 B 头 + 4 B 标签 + 2 B CRC */
+/* Rough control frame airtime: 22 B RC + 3 B header + 4 B tag + 2 B CRC */
 #define CTL_FRAME_LEN 31U
-/* 遥测帧：8 B 载荷 + 头与标签 */
+/* Telemetry frame: 8 B payload plus header and tag */
 #define CTL_TLM_LEN 15U
 /*
- * 上板调试：两条链路可以各自单独跑。控制链路承载 RC 与配对，数据链路承载
- * 透传——先各自单独跑通，再合起来看分时（见 doc/12-debug.md 第 3 节）。
+ * Bench bring-up: the two links can each run alone. Control carries RC and pairing,
+ * data carries the passthrough; prove them one at a time before combining (doc/12-debug.md 3).
  */
 #define ZLRS_CONTROL_ENABLED IS_ENABLED(CONFIG_ZLRS_APP_LINK_CONTROL)
 #define ZLRS_DATA_ENABLED IS_ENABLED(CONFIG_ZLRS_APP_LINK_DATA)
@@ -82,13 +82,13 @@ static uint16_t data_mtu;
 static zlrs_link_t link_control;
 static zlrs_link_t link_data;
 
-/* 两条链路各自的调制档：启动时按 Kconfig 与地区定下来，见 plan_init() */
+/* Per-link modulation: fixed at boot from Kconfig and the region, see plan_init() */
 static zlrs_mod_cfg_t control_mod;
 static zlrs_mod_cfg_t data_mod;
 
 /*
- * 频段角色（doc/07-architecture.md 第 2 节）：默认控制链路占 sub-G、数据链路占 2.4G；
- * 竞速模式对调。法规门（功率上限、速率上限、占空比）+ sub-G 那条链路才吃。
+ * Band role (doc/07-architecture.md 2): control owns sub-G by default, data owns 2.4G;
+ * racing mode swaps them. The regulatory gate (power, rate, duty) applies to the sub-G link.
  */
 #if IS_ENABLED(CONFIG_ZLRS_APP_BAND_ROLE_SUBG_DATA)
 #define CONTROL_ON_SUBG 0
@@ -96,7 +96,7 @@ static zlrs_mod_cfg_t data_mod;
 #define CONTROL_ON_SUBG 1
 #endif
 
-/* 地区：决定频段、功率上限与占空比记账 */
+/* Region: picks the band, the power ceiling and the duty accounting */
 static const zlrs_region_t *region;
 static uint8_t region_id;
 static int8_t tx_power_dbm;
@@ -105,15 +105,15 @@ static zlrs_duty_t duty;
 
 static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(DT_ALIAS(zlrs_button), gpios);
 static bool button_down;
-static bool button_fired; /* 这一次按住已经触发过配对 */
+static bool button_fired; /* pairing already fired for this press */
 static uint32_t button_since_ms;
 
-/* CRSF 端口的收发（定义在下面，链路回调里要用） */
+/* CRSF port I/O (defined below, called from the link callbacks) */
 static void crsf_send_rc(const uint8_t *payload, uint8_t len);
 static void crsf_send_link_stats(const zlrs_tlm_t *tlm);
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_ENTROPY_TRNG)
-/* 熵源自检（定义在 main 之前），shell 命令与开机自检都用它 */
+/* Entropy self-test (defined above main); used by the boot check and the shell command */
 static int entropy_selftest(void);
 #endif
 
@@ -125,13 +125,13 @@ static bool rc_input_seen;
 static uint32_t crsf_bad_input;
 static uint32_t last_report_ms;
 static uint32_t led_drop_seen;
-/* 连上过才算"失控"：从没连上的设备该显示未配置/未配对/搜索，而不是红灯 */
+/* Failsafe means nothing before a first connection: show unconfigured/unpaired/searching, not red */
 static bool ever_connected;
 static uint32_t led_drop_ms;
 
 /*
- * 速率自适应的档位表（从快到慢）。阈值要等实测误包率曲线回来再标定，
- * 见 doc/13-roadmap.md——这里给的是占位值，框架本身与阈值无关。
+ * Rate adaptation tiers, fastest first. Thresholds wait for measured PER curves,
+ * see doc/13-roadmap.md; the numbers here are placeholders, the mechanism ignores them.
  */
 #if IS_ENABLED(CONFIG_ZLRS_APP_RATE_ADAPT)
 static const zlrs_rate_tier_t rate_tiers[] = {
@@ -147,10 +147,10 @@ static const zlrs_rate_tier_t rate_tiers[] = {
 static zlrs_rate_ctl_t rate_ctl;
 #endif
 
-/* 动态功率：TX 按 RX 回报的 RSSI/LQ 升降自己的发射功率 */
+/* Dynamic power: the TX follows the RSSI/LQ the RX reports back */
 #if IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)
 static zlrs_power_ctl_t power_ctl;
-/* 最新一次遥测里的上行质量；判据每秒评估一次，所以先存下来 */
+/* Uplink quality from the latest telemetry; the verdict runs at 1 Hz, so stash it here */
 static struct {
 	int16_t rssi_dbm;
 	uint8_t lq;
@@ -163,14 +163,14 @@ static struct {
 	uint32_t data_rx;
 } counters;
 
-/* ---- 链路回调（链路线程里执行） ----------------------------------------- */
+/* ---- link callbacks (run on the link thread) ------------------------------ */
 
 static void on_rc(void *ctx, const uint8_t *payload, uint16_t len)
 {
 	(void)ctx;
 
 	counters.rc_rx++;
-	/* RX 侧：把空口通道数据重建成 CRSF 帧发给飞控 */
+	/* RX: rebuild the air-side channel payload into a CRSF frame for the flight controller */
 	crsf_send_rc(payload, (uint8_t)len);
 }
 
@@ -181,12 +181,12 @@ static void on_tlm(void *ctx, const uint8_t *payload, uint16_t len)
 	(void)ctx;
 
 	counters.tlm_rx++;
-	/* TX 侧：把 RX 的上行质量转成给手台看的链路统计帧 */
+	/* TX: turn the RX uplink quality into the link-stats frame the handset reads */
 	if (zlrs_tlm_decode(payload, len, &tlm)) {
 		crsf_send_link_stats(&tlm);
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)
-		/* 只存下来：判据在 1 Hz 的 report() 里评估，见 doc/09-protocol.md 4.5 */
+		/* Just stash it: the verdict runs in report() at 1 Hz, see doc/09-protocol.md 4.5 */
 		tlm_latest.rssi_dbm = -(int16_t)tlm.rssi_neg_dbm;
 		tlm_latest.lq = tlm.lq_percent;
 		tlm_latest.fresh = true;
@@ -229,7 +229,7 @@ static void on_state(void *ctx, uint8_t state)
 	LOG_INF("%s link -> %s", (kind == ZLRS_LINK_CONTROL) ? "control" : "data", name);
 }
 
-/* RX：配对时从 TX 收到失控值，存 NVS 并立刻用于输出 */
+/* RX: failsafe values arrive from the TX during pairing; store them and use them right away */
 static void on_failsafe(void *ctx, const uint8_t *payload, uint16_t len)
 {
 	(void)ctx;
@@ -244,17 +244,17 @@ static void on_failsafe(void *ctx, const uint8_t *payload, uint16_t len)
 }
 
 /*
- * 控制帧的时间计划：帧率档（Kconfig）× 地区占空比上限。超了就压到上限并
- * 告警——法规优先，但要让用户看见。
+ * Control frame plan: rate tier (Kconfig) x region duty cap. Over the cap we clamp to it and
+ * warn: the regulation wins, but the user gets to see it.
  */
 /*
- * 搜索态的 SYNC 周期按调制档定（doc/09-protocol.md 3.6）：
- * 速率越低、一帧空中时间越长，间隔相应放宽到 100–600 ms。
+ * SEARCHING sync period follows the modulation (doc/09-protocol.md 3.6):
+ * the slower the rate the longer a frame takes, so the interval widens to 100-600 ms.
  */
 static uint16_t sync_period_for_mod(const zlrs_mod_cfg_t *mod)
 {
 	if (mod->modulation != ZLRS_MOD_FLRC) {
-		return 600U; /* LoRa：一帧几十毫秒，再密就没意义 */
+		return 600U; /* LoRa: a frame is tens of ms, a tighter cadence buys nothing */
 	}
 	if (mod->rate_bps >= 2600000U) {
 		return 100U;
@@ -272,7 +272,7 @@ static uint16_t sync_period_for_mod(const zlrs_mod_cfg_t *mod)
 static void plan_init(void)
 {
 	zlrs_control_plan_t plan;
-	/* 法规门只作用在 sub-G 那条链路上：竞速模式下它是数据链路 */
+	/* The regulatory gate follows the sub-G link, which is the data link in racing mode */
 	const zlrs_region_t *ctl_region = CONTROL_ON_SUBG ? region : NULL;
 	const zlrs_region_t *data_region = CONTROL_ON_SUBG ? NULL : region;
 	zlrs_plan_req_t req = {
@@ -282,11 +282,11 @@ static void plan_init(void)
 	};
 
 	/*
-	 * 调制按链路各自选（doc/07-architecture.md 第 3 节）：窄带地区放不下宽带
-	 * FLRC 时控制链路改跑 LoRa 远距档，数据链路始终留在 2.4G 跑 FLRC。
+	 * Modulation is per link (doc/07-architecture.md 3): where the band cannot fit wide
+	 * FLRC the control link falls back to the LoRa tier; data always stays on 2.4G FLRC.
 	 */
 #if IS_ENABLED(CONFIG_ZLRS_APP_BAND_ROLE_SUBG_DATA)
-	/* 竞速模式：控制链路独占 2.4G，速率/帧率用它自己那套配置 */
+	/* Racing mode: control owns 2.4G and uses its own rate/frame-rate knobs */
 	control_mod = zlrs_mod_flrc(CONFIG_ZLRS_APP_RACING_CONTROL_RATE_BPS);
 	req.want_hz = CONFIG_ZLRS_APP_RACING_CONTROL_RATE_HZ;
 #elif IS_ENABLED(CONFIG_ZLRS_APP_CONTROL_MODULATION_LORA)
@@ -308,8 +308,8 @@ static void plan_init(void)
 	req.mod = &control_mod;
 
 	/*
-	 * MTU 跟着帧格式与速率档走（doc/09-protocol.md 4.3）：取"数据窗口单向
-	 * 预算"（四分之一帧周期）内装得下的最大载荷，再受帧格式载荷上限约束。
+	 * MTU follows the frame format and rate tier (doc/09-protocol.md 4.3): the largest payload
+	 * that fits the one-way data window budget (a quarter frame), capped by the format.
 	 */
 	{
 		const uint32_t budget_us =
@@ -325,8 +325,8 @@ static void plan_init(void)
 	}
 
 	/*
-	 * 超帧周期由最慢的那条链路决定：数据链路那两个窗口按"每 data_every_n
-	 * 帧跑一次"摊到每一帧里，计划内部迭代到自洽（见 lib/region/region.c）。
+	 * The superframe period is set by the slower link: the two data windows run once per
+	 * data_every_n frames, amortised over each frame; lib/region iterates the plan to agreement.
 	 */
 	req.other_mod = ZLRS_DATA_ENABLED ? &data_mod : NULL;
 	req.other_frame_len = (uint16_t)(data_mtu + 7U);
@@ -349,8 +349,8 @@ static void plan_init(void)
 			(unsigned int)plan.rate_hz);
 	}
 
-	/* 连接态周期 SYNC 按帧数换算（见 doc/09-protocol.md 5.1）：1000 ms 在
-	 * 常见帧周期下装得进 uint8，更短的帧周期由 MAX 压到 255 帧以内 */
+	/* CONNECTED sync period converted to frames (doc/09-protocol.md 5.1): 1000 ms fits an
+	 * uint8 at common frame periods, shorter periods get clamped to 255 frames. */
 	if (CONFIG_ZLRS_APP_RESYNC_PERIOD_MS > 0) {
 		const uint32_t frames = ((uint32_t)CONFIG_ZLRS_APP_RESYNC_PERIOD_MS * 1000U) /
 					frame_period_us;
@@ -371,24 +371,24 @@ static void plan_init(void)
 		(unsigned int)resync_every_n);
 }
 
-/* ---- 链路搭建 ------------------------------------------------------------ */
+/* ---- link setup ---------------------------------------------------------- */
 
 static void build_links(void)
 {
 	zlrs_link_cfg_t ctl_cfg = {
 		.kind = ZLRS_LINK_CONTROL,
 		.role = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? ZLRS_ROLE_TX : ZLRS_ROLE_RX,
-		/* 频段角色可配：远距模式控制链路占 sub-G，竞速模式对调（见 01 第 3.2 节） */
+		/* Band role: control on sub-G by default, swapped in racing mode (doc/01-product.md 3.2) */
 		.domain = CONTROL_ON_SUBG ? region->domain : ZLRS_DOMAIN_ISM2400,
 		.second_domain = CONTROL_ON_SUBG ? ZLRS_DOMAIN_ISM2400 : region->domain,
 		.sync_slot = ZLRS_SYNC_SLOT_CONTROL,
 		.profile = IS_ENABLED(CONFIG_ZLRS_APP_SECURITY_PROFILE_P0) ? ZLRS_PROFILE_P0
 									    : ZLRS_PROFILE_P1,
-		/* 上板调试档，各自可关，见 doc/12-debug.md 第 3 节 */
+		/* Bench switches, each can be turned off, see doc/12-debug.md 3 */
 		.hopping = IS_ENABLED(CONFIG_ZLRS_APP_FHSS) ? 1U : 0U,
 		.handshake = IS_ENABLED(CONFIG_ZLRS_APP_SESSION_HANDSHAKE) ? 1U : 0U,
 		.telemetry = IS_ENABLED(CONFIG_ZLRS_APP_TELEMETRY) ? 1U : 0U,
-		/* 调制档：窄频段地区走 LoRa 远距档，宽带地区走 FLRC（见 plan_init） */
+		/* Modulation: narrow-band regions get the LoRa tier, wide ones FLRC (see plan_init) */
 		.mod = control_mod,
 		.tx_power_dbm = CONTROL_ON_SUBG
 					? MIN(tx_power_dbm,
@@ -397,8 +397,8 @@ static void build_links(void)
 		.rx_timeout_ms = 2U,
 		.sync_period_ms = sync_period_for_mod(&control_mod),
 		/*
-		 * 遥测是 TX 侧的活证：关掉遥测就没东西可听，失联判定得一起关，
-		 * 否则每一帧都会把 TX 拉回 SEARCHING 重建会话。
+		 * Telemetry is the TX-side liveness proof: with it off there is nothing to hear, so the
+		 * peer-loss check has to go too, or every frame drags the TX back into SEARCHING.
 		 */
 		.peer_timeout_ms = (IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) &&
 				    IS_ENABLED(CONFIG_ZLRS_APP_TELEMETRY))
@@ -407,10 +407,10 @@ static void build_links(void)
 		.pair_period_ms = 100U,
 		.pair_window_ms = 30000U,
 		.data_mtu = 0U,
-		/* 节奏稀疏化：见 plan_init()，两端同固件所以一致 */
+		/* Cadence thinning: see plan_init(); both ends run the same firmware so they agree */
 		.tlm_every_n = tlm_every_n,
-		.data_every_n = 1U, /* 控制链路不用这个字段 */
-		/* 连接态周期 SYNC：跳频索引重同步 + 对端重启后自动重连 */
+		.data_every_n = 1U, /* unused on the control link */
+		/* Periodic sync while connected: re-align the hop index, auto-reconnect after a peer reboot */
 		.resync_every_n = resync_every_n,
 	};
 	zlrs_link_cfg_t data_cfg = ctl_cfg;
@@ -438,20 +438,20 @@ static void build_links(void)
 				      region->max_tx_power_dbm);
 	data_cfg.arq = IS_ENABLED(CONFIG_ZLRS_APP_DATA_ARQ) ? 1U : 0U;
 	/*
-	 * ARQ 重传超时由档位派生：一帧的空中时间加一次往返余量，至少留 30 ms
-	 * （FLRC 的亚毫秒帧用的就是那个默认值）。
+	 * ARQ retransmit timeout derives from the tier: one airtime plus a round trip, floor 30 ms
+	 * (which is what the sub-millisecond FLRC frames end up using).
 	 */
 	data_cfg.arq_timeout_ms = (uint16_t)MAX(
 		ZLRS_ARQ_TIMEOUT_MS,
 		2U * zlrs_mod_airtime_ms(&data_mod, data_mtu + 7U));
 	/*
-	 * 数据链路尽力而为：空闲不发空帧，所以不判失联——判了会在空闲时反复重建
-	 * 会话。代价是对端重启后要等这一侧重启或重配，见 doc/09-protocol.md 3.7。
+	 * The data link is best-effort: it sends nothing when idle, so it has no peer-loss check,
+	 * which would otherwise rebuild the session over and over while idle (doc/09-protocol.md 3.7).
 	 */
 	data_cfg.peer_timeout_ms = 0U;
 	data_cfg.data_mtu = data_mtu;
 	data_cfg.sync_period_ms = sync_period_for_mod(&data_mod);
-	data_cfg.tlm_every_n = 1U; /* 数据链路没有遥测时隙 */
+	data_cfg.tlm_every_n = 1U; /* no telemetry slot on the data link */
 	data_cfg.data_every_n = data_every_n;
 
 	zlrs_link_init(&link_control, &ctl_cfg, zlrs_radio_control_ops(), &ctl_ev);
@@ -472,7 +472,7 @@ static void build_links(void)
 #endif
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)
-	/* 上限取"配置功率与地区上限的较小值"，下限是配置项 */
+	/* Ceiling is min(configured power, region cap); the floor is a Kconfig knob */
 	zlrs_power_init(&power_ctl, MIN(tx_power_dbm, region->max_tx_power_dbm),
 			CONFIG_ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM, 0U);
 #endif
@@ -486,7 +486,7 @@ static void load_identity(void)
 	bool have_root_key = false;
 	const uint32_t now_ms = zlrs_radio_port_now_ms();
 
-	/* 根密钥：编译期给的优先（台架用），否则读 NVS */
+	/* Root key: the build-time one wins (bench use), otherwise read NVS */
 	if (strlen(CONFIG_ZLRS_APP_ROOT_KEY_HEX) > 0U) {
 		if (zlrs_store_parse_hex_key(CONFIG_ZLRS_APP_ROOT_KEY_HEX, root_key) == 0) {
 			have_root_key = true;
@@ -498,7 +498,7 @@ static void load_identity(void)
 		have_root_key = true;
 	}
 
-	/* 设备标识：首次启动生成并存 NVS，见 doc/10-security.md 第 2 节 */
+	/* Device id: generated on first boot and stored in NVS, see doc/10-security.md 2 */
 	if (zlrs_store_load_dev_id(dev_id) != (int)ZLRS_DEV_ID_LEN) {
 		const uint32_t rnd = sys_rand32_get();
 
@@ -516,7 +516,7 @@ static void load_identity(void)
 	zlrs_link_set_root_key(&link_control, root_key, now_ms);
 	zlrs_link_set_root_key(&link_data, root_key, now_ms);
 
-	/* 配对记录：对端 dev_id + 配对时的两个 nonce，两条链路都要装（见 02 第 3 节） */
+	/* Pairing record: peer dev_id plus the two pairing nonces, loaded into both links */
 	if (zlrs_store_load_pairing(&pairing) == (int)sizeof(pairing)) {
 		zlrs_link_set_peer(&link_control, pairing.peer_id, pairing.pair_salt, now_ms);
 		zlrs_link_set_peer(&link_data, pairing.peer_id, pairing.pair_salt, now_ms);
@@ -524,9 +524,9 @@ static void load_identity(void)
 	}
 }
 
-/* ---- 超帧 ---------------------------------------------------------------- */
+/* ---- superframe ---------------------------------------------------------- */
 
-/* 泵 RAC 引擎时的等待节拍：够细（不拖时隙），又不至于把 CPU 全烧在轮询上 */
+/* Tick while pumping the RAC engine: fine enough not to stretch a slot, coarse enough not to spin */
 #define ZLRS_RADIO_PUMP_STEP_US 200U
 
 static void run_slot(uint8_t slot)
@@ -534,12 +534,12 @@ static void run_slot(uint8_t slot)
 	const bool data_slot = (slot == ZLRS_SLOT_DATA_A || slot == ZLRS_SLOT_DATA_B);
 	zlrs_link_t *link = data_slot ? &link_data : &link_control;
 	const uint32_t now_ms = zlrs_radio_port_now_ms();
-	/* 法规门（占空比）只作用在 sub-G 那条链路上 */
+	/* The duty-cycle gate only applies to whichever link is on sub-G */
 	const bool on_subg = data_slot ? (CONTROL_ON_SUBG == 0) : (CONTROL_ON_SUBG != 0);
 	const zlrs_radio_req_t *req;
 
 	if (data_slot ? !ZLRS_DATA_ENABLED : !ZLRS_CONTROL_ENABLED) {
-		return; /* 这条链路这次没启用 */
+		return; /* this link is not enabled in this build */
 	}
 
 	req = zlrs_link_slot(link, slot, now_ms);
@@ -548,8 +548,8 @@ static void run_slot(uint8_t slot)
 		return;
 	}
 
-	/* 地区占空比额度用完就让出时隙（按射频失败收尾，链路层下轮再试）；
-	 * 只约束 sub-G 那条链路。 */
+	/* Out of duty budget: give the slot up (finish as a radio failure, the link retries next
+	 * round). Only constrains the sub-G link. */
 	if (req->is_tx && on_subg &&
 	    !zlrs_duty_reserve(&duty, zlrs_airtime_mod_ms(&req->mod, req->size), now_ms)) {
 		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, now_ms);
@@ -562,10 +562,10 @@ static void run_slot(uint8_t slot)
 	}
 
 	/*
-	 * 等事务做完的同时泵 RAC 引擎。官方的 immediate_radio_access 示例就是
-	 * "run_engine + 等事件"这个结构：引擎不推，planner 不会真正去开射频，
-	 * 事务会一直停在 RP_STATUS_TASK_INIT（我们之前就是这样：提交了但一个包都发不出去）。
-	 * 用 done_sem 的短超时当节拍，超了就把整段等待算进时隙预算。
+	 * Pump the RAC engine while waiting for the transaction to finish. The vendor's
+	 * immediate_radio_access sample is exactly "run_engine + wait for event": without it the
+	 * planner never keys the radio and the transaction sits in RP_STATUS_TASK_INIT forever.
+	 * The done_sem timeout doubles as the tick; the whole wait counts against the slot budget.
 	 */
 	{
 		uint32_t waited_us = 0U;
@@ -583,7 +583,7 @@ static void run_slot(uint8_t slot)
 		}
 
 		if (!done) {
-			/* 预算内没回来：放弃事务并给链路层收尾，免得卡住 */
+			/* Not back within budget: abort and finish the link transaction so nothing stalls */
 			zlrs_radio_port_abort();
 			zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0,
 					   zlrs_radio_port_now_ms());
@@ -596,23 +596,23 @@ static void run_slot(uint8_t slot)
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_UPDATE_TRIGGER)
 /*
- * 重启进 MCUboot 的串口恢复：置 boot mode 标志（retained SRAM，重启不丢），
- * MCUboot 读到就停在恢复里等签名镜像。入口只有配置协议的"进恢复"命令与
- * （调试构建的）shell，见 doc/10-security.md 第 10 节。
+ * Reboot into MCUboot serial recovery: set the boot-mode flag (retained SRAM, survives a reset),
+ * which makes MCUboot wait for a signed image. The only entries are the config protocol's
+ * recovery command and the debug shell, see doc/10-security.md 10.
  */
 static void enter_serial_recovery(void)
 {
 	LOG_WRN("update trigger: rebooting into MCUboot serial recovery");
 
-	/* RP2350 的看门狗在 SYSRESETREQ 之后可能还开着，留给 MCUboot 会打断它的
-	 * 串口恢复；bootloader 侧另有一道护栏（lib/bootguard）。 */
+	/* RP2350's watchdog may still be armed after SYSRESETREQ; leaving it for MCUboot would
+	 * cut its serial recovery short (lib/bootguard is the bootloader-side guard). */
 	zlrs_watchdog_disarm();
 
 	if (bootmode_set(BOOT_MODE_TYPE_BOOTLOADER) != 0) {
 		LOG_ERR("boot mode write failed; MCUboot will boot the app again");
 	}
 
-	/* 让日志先出串口，再重启 */
+	/* Let the log reach the UART before resetting */
 	k_msleep(50);
 	sys_reboot(SYS_REBOOT_COLD);
 }
@@ -624,13 +624,13 @@ static void pump_serial(void)
 	uint16_t got;
 
 	if (!ZLRS_DATA_ENABLED) {
-		return; /* 没有数据链路：串口不往上送 */
+		return; /* no data link: nothing to forward from the UART */
 	}
 
 	got = zlrs_data_port_read(chunk, sizeof(chunk));
 
 	if (got > 0U) {
-		(void)zlrs_link_write(&link_data, chunk, got); /* 队列满就丢尾巴 */
+		(void)zlrs_link_write(&link_data, chunk, got); /* queue full: drop the tail */
 
 	}
 }
@@ -639,7 +639,7 @@ static void adopt_pairing(void)
 {
 	zlrs_store_pairing_t pairing;
 
-	/* 配对记录由控制链路产生、数据链路采用；少一条就不用同步 */
+	/* Control produces the pairing record, data adopts it; skip when either link is off */
 	if (!ZLRS_CONTROL_ENABLED || !ZLRS_DATA_ENABLED) {
 		return;
 	}
@@ -647,14 +647,14 @@ static void adopt_pairing(void)
 	if (!link_control.paired) {
 		return;
 	}
-	/* 换绑或同对设备重新配对后，dev_id 或配对 nonce 会变，数据链路要重同步 */
+	/* Re-pairing changes the dev_id or the nonces, so the data link has to re-sync */
 	if (link_data.paired &&
 	    memcmp(link_data.peer_id, link_control.peer_id, ZLRS_DEV_ID_LEN) == 0 &&
 	    memcmp(link_data.pair_salt, link_control.pair_salt, ZLRS_PAIR_SALT_LEN) == 0) {
 		return;
 	}
 
-	/* 控制链路配对成功后，把配对记录同步给数据链路并落盘 */
+	/* After pairing succeeds on the control link, push the record to the data link and store it */
 	zlrs_link_set_peer(&link_data, link_control.peer_id, link_control.pair_salt,
 			   zlrs_radio_port_now_ms());
 	memcpy(pairing.peer_id, link_control.peer_id, ZLRS_DEV_ID_LEN);
@@ -666,14 +666,14 @@ static void adopt_pairing(void)
 }
 
 /*
- * 按键只有一个动作：长按（按住到阈值）触发配对，见 doc/11-ux.md。
- * 没有短按，也没有按键解绑——要换绑就直接长按重新配对，新记录会顶掉旧的。
+ * The button has exactly one action: hold it to the threshold to start pairing (doc/11-ux.md).
+ * No short press and no unpair gesture: hold again to re-pair, the new record replaces the old.
  */
 static void handle_button(uint32_t now_ms)
 {
 	const int pressed = gpio_pin_get_dt(&button);
 
-	/* 上板调试可以关掉按键配对：只剩开机进配置模式那一种用法 */
+	/* Bench builds can drop button pairing; the button then does nothing at all */
 	if (!IS_ENABLED(CONFIG_ZLRS_APP_PAIRING_BUTTON) || !ZLRS_CONTROL_ENABLED) {
 		return;
 	}
@@ -700,29 +700,29 @@ static void handle_button(uint32_t now_ms)
 }
 
 /*
- * 失控值：默认是"油门最低、其余中位"，与 CRSF 端口断开时手台给的值一致。
- * 后面配置协议可以改写它（见 doc/08-firmware.md 第 2 节的配置模式）。
+ * Failsafe values default to throttle low and everything else centred, which is what a
+ * handset sends with its link down. The config protocol can overwrite them (08-firmware 3).
  */
 static void failsafe_init(void)
 {
 	uint16_t channels[ZLRS_CRSF_CHANNEL_COUNT];
 
 	if (zlrs_store_load_failsafe(failsafe_payload) != (int)sizeof(failsafe_payload)) {
-		/* 没配过就用默认值：油门最低、其余中位 */
+		/* Never configured: use the default (throttle low, the rest centred) */
 		zlrs_crsf_channels_default(channels);
 		zlrs_crsf_channels_pack(failsafe_payload, channels);
 	}
 	memcpy(rc_payload, failsafe_payload, sizeof(rc_payload));
 
-	/* TX 侧：这份值会随下一次配对下发给 RX */
+	/* TX side: these values travel to the RX with the next pairing */
 	zlrs_link_set_failsafe(&link_control, failsafe_payload, sizeof(failsafe_payload));
 }
 
-/* TX：手台发来的 RC 帧 → 空口 RC 载荷 */
+/* TX: RC frames from the handset become air-side RC payloads */
 static void crsf_handle_input(uint8_t type, const uint8_t *payload, uint8_t len)
 {
 	if (type != ZLRS_CRSF_TYPE_RC_CHANNELS) {
-		return; /* 手台/飞控的其它帧本设计不消费 */
+		return; /* other handset/flight-controller frames are not consumed by design */
 	}
 	if (len != ZLRS_CRSF_RC_PAYLOAD_LEN) {
 		crsf_bad_input++;
@@ -735,8 +735,8 @@ static void crsf_handle_input(uint8_t type, const uint8_t *payload, uint8_t len)
 }
 
 /*
- * TX：给手台看的链路统计（0x14）。
- * 上行数字来自 RX 的遥测回报，下行数字是 TX 自己测的——两边各自只报自己知道的。
+ * TX: link statistics for the handset (0x14).
+ * Uplink numbers come from RX telemetry, downlink ones are measured here — each side reports
  */
 static void crsf_send_link_stats(const zlrs_tlm_t *tlm)
 {
@@ -764,7 +764,7 @@ static void crsf_send_link_stats(const zlrs_tlm_t *tlm)
 				   sizeof(payload));
 }
 
-/* RX：把收到的 RC 载荷重建成 CRSF 帧发给飞控 */
+/* RX: rebuild the received RC payload into a CRSF frame for the flight controller */
 static void crsf_send_rc(const uint8_t *payload, uint8_t len)
 {
 	if (!ZLRS_CRSF_ENABLED || len != ZLRS_CRSF_RC_PAYLOAD_LEN) {
@@ -774,7 +774,7 @@ static void crsf_send_rc(const uint8_t *payload, uint8_t len)
 	(void)zlrs_crsf_port_write(ZLRS_CRSF_TYPE_RC_CHANNELS, payload, len);
 }
 
-/* RX：把本侧测到的上行质量回报给 TX */
+/* RX: report the uplink quality measured on this side back to the TX */
 static void crsf_report_tlm(uint32_t now_ms)
 {
 	zlrs_tlm_t tlm;
@@ -803,14 +803,14 @@ static void crsf_report_tlm(uint32_t now_ms)
 	zlrs_link_set_tlm(&link_control, payload, sizeof(payload));
 }
 
-/* 主循环里的 CRSF 任务：收帧、TX 侧超时转失控、RX 侧输出与上报 */
+/* CRSF task in the main loop: read frames, TX failsafe timeout, RX output and reporting */
 static void pump_crsf(uint32_t now_ms)
 {
 	uint8_t type = 0U;
 	uint8_t payload[ZLRS_CRSF_PAYLOAD_MAX_LEN];
 	uint8_t len;
 
-	/* 上板调试可以关掉 CRSF 端口：TX 就只发配置好的失控值 */
+	/* Bench builds can drop the CRSF port: the TX then sends only the configured failsafe values */
 	if (!ZLRS_CRSF_ENABLED || !ZLRS_CONTROL_ENABLED) {
 		return;
 	}
@@ -824,7 +824,7 @@ static void pump_crsf(uint32_t now_ms)
 	}
 
 	if (IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX)) {
-		/* 手台拔线/关机：TX 立刻改发预设失控值，不让对端继续跑旧杆量 */
+		/* Handset unplugged or powered off: switch to the preset failsafe values at once */
 		if (rc_input_seen &&
 		    (uint32_t)(now_ms - last_rc_input_ms) >
 			    CONFIG_ZLRS_APP_CRSF_TIMEOUT_MS) {
@@ -834,7 +834,7 @@ static void pump_crsf(uint32_t now_ms)
 			LOG_WRN("CRSF input timeout: sending failsafe values");
 		}
 	} else {
-		/* RX：链路没连上就持续输出失控值，飞控才不会失控 */
+		/* RX: keep emitting failsafe values while unconnected, so the flight controller stays safe */
 		if (link_control.state != ZLRS_STATE_CONNECTED) {
 			crsf_send_rc(failsafe_payload, sizeof(failsafe_payload));
 		}
@@ -864,9 +864,9 @@ static void report(uint32_t now_ms)
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_SUB_BAND_MIX)
 	/*
-	 * 子带混合自适应（doc/09-protocol.md 5.1）：LQ 掉了就把时隙往 sub-G 挪
-	 * （顺序由链路层定：遥测 → 数传 → RC），LQ 好了再挪回来。上限受地区
-	 * 占空比约束（zlrs_region_mix_level），每秒最多动一档。
+	 * Sub-band mixing (doc/09-protocol.md 5.1): when LQ drops, move slots to sub-G (the link
+	 * layer picks the order: telemetry, then data, then RC) and move them back when LQ recovers.
+	 * The region duty cap (zlrs_region_mix_level) bounds it; at most one step per second.
 	 */
 	{
 		static uint32_t mix_last_ms;
@@ -903,8 +903,8 @@ static void report(uint32_t now_ms)
 		tlm_latest.fresh = false;
 
 		/*
-		 * 每秒评估一次：这一秒收到过遥测就用它的 RSSI/LQ 判质量，
-		 * 否则走 valid=false 的超时路径（回到上限）。
+		 * Evaluated once a second: if telemetry arrived, judge quality from its RSSI/LQ,
+		 * otherwise take the valid=false timeout path, which goes back to the ceiling.
 		 */
 		if (zlrs_power_update(&power_ctl, fresh, tlm_latest.rssi_dbm,
 				      tlm_latest.lq, now_ms, &next)) {
@@ -916,8 +916,8 @@ static void report(uint32_t now_ms)
 #endif
 
 	/*
-	 * 每秒四条状态日志：上板调试开着（一眼看出链路在干什么），量产关掉。
-	 * 注意这只影响"打不打日志"——速率档与动态功率的每秒评估在上面，跟它无关。
+	 * The once-a-second status lines: on for bench work (one glance says what the link is doing),
+	 * off in production. This only gates the logging; the 1 Hz rate and power verdicts are separate.
 	 */
 	if (!IS_ENABLED(CONFIG_ZLRS_APP_STATS_LOG)) {
 		return;
@@ -926,7 +926,7 @@ static void report(uint32_t now_ms)
 	LOG_INF("%s ctl=%u tlm=%u data=%u serial_drop=%u",
 		IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? "TX" : "RX", counters.rc_rx,
 		counters.tlm_rx, counters.data_rx, zlrs_data_port_dropped());
-	/* 空口真发出去多少帧：只统计"事务真的完成"的那些（见 lib/link） */
+	/* Frames that really went out: only transactions that completed count (see lib/link) */
 	LOG_INF("air: ctl_tx=%u ctl_rx=%u data_tx=%u data_rx=%u fail=%u+%u",
 		link_control.stats.tx_frames, link_control.stats.rx_frames,
 		link_data.stats.tx_frames, link_data.stats.rx_frames,
@@ -945,21 +945,21 @@ static void report(uint32_t now_ms)
 }
 
 /*
- * 状态灯：把链路状态翻译成 lib/led 的输入，见 doc/11-ux.md。
- * 每 20 Hz 刷一次（zlrs_led_port_update 内部限速）。
+ * Status LED: translate the link state into lib/led inputs, see doc/11-ux.md.
+ * Refreshed at 20 Hz (zlrs_led_port_update rate-limits internally).
  */
 #if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
 static void enter_config_mode(void);
 #endif
 
 /*
- * 致命错误（地区与 SKU 不匹配、熵源自检不过、PSA 起不来……）时的状态：
- * **报警但不锁死**——红灯 + 配置口继续在线，主机仍然能进配置模式、触发串口
- * 恢复、把设备刷回来。法规/安全问题宁可不停发，但要保证"永远刷得动"，
- * 否则一次坏镜像就得拆机按 BOOTSEL。
+ * State on a fatal error (region vs SKU mismatch, entropy self-test failure, PSA init failure):
+ * alarm but stay reachable. Red LED, config port still up, so the host can enter config mode,
+ * trigger serial recovery and reflash. A regulatory or security problem is worth staying off
+ * the air for, but the device must stay flashable — otherwise one bad image means BOOTSEL.
  *
- * 例外：升级后还没被上位机确认过的镜像（test 镜像）出致命错误时直接复位，
- * 让 MCUboot 回滚到上一版——故障态再"可刷"也不该赖着一版坏固件不放。
+ * Exception: a test image (not yet confirmed by the host) resets on a fatal error so that
+ * MCUboot rolls back — a flashable fault state is no reason to keep a broken build running.
  */
 static void fault_loop(void)
 {
@@ -967,7 +967,7 @@ static void fault_loop(void)
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_MCUBOOT_CONFIRM)
 	if (!boot_is_img_confirmed()) {
-		/* 留 2 秒给主机看日志/接手，然后复位回滚 */
+		/* Give the host 2 s to read the log or step in, then reset to roll back */
 		LOG_ERR("fault on unconfirmed image: rebooting to roll back");
 		k_msleep(2000);
 		sys_reboot(SYS_REBOOT_COLD);
@@ -975,10 +975,10 @@ static void fault_loop(void)
 #endif
 
 	memset(&in, 0, sizeof(in));
-	in.failsafe = true; /* 红灯快闪 */
+	in.failsafe = true; /* fast red blink */
 	in.link_state = ZLRS_STATE_SEARCHING;
 	in.role_tx = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX);
-	in.uptime_ms = 60000U; /* 越过开机自检窗口，立刻进告警 */
+	in.uptime_ms = 60000U; /* past the boot self-test window, so the alarm shows at once */
 
 	LOG_ERR("fault state: not transmitting; config port stays available for flashing");
 
@@ -987,7 +987,7 @@ static void fault_loop(void)
 		zlrs_led_port_update(&in, k_uptime_get_32());
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
-		/* 配置口活着：进配置模式、`recovery` 命令、重新刷机都还能走 */
+		/* Config port alive: config mode, the recovery command and reflashing all still work */
 		if (zlrs_config_port_poll_enter()) {
 			enter_config_mode();
 		}
@@ -998,8 +998,8 @@ static void fault_loop(void)
 }
 
 /*
- * PSA provider 必须在第一次导入钥匙之前初始化；失败就别收发——KDF 与每包
- * tag 都靠它，闭着眼上空中没有意义。
+ * The PSA provider must be initialised before the first key import; on failure stay off the
+ * air: the KDF and the per-frame tags depend on it, so transmitting blind is pointless.
  */
 static void crypto_init(void)
 {
@@ -1033,14 +1033,14 @@ static void led_tick(uint32_t now_ms)
 	in.lq_percent = link_control.stats.lq_percent;
 	in.uptime_ms = now_ms;
 	in.drop_recent = (drops > 0U) && (uint32_t)(now_ms - led_drop_ms) < 1000U;
-	/* 发射端没有遥控器输入时就是在发失控值；接收端未连接时在往飞控输出失控值 */
+	/* TX without RC input sends failsafe values; an unconnected RX outputs them to the FC */
 	if (link_control.state == ZLRS_STATE_CONNECTED) {
 		ever_connected = true;
 	}
 	/*
-	 * 失控保护只在"连上过"之后才有意义：发射端连上过、但从遥控器收不到通道数据
-	 * （在发失控值），或接收端连上过又掉线（在往飞控输出失控值）。从没连上过的
-	 * 设备按普通链路状态显示——未配置紫、未配对黄、搜索青，别用红灯盖掉该做的动作。
+	 * Failsafe only means something after a first connection: the TX was connected and then lost
+	 * the handset (sending failsafe), or the RX was connected and dropped (outputting failsafe).
+	 * A device that never connected shows its normal state (purple/yellow/cyan), never red.
 	 */
 	in.failsafe = ever_connected &&
 		      (IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX)
@@ -1051,10 +1051,10 @@ static void led_tick(uint32_t now_ms)
 }
 
 /*
- * 镜像确认：只有"上位机真的连上来、发了一条配置命令、并且收到了应答"才算这一版
- * 升级成功——test/revert 的判据只有这一位。升级走 test 语义，新镜像等不到上位机
- * （或干脆起不来、被看门狗复位）时，复位就让 MCUboot 回滚到上一版；没有上一版
- * 就停在串口恢复里，照样能刷。见 doc/08-firmware.md 第 6 节。
+ * Image confirmation: an upgrade counts as successful only when the host really connected,
+ * sent the explicit confirm command and got an answer — that flag is the whole test/revert
+ * verdict. Upgrades run with test semantics: if the host never confirms, or the image never
+ * comes up at all, the reset makes MCUboot roll back. See doc/08-firmware.md 6.
  */
 static void confirm_image(void)
 {
@@ -1065,7 +1065,7 @@ static void confirm_image(void)
 		return;
 	}
 
-	/* 已经确认过（这次是正常启动，不是升级）：没事情做 */
+	/* Already confirmed (an ordinary boot, not an upgrade): nothing to do */
 	if (boot_is_img_confirmed()) {
 		confirmed = true;
 		return;
@@ -1080,7 +1080,7 @@ static void confirm_image(void)
 			LOG_ERR("image confirm failed; MCUboot will revert on next reset");
 		}
 	} else if (k_uptime_get_32() >= (uint32_t)CONFIG_ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS) {
-		/* 这一版没被上位机确认过：别骑着它不放，复位让 MCUboot 回滚 */
+		/* Never confirmed by the host: reset and let MCUboot roll back instead of clinging on */
 		LOG_ERR("upgrade not confirmed by host: rebooting to roll back");
 		sys_reboot(SYS_REBOOT_COLD);
 	}
@@ -1089,16 +1089,16 @@ static void confirm_image(void)
 }
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
-/* shell 入口只置这个标志：会话要跑在主循环里（超帧停、数据口不被透传抢），
- * 见主循环里的处理 */
+/* The shell entry only sets this flag: the session runs in the main loop (superframe stopped,
+ * data port not stolen by the passthrough), see the main loop. */
 static atomic_t config_request;
 
-/* 跑一段配置会话（EXIT 或空闲超时结束）后继续正常模式。三个入口共用 */
+/* Run one config session (ends on EXIT or idle timeout), then resume normal mode. Shared. */
 static void enter_config_mode(void)
 {
 	LOG_WRN("entering config mode");
 
-	/* 0 = EXIT，1 = 超时，-1 = 没有可用数据口：日志里要能分辨 */
+	/* 0 = EXIT, 1 = timeout, -1 = no usable port: the log has to tell them apart */
 	{
 		const int rc = zlrs_config_mode_run(&link_control, failsafe_payload);
 
@@ -1112,7 +1112,7 @@ static void enter_config_mode(void)
 	LOG_INF("config mode done, back to normal");
 }
 
-/* ---- 配置协议要动的应用侧动作 ------------------------------------------ */
+/* ---- application-side actions the config protocol triggers ----------------- */
 
 static int cfg_op_save_region(uint8_t id)
 {
@@ -1122,7 +1122,7 @@ static int cfg_op_save_region(uint8_t id)
 		return ZLRS_CFG_E_PARAM;
 	}
 
-	/* 地区要的 sub-G 硬件必须与板子一致（-5 = SKU 不匹配），不匹配直接拒绝 */
+	/* The region's sub-G hardware must match the board (-5 = SKU mismatch); refuse otherwise */
 	if (zlrs_region_validate(want, ZLRS_SUBG_BAND, tx_power_dbm) == -5) {
 		return ZLRS_CFG_E_PARAM;
 	}
@@ -1176,7 +1176,7 @@ static int cfg_op_factory_reset(void)
 #if IS_ENABLED(CONFIG_ZLRS_APP_UPDATE_TRIGGER)
 static int cfg_op_recovery(void)
 {
-	enter_serial_recovery(); /* 不会返回 */
+	enter_serial_recovery(); /* does not return */
 
 	return ZLRS_CFG_OK;
 }
@@ -1232,15 +1232,15 @@ static int cmd_config(const struct shell *sh, size_t argc, char **argv)
 	ARG_UNUSED(argv);
 
 	atomic_set(&config_request, 1);
-	shell_print(sh, "已请求配置模式：配置口跑配置协议，EXIT 回来");
+	shell_print(sh, "config mode requested: the config CDC speaks the protocol, EXIT returns");
 
 	return 0;
 }
 #endif
 
 /*
- * 数据口两块端点的状态：上板调试用。端点二选一在这个板上被坑过两次——
- * 先看 DTR（usbipd 上送不到）、后加"收到过主机字节"。这条命令一次把判据摊开。
+ * Data port endpoint state, for bench debugging. Picking an endpoint bit us twice on this
+ * board: first DTR (never reaches us over usbipd), then "host bytes seen". This dumps both.
  */
 static int cmd_ports(const struct shell *sh, size_t argc, char **argv)
 {
@@ -1251,7 +1251,7 @@ static int cmd_ports(const struct shell *sh, size_t argc, char **argv)
 	ARG_UNUSED(argv);
 
 	if (count == 0U) {
-		shell_print(sh, "数据口没有可用端点");
+		shell_print(sh, "data port has no usable endpoint");
 		return 0;
 	}
 
@@ -1270,8 +1270,8 @@ static int cmd_recovery(const struct shell *sh, size_t argc, char **argv)
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
 
-	shell_print(sh, "重启进 MCUboot 串口恢复");
-	enter_serial_recovery(); /* 不会返回 */
+	shell_print(sh, "rebooting into MCUboot serial recovery");
+	enter_serial_recovery(); /* does not return */
 
 	return 0;
 }
@@ -1296,8 +1296,8 @@ static int cmd_entropy(const struct shell *sh, size_t argc, char **argv)
 
 #if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
 /*
- * 调试用：把 MCUboot 眼里的镜像状态打出来。升级/回滚出问题时先看这个——
- * confirmed 为真表示 MCUboot 认为这一版已经定下来了（不会再回滚）。
+ * Debug helper: dump the image state as MCUboot sees it. First thing to look at when an
+ * upgrade or rollback misbehaves; confirmed=1 means MCUboot has pinned this build for good.
  */
 static void mcuboot_dump_slot(const struct shell *sh, const char *name, uint8_t area_id)
 {
@@ -1305,16 +1305,16 @@ static void mcuboot_dump_slot(const struct shell *sh, const char *name, uint8_t 
 	static uint8_t sector[4096];
 
 	if (flash_area_open(area_id, &fa) != 0) {
-		shell_print(sh, "%s: 打不开 flash area %u", name, area_id);
+		shell_print(sh, "%s: cannot open flash area %u", name, area_id);
 		return;
 	}
 
 	/*
-	 * MCUboot 的 trailer 落在槽的最后一个扇区里。整扇区扫一遍，把非 0xFF 的
-	 * 位置和值打出来——这样它把 magic / image_ok / copy_done 写在哪一目了然。
+	 * MCUboot's trailer lives in the last sector of the slot. Scan for non-0xFF bytes so that the
+	 * positions and values show up, which makes magic / image_ok / copy_done obvious.
 	 */
-	/* 状态可能不在最后一个扇区：从槽尾往前扫 16 个扇区，只列非 0xFF 的位置 */
-	shell_print(sh, "%s：从槽尾往前 64 KB 里非 0xFF 的字节（相对槽尾偏移）:", name);
+	/* State may not sit in the last sector: scan 16 sectors back, list the non-0xFF bytes */
+	shell_print(sh, "%s: non-0xFF bytes in the last 64 KB (offset from the slot end):", name);
 
 	uint8_t shown = 0U;
 
@@ -1322,7 +1322,7 @@ static void mcuboot_dump_slot(const struct shell *sh, const char *name, uint8_t 
 		const uint32_t off = fa->fa_size - back * sizeof(sector);
 
 		if (flash_area_read(fa, off, sector, sizeof(sector)) != 0) {
-			shell_print(sh, "  读 0x%05x 失败", off);
+			shell_print(sh, "  read at 0x%05x failed", off);
 			break;
 		}
 
@@ -1336,7 +1336,7 @@ static void mcuboot_dump_slot(const struct shell *sh, const char *name, uint8_t 
 	}
 
 	if (shown == 0U) {
-		shell_print(sh, "  （这 64 KB 里没有任何写入痕迹）");
+		shell_print(sh, "  (no writes found in these 64 KB)");
 	}
 
 	flash_area_close(fa);
@@ -1348,7 +1348,7 @@ static int cmd_mcuboot(const struct shell *sh, size_t argc, char **argv)
 	ARG_UNUSED(argv);
 
 	shell_print(sh, "active slot : %u", boot_fetch_active_slot());
-	/* VTOR 指到哪个槽，就是真正在哪个槽里跑（跟 MCUboot 报的 active slot 对照看） */
+	/* VTOR points at the slot really running (cross-check against MCUboot's active slot) */
 	shell_print(sh, "VTOR        : 0x%08x (slot0=0x%08x, slot1=0x%08x)",
 		    (unsigned int)SCB->VTOR,
 		    (unsigned int)(0x10000000 + PARTITION_OFFSET(slot0_partition)),
@@ -1366,30 +1366,30 @@ static int cmd_mcuboot(const struct shell *sh, size_t argc, char **argv)
 
 SHELL_STATIC_SUBCMD_SET_CREATE(
 	zlrs_cmds,
-	SHELL_CMD(status, NULL, "角色 / SKU / 地区 / 链路状态", cmd_status),
-	SHELL_CMD(ports, NULL, "数据口两块端点的状态", cmd_ports),
+	SHELL_CMD(status, NULL, "role / SKU / region / link state", cmd_status),
+	SHELL_CMD(ports, NULL, "state of both data port endpoints", cmd_ports),
 #if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
-	SHELL_CMD(config, NULL, "进配置模式（EXIT 回正常）", cmd_config),
+	SHELL_CMD(config, NULL, "enter config mode (EXIT returns)", cmd_config),
 #endif
 #if IS_ENABLED(CONFIG_ZLRS_APP_UPDATE_TRIGGER)
-	SHELL_CMD(recovery, NULL, "重启进 MCUboot 串口恢复", cmd_recovery),
+	SHELL_CMD(recovery, NULL, "reboot into MCUboot serial recovery", cmd_recovery),
 #endif
 #if IS_ENABLED(CONFIG_ZLRS_APP_ENTROPY_TRNG)
-	SHELL_CMD(entropy, NULL, "熵源自检（TRNG 读两块 32 字节）", cmd_entropy),
+	SHELL_CMD(entropy, NULL, "entropy self-test (two 32-byte TRNG blocks)", cmd_entropy),
 #endif
 #if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
-	SHELL_CMD(mcuboot, NULL, "MCUboot 眼里的镜像状态（调试）", cmd_mcuboot),
+	SHELL_CMD(mcuboot, NULL, "image state as MCUboot sees it (debug)", cmd_mcuboot),
 #endif
 	SHELL_SUBCMD_SET_END);
 
-SHELL_CMD_REGISTER(zlrs, &zlrs_cmds, "zlrs 调试命令", NULL);
+SHELL_CMD_REGISTER(zlrs, &zlrs_cmds, "zlrs debug commands", NULL);
 #endif /* CONFIG_ZLRS_APP_SHELL */
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_ENTROPY_TRNG)
 /*
- * 熵源自检：连续读两块 32 字节，必须成功且互不相同。
- * 失败就报错——**不做软件兜底**：硬件熵源坏了就是坏了，宁可停机也不用假熵，
- * 否则密钥、设备标识、配对全都建立在"看起来能跑"的随机数上。
+ * Entropy self-test: read two 32-byte blocks in a row; both must succeed and differ.
+ * On failure, report it — no software fallback. A broken hardware entropy source is broken;
+ * keys, device id and pairing must not rest on random numbers that merely look fine.
  */
 static int entropy_selftest(void)
 {
@@ -1421,15 +1421,15 @@ static int entropy_selftest(void)
 
 int main(void)
 {
-	/* 上板调试档：USB 已就绪，先等主机打开控制台端口，否则接下来的 panic
-	 * 日志会打在没人打开的口上。生产构建为 0 */
+	/* Bench switch: USB is up, so wait for the host to open the console port — otherwise any
+	 * panic log lands on a port nobody has open. Production builds use 0. */
 	if (CONFIG_ZLRS_APP_BOOT_DELAY_MS > 0) {
 		k_msleep(CONFIG_ZLRS_APP_BOOT_DELAY_MS);
 	}
 
 	LOG_INF("zlrs %s", APP_VERSION_STRING);
 
-	/* 上板调试档：这些开关关掉以后链路不再是生产形态，开机就喊一声 */
+	/* Bench switches: with these off the link is no longer production-shaped, so say so at boot */
 	if (!IS_ENABLED(CONFIG_ZLRS_APP_SECURITY_PROFILE_P1)) {
 		LOG_WRN("bring-up: security profile P0, frames carry no tag");
 	}
@@ -1466,9 +1466,9 @@ int main(void)
 	}
 
 	/*
-	 * NVS 先起来：地区、功率、密钥、配对、失控值、波特率都从它读。挂了不至于
-	 * 不能跑，但必须说清楚后果：读不出来也存不下去，设备会停在"未配置"
-	 * （不发射频）。store 自己也会打一条错误。
+	 * Bring NVS up first: region, power, keys, pairing, failsafe values and baud all come from
+	 * it. A broken NVS is survivable, but the consequences are worth spelling out: nothing can
+	 * be read or written, so the device stays unconfigured and off the air. store logs its own error.
 	 */
 	if (zlrs_store_init() != 0) {
 		LOG_ERR("store unavailable: keys, pairing and failsafe will not persist");
@@ -1476,23 +1476,23 @@ int main(void)
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
 	/*
-	 * 配置口尽早起来：后面任何一步判定致命（熵源、地区/SKU、PSA）都会进
-	 * fault_loop，那条路径要靠配置口保持"刷得动"。
+	 * Bring the config port up early: any later fatal step (entropy, region/SKU, PSA) lands in
+	 * fault_loop, and that path stays flashable only while the config port is alive.
 	 */
 	(void)zlrs_config_port_init();
 	zlrs_config_set_ops(&cfg_ops);
 #endif
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_ENTROPY_TRNG)
-	/* 熵源坏了就别往下走：后面的密钥生成与设备标识全依赖它 */
+	/* A dead entropy source stops the boot: key generation and the device id depend on it */
 	if (entropy_selftest() != 0) {
 		fault_loop();
 	}
 #endif
 
 	/*
-	 * 地区与功率上限是运行期参数（配置协议可写）：NVS 里有就用它，没有就用
-	 * 编译期默认值。写入的取值在配置回调里校验（见 cfg_op_save_region）。
+	 * Region and power ceiling are runtime parameters (the config protocol writes them): use the
+	 * stored value when present, the build-time default otherwise. cfg_op_save_region validates.
 	 */
 	region_id = CONFIG_ZLRS_APP_REGION;
 	tx_power_dbm = CONFIG_ZLRS_APP_TX_POWER_DBM;
@@ -1512,14 +1512,14 @@ int main(void)
 		LOG_ERR("unknown region %d", region_id);
 		return 0;
 	}
-	/* 上板第一眼要看的两件事：这块板子是哪个 SKU、跑的是哪个地区 */
+	/* The first two things to look at on the bench: which SKU this board is, which region it runs */
 	LOG_INF("board: sub-G %s (band %d), region %s",
 		ZLRS_SUBG_BAND == ZLRS_BAND_SUBG_LF ? "LF" : "HF", ZLRS_SUBG_BAND,
 		region->name);
 	{
 		const int rc = zlrs_region_validate(region, ZLRS_SUBG_BAND, tx_power_dbm);
 
-		/* -5：地区要的 sub-G 硬件跟这块板子不是一回事 → 不发射频 */
+		/* -5: the region wants different sub-G hardware than this board has, so stay off the air */
 		if (rc == -5) {
 			LOG_ERR("region %s needs another sub-G sku (board band %d)",
 				region->name, ZLRS_SUBG_BAND);
@@ -1537,7 +1537,7 @@ int main(void)
 		(void)zlrs_led_port_init();
 	}
 
-	/* 等 USP/RAC 线程就绪，再初始化 RAC（见 doc/07-architecture.md 第 6 节） */
+	/* Wait for the USP/RAC thread, then init RAC (see doc/07-architecture.md 6) */
 #if IS_ENABLED(CONFIG_ZLRS_APP_RADIO)
 	SMTC_SW_PLATFORM_INIT();
 	SMTC_SW_PLATFORM_VOID(smtc_rac_init());
@@ -1549,7 +1549,7 @@ int main(void)
 	load_identity();
 	failsafe_init();
 
-	/* 数据口必须先于配置模式初始化：按键入口就在下面，会话直接读数据口 */
+	/* The data port must come up before config mode: the session reads that port directly */
 	{
 		uint32_t baud = 0U;
 
@@ -1580,8 +1580,8 @@ int main(void)
 		IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? "TX" : "RX");
 
 	/*
-	 * 初始化到这里算跑完了（端口、NVS、链路、USB 都起来了）。镜像确认不在这里
-	 * 做：升级后要等上位机真的发一条命令过来才算数（见 confirm_image）。
+	 * Init is done at this point (ports, NVS, links, USB). Image confirmation does not happen
+	 * here: after an upgrade it waits for the host's explicit confirm (see confirm_image).
 	 */
 
 	for (;;) {
@@ -1591,21 +1591,21 @@ int main(void)
 		confirm_image();
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
-		/* 进配置模式的三个入口都收敛到这里：配置口命令、shell、调试魔数。
-		 * 会话期间超帧暂停、射频停、数据口字节丢弃。 */
+		/* All config-mode entries converge here: config port command, shell, debug magic.
+		 * During the session the superframe pauses, the radio stops, the data port drops bytes. */
 		if (zlrs_config_port_poll_enter() || atomic_cas(&config_request, 1, 0)) {
 			enter_config_mode();
 		}
 #endif
 
 		/*
-		 * 时间戳必须在配置会话之后重新取：会话里发生的事（配置口触发配对）
-		 * 用的时钟比进会话前取的那个"现在"晚，差值是负的，无符号相减直接
-		 * 下溢成一个巨大的数——配对窗口会在第一次 tick 就被判成过期。
+		 * The timestamp must be re-read after a config session. Anything stamped inside the session
+		 * (a pairing triggered from the config port) is later than the "now" taken before it, so
+		 * unsigned subtraction underflows and the pairing window looks long expired.
 		 */
 		const uint32_t now_ms = zlrs_radio_port_now_ms();
 
-		/* 四个时隙平分一帧：超预算的事务由 run_slot 放弃并收尾，不拖长整帧 */
+		/* Four slots share a frame: over-budget transactions are dropped, they do not stretch it */
 		run_slot(ZLRS_SLOT_CTL_DOWN);
 		run_slot(ZLRS_SLOT_CTL_UP);
 		run_slot(ZLRS_SLOT_DATA_A);
