@@ -72,7 +72,7 @@ After pairing, this device cannot hear other pairs at the physical layer, spendi
 - `tag` = HMAC-SHA256 truncated to 4 B over `header` + `seq` + `payload`; the key is directional, see [10-security](10-security.md) 3.
 - HMAC-SHA256 keeps the identity layer on a single primitive: PBKDF2, HKDF and the MAC all sit in one function family.
 - **P2 comes last**: encryption is implemented once everything else is done.
-- The profile is runtime configuration (`set-profile p0|p1|p2`, stored in NVS; the build carries only the default, and `P0` has no tag so a production image refuses it), and the profile declared in `SYNC` has to match the local one.
+- The profile is configuration (the build carries only the default), a production image refuses `P0`, and the profile declared in `SYNC` has to match the local one.
 
 ### 2.4 Control payload and rate tiers
 

@@ -37,7 +37,7 @@ Every ELRS figure comes from its official documentation and source, linked at th
 | Regulation | compile-time presets | four runtime region tables plus radio-design checks, duty accounting and rate/frame-rate clamping |
 | Peripheral integration | Serial VTX, Team Racing, Trainer, Sentinel, Backpack, BLE | none |
 | Dual-band use | Gemini dual-transmit diversity; Xrossband dual-band redundancy (**two radios transmitting at once**) | one radio **hops across sub-bands**: the two bands form one link mixed by `r`, neither redundant nor diversity |
-| Firmware and roles | separate TX and RX targets | one firmware; the role is runtime configuration (`set-role`), the build only carries the default |
+| Firmware and roles | separate TX and RX targets | one firmware; the role is configuration, the build only carries the default |
 
 ## Gaps, in priority order
 
