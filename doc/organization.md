@@ -169,8 +169,7 @@ The configuration protocol grows three commands to match section 4:
 | host tests with ASan + UBSan | CI, `build.yml` | protocol and link regressions |
 | script self-tests | CI, `build.yml` | framing drift between tools and firmware |
 | build matrix: both sub-G SKUs × plain, bench switches, single-link cuts, LoRa, racing, MCUboot | CI, `firmware.yml` | Kconfig and devicetree combinations that do not compile |
-| `core/` contains no `#include <zephyr/` | CI | platform code leaking into the pure C core |
-| `app/` contains no `CONFIG_BOARD_*` | CI | software branching on board identity |
+| tree gates: `core/` has no `#include <zephyr/`, `app/` names no board, shipped configs carry no `ZLRS_APP_DEBUG_*` | CI, `tools/gates.sh` (also runnable by hand) | platform code leaking into the pure C core; software branching on board identity; a debug-only switch shipping in an image |
 | capability line versus board README | review | hardware that is wired but not declared, or the reverse |
 
 ## 7. Adding hardware

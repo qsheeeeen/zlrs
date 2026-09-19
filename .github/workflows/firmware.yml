@@ -72,6 +72,16 @@ jobs:
           . zlrs/tools/zephyr-env.sh
           ZLRS_BOARD=rp2350_zero_core2021/rp2350a/m33/lf zlrs-build -d build-lf
 
+      # Debug image: the overlay is the only place that sets CONFIG_ZLRS_APP_DEBUG, so this step
+      # is what keeps the debug-only options (shell, stats log, boot delay) compiling.
+      - name: build (debug overlay, hf sku)
+        run: |
+          set -x
+          . zlrs/tools/zephyr-env.sh
+          zlrs-build -d build-debug -- \
+            -DEXTRA_CONF_FILE="$ZLRS_REPO_ROOT/app/debug.conf" \
+            -DDTC_OVERLAY_FILE="$ZLRS_REPO_ROOT/app/debug.overlay"
+
       # Bench profile: turn every complex feature off so the trimmed combination still compiles
       - name: build (bring-up toggles off, both skus)
         run: |

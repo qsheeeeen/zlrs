@@ -30,6 +30,14 @@ jobs:
           sudo apt-get install -y --no-install-recommends clang-format
           git ls-files '*.c' '*.h' | xargs clang-format --dry-run --Werror
 
+  gates:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: tree gates
+        run: tools/gates.sh
+
   host-tests:
     runs-on: ubuntu-24.04
     timeout-minutes: 15

@@ -29,6 +29,22 @@ This document holds **to-dos and acceptance criteria** only. Finished work gets 
 
 - **P2 encryption profile**: implement once everything else is done (AES-CTR with the MAC covering the ciphertext).
 
+## Pending defaults
+
+Some knobs are on or off today only because they have not been accepted on hardware yet — "what the system will do" is already decided, "proven on a board" is not. Each row is that debt: the knob, its default today, what has to be measured, and what happens afterwards. This is the only place where "not tested yet" is written down; the design documents describe the final shape and [12-debug](12-debug.md) owns the bench switches themselves.
+
+| Knob | Default today | What is missing | Afterwards |
+| --- | --- | --- | --- |
+| `ZLRS_APP_RATE_ADAPT` | off | per-tier packet error rate and SNR thresholds, measured with a second module | on, thresholds in the tier table |
+| `ZLRS_APP_WATCHDOG` | off | a long run on hardware without false resets (PBKDF2 inside config mode is the slowest feed interval) | on |
+| `ZLRS_APP_DATA_ARQ` | on | throughput and latency on hardware; the ack can shrink to one header bit once the RX always has a frame to ride along | stays on, window sized from measurements |
+| `ZLRS_APP_DYNAMIC_POWER` | on | thresholds and hysteresis from measured RSSI/SNR | stays on, thresholds replaced |
+| `ZLRS_APP_SUB_BAND_MIX` | on | switching cost and interference benefit, with two modules | stays on |
+| `ZLRS_APP_FHSS`, `ZLRS_APP_SESSION_HANDSHAKE`, `ZLRS_APP_TELEMETRY` | on | the first two-module session (pairing, session, telemetry round trip) | stay on |
+| role TX/RX and the security profile | compile time, P1 | `set-role` / `set-profile` in the config protocol ([organization](organization.md) 4) | runtime, stored in NVS |
+
+The bench switches that exist to isolate these (`…=n` forms, P0, `RADIO=n`, one link at a time) are *not* debt: they are part of the product's shape and stay, see [12-debug](12-debug.md) 3.
+
 ## Acceptance criteria
 
 | Item | What counts as passing |
