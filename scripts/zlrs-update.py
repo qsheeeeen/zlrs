@@ -159,7 +159,7 @@ def config_probe_command(port: str) -> list[str]:
 
 def config_subcmd_command(port: str, subcmd: str) -> list[str]:
     return [sys.executable, str(repo_root() / "scripts" / "zlrs-config.py"),
-            "--port", port, subcmd]
+            "--port", port, "--timeout", "3", subcmd]
 
 
 def run_config_subcmd(port: str, subcmd: str) -> tuple[int, str]:
@@ -167,6 +167,24 @@ def run_config_subcmd(port: str, subcmd: str) -> tuple[int, str]:
     result = subprocess.run(config_subcmd_command(port, subcmd), capture_output=True,
                             text=True, check=False)
     return result.returncode, f"{result.stdout or ''}{result.stderr or ''}"
+
+
+def run_config_subcmd_retry(port: str, subcmd: str, attempts: int = 5,
+                            delay: float = 2.0) -> tuple[int, str]:
+    """
+    重试版：新镜像刚起来时主循环可能还没开始服务配置会话（射频初始化还在跑），
+    头一两次查询会超时——那是正常的，不是"跑的不是新版"。
+    """
+    rc, out = 1, ""
+
+    for i in range(attempts):
+        rc, out = run_config_subcmd(port, subcmd)
+        if rc == 0:
+            return rc, out
+        if i + 1 < attempts:
+            time.sleep(delay)
+
+    return rc, out
 
 
 def parse_hex_hash(out: str) -> str | None:
@@ -377,7 +395,7 @@ def main() -> int:
 
     # 5. 核对跑的是不是刚传的那一版：比对镜像哈希（版本串可能一样，哈希一定不一样）
     want_hash = image_hash_of(image)
-    rc, out = run_config_subcmd(app_port, "image-hash")
+    rc, out = run_config_subcmd_retry(app_port, "image-hash")
     got_hash = parse_hex_hash(out) if rc == 0 else None
 
     print(f"[5/6] 核对运行的镜像：期望 {want_hash or '?'}，设备报 {got_hash or '?'}")
@@ -394,7 +412,7 @@ def main() -> int:
         print("[6/6] 跳过确认（--no-confirm-check）：这一版不会保留，会回滚")
         return 0
 
-    rc, out = run_config_subcmd(app_port, "confirm")
+    rc, out = run_config_subcmd_retry(app_port, "confirm")
     if out.strip():
         print(out.rstrip())
 
@@ -402,7 +420,7 @@ def main() -> int:
         print("确认失败：设备没有接受，这一版会回滚", file=sys.stderr)
         return 1
 
-    rc, out = run_config_subcmd(app_port, "build")
+    rc, out = run_config_subcmd_retry(app_port, "build")
     print(f"    升级成功：镜像已确认{('，固件 ' + out.strip()) if rc == 0 else ''}")
     return 0
 
