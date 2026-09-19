@@ -97,15 +97,15 @@ The vendor sample (Semtech's `packet_error_rate_flrc`) runs on this board as-is,
 ```
 app/                  Zephyr application: USP/RAC port, ports, superframe main loop, NVS storage
 boards/zlrs/          board definitions (RP2350-Zero plus Core2021)
-lib/proto/            protocol core: framing, reassembly, hop tables, key derivation and tags,
+core/proto/            protocol core: framing, reassembly, hop tables, key derivation and tags,
                                             telemetry payload, modulation tiers and the airtime model (FLRC / LoRa)
-lib/link/             link layer (pure C): state machine, pairing and sessions, superframe slots,
+core/link/             link layer (pure C): state machine, pairing and sessions, superframe slots,
                                             the radio abstraction, reliable retransmit and rate adaptation
-lib/crsf/             CRSF codec (pure C)
-lib/config/           config protocol (pure C): framing plus command dispatch
-lib/region/           region layer (pure C): channel plans, power ceilings, duty accounting
-lib/led/              status LED engine (pure C)
-lib/usb/              USB device stack (usbd context plus every CDC in devicetree)
+core/crsf/             CRSF codec (pure C)
+core/config/           config protocol (pure C): framing plus command dispatch
+core/region/           region layer (pure C): channel plans, power ceilings, duty accounting
+core/led/              status LED engine (pure C)
+subsys/usb/              USB device stack (usbd context plus every CDC in devicetree)
 include/zlrs/         public headers
 tests/host/           host tests and the two-node simulation
 scripts/              workspace, config, update and self-test scripts
@@ -113,7 +113,7 @@ docs/                  design documents (index in docs/README.md)
 zephyr/module.yml     this repository as a Zephyr module
 ```
 
-`lib/` and `include/` depend on no Zephyr, so the protocol core and link layer compile the same sources on the host; the target only adds a radio port layer. Everything on the radio side (SPI timing, calibration, band selection, transfer scheduling) belongs to `usp_zephyr`.
+`core/` and `include/` depend on no Zephyr, so the protocol core and link layer compile the same sources on the host; the target only adds a radio port layer. Everything on the radio side (SPI timing, calibration, band selection, transfer scheduling) belongs to `usp_zephyr`.
 
 ## Documentation
 
@@ -150,7 +150,7 @@ Index and reading paths: [docs/README.md](docs/README.md). Four parts: product d
 2. **New hardware means devicetree only**: the application knows aliases (`lora-transceiver`, `zlrs-crsf-uart`/`-cdc`, `zlrs-data-uart`/`-cdc`, `zlrs-button`, `zlrs-led`) and a missing alias trims that port automatically.
 3. **The toolchain is the Zephyr SDK**: a distro `arm-none-eabi-gcc` trips a static assertion.
 4. **The image may not grow past its code partition**: overrunning it is a build error.
-5. **Host tests need no workspace**: `tests/host` compiles the same sources from `lib/`.
+5. **Host tests need no workspace**: `tests/host` compiles the same sources from `core/`.
 
 ## Tests
 

@@ -73,24 +73,24 @@ Rough numbers: 40% of a 6.67 ms frame for the 2.4G data link is about 650 bytes 
 
 ```
 include/zlrs/proto/   protocol core headers
-lib/proto/            protocol core: framing, reassembly, FHSS hop tables,
+core/proto/            protocol core: framing, reassembly, FHSS hop tables,
                       key derivation and tags. On target the crypto primitives go
-                      through PSA (lib/proto/crypto_psa.c); the host tests use
+                      through PSA (core/proto/crypto_psa.c); the host tests use
                       an equivalent pure C implementation (tests/host/crypto_soft.c)
-lib/link/             link layer: sessions and pairing, key derivation and tags,
+core/link/             link layer: sessions and pairing, key derivation and tags,
                       frames into RAC transactions, reliable retransmit and rate adaptation
-lib/crsf/             CRSF codec: RC channel frames and the link statistics frame
-lib/config/           config protocol: framing and dispatch (storage goes to the app by callback)
-lib/region/           region layer: channel plans, power ceilings, duty accounting
-lib/led/              status LED engine: state to colour and cadence
-lib/usb/              USB device stack: usbd context plus every CDC in devicetree
+core/crsf/             CRSF codec: RC channel frames and the link statistics frame
+core/config/           config protocol: framing and dispatch (storage goes to the app by callback)
+core/region/           region layer: channel plans, power ceilings, duty accounting
+core/led/              status LED engine: state to colour and cadence
+subsys/usb/              USB device stack: usbd context plus every CDC in devicetree
 app/                  Zephyr application: threads and superframe, ports, radio port, button, storage
 tests/host/           host tests (no Zephyr dependency)
 ```
 
-The rule: the protocol core and the link layer both compile and run on the host (the same `lib/` sources); `lib/link/` only depends on the radio abstraction while `app/` depends on Zephyr and USP. Everything on the radio side (SPI timing, calibration, band selection, transfer scheduling) lives in `usp_zephyr`.
+The rule: the protocol core and the link layer both compile and run on the host (the same `core/` sources); `core/link/` only depends on the radio abstraction while `app/` depends on Zephyr and USP. Everything on the radio side (SPI timing, calibration, band selection, transfer scheduling) lives in `usp_zephyr`.
 
-Every transmission also passes a **regulatory gate**: `lib/region` provides the region's channel plan, power ceiling and duty cap; a slot with no budget left is given up and counted in the log. See [09-protocol](09-protocol.md) 5.2.
+Every transmission also passes a **regulatory gate**: `core/region` provides the region's channel plan, power ceiling and duty cap; a slot with no budget left is given up and counted in the log. See [09-protocol](09-protocol.md) 5.2.
 
 ## 6. Threading model and callback contract
 

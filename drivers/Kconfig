@@ -3,6 +3,6 @@
 
 menu "zlrs drivers"
 
-rsource "trng/Kconfig"
+rsource "entropy/Kconfig"
 
 endmenu

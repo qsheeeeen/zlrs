@@ -1,7 +1,10 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 
-menu "zlrs libraries"
+menu "zlrs core"
+
+# The pure C feature core. Everything here must build and unit-test on a host
+# without Zephyr; the Zephyr-side pieces live in subsys/ and drivers/.
 
 rsource "proto/Kconfig"
 rsource "link/Kconfig"
@@ -9,7 +12,5 @@ rsource "crsf/Kconfig"
 rsource "config/Kconfig"
 rsource "region/Kconfig"
 rsource "led/Kconfig"
-rsource "usb/Kconfig"
-rsource "bootguard/Kconfig"
 
 endmenu

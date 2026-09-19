@@ -63,7 +63,7 @@ uint32_t zlrs_region_clamp_rate(const zlrs_region_t *region, uint32_t rate_bps)
 
 zlrs_mod_cfg_t zlrs_region_clamp_mod(const zlrs_region_t *region, zlrs_mod_cfg_t mod)
 {
-	/* The step in narrow-band regions follows the FLRC bandwidth (see lib/proto/fhss.c), and a
+	/* The step in narrow-band regions follows the FLRC bandwidth (see core/proto/fhss.c), and a
 	      LoRa bandwidth has to fit inside the band edges as well */
 	static const uint32_t bws[] = {500000U, 250000U, 125000U};
 

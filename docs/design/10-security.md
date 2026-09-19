@@ -138,7 +138,7 @@ Algorithm choices:
 | per-frame tag | HMAC-SHA256 truncated to 4 B |
 | P2 encryption (last) | AES-CTR with the MAC over the ciphertext (encrypt-then-MAC) |
 
-On target the primitives go through Zephyr's PSA Crypto (`lib/proto/crypto_psa.c`); the host tests use a pure C implementation behind the same interface (`tests/host/crypto_soft.c`), and the two are checked against each other with fixed vectors.
+On target the primitives go through Zephyr's PSA Crypto (`core/proto/crypto_psa.c`); the host tests use a pure C implementation behind the same interface (`tests/host/crypto_soft.c`), and the two are checked against each other with fixed vectors.
 
 ## 9. Layering boundary
 

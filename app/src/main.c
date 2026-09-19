@@ -323,7 +323,7 @@ static void plan_init(void)
 
 	/*
 	 * The superframe period is set by the slower link: the two data windows run once per
-	 * data_every_n frames, amortised over each frame; lib/region iterates the plan to agreement.
+	 * data_every_n frames, amortised over each frame; core/region iterates the plan to agreement.
 	 */
 	req.other_mod = ZLRS_DATA_ENABLED ? &data_mod : NULL;
 	req.other_frame_len = (uint16_t)(data_mtu + 7U);
@@ -599,7 +599,7 @@ static void enter_serial_recovery(void)
 	LOG_WRN("update trigger: rebooting into MCUboot serial recovery");
 
 	/* RP2350's watchdog may still be armed after SYSRESETREQ; leaving it for MCUboot would
-	 * cut its serial recovery short (lib/bootguard is the bootloader-side guard). */
+	 * cut its serial recovery short (subsys/bootguard is the bootloader-side guard). */
 	zlrs_watchdog_disarm();
 
 	if (bootmode_set(BOOT_MODE_TYPE_BOOTLOADER) != 0) {
@@ -914,7 +914,7 @@ static void report(uint32_t now_ms)
 	LOG_INF("%s ctl=%u tlm=%u data=%u serial_drop=%u",
 		IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? "TX" : "RX", counters.rc_rx, counters.tlm_rx,
 		counters.data_rx, zlrs_data_port_dropped());
-	/* Frames that really went out: only transactions that completed count (see lib/link) */
+	/* Frames that really went out: only transactions that completed count (see core/link) */
 	LOG_INF("air: ctl_tx=%u ctl_rx=%u data_tx=%u data_rx=%u fail=%u+%u",
 		link_control.stats.tx_frames, link_control.stats.rx_frames,
 		link_data.stats.tx_frames, link_data.stats.rx_frames, link_control.stats.radio_fail,
@@ -932,7 +932,7 @@ static void report(uint32_t now_ms)
 }
 
 /*
- * Status LED: translate the link state into lib/led inputs, see docs/design/11-ux.md.
+ * Status LED: translate the link state into core/led inputs, see docs/design/11-ux.md.
  * Refreshed at 20 Hz (zlrs_led_port_update rate-limits internally).
  */
 #if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)

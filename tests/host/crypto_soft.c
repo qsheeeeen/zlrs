@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Crypto implementation (**host only**): pure C, no dependencies. The device always uses
- * lib/proto/crypto_psa.c (Zephyr's PSA Crypto); this copy exists for the host tests, twice over:
+ * core/proto/crypto_psa.c (Zephyr's PSA Crypto); this copy exists for the host tests, twice over:
  *
  *   1. run the fixed vectors that pin down KDF, tag and passphrase derivation;
  *   2. run the protocol simulation, which needs a working backend without PSA on the host.

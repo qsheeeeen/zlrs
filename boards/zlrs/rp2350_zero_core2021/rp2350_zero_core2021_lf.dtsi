@@ -13,7 +13,7 @@
 
 / {
 	/*
-	 * Sub-G hardware: LF. The region has to match it, see lib/region.
+	 * Sub-G hardware: LF. The region has to match it, see core/region.
 	 * This cannot live in /chosen: Zephyr's DT macros only export `zephyr,`-prefixed chosen
 	 * properties, and a custom prefix silently falls back to the default (HF).
 	 */

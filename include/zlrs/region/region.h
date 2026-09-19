@@ -82,7 +82,7 @@ uint32_t zlrs_airtime_us(uint16_t frame_len, uint32_t rate_bps);
 /* Same estimate in milliseconds (rounded up), used by the duty accounting */
 uint32_t zlrs_airtime_ms(uint16_t frame_len, uint32_t rate_bps);
 
-/* Modulation-aware: equivalent for FLRC, LoRa uses the model in lib/proto/mod.c */
+/* Modulation-aware: equivalent for FLRC, LoRa uses the model in core/proto/mod.c */
 uint32_t zlrs_airtime_mod_us(const zlrs_mod_cfg_t *mod, uint16_t frame_len);
 uint32_t zlrs_airtime_mod_ms(const zlrs_mod_cfg_t *mod, uint16_t frame_len);
 

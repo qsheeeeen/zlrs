@@ -110,6 +110,6 @@ python3 scripts/zlrs-update.py --port /dev/ttyACM1     # trigger, upload, wait f
 Defaults that `Kconfig.defconfig` sets for every variant:
 
 - `CONFIG_BUILD_OUTPUT_HEX` and `BUILD_OUTPUT_UF2`: produce a hex file and a drag-and-drop uf2.
-- The console sits on USB's third CDC, so the board enables `USB_DEVICE_STACK_NEXT` and `USBD_CDC_ACM_CLASS` by default. **`CDC_ACM_SERIAL_INITIALIZE_AT_BOOT` stays off**: that helper registers only the first CDC while the application and bootloader need `lib/usb` to build its own context and register all of them (see [docs/design/08-firmware.md](../../../docs/design/08-firmware.md) 4).
+- The console sits on USB's third CDC, so the board enables `USB_DEVICE_STACK_NEXT` and `USBD_CDC_ACM_CLASS` by default. **`CDC_ACM_SERIAL_INITIALIZE_AT_BOOT` stays off**: that helper registers only the first CDC while the application and bootloader need `subsys/usb` to build its own context and register all of them (see [docs/design/08-firmware.md](../../../docs/design/08-firmware.md) 4).
 - `USE_DT_CODE_PARTITION=y`: the image links into the devicetree code partition, so growing past 1 MB is a build error rather than a surprise that has eaten the storage partition.
 - Peripherals such as `CONFIG_UART_LINE_CTRL`, `UART_INTERRUPT_DRIVEN`, `GPIO`, `RESET`, `CLOCK_CONTROL`, `SERIAL` and `UART_CONSOLE` stay on.

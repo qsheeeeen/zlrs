@@ -13,7 +13,7 @@
 
 / {
 	/*
-	 * Sub-G hardware: HF. The region has to match it, see lib/region.
+	 * Sub-G hardware: HF. The region has to match it, see core/region.
 	 * It cannot live in /chosen: DT macros do not read custom-prefixed chosen properties.
 	 */
 	zlrs_subg_band: subg-band {

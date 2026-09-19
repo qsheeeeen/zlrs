@@ -7,5 +7,11 @@
 
 zephyr_include_directories(include)
 
-add_subdirectory(lib)
+# core/ is the pure C feature core, subsys/ and drivers/ are the Zephyr-side
+# pieces this module owns. Every image in the workspace (application and
+# bootloader) gets them; the -ifdef guards keep them out of builds that do not
+# enable the corresponding feature.
+add_subdirectory(core)
+add_subdirectory_ifdef(CONFIG_ZLRS_USB subsys/usb)
+add_subdirectory_ifdef(CONFIG_ZLRS_BOOTGUARD subsys/bootguard)
 add_subdirectory(drivers)

@@ -11,7 +11,7 @@ config ZLRS_PROTO
 	select PSA_WANT_KEY_TYPE_HMAC
 	help
 	  Pure C, no Zephyr dependency. The crypto part depends on the backend: on target it is
-	  Zephyr's PSA Crypto (lib/proto/crypto_psa.c, which is why the algorithms above are
+	  Zephyr's PSA Crypto (core/proto/crypto_psa.c, which is why the algorithms above are
 	  selected). The host tests use a self-contained software implementation instead
 	  (tests/host/crypto_soft.c); both must produce identical bytes.
 

@@ -2,10 +2,10 @@
  * Copyright (c) 2026 zlrs contributors
  * SPDX-License-Identifier: Apache-2.0
  *
- * Modulation tiers and the airtime model (lib/proto/mod.c).
+ * Modulation tiers and the airtime model (core/proto/mod.c).
  *
  * Where the expected values come from:
- *   - FLRC and zlrs_airtime_us() in lib/region must agree (one model, two call sites)
+ *   - FLRC and zlrs_airtime_us() in core/region must agree (one model, two call sites)
  *   - LoRa timing by hand from Semtech's formula: Ts = 2^SF/BW, preamble (n + 4.25) symbols,
  *     payload symbols n_payload = 8 + ceil((8*PL - 4*SF + 28 + 16) / (4*(SF - 2*DE))) * (CR+4)
  */

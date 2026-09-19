@@ -34,7 +34,7 @@ ifneq ($(FUZZ_ITERS),)
 CPPFLAGS += -DFUZZ_ITERS=$(FUZZ_ITERS)
 endif
 
-VPATH := .:../../lib/proto:../../lib/link:../../lib/crsf:../../lib/config:../../lib/region:../../lib/led
+VPATH := .:../../core/proto:../../core/link:../../core/crsf:../../core/config:../../core/region:../../core/led
 
 SRCS := main.c test_proto.c test_link.c \
         test_crsf.c test_config.c test_region.c test_mod.c test_led.c test_power.c \

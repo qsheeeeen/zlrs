@@ -21,7 +21,7 @@
 		zephyr,console = &cdc_acm_uart3;
 		zephyr,shell-uart = &cdc_acm_uart3;
 		zephyr,lorawan-transceiver = &lora_core2021;
-		/* Entropy comes from the zlrs TRNG driver (bounded waits, no interrupt masking; drivers/trng) */
+		/* Entropy comes from the zlrs TRNG driver (bounded waits, no interrupt masking; drivers/entropy) */
 		zephyr,entropy = &rng;
 		/* Each variant sets zephyr,code-partition itself: code without a bootloader, slot0 with one
 		 * (see the partition table in this directory's README) */
@@ -54,7 +54,7 @@
 /*
  * RP2350 TRNG: the SoC's rng@400f0000 node (reg gives the block base) is switched to the zlrs
  * driver. The one in the Zephyr tree that binds `raspberrypi,pico-rng` goes through pico-sdk's
- * interrupt-off busy wait and stops USB, see the header of drivers/trng/rp2350_trng.c.
+ * interrupt-off busy wait and stops USB, see the header of drivers/entropy/rp2350_trng.c.
  */
 &rng {
 	compatible = "zlrs,rp2350-trng";

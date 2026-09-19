@@ -38,7 +38,7 @@ config ZLRS_APP_REGION
 	range 0 3
 	help
 	  The region picks the control link's band, power ceiling and duty cap (docs/design/09-protocol.md
-	  5.2 and lib/region): EU868 caps duty at 1%, FCC915 and CN470 do not.
+	  5.2 and core/region): EU868 caps duty at 1%, FCC915 and CN470 do not.
 	  HF SKUs accept 0/1, LF SKUs accept 2/3; a mismatch trips the boot check, shows red and
 	  keeps the radio off: regulatory settings do not get to be approximate.
 
@@ -318,7 +318,7 @@ config ZLRS_APP_CONTROL_RATE_HZ
 	help
 	  150 = general tier (long range, default), 500 = close-in racing.
 	  At 500 Hz each slot has only a few hundred microseconds and only unlimited-duty regions
-	  can sustain it; the effective rate is clamped by the duty cap (lib/region, 09-protocol 4.1).
+	  can sustain it; the effective rate is clamped by the duty cap (core/region, 09-protocol 4.1).
 	  The 500 Hz ceiling is architectural: RAC schedules in whole milliseconds, higher needs burst.
 
 config ZLRS_APP_DATA_RATE_BPS
@@ -381,7 +381,7 @@ config ZLRS_APP_DYNAMIC_POWER
 	help
 	  With signal to spare, drop power (saves energy, less interference); when it gets tight, come
 	  back up. Losing telemetry means the ceiling (the other end is probably gone). Evaluated
-	  once a second; thresholds and hysteresis live in lib/link/power.c and wait for measurements.
+	  once a second; thresholds and hysteresis live in core/link/power.c and wait for measurements.
 
 config ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM
 	int "Dynamic power floor (dBm)"
@@ -406,7 +406,7 @@ config ZLRS_APP_ENTROPY_TRNG
 	default y
 	select ZLRS_RP2350_TRNG
 	help
-	  The driver lives in drivers/trng: probe resets and pre-fetches, reads come from a small
+	  The driver lives in drivers/entropy: probe resets and pre-fetches, reads come from a small
 	  pool, interrupts stay on, waits are bounded and failures are reported, never papered over.
 	  Zephyr's ENTROPY_RPI_PICO_RNG is unusable here: pico-sdk spins with interrupts off and USB dies.
 	  See docs/design/13-roadmap.md.

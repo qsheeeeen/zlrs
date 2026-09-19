@@ -1,5 +1,5 @@
 /*
- * Compile-time configuration of the protocol core. Layering: lib/proto and lib/link depend
+ * Compile-time configuration of the protocol core. Layering: core/proto and core/link depend
  * on no Zephyr and run in host tests; the Zephyr glue lives in app/ only.
  *
  * SPDX-License-Identifier: Apache-2.0

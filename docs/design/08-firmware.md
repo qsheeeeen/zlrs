@@ -61,7 +61,7 @@ One firmware has to fit several hardware configurations; that is a hard requirem
 
 The approach: the application only knows aliases (`zlrs-crsf-uart`, `zlrs-crsf-cdc`, `zlrs-data-uart`, `zlrs-data-cdc`, `zlrs-button`, `zlrs-led`); a missing alias means "this link has no such port" and everything still builds. Library switches follow the application switches: turning off `ZLRS_APP_CONFIG_MODE` or `ZLRS_APP_STATUS_LED` trims `ZLRS_CONFIG` or `ZLRS_LED` with them. `ZLRS_APP_CORE` enables what the application always needs (`ZLRS_PROTO`, `ZLRS_LINK`, `ZLRS_REGION`, `ZLRS_CRSF`); the CRSF codec is compiled in with the port layer, so `ZLRS_APP_CRSF_PORT=n` only skips initialising that port and leaves the code and library in place (a few hundred bytes of pure C).
 
-**Each image builds its own USB stack** (`lib/usb`, `CONFIG_ZLRS_USB`, enabled separately by the application and the bootloader configs): a `zephyr,cdc-acm-uart` node in devicetree only says how many CDCs exist, it does not bring the device up — the image builds a context, registers the classes and calls `usbd_enable()`. Zephyr's own `CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT` registers only the first CDC while this firmware has several, so that switch stays off. Lightweight hardware simply deletes `usbd` and the CDC aliases from devicetree.
+**Each image builds its own USB stack** (`subsys/usb`, `CONFIG_ZLRS_USB`, enabled separately by the application and the bootloader configs): a `zephyr,cdc-acm-uart` node in devicetree only says how many CDCs exist, it does not bring the device up — the image builds a context, registers the classes and calls `usbd_enable()`. Zephyr's own `CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT` registers only the first CDC while this firmware has several, so that switch stays off. Lightweight hardware simply deletes `usbd` and the CDC aliases from devicetree.
 
 **One buffer pool per CDC** (`CONFIG_USBD_CDC_ACM_BUF_POOL=y`): several CDCs on a full-speed device fight over the UDC's shared pool, and a failed RX allocation is never retried, so TX works while RX dies without a word.
 
@@ -121,7 +121,7 @@ Failure modes:
 
 The rollback verdict lives in MCUboot's image trailer and the application only "confirms when it should": if `boot_is_img_confirmed()` is true it does nothing, if false it waits for the host (`ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS`, 60 s by default). An image written directly with BOOTSEL has an empty trailer, which MCUboot treats as an initial image and does not require a confirmation for: that is the first flash.
 
-**The watchdog** (`CONFIG_ZLRS_APP_WATCHDOG`, off by default) only turns a hang into a reset: the application arms it at `PRE_KERNEL_1` (before the entropy source, so a hung entropy probe still resets) and feeds it from the main loop and config sessions, while on the bootloader side `lib/bootguard` (`CONFIG_ZLRS_BOOTGUARD`) clears the hardware enable bit first (the driver's `wdt_disable()` does nothing in the next boot, and without this the previous watchdog would interrupt serial recovery). MCUboot then re-arms it with `BOOT_WATCHDOG_TIMEOUT_MS` (30 s) and leaves it running across the jump into the application, so an application that hangs before arming its own still gets reset and rolled back.
+**The watchdog** (`CONFIG_ZLRS_APP_WATCHDOG`, off by default) only turns a hang into a reset: the application arms it at `PRE_KERNEL_1` (before the entropy source, so a hung entropy probe still resets) and feeds it from the main loop and config sessions, while on the bootloader side `subsys/bootguard` (`CONFIG_ZLRS_BOOTGUARD`) clears the hardware enable bit first (the driver's `wdt_disable()` does nothing in the next boot, and without this the previous watchdog would interrupt serial recovery). MCUboot then re-arms it with `BOOT_WATCHDOG_TIMEOUT_MS` (30 s) and leaves it running across the jump into the application, so an application that hangs before arming its own still gets reset and rolled back.
 
 One command updates a device: `python3 scripts/zlrs-update.py --port <application config port>` (trigger recovery, wait for the recovery port, read the active slot, write the other one and mark it test, wait for the application, check `image-hash`, send `confirm`). The tool writes pending but **never permanent**: marking an image permanent before it has run cuts off the rollback path. Bricked boards go through BOOTSEL and a UF2 drag (see [12-debug](12-debug.md)). Production images use their own signing key, and changing that key means reflashing the bootloader.
 
@@ -131,9 +131,9 @@ A device that looks alive while some port died long ago is the most expensive tr
 
 | Layer | What it has | What it must do |
 | --- | --- | --- |
-| `lib/` (pure C, host-testable) | inputs and outputs only, no devices, no logging | return error codes or booleans and **never print**; crypto always fails closed |
+| `core/` (pure C, host-testable) | inputs and outputs only, no devices, no logging | return error codes or booleans and **never print**; crypto always fails closed |
 | `app/src/` (the Zephyr glue) | devices, logging, policy | check every return value and pick a response by consequence: degrade (port gone, use the other endpoint), downgrade (no NVS, stay off the air) or fatal (PSA init failed, `fault_loop()`) |
-| image-level glue such as `lib/usb` and `lib/bootguard` | failure affects whether the whole board works | check them too, but default to non-fatal: USB is optional, so warn and keep running |
+| image-level glue such as `subsys/usb` and `subsys/bootguard` | failure affects whether the whole board works | check them too, but default to non-fatal: USB is optional, so warn and keep running |
 
 Specific rules:
 

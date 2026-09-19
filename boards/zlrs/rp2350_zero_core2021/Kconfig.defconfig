@@ -32,7 +32,7 @@ config SERIAL
 # data, config) and two in the bootloader (recovery, console).
 #
 # Note there is no default for CDC_ACM_SERIAL_INITIALIZE_AT_BOOT: that helper registers
-# only the first CDC, while lib/usb builds its own context and registers them all.
+# only the first CDC, while subsys/usb builds its own context and registers them all.
 config USB_DEVICE_STACK_NEXT
 	default y
 

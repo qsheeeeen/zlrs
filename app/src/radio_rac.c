@@ -130,7 +130,7 @@ static ral_lora_bw_t lora_bw(uint32_t bw_hz)
 
 /*
  * Parameters of a LoRa transaction. The sync word is one byte (derived by the link layer from
- * the pairing key, top bit as the private bit, see derive_pair in lib/link/link.c). RAC declares
+ * the pairing key, top bit as the private bit, see derive_pair in core/link/link.c). RAC declares
  * it as an enum but passes the byte through; the driver only requires the top 4 bits to be non-zero.
  */
 static void fill_lora_params(smtc_rac_context_t *rac, const zlrs_radio_req_t *req)

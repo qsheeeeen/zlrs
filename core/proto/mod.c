@@ -10,7 +10,7 @@
 
 /*
  * FLRC net time: payload plus 4 bytes of overhead (preamble/sync word/length) at the raw rate.
- * It is the same model as zlrs_airtime_us() in lib/region, which feeds the regulatory
+ * It is the same model as zlrs_airtime_us() in core/region, which feeds the regulatory
  * accounting; here it feeds superframe planning. Both must produce the same number.
  */
 static uint32_t flrc_airtime_us(uint32_t rate_bps, uint16_t frame_len)
