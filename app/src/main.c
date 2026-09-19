@@ -526,6 +526,9 @@ static void load_identity(void)
 
 /* ---- 超帧 ---------------------------------------------------------------- */
 
+/* 泵 RAC 引擎时的等待节拍：够细（不拖时隙），又不至于把 CPU 全烧在轮询上 */
+#define ZLRS_RADIO_PUMP_STEP_US 200U
+
 static void run_slot(uint8_t slot)
 {
 	const bool data_slot = (slot == ZLRS_SLOT_DATA_A || slot == ZLRS_SLOT_DATA_B);
@@ -553,12 +556,39 @@ static void run_slot(uint8_t slot)
 		return;
 	}
 
-	if (link->radio.submit(link->radio.ctx, req) != 0 ||
-	    zlrs_radio_port_wait_us(slot_budget_us) != 0) {
-		/* 射频没在预算内回来：放弃事务并给链路层收尾，免得卡住 */
-		zlrs_radio_port_abort();
+	if (link->radio.submit(link->radio.ctx, req) != 0) {
 		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_radio_port_now_ms());
 		return;
+	}
+
+	/*
+	 * 等事务做完的同时泵 RAC 引擎。官方的 immediate_radio_access 示例就是
+	 * "run_engine + 等事件"这个结构：引擎不推，planner 不会真正去开射频，
+	 * 事务会一直停在 RP_STATUS_TASK_INIT（我们之前就是这样：提交了但一个包都发不出去）。
+	 * 用 done_sem 的短超时当节拍，超了就把整段等待算进时隙预算。
+	 */
+	{
+		uint32_t waited_us = 0U;
+		bool done = false;
+
+		while (waited_us < slot_budget_us) {
+			SMTC_SW_PLATFORM_VOID(smtc_rac_run_engine());
+
+			if (zlrs_radio_port_wait_us(ZLRS_RADIO_PUMP_STEP_US) == 0) {
+				done = true;
+				break;
+			}
+
+			waited_us += ZLRS_RADIO_PUMP_STEP_US;
+		}
+
+		if (!done) {
+			/* 预算内没回来：放弃事务并给链路层收尾，免得卡住 */
+			zlrs_radio_port_abort();
+			zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0,
+					   zlrs_radio_port_now_ms());
+			return;
+		}
 	}
 
 	zlrs_radio_port_drain();
@@ -896,6 +926,11 @@ static void report(uint32_t now_ms)
 	LOG_INF("%s ctl=%u tlm=%u data=%u serial_drop=%u",
 		IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? "TX" : "RX", counters.rc_rx,
 		counters.tlm_rx, counters.data_rx, zlrs_data_port_dropped());
+	/* 空口真发出去多少帧：只统计"事务真的完成"的那些（见 lib/link） */
+	LOG_INF("air: ctl_tx=%u ctl_rx=%u data_tx=%u data_rx=%u fail=%u+%u",
+		link_control.stats.tx_frames, link_control.stats.rx_frames,
+		link_data.stats.tx_frames, link_data.stats.rx_frames,
+		link_control.stats.radio_fail, link_data.stats.radio_fail);
 	LOG_INF("crsf_bad=%u crsf_drop=%u air_drop=%u lq=%u%%",
 		crsf_bad_input, zlrs_crsf_port_rx_dropped(),
 		link_data.stats.data_drop_bytes, link_control.stats.lq_percent);

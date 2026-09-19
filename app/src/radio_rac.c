@@ -176,6 +176,9 @@ static ral_flrc_rx_match_sync_word_t rx_match_syncword(uint8_t slot)
 	}
 }
 
+/* 事务失败只报一次（每帧都会失败，刷屏没意义） */
+static bool radio_fail_logged;
+
 static void client_complete(rac_client_t *client, rp_status_t status)
 {
 	client->status = ZLRS_RADIO_OK;
@@ -196,6 +199,11 @@ static void client_complete(rac_client_t *client, rp_status_t status)
 		break;
 	default:
 		client->status = ZLRS_RADIO_FAIL;
+		/* 只报第一次：射频事务失败会每帧重复，刷屏没意义 */
+		if (!radio_fail_logged) {
+			radio_fail_logged = true;
+			LOG_ERR("radio transaction failed (rp_status %d)", (int)status);
+		}
 		break;
 	}
 
