@@ -1586,7 +1586,6 @@ int main(void)
 
 	for (;;) {
 		const int64_t start_us = k_uptime_get() * 1000;
-		const uint32_t now_ms = zlrs_radio_port_now_ms();
 
 		zlrs_watchdog_feed();
 		confirm_image();
@@ -1598,6 +1597,13 @@ int main(void)
 			enter_config_mode();
 		}
 #endif
+
+		/*
+		 * 时间戳必须在配置会话之后重新取：会话里发生的事（配置口触发配对）
+		 * 用的时钟比进会话前取的那个"现在"晚，差值是负的，无符号相减直接
+		 * 下溢成一个巨大的数——配对窗口会在第一次 tick 就被判成过期。
+		 */
+		const uint32_t now_ms = zlrs_radio_port_now_ms();
 
 		/* 四个时隙平分一帧：超预算的事务由 run_slot 放弃并收尾，不拖长整帧 */
 		run_slot(ZLRS_SLOT_CTL_DOWN);
