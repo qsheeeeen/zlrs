@@ -63,7 +63,7 @@ extern "C" {
 
 typedef struct {
 	uint8_t version;    /* protocol version */
-	uint8_t role;       /* 0 = TX，1 = RX */
+	uint8_t role;       /* 0 = TX, 1 = RX */
 	uint8_t state;      /* ZLRS_STATE_* */
 	uint8_t flags;      /* bit0 root key set, bit1 paired, bit2 session valid */
 	uint8_t dev_id[ZLRS_DEV_ID_LEN];

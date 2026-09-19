@@ -95,7 +95,7 @@ uint8_t zlrs_crsf_tx_power_index(int8_t dbm);
 
 /*
  * Rate tier numbers are zlrs's own; both ends only have to agree on them
- * （FLRC 2.6M=0 / 1.3M=1 / 0.65M=2 / 0.325M=3，LoRa = 0x10 | SF）
+ * (FLRC 2.6M=0 / 1.3M=1 / 0.65M=2 / 0.325M=3, LoRa = 0x10 | SF)
  */
 uint8_t zlrs_crsf_rf_mode(uint32_t rate_bps);
 

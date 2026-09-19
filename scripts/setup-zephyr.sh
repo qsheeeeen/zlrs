@@ -108,7 +108,7 @@ echo "    imgtool (MCUboot signing) dependencies"
 	-r "${WS}/bootloader/mcuboot/scripts/requirements.txt"
 
 # Host-side tool scripts: pyserial for config mode and the recovery trigger, smpmgr for upgrades
-# （scripts/zlrs-config.py、zlrs-recovery.py、zlrs-update.py）。
+# (scripts/zlrs-config.py, zlrs-recovery.py, zlrs-update.py).
 echo "    host script dependencies (pyserial / smpmgr)"
 "${VENV_DIR}/bin/python" -m pip install --quiet --no-warn-script-location \
 	pyserial smpmgr

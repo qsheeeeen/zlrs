@@ -105,7 +105,7 @@ def upload_command(client: str, port: str, image: Path, baud: int) -> list[str]:
 
     This script **never** passes `--confirm` to smpmgr: that marks the image permanent inside the
     bootloader before the image has ever run, cutting rollback off. Only the application marks it
-    `boot_write_img_confirmed()`。
+    the application calls `boot_write_img_confirmed()` itself once it is up and the host is talking.
     """
     cmd = [client, "--port", port, "--baudrate", str(baud), "upgrade"]
     cmd.append(str(image))

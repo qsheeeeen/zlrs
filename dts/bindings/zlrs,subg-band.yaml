@@ -11,5 +11,5 @@ properties:
   band:
     type: int
     required: true
-    description: 0 = LF（470 / 433），1 = HF（868 / 915）
+    description: 0 = LF (470 / 433), 1 = HF (868 / 915)
     enum: [0, 1]

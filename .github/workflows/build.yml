@@ -1,10 +1,10 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# 每次 push / PR 都跑的快速检查：纯 C 层的单元与仿真测试，外加配置工具的组帧
-# 自检。不需要 Zephyr 工作区，几十秒出结果。
+# The quick check on every push and PR: unit and simulation tests for the pure C layers plus the
+# config tool's framing self-test. No Zephyr workspace needed; results in under a minute.
 #
-# 固件构建（要拉 ~5 GB 工作区、~10 分钟）单独放在 firmware.yml，见那里的说明。
+# Firmware builds (~5 GB workspace, ~10 minutes) live in firmware.yml; see the notes there.
 
 name: build
 
@@ -29,8 +29,8 @@ jobs:
           cc --version | head -1
           make --version | head -1
           python3 --version
-      # 主机测试默认带 ASan + UBSan。CI 里额外打开泄漏检测（受限容器缺 ptrace 时
-      # 它起不来，所以本地默认关）。
+      # Host tests carry ASan + UBSan by default; CI also turns on leak detection (restricted
+      # containers without ptrace cannot start it, so it stays off locally).
       - name: host tests (ASan + UBSan)
         run: make -C tests/host run LEAKS=1
       - name: config tool self-test

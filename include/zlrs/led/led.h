@@ -1,7 +1,7 @@
 /*
  * Status LED: one WS2812 pixel expresses link state and alerts. Colour and cadence both carry
  * meaning (colour alone fails in bright light or with colour blindness). Priorities: 11-ux.
- * app/src/led_port.c。
+ * app/src/led_port.c.
  *
  * SPDX-License-Identifier: Apache-2.0
  */

@@ -7,7 +7,7 @@
  *
  * On its own it checks the logic invariants; the host tests carry ASan + UBSan by default
  * (`make -C tests/host run`), so overruns and UB surface immediately. For more rounds:
- * `make -C tests/host run FUZZ_ITERS=2000000`。
+ * `make -C tests/host run FUZZ_ITERS=2000000`.
  */
 
 #include "test.h"
