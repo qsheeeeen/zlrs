@@ -1054,7 +1054,7 @@ static void led_tick(uint32_t now_ms)
  * 镜像确认：只有"上位机真的连上来、发了一条配置命令、并且收到了应答"才算这一版
  * 升级成功——test/revert 的判据只有这一位。升级走 test 语义，新镜像等不到上位机
  * （或干脆起不来、被看门狗复位）时，复位就让 MCUboot 回滚到上一版；没有上一版
- * 就停在串口恢复里，照样能刷。见 doc/08-firmware.md 第 5 节。
+ * 就停在串口恢复里，照样能刷。见 doc/08-firmware.md 第 6 节。
  */
 static void confirm_image(void)
 {
@@ -1232,7 +1232,7 @@ static int cmd_config(const struct shell *sh, size_t argc, char **argv)
 	ARG_UNUSED(argv);
 
 	atomic_set(&config_request, 1);
-	shell_print(sh, "已请求配置模式：数据口改跑配置协议，EXIT 回来");
+	shell_print(sh, "已请求配置模式：配置口跑配置协议，EXIT 回来");
 
 	return 0;
 }
@@ -1351,14 +1351,14 @@ static int cmd_mcuboot(const struct shell *sh, size_t argc, char **argv)
 	/* VTOR 指到哪个槽，就是真正在哪个槽里跑（跟 MCUboot 报的 active slot 对照看） */
 	shell_print(sh, "VTOR        : 0x%08x (slot0=0x%08x, slot1=0x%08x)",
 		    (unsigned int)SCB->VTOR,
-		    (unsigned int)(0x10000000 + FIXED_PARTITION_OFFSET(slot0_partition)),
-		    (unsigned int)(0x10000000 + FIXED_PARTITION_OFFSET(slot1_partition)));
+		    (unsigned int)(0x10000000 + PARTITION_OFFSET(slot0_partition)),
+		    (unsigned int)(0x10000000 + PARTITION_OFFSET(slot1_partition)));
 	shell_print(sh, "confirmed   : %d", (int)boot_is_img_confirmed());
 	shell_print(sh, "swap type   : %d (0=none 1=test 2=revert 3=fail 4=permanent)",
 		    (int)mcuboot_swap_type());
 	shell_print(sh, "confirmed by host: %d", (int)zlrs_config_image_confirmed());
-	mcuboot_dump_slot(sh, "slot0", FIXED_PARTITION_ID(slot0_partition));
-	mcuboot_dump_slot(sh, "slot1", FIXED_PARTITION_ID(slot1_partition));
+	mcuboot_dump_slot(sh, "slot0", PARTITION_ID(slot0_partition));
+	mcuboot_dump_slot(sh, "slot1", PARTITION_ID(slot1_partition));
 
 	return 0;
 }

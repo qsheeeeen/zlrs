@@ -24,7 +24,6 @@ LOG_MODULE_REGISTER(zlrs_led_port, CONFIG_APP_LOG_LEVEL);
  * 别名留在 devicetree 里的话，DEVICE_DT_GET 会引用一个不存在的设备，链接失败。
  */
 #if DT_NODE_EXISTS(DT_ALIAS(zlrs_led)) && IS_ENABLED(CONFIG_LED_STRIP)
-static const struct device *const strip = DEVICE_DT_GET(DT_ALIAS(zlrs_led));
 #define LED_AVAILABLE 1
 #else
 #define LED_AVAILABLE 0
@@ -55,6 +54,7 @@ static bool ready;
 static uint32_t last_update_ms;
 static bool led_error_logged;
 static struct led_rgb pixels[ZLRS_LED_PIXELS];
+static const struct device *const strip = DEVICE_DT_GET(DT_ALIAS(zlrs_led));
 
 int zlrs_led_port_init(void)
 {

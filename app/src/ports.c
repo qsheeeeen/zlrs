@@ -955,6 +955,9 @@ static int cfg_read_build(void *ctx, char *out, size_t out_len)
  */
 static int cfg_read_image_hash(void *ctx, uint8_t out[ZLRS_CFG_IMAGE_HASH_LEN])
 {
+	(void)ctx;
+
+#ifdef CONFIG_BOOTLOADER_MCUBOOT
 #define MCUBOOT_IMAGE_MAGIC     0x96f3b83dU
 #define MCUBOOT_TLV_INFO_MAGIC  0x6907U
 #define MCUBOOT_TLV_SHA256      0x10U
@@ -968,10 +971,7 @@ static int cfg_read_image_hash(void *ctx, uint8_t out[ZLRS_CFG_IMAGE_HASH_LEN])
 	const struct flash_area *fa;
 	uint32_t off, tlv_end;
 
-	(void)ctx;
-
-#ifdef CONFIG_BOOTLOADER_MCUBOOT
-	if (flash_area_open(FIXED_PARTITION_ID(slot0_partition), &fa) != 0) {
+	if (flash_area_open(PARTITION_ID(slot0_partition), &fa) != 0) {
 		return ZLRS_CFG_E_STATE;
 	}
 
