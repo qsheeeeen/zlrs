@@ -1,29 +1,29 @@
 /*
- * RP2350 硬件 TRNG 熵源（zlrs 自带驱动，见 doc/13-roadmap.md）。
+ * RP2350 hardware TRNG entropy source (zlrs driver, see doc/13-roadmap.md).
  *
- * 为什么不用 Zephyr 树里的 entropy_rpi_pico：那条路调 pico-sdk 的
- * get_rand_64()，取数时拿自旋锁并把中断关掉，等 192 个 ROSC 采样填满 EHR 才
- * 返回——USB 的中断与工作队列在这期间得不到服务，实测打开后 USB 枚举不出来。
+ * Why not Zephyr's entropy_rpi_pico: that path calls pico-sdk's get_rand_64(), which takes
+ * a spinlock and disables interrupts, and only returns once 192 ROSC samples have filled the
+ * EHR. USB interrupts and workqueues get no service meanwhile: with it on, USB never enumerates.
  *
- * 取数流程照 RP2350 datasheet 12.12，走 Arm TRNG 的标准用法（bootrom 和
- * pico-sdk 走的是另一条路：置位 TRNG_DEBUG_CONTROL 绕过熵检查与去相关器，
- * 把原始 ROSC 采样交给 SHA-256 / xoroshiro 去处理）：
+ * Reads follow the ARM TRNG usage described in RP2350 datasheet 12.12. (bootrom and pico-sdk
+ * take another route: set TRNG_DEBUG_CONTROL to bypass the entropy checks and decorrelator and
+ * hand raw ROSC samples to SHA-256 / xoroshiro):
  *
- *   - 复位后三项熵检查默认全开，不用显式打开；TRNG_CONFIG 选 ROSC 链长，
- *     SAMPLE_CNT1 定采样间隔。datasheet 12.12.2 给的是"链长 0/1 + 采样数
- *     20–25，平均约 2 ms 一块"，但这档在 RP2350 上过不了 Von Neumann 检查
- *     （板子上实测：多次报 32 bit 连 0/连 1，偶尔直接自相关连败停摆），
- *     datasheet 12.12.4 自己也说官方驱动不走这条路。采样数取它点名的 100：
- *     同一台板子上连跑 10 块全干净，代价是生成时间按采样数成比例变长。
- *   - 一块是 6 个 EHR_DATA 字；读最后一个字才清空结果寄存器，也才接着采
- *     下一块（12.12.3）。
- *   - 生成时间不可预测，偶发会超过平均值的 100 倍，datasheet 因此建议攒一个
- *     小池子、池子有空位就启动下一次生成（12.12.4）。probe 里先把第一块启动
- *     起来（那时调度器还没起来，不能干等），后面取数就不必从零等。
+ *   - All three entropy checks are on after reset, nothing to enable. TRNG_CONFIG picks the
+ *     ROSC chain length and SAMPLE_CNT1 the sampling interval. Datasheet 12.12.2 suggests
+ *     chain length 0/1 with 20-25 samples (about 2 ms per block), but that fails the Von
+ *     Neumann check on this silicon (measured: runs of 32 zeroes or ones, sometimes autocorrelation
+ *     giving up entirely), and 12.12.4 admits the official driver does not use it. We take the
+ *     100 samples it names: 10 blocks in a row came out clean, at a proportional time cost.
+ *   - A block is 6 EHR_DATA words; reading the last one clears the result registers and starts
+ *     the next block (12.12.3).
+ *   - Generation time is unpredictable and occasionally exceeds 100x the average, so 12.12.4
+ *     suggests a small pool and kicking off the next generation whenever a slot frees up. Probe
+ *     starts the first block (no scheduler yet, so it cannot wait), so reads never start from zero.
  *
- * 两条底线：不关中断、不拿自旋锁；等待有界（超时返回错误）。
- * **不做软件兜底**：读不出来、熵检查不过就是失败，错误原样交给上层（CSPRNG /
- * PSA / 开机自检）——不能用"看起来能跑"的假熵糊过去。
+ * Two hard rules: no interrupts disabled, no spinlocks; and bounded waits (timeout = error).
+ * **No software fallback**: a failed read or a failed entropy check is a failure, reported
+ * upward (CSPRNG / PSA / boot self-test). Random numbers that merely look fine are not acceptable.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -45,36 +45,36 @@
 
 LOG_MODULE_REGISTER(zlrs_trng, CONFIG_ZLRS_TRNG_LOG_LEVEL);
 
-/* 链长 0（ROSC 最快）配采样数 100，见文件头：20–25 那档过不了 VN 检查 */
+/* Chain length 0 (fastest ROSC) with 100 samples; 20-25 fails the VN check, see the header */
 #define TRNG_ROSC_CHAIN   0U
 #define TRNG_SAMPLE_TICKS 100U
 
-/* 一块 = 192 bit = 6 个 EHR_DATA 字 */
+/* one block = 192 bit = 6 EHR_DATA words */
 #define TRNG_BLOCK_WORDS 6U
 #define TRNG_BLOCK_BYTES (TRNG_BLOCK_WORDS * sizeof(uint32_t))
 
 /*
- * 池子攒两块：一块应付当前这次取数，另一块留在池子里，硬件继续往后采——
- * datasheet 12.12.4 说的"小池子"。
+ * The pool holds two blocks: one for the read in progress, one in reserve while the hardware
+ * keeps generating: the "small pool" of datasheet 12.12.4.
  */
 #define TRNG_POOL_BLOCKS 2U
 #define TRNG_POOL_BYTES  (TRNG_POOL_BLOCKS * TRNG_BLOCK_BYTES)
 
-/* 生成时间偶发超过平均值的 100 倍（12.12.4），超时按这个量级留 */
+/* Generation occasionally exceeds 100x the average (12.12.4), so the timeout is that order */
 #define TRNG_BLOCK_TIMEOUT_MS 1000U
 #define TRNG_POLL_INTERVAL_MS 1U
 
-/* 检查失败的那一块不能当数据用，重来一块是正常流程，不是兜底 */
+/* A block that failed a check is not data; starting a new one is the normal path, not a fallback */
 #define TRNG_BLOCK_ATTEMPTS 3U
 
-/* RNG_ISR 里软件能清的位；AUTOCORR_ERR 只有软复位能清（12.12.5） */
+/* Bits software can clear in RNG_ISR; AUTOCORR_ERR needs a soft reset (12.12.5) */
 #define TRNG_ISR_CLEARABLE                                          \
 	(TRNG_RNG_ISR_EHR_VALID_BITS | TRNG_RNG_ISR_VN_ERR_BITS |   \
 	 TRNG_RNG_ISR_CRNGT_ERR_BITS)
 
 /*
- * HAL 的 trng_hw_t 从 RNG_IMR（0x100）开始排，DT 的 reg 给的是 TRNG 块基址
- * （datasheet 12.12.5 的 0x400f0000）。
+ * The HAL's trng_hw_t starts at RNG_IMR (0x100) while the DT reg gives the TRNG block base
+ * (0x400f0000, datasheet 12.12.5).
  */
 #define TRNG_CONFIG_INIT(inst)                                              \
 	{                                                                   \
@@ -87,17 +87,17 @@ struct trng_config {
 };
 
 struct trng_data {
-	/* 池子：取数只从这里拿字节，空了才去等硬件 */
+	/* The pool: reads come from here, the hardware is only waited on when it runs dry */
 	uint8_t pool[TRNG_POOL_BYTES];
-	uint16_t pool_head; /* 下一个交出去的字节 */
-	uint16_t pool_len;  /* pool_head 之后还有多少字节 */
-	/* RND_SRC_EN 置位：有块在采，或采好了等着取 */
+	uint16_t pool_head; /* next byte to hand out */
+	uint16_t pool_len;  /* bytes left after pool_head */
+	/* RND_SRC_EN is set: a block is being generated or is ready to collect */
 	bool running;
-	/* 取数要等硬件，entropy API 要求线程安全 */
+	/* Reads wait on hardware and the entropy API has to be thread safe */
 	struct k_mutex lock;
 };
 
-/* 软复位 + datasheet 12.12.2 的配置，熵源停在关闭状态 */
+/* Soft reset plus the 12.12.2 configuration, leaving the source disabled */
 static void trng_reset(const struct trng_config *cfg, struct trng_data *data)
 {
 	trng_hw_t *const trng = cfg->regs;
@@ -105,13 +105,13 @@ static void trng_reset(const struct trng_config *cfg, struct trng_data *data)
 	trng->rnd_source_enable = 0U;
 	trng->trng_sw_reset = 1U;
 
-	/* 软复位后要有固定延时（bootrom 的做法：读两次同一个寄存器） */
+	/* A soft reset needs a fixed delay (bootrom reads the same register twice) */
 	(void)trng->trng_sw_reset;
 	(void)trng->trng_sw_reset;
 
 	trng->trng_config = TRNG_ROSC_CHAIN;
 	trng->sample_cnt1 = TRNG_SAMPLE_TICKS;
-	/* 轮询取数，不要中断。屏蔽位的复位值就是全屏蔽，写出来是说清楚意图 */
+	/* Poll instead of using interrupts. The reset value already masks everything; writing says so */
 	trng->rng_imr = TRNG_RNG_IMR_EHR_VALID_INT_MASK_BITS |
 			TRNG_RNG_IMR_VN_ERR_INT_MASK_BITS |
 			TRNG_RNG_IMR_CRNGT_ERR_INT_MASK_BITS |
@@ -120,7 +120,7 @@ static void trng_reset(const struct trng_config *cfg, struct trng_data *data)
 	data->running = false;
 }
 
-/* 启动一块。已经在采就不动——中途重写 RND_SRC_EN 会把当前这块打断 */
+/* Start a block. Leave it alone if one is running: rewriting RND_SRC_EN would abort it */
 static void trng_start(const struct trng_config *cfg, struct trng_data *data)
 {
 	trng_hw_t *const trng = cfg->regs;
@@ -129,14 +129,14 @@ static void trng_start(const struct trng_config *cfg, struct trng_data *data)
 		return;
 	}
 
-	/* RST_BITS_COUNTER 要求熵源处于关闭状态（12.12.5） */
+	/* RST_BITS_COUNTER requires the source to be disabled (12.12.5) */
 	trng->rng_icr = TRNG_ISR_CLEARABLE;
 	trng->rst_bits_counter = 1U;
 	trng->rnd_source_enable = 1U;
 	data->running = true;
 }
 
-/* 不用时关上熵源省电（12.12.3），顺手清掉采了一半的那块 */
+/* Disable the source when idle to save power (12.12.3) and drop the half-collected block */
 static void trng_stop(const struct trng_config *cfg, struct trng_data *data)
 {
 	trng_hw_t *const trng = cfg->regs;
@@ -152,8 +152,8 @@ static void trng_stop(const struct trng_config *cfg, struct trng_data *data)
 }
 
 /*
- * 一块作废之后重新起一块：Von Neumann / CRNGT 检查失败清状态就行；自相关
- * 测试连败会让 RNG 整个停摆，那个位只有软复位能清（12.12.5）。
+ * Starting over after a bad block: Von Neumann and CRNGT failures just need the state cleared,
+ * but repeated autocorrelation failures stop the RNG entirely and only a soft reset clears that.
  */
 static void trng_recover(const struct trng_config *cfg, struct trng_data *data)
 {
@@ -169,14 +169,14 @@ static void trng_recover(const struct trng_config *cfg, struct trng_data *data)
 }
 
 /*
- * 等一块就绪：0 = EHR 里有数据可以读，其余是 errno。start 是这块开始等的时刻，
- * 重试共用同一个截止点：一块的等待上限就是 TRNG_BLOCK_TIMEOUT_MS。
+ * Wait for a block: 0 = the EHR holds readable data, anything else is an errno. start is when
+ * this wait began; retries share the deadline, so a block gets TRNG_BLOCK_TIMEOUT_MS in total.
  *
- * 只认 EHR_VALID，不认 trng_busy：生成刚开始那几拍 busy 还没抬起来，照 busy
- * 判会读到全 0 的结果寄存器。
+ * Trust EHR_VALID, not trng_busy: busy is not up yet in the first cycles of a generation, so
+ * going by busy reads all-zero result registers.
  *
- * 检查位先于 EHR_VALID 判：出错的那一块也会把 EHR_VALID 置起来（实测），
- * datasheet 12.12.3 说检查不过的结果不能当数据用，所以宁可丢掉重来。
+ * Check the error bits before EHR_VALID: a failed block sets EHR_VALID too (measured), and
+ * 12.12.3 says a block that failed a check is not data, so drop it and start over.
  */
 static int trng_wait_block(const struct trng_config *cfg, uint32_t start)
 {
@@ -203,7 +203,7 @@ static int trng_wait_block(const struct trng_config *cfg, uint32_t start)
 	}
 }
 
-/* 把没取走的字节挪到最前面，下一块才能整块放进池子 */
+/* Move the leftover bytes to the front so the next block fits in whole */
 static void trng_pool_compact(struct trng_data *data)
 {
 	if (data->pool_head == 0U) {
@@ -217,7 +217,7 @@ static void trng_pool_compact(struct trng_data *data)
 	data->pool_head = 0U;
 }
 
-/* 池子里还能放几块 */
+/* How many blocks the pool can still take */
 static size_t trng_pool_room(struct trng_data *data)
 {
 	trng_pool_compact(data);
@@ -225,7 +225,7 @@ static size_t trng_pool_room(struct trng_data *data)
 	return (sizeof(data->pool) - data->pool_len) / TRNG_BLOCK_BYTES;
 }
 
-/* 读满 6 个字搬进池子：读最后一个字会清结果寄存器，也接着采下一块（12.12.3） */
+/* Read all 6 words into the pool: the last read clears the registers and starts the next block */
 static void trng_pool_put_block(const struct trng_config *cfg, struct trng_data *data)
 {
 	const trng_hw_t *trng = cfg->regs;
@@ -241,7 +241,7 @@ static void trng_pool_put_block(const struct trng_config *cfg, struct trng_data 
 	data->pool_len += TRNG_BLOCK_BYTES;
 }
 
-/* 等一块进池子。0 = 池子里多了一块 */
+/* Wait for one block to land in the pool. 0 = the pool grew by one */
 static int trng_pool_refill(const struct trng_config *cfg, struct trng_data *data)
 {
 	const uint32_t start = k_uptime_get_32();
@@ -261,7 +261,7 @@ static int trng_pool_refill(const struct trng_config *cfg, struct trng_data *dat
 			return 0;
 		}
 		if (rc == -ETIMEDOUT) {
-			/* 可能只是慢（12.12.4）：机器状态不动，下次取数接着等 */
+			/* It may simply be slow (12.12.4): leave the machine state alone, the next read keeps waiting */
 			return rc;
 		}
 
@@ -271,7 +271,7 @@ static int trng_pool_refill(const struct trng_config *cfg, struct trng_data *dat
 	return -EIO;
 }
 
-/* 池子满了就关熵源；还有空位就把已经采好的块收进来，让硬件继续采下一块 */
+/* Pool full: disable the source. Room left: collect the finished block and keep generating */
 static void trng_pool_top_up(const struct trng_config *cfg, struct trng_data *data)
 {
 	for (;;) {
@@ -288,7 +288,7 @@ static void trng_pool_top_up(const struct trng_config *cfg, struct trng_data *da
 			continue;
 		}
 
-		/* 还没好：停过（省电）或这块废了才重起，正采着就让它接着采 */
+		/* Not ready yet: restart only after an idle stop or a bad block, otherwise let it run */
 		if (!data->running ||
 		    (isr & (TRNG_RNG_ISR_VN_ERR_BITS |
 			    TRNG_RNG_ISR_CRNGT_ERR_BITS |
@@ -311,7 +311,7 @@ static int trng_get_entropy(const struct device *dev, uint8_t *buf, uint16_t len
 		return 0;
 	}
 
-	/* 取数要等硬件（可以到几百毫秒），只能在调用线程里做 */
+	/* Reads wait on hardware (hundreds of ms), so they stay on the calling thread */
 	if (k_is_in_isr()) {
 		return -ENOTSUP;
 	}
@@ -355,8 +355,8 @@ static int trng_init(const struct device *dev)
 	struct trng_data *data = dev->data;
 
 	/*
-	 * 寄存器自检：驱动按 192 bit（6 个 EHR 字）取数，先确认这块 IP 真的是
-	 * 192 bit 的 EHR——不是就说明这不是我们认识的 TRNG，别拿它当熵源。
+	 * Register self-test: the driver reads 192 bit (6 EHR words), so first confirm this IP really
+	 * has a 192-bit EHR. If it does not, this is not the TRNG we know and it must not feed entropy.
 	 */
 	if ((cfg->regs->rng_version & TRNG_RNG_VERSION_EHR_WIDTH_192_BITS) == 0U) {
 		LOG_ERR("TRNG reports a 128-bit EHR (RNG_VERSION 0x%x)",
@@ -368,8 +368,8 @@ static int trng_init(const struct device *dev)
 	trng_reset(cfg, data);
 
 	/*
-	 * 预取第一块：这里只把熵源打开，不等它——probe 跑在 PRE_KERNEL_1，
-	 * 调度器还没起来，取数的等待不能放这儿。
+	 * Pre-fetch the first block: enable the source and do not wait — probe runs at PRE_KERNEL_1,
+	 * before the scheduler exists, so no waiting can happen here.
 	 */
 	trng_start(cfg, data);
 
