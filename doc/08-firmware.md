@@ -32,7 +32,7 @@
 
 - 射频不收也不发，链路状态冻结；
 - 数据口收到的字节**直接丢弃并计数**，不做缓存；退出后恢复正常收发；
-- 状态灯白灯 0.5 Hz（见 [11-ux](11-ux.md)）；
+- 状态灯白灯 1 Hz（见 [11-ux](11-ux.md)）；
 - 看门狗在会话期间 `disarm`（写短语要几十秒 PBKDF2，会被 8 s 看门狗复位），退出后重新武装。
 
 ## 3. 运行期配置
@@ -59,9 +59,9 @@
 - 数据 UART 也应是可选的；
 - 用 Kconfig 与 devicetree 表达能力，应用层靠 DT 探测，不写满 `#ifdef`。
 
-做法：应用只认别名（`zlrs-crsf-uart` / `zlrs-crsf-cdc` / `zlrs-data-uart` / `zlrs-data-cdc` / `zlrs-button` / `zlrs-led`），别名不挂就是"这条链路的端口不存在"，一样编得过。库层开关由应用开关反选：`ZLRS_APP_CONFIG_MODE` / `ZLRS_APP_STATUS_LED` / `ZLRS_APP_CRSF_PORT` 一关，对应的 `ZLRS_CONFIG` / `ZLRS_LED` / `ZLRS_CRSF` 一起裁掉。
+做法：应用只认别名（`zlrs-crsf-uart` / `zlrs-crsf-cdc` / `zlrs-data-uart` / `zlrs-data-cdc` / `zlrs-button` / `zlrs-led`），别名不挂就是"这条链路的端口不存在"，一样编得过。库层开关跟着应用开关走：`ZLRS_APP_CONFIG_MODE` / `ZLRS_APP_STATUS_LED` 一关，对应的 `ZLRS_CONFIG` / `ZLRS_LED` 一起裁掉；`ZLRS_APP_CORE` 打开的是应用永远要的那几个（`ZLRS_PROTO` / `ZLRS_LINK` / `ZLRS_REGION` / `ZLRS_CRSF`），其中 CRSF 编解码是端口层的常编代码——`ZLRS_APP_CRSF_PORT=n` 只是不初始化那个端口，代码与库不跟着掉（纯 C，几百字节）。
 
-**USB 设备栈由镜像自己建**（`lib/usb`，`CONFIG_ZLRS_USB`，应用侧 `CONFIG_ZLRS_APP_USB`）：devicetree 里的 `zephyr,cdc-acm-uart` 节点只表达"要几块 CDC"，设备不会自己上线——镜像要建 context、注册类、再 `usbd_enable()`。Zephyr 自带的 `CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT` 只注册第一块 CDC，本固件有好几块，所以那个开关保持关着。
+**USB 设备栈由镜像自己建**（`lib/usb`，`CONFIG_ZLRS_USB`，应用与 bootloader 两份配置各自打开）：devicetree 里的 `zephyr,cdc-acm-uart` 节点只表达"要几块 CDC"，设备不会自己上线——镜像要建 context、注册类、再 `usbd_enable()`。Zephyr 自带的 `CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT` 只注册第一块 CDC，本固件有好几块，所以那个开关保持关着。轻量硬件把 devicetree 里的 `usbd` 与 CDC 别名删掉即可。
 
 **每块 CDC 用自己的缓冲池**（`CONFIG_USBD_CDC_ACM_BUF_POOL=y`）：全速设备上多块 CDC 会抢 UDC 的公共池，RX 工作项分配失败后不会重试，表现是"只能发不能收"且无提示。
 

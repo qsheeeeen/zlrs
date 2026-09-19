@@ -150,8 +150,9 @@ def self_test() -> int:
         ("set-power", CMD_SET_POWER, bytes([20]), "a55a022301144f"),
         ("factory-reset", CMD_FACTORY_RESET, b"", "a55a0240006c"),
         ("recovery", CMD_RECOVERY, b"", "a55a02410067"),
-        ("build", CMD_BUILD, b"", None),
-        ("confirm", CMD_CONFIRM, b"", None),
+        ("build", CMD_BUILD, b"", "a55a02120075"),
+        ("image-hash", CMD_IMAGE_HASH, b"", "a55a0213007e"),
+        ("confirm", CMD_CONFIRM, b"", "a55a0242007a"),
         ("exit", CMD_EXIT, b"", "a55a023000d6"),
     ]
 

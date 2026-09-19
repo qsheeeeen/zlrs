@@ -61,6 +61,7 @@ west build -b "$ZLRS_BOARD" "$ZLRS_APP" -- \
 
   **射频打开而 Core2021 没接会黑灯**：vendored 的 `lr20xx_hal_wait_on_busy()` 在等 BUSY 的死循环里忙等（`k_usleep` 被注释掉了），默认超时 600 s，超时还 `k_oops()`；它跑在主线程（最高优先级），USB 栈拿不到 CPU，表现是"灯不亮 + USB 完全不枚举 + 应用被 8 s 看门狗反复复位"。这与应用代码无关，模块接上就正常。
 - **看门狗**在调试期建议打开（`CONFIG_ZLRS_APP_WATCHDOG=y`）：刷坏的镜像会自己复位，配合 MCUboot 的 test/revert 自动回滚，停在串口恢复里，不用按 BOOTSEL。
+- **抓开机日志**用 `CONFIG_ZLRS_APP_BOOT_DELAY_MS`（默认 0）：USB 起来之后先等这么久再往下初始化，主机来得及打开控制台端口——否则初始化中途的 panic 日志打在没人打开的口上，什么都看不到。
 - **恢复口按名字找**：应用是 `ZLRS`、bootloader 是 `ZLRS MCUBOOT`，用 `/dev/serial/by-id/...` 而不是 `ttyACM*`。
 - **判断"射频到底发出去了没有"，看每秒状态日志的 `air:` 那一行**（`CONFIG_ZLRS_APP_STATS_LOG=y`）：`ctl_tx` / `data_tx` 只统计事务真的做完的帧，`fail` 是事务失败次数。只有一块板时唯一能上空的路径是配对——配置口 `pair` 之后 30 s 窗口里每 100 ms 一个 `PAIR_REQ`，`ctl_tx` 该涨到 300 上下，`fail` 保持 0。
 - **不要用 `cat` 读 console**：读一小会儿就收不到东西了，而且会把 tty 回显打开、设备日志被回送成 shell 输入。用 pyserial 那种一直读的方式（`scripts/` 之外的自备小工具就行）。
