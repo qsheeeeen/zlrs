@@ -5,7 +5,7 @@ build:
   kconfig: Kconfig
   cmake: .
   settings:
-    # 仓库自带板级定义（boards/<vendor>/<board>/）与 dts 绑定，
-    # 见 <board_root>/boards 与 <dts_root>/dts
+    # The repository carries its own board definitions (boards/<vendor>/<board>/) and dts bindings,
+    # see <board_root>/boards and <dts_root>/dts
     board_root: .
     dts_root: .
