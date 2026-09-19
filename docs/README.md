@@ -56,13 +56,9 @@ layers, gates — is specified in [design/organization.md](design/organization.m
 
 ## Using it
 
-| Document | Scope |
-| --- | --- |
-| [README](../README.md) | build, flash, configure, repository layout |
-| [CONTRIBUTING](../CONTRIBUTING.md) | how to build, test and submit changes |
-| [CHANGELOG](../CHANGELOG.md) | what changed, per release |
-| [SECURITY](../SECURITY.md) | what is in scope and how to report a problem |
-| [CODE_OF_CONDUCT](../CODE_OF_CONDUCT.md) | expected behaviour in this project |
+Build, flash and configure instructions live in the [README](../README.md);
+host tests, style and the rules for changing this repository are in
+[organization.md](design/organization.md) section 6.
 
 ## Reading paths
 
