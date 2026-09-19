@@ -1,312 +1,312 @@
-# 空中协议
+# Over-the-air protocol
 
-本文定义 zlrs 的空中协议：物理层交给我们什么、帧长什么样、链路状态机怎么走、会话与同步怎么建、可靠传输怎么做、超帧怎么排、跳频与法规怎么落地。身份与密钥见 [10-security](10-security.md)，时序预算见 [07-architecture](07-architecture.md) 第 4 节，芯片参数见 [06-radio](06-radio.md)。
+The zlrs over-the-air protocol: what the physical layer hands us, what a frame looks like, how the link state machine moves, how sessions and sync are set up, how reliable transfer works, how the superframe is laid out, and how hopping and the regulations land in code. Identity and keys: [10-security](10-security.md); timing budget: [07-architecture](07-architecture.md) 4; chip parameters: [06-radio](06-radio.md).
 
-## 1. 物理层已经给了什么
+## 1. What the physical layer already provides
 
-| 能力 | 硬件提供 | 我们要做的 |
+| Capability | From hardware | What we do |
 | --- | --- | --- |
-| 前导码 | 是（`agc_pbl_len`） | 取值见 5.3 |
-| 同步字 | 是（FLRC，3 个槽，每个 2 或 4 字节） | 用它做第一级过滤，见 1.1 |
-| CRC | 是（`SetFlrcPacketParams`） | **不需要自己加 CRC** |
-| 长度字段 | 是（变长包格式） | 不需要自己带长度 |
+| Preamble | yes (`agc_pbl_len`) | values in 5.3 |
+| Sync word | yes (FLRC, three slots of 2 or 4 bytes) | used as the first filter, see 1.1 |
+| CRC | yes (`SetFlrcPacketParams`) | **no CRC of our own** |
+| Length field | yes (variable-length packets) | we carry no length |
 
-结论：**帧里不要重复携带 CRC 和长度**，这两样是射频链路层的活。
+Conclusion: **frames do not repeat the CRC or the length**; both belong to the radio link layer.
 
-### 1.1 配对过滤用同步字
+### 1.1 Pairing filtering uses the sync word
 
-**帧里不放 `pair_id`，过滤交给射频同步字。** 同步字是硬件匹配的：不匹配的包在射频层就被丢弃，MCU 根本不会被唤醒。
+**No `pair_id` in the frame: the radio's sync word does the filtering.** Matching is done in hardware, so a non-matching packet is dropped by the radio and never wakes the MCU.
 
-| 槽 | 值 | 用途 |
+| Slot | Value | Used for |
 | --- | --- | --- |
-| 1 | `KDF(pair_key, "zlrs/sync/control")[:4]` | sub-GHz 控制链路 |
-| 2 | `KDF(pair_key, "zlrs/sync/data")[:4]` | 2.4G 数传链路 |
-| 3 | 公开常量 | 配对模式 |
+| 1 | `KDF(pair_key, "zlrs/sync/control")[:4]` | the sub-GHz control link |
+| 2 | `KDF(pair_key, "zlrs/sync/data")[:4]` | the 2.4G data link |
+| 3 | a public constant | pairing mode |
 
-配对之后，本机在物理层就听不到其它配对的流量，不消耗 MCU 时间或空口字节。同步字固定 4 字节（32 位），速率档不编码进去。代价：换频段时要连同步字一起重配；配对改变后要重算一次。
+After pairing, this device cannot hear other pairs at the physical layer, spending no MCU time and no air bytes on them. The sync word is always 4 bytes (32 bits) and the rate tier is not encoded into it. The cost: changing band means reconfiguring the sync word too, and a new pairing has to derive a fresh one.
 
-## 2. 帧格式
+## 2. Frame format
 
-| 字段 | 长度 | 说明 |
+| Field | Length | Notes |
 | --- | --- | --- |
-| `header` | 1 B | 高 6 位 = 类型（64 种），低 2 位 = 标志 |
-| `seq` | 2 B | 会话内递增，防重放、用于分片重组与可靠传输 |
-| `payload` | 0..N B | 类型相关 |
-| `tag` | 0 或 4 B | HMAC 截断，覆盖 header + seq + payload |
-| `crc` | 硬件追加 | 由射频链路层生成与校验 |
+| `header` | 1 B | top 6 bits = type (64 of them), low 2 bits = flags |
+| `seq` | 2 B | increases within a session; replay protection, reassembly and reliable transfer use it |
+| `payload` | 0..N B | type dependent |
+| `tag` | 0 or 4 B | truncated HMAC over header + seq + payload |
+| `crc` | appended by hardware | generated and checked by the radio link layer |
 
-**MTU 不单设参数**：等于当前帧格式下数据包的最大载荷，随速率档与包格式变化。`tag` 是否存在、载荷是否加密，由 profile 决定，不由标志位决定。
+**The MTU is not a separate parameter**: it is the largest data payload the current frame format allows and moves with the rate tier and packet format. Whether a `tag` is present and whether the payload is encrypted are decided by the profile, not by flags.
 
-### 2.1 header 标志位
+### 2.1 Header flags
 
-| 位 | 名称 | 含义 |
+| Bit | Name | Meaning |
 | --- | --- | --- |
-| 0 | `MORE` | 分片未结束 |
-| 1 | `ACK_REQ` | 请求对端确认（可靠传输档用） |
+| 0 | `MORE` | more fragments follow |
+| 1 | `ACK_REQ` | asks the peer to acknowledge (used by the reliable mode) |
 
-### 2.2 包类型
+### 2.2 Packet types
 
-| 值 | 类型 | 方向 | 说明 |
+| Value | Type | Direction | Notes |
 | --- | --- | --- | --- |
-| 0 | `RC` | TX 到 RX | 遥控通道 |
-| 1 | `TLM` | RX 到 TX | 遥测 |
-| 2 | `DATA_UP` | TX 到 RX | 透传数据 |
-| 3 | `DATA_DOWN` | RX 到 TX | 透传数据 |
-| 4 | `ACK` | 双向 | 可靠传输的确认（见 4.3） |
-| 5 | `SYNC` | TX 到 RX | 会话建立、跳频同步、profile 声明 |
-| 6 | `PAIR_REQ` | TX 到 RX | 配对 |
-| 7 | `PAIR_RESP` | RX 到 TX | 配对 |
-| 8 | `PAIR_CFM` | TX 到 RX | 配对 |
-| 9 | `SESS_RESP` | RX 到 TX | 会话响应，带 `nonce_r` |
-| 10 | `SESS_CFM` | TX 到 RX | 会话确认，用新会话钥匙打 tag |
-| 11–63 | 保留 | — | — |
+| 0 | `RC` | TX to RX | RC channels |
+| 1 | `TLM` | RX to TX | telemetry |
+| 2 | `DATA_UP` | TX to RX | passthrough data |
+| 3 | `DATA_DOWN` | RX to TX | passthrough data |
+| 4 | `ACK` | both ways | reliable-transfer acknowledgement (see 4.3) |
+| 5 | `SYNC` | TX to RX | session setup, hop sync, profile declaration |
+| 6 | `PAIR_REQ` | TX to RX | pairing |
+| 7 | `PAIR_RESP` | RX to TX | pairing |
+| 8 | `PAIR_CFM` | TX to RX | pairing |
+| 9 | `SESS_RESP` | RX to TX | session response carrying `nonce_r` |
+| 10 | `SESS_CFM` | TX to RX | session confirmation tagged with the new session key |
+| 11-63 | reserved | - | - |
 
-### 2.3 安全 profile
+### 2.3 Security profiles
 
-| profile | tag | 加密 | 用途 |
+| Profile | tag | Encryption | Used for |
 | --- | --- | --- | --- |
-| `P0` | 无 | 无 | **极致性能档**：开销最小、帧最短，适合竞速；无认证，可被注入 |
-| `P1` | 4 B | 无 | **默认**：每包认证，不加密 |
-| `P2` | 4 B | AES-CTR | 认证加密；MAC 覆盖密文（encrypt-then-MAC） |
+| `P0` | none | none | **maximum performance**: least overhead and the shortest frames, good for racing; no authentication, so it can be injected into |
+| `P1` | 4 B | none | **the default**: every frame authenticated, nothing encrypted |
+| `P2` | 4 B | AES-CTR | authenticated encryption with the MAC over the ciphertext (encrypt-then-MAC) |
 
-- `tag` = HMAC-SHA256 截断到 4 B，覆盖 `header` + `seq` + `payload`；钥匙按方向派生，见 [10-security](10-security.md) 第 3 节。
-- 选 HMAC-SHA256 是为了让身份层只用 SHA-256 一个原语：PBKDF2、HKDF、MAC 全落在同一族函数上。
-- **P2 最后做**：其余功能全部完成之后再实现加密档。
-- profile 是编译期配置（`CONFIG_ZLRS_APP_SECURITY_PROFILE_P0` / `CONFIG_ZLRS_APP_SECURITY_PROFILE_P1` / `CONFIG_ZLRS_APP_SECURITY_PROFILE_P2`），`SYNC` 里声明的 profile 必须与本机一致。
+- `tag` = HMAC-SHA256 truncated to 4 B over `header` + `seq` + `payload`; the key is directional, see [10-security](10-security.md) 3.
+- HMAC-SHA256 keeps the identity layer on a single primitive: PBKDF2, HKDF and the MAC all sit in one function family.
+- **P2 comes last**: encryption is implemented once everything else is done.
+- The profile is a compile-time setting (`CONFIG_ZLRS_APP_SECURITY_PROFILE_P0`, `_P1`, `_P2`) and the profile declared in `SYNC` has to match the local one.
 
-### 2.4 控制帧载荷与速率档
+### 2.4 Control payload and rate tiers
 
-| 项 | 默认 | 其它档位 |
+| Item | Default | Other tiers |
 | --- | --- | --- |
-| 控制帧率 | 150 Hz | 500 Hz（近距竞速）；1000 Hz 是目标（`r=0`，全 2.4G） |
-| 通道数 | 16 | — |
-| 每通道位宽 | 11 位 | — |
-| `RC` payload | 22 B | — |
+| Control rate | 150 Hz | 500 Hz for close-in racing; 1000 Hz is the target (`r=0`, all 2.4G) |
+| Channels | 16 | - |
+| Bits per channel | 11 | - |
+| `RC` payload | 22 B | - |
 
-`RC` 帧的载荷直接搬 CRSF 的 22 字节通道数据（16 通道 × 11 位打包），RX 侧重建 CRSF 的帧头与 CRC8。150 Hz、22 B 载荷下，27 字节帧在 0.975 Mbps 上约 222 us，占 6.67 ms 周期的 3.3%。
+The `RC` payload carries CRSF's 22 bytes of channel data verbatim (16 channels packed at 11 bits) and the RX rebuilds CRSF's header and CRC8. At 150 Hz with a 22 B payload, a 27-byte frame takes about 222 us at 0.975 Mbps, 3.3% of a 6.67 ms frame.
 
-### 2.5 分片规则
+### 2.5 Fragmentation
 
-- `MORE` 置位表示后面还有分片。
-- 接收端严格按 `seq` 顺序重组；出现缺口或超过 100 ms 未收齐，丢弃整段。
-- 不做乱序重组：显式分片头每包要多付 2 B，代价大于收益。
+- `MORE` set means more fragments follow.
+- The receiver reassembles strictly in `seq` order; a gap or more than 100 ms without completion drops the whole run.
+- No out-of-order reassembly: an explicit fragment header would cost 2 B per frame, more than it buys.
 
-### 2.6 空口开销
+### 2.6 Overhead on air
 
-以 22 字节载荷、FLRC 1.3 Mbps（有效 0.975 Mbps）为例：
+With a 22-byte payload at FLRC 1.3 Mbps (0.975 Mbps effective):
 
-| 组成 | 字节 | 空口（估算） |
+| Composition | Bytes | Airtime (estimate) |
 | --- | --- | --- |
-| header + seq + payload | 25 | 约 205 us |
-| 加 4 B tag（P1/P2） | 29 | 约 238 us |
-| 前导码与同步字 | — | 再加几十 us |
+| header + seq + payload | 25 | about 205 us |
+| plus a 4 B tag (P1/P2) | 29 | about 238 us |
+| preamble and sync word | - | another few tens of us |
 
-tag 的代价约 16%；P0 不带 tag，所以更短、更快。
+The tag costs about 16%; P0 carries none and is therefore shorter and faster.
 
-### 2.7 链路质量与诊断
+### 2.7 Link quality and diagnostics
 
-**不另建诊断通道，复用 CRSF 既有的链路统计帧**（`0x14` LINK_STATISTICS）：
+**No separate diagnostics channel: CRSF's existing link statistics frame** (`0x14` LINK_STATISTICS) is reused:
 
-| CRSF 字段 | 我们的来源 |
+| CRSF field | Where our value comes from |
 | --- | --- |
-| 上行 RSSI / LQ / SNR | RX 测得并随遥测回传 |
-| 下行 RSSI / LQ / SNR | TX 自己测 |
-| RF 模式 | 当前速率档 |
+| uplink RSSI / LQ / SNR | measured by the RX and sent back in telemetry |
+| downlink RSSI / LQ / SNR | measured by the TX |
+| RF mode | the current rate tier |
 
-所以 `TLM` 载荷按 CRSF 链路统计帧的要求填（ELRS 传什么我们传什么）。速率自适应取其中的 LQ，动态功率取 RSSI 与 LQ，都不另外采一套。数传链路的溢出与丢弃字节数不进 CRSF，只在配置协议的 `STATUS` 里带计数。
+The `TLM` payload therefore carries exactly what CRSF's link statistics frame wants (whatever ELRS sends, we send). Rate adaptation takes the LQ from it and dynamic power takes RSSI and LQ, with no second measurement path. The data link's overflow and drops do not go into CRSF; only the config protocol's `STATUS` counts them.
 
-## 3. 链路状态机
+## 3. Link state machine
 
-### 3.1 两条链路的关系
+### 3.1 How the two links relate
 
-控制链路与数传链路各跑一份同样的状态机，互相独立。系统级的"在线"由控制链路决定；数传链路掉线只降吞吐。
+The control link and the data link each run a copy of the same state machine and are independent. System-level "online" is the control link's call; losing the data link only costs throughput.
 
-### 3.2 状态
+### 3.2 States
 
-| 状态 | 含义 |
+| State | Meaning |
 | --- | --- |
-| `UNCONFIGURED` | 没有 `root_key`，什么都不做 |
-| `UNPAIRED` | 有 `root_key`，但没有配对记录 |
-| `PAIRING` | 用户长按按键，正在配对 |
-| `SEARCHING` | 有配对记录，正在尝试建立连接 |
-| `CONNECTED` | 已建立连接，正常收发 |
+| `UNCONFIGURED` | no `root_key`, nothing happens |
+| `UNPAIRED` | a `root_key` but no pairing record |
+| `PAIRING` | the user held the button, pairing is under way |
+| `SEARCHING` | paired, trying to bring a session up |
+| `CONNECTED` | session up, traffic flowing |
 
-### 3.3 TX 侧转移
+### 3.3 Transitions on the TX
 
-| 起点 | 事件 | 终点 | 动作 |
+| From | Event | To | Action |
 | --- | --- | --- | --- |
-| `UNCONFIGURED` | 写入 `root_key` | `UNPAIRED` | 生成并保存 `dev_id` |
-| `UNPAIRED` | 长按按键 | `PAIRING` | 降功率、切配对同步字、周期发 `PAIR_REQ` |
-| `PAIRING` | 配对成功 | `SEARCHING` | 记录对端 `dev_id` 与两个 nonce、恢复功率、切常态同步字 |
-| `PAIRING` | 超时 30 s | `UNPAIRED` | 恢复功率与同步字 |
-| `SEARCHING` | 周期发 `SYNC`；收到 `SESS_RESP` 就算出会话、发 `SESS_CFM` | `CONNECTED` | 进入常态收发 |
-| `CONNECTED` | 250 ms 收不到任何有效包 | `SEARCHING` | 继续发 `SYNC` |
+| `UNCONFIGURED` | `root_key` written | `UNPAIRED` | generate and store `dev_id` |
+| `UNPAIRED` | long press | `PAIRING` | lower power, switch to the pairing sync word, send `PAIR_REQ` periodically |
+| `PAIRING` | pairing succeeds | `SEARCHING` | store the peer's `dev_id` and both nonces, restore power, switch to the normal sync word |
+| `PAIRING` | 30 s timeout | `UNPAIRED` | restore power and sync word |
+| `SEARCHING` | `SYNC` sent periodically; a `SESS_RESP` derives the session and `SESS_CFM` goes out | `CONNECTED` | normal traffic starts |
+| `CONNECTED` | 250 ms with no valid frame | `SEARCHING` | keep sending `SYNC` |
 
-### 3.4 RX 侧转移
+### 3.4 Transitions on the RX
 
-| 起点 | 事件 | 终点 | 动作 |
+| From | Event | To | Action |
 | --- | --- | --- | --- |
-| `UNCONFIGURED` | 写入 `root_key` | `UNPAIRED` | 生成并保存 `dev_id` |
-| `UNPAIRED` | 长按按键 | `PAIRING` | 切配对同步字、监听 `PAIR_REQ` |
-| `PAIRING` | 配对成功 | `SEARCHING` | 记录对端 `dev_id` 与两个 nonce、切常态同步字 |
-| `SEARCHING` | 收到 `SYNC` 回 `SESS_RESP`；再收到本会话钥匙的 `SESS_CFM` | `CONNECTED` | 按 `SYNC` 的跳频索引对齐 |
-| `CONNECTED` | 100 ms 收不到有效包 | `SEARCHING` | 输出失控保护值 |
+| `UNCONFIGURED` | `root_key` written | `UNPAIRED` | generate and store `dev_id` |
+| `UNPAIRED` | long press | `PAIRING` | switch to the pairing sync word and listen for `PAIR_REQ` |
+| `PAIRING` | pairing succeeds | `SEARCHING` | store the peer's `dev_id` and both nonces, switch to the normal sync word |
+| `SEARCHING` | a `SYNC` is answered with `SESS_RESP`, then a `SESS_CFM` tagged with this session's key arrives | `CONNECTED` | align on the hop index from `SYNC` |
+| `CONNECTED` | 100 ms with no valid frame | `SEARCHING` | output failsafe values |
 
-失控保护是 `CONNECTED` 之外的**输出行为**，不是链路状态：`SEARCHING` 期间 RX 必须持续输出预设的失控值给飞控。失控值由 TX 侧配置、配对时下发给 RX 存本地；默认「油门 0、其余通道中位」。
+Failsafe is an **output behaviour** outside `CONNECTED`, not a link state: while `SEARCHING` the RX has to keep feeding the configured failsafe values to the flight controller. The TX configures them and ships them during pairing for the RX to store; the default is throttle at zero and the other channels centred.
 
-配对载荷（`PAIR_REQ` / `PAIR_RESP` / `PAIR_CFM` 共用）：
+Pairing payload (shared by `PAIR_REQ`, `PAIR_RESP` and `PAIR_CFM`):
 
 ```
 [dev_a(4)][dev_b(4)][nonce_a(4)][nonce_b(4)][flags(1)][failsafe(22)]
 ```
 
-`failsafe` 只有发起方（TX）填：设过值就置 `flags` 的 bit0，响应方收到后照单存本地并写 NVS；没置位就保持自己那份。
+Only the initiator (TX) fills in `failsafe`: when it has values it sets bit0 of `flags` and the responder stores exactly what it received, NVS included; without the bit the responder keeps its own.
 
-### 3.5 会话建立（三次握手）
+### 3.5 Session setup (a three-way handshake)
 
-与配对同一个形状：双方各出一个 nonce，都进 KDF，最后一条消息用新钥匙打 tag、回带对方的 nonce。区别是钥匙材料与生命周期——配对用长期共享的 `root_key`，会话用配对建立的 `pair_key`。
+The same shape as pairing: one nonce from each end, both feeding the KDF, and a last message tagged with the new key that echoes the other end's nonce. What differs is the key material and its lifetime: pairing uses the long-lived shared `root_key`, a session uses the `pair_key` that pairing established.
 
-TX 周期性在同步信道上发 `SYNC`，携带三样东西：
+The TX sends `SYNC` periodically on the sync channel carrying:
 
-| 内容 | 作用 |
+| Content | Purpose |
 | --- | --- |
-| `nonce_t` | 本次会话的随机数 |
-| 信道 / 跳频索引 | RX 据此对齐 |
-| profile | 速率档、tag 开关、加密开关 |
-| 子带 | 混合比 `r` 与跳频表版本（TX 定、RX 从下一个同步帧生效） |
+| `nonce_t` | this session's random number |
+| channel and hop index | what the RX aligns to |
+| profile | rate tier, tag on or off, encryption on or off |
+| sub-band | mix ratio `r` and hop table version (chosen by the TX, effective on the RX from the next sync frame) |
 
-握手三步：
+The three steps:
 
-1. TX → RX：`SYNC{version, profile, hop, nonce_t}`，用配对级 `link_auth` 认证。
-2. RX → TX：`SESS_RESP{nonce_t, nonce_r}`，同样用 `link_auth` 认证；`nonce_r` 由 RX 现抽。
-3. TX → RX：`SESS_CFM{nonce_r, hop}`，用**新会话钥匙**打 tag，并回带本端此刻的跳频索引；RX 验过才采用会话。
+1. TX to RX: `SYNC{version, profile, hop, nonce_t}`, authenticated with the pairing-level `link_auth`.
+2. RX to TX: `SESS_RESP{nonce_t, nonce_r}`, also authenticated with `link_auth`; the RX draws `nonce_r` now.
+3. TX to RX: `SESS_CFM{nonce_r, hop}` tagged with the **new session key**, echoing the hop index this end is on right now; the RX adopts the session only after it verifies.
 
-会话钥匙 `KDF(pair_key, "zlrs/session", nonce_t || nonce_r || 发送方 id || 接收方 id)`：收发各一把，本机发用 out、收对端用 in（见 [10-security](10-security.md) 第 3 节）。序列号从 0 起。
+Session key `KDF(pair_key, "zlrs/session", nonce_t || nonce_r || sender id || receiver id)`: one per direction, out for what we send and in for what the peer sends (see [10-security](10-security.md) 3). Sequence numbers start at 0.
 
-**为什么必须有第二步**：只有 `nonce_t` 的话，钥匙完全由 TX 那个可被整帧重放的值决定；掺进 RX 现抽的 `nonce_r` 之后，重放只能换来一条全新钥匙的候选会话，而采用它需要 TX 拿同一把钥匙来确认。
+**Why the second step is mandatory**: with `nonce_t` alone the key would come entirely from a value the TX puts on air and anyone can replay; mixing in the RX's fresh `nonce_r` means a replay only earns a candidate session under a brand new key, and adopting it needs the TX to confirm with that same key.
 
-**重传**：RX 对同一个 `nonce_t` 只重发同一条响应；TX 收到重复响应就再发一次确认。丢哪一条都只耽误一个 `SYNC` 周期。
+**Retransmits**: for the same `nonce_t` the RX repeats the same response and the TX repeats its confirmation when a duplicate response arrives. Losing any one message costs a single `SYNC` period.
 
-**建链时机**：TX 发出确认即进 `CONNECTED`；RX 验过确认才进。对端没收到确认时，失联判定会把 TX 拉回 `SEARCHING`。
+**When the link counts as up**: the TX enters `CONNECTED` as soon as the confirmation leaves, the RX only after it verifies one. If the peer never hears the confirmation, the peer-loss check pulls the TX back to `SEARCHING`.
 
-### 3.6 同步节奏
+### 3.6 Sync cadence
 
-`SYNC` 只在同步信道上发，间隔分状态（照 ELRS 的做法）：
+`SYNC` only ever goes out on the sync channel, at state-dependent intervals (following ELRS):
 
-| 状态 | 间隔 |
+| State | Interval |
 | --- | --- |
-| 搜索 / 断连 | 100–600 ms（按速率档），其间 RX 在同步信道上扫描 |
-| 连接 | **5 s** |
+| searching or disconnected | 100-600 ms depending on the rate tier, with the RX scanning the sync channel |
+| connected | **5 s** |
 
-连接态的稀疏 `SYNC` 有两个作用：把两端晶振漂移累积的索引误差抹掉一次；发现"对端换了会话"（重启、重新配对）并自动重新握手。对端重启的检测因此最多晚 5 s。两条链路各自发自己的 `SYNC`，各自建立会话。
+The sparse `SYNC` while connected does two jobs: it wipes out the hop-index error that crystal drift accumulates, and it notices a peer that changed sessions (a reboot or re-pair) so the handshake restarts by itself. A peer reboot is therefore noticed within 5 s at worst. Each link sends its own `SYNC` and sets up its own session.
 
-### 3.7 定时器
+### 3.7 Timers
 
-| 项 | 控制链路 | 数传链路 |
+| Item | Control link | Data link |
 | --- | --- | --- |
-| 配对窗口 | 30 s | 30 s |
-| 分片重组 | 100 ms | 100 ms |
-| 失联判定 | RX 失控保护 100 ms / TX 250 ms | 无判定（尽力而为时不发空帧） |
-| `SYNC` 周期 | 连接 5 s，搜索 100–600 ms | 同左 |
+| pairing window | 30 s | 30 s |
+| reassembly | 100 ms | 100 ms |
+| peer loss | 100 ms for RX failsafe, 250 ms for the TX | none: best-effort sends no idle frames |
+| `SYNC` period | 5 s connected, 100-600 ms searching | the same |
 
-分片重组超时给到 100 ms 是因为可靠传输的重传周期是 30 ms：太短会在重传途中把半截分片丢掉。全部按时间定义，不按包数——换帧率不用改参数。
+Reassembly gets 100 ms because reliable transfer retransmits every 30 ms: anything shorter would throw away half-finished messages in mid-retransmit. Every timer is defined in time rather than frames, so changing the frame rate changes no parameter.
 
-## 4. 超帧与链路策略
+## 4. Superframe and link policy
 
-### 4.1 固定超帧
+### 4.1 A fixed superframe
 
-**每个控制周期形状完全相同。** 动态分配时隙能省下约 3% 的切换开销，代价是延迟上限不可算、出问题难定位；[01-product](01-product.md) 那条"确定性延迟、故障可预测可检测"更值这 3%。
+**Every control period has exactly the same shape.** Allocating slots dynamically would save about 3% of switching cost, at the price of an uncomputable latency bound and problems that are hard to localise; the "deterministic latency, predictable and detectable failures" of [01-product](01-product.md) is worth more than those 3%.
 
-一个周期（150 Hz，6.67 ms）的形状：
+One period (150 Hz, 6.67 ms) looks like this:
 
-| 段 | 内容 | 约计 |
+| Leg | Content | Roughly |
 | --- | --- | --- |
-| 1 | sub-GHz：TX 发 `RC` 帧 | 238 us |
-| 2 | sub-GHz：切收，RX 发遥测帧（**必须回应**） | 91 + 238 us |
-| 3 | 切到 2.4G | — |
-| 4 | 2.4G：数传窗口，前半 TX 到 RX，后半 RX 到 TX | 约 5.7 ms |
-| 5 | 切回 sub-GHz | — |
+| 1 | sub-GHz: the TX sends an `RC` frame | 238 us |
+| 2 | sub-GHz: switch to receive, the RX sends telemetry (**mandatory answer**) | 91 + 238 us |
+| 3 | switch to 2.4G | - |
+| 4 | 2.4G: the data window, TX to RX first, RX to TX second | about 5.7 ms |
+| 5 | switch back to sub-GHz | - |
 
-控制链路加频段切换合计约 924 us，占周期的 14%（1.3 Mbps 档、29 字节帧的粗估）。**帧率是档位**：150 Hz 默认、500 Hz 竞速、1000 Hz 是目标；实际生效值由时间计划（`zlrs_region_control_plan()`，空中时间用 `zlrs_mod_airtime_us()` 算）按地区占空比与空中时间压档得出，遥测与数传窗口按稀疏系数摊进每一帧（500 Hz 档是 1/3 与 1/5）。
+The control link plus the band switches comes to about 924 us, 14% of the period (a rough figure for the 1.3 Mbps tier with 29-byte frames). **The frame rate is a tier**: 150 Hz by default, 500 Hz for racing, 1000 Hz the target; the effective value comes from the time plan (`zlrs_region_control_plan()`, with airtime from `zlrs_mod_airtime_us()`), clamped by the regional duty cap and airtime, with the telemetry and data windows thinned into each frame (1/3 and 1/5 at the 500 Hz tier).
 
-1000 Hz 需要控制链路自己拥有射频（IRQ 驱动的逐帧时序）：RAC 的 FLRC burst 是单向批量传输，事务起点仍由毫秒粒度的 planner 决定，做不到 1 ms 一帧。`r=0` 时 2.6 Mbps 的 31 B 帧是 108 µs，时隙预算 308 µs，四个时隙分得开。
+1000 Hz needs the control link to own the radio and drive frames from IRQs: RAC's FLRC burst is a one-way batch transfer whose start still comes from a millisecond-granularity planner, so 1 ms frames are out of reach. At `r=0` a 31 B frame at 2.6 Mbps takes 108 us and the slot budget is 308 us, which separates the four slots cleanly.
 
-### 4.2 遥测窗口
+### 4.2 Telemetry window
 
-**RX 必须回应**，即使没有遥测数据也要发一个最小的空帧（约 7 B）：TX 靠"这个周期收到东西了吗"判断链路存活，否则无法区分"链路断了"和"暂时没数据"。
+**The RX must answer**, sending a minimal empty frame (about 7 B) even with nothing to report: the TX decides the link is alive by whether something arrived this period, and without the answer it cannot tell "the link is down" from "there is nothing to say yet".
 
-### 4.3 数传窗口与可靠传输
+### 4.3 Data window and reliable transfer
 
-数传窗口固定对半分：前半 TX 到 RX，后半 RX 到 TX。时序最可预测；单向流量时浪费一半，数据链路本来就是辅助通道，接受这个代价。
+The data window splits in half: TX to RX first, RX to TX second. That keeps the timing maximally predictable; an idle direction wastes half of it, which the data link accepts as a secondary channel.
 
-数传有**两档语义**，默认可靠重传：
+The data link has **two modes** and defaults to reliable transfer:
 
-| 档 | 行为 |
+| Mode | Behaviour |
 | --- | --- |
-| **可靠重传（ARQ，默认）** | 接收方回累计 ACK（"已按序收到哪个序号"），发送方把窗口里未确认的帧重传（窗口 4 帧、超时 30 ms、最多 6 次）；接收侧按序号去重、按序投递，并统计"序号缺口" |
-| best-effort | 裸字节流，缓冲满即丢，附溢出计数；延迟最低，适合上层自带重传又不在乎丢包的场景 |
+| **reliable (ARQ, the default)** | the receiver sends cumulative ACKs ("this is the highest in-order sequence number"), the sender retransmits unacknowledged frames in the window (4 frames, 30 ms timeout, at most 6 tries); the receiver dedups, delivers in order and counts sequence gaps |
+| best-effort | a raw byte stream that drops when the buffer is full and counts the overflow; the lowest latency, for upper layers that retransmit themselves and do not mind loss |
 
-可靠传输的思路与 ELRS 的 AirPort/MAVLink 一致（确认 + 重发直到确认），实现上我们用一个累计 ACK 帧而不是包头 1 bit：ELRS 的 RX 每个时隙都有包可搭，我们的数传窗口里 RX 方向不一定有数据，所以需要一个独立的确认帧。进一步收窄成 1 bit piggyback 记在 [13-roadmap](13-roadmap.md)。
+Reliable transfer follows ELRS's AirPort/MAVLink idea (acknowledge and resend until acknowledged) but uses a separate cumulative ACK frame instead of a single header bit: an ELRS receiver always has a frame to ride along in, while our RX direction may have no data at all, so a dedicated ack frame is needed. Narrowing that to a piggybacked bit is on [13-roadmap](13-roadmap.md).
 
-重传用尽时这一段计成丢弃（可见计数），窗口清空、序号重开，并让接收端把半截消息作废。会话里的第一帧必须从序号 0 开始：宁可丢一段，也不能把半截流错位投递给上层。
+When retries run out the run is counted as dropped (visibly), the window clears, sequence numbers restart and the receiver is told to void the half message. The first frame of a session has to start at sequence 0: dropping a run is better than handing the layer above a stream at the wrong offset.
 
-帧长动态，上限是当前帧格式能装下的最大载荷（即 MTU），且**一帧必须在窗口内发完，不能跨窗口**：低速档下长帧反而装不下，上限跟着速率档走。
+Frame length is dynamic and capped by the largest payload the current frame format fits (the MTU), and **a frame has to finish inside its window, never spanning two**: at low rates a long frame no longer fits, so the cap follows the rate tier.
 
-### 4.4 速率自适应
+### 4.4 Rate adaptation
 
-两条链路都自适应，目标函数不同：
+Both links adapt, with different objectives:
 
-| 链路 | 目标 | 质量退化时的行为 |
+| Link | Objective | When quality drops |
 | --- | --- | --- |
-| 控制链路 | 距离与稳定性 | 降速率档换灵敏度，接受帧率下降 |
-| 数传链路 | 帧率与吞吐 | 优先保住速率与帧率，不为距离而降速 |
+| Control | distance and stability | drop a rate tier for sensitivity and accept a lower frame rate |
+| Data | rate and throughput | keep the rate and frame rate, never trade speed for distance |
 
-所以档位是「频段 + 速率 + 帧率」的组合。数传链路的速率上限由配置的串口波特率推导（115200 → 要扛住约 11.5 kB/s；921600 → 约 92 kB/s），配置工具负责校验可达性。
+A tier is therefore a combination of band, rate and frame rate. The data link's rate ceiling is derived from the configured serial baud rate (115200 has to carry about 11.5 kB/s, 921600 about 92 kB/s) and the config tool checks that it is reachable.
 
-判据：主判据是每档的 LQ 下限，升档要多 10 个百分点余量，连续 3 个窗口（每次 1 s，在 1 Hz 的 `report()` 里评估）达标才动，换档后 2 s 内不评估。RSSI 不参与速率判定。
+The verdict: each tier has a minimum LQ, moving up needs a further 10 percentage points of margin, three consecutive windows (1 s each, judged in `report()` at 1 Hz) have to agree, and nothing is judged for 2 s after a change. RSSI plays no part in the rate decision.
 
-### 4.5 动态功率
+### 4.5 Dynamic power
 
-功率同样决定链路预算，而且改功率不影响帧时长。依据是 RX 遥测回报的上行 RSSI 与 LQ，每秒评估一次：
+Power also sets the link budget and changing it costs no airtime. The decision uses the uplink RSSI and LQ the RX reports, judged once a second:
 
-| 条件 | 动作 |
+| Condition | Action |
 | --- | --- |
-| RSSI 低于下限（默认 −95 dBm）或 LQ 低于下限（默认 90%） | 连续 3 次评估后升一档（步长 3 dB） |
-| RSSI 高于上限（默认 −70 dBm）且 LQ 高于上限（默认 98%） | 连续 3 次评估后降一档 |
-| 两者之间 | 不动（滞回区） |
-| 一秒内没收到遥测 | 直接回到上限 |
+| RSSI below the floor (-95 dBm by default) or LQ below it (90%) | after 3 consecutive judgements, up one step (3 dB) |
+| RSSI above the ceiling (-70 dBm) and LQ above it (98%) | after 3 consecutive judgements, down one step |
+| in between | nothing moves, this is the hysteresis band |
+| no telemetry for a second | straight back to the ceiling |
 
-上限取"配置功率与地区上限的较小值"（法规优先），下限是配置项（默认 0 dBm）。默认开启。
+The ceiling is the smaller of the configured power and the regional limit (the regulation wins) and the floor is a setting (0 dBm by default). On by default.
 
-## 5. 跳频与法规
+## 5. Hopping and regulation
 
-**逐包跳频**：每包换一个频点，索引由 `fhss_seed` 派生的频点表决定，TX 在 `SYNC` 里携带索引，RX 与之锁步。这样同时买到抗干扰、与其它 zlrs 链路的共存，以及法规跳频条款所需的信道数与驻留时间。代价是 RX 要在特定时刻打开特定频点。
+**Per-frame hopping**: every frame changes frequency, the index comes from the table derived from `fhss_seed`, the TX carries the index in `SYNC` and the RX stays in lockstep. That buys interference resistance, coexistence with other zlrs links and the channel count and dwell time the hopping rules want, at the price of the RX having to open a specific frequency at a specific moment.
 
-### 5.1 前提与重同步
+### 5.1 Preconditions and resync
 
-| 前提 | 来源 |
+| Precondition | Where it comes from |
 | --- | --- |
-| 共同的频点表 | `fhss_seed + r + 表版本` 派生（两端各自算）：同一张表里既有 2.4G 频点也有 sub-G 频点 |
-| 共同的时隙长度 | 速率档决定 |
-| 共同的索引 | `SYNC` 携带，建链时对齐，连接态每 5 s 再对齐一次 |
-| 时钟漂移 | 连接态周期 `SYNC` 把索引拉回；搜索态密集 `SYNC` + 同步信道扫描负责重新捕获 |
+| a shared frequency table | derived from `fhss_seed + r + table version` on each end: one table holding both 2.4G and sub-G frequencies |
+| a shared slot length | decided by the rate tier |
+| a shared index | carried by `SYNC`, aligned when the link comes up and again every 5 s while connected |
+| clock drift | the periodic `SYNC` while connected pulls the index back; searching relies on dense `SYNC` plus a scan of the sync channel |
 
-重同步帧上的 `SYNC` 是配对级 `link_auth` 打的 tag，旧帧也能验过，所以收下它有两道门：**序号必须更新**（同会话共用一个序号空间）；**换会话要"最近完全听不到对端"**（`now - last_rx > beacon_period` 才认新 `nonce_t`，否则当重放丢掉）。这条同时是"对端重启后自动重连"的实现。
+A `SYNC` on a resync frame is tagged with the pairing-level `link_auth`, so an old frame verifies too; accepting one therefore needs two gates: **the sequence number must be new** (one sequence space per session) and **switching sessions needs recent total silence** (a new `nonce_t` is believed only when `now - last_rx > beacon_period`, otherwise it is a replay and dropped). That same rule is how a peer reboot reconnects by itself.
 
-### 5.2 法规
+### 5.2 Regulation
 
-- FCC 15.247 的跳频条款要求 ≥50 个信道、单信道驻留 ≤400 ms、各信道等概率使用；逐包跳频满足。
-- ETSI EN 300 220 的某些子频段有占空比限制（1% / 10%），直接限制控制帧率与数传可用时隙比例。
-- 2.4G ISM 无跳频要求。
+- FCC 15.247's hopping rules want at least 50 channels, a dwell time of 400 ms or less and equal use of every channel; per-frame hopping satisfies them.
+- Some sub-bands of ETSI EN 300 220 carry duty limits (1% or 10%) that directly bound the control rate and the share of slots the data link may use.
+- 2.4G ISM has no hopping requirement.
 
-实现在 `lib/region`：四张表（FCC915 不限占空比、EU868 1%/60 s、CN470、CN433），启动时由 `zlrs_region_validate()` 校验"地区要的 sub-G 硬件与板子一致"（HF SKU 跑 868/915，LF SKU 跑 470/433，不匹配就红灯告警且不发射频），发射前做占空比记账，额度用完的时隙让出去并计数。
+This lives in `lib/region`: four tables (FCC915 with no duty limit, EU868 at 1% per 60 s, CN470, CN433), `zlrs_region_validate()` at boot checks that the region's sub-G hardware matches the board (HF SKU for 868/915, LF SKU for 470/433, and a mismatch means a red alert and no radio), every transmission is booked against the duty budget, and a slot with none left is given up and counted.
 
-信道间隔按调制带宽定：CN470 用 300 kHz 间隔（96 信道），CN433 只有 1.74 MHz 宽、放得下 5 个 300 kHz 信道。窄频段地区带 `max_rate_bps`，超过上限的配置自动压到 0.325 Mbps 窄带 FLRC。
+Channel spacing follows the modulation bandwidth: CN470 uses 300 kHz spacing (96 channels) while CN433 is only 1.74 MHz wide and fits five 300 kHz channels. Narrow-band regions carry a `max_rate_bps`, and a configuration above it is clamped to 0.325 Mbps narrow-band FLRC.
 
-**LoRa 是"速率换距离"的选项，只用于控制链路**：默认走窄带 FLRC（0.325 Mbps，占 300 kHz，窄带地区放得下）；LoRa 的优势是灵敏度（SF7 在 sub-G 是 -118 dBm），代价是空中时间长几十倍——31 B 的帧要 72 ms。EU868 的 1% 占空比撑不住这一档（每秒只够 0.14 帧），所以那里只用窄带 FLRC。
+**LoRa is the trade-rate-for-distance option and applies to the control link only**: the default is narrow-band FLRC (0.325 Mbps in 300 kHz, which fits narrow regions); LoRa buys sensitivity (SF7 is -118 dBm on sub-G) and costs tens of times the airtime, 72 ms for a 31 B frame. EU868's 1% duty cannot feed that tier (0.14 frames per second), so it stays on narrow-band FLRC.
 
-### 5.3 前导码与同步字
+### 5.3 Preamble and sync words
 
-- FLRC：同步字固定 4 字节，三个槽（控制 1 / 数传 2 / 配对 3）由配对钥匙按角色派生（`derive_pair()`）。
-- LoRa：同步字 1 字节，另派生（`zlrs/sync/lora/control` 等），最高位当 private bit 置 1，满足 "`0x0X` 不能用"的约束；配对帧固定落在私网同步字 `0x12`。
-- 前导码在 datasheet 最小值之上留余量（LoRa 默认 8 个符号；SF5/SF6 建议 ≥12）。
+- FLRC: sync words are 4 bytes and the three slots (1 control, 2 data, 3 pairing) are derived from the pairing key by role (`derive_pair()`).
+- LoRa: the sync word is one byte derived separately (`zlrs/sync/lora/control` and friends) with the top bit set as the private bit, satisfying the rule that `0x0X` values are not allowed; pairing frames always use the private sync word `0x12`.
+- Preamble lengths leave margin over the datasheet minimum (8 symbols for LoRa by default, 12 or more suggested for SF5/SF6).
