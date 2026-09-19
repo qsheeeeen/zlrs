@@ -24,7 +24,7 @@ typedef struct {
 } zlrs_led_rgb_t;
 
 typedef struct {
-	bool config_mode;  /* 正在跑配置模式 */
+	bool config_mode;  /* 正在跑配置模式（一闪而过的会话由应用侧过滤，见 ports.c） */
 	bool configured;   /* 有根密钥 */
 	bool paired;       /* 有配对记录 */
 	bool failsafe;     /* 正在发/输出失控值（TX 输入超时、RX 未连接） */
@@ -44,4 +44,3 @@ zlrs_led_rgb_t zlrs_led_frame(const zlrs_led_input_t *in, uint32_t now_ms);
 #ifdef __cplusplus
 }
 #endif
-

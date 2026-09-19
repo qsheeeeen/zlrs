@@ -561,6 +561,13 @@ uint32_t zlrs_crsf_port_rx_dropped(void)
 #define CFG_RX_CHUNK 32U
 #define CFG_EXIT_POLL_MS 50U
 
+/*
+ * 白灯要露脸多久才算"真在配置"。升级工具与 `zlrs-config.py` 都是一条命令开一次
+ * 会话、百来毫秒就退，这种瞬时会话闪一下白反而像故障（黄 → 白 → 蓝 看着就是
+ * "乱闪"），所以会话真持续下来才切白，短会话保持原来的状态灯语。
+ */
+#define CFG_LED_DELAY_MS 500U
+
 /* ---- 配置口：专用的 CDC，常驻在 USB 上 -------------------------------- */
 
 #define CFG_PORT_RX_RING_LEN 512U
@@ -1053,6 +1060,7 @@ int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 	const uint32_t timeout_ms =
 		(uint32_t)CONFIG_ZLRS_APP_CONFIG_TIMEOUT_S * 1000U;
 	uint32_t last_activity_ms = k_uptime_get_32();
+	const uint32_t started_ms = last_activity_ms;
 	bool exit_requested = false;
 
 	cfg_link = control;
@@ -1078,18 +1086,19 @@ int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 		uint8_t chunk[CFG_RX_CHUNK];
 		bool any = false;
 		zlrs_led_input_t led_in;
+		const uint32_t now_ms = k_uptime_get_32();
 
 		zlrs_watchdog_feed();
 
 		/* 白灯慢闪 = 不是正常工作状态 */
 		memset(&led_in, 0, sizeof(led_in));
-		led_in.config_mode = true;
+		led_in.config_mode = (uint32_t)(now_ms - started_ms) >= CFG_LED_DELAY_MS;
 		led_in.configured = cfg_link->configured;
 		led_in.paired = cfg_link->paired;
 		led_in.role_tx = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX);
 		led_in.link_state = cfg_link->state;
 		led_in.lq_percent = cfg_link->stats.lq_percent;
-		led_in.uptime_ms = k_uptime_get_32();
+		led_in.uptime_ms = now_ms;
 		zlrs_led_port_update(&led_in, led_in.uptime_ms);
 
 		/* 配置模式期间射频停：数据口收到的东西直接丢，只计数 */
