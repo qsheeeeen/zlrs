@@ -8,7 +8,7 @@ What zlrs runs on: target shapes, board, build targets, toolchain, image layout 
 | --- | --- |
 | **Prototype** | a Waveshare RP2350-Zero and a Waveshare Core2021 wired together, exposing USB-C only; see [04-prototype](04-prototype.md) |
 | **Carrier board** | the same wiring turned into a PCB exposing USB-C, a button and two 6P serial ports; see [05-carrier](05-carrier.md) |
-| **Lightweight** | no native USB; one UART port whose link role (control or data) is runtime configuration, default declared in devicetree; see [08-firmware](08-firmware.md) 4 |
+| **Lightweight** | no native USB; one UART port, control or data by configuration; see [08-firmware](08-firmware.md) 4 |
 
 All three shapes share one firmware and one board definition; only devicetree and Kconfig differ.
 
