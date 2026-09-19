@@ -1,5 +1,5 @@
 /*
- * 持久化：根密钥、设备标识与配对记录放 NVS，见 doc/10-security.md 第 2 节。
+ * Persistence: root key, device id and pairing record live in NVS (doc/10-security.md 2).
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -14,15 +14,15 @@
 int zlrs_store_init(void);
 
 /*
- * 配对记录：对端身份 + 配对时的两个 nonce（见 doc/10-security.md 第 2、3 节）。
- * 一次配对就是一条记录，没有别的形态。
+ * Pairing record: peer identity plus the two pairing nonces (see doc/10-security.md 2, 3).
+ * One pairing, one record; there is no other shape.
  */
 typedef struct {
 	uint8_t peer_id[ZLRS_DEV_ID_LEN];
 	uint8_t pair_salt[ZLRS_PAIR_SALT_LEN];
 } zlrs_store_pairing_t;
 
-/* 返回读到的字节数，没有记录或出错返回负值 */
+/* Returns the bytes read; negative when the record is missing or the read failed */
 int zlrs_store_load_root_key(uint8_t out[ZLRS_KEY_LEN]);
 int zlrs_store_load_dev_id(uint8_t out[ZLRS_DEV_ID_LEN]);
 int zlrs_store_load_pairing(zlrs_store_pairing_t *out);
@@ -39,11 +39,11 @@ int zlrs_store_save_baud(uint32_t baud);
 int zlrs_store_save_region(uint8_t region);
 int zlrs_store_save_power(int8_t dbm);
 
-/* 恢复出厂：清掉所有记录（密钥、配对、失控值、波特率、地区、功率） */
+/* Factory reset: wipe every record (keys, pairing, failsafe, baud, region, power) */
 int zlrs_store_erase_all(void);
 
-/* 只擦配对记录（设备标识与密钥保留） */
+/* Erase the pairing record only (device id and keys stay) */
 int zlrs_store_erase_pairing(void);
 
-/* 把 64 个十六进制字符解析成根密钥，成功返回 0 */
+/* Parse 64 hex characters into a root key, returns 0 on success */
 int zlrs_store_parse_hex_key(const char *hex, uint8_t out[ZLRS_KEY_LEN]);

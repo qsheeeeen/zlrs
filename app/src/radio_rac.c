@@ -1,6 +1,6 @@
 /*
- * 射频移植层（RAC 后端）：CONFIG_ZLRS_APP_RADIO=y 时用这份。
- * 接口与契约见 radio_port.h，回调时序见 doc/07-architecture.md 6.2。
+ * Radio port layer (RAC backend), used when CONFIG_ZLRS_APP_RADIO=y.
+ * Interface and contract: radio_port.h; callback timing: doc/07-architecture.md 6.2.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -63,7 +63,7 @@ const zlrs_radio_ops_t *zlrs_radio_data_ops(void)
 	return &data_ops;
 }
 
-/* 速率档：v1.1 起原始速率与带宽合成一个枚举，见 doc/06-radio.md */
+/* Rate tiers: since v1.1 the raw rate and bandwidth share one enum, see doc/06-radio.md */
 static ral_flrc_raw_bit_rate_t raw_bit_rate(uint32_t rate_bps)
 {
 	switch (rate_bps) {
@@ -114,7 +114,7 @@ static ral_flrc_tx_syncword_t tx_syncword(uint8_t slot)
 	}
 }
 
-/* 带宽按 Hz 给，RAC/RAL 那边是枚举 */
+/* Bandwidth is given in Hz, RAC/RAL takes an enum */
 static ral_lora_bw_t lora_bw(uint32_t bw_hz)
 {
 	switch (bw_hz) {
@@ -129,9 +129,9 @@ static ral_lora_bw_t lora_bw(uint32_t bw_hz)
 }
 
 /*
- * LoRa 事务的参数。同步字是 1 字节（链路层从配对钥匙派生，最高位当 private
- * bit，见 lib/link/link.c 的 derive_pair）；RAC 那边虽然声明成枚举，实际是把
- * 这个字节原样交给驱动，驱动的约束只有"高 4 位不能是 0"。
+ * Parameters of a LoRa transaction. The sync word is one byte (derived by the link layer from
+ * the pairing key, top bit as the private bit, see derive_pair in lib/link/link.c). RAC declares
+ * it as an enum but passes the byte through; the driver only requires the top 4 bits to be non-zero.
  */
 static void fill_lora_params(smtc_rac_context_t *rac, const zlrs_radio_req_t *req)
 {
@@ -150,8 +150,8 @@ static void fill_lora_params(smtc_rac_context_t *rac, const zlrs_radio_req_t *re
 	rac->radio_params.lora.invert_iq_is_on = 0U;
 	rac->radio_params.lora.crc_is_on = 1U;
 	/*
-	 * 配对时还没有配对钥匙，派生不出同步字，只能落在固定值上——配对帧就用它，
-	 * 别把"上一对留下的派生值"带进来。
+	 * While pairing there is no pairing key yet, so no sync word can be derived and a fixed value
+	 * has to do: pairing frames use it, and no leftover derivation from the previous pair leaks in.
 	 */
 	rac->radio_params.lora.sync_word =
 		(req->mod.sync_byte != 0U && req->sync_slot != ZLRS_SYNC_SLOT_PAIRING)
@@ -176,7 +176,7 @@ static ral_flrc_rx_match_sync_word_t rx_match_syncword(uint8_t slot)
 	}
 }
 
-/* 事务失败只报一次（每帧都会失败，刷屏没意义） */
+/* Report a failing transaction once: it fails every frame, more log lines help nobody */
 static bool radio_fail_logged;
 
 static void client_complete(rac_client_t *client, rp_status_t status)
@@ -189,17 +189,17 @@ static void client_complete(rac_client_t *client, rp_status_t status)
 	switch (status) {
 	case RP_STATUS_TX_DONE:
 	case RP_STATUS_RX_TIMEOUT:
-		/* 空接收窗口不是错误 */
+		/* An empty receive window is not an error */
 		break;
 	case RP_STATUS_RX_PACKET:
 		client->rx_len = client->ctx->smtc_rac_data_result.rx_size;
 		client->rssi = client->ctx->smtc_rac_data_result.rssi_result;
-		/* FLRC 下 USP 不填 SNR（只有 LoRa 有效），先原样带上去 */
+		/* USP leaves SNR unset under FLRC (only LoRa provides it), pass it on as-is */
 		client->snr = client->ctx->smtc_rac_data_result.snr_result;
 		break;
 	default:
 		client->status = ZLRS_RADIO_FAIL;
-		/* 只报第一次：射频事务失败会每帧重复，刷屏没意义 */
+		/* First time only: a failing transaction repeats every frame and would flood the log */
 		if (!radio_fail_logged) {
 			radio_fail_logged = true;
 			LOG_ERR("radio transaction failed (rp_status %d)", (int)status);
@@ -238,7 +238,7 @@ static int client_open(rac_client_t *client, uint8_t priority, void (*post)(rp_s
 	client->ctx->scheduler_config.callback_pre_radio_transaction = NULL;
 	client->ctx->scheduler_config.callback_post_radio_transaction = post;
 
-	/* 每个事务都一样的 FLRC 参数 */
+	/* FLRC parameters shared by every transaction */
 	client->ctx->radio_params.flrc.pld_is_fix = false;
 	client->ctx->radio_params.flrc.crc_type = RAL_FLRC_CRC_2_BYTES;
 	client->ctx->radio_params.flrc.crc_seed = 0U;
@@ -277,8 +277,8 @@ static int port_submit(void *ctx, const zlrs_radio_req_t *req)
 	rac->smtc_rac_data_buffer_setup.size_of_rx_payload_buffer = req->max_rx_size;
 
 	/*
-	 * 调制按链路各自选：控制链路可能是 LoRa 远距档，数据链路始终是 FLRC。
-	 * 见 doc/07-architecture.md 第 3 节。
+	 * Modulation is per link: control may run the LoRa long-range tier, data is always FLRC.
+	 * See doc/07-architecture.md 3.
 	 */
 	if (req->mod.modulation == (uint8_t)ZLRS_MOD_LORA) {
 		rac->modulation_type = SMTC_RAC_MODULATION_LORA;
@@ -294,7 +294,7 @@ static int port_submit(void *ctx, const zlrs_radio_req_t *req)
 		rac->radio_params.flrc.cr = RAL_FLRC_CR_3_4;
 		rac->radio_params.flrc.tx_syncword_index = tx_syncword(req->sync_slot);
 		rac->radio_params.flrc.match_sync_word = rx_match_syncword(req->sync_slot);
-		/* 三个同步字槽各一个指针，只填这次事务用到的那个 */
+		/* One pointer per sync word slot; only the one this transaction uses is filled in */
 		for (uint8_t i = 0U; i < 3U; i++) {
 			rac->radio_params.flrc.sync_word[i] = NULL;
 		}
@@ -330,7 +330,7 @@ static void drain_client(rac_client_t *client, uint32_t now_ms)
 
 	client->done = false;
 
-	/* 结果可能被下一个事务覆盖，取出后立即交付 */
+	/* The next transaction can overwrite the result, so hand it over as soon as it is read */
 	zlrs_link_complete(client->link, client->status, client->rx_len, client->rssi,
 			   client->snr, now_ms);
 }

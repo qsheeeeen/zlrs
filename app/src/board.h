@@ -1,5 +1,5 @@
 /*
- * 板级派生量：从 devicetree 读出来的"这块板子是什么"。
+ * Board-derived values: what this board is, read from the devicetree.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -10,7 +10,7 @@
 
 #include "zlrs/region/region.h"
 
-/* 本机 sub-G SKU（板级在各变体 dtsi 里声明）；地区必须与它匹配，见 lib/region。
- * 只能从 DT 节点读：/chosen 里自定义前缀的属性 DT 宏读不到（会静默用默认值）。 */
+/* Local sub-G SKU (declared in each variant's dtsi); the region has to match it, see lib/region.
+ * It must come from a DT node: DT macros cannot read custom-prefixed /chosen properties. */
 #define ZLRS_SUBG_BAND DT_PROP(DT_NODELABEL(zlrs_subg_band), band)
 

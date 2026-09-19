@@ -1,5 +1,5 @@
 /*
- * 状态灯驱动，见 app/src/led_port.h。
+ * Status LED driver, see app/src/led_port.h.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -16,12 +16,12 @@
 
 LOG_MODULE_REGISTER(zlrs_led_port, CONFIG_APP_LOG_LEVEL);
 
-/* 20 Hz 足够让闪烁看起来连续，又不会把时间花在刷灯上 */
+/* 20 Hz looks continuous to the eye without spending time on the strip */
 #define LED_UPDATE_MS 50U
 
 /*
- * 有别名还不够：还要真的有灯带驱动在编（CONFIG_LED_STRIP）。只把驱动裁掉、
- * 别名留在 devicetree 里的话，DEVICE_DT_GET 会引用一个不存在的设备，链接失败。
+ * An alias is not enough, the strip driver has to be compiled in (CONFIG_LED_STRIP): trimming
+ * the driver while leaving the alias makes DEVICE_DT_GET reference a device that does not exist.
  */
 #if DT_NODE_EXISTS(DT_ALIAS(zlrs_led)) && IS_ENABLED(CONFIG_LED_STRIP)
 #define LED_AVAILABLE 1
@@ -30,8 +30,8 @@ LOG_MODULE_REGISTER(zlrs_led_port, CONFIG_APP_LOG_LEVEL);
 #endif
 
 /*
- * 状态灯引擎（lib/led）本身也是可裁的：关掉以后这个移植层退化成空操作，
- * 应用侧不用再关心有没有灯（见 doc/08-firmware.md 第 4 节）。
+ * The pattern engine (lib/led) is trimmable too: with it off this port becomes a no-op and the
+ * application never has to care whether a LED exists (see doc/08-firmware.md 4).
  */
 #if !IS_ENABLED(CONFIG_ZLRS_LED) || !LED_AVAILABLE
 int zlrs_led_port_init(void)
@@ -88,9 +88,9 @@ void zlrs_led_port_update(const zlrs_led_input_t *in, uint32_t now_ms)
 	pixels[0].b = color.b;
 
 	/*
-	 * 刷灯失败要说话：状态灯是板上唯一的本地反馈，灯带驱动（PIO）真出问题
-	 * 时"S 灯不亮"很容易被当成"状态就是没到"，而上层还在照常跑。
-	 * 20 Hz 调用，所以只报一次，免得刷屏。
+	 * A failed strip write has to be reported: the LED is the only local feedback, and when the
+	 * PIO driver really breaks, "the LED is dark" looks like "the state never happened" while
+	 * everything keeps running. Called at 20 Hz, so report it once.
 	 */
 	if (led_strip_update_rgb(strip, pixels, ZLRS_LED_PIXELS) != 0 && !led_error_logged) {
 		led_error_logged = true;

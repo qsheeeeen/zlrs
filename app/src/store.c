@@ -12,7 +12,7 @@
 
 LOG_MODULE_REGISTER(zlrs_store, CONFIG_APP_LOG_LEVEL);
 
-/* NVS 记录号 */
+/* NVS record ids */
 #define NVS_ID_ROOT_KEY 1U
 #define NVS_ID_DEV_ID 2U
 #define NVS_ID_FAILSAFE 4U
@@ -70,8 +70,8 @@ static int write_record(uint16_t id, const void *data, size_t len)
 	}
 
 	rc = nvs_write(&fs, id, data, len);
-	/* 成功有两种返回：写入 len 字节，或内容一致没动 flash（0）。只判符号会把
-	 * 前者当失败、把长度不符当成功（见 zephyr/kvss/nvs.h）。 */
+	/* Success has two shapes: len bytes written, or 0 when the content was identical and flash
+	 * untouched. A sign check alone would call the first a failure and mismatched lengths a success. */
 	if (rc == 0 || rc == (ssize_t)len) {
 		return 0;
 	}
@@ -166,7 +166,7 @@ int zlrs_store_erase_all(void)
 	for (size_t i = 0U; i < ARRAY_SIZE(ids); i++) {
 		const int rc = nvs_delete(&fs, ids[i]);
 
-		/* 记录不存在也算成功：恢复出厂就是让它不在 */
+		/* A missing record counts as success: factory reset is what removes it */
 		if (rc != 0 && rc != -ENOENT) {
 			LOG_ERR("nvs_delete(id %u) returned %d", ids[i], rc);
 			return rc;

@@ -1,6 +1,6 @@
 /*
- * 状态灯的驱动侧：把 lib/led 算出的颜色写到板上的 WS2812（需要 `zlrs-led` 别名，
- * 没有就退化成空操作）。见 doc/11-ux.md。
+ * Status LED driver side: write the colour lib/led computes to the on-board WS2812 (needs the
+ * `zlrs-led` alias and degrades to a no-op without it). See doc/11-ux.md.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -11,9 +11,9 @@
 
 #include "zlrs/led/led.h"
 
-/* 找设备；板上没有状态灯时返回 -1，但后续 update 调用是安全的 */
+/* Look up the device; -1 when the board has no LED, later update calls stay safe */
 int zlrs_led_port_init(void);
 
-/* 按状态算出颜色并刷新（内部限速 20 Hz）；now_ms 用链路时基 */
+/* Turn the state into a colour and refresh (rate-limited to 20 Hz); now_ms uses the link clock */
 void zlrs_led_port_update(const zlrs_led_input_t *in, uint32_t now_ms);
 

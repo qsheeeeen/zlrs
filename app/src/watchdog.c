@@ -1,12 +1,12 @@
 /*
- * 硬件看门狗（RP2350 wdt0），CONFIG_ZLRS_APP_WATCHDOG 打开才生效。
+ * Hardware watchdog (RP2350 wdt0), active only when CONFIG_ZLRS_APP_WATCHDOG is on.
  *
- * 它不负责回滚，只负责"把卡死变成复位"（回滚判据是镜像确认位，见
- * app/Kconfig 的 ZLRS_APP_MCUBOOT_CONFIRM）。这块板上 Zephyr 没有
- * RESET_ON_FATAL_ERROR，崩溃就是 CPU 停住，没有它永远等不到那次复位。
+ * It does not roll back by itself, it turns a hang into a reset (rollback is decided by the
+ * image confirm bit, see ZLRS_APP_MCUBOOT_CONFIRM in app/Kconfig). Zephyr has no
+ * RESET_ON_FATAL_ERROR on this board, so a crash just stops the CPU and nothing else resets it.
  *
- * PRE_KERNEL_1 就装好：连其后 POST_KERNEL 驱动初始化挂死也能复位。
- * 喂狗只在会阻塞的循环里做——用独立线程喂等于白装。
+ * Armed at PRE_KERNEL_1, so even a hang in the POST_KERNEL driver init gets reset.
+ * Feeding happens in the blocking loops only: a dedicated feeding thread would defeat the point.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -38,7 +38,7 @@ void zlrs_watchdog_arm(void)
 	int err;
 
 	if (wdt_channel >= 0) {
-		return; /* 已经武装着 */
+		return; /* already armed */
 	}
 
 	if (!device_is_ready(wdt)) {
@@ -64,10 +64,10 @@ void zlrs_watchdog_arm(void)
 }
 
 /*
- * 早于所有 POST_KERNEL 驱动与应用初始化：驱动初始化失败导致的挂死也能被复位。
- * wdt 驱动自己占 PRE_KERNEL_1 + CONFIG_KERNEL_INIT_PRIORITY_DEVICE（默认 50），
- * 我们排它后面。优先级必须写字面量：SYS_INIT 拿它拼 section 名，写 "50 + 1"
- * 会被链接器当成未定义的初始化层（Undefined initialization levels used）。
+ * Earlier than every POST_KERNEL driver and the application init, so their hangs get reset too.
+ * The wdt driver itself sits at PRE_KERNEL_1 + CONFIG_KERNEL_INIT_PRIORITY_DEVICE (50 by
+ * default) and we follow it. The priority has to be a literal: SYS_INIT builds a section name
+ * from it, and "50 + 1" would trip "Undefined initialization levels used" in the linker.
  */
 static int watchdog_arm_init(void)
 {
@@ -88,7 +88,7 @@ void zlrs_watchdog_feed(void)
 void zlrs_watchdog_disarm(void)
 {
 	if (wdt_channel >= 0) {
-		/* 驱动状态里它是 enabled（我们装的），所以 wdt_disable() 这次能生效 */
+		/* The driver state says enabled (we armed it), so wdt_disable() works this time */
 		(void)wdt_disable(wdt);
 		wdt_channel = -1;
 		LOG_INF("watchdog disarmed");
@@ -99,17 +99,17 @@ void zlrs_watchdog_disarm(void)
 
 void zlrs_watchdog_arm(void)
 {
-	/* 没开：空实现 */
+	/* Disabled: empty implementation */
 }
 
 void zlrs_watchdog_feed(void)
 {
-	/* 没开：空实现，调用点不用写条件编译 */
+	/* Disabled: empty implementation so call sites need no conditionals */
 }
 
 void zlrs_watchdog_disarm(void)
 {
-	/* 没开：空实现 */
+	/* Disabled: empty implementation */
 }
 
 #endif /* CONFIG_ZLRS_APP_WATCHDOG */

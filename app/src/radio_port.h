@@ -1,6 +1,6 @@
 /*
- * 射频移植层：zlrs_radio_ops_t 的具体后端，回调契约见 doc/07-architecture.md 6.2。
- * 由 CONFIG_ZLRS_APP_RADIO 二选一：radio_rac.c（RAC/LR2021）或 radio_null.c。
+ * Radio port layer: the concrete backends behind zlrs_radio_ops_t (contract: 07-architecture 6.2).
+ * CONFIG_ZLRS_APP_RADIO picks one: radio_rac.c (RAC/LR2021) or radio_null.c.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -11,26 +11,26 @@
 
 #include "zlrs/link/link.h"
 
-/* 传给 zlrs_link_init() 的操作表 */
+/* Operation tables handed to zlrs_link_init() */
 const zlrs_radio_ops_t *zlrs_radio_control_ops(void);
 const zlrs_radio_ops_t *zlrs_radio_data_ops(void);
 
-/* 打开后端并把完成结果接到两条链路上（失败返回负值） */
+/* Bring the backend up and wire completion into both links (negative on failure) */
 int zlrs_radio_port_init(zlrs_link_t *control, zlrs_link_t *data);
 
 /*
- * 等一次事务完成；超时返回负值。
- * 用微秒：控制帧率拉到 500 Hz 以后，一个时隙的预算只有几百微秒。
- * 射频关掉时没有可等的东西，立刻返回 0。
+ * Wait for one transaction; negative on timeout.
+ * Microseconds matter: at 500 Hz control a slot only budgets a few hundred microseconds.
+ * With the radio off there is nothing to wait for, so it returns 0 at once.
  */
 int zlrs_radio_port_wait_us(uint32_t timeout_us);
 
-/* 把已完成的事务结果回填给链路层（链路线程里调用） */
+/* Hand finished transactions back to the link layer (called on the link thread) */
 void zlrs_radio_port_drain(void);
 
-/* 放弃挂起的事务（时隙预算用完时用，避免迟到的完成事件串到下一次事务上） */
+/* Abort a pending transaction after a slot overrun, so a late completion cannot leak into the next */
 void zlrs_radio_port_abort(void);
 
-/* 与射频后端同一个时间基（k_uptime_get_32） */
+/* Same time base as the radio backend (k_uptime_get_32) */
 uint32_t zlrs_radio_port_now_ms(void);
 
