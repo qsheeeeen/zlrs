@@ -186,6 +186,25 @@ def self_test() -> int:
         print("  FAIL channels default")
         failures += 1
 
+    # Target picking: with exactly one module present and no flags the result has to be a
+    # one-element list. Returning the path itself made the caller iterate its characters.
+    fake = argparse.ArgumentParser()
+    fake.add_argument("--port")
+    fake.add_argument("--serial")
+    fake.add_argument("--all", action="store_true")
+    plain = argparse.Namespace(port=None, serial=None, all=False)
+    saved = globals()["app_ports"]
+    globals()["app_ports"] = lambda: ["/dev/serial/by-id/usb-fake-if04"]
+
+    try:
+        picked = pick_targets(plain, fake)
+    finally:
+        globals()["app_ports"] = saved
+
+    if picked != ["/dev/serial/by-id/usb-fake-if04"]:
+        print(f"  FAIL pick one module: {picked!r}")
+        failures += 1
+
     print(f"self-test: {'ok' if failures == 0 else str(failures) + ' failure(s)'}")
     return 0 if failures == 0 else 1
 
@@ -299,7 +318,7 @@ def pick_targets(args, parser) -> list[str]:
         parser.error(
             "several modules are plugged in: pick one with --serial / --port, or use --all:\n  "
             + "\n  ".join(ports))
-    return ports[0]
+    return [ports[0]]
 
 
 def main() -> int:
