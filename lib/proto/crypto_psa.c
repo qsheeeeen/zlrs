@@ -1,12 +1,12 @@
 /*
  * SPDX-License-Identifier: Apache-2.0
  *
- * 设备侧密码学实现：原语走 Zephyr 的 PSA Crypto（provider 由 Kconfig 选，换实现
- * 不用改这里）。必须与 crypto_soft.c 给出同一串字节——主机侧用例跑的是那份，
- * 两边不一致就等于配不出同一把钥匙。接口见 zlrs/proto/crypto.h。
+ * Device-side crypto: the primitives go through Zephyr's PSA Crypto (the provider comes from
+ * Kconfig and swapping it needs no change here). It must produce the same bytes as
+ * crypto_soft.c, which the host tests run, or the two ends cannot derive the same key.
  *
- * 两处刻意选择：空盐写成 32 个 0（HMAC 补零后与空盐等价，与软件实现逐字节一致）；
- * PBKDF2 用 HMAC 按 RFC 8018 组合，因为不是每个 provider 都提供 PBKDF2 算法。
+ * Two deliberate choices: the empty salt is written as 32 zero bytes (equivalent to an empty
+ * salt for HMAC, and byte-identical to the software implementation); PBKDF2 is built from HMAC
  */
 
 #include <psa/crypto.h>
@@ -18,7 +18,7 @@
 #define SHA256_LEN 32U
 #define INFO_MAX 96U
 
-/* 主机侧的 crypto_soft.c 里也有一份（各文件自包含），改动要两边同步 */
+/* crypto_soft.c carries a copy (each file is self-contained); keep the two in step */
 void zlrs_root_key_from_phrase(const char *phrase, uint8_t out[ZLRS_KEY_LEN])
 {
 	static const char salt[] = ZLRS_KDF_V1_SALT;
@@ -38,8 +38,8 @@ bool zlrs_ct_equal(const uint8_t *a, const uint8_t *b, size_t len)
 	return diff == 0U;
 }
 
-/* 导一把 HMAC 钥匙，做完一串运算再销毁。PSA 的 key slot 数量随 provider 不同，
- * 所以不常驻：每帧多一次导入的开销，换来的是不依赖 slot 配置。 */
+/* Import an HMAC key, run the operations and destroy it. PSA key slots depend on the provider,
+ * so nothing is kept resident: one extra import per frame buys independence from slot setup. */
 static bool hmac_key_import(const uint8_t *key, size_t key_len, psa_key_id_t *out)
 {
 	psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
@@ -134,7 +134,7 @@ out:
 	psa_reset_key_attributes(&attr);
 	memset(info, 0, sizeof(info));
 	if (!ok) {
-		/* 失败就输出全零：认证必然过不了（fail closed），不会静默放行 */
+		/* On failure output all zeroes: authentication cannot pass (fail closed), never silent */
 		memset(out, 0, out_len);
 	}
 }
@@ -155,7 +155,7 @@ void zlrs_pbkdf2_sha256(const char *phrase, const uint8_t *salt, size_t salt_len
 		return;
 	}
 
-	/* RFC 8018：T = U1 ^ U2 ^ ... ^ Uc，输出长度等于 SHA-256 输出，单块即可 */
+	/* RFC 8018: T = U1 ^ U2 ^ ... ^ Uc; the output length matches SHA-256, so one block */
 	memcpy(block, salt, salt_len);
 	block[salt_len] = 0U;
 	block[salt_len + 1U] = 0U;

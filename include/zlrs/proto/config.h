@@ -1,6 +1,6 @@
 /*
- * 协议核心的编译期配置。分层：lib/proto（协议核心）、lib/link（链路层）都不
- * 依赖 Zephyr、主机可直接测；Zephyr 粘合只在 app/。
+ * Compile-time configuration of the protocol core. Layering: lib/proto and lib/link depend
+ * on no Zephyr and run in host tests; the Zephyr glue lives in app/ only.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -8,13 +8,13 @@
 #pragma once
 
 /*
- * 空口协议版本：不兼容的改动递增一次，写在 SYNC 里，RX 只认同版本。
- * 1：tag/会话密钥按双方 dev_id 派生（方向由顺序编码），pair_key 掺配对 nonce，
- *    会话密钥掺三次握手的两个 nonce，见 doc/10-security.md 第 3 节。
+ * Over-the-air protocol version: bump on incompatible changes, carried in SYNC, RX checks it.
+ * 1: tags and session keys derive from both dev_ids (order encodes direction), pair_key mixes
+ *    in the pairing nonce and session keys mix in the handshake nonces (10-security 3).
  */
 #define ZLRS_PROTO_VERSION 1U
 
-/* 帧：header(1) + seq(2) + payload + tag(0/4)，CRC 由射频硬件生成 */
+/* Frame: header(1) + seq(2) + payload + tag(0/4); the radio hardware produces the CRC */
 #define ZLRS_FRAME_HDR_LEN 3U
 #define ZLRS_TAG_LEN 4U
 #define ZLRS_FRAME_MAX_LEN 255U
@@ -22,38 +22,38 @@
 	(ZLRS_FRAME_MAX_LEN - ZLRS_FRAME_HDR_LEN - ZLRS_TAG_LEN)
 
 /*
- * 分片重组超时。ARQ 的重传周期是 30 ms，这里要留足余量，否则重传过程中
- * 半截分片会被重组器丢掉。
+ * Reassembly timeout. ARQ retransmits every 30 ms, so leave enough headroom or a retransmit
+ * lets the reassembler discard a half-finished message.
  */
 #define ZLRS_FRAG_TIMEOUT_MS 100U
 #define ZLRS_REASM_BUF_LEN 512U
 
-/* 同步字：4 字节，槽 1 控制链路、槽 2 数据链路、槽 3 配对 */
+/* Sync words: 4 bytes, slot 1 control link, slot 2 data link, slot 3 pairing */
 #define ZLRS_SYNC_WORD_LEN 4U
 #define ZLRS_SYNC_SLOT_CONTROL 1U
 #define ZLRS_SYNC_SLOT_DATA 2U
 #define ZLRS_SYNC_SLOT_PAIRING 3U
 
-/* 跳频表长度，必须是频点数的整数倍 */
+/* Hop table length, must be a multiple of the channel count */
 #define ZLRS_FHSS_SEQUENCE_LEN 256U
 
-/* 密钥与设备标识 */
+/* keys and device identity */
 #define ZLRS_KEY_LEN 32U
 #define ZLRS_DEV_ID_LEN 4U
 
-/* 配对时的两个 nonce（发起方 || 响应方），参与 pair_key 派生并落盘 */
+/* The two pairing nonces (initiator || responder): feed pair_key and are stored */
 #define ZLRS_PAIR_SALT_LEN 8U
 
-/* 设备角色 */
+/* device roles */
 #define ZLRS_ROLE_TX 0U
 #define ZLRS_ROLE_RX 1U
 
-/* 控制链路默认帧率（Hz） */
+/* default control link frame rate (Hz) */
 #define ZLRS_FRAME_RATE_HZ 150U
 
-/* 控制链路 RC 载荷：CRSF 的 22 字节通道数据原样搬运 */
+/* Control link RC payload: CRSF's 22 bytes of channel data carried as-is */
 #define ZLRS_RC_PAYLOAD_LEN 22U
 
-/* 配置协议里的失控值：就是同一份 22 字节 CRSF 通道载荷 */
+/* Failsafe values in the config protocol: that same 22-byte CRSF channel payload */
 #define ZLRS_CFG_FAILSAFE_LEN ZLRS_RC_PAYLOAD_LEN
 

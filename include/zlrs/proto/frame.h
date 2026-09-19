@@ -1,6 +1,6 @@
 /*
- * 空口帧格式，见 doc/09-protocol.md 第 2 节。前导码、同步字、CRC 与长度由
- * LR2021 的 FLRC 硬件负责，帧里不重复携带；多字节字段小端。
+ * Over-the-air frame format, see doc/09-protocol.md 2. Preamble, sync word, CRC and length
+ * belong to the LR2021 hardware and are not repeated in the frame; multi-byte fields are little-endian.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -16,36 +16,36 @@
 extern "C" {
 #endif
 
-/* 包类型（6 位空间，见 doc/09-protocol.md 2.2） */
+/* Packet types (a 6-bit space, see doc/09-protocol.md 2.2) */
 typedef enum {
-	ZLRS_PKT_RC = 0,       /* TX -> RX：遥控通道 */
-	ZLRS_PKT_TLM = 1,      /* RX -> TX：遥测 */
-	ZLRS_PKT_DATA_UP = 2,  /* TX -> RX：透传数据 */
-	ZLRS_PKT_DATA_DOWN = 3,/* RX -> TX：透传数据 */
-	ZLRS_PKT_ACK = 4,      /* 双向：透传确认（ARQ profile） */
-	ZLRS_PKT_SYNC = 5,   /* TX -> RX：会话建立 */
-	ZLRS_PKT_PAIR_REQ = 6, /* TX -> RX：配对 */
-	ZLRS_PKT_PAIR_RESP = 7,/* RX -> TX：配对 */
-	ZLRS_PKT_PAIR_CFM = 8, /* TX -> RX：配对 */
-	ZLRS_PKT_SESS_RESP = 9,/* RX -> TX：会话响应，带自己的 nonce */
-	ZLRS_PKT_SESS_CFM = 10,/* TX -> RX：会话确认，用新会话钥匙打 tag */
+	ZLRS_PKT_RC = 0,       /* TX -> RX: RC channels */
+	ZLRS_PKT_TLM = 1,      /* RX -> TX: telemetry */
+	ZLRS_PKT_DATA_UP = 2,  /* TX -> RX: passthrough data */
+	ZLRS_PKT_DATA_DOWN = 3,/* RX -> TX: passthrough data */
+	ZLRS_PKT_ACK = 4,      /* both ways: passthrough ACK (ARQ profile) */
+	ZLRS_PKT_SYNC = 5,   /* TX -> RX: session setup */
+	ZLRS_PKT_PAIR_REQ = 6, /* TX -> RX: pairing */
+	ZLRS_PKT_PAIR_RESP = 7,/* RX -> TX: pairing */
+	ZLRS_PKT_PAIR_CFM = 8, /* TX -> RX: pairing */
+	ZLRS_PKT_SESS_RESP = 9,/* RX -> TX: session response carrying its nonce */
+	ZLRS_PKT_SESS_CFM = 10,/* TX -> RX: session confirm, tagged with the new session key */
 } zlrs_pkt_type_t;
 
-/* header 低 2 位 */
-#define ZLRS_FLAG_MORE 0x01U    /* 分片未结束 */
-#define ZLRS_FLAG_ACK_REQ 0x02U /* 请求确认 */
+/* low 2 bits of the header */
+#define ZLRS_FLAG_MORE 0x01U    /* more fragments follow */
+#define ZLRS_FLAG_ACK_REQ 0x02U /* acknowledgement requested */
 
-/* 安全 profile，见 doc/10-security.md 第 8 节 */
+/* Security profiles, see doc/10-security.md 8 */
 typedef enum {
-	ZLRS_PROFILE_P0 = 0, /* 无 tag、无加密，仅调试 */
+	ZLRS_PROFILE_P0 = 0, /* no tag, no encryption, debug only */
 	ZLRS_PROFILE_P1 = 1, /* 4 B tag */
-	ZLRS_PROFILE_P2 = 2, /* 4 B tag + AES-CTR 载荷加密 */
+	ZLRS_PROFILE_P2 = 2, /* 4 B tag plus AES-CTR payload encryption */
 } zlrs_profile_t;
 
-/* 该 profile 的 tag 长度 */
+/* tag length of that profile */
 uint8_t zlrs_profile_tag_len(zlrs_profile_t profile);
 
-/* 一帧的解析视图；tag 为 NULL 表示该帧不带 tag */
+/* Parsed view of a frame; a NULL tag means the frame carries none */
 typedef struct {
 	uint8_t type;
 	uint8_t flags;
@@ -55,23 +55,23 @@ typedef struct {
 	const uint8_t *tag;
 } zlrs_frame_t;
 
-/* 该载荷长度 + tag 长度编码成多少字节 */
+/* How many bytes this payload plus tag length encode to */
 uint16_t zlrs_frame_len(uint16_t payload_len, uint8_t tag_len);
 
 /*
- * 编码到 buf，返回写入长度；容量不足返回 0。
- * frame->tag 为 NULL 时按 tag_len = 0 编码。
+ * Encode into buf and return the length written; 0 when the buffer is too small.
+ * A NULL frame->tag encodes as tag_len = 0.
  */
 uint16_t zlrs_frame_encode(const zlrs_frame_t *frame, uint8_t *buf, uint16_t cap);
 
 /*
- * 解码。len 是射频收到的字节数，tag_len 由当前 profile 决定。
- * 长度不足以容纳 header/tag 或类型越界时返回 false。
+ * Decode. len is what the radio received, tag_len comes from the current profile.
+ * Returns false when the length cannot hold header and tag or the type is out of range.
  */
 bool zlrs_frame_decode(zlrs_frame_t *frame, const uint8_t *buf, uint16_t len,
 		       uint8_t tag_len);
 
-/* tag 覆盖的字节数：header + seq + payload */
+/* Bytes the tag covers: header + seq + payload */
 uint16_t zlrs_frame_mac_len(const zlrs_frame_t *frame);
 
 #ifdef __cplusplus

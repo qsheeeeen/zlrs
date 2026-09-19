@@ -1,5 +1,5 @@
 /*
- * 调制档与空中时间模型，见 include/zlrs/proto/mod.h 与 doc/07-architecture.md 第 3 节。
+ * Modulation and airtime model, see include/zlrs/proto/mod.h and doc/07-architecture.md 3.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -9,9 +9,9 @@
 #include <string.h>
 
 /*
- * FLRC 的净时间：载荷 + 4 字节开销（前导码/同步字/长度）按原始速率折算，
- * 与 lib/region 里的 zlrs_airtime_us() 是同一个模型——那边用于法规记账，
- * 这里用于超帧规划，两边必须是同一个数。
+ * FLRC net time: payload plus 4 bytes of overhead (preamble/sync word/length) at the raw rate.
+ * It is the same model as zlrs_airtime_us() in lib/region, which feeds the regulatory
+ * accounting; here it feeds superframe planning. Both must produce the same number.
  */
 static uint32_t flrc_airtime_us(uint32_t rate_bps, uint16_t frame_len)
 {
@@ -27,8 +27,8 @@ static uint32_t flrc_airtime_us(uint32_t rate_bps, uint16_t frame_len)
 }
 
 /*
- * LoRa 载荷符号数（Semtech 公式）：CRC=1（硬件生成）、IH=0（显式头）、DE 只在
- * SF11/SF12 配 125 kHz 时置 1、CR 用 1..4 表示 4/5..4/8。
+ * LoRa payload symbol count (Semtech formula): CRC=1 (hardware), IH=0 (explicit header), DE
+ * only set for SF11/SF12 at 125 kHz, and CR 1..4 meaning 4/5..4/8.
  */
 static uint32_t lora_payload_symbols(const zlrs_mod_cfg_t *mod, uint16_t frame_len)
 {
@@ -43,7 +43,7 @@ static uint32_t lora_payload_symbols(const zlrs_mod_cfg_t *mod, uint16_t frame_l
 		return 8U;
 	}
 
-	/* 向上取整（分子可能为负：极短帧时按 0 处理） */
+	/* Round up (the numerator can go negative for very short frames, then treat it as 0) */
 	quotient = (numerator > 0) ? (int32_t)(((uint32_t)numerator + denominator - 1U) /
 					      denominator)
 				   : 0;
@@ -89,7 +89,7 @@ zlrs_mod_cfg_t zlrs_mod_lora(uint8_t sf, uint32_t bw_hz, uint8_t cr, uint8_t pre
 
 uint32_t zlrs_mod_airtime_us(const zlrs_mod_cfg_t *mod, uint16_t frame_len)
 {
-	uint64_t symbol_num;   /* 一个符号的时间 = symbol_num / bw_hz 秒 */
+	uint64_t symbol_num;   /* one symbol lasts symbol_num / bw_hz seconds */
 	uint64_t payload_us;
 	uint64_t preamble_us;
 	uint32_t symbols;
@@ -107,10 +107,10 @@ uint32_t zlrs_mod_airtime_us(const zlrs_mod_cfg_t *mod, uint16_t frame_len)
 		return 0U;
 	}
 
-	/* Ts = 2^SF / BW 秒，用微秒×Hz 的整数表示，避免逐项取整带来的误差 */
+	/* Ts = 2^SF / BW seconds, kept as us x Hz integers to avoid per-term rounding error */
 	symbol_num = (uint64_t)1000000U << mod->sf;
 
-	/* 前导码：(n + 4.25) 个符号 = n + 17/4 */
+	/* Preamble: (n + 4.25) symbols = n + 17/4 */
 	preamble_us = (symbol_num * ((uint64_t)4U * mod->preamble + 17U) +
 		       4U * mod->bw_hz - 1U) /
 		      (4U * mod->bw_hz);

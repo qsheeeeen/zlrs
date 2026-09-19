@@ -1,5 +1,5 @@
 /*
- * 空口遥测载荷编解码，见 include/zlrs/proto/tlm.h。
+ * Telemetry payload codec, see include/zlrs/proto/tlm.h.
  *
  * SPDX-License-Identifier: Apache-2.0
  */

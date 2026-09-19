@@ -1,6 +1,6 @@
 /*
- * 跳频序列，见 doc/09-protocol.md 第 5 节：两端由 fhss_seed 各自算出同一张表，
- * 每块第 0 个时隙固定落在同步信道，其余块内洗牌（等概率使用）。
+ * Hopping sequence, see doc/09-protocol.md 5: both ends derive the same table from fhss_seed,
+ * slot 0 of every block stays on the sync channel and the rest are shuffled within the block.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -16,12 +16,12 @@
 extern "C" {
 #endif
 
-/* 地区频段：信道表与功率上限由地区配置层选取 */
+/* Region band: the region layer picks the channel plan and the power ceiling */
 typedef struct {
 	const char *name;
-	uint32_t start_hz;     /* 首个信道中心频率 */
-	uint32_t step_hz;      /* 信道间隔 */
-	uint8_t channel_count; /* 信道数 */
+	uint32_t start_hz;     /* centre frequency of the first channel */
+	uint32_t step_hz;      /* channel spacing */
+	uint8_t channel_count; /* number of channels */
 } zlrs_fhss_domain_t;
 
 enum {
@@ -43,8 +43,8 @@ typedef struct {
 	uint8_t sync_channel;
 
 	/*
-	 * 子带混合（doc/09-protocol.md 5.1）：主表之外再挂一张子带表（通常是
-	 * sub-G），两张表各自维护索引；哪个时隙落哪个子带由链路层按混合比决定。
+	 * Sub-band mixing (doc/09-protocol.md 5.1): a second table (usually sub-G) hangs beside the
+	 * main one, each with its own index; the link layer decides which slot lands on which.
 	 */
 	const zlrs_fhss_domain_t *sub_domain;
 	uint8_t sub_sequence[ZLRS_FHSS_SEQUENCE_LEN];
@@ -55,14 +55,14 @@ typedef struct {
 
 void zlrs_fhss_init(zlrs_fhss_t *fhss, uint8_t domain_id, uint32_t seed);
 
-/* 双表：主表 + 子带表，同一个 seed 派生，两端各算一张 */
+/* Two tables (main + sub-band) derived from one seed, computed independently on each end */
 void zlrs_fhss_init_dual(zlrs_fhss_t *fhss, uint8_t main_domain_id,
 			 uint8_t sub_domain_id, uint32_t seed);
 
-/* 子带混合比：每 4 个时隙里落在 sub-G 的个数（0 / 1 / 2 / 4，即 0/25/50/100 %） */
+/* Sub-band mix: how many of every 4 slots land on sub-G (0/1/2/4 = 0/25/50/100%) */
 uint8_t zlrs_fhss_mix_slots(uint8_t mix);
 
-/* 子带表是否可用（没配子带时为 false） */
+/* Is the sub-band table usable (false when none is configured) */
 bool zlrs_fhss_sub_ready(const zlrs_fhss_t *fhss);
 
 uint32_t zlrs_fhss_sub_current_hz(const zlrs_fhss_t *fhss);

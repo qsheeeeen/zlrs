@@ -7,10 +7,10 @@
 #include <string.h>
 
 /*
- * 信道划分按各地区的可用带宽与法规信道数取：
- *   - FCC 15.247 要求跳频系统至少 50 个信道
- *   - EU868 受占空比约束，信道数少而间隔宽
- *   - 2.4G ISM 用 1 MHz 间隔铺满整段
+ * Channel plans follow the available bandwidth and the regulatory channel counts per region:
+ *   - FCC 15.247 wants at least 50 channels for a hopping system
+ *   - EU868 lives under a duty cap, so few channels with wide spacing
+ *   - 2.4G ISM fills the band at 1 MHz spacing
  */
 const zlrs_fhss_domain_t zlrs_fhss_domains[ZLRS_DOMAIN_COUNT] = {
 	[ZLRS_DOMAIN_FCC915] = {.name = "FCC915",
@@ -22,17 +22,17 @@ const zlrs_fhss_domain_t zlrs_fhss_domains[ZLRS_DOMAIN_COUNT] = {
 			       .step_hz = 500000U,
 			       .channel_count = 13U},
 	/*
-	 * 470–510 MHz：Core2021 LF 变体的主力频段。步进 300 kHz 是按 FLRC 带宽
-	 * 定的（0.325 Mbps 的 DSB 带宽 300 kHz）；200 kHz 那套是 LoRa 的信道
-	 * 规划，直接拿来跳频会互相压。
+	 * 470-510 MHz: the main band of the Core2021 LF variant. A 300 kHz step matches the FLRC
+	 * bandwidth (0.325 Mbps DSB is 300 kHz wide); the 200 kHz plan belongs to LoRa and would
+	 * squeeze neighbouring channels if used for hopping.
 	 */
 	[ZLRS_DOMAIN_CN470] = {.name = "CN470",
 			       .start_hz = 470300000U,
 			       .step_hz = 300000U,
 			       .channel_count = 96U},
 	/*
-	 * 433.05–434.79 MHz 是国内 433 ISM 段，只有 1.74 MHz 宽：
-	 * 放得下 5 个 300 kHz 间隔的信道，所以这个地区只能用窄带速率档。
+	 * 433.05-434.79 MHz is the Chinese 433 ISM band, only 1.74 MHz wide: it fits five channels at
+	 * 300 kHz spacing, so this region can only use the narrow-band rate tiers.
 	 */
 	[ZLRS_DOMAIN_CN433] = {.name = "CN433",
 			       .start_hz = 433300000U,
@@ -48,7 +48,7 @@ static uint32_t rng_state = 0x12345678U;
 
 static void rng_seed(uint32_t seed)
 {
-	/* xorshift32 的零点是不动点，避开它 */
+	/* Zero is a fixed point of xorshift32, so avoid it */
 	rng_state = (seed != 0U) ? seed : 0x12345678U;
 }
 
@@ -85,8 +85,8 @@ static uint16_t build_sequence(uint32_t seed, uint8_t channel_count,
 	rng_seed(seed);
 
 	/*
-	 * 每块的第 0 个位置放同步信道，同步信道原本该出现的位置放 0 号信道，
-	 * 这样整张表里每个频点出现次数完全相同。
+	 * Slot 0 of every block holds the sync channel and the channel that would have been there gets
+	 * channel 0 instead, so every frequency appears exactly as often in the table.
 	 */
 	for (uint16_t i = 0; i < count; i++) {
 		const uint8_t channel = (uint8_t)(i % channel_count);
@@ -100,7 +100,7 @@ static uint16_t build_sequence(uint32_t seed, uint8_t channel_count,
 		}
 	}
 
-	/* 块内洗牌，位置 0 保持不动 */
+	/* Shuffle inside the block, leaving position 0 alone */
 	for (uint16_t i = 0; i < count; i++) {
 		uint16_t base;
 		uint8_t pick;
@@ -147,7 +147,7 @@ void zlrs_fhss_init_dual(zlrs_fhss_t *fhss, uint8_t main_domain_id,
 	fhss->sub_domain = &zlrs_fhss_domains[sub_domain_id];
 	fhss->sub_sync_channel = (uint8_t)(fhss->sub_domain->channel_count / 2U);
 	fhss->sub_index = 0U;
-	/* 子表的种子与主表区分开：同一对设备、两个子带不能跳成同一张表 */
+	/* The sub-table seed differs from the main one: one pair must not hop twice on the same table */
 	fhss->sub_count = build_sequence(seed ^ 0x9E3779B9U,
 					 fhss->sub_domain->channel_count,
 					 fhss->sub_sync_channel, fhss->sub_sequence);
@@ -198,7 +198,7 @@ void zlrs_fhss_set_sub_index(zlrs_fhss_t *fhss, uint16_t index)
 static uint32_t freq_hz(const zlrs_fhss_t *fhss, uint8_t channel)
 {
 	if (fhss->domain == NULL) {
-		return 0U; /* 还没按密钥初始化 */
+		return 0U; /* not initialised with a key yet */
 	}
 
 	if (channel >= fhss->domain->channel_count) {

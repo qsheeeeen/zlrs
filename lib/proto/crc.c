@@ -1,5 +1,5 @@
 /*
- * CRC8（DVB-S2），见 include/zlrs/proto/crc.h。
+ * CRC8 (DVB-S2), see include/zlrs/proto/crc.h.
  *
  * SPDX-License-Identifier: Apache-2.0
  */

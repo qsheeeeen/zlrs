@@ -41,7 +41,7 @@ int zlrs_reasm_push(zlrs_reasm_t *reasm, const zlrs_frame_t *frame, uint32_t now
 
 	if (!reasm->active) {
 		if (!more && frame->payload_len <= reasm->cap) {
-			/* 单帧消息 */
+			/* single-frame message */
 			if (frame->payload_len > 0U) {
 				memcpy(reasm->buf, frame->payload, frame->payload_len);
 			}
@@ -52,7 +52,7 @@ int zlrs_reasm_push(zlrs_reasm_t *reasm, const zlrs_frame_t *frame, uint32_t now
 		reasm->len = 0;
 		reasm->expected_seq = frame->seq;
 	} else if (frame->seq != reasm->expected_seq) {
-		/* 缺口：整段丢弃 */
+		/* gap: drop the whole run */
 		reasm_reset(reasm);
 		return ZLRS_REASM_DROPPED;
 	}
