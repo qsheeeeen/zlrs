@@ -59,7 +59,7 @@ fi
 
 if [ ! -x "${ZLRS_SDK_DIR}/gnu/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc" ] &&
    [ ! -x "${ZLRS_SDK_DIR}/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc" ]; then
-	echo "zlrs: no arm-zephyr-eabi toolchain in ${ZLRS_SDK_DIR}, install it:"
+	echo "zlrs: no arm-zephyr-eabi toolchain in ${ZLRS_SDK_DIR}, install it:
   cd \"${ZLRS_SDK_DIR}\" && ./setup.sh -t arm-zephyr-eabi -h -c" >&2
 fi
 
