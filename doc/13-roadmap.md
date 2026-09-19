@@ -1,41 +1,41 @@
-# 路线图
+# Roadmap
 
-本文只记**待办与验收标准**。已做的历史只留一行摘要，细节在代码注释里；设计见各设计文档。
+This document holds **to-dos and acceptance criteria** only. Finished work gets a one-line summary, details live in code comments and the design is in the design documents.
 
-## 待办
+## To-do
 
-### 射频与协议
+### Radio and protocol
 
-- **单板上空（已过）**：Core2021 接上后，配对的 `PAIR_REQ` 真的能出去——30 s 窗口里每 100 ms 一个，连跑 5 轮约 1700 次事务 `fail=0`。同一块板上还验过 CRSF 入口：从 CRSF CDC 灌 911 个合法 RC 帧 `crsf_bad=0`，再灌 550 个载荷长度错的帧 `crsf_bad` 正好 +550。这一段验的是 SPI/控制线、RAC 事务与 CRSF 解析，收（RX）不在其中。
-- **配对、会话与两条链路的空中往返**：需要第二块模块（LF SKU 或 HF SKU 都行，两端同地区）。两端的配对握手、会话握手、遥测、数传与 ARQ 都要两块同时在场才有意义。
-- **跨子带混合上板验证**：软件侧已完成（双表跳频、`SYNC` 带 `r` 与表版本、迁移顺序遥测 → 数传 → RC、地区占空比上限、按 LQ 的自适应），主机测试覆盖两端选频一致与回退；实际切换开销与抗干扰收益要等第二块模块。
-- **1000 Hz 控制帧率**（`r=0`，全 2.4G）：需要控制链路自己拥有射频——绕开 RAC 的毫秒级 planner，直调 LR20xx 驱动 + IRQ 驱动逐帧收发。协议侧（1 ms 帧节奏、时隙预算、稀疏系数）已就绪。
-- **LoRa 远距档上板验证**：灵敏度、误包率曲线、实测空中时间与模型的差。EU868 的 1% 占空比撑不住这一档，只做不限占空比地区的选项。
-- **可靠传输（ARQ）上板验证**：默认档已开启（窗口 4 帧 + 累计 ACK + 重传），要上板量吞吐与延迟；后续可以把确认收窄成 ELRS 式的包头 1 bit（RX 每个时隙都有包可搭时）。
-- **无线 OTA**（可选）：镜像走 2.4G 数传链路，约 10 s/1 MB。
+- **First frames in the air, one board (passed)**: with the Core2021 attached, pairing `PAIR_REQ` frames really go out: one every 100 ms through the 30 s window, about 1700 transactions over five rounds with `fail=0`. The CRSF entry was checked on the same board: 911 valid RC frames fed into the CRSF CDC gave `crsf_bad=0`, then 550 frames with the wrong payload length took `crsf_bad` up by exactly 550. This covers SPI and the control lines, RAC transactions and CRSF parsing; receive is not part of it.
+- **Pairing, sessions and round trips on both links**: needs a second module (LF or HF SKU, both ends in the same region). The pairing handshake, session handshake, telemetry, data and ARQ only mean something with two boards present.
+- **Sub-band mixing on hardware**: the software side is done (two hop tables, `SYNC` carrying `r` and the table version, the telemetry-then-data-then-RC migration order, the regional duty cap and LQ-driven adaptation) and the host tests cover both ends picking the same frequency and falling back; the real switching cost and interference benefit wait for a second module.
+- **1000 Hz control rate** (`r=0`, all 2.4G): the control link has to own the radio, bypassing RAC's millisecond planner and driving the LR20xx driver plus IRQs frame by frame. The protocol side (1 ms frames, slot budgets, thinning factors) is ready.
+- **LoRa long-range tier on hardware**: sensitivity, packet error rate curves and the gap between measured airtime and the model. EU868's 1% duty cannot feed this tier, so it is offered only in regions without a duty cap.
+- **Reliable transfer (ARQ) on hardware**: on by default (a 4-frame window, cumulative ACKs, retransmits); throughput and latency need measuring on the board. Later the ack can shrink to ELRS's 1 header bit once the RX always has a frame to ride along.
+- **Over-the-air firmware update** (optional): images travel over the 2.4G data link, roughly 10 s per MB.
 
-### 硬件
+### Hardware
 
-- **载板打样**：[05-carrier](05-carrier.md) 的两层板。
-- **轻量版**：裁掉 USB 与数据口，只留控制链路。
-- **RP2350 TRNG**（已上板验证，默认开）：Zephyr 的 `entropy_rpi_pico` 不能用（pico-sdk 取数时关中断忙等，USB 直接停摆，板上复现过）。`drivers/trng/` 是 zlrs 自己的驱动：probe 里软复位 + 配置 + 预取，取数走两块的小池子，**不关中断、不拿自旋锁**，超时/检查不过就报错（不做软件兜底）。寄存器时序照 datasheet 12.12 与 bootrom；采样数取 100——datasheet 建议的 20–25 在 RP2350 上过不了内部 Von Neumann 检查（板上实测多块报 32 bit 连 0/连 1），100 档连跑 10 块全干净。板上验证：开机自检 `entropy self-test ok`、`zlrs entropy` 连跑 25 次全过、运行 150 s 以上不被看门狗复位。
+- **Carrier board spin**: the two-layer board from [05-carrier](05-carrier.md).
+- **Lightweight variant**: USB and the data port trimmed, control link only.
+- **RP2350 TRNG** (verified on hardware, on by default): Zephyr's `entropy_rpi_pico` is unusable (pico-sdk reads with interrupts off and busy waits, which stops USB dead; reproduced on the board). `drivers/trng/` is zlrs's own driver: probe soft-resets, configures and pre-fetches, reads come from a two-block pool, **interrupts stay on and no spinlock is taken**, and a timeout or failed check is an error rather than something to paper over. Register timing follows datasheet 12.12 and the bootrom; the sample count is 100 because the datasheet's suggested 20-25 fails the internal Von Neumann check on RP2350 (measured: runs of 32 zeroes or ones), while ten blocks at 100 came out clean. Verified on the board: `entropy self-test ok` at boot, 25 consecutive `zlrs entropy` runs and over 150 s of uptime without a watchdog reset.
 
-### 升级链路
+### Update path
 
-- **MCUboot 换槽 + 上位机确认**（已上板验证，见 [08-firmware](08-firmware.md) 第 6 节）：四条路径都过——首版不需要确认、升级 + `confirm` 保留、不确认 20/60 s 后自己复位回滚、应用挂死由 bootloader 看门狗 30 s 回滚。两个细节：换槽必须用 `swap using move`（`swap using offset` 在这块板上换得进去、回不来），工具必须点名非活跃槽（MCUboot 的恢复上传默认写主槽）。
-- **应用侧 mcumgr**（可选）：运行中升级，镜像直接写 slot1。
+- **MCUboot slot swap plus host confirmation** (verified on hardware, see [08-firmware](08-firmware.md) 6): all four paths pass: the first image needs no confirmation, an upgrade plus `confirm` stays, no confirmation means a reset and rollback after 20/60 s, and a hung application is rolled back by the bootloader's 30 s watchdog. Two details: the swap has to use `swap using move` (`swap using offset` goes in but never comes back on this board) and the tool has to name the inactive slot, since MCUboot's recovery upload defaults to the primary one.
+- **mcumgr in the application** (optional): update while running, writing the image straight into slot1.
 
-### 安全
+### Security
 
-- **P2 加密档**：其余功能全部完成之后再实现（AES-CTR，MAC 覆盖密文）。
+- **P2 encryption profile**: implement once everything else is done (AES-CTR with the MAC covering the ciphertext).
 
-## 验收标准
+## Acceptance criteria
 
-| 项 | 怎么算过 |
+| Item | What counts as passing |
 | --- | --- |
-| 硬件定版 | 模块在目标频段上收到已知发射源的 RSSI 与 datasheet 量级一致 |
-| 配对与会话 | 两台设备长按配对后建立会话，控制链路与数传链路各自跑起来 |
-| 配置 | 空片 RX 用配置工具（配置 CDC）配到能配对 |
-| 数传 | 接收端 UART 的 TX/RX 短接成回环，从发送端发数据，能收到回来的数据 |
-| 1000 Hz | 纯 2.4G 形态下稳定跑 1000 Hz，延迟与丢包可量化 |
-| 抗干扰 | 同频段多套设备与干扰源下的链路保持率与恢复时间可量化 |
+| Hardware freeze | the module's RSSI for a known transmitter on the target band matches the datasheet's order of magnitude |
+| Pairing and sessions | two devices pair on a long press, establish a session and run both the control and data links |
+| Configuration | a blank RX can be configured with the tool (config CDC) until it is able to pair |
+| Data link | short the RX's UART TX to RX as a loopback, send data from the TX side and get it back |
+| 1000 Hz | steady 1000 Hz in the all-2.4G shape, with latency and loss that can be measured |
+| Interference | link retention and recovery time measured with several devices on the band plus interferers |
