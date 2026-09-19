@@ -25,13 +25,13 @@ extern "C" {
 
 /* Link kinds */
 #define ZLRS_LINK_CONTROL 0U
-#define ZLRS_LINK_DATA 1U
+#define ZLRS_LINK_DATA    1U
 
 /* Superframe slots, see doc/09-protocol.md 4.1 */
 #define ZLRS_SLOT_CTL_DOWN 0U /* TX -> RX: RC frame (the RX side is a receive window) */
-#define ZLRS_SLOT_CTL_UP 1U   /* RX -> TX: TLM frame (the TX side is a receive window) */
-#define ZLRS_SLOT_DATA_A 2U   /* first half of the data window: TX -> RX */
-#define ZLRS_SLOT_DATA_B 3U   /* second half of the data window: RX -> TX */
+#define ZLRS_SLOT_CTL_UP   1U /* RX -> TX: TLM frame (the TX side is a receive window) */
+#define ZLRS_SLOT_DATA_A   2U /* first half of the data window: TX -> RX */
+#define ZLRS_SLOT_DATA_B   3U /* second half of the data window: RX -> TX */
 
 /* Link states, see doc/09-protocol.md 3.2 */
 typedef enum {
@@ -43,13 +43,13 @@ typedef enum {
 } zlrs_link_state_t;
 
 /* Completion status: the port layer folds the radio result into these two */
-#define ZLRS_RADIO_OK 0
+#define ZLRS_RADIO_OK   0
 #define ZLRS_RADIO_FAIL 1
 
 typedef struct {
-	uint8_t kind;      /* ZLRS_LINK_CONTROL / ZLRS_LINK_DATA */
-	uint8_t role;      /* ZLRS_ROLE_TX / ZLRS_ROLE_RX */
-	uint8_t domain;    /* ZLRS_DOMAIN_*: the main hop table */
+	uint8_t kind;   /* ZLRS_LINK_CONTROL / ZLRS_LINK_DATA */
+	uint8_t role;   /* ZLRS_ROLE_TX / ZLRS_ROLE_RX */
+	uint8_t domain; /* ZLRS_DOMAIN_*: the main hop table */
 	/*
 	 * Second table (sub-band mixing, doc/09-protocol.md 5.1): 0xFF = not configured, the link
 	 * only hops the main table; otherwise each sub-band gets one and sub_mix splits the slots.
@@ -64,13 +64,13 @@ typedef struct {
 	 */
 	zlrs_mod_cfg_t mod;
 	int8_t tx_power_dbm;
-	uint16_t rx_timeout_ms;     /* one receive window */
+	uint16_t rx_timeout_ms;   /* one receive window */
 	uint16_t sync_period_ms;  /* SYNC period while SEARCHING */
-	uint16_t peer_timeout_ms;   /* peer-loss timeout */
-	uint16_t pair_period_ms;    /* PAIR_REQ repeat period */
-	uint16_t pair_window_ms;    /* pairing window */
-	uint16_t data_mtu;          /* data frame payload cap */
-	uint8_t arq;                /* 1 = passthrough uses the ARQ profile, 0 = best-effort */
+	uint16_t peer_timeout_ms; /* peer-loss timeout */
+	uint16_t pair_period_ms;  /* PAIR_REQ repeat period */
+	uint16_t pair_window_ms;  /* pairing window */
+	uint16_t data_mtu;        /* data frame payload cap */
+	uint8_t arq;              /* 1 = passthrough uses the ARQ profile, 0 = best-effort */
 	/* ARQ retransmit timeout (ms). 0 = ZLRS_ARQ_TIMEOUT_MS, right for sub-ms FLRC frames */
 	uint16_t arq_timeout_ms;
 	/*
@@ -131,7 +131,7 @@ typedef struct {
 	uint32_t rx_syncs;      /* SYNC frames received while connected */
 	uint32_t mix_changes;   /* how often a new sub-band mix was adopted */
 	uint32_t mix_fallbacks; /* fallbacks to the default mix after missing new SYNC versions */
-	uint32_t hop_resync;      /* hop-index corrections received through SYNC */
+	uint32_t hop_resync;    /* hop-index corrections received through SYNC */
 	uint32_t radio_fail;
 	int16_t last_rssi;
 	int8_t last_snr; /* the radio stack cannot provide it under FLRC, see doc/06-radio.md */
@@ -144,15 +144,15 @@ typedef struct {
 } zlrs_link_stats_t;
 
 #define ZLRS_LINK_TX_QUEUE_LEN 512U
-#define ZLRS_LINK_TLM_MAX_LEN 32U
+#define ZLRS_LINK_TLM_MAX_LEN  32U
 
 /*
  * ARQ profile (the data-link default, see doc/09-protocol.md 4.3): cumulative ACKs over a
  * fixed window, retransmit until acked or timed out. The window is a run of frames from the
  * head; bytes are only committed to the queue on ACK, so retransmits need no extra buffer.
  */
-#define ZLRS_ARQ_WINDOW 4U
-#define ZLRS_ARQ_TIMEOUT_MS 30U
+#define ZLRS_ARQ_WINDOW      4U
+#define ZLRS_ARQ_TIMEOUT_MS  30U
 #define ZLRS_ARQ_MAX_RETRIES 6U
 
 typedef struct {
@@ -195,14 +195,14 @@ typedef struct {
 	 * to prove the peer derived the same key. The RX only adopts the session after that proof,
 	 * so replaying an old SYNC yields no old session key.
 	 */
-	bool session_pending;    /* RX: answered a SYNC, waiting for the peer's confirm */
-	bool sess_resp_due;      /* RX: SESS_RESP due in the uplink slot */
-	bool sess_cfm_due;       /* TX: SESS_CFM due in the downlink slot */
-	uint32_t sess_nonce_t;   /* initiator (TX) nonce */
-	uint32_t sess_nonce_r;   /* responder (RX) nonce */
-	uint16_t sess_hop;       /* hop index of this session */
-	uint32_t pair_nonce;     /* pairing: initiator nonce_a */
-	uint32_t pair_nonce_b;   /* pairing: responder nonce_b */
+	bool session_pending;  /* RX: answered a SYNC, waiting for the peer's confirm */
+	bool sess_resp_due;    /* RX: SESS_RESP due in the uplink slot */
+	bool sess_cfm_due;     /* TX: SESS_CFM due in the downlink slot */
+	uint32_t sess_nonce_t; /* initiator (TX) nonce */
+	uint32_t sess_nonce_r; /* responder (RX) nonce */
+	uint16_t sess_hop;     /* hop index of this session */
+	uint32_t pair_nonce;   /* pairing: initiator nonce_a */
+	uint32_t pair_nonce_b; /* pairing: responder nonce_b */
 
 	/* state and timing */
 	uint8_t state;
@@ -210,8 +210,8 @@ typedef struct {
 	uint32_t last_rx_ms;
 	uint32_t last_sync_ms;
 	uint32_t last_pair_tx_ms;
-	bool pair_cfm_pending;  /* TX got PAIR_RESP, send PAIR_CFM in the next downlink slot */
-	bool pair_wait_cfm;     /* RX answered PAIR_RESP, waiting for PAIR_CFM */
+	bool pair_cfm_pending; /* TX got PAIR_RESP, send PAIR_CFM in the next downlink slot */
+	bool pair_wait_cfm;    /* RX answered PAIR_RESP, waiting for PAIR_CFM */
 	/*
 	 * Simplified handshake (cfg.handshake = 0): the RX enters CONNECTED on a SYNC but keeps
 	 * answering SESS_RESP until the peer's first frame arrives: it may still be SEARCHING.
@@ -270,8 +270,8 @@ typedef struct {
 	bool req_pending;
 } zlrs_link_t;
 
-void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
-		    const zlrs_radio_ops_t *radio, const zlrs_link_events_t *events);
+void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg, const zlrs_radio_ops_t *radio,
+		    const zlrs_link_events_t *events);
 
 /* The link only joins the air once a root key has been written */
 void zlrs_link_set_root_key(zlrs_link_t *link, const uint8_t root_key[ZLRS_KEY_LEN],
@@ -307,15 +307,15 @@ void zlrs_link_set_failsafe(zlrs_link_t *link, const uint8_t *payload, uint16_t 
 const zlrs_radio_req_t *zlrs_link_slot(zlrs_link_t *link, uint8_t slot, uint32_t now_ms);
 
 /* radio transaction finished */
-void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t rssi,
-			int8_t snr, uint32_t now_ms);
+void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t rssi, int8_t snr,
+			uint32_t now_ms);
 
 /*
  * Inject a frame directly, equivalent to "the radio received len bytes". The normal path
  * through zlrs_link_complete() ends up here too; bypass receivers and host tests use it.
  */
-void zlrs_link_rx(zlrs_link_t *link, const uint8_t *buf, uint16_t len, int16_t rssi,
-		  int8_t snr, uint32_t now_ms);
+void zlrs_link_rx(zlrs_link_t *link, const uint8_t *buf, uint16_t len, int16_t rssi, int8_t snr,
+		  uint32_t now_ms);
 
 /* Timeouts and state transitions, called once per superframe */
 void zlrs_link_tick(zlrs_link_t *link, uint32_t now_ms);

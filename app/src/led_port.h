@@ -16,4 +16,3 @@ int zlrs_led_port_init(void);
 
 /* Turn the state into a colour and refresh (rate-limited to 20 Hz); now_ms uses the link clock */
 void zlrs_led_port_update(const zlrs_led_input_t *in, uint32_t now_ms);
-

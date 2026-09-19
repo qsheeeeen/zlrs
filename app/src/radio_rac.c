@@ -142,9 +142,8 @@ static void fill_lora_params(smtc_rac_context_t *rac, const zlrs_radio_req_t *re
 	rac->radio_params.lora.frequency_in_hz = req->freq_hz;
 	rac->radio_params.lora.sf = (ral_lora_sf_t)req->mod.sf;
 	rac->radio_params.lora.bw = lora_bw(req->mod.bw_hz);
-	rac->radio_params.lora.cr = (ral_lora_cr_t)((req->mod.cr >= 1U && req->mod.cr <= 4U)
-							    ? req->mod.cr
-							    : 1U);
+	rac->radio_params.lora.cr =
+		(ral_lora_cr_t)((req->mod.cr >= 1U && req->mod.cr <= 4U) ? req->mod.cr : 1U);
 	rac->radio_params.lora.preamble_len_in_symb = req->mod.preamble;
 	rac->radio_params.lora.header_type = RAL_LORA_PKT_EXPLICIT;
 	rac->radio_params.lora.invert_iq_is_on = 0U;
@@ -331,8 +330,8 @@ static void drain_client(rac_client_t *client, uint32_t now_ms)
 	client->done = false;
 
 	/* The next transaction can overwrite the result, so hand it over as soon as it is read */
-	zlrs_link_complete(client->link, client->status, client->rx_len, client->rssi,
-			   client->snr, now_ms);
+	zlrs_link_complete(client->link, client->status, client->rx_len, client->rssi, client->snr,
+			   now_ms);
 }
 
 void zlrs_radio_port_drain(void)

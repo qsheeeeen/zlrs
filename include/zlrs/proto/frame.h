@@ -18,21 +18,21 @@ extern "C" {
 
 /* Packet types (a 6-bit space, see doc/09-protocol.md 2.2) */
 typedef enum {
-	ZLRS_PKT_RC = 0,       /* TX -> RX: RC channels */
-	ZLRS_PKT_TLM = 1,      /* RX -> TX: telemetry */
-	ZLRS_PKT_DATA_UP = 2,  /* TX -> RX: passthrough data */
-	ZLRS_PKT_DATA_DOWN = 3,/* RX -> TX: passthrough data */
-	ZLRS_PKT_ACK = 4,      /* both ways: passthrough ACK (ARQ profile) */
-	ZLRS_PKT_SYNC = 5,   /* TX -> RX: session setup */
-	ZLRS_PKT_PAIR_REQ = 6, /* TX -> RX: pairing */
-	ZLRS_PKT_PAIR_RESP = 7,/* RX -> TX: pairing */
-	ZLRS_PKT_PAIR_CFM = 8, /* TX -> RX: pairing */
-	ZLRS_PKT_SESS_RESP = 9,/* RX -> TX: session response carrying its nonce */
-	ZLRS_PKT_SESS_CFM = 10,/* TX -> RX: session confirm, tagged with the new session key */
+	ZLRS_PKT_RC = 0,        /* TX -> RX: RC channels */
+	ZLRS_PKT_TLM = 1,       /* RX -> TX: telemetry */
+	ZLRS_PKT_DATA_UP = 2,   /* TX -> RX: passthrough data */
+	ZLRS_PKT_DATA_DOWN = 3, /* RX -> TX: passthrough data */
+	ZLRS_PKT_ACK = 4,       /* both ways: passthrough ACK (ARQ profile) */
+	ZLRS_PKT_SYNC = 5,      /* TX -> RX: session setup */
+	ZLRS_PKT_PAIR_REQ = 6,  /* TX -> RX: pairing */
+	ZLRS_PKT_PAIR_RESP = 7, /* RX -> TX: pairing */
+	ZLRS_PKT_PAIR_CFM = 8,  /* TX -> RX: pairing */
+	ZLRS_PKT_SESS_RESP = 9, /* RX -> TX: session response carrying its nonce */
+	ZLRS_PKT_SESS_CFM = 10, /* TX -> RX: session confirm, tagged with the new session key */
 } zlrs_pkt_type_t;
 
 /* low 2 bits of the header */
-#define ZLRS_FLAG_MORE 0x01U    /* more fragments follow */
+#define ZLRS_FLAG_MORE    0x01U /* more fragments follow */
 #define ZLRS_FLAG_ACK_REQ 0x02U /* acknowledgement requested */
 
 /* Security profiles, see doc/10-security.md 8 */
@@ -68,8 +68,7 @@ uint16_t zlrs_frame_encode(const zlrs_frame_t *frame, uint8_t *buf, uint16_t cap
  * Decode. len is what the radio received, tag_len comes from the current profile.
  * Returns false when the length cannot hold header and tag or the type is out of range.
  */
-bool zlrs_frame_decode(zlrs_frame_t *frame, const uint8_t *buf, uint16_t len,
-		       uint8_t tag_len);
+bool zlrs_frame_decode(zlrs_frame_t *frame, const uint8_t *buf, uint16_t len, uint8_t tag_len);
 
 /* Bytes the tag covers: header + seq + payload */
 uint16_t zlrs_frame_mac_len(const zlrs_frame_t *frame);
@@ -77,4 +76,3 @@ uint16_t zlrs_frame_mac_len(const zlrs_frame_t *frame);
 #ifdef __cplusplus
 }
 #endif
-

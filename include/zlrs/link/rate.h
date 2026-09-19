@@ -34,13 +34,13 @@ typedef struct {
 typedef struct {
 	const zlrs_rate_tier_t *tiers;
 	uint8_t count;
-	uint8_t current;      /* index of the current tier */
-	uint8_t hysteresis;   /* margin above the target tier's min_lq_to_stay when moving up */
-	uint8_t windows;      /* consecutive windows that have to agree before a change */
-	uint32_t hold_ms;     /* minimum time a new tier stays before the next change */
-	uint32_t last_ms;     /* when the tier last changed (or was initialised) */
-	uint8_t good;         /* consecutive good windows */
-	uint8_t bad;          /* consecutive bad windows */
+	uint8_t current;    /* index of the current tier */
+	uint8_t hysteresis; /* margin above the target tier's min_lq_to_stay when moving up */
+	uint8_t windows;    /* consecutive windows that have to agree before a change */
+	uint32_t hold_ms;   /* minimum time a new tier stays before the next change */
+	uint32_t last_ms;   /* when the tier last changed (or was initialised) */
+	uint8_t good;       /* consecutive good windows */
+	uint8_t bad;        /* consecutive bad windows */
 } zlrs_rate_ctl_t;
 
 void zlrs_rate_init(zlrs_rate_ctl_t *ctl, const zlrs_rate_tier_t *tiers, uint8_t count,
@@ -50,8 +50,7 @@ void zlrs_rate_init(zlrs_rate_ctl_t *ctl, const zlrs_rate_tier_t *tiers, uint8_t
  * Called once per LQ window. Returns true when the tier should change and writes the new index.
  * Internally filtered by windows, hold_ms and hysteresis.
  */
-bool zlrs_rate_update(zlrs_rate_ctl_t *ctl, uint8_t lq_percent, uint32_t now_ms,
-		      uint8_t *out);
+bool zlrs_rate_update(zlrs_rate_ctl_t *ctl, uint8_t lq_percent, uint32_t now_ms, uint8_t *out);
 
 uint32_t zlrs_rate_current_bps(const zlrs_rate_ctl_t *ctl);
 
@@ -61,4 +60,3 @@ const zlrs_mod_cfg_t *zlrs_rate_current_mod(const zlrs_rate_ctl_t *ctl);
 #ifdef __cplusplus
 }
 #endif
-

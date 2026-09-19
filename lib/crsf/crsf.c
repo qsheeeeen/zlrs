@@ -179,7 +179,7 @@ uint8_t zlrs_crsf_rssi_from_dbm(int16_t dbm)
 uint8_t zlrs_crsf_tx_power_index(int8_t dbm)
 {
 	/* index -> mW, matching CRSF's power tiers */
-	static const uint16_t milliwatts[] = { 0U, 10U, 25U, 100U, 500U, 1000U, 2000U, 250U, 50U };
+	static const uint16_t milliwatts[] = {0U, 10U, 25U, 100U, 500U, 1000U, 2000U, 250U, 50U};
 	uint32_t thousandths = 1000U; /* 1 mW, counted in 1/1000 mW */
 	uint16_t want_mw;
 	uint8_t best = 0U;

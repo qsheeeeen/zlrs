@@ -23,8 +23,8 @@
 /* FLRC: point-by-point agreement with the region layer's model */
 static void test_mod_flrc_matches_region(void)
 {
-	static const uint32_t rates[] = { 2600000U, 1300000U, 650000U, 325000U };
-	static const uint16_t lens[] = { 7U, 31U, 128U, 255U };
+	static const uint32_t rates[] = {2600000U, 1300000U, 650000U, 325000U};
+	static const uint16_t lens[] = {7U, 31U, 128U, 255U};
 	const zlrs_mod_cfg_t no_rate = zlrs_mod_flrc(0U);
 
 	printf("mod: flrc airtime matches region model\n");

@@ -90,8 +90,7 @@ static void drain_client(null_client_t *client)
 	client->pending = false;
 
 	/* The result is "sent, nothing heard": an RX length of 0 is an empty receive window */
-	zlrs_link_complete(client->link, ZLRS_RADIO_OK, 0U, 0, 0,
-			   zlrs_radio_port_now_ms());
+	zlrs_link_complete(client->link, ZLRS_RADIO_OK, 0U, 0, 0, zlrs_radio_port_now_ms());
 }
 
 void zlrs_radio_port_drain(void)

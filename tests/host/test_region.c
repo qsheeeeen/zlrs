@@ -18,19 +18,16 @@ static void test_tables(void)
 		CHECK(region != NULL);
 		CHECK(region->name != NULL);
 		/* Matching band, power within the ceiling: must pass */
-		CHECK(zlrs_region_validate(region, region->band,
-					   region->max_tx_power_dbm) == 0);
+		CHECK(zlrs_region_validate(region, region->band, region->max_tx_power_dbm) == 0);
 		/* A little over the ceiling has to be refused */
 		if (region->max_tx_power_dbm < 22) {
 			CHECK(zlrs_region_validate(region, region->band,
-						   (int8_t)(region->max_tx_power_dbm + 1)) !=
-			      0);
+						   (int8_t)(region->max_tx_power_dbm + 1)) != 0);
 		}
 		/* A band mismatch has to be refused: an LF board cannot do 915, an HF one cannot do 470/433 */
 		CHECK(zlrs_region_validate(region,
-					   (region->band == ZLRS_BAND_SUBG_HF)
-						   ? ZLRS_BAND_SUBG_LF
-						   : ZLRS_BAND_SUBG_HF,
+					   (region->band == ZLRS_BAND_SUBG_HF) ? ZLRS_BAND_SUBG_LF
+									       : ZLRS_BAND_SUBG_HF,
 					   region->max_tx_power_dbm) != 0);
 	}
 
@@ -38,16 +35,14 @@ static void test_tables(void)
 	CHECK(zlrs_region_validate(NULL, ZLRS_BAND_SUBG_HF, 0) != 0);
 
 	/* On the prototype: the HF board accepts FCC915/EU868, the LF board CN470/CN433 */
-	CHECK(zlrs_region_validate(zlrs_region_get(ZLRS_REGION_FCC915), ZLRS_BAND_SUBG_HF,
-				   10) == 0);
-	CHECK(zlrs_region_validate(zlrs_region_get(ZLRS_REGION_FCC915), ZLRS_BAND_SUBG_LF,
-				   10) == -5);
-	CHECK(zlrs_region_validate(zlrs_region_get(ZLRS_REGION_CN470), ZLRS_BAND_SUBG_LF,
-				   10) == 0);
-	CHECK(zlrs_region_validate(zlrs_region_get(ZLRS_REGION_CN433), ZLRS_BAND_SUBG_LF,
-				   10) == 0);
-	CHECK(zlrs_region_validate(zlrs_region_get(ZLRS_REGION_CN433), ZLRS_BAND_SUBG_HF,
-				   10) == -5);
+	CHECK(zlrs_region_validate(zlrs_region_get(ZLRS_REGION_FCC915), ZLRS_BAND_SUBG_HF, 10) ==
+	      0);
+	CHECK(zlrs_region_validate(zlrs_region_get(ZLRS_REGION_FCC915), ZLRS_BAND_SUBG_LF, 10) ==
+	      -5);
+	CHECK(zlrs_region_validate(zlrs_region_get(ZLRS_REGION_CN470), ZLRS_BAND_SUBG_LF, 10) == 0);
+	CHECK(zlrs_region_validate(zlrs_region_get(ZLRS_REGION_CN433), ZLRS_BAND_SUBG_LF, 10) == 0);
+	CHECK(zlrs_region_validate(zlrs_region_get(ZLRS_REGION_CN433), ZLRS_BAND_SUBG_HF, 10) ==
+	      -5);
 }
 
 /* Rate ceiling: narrow bands pull the configured rate down */
@@ -55,20 +50,14 @@ static void test_rate_limit(void)
 {
 	printf("region: rate limit\n");
 
-	CHECK(zlrs_region_clamp_rate(zlrs_region_get(ZLRS_REGION_FCC915), 2600000U) ==
-	      2600000U);
-	CHECK(zlrs_region_clamp_rate(zlrs_region_get(ZLRS_REGION_FCC915), 1300000U) ==
-	      1300000U);
+	CHECK(zlrs_region_clamp_rate(zlrs_region_get(ZLRS_REGION_FCC915), 2600000U) == 2600000U);
+	CHECK(zlrs_region_clamp_rate(zlrs_region_get(ZLRS_REGION_FCC915), 1300000U) == 1300000U);
 	/* EU868, CN470 and CN433 cannot fit the wideband tiers */
-	CHECK(zlrs_region_clamp_rate(zlrs_region_get(ZLRS_REGION_EU868), 1300000U) ==
-	      325000U);
-	CHECK(zlrs_region_clamp_rate(zlrs_region_get(ZLRS_REGION_CN470), 2600000U) ==
-	      325000U);
-	CHECK(zlrs_region_clamp_rate(zlrs_region_get(ZLRS_REGION_CN433), 650000U) ==
-	      325000U);
+	CHECK(zlrs_region_clamp_rate(zlrs_region_get(ZLRS_REGION_EU868), 1300000U) == 325000U);
+	CHECK(zlrs_region_clamp_rate(zlrs_region_get(ZLRS_REGION_CN470), 2600000U) == 325000U);
+	CHECK(zlrs_region_clamp_rate(zlrs_region_get(ZLRS_REGION_CN433), 650000U) == 325000U);
 	/* Anything already below the ceiling stays put */
-	CHECK(zlrs_region_clamp_rate(zlrs_region_get(ZLRS_REGION_CN433), 325000U) ==
-	      325000U);
+	CHECK(zlrs_region_clamp_rate(zlrs_region_get(ZLRS_REGION_CN433), 325000U) == 325000U);
 	CHECK(zlrs_region_clamp_rate(NULL, 1300000U) == 1300000U);
 }
 
@@ -98,13 +87,13 @@ static void test_max_frames(void)
 	CHECK(zlrs_airtime_us(31U, 1300000U) == 216U);
 
 	/* 1% -> 10000 us/s -> 10000/216 = 46 frames per second */
-	CHECK(zlrs_region_max_frames_per_s(zlrs_region_get(ZLRS_REGION_EU868), 1300000U,
-					   31U) == 46U);
+	CHECK(zlrs_region_max_frames_per_s(zlrs_region_get(ZLRS_REGION_EU868), 1300000U, 31U) ==
+	      46U);
 	/* Unlimited-duty regions: as fast as you like */
-	CHECK(zlrs_region_max_frames_per_s(zlrs_region_get(ZLRS_REGION_FCC915), 1300000U,
-					   31U) == UINT32_MAX);
-	CHECK(zlrs_region_max_frames_per_s(zlrs_region_get(ZLRS_REGION_CN470), 1300000U,
-					   31U) == UINT32_MAX);
+	CHECK(zlrs_region_max_frames_per_s(zlrs_region_get(ZLRS_REGION_FCC915), 1300000U, 31U) ==
+	      UINT32_MAX);
+	CHECK(zlrs_region_max_frames_per_s(zlrs_region_get(ZLRS_REGION_CN470), 1300000U, 31U) ==
+	      UINT32_MAX);
 	/* No ceiling when the rate is unknown (the layer above decides) */
 	CHECK(zlrs_region_max_frames_per_s(zlrs_region_get(ZLRS_REGION_EU868), 0U, 31U) ==
 	      UINT32_MAX);
@@ -194,7 +183,8 @@ static void test_control_plan(void)
 	CHECK(plan.rate_hz == 46U);
 	CHECK(plan.clamped_by_duty);
 	CHECK(!plan.clamped_by_airtime);
-	CHECK(plan.tlm_every_n == 1U); /* the rate is below the target, so every frame carries telemetry */
+	CHECK(plan.tlm_every_n ==
+	      1U); /* the rate is below the target, so every frame carries telemetry */
 
 	/* At the narrow-band rate (CN470 clamps to 0.325 Mbps) airtime bounds the frame rate */
 	req.region = zlrs_region_get(ZLRS_REGION_CN470);

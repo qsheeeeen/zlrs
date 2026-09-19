@@ -15,12 +15,12 @@
 #include "zlrs/link/link.h"
 #include "zlrs/link/rate.h"
 
-#define SIM_FRAME_MS 6U
-#define SIM_RATE_CTL 1300000U
-#define SIM_RATE_DATA 2600000U
-#define SIM_DATA_MTU 128U
+#define SIM_FRAME_MS       6U
+#define SIM_RATE_CTL       1300000U
+#define SIM_RATE_DATA      2600000U
+#define SIM_DATA_MTU       128U
 #define SIM_FRAMES_PER_SEC (1000U / SIM_FRAME_MS)
-#define SIM_MAX_NODES 3U /* the main pair plus an optional third node (peer or attacker) */
+#define SIM_MAX_NODES      3U /* the main pair plus an optional third node (peer or attacker) */
 
 typedef struct node node_t;
 
@@ -56,14 +56,14 @@ struct node {
 typedef struct {
 	node_t tx;
 	node_t rx;
-	node_t nth;        /* third node: bystander or attacker, only the three-node cases use it */
+	node_t nth; /* third node: bystander or attacker, only the three-node cases use it */
 	bool nth_enabled;
 	uint32_t now_ms;
 	/* Superframe length in ms: 6 by default (~167 Hz), the 1000 Hz case sets 1 */
 	uint32_t frame_ms;
 	uint8_t root_key[ZLRS_KEY_LEN];
-	int32_t drop_down; /* how many more TX->RX deliveries to drop */
-	int32_t drop_up;   /* how many more RX->TX deliveries to drop */
+	int32_t drop_down;      /* how many more TX->RX deliveries to drop */
+	int32_t drop_up;        /* how many more RX->TX deliveries to drop */
 	int32_t drop_data_down; /* drop only TX->RX data frames (ARQ cases) */
 	bool replay_data_next;  /* deliver the next data frame twice (dedup cases) */
 	bool corrupt_next;
@@ -206,7 +206,7 @@ static void node_init(node_t *node, uint8_t role, const uint8_t *root_key,
 		.domain = ZLRS_DOMAIN_FCC915,
 		.sync_slot = ZLRS_SYNC_SLOT_CONTROL,
 		.profile = ZLRS_PROFILE_P1,
-		.mod = { .modulation = ZLRS_MOD_FLRC, .rate_bps = SIM_RATE_CTL },
+		.mod = {.modulation = ZLRS_MOD_FLRC, .rate_bps = SIM_RATE_CTL},
 		.tx_power_dbm = 10,
 		.rx_timeout_ms = 2U,
 		.sync_period_ms = 1000U,
@@ -264,8 +264,8 @@ static void node_init(node_t *node, uint8_t role, const uint8_t *root_key,
 static void sim_init_with(sim_t *sim, const sim_features_t *features)
 {
 	static uint8_t root_key[ZLRS_KEY_LEN];
-	static const uint8_t tx_id[ZLRS_DEV_ID_LEN] = { 0x11, 0x22, 0x33, 0x44 };
-	static const uint8_t rx_id[ZLRS_DEV_ID_LEN] = { 0xaa, 0xbb, 0xcc, 0xdd };
+	static const uint8_t tx_id[ZLRS_DEV_ID_LEN] = {0x11, 0x22, 0x33, 0x44};
+	static const uint8_t rx_id[ZLRS_DEV_ID_LEN] = {0xaa, 0xbb, 0xcc, 0xdd};
 
 	sim_features = (features != NULL) ? *features : sim_features_default;
 	memset(sim, 0, sizeof(*sim));
@@ -286,8 +286,7 @@ static void sim_init(sim_t *sim)
 
 static zlrs_link_t *link_of(node_t *node, uint8_t slot)
 {
-	return (slot == ZLRS_SLOT_CTL_DOWN || slot == ZLRS_SLOT_CTL_UP) ? &node->ctl
-								       : &node->data;
+	return (slot == ZLRS_SLOT_CTL_DOWN || slot == ZLRS_SLOT_CTL_UP) ? &node->ctl : &node->data;
 }
 
 /*
@@ -346,7 +345,7 @@ static void sim_slot(sim_t *sim, uint8_t slot)
 {
 	zlrs_link_t *links[SIM_MAX_NODES];
 	const zlrs_radio_req_t *reqs[SIM_MAX_NODES];
-	bool served[SIM_MAX_NODES] = { false };
+	bool served[SIM_MAX_NODES] = {false};
 	uint8_t nodes = 0U;
 
 	links[nodes] = link_of(&sim->tx, slot);
@@ -387,8 +386,7 @@ static void sim_slot(sim_t *sim, uint8_t slot)
 
 			if (primary) {
 				if (i == 0U && j == 1U) {
-					drop = (slot == ZLRS_SLOT_DATA_A &&
-						sim->drop_data_down > 0)
+					drop = (slot == ZLRS_SLOT_DATA_A && sim->drop_data_down > 0)
 						       ? &sim->drop_data_down
 						       : &sim->drop_down;
 				} else if (i == 1U && j == 0U) {
@@ -398,8 +396,7 @@ static void sim_slot(sim_t *sim, uint8_t slot)
 
 			if (drop != NULL && *drop > 0) {
 				(*drop)--;
-				zlrs_link_complete(links[j], ZLRS_RADIO_OK, 0U, 0, 0,
-						   sim->now_ms);
+				zlrs_link_complete(links[j], ZLRS_RADIO_OK, 0U, 0, 0, sim->now_ms);
 				served[j] = true;
 				continue;
 			}
@@ -427,8 +424,7 @@ static void sim_run(sim_t *sim, uint32_t frames)
 		if (sim->replay_data_next && sim->down_len > 0U &&
 		    (sim->down[0] >> 2) == (uint8_t)ZLRS_PKT_DATA_UP) {
 			sim->replay_data_next = false;
-			zlrs_link_rx(&sim->rx.data, sim->down, sim->down_len, -60, 0,
-				     sim->now_ms);
+			zlrs_link_rx(&sim->rx.data, sim->down, sim->down_len, -60, 0, sim->now_ms);
 		}
 		sim_slot(sim, ZLRS_SLOT_DATA_B);
 
@@ -441,14 +437,14 @@ static void sim_run(sim_t *sim, uint32_t frames)
 	}
 }
 
-#define SIM_UNTIL(sim, cond, limit)                       \
-	do {                                              \
-		for (int _i = 0; _i < (limit); _i++) {    \
-			if (cond) {                       \
-				break;                    \
-			}                                 \
-			sim_run((sim), 1U);               \
-		}                                         \
+#define SIM_UNTIL(sim, cond, limit)                                                                \
+	do {                                                                                       \
+		for (int _i = 0; _i < (limit); _i++) {                                             \
+			if (cond) {                                                                \
+				break;                                                             \
+			}                                                                          \
+			sim_run((sim), 1U);                                                        \
+		}                                                                                  \
 	} while (0)
 
 /* Push a frame straight into a link's receive buffer, bypassing the simulation */
@@ -472,8 +468,7 @@ static uint16_t build_data_frame(uint8_t *out, uint8_t type, uint16_t seq, uint8
 	if (zlrs_frame_encode(&frame, out, total) != total - ZLRS_TAG_LEN) {
 		return 0U;
 	}
-	zlrs_tag(key, ZLRS_KEY_LEN, out, ZLRS_FRAME_HDR_LEN + len,
-		 &out[ZLRS_FRAME_HDR_LEN + len]);
+	zlrs_tag(key, ZLRS_KEY_LEN, out, ZLRS_FRAME_HDR_LEN + len, &out[ZLRS_FRAME_HDR_LEN + len]);
 
 	return total;
 }
@@ -490,10 +485,8 @@ static void pair_and_connect(sim_t *sim)
 		  2000);
 
 	/* Copy the pairing record (dev_id and nonces) to the data link, as the app does */
-	zlrs_link_set_peer(&sim->tx.data, sim->rx.dev_id, sim->tx.ctl.pair_salt,
-			   sim->now_ms);
-	zlrs_link_set_peer(&sim->rx.data, sim->tx.dev_id, sim->rx.ctl.pair_salt,
-			   sim->now_ms);
+	zlrs_link_set_peer(&sim->tx.data, sim->rx.dev_id, sim->tx.ctl.pair_salt, sim->now_ms);
+	zlrs_link_set_peer(&sim->rx.data, sim->tx.dev_id, sim->rx.ctl.pair_salt, sim->now_ms);
 
 	SIM_UNTIL(sim,
 		  sim->tx.ctl.state == ZLRS_STATE_CONNECTED &&
@@ -529,9 +522,9 @@ static void test_third_node_isolation(void)
 {
 	sim_t sim;
 	uint8_t chunk[16];
-	static const uint8_t other_id[ZLRS_DEV_ID_LEN] = { 0x55, 0x66, 0x77, 0x88 };
-	static const uint8_t other_peer[ZLRS_DEV_ID_LEN] = { 0x99, 0xaa, 0xbb, 0xcc };
-	static const uint8_t other_salt[ZLRS_PAIR_SALT_LEN] = { 9U, 9U, 9U, 9U, 9U, 9U, 9U, 9U };
+	static const uint8_t other_id[ZLRS_DEV_ID_LEN] = {0x55, 0x66, 0x77, 0x88};
+	static const uint8_t other_peer[ZLRS_DEV_ID_LEN] = {0x99, 0xaa, 0xbb, 0xcc};
+	static const uint8_t other_salt[ZLRS_PAIR_SALT_LEN] = {9U, 9U, 9U, 9U, 9U, 9U, 9U, 9U};
 
 	printf("link: third node isolation\n");
 	sim_init(&sim);
@@ -628,8 +621,7 @@ static void test_group_member_impersonates(void)
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_SEARCHING);
 
 	/* The impersonator: same dev_id as the main TX, with the salt it heard */
-	sim_enable_nth(&sim, ZLRS_ROLE_TX, sim.tx.dev_id, sim.rx.dev_id,
-		       sim.tx.ctl.pair_salt);
+	sim_enable_nth(&sim, ZLRS_ROLE_TX, sim.tx.dev_id, sim.rx.dev_id, sim.tx.ctl.pair_salt);
 
 	SIM_UNTIL(&sim, sim.rx.ctl.state == ZLRS_STATE_CONNECTED, 2000);
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
@@ -769,19 +761,14 @@ static void test_session(void)
 	CHECK(sim.rx.data.state == ZLRS_STATE_CONNECTED);
 
 	/* Session keys are directional: our out is the peer's in, and out != in on one device */
-	CHECK(memcmp(sim.tx.ctl.session_key_out, sim.rx.ctl.session_key_in,
-		     ZLRS_KEY_LEN) == 0);
-	CHECK(memcmp(sim.tx.ctl.session_key_in, sim.rx.ctl.session_key_out,
-		     ZLRS_KEY_LEN) == 0);
-	CHECK(memcmp(sim.tx.ctl.session_key_out, sim.tx.ctl.session_key_in,
-		     ZLRS_KEY_LEN) != 0);
+	CHECK(memcmp(sim.tx.ctl.session_key_out, sim.rx.ctl.session_key_in, ZLRS_KEY_LEN) == 0);
+	CHECK(memcmp(sim.tx.ctl.session_key_in, sim.rx.ctl.session_key_out, ZLRS_KEY_LEN) == 0);
+	CHECK(memcmp(sim.tx.ctl.session_key_out, sim.tx.ctl.session_key_in, ZLRS_KEY_LEN) != 0);
 	/* Both nonces reach both ends: the TX's nonce_t and the RX's nonce_r */
 	CHECK(sim.tx.ctl.sess_nonce_t == sim.rx.ctl.sess_nonce_t);
 	CHECK(sim.tx.ctl.sess_nonce_r == sim.rx.ctl.sess_nonce_r);
-	CHECK(memcmp(sim.tx.data.session_key_out, sim.rx.data.session_key_in,
-		     ZLRS_KEY_LEN) == 0);
-	CHECK(memcmp(sim.tx.ctl.session_key_out, sim.tx.data.session_key_out,
-		     ZLRS_KEY_LEN) != 0);
+	CHECK(memcmp(sim.tx.data.session_key_out, sim.rx.data.session_key_in, ZLRS_KEY_LEN) == 0);
+	CHECK(memcmp(sim.tx.ctl.session_key_out, sim.tx.data.session_key_out, ZLRS_KEY_LEN) != 0);
 
 	/* Once connected the RX stops listening for SYNC: replaying the current one changes nothing */
 	nonce = sim.rx.ctl.sess_nonce_t;
@@ -842,8 +829,7 @@ static void test_reflection(void)
 	nonce = sim.tx.ctl.sess_nonce_t;
 	sim.drop_up = 500;
 	SIM_UNTIL(&sim,
-		  sim.tx.ctl.state == ZLRS_STATE_SEARCHING &&
-			  sim.tx.ctl.sess_nonce_t != nonce,
+		  sim.tx.ctl.state == ZLRS_STATE_SEARCHING && sim.tx.ctl.sess_nonce_t != nonce,
 		  2000);
 	sim.drop_up = 0;
 	CHECK(sim.tx.ctl.sess_nonce_t != nonce);
@@ -894,8 +880,7 @@ static void test_pairing_rotation(void)
 	CHECK(memcmp(sim.tx.ctl.link_auth_out, auth_before, ZLRS_KEY_LEN) != 0);
 	/* Both ends still derive the same set */
 	CHECK(memcmp(sim.tx.ctl.sync_word, sim.rx.ctl.sync_word, ZLRS_SYNC_WORD_LEN) == 0);
-	CHECK(memcmp(sim.tx.ctl.link_auth_out, sim.rx.ctl.link_auth_in,
-		     ZLRS_KEY_LEN) == 0);
+	CHECK(memcmp(sim.tx.ctl.link_auth_out, sim.rx.ctl.link_auth_in, ZLRS_KEY_LEN) == 0);
 
 	/* A SYNC recorded under the old pairing: the keys changed, so it must be dropped */
 	bad_tag = sim.rx.ctl.stats.rx_bad_tag;
@@ -967,8 +952,7 @@ static void test_session_replay(void)
 	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
 	CHECK(sim.rx.ctl.session_valid);
-	CHECK(memcmp(sim.tx.ctl.session_key_out, sim.rx.ctl.session_key_in,
-		     ZLRS_KEY_LEN) == 0);
+	CHECK(memcmp(sim.tx.ctl.session_key_out, sim.rx.ctl.session_key_in, ZLRS_KEY_LEN) == 0);
 }
 
 static void test_control_payloads(void)
@@ -1034,7 +1018,7 @@ static void test_rx_rejects(void)
 	sim_t sim;
 	uint8_t rc[ZLRS_RC_PAYLOAD_LEN];
 	uint8_t bad[ZLRS_FRAME_MAX_LEN];
-	uint8_t tiny[2] = { 0x00, 0x01 };
+	uint8_t tiny[2] = {0x00, 0x01};
 	uint32_t dup_before;
 	uint32_t tag_before;
 	uint32_t frame_before;
@@ -1074,7 +1058,7 @@ static void test_frag_drop(void)
 {
 	sim_t sim;
 	uint8_t frame[ZLRS_FRAME_MAX_LEN];
-	uint8_t chunk[6] = { 1U, 2U, 3U, 4U, 5U, 6U };
+	uint8_t chunk[6] = {1U, 2U, 3U, 4U, 5U, 6U};
 	const uint8_t *key;
 	uint32_t drop_before;
 	uint16_t seq;
@@ -1090,15 +1074,15 @@ static void test_frag_drop(void)
 
 	/* Gap: drop the whole run */
 	drop_before = sim.rx.data.stats.rx_frag_drop;
-	len = build_data_frame(frame, ZLRS_PKT_DATA_UP, seq, ZLRS_FLAG_MORE, chunk,
-			       sizeof(chunk), key);
+	len = build_data_frame(frame, ZLRS_PKT_DATA_UP, seq, ZLRS_FLAG_MORE, chunk, sizeof(chunk),
+			       key);
 	CHECK(len > 0U);
 	sim_inject(&sim, &sim.rx.data, frame, len);
 	CHECK(sim.rx.data.reasm.len == sizeof(chunk));
 
 	seq = (uint16_t)(seq + 2U);
-	len = build_data_frame(frame, ZLRS_PKT_DATA_UP, seq, ZLRS_FLAG_MORE, chunk,
-			       sizeof(chunk), key);
+	len = build_data_frame(frame, ZLRS_PKT_DATA_UP, seq, ZLRS_FLAG_MORE, chunk, sizeof(chunk),
+			       key);
 	sim_inject(&sim, &sim.rx.data, frame, len);
 	CHECK(sim.rx.data.stats.rx_frag_drop == drop_before + 1U);
 	CHECK(sim.rx.data.reasm.len == 0U);
@@ -1106,15 +1090,15 @@ static void test_frag_drop(void)
 
 	/* Timeout: the leftovers go and a new run starts */
 	seq = (uint16_t)(seq + 1U);
-	len = build_data_frame(frame, ZLRS_PKT_DATA_UP, seq, ZLRS_FLAG_MORE, chunk,
-			       sizeof(chunk), key);
+	len = build_data_frame(frame, ZLRS_PKT_DATA_UP, seq, ZLRS_FLAG_MORE, chunk, sizeof(chunk),
+			       key);
 	sim_inject(&sim, &sim.rx.data, frame, len);
 	CHECK(sim.rx.data.reasm.len == sizeof(chunk));
 
 	sim.now_ms += ZLRS_FRAG_TIMEOUT_MS + 5U;
 	seq = (uint16_t)(seq + 1U);
-	len = build_data_frame(frame, ZLRS_PKT_DATA_UP, seq, ZLRS_FLAG_MORE, chunk,
-			       sizeof(chunk), key);
+	len = build_data_frame(frame, ZLRS_PKT_DATA_UP, seq, ZLRS_FLAG_MORE, chunk, sizeof(chunk),
+			       key);
 	sim_inject(&sim, &sim.rx.data, frame, len);
 	CHECK(sim.rx.data.reasm.len == sizeof(chunk)); /* only the new fragment is left */
 	CHECK(sim.rx.data.stats.rx_frag_drop == drop_before + 1U);
@@ -1137,7 +1121,7 @@ static void test_recovery(void)
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_SEARCHING);
 	CHECK(sim.tx.ctl.state == ZLRS_STATE_SEARCHING);
 	CHECK(sim.rx.ctl_state == ZLRS_STATE_SEARCHING); /* on_state fired, which drives failsafe */
-	CHECK(sim.tx.ctl.paired && sim.rx.ctl.paired); /* the pairing record survives */
+	CHECK(sim.tx.ctl.paired && sim.rx.ctl.paired);   /* the pairing record survives */
 
 	/* Restore delivery: a new SYNC reconnects, no re-pairing needed */
 	sim.drop_down = 0;
@@ -1170,16 +1154,14 @@ static void test_hop_lockstep(void)
 	CHECK(sim.tx.data.fhss.index == sim.rx.data.fhss.index);
 	CHECK(sim.tx.ctl.fhss.index != ctl_before);
 	CHECK(sim.tx.data.fhss.index != data_before);
-	CHECK(zlrs_fhss_current_hz(&sim.tx.ctl.fhss) ==
-	      zlrs_fhss_current_hz(&sim.rx.ctl.fhss));
-	CHECK(zlrs_fhss_current_hz(&sim.tx.data.fhss) ==
-	      zlrs_fhss_current_hz(&sim.rx.data.fhss));
+	CHECK(zlrs_fhss_current_hz(&sim.tx.ctl.fhss) == zlrs_fhss_current_hz(&sim.rx.ctl.fhss));
+	CHECK(zlrs_fhss_current_hz(&sim.tx.data.fhss) == zlrs_fhss_current_hz(&sim.rx.data.fhss));
 }
 
 static void test_unconfigured(void)
 {
 	node_t node;
-	static const uint8_t dev_id[ZLRS_DEV_ID_LEN] = { 1U, 2U, 3U, 4U };
+	static const uint8_t dev_id[ZLRS_DEV_ID_LEN] = {1U, 2U, 3U, 4U};
 
 	printf("link: unconfigured\n");
 
@@ -1260,8 +1242,8 @@ static void test_backpressure(void)
 
 	/* A 512-byte queue: fill it, and everything beyond must count as dropped */
 	for (uint8_t i = 0U; i < 4U; i++) {
-		accepted = (uint16_t)(accepted + zlrs_link_write(&sim.tx.data, chunk,
-								 sizeof(chunk)));
+		accepted =
+			(uint16_t)(accepted + zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)));
 	}
 	CHECK(accepted == ZLRS_LINK_TX_QUEUE_LEN);
 	CHECK(sim.tx.data.stats.data_drop_bytes == 0U);
@@ -1375,14 +1357,10 @@ static void test_arq_giveup(void)
 static void test_rate_adapt(void)
 {
 	static const zlrs_rate_tier_t tiers[] = {
-		{ .mod = { .modulation = ZLRS_MOD_FLRC, .rate_bps = 2600000U },
-		  .min_lq_to_stay = 85U },
-		{ .mod = { .modulation = ZLRS_MOD_FLRC, .rate_bps = 1300000U },
-		  .min_lq_to_stay = 60U },
-		{ .mod = { .modulation = ZLRS_MOD_FLRC, .rate_bps = 650000U },
-		  .min_lq_to_stay = 35U },
-		{ .mod = { .modulation = ZLRS_MOD_FLRC, .rate_bps = 325000U },
-		  .min_lq_to_stay = 0U },
+		{.mod = {.modulation = ZLRS_MOD_FLRC, .rate_bps = 2600000U}, .min_lq_to_stay = 85U},
+		{.mod = {.modulation = ZLRS_MOD_FLRC, .rate_bps = 1300000U}, .min_lq_to_stay = 60U},
+		{.mod = {.modulation = ZLRS_MOD_FLRC, .rate_bps = 650000U}, .min_lq_to_stay = 35U},
+		{.mod = {.modulation = ZLRS_MOD_FLRC, .rate_bps = 325000U}, .min_lq_to_stay = 0U},
 	};
 	zlrs_rate_ctl_t ctl;
 	uint8_t next = 0xFFU;
@@ -1532,7 +1510,7 @@ static void test_cadence(void)
 
 	/* Give the RX a telemetry payload: an empty one is a keepalive and does not call on_tlm */
 	{
-		uint8_t tlm[8] = { 1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U };
+		uint8_t tlm[8] = {1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U};
 
 		zlrs_link_set_tlm(&sim.rx.ctl, tlm, sizeof(tlm));
 	}
@@ -1662,10 +1640,8 @@ static void test_bringup_no_handshake(void)
 	CHECK(sim.sess_resp_len > 0U); /* SESS_RESP is used, not SESS_CFM */
 
 	/* The session key is the pairing key: no per-session nonce derivation */
-	CHECK(memcmp(sim.tx.ctl.session_key_out, sim.tx.ctl.link_auth_out, ZLRS_KEY_LEN) ==
-	      0);
-	CHECK(memcmp(sim.tx.ctl.session_key_in, sim.rx.ctl.link_auth_out, ZLRS_KEY_LEN) ==
-	      0);
+	CHECK(memcmp(sim.tx.ctl.session_key_out, sim.tx.ctl.link_auth_out, ZLRS_KEY_LEN) == 0);
+	CHECK(memcmp(sim.tx.ctl.session_key_in, sim.rx.ctl.link_auth_out, ZLRS_KEY_LEN) == 0);
 	CHECK(!sim.rx.ctl.session_pending);
 	CHECK(!sim.tx.ctl.sess_cfm_due);
 
@@ -1743,8 +1719,8 @@ static void test_hop_resync(void)
 	CHECK(sim.rx.ctl.fhss.index == sim.tx.ctl.fhss.index);
 
 	/* Fake drift: the RX index is off by 4, so the next frames miss the frequency */
-	sim.rx.ctl.fhss.index = (uint16_t)((sim.rx.ctl.fhss.index + 4U) %
-					   sim.rx.ctl.fhss.sequence_count);
+	sim.rx.ctl.fhss.index =
+		(uint16_t)((sim.rx.ctl.fhss.index + 4U) % sim.rx.ctl.fhss.sequence_count);
 	CHECK(sim.rx.ctl.fhss.index != sim.tx.ctl.fhss.index);
 
 	resync_before = sim.rx.ctl.stats.hop_resync;
@@ -1895,8 +1871,7 @@ static void test_peer_restart(void)
 	CHECK(sim.tx.data.state == ZLRS_STATE_CONNECTED);
 	CHECK(sim.rx.data.state == ZLRS_STATE_CONNECTED);
 	/* After the reconnect the keys still match */
-	CHECK(memcmp(sim.tx.ctl.session_key_out, sim.rx.ctl.session_key_in, ZLRS_KEY_LEN) ==
-	      0);
+	CHECK(memcmp(sim.tx.ctl.session_key_out, sim.rx.ctl.session_key_in, ZLRS_KEY_LEN) == 0);
 
 	/* RC and passthrough keep working */
 	memset(rc, 0x91U, sizeof(rc));
@@ -1950,8 +1925,8 @@ static void test_sync_replay_guard(void)
 	/* This frame's nonce belongs to the previous session */
 	nonce_before = sim.rx.ctl.sess_nonce_t;
 	memcpy(key_before, sim.rx.ctl.session_key_in, ZLRS_KEY_LEN);
-	sync_nonce = (uint32_t)sync[7] | ((uint32_t)sync[8] << 8) |
-		       ((uint32_t)sync[9] << 16) | ((uint32_t)sync[10] << 24);
+	sync_nonce = (uint32_t)sync[7] | ((uint32_t)sync[8] << 8) | ((uint32_t)sync[9] << 16) |
+		     ((uint32_t)sync[10] << 24);
 	CHECK(sync_nonce != nonce_before);
 
 	/* The session is healthy: the old SYNC can only be dropped */

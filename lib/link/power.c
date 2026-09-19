@@ -52,8 +52,8 @@ int8_t zlrs_power_current_dbm(const zlrs_power_ctl_t *ctl)
 	return ctl->current_dbm;
 }
 
-bool zlrs_power_update(zlrs_power_ctl_t *ctl, bool valid, int16_t rssi_dbm,
-		       uint8_t lq_percent, uint32_t now_ms, int8_t *out_dbm)
+bool zlrs_power_update(zlrs_power_ctl_t *ctl, bool valid, int16_t rssi_dbm, uint8_t lq_percent,
+		       uint32_t now_ms, int8_t *out_dbm)
 {
 	if (valid) {
 		/* Fresh telemetry: this call judges quality, not the timeout */
@@ -61,8 +61,7 @@ bool zlrs_power_update(zlrs_power_ctl_t *ctl, bool valid, int16_t rssi_dbm,
 		ctl->last_tlm_ms = now_ms;
 	} else {
 		/* Polling path: only here is the telemetry timeout checked */
-		if (!ctl->tlm_seen ||
-		    (uint32_t)(now_ms - ctl->last_tlm_ms) < ctl->tlm_timeout_ms) {
+		if (!ctl->tlm_seen || (uint32_t)(now_ms - ctl->last_tlm_ms) < ctl->tlm_timeout_ms) {
 			return false;
 		}
 

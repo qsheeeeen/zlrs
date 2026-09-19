@@ -135,8 +135,7 @@ uint8_t zlrs_cfg_encode(uint8_t *out, size_t out_len, uint8_t cmd, const uint8_t
 	return total;
 }
 
-void zlrs_cfg_status_encode(uint8_t out[ZLRS_CFG_STATUS_LEN],
-			    const zlrs_cfg_status_t *status)
+void zlrs_cfg_status_encode(uint8_t out[ZLRS_CFG_STATUS_LEN], const zlrs_cfg_status_t *status)
 {
 	out[0] = status->version;
 	out[1] = status->role;
@@ -170,15 +169,15 @@ bool zlrs_cfg_status_decode(const uint8_t *in, uint8_t len, zlrs_cfg_status_t *s
 	status->band = in[13];
 	status->region = in[14];
 	status->tx_power_dbm = (int8_t)in[15];
-	status->data_baud = (uint32_t)in[16] | ((uint32_t)in[17] << 8) |
-			    ((uint32_t)in[18] << 16) | ((uint32_t)in[19] << 24);
+	status->data_baud = (uint32_t)in[16] | ((uint32_t)in[17] << 8) | ((uint32_t)in[18] << 16) |
+			    ((uint32_t)in[19] << 24);
 
 	return true;
 }
 
 static uint8_t ack_frame(uint8_t *out, size_t out_len, uint8_t cmd, uint8_t status)
 {
-	uint8_t payload[2] = { cmd, status };
+	uint8_t payload[2] = {cmd, status};
 
 	return zlrs_cfg_encode(out, out_len, ZLRS_CFG_CMD_ACK, payload, sizeof(payload));
 }
@@ -236,9 +235,8 @@ static uint8_t handle_set_phrase(const zlrs_cfg_backend_t *backend, const uint8_
 	return ack_frame(out, out_len, cmd, (uint8_t)rc);
 }
 
-uint8_t zlrs_cfg_dispatch(const zlrs_cfg_backend_t *backend, uint8_t cmd,
-			  const uint8_t *payload, uint8_t payload_len, uint8_t *out,
-			  size_t out_len)
+uint8_t zlrs_cfg_dispatch(const zlrs_cfg_backend_t *backend, uint8_t cmd, const uint8_t *payload,
+			  uint8_t payload_len, uint8_t *out, size_t out_len)
 {
 	if (backend == NULL || out == NULL) {
 		return 0U;
@@ -265,8 +263,7 @@ uint8_t zlrs_cfg_dispatch(const zlrs_cfg_backend_t *backend, uint8_t cmd,
 
 		zlrs_cfg_status_encode(body, &status);
 
-		return zlrs_cfg_encode(out, out_len, ZLRS_CFG_CMD_STATUS_RESP, body,
-				       sizeof(body));
+		return zlrs_cfg_encode(out, out_len, ZLRS_CFG_CMD_STATUS_RESP, body, sizeof(body));
 	}
 	case ZLRS_CFG_CMD_BUILD: {
 		char build[ZLRS_CFG_BUILD_MAX_LEN] = {0};
@@ -295,8 +292,7 @@ uint8_t zlrs_cfg_dispatch(const zlrs_cfg_backend_t *backend, uint8_t cmd,
 		if (backend->confirm_image == NULL) {
 			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_STATE);
 		}
-		return ack_frame(out, out_len, cmd,
-				 (uint8_t)backend->confirm_image(backend->ctx));
+		return ack_frame(out, out_len, cmd, (uint8_t)backend->confirm_image(backend->ctx));
 	case ZLRS_CFG_CMD_IMAGE_HASH: {
 		uint8_t hash[ZLRS_CFG_IMAGE_HASH_LEN];
 
@@ -367,14 +363,12 @@ uint8_t zlrs_cfg_dispatch(const zlrs_cfg_backend_t *backend, uint8_t cmd,
 		if (backend->factory_reset == NULL) {
 			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_STATE);
 		}
-		return ack_frame(out, out_len, cmd,
-				 (uint8_t)backend->factory_reset(backend->ctx));
+		return ack_frame(out, out_len, cmd, (uint8_t)backend->factory_reset(backend->ctx));
 	case ZLRS_CFG_CMD_RECOVERY:
 		if (backend->enter_recovery == NULL) {
 			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_STATE);
 		}
-		return ack_frame(out, out_len, cmd,
-				 (uint8_t)backend->enter_recovery(backend->ctx));
+		return ack_frame(out, out_len, cmd, (uint8_t)backend->enter_recovery(backend->ctx));
 	default:
 		return ack_frame(out, out_len, cmd, ZLRS_CFG_E_UNKNOWN);
 	}

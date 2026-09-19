@@ -20,11 +20,10 @@
 
 LOG_MODULE_REGISTER(zlrs_usb, CONFIG_ZLRS_USB_LOG_LEVEL);
 
-USBD_DEVICE_DEFINE(zlrs_usbd, DEVICE_DT_GET(DT_NODELABEL(zephyr_udc0)),
-		   CONFIG_ZLRS_USB_VID, CONFIG_ZLRS_USB_PID);
+USBD_DEVICE_DEFINE(zlrs_usbd, DEVICE_DT_GET(DT_NODELABEL(zephyr_udc0)), CONFIG_ZLRS_USB_VID,
+		   CONFIG_ZLRS_USB_PID);
 
-static const struct reset_dt_spec usbctrl_reset =
-	RESET_DT_SPEC_GET(DT_NODELABEL(zephyr_udc0));
+static const struct reset_dt_spec usbctrl_reset = RESET_DT_SPEC_GET(DT_NODELABEL(zephyr_udc0));
 
 USBD_DESC_LANG_DEFINE(zlrs_usb_lang);
 USBD_DESC_MANUFACTURER_DEFINE(zlrs_usb_mfr, CONFIG_ZLRS_USB_MANUFACTURER);
@@ -32,22 +31,17 @@ USBD_DESC_PRODUCT_DEFINE(zlrs_usb_product, CONFIG_ZLRS_USB_PRODUCT);
 IF_ENABLED(CONFIG_HWINFO, (USBD_DESC_SERIAL_NUMBER_DEFINE(zlrs_usb_sn)));
 
 USBD_DESC_CONFIG_DEFINE(zlrs_usb_fs_cfg_desc, "zlrs");
-USBD_CONFIGURATION_DEFINE(zlrs_usb_fs_config, 0, CONFIG_ZLRS_USB_MAX_POWER,
-			  &zlrs_usb_fs_cfg_desc);
+USBD_CONFIGURATION_DEFINE(zlrs_usb_fs_config, 0, CONFIG_ZLRS_USB_MAX_POWER, &zlrs_usb_fs_cfg_desc);
 
 /* The high-speed descriptors exist for capable controllers: which one is used depends on caps */
 USBD_DESC_CONFIG_DEFINE(zlrs_usb_hs_cfg_desc, "zlrs HS");
-USBD_CONFIGURATION_DEFINE(zlrs_usb_hs_config, 0, CONFIG_ZLRS_USB_MAX_POWER,
-			  &zlrs_usb_hs_cfg_desc);
+USBD_CONFIGURATION_DEFINE(zlrs_usb_hs_config, 0, CONFIG_ZLRS_USB_MAX_POWER, &zlrs_usb_hs_cfg_desc);
 
 static int zlrs_usb_add_descriptors(void)
 {
-	static struct usbd_desc_node *const descs[] = {
-		&zlrs_usb_lang,
-		&zlrs_usb_mfr,
-		&zlrs_usb_product,
-		IF_ENABLED(CONFIG_HWINFO, (&zlrs_usb_sn,))
-	};
+	static struct usbd_desc_node *const descs[] = {&zlrs_usb_lang, &zlrs_usb_mfr,
+						       &zlrs_usb_product,
+						       IF_ENABLED(CONFIG_HWINFO, (&zlrs_usb_sn,)) };
 
 	for (uint8_t i = 0U; i < ARRAY_SIZE(descs); i++) {
 		const int err = usbd_add_descriptor(&zlrs_usbd, descs[i]);
@@ -136,8 +130,8 @@ static int zlrs_usb_init(void)
 		return 0;
 	}
 
-	LOG_INF("usb device up: %s %s (%s)", CONFIG_ZLRS_USB_MANUFACTURER,
-		CONFIG_ZLRS_USB_PRODUCT, speed == USBD_SPEED_HS ? "HS" : "FS");
+	LOG_INF("usb device up: %s %s (%s)", CONFIG_ZLRS_USB_MANUFACTURER, CONFIG_ZLRS_USB_PRODUCT,
+		speed == USBD_SPEED_HS ? "HS" : "FS");
 
 	return 0;
 }

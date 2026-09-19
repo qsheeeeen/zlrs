@@ -107,10 +107,10 @@ static void test_connected_lq(void)
 	zlrs_led_rgb_t strong;
 	zlrs_led_rgb_t weak;
 	zlrs_led_rgb_t bad;
-	const zlrs_led_rgb_t rx_green30 = { 0U, 76U, 0U };
-	const zlrs_led_rgb_t rx_green18 = { 0U, 45U, 0U };
-	const zlrs_led_rgb_t rx_green10 = { 0U, 25U, 0U };
-	const zlrs_led_rgb_t tx_blue10 = { 0U, 9U, 25U };
+	const zlrs_led_rgb_t rx_green30 = {0U, 76U, 0U};
+	const zlrs_led_rgb_t rx_green18 = {0U, 45U, 0U};
+	const zlrs_led_rgb_t rx_green10 = {0U, 25U, 0U};
+	const zlrs_led_rgb_t tx_blue10 = {0U, 9U, 25U};
 
 	printf("led: connected and lq\n");
 
@@ -154,7 +154,7 @@ static void test_drop_overlay(void)
 	zlrs_led_input_t in;
 	zlrs_led_rgb_t base;
 	zlrs_led_rgb_t flashed;
-	const zlrs_led_rgb_t green30 = { 0U, 76U, 0U };
+	const zlrs_led_rgb_t green30 = {0U, 76U, 0U};
 
 	printf("led: drop overlay\n");
 

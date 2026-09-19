@@ -13,13 +13,13 @@
 extern unsigned int zlrs_test_checks;
 extern unsigned int zlrs_test_failures;
 
-#define CHECK(cond)                                                                 \
-	do {                                                                        \
-		zlrs_test_checks++;                                                 \
-		if (!(cond)) {                                                      \
-			zlrs_test_failures++;                                       \
-			printf("  FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond);    \
-		}                                                                   \
+#define CHECK(cond)                                                                                \
+	do {                                                                                       \
+		zlrs_test_checks++;                                                                \
+		if (!(cond)) {                                                                     \
+			zlrs_test_failures++;                                                      \
+			printf("  FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond);                   \
+		}                                                                                  \
 	} while (0)
 
 /* Compare against a hex string, case-insensitive */
@@ -34,4 +34,3 @@ void test_mod(void);
 void test_led(void);
 void test_power(void);
 void test_fuzz(void);
-

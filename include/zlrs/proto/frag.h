@@ -27,8 +27,8 @@ typedef struct {
 } zlrs_reasm_t;
 
 enum {
-	ZLRS_REASM_NONE = 0,  /* buffered but still incomplete */
-	ZLRS_REASM_DONE = 1,  /* the whole run is in buf, its length in len */
+	ZLRS_REASM_NONE = 0,    /* buffered but still incomplete */
+	ZLRS_REASM_DONE = 1,    /* the whole run is in buf, its length in len */
 	ZLRS_REASM_DROPPED = 2, /* gap, timeout or oversize: the run is gone */
 };
 
@@ -43,4 +43,3 @@ int zlrs_reasm_push(zlrs_reasm_t *reasm, const zlrs_frame_t *frame, uint32_t now
 #ifdef __cplusplus
 }
 #endif
-

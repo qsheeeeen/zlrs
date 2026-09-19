@@ -15,4 +15,3 @@ void zlrs_watchdog_disarm(void);
 
 /* Re-arm after a long blocking operation such as a config session. Empty when disabled */
 void zlrs_watchdog_arm(void);
-

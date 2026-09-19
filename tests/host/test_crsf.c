@@ -23,8 +23,8 @@ static void test_crc8(void)
 	CHECK(zlrs_crsf_crc8(check, 9U) == 0xBCU);
 	CHECK(zlrs_crsf_crc8((const uint8_t *)"", 0U) == 0x00U);
 	/* Single bytes 0x00 and 0x01 match the hand computation */
-	CHECK(zlrs_crsf_crc8((const uint8_t[]){ 0x00U }, 1U) == 0x00U);
-	CHECK(zlrs_crsf_crc8((const uint8_t[]){ 0x01U }, 1U) == 0xD5U);
+	CHECK(zlrs_crsf_crc8((const uint8_t[]){0x00U}, 1U) == 0x00U);
+	CHECK(zlrs_crsf_crc8((const uint8_t[]){0x01U}, 1U) == 0xD5U);
 }
 
 static void test_channels(void)
@@ -68,8 +68,7 @@ static void test_channels(void)
 	zlrs_crsf_channels_pack(packed, channels);
 	zlrs_crsf_channels_unpack(packed, back);
 	for (uint8_t i = 0U; i < ZLRS_CRSF_CHANNEL_COUNT; i++) {
-		const uint16_t want =
-			(uint16_t)(channels[i] & ZLRS_CRSF_CHANNEL_MASK);
+		const uint16_t want = (uint16_t)(channels[i] & ZLRS_CRSF_CHANNEL_MASK);
 
 		CHECK(back[i] == want);
 	}
@@ -125,21 +124,21 @@ static void test_encode_parse(void)
 static void test_parser_recovery(void)
 {
 	uint8_t frame[ZLRS_CRSF_FRAME_MAX_LEN];
-	uint8_t stats_payload[ZLRS_CRSF_LINK_STATS_LEN] = { 60U, 60U, 99U, 5U, 0U, 1U, 3U, 61U, 98U, 4U };
+	uint8_t stats_payload[ZLRS_CRSF_LINK_STATS_LEN] = {60U, 60U, 99U, 5U,  0U,
+							   1U,  3U,  61U, 98U, 4U};
 	zlrs_crsf_parser_t parser;
 	uint8_t len;
 
 	printf("crsf parser recovery\n");
 
-	len = zlrs_crsf_encode(frame, ZLRS_CRSF_ADDR_TX_MODULE,
-			       ZLRS_CRSF_TYPE_LINK_STATISTICS, stats_payload,
-			       sizeof(stats_payload));
+	len = zlrs_crsf_encode(frame, ZLRS_CRSF_ADDR_TX_MODULE, ZLRS_CRSF_TYPE_LINK_STATISTICS,
+			       stats_payload, sizeof(stats_payload));
 	CHECK(len == 14U);
 
 	/* Resynchronises after leading garbage, including a fake address */
 	zlrs_crsf_parser_init(&parser);
 	CHECK(zlrs_crsf_feed(&parser, 0x5AU) == ZLRS_CRSF_BAD_FRAME);
-	CHECK(zlrs_crsf_feed(&parser, 0xC8U) == ZLRS_CRSF_NONE); /* fake header */
+	CHECK(zlrs_crsf_feed(&parser, 0xC8U) == ZLRS_CRSF_NONE);      /* fake header */
 	CHECK(zlrs_crsf_feed(&parser, 0xFFU) == ZLRS_CRSF_BAD_FRAME); /* illegal length */
 	for (uint8_t i = 0U; i < len; i++) {
 		const enum zlrs_crsf_result r = zlrs_crsf_feed(&parser, frame[i]);

@@ -19,8 +19,8 @@
 /* For bench debugging: state of one data endpoint (`zlrs ports` prints it) */
 typedef struct {
 	const char *name;
-	bool ready;      /* the endpoint exists on the board and the device is ready */
-	bool active;     /* this is the selected endpoint (see port_active) */
+	bool ready;          /* the endpoint exists on the board and the device is ready */
+	bool active;         /* this is the selected endpoint (see port_active) */
 	uint32_t rx_total;   /* bytes received (evidence that the host is using it) */
 	uint32_t rx_dropped; /* bytes dropped because this was not the active endpoint */
 } zlrs_port_state_t;

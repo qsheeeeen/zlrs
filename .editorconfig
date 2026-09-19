@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Editor defaults for the tree. C style is enforced by .clang-format (run
+# `clang-format -i $(git ls-files '*.c' '*.h')`); this file only keeps editors
+# from fighting over the basics.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{c,h,dts,dtsi,overlay,conf}]
+indent_style = tab
+indent_size = 8
+
+[Kconfig*]
+indent_style = tab
+indent_size = 8
+
+[*.{py,sh}]
+indent_style = space
+indent_size = 4
+
+[*.{yml,yaml}]
+indent_style = space
+indent_size = 2
+
+[*.md]
+indent_style = space
+indent_size = 2
+trim_trailing_whitespace = false
+
+[Makefile]
+indent_style = tab

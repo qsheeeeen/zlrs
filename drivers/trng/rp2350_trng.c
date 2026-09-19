@@ -68,18 +68,16 @@ LOG_MODULE_REGISTER(zlrs_trng, CONFIG_ZLRS_TRNG_LOG_LEVEL);
 #define TRNG_BLOCK_ATTEMPTS 3U
 
 /* Bits software can clear in RNG_ISR; AUTOCORR_ERR needs a soft reset (12.12.5) */
-#define TRNG_ISR_CLEARABLE                                          \
-	(TRNG_RNG_ISR_EHR_VALID_BITS | TRNG_RNG_ISR_VN_ERR_BITS |   \
-	 TRNG_RNG_ISR_CRNGT_ERR_BITS)
+#define TRNG_ISR_CLEARABLE                                                                         \
+	(TRNG_RNG_ISR_EHR_VALID_BITS | TRNG_RNG_ISR_VN_ERR_BITS | TRNG_RNG_ISR_CRNGT_ERR_BITS)
 
 /*
  * The HAL's trng_hw_t starts at RNG_IMR (0x100) while the DT reg gives the TRNG block base
  * (0x400f0000, datasheet 12.12.5).
  */
-#define TRNG_CONFIG_INIT(inst)                                              \
-	{                                                                   \
-		.regs = (trng_hw_t *)(uintptr_t)(DT_INST_REG_ADDR(inst) +   \
-						 TRNG_RNG_IMR_OFFSET)       \
+#define TRNG_CONFIG_INIT(inst)                                                                     \
+	{                                                                                          \
+		.regs = (trng_hw_t *)(uintptr_t)(DT_INST_REG_ADDR(inst) + TRNG_RNG_IMR_OFFSET)     \
 	}
 
 struct trng_config {
@@ -112,8 +110,7 @@ static void trng_reset(const struct trng_config *cfg, struct trng_data *data)
 	trng->trng_config = TRNG_ROSC_CHAIN;
 	trng->sample_cnt1 = TRNG_SAMPLE_TICKS;
 	/* Poll instead of using interrupts. The reset value already masks everything; writing says so */
-	trng->rng_imr = TRNG_RNG_IMR_EHR_VALID_INT_MASK_BITS |
-			TRNG_RNG_IMR_VN_ERR_INT_MASK_BITS |
+	trng->rng_imr = TRNG_RNG_IMR_EHR_VALID_INT_MASK_BITS | TRNG_RNG_IMR_VN_ERR_INT_MASK_BITS |
 			TRNG_RNG_IMR_CRNGT_ERR_INT_MASK_BITS |
 			TRNG_RNG_IMR_AUTOCORR_ERR_INT_MASK_BITS;
 	trng->rng_icr = TRNG_ISR_CLEARABLE;
@@ -188,8 +185,7 @@ static int trng_wait_block(const struct trng_config *cfg, uint32_t start)
 		if ((isr & TRNG_RNG_ISR_AUTOCORR_ERR_BITS) != 0U) {
 			return -EIO;
 		}
-		if ((isr & (TRNG_RNG_ISR_VN_ERR_BITS |
-			    TRNG_RNG_ISR_CRNGT_ERR_BITS)) != 0U) {
+		if ((isr & (TRNG_RNG_ISR_VN_ERR_BITS | TRNG_RNG_ISR_CRNGT_ERR_BITS)) != 0U) {
 			return -EAGAIN;
 		}
 		if ((isr & TRNG_RNG_ISR_EHR_VALID_BITS) != 0U) {
@@ -234,8 +230,7 @@ static void trng_pool_put_block(const struct trng_config *cfg, struct trng_data 
 	__ASSERT_NO_MSG((sizeof(data->pool) - at) >= TRNG_BLOCK_BYTES);
 
 	for (uint8_t i = 0U; i < TRNG_BLOCK_WORDS; i++) {
-		sys_put_le32(trng->ehr_data[i],
-			     &data->pool[at + (i * sizeof(uint32_t))]);
+		sys_put_le32(trng->ehr_data[i], &data->pool[at + (i * sizeof(uint32_t))]);
 	}
 
 	data->pool_len += TRNG_BLOCK_BYTES;
@@ -290,8 +285,7 @@ static void trng_pool_top_up(const struct trng_config *cfg, struct trng_data *da
 
 		/* Not ready yet: restart only after an idle stop or a bad block, otherwise let it run */
 		if (!data->running ||
-		    (isr & (TRNG_RNG_ISR_VN_ERR_BITS |
-			    TRNG_RNG_ISR_CRNGT_ERR_BITS |
+		    (isr & (TRNG_RNG_ISR_VN_ERR_BITS | TRNG_RNG_ISR_CRNGT_ERR_BITS |
 			    TRNG_RNG_ISR_AUTOCORR_ERR_BITS)) != 0U) {
 			trng_recover(cfg, data);
 		}
@@ -359,8 +353,7 @@ static int trng_init(const struct device *dev)
 	 * has a 192-bit EHR. If it does not, this is not the TRNG we know and it must not feed entropy.
 	 */
 	if ((cfg->regs->rng_version & TRNG_RNG_VERSION_EHR_WIDTH_192_BITS) == 0U) {
-		LOG_ERR("TRNG reports a 128-bit EHR (RNG_VERSION 0x%x)",
-			cfg->regs->rng_version);
+		LOG_ERR("TRNG reports a 128-bit EHR (RNG_VERSION 0x%x)", cfg->regs->rng_version);
 		return -ENOTSUP;
 	}
 
@@ -376,12 +369,10 @@ static int trng_init(const struct device *dev)
 	return 0;
 }
 
-#define TRNG_DEFINE(inst)                                                    \
-	static struct trng_data trng_data_##inst;                            \
-	static const struct trng_config trng_config_##inst =                 \
-		TRNG_CONFIG_INIT(inst);                                      \
-	DEVICE_DT_INST_DEFINE(inst, trng_init, NULL, &trng_data_##inst,      \
-			      &trng_config_##inst, PRE_KERNEL_1,             \
-			      CONFIG_ENTROPY_INIT_PRIORITY, &trng_api);
+#define TRNG_DEFINE(inst)                                                                          \
+	static struct trng_data trng_data_##inst;                                                  \
+	static const struct trng_config trng_config_##inst = TRNG_CONFIG_INIT(inst);               \
+	DEVICE_DT_INST_DEFINE(inst, trng_init, NULL, &trng_data_##inst, &trng_config_##inst,       \
+			      PRE_KERNEL_1, CONFIG_ENTROPY_INIT_PRIORITY, &trng_api);
 
 DT_INST_FOREACH_STATUS_OKAY(TRNG_DEFINE)

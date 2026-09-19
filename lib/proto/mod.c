@@ -34,8 +34,7 @@ static uint32_t lora_payload_symbols(const zlrs_mod_cfg_t *mod, uint16_t frame_l
 {
 	const uint32_t cr = (mod->cr >= 1U && mod->cr <= 4U) ? mod->cr : 1U;
 	const uint32_t de = ((mod->sf >= 11U) && (mod->bw_hz == 125000U)) ? 1U : 0U;
-	const int32_t numerator =
-		(int32_t)(8U * frame_len) - (int32_t)(4U * mod->sf) + 28 + 16;
+	const int32_t numerator = (int32_t)(8U * frame_len) - (int32_t)(4U * mod->sf) + 28 + 16;
 	const uint32_t denominator = 4U * (mod->sf - 2U * de);
 	int32_t quotient;
 
@@ -44,9 +43,9 @@ static uint32_t lora_payload_symbols(const zlrs_mod_cfg_t *mod, uint16_t frame_l
 	}
 
 	/* Round up (the numerator can go negative for very short frames, then treat it as 0) */
-	quotient = (numerator > 0) ? (int32_t)(((uint32_t)numerator + denominator - 1U) /
-					      denominator)
-				   : 0;
+	quotient = (numerator > 0)
+			   ? (int32_t)(((uint32_t)numerator + denominator - 1U) / denominator)
+			   : 0;
 
 	return (uint32_t)(8 + (uint32_t)quotient * (cr + 4U));
 }
@@ -89,7 +88,7 @@ zlrs_mod_cfg_t zlrs_mod_lora(uint8_t sf, uint32_t bw_hz, uint8_t cr, uint8_t pre
 
 uint32_t zlrs_mod_airtime_us(const zlrs_mod_cfg_t *mod, uint16_t frame_len)
 {
-	uint64_t symbol_num;   /* one symbol lasts symbol_num / bw_hz seconds */
+	uint64_t symbol_num; /* one symbol lasts symbol_num / bw_hz seconds */
 	uint64_t payload_us;
 	uint64_t preamble_us;
 	uint32_t symbols;
@@ -102,8 +101,8 @@ uint32_t zlrs_mod_airtime_us(const zlrs_mod_cfg_t *mod, uint16_t frame_len)
 		return flrc_airtime_us(mod->rate_bps, frame_len);
 	}
 
-	if (mod->modulation != (uint8_t)ZLRS_MOD_LORA || mod->bw_hz == 0U ||
-	    mod->sf < 5U || mod->sf > 12U) {
+	if (mod->modulation != (uint8_t)ZLRS_MOD_LORA || mod->bw_hz == 0U || mod->sf < 5U ||
+	    mod->sf > 12U) {
 		return 0U;
 	}
 
@@ -111,8 +110,7 @@ uint32_t zlrs_mod_airtime_us(const zlrs_mod_cfg_t *mod, uint16_t frame_len)
 	symbol_num = (uint64_t)1000000U << mod->sf;
 
 	/* Preamble: (n + 4.25) symbols = n + 17/4 */
-	preamble_us = (symbol_num * ((uint64_t)4U * mod->preamble + 17U) +
-		       4U * mod->bw_hz - 1U) /
+	preamble_us = (symbol_num * ((uint64_t)4U * mod->preamble + 17U) + 4U * mod->bw_hz - 1U) /
 		      (4U * mod->bw_hz);
 
 	symbols = lora_payload_symbols(mod, frame_len);

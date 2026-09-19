@@ -56,8 +56,8 @@ typedef struct {
 void zlrs_fhss_init(zlrs_fhss_t *fhss, uint8_t domain_id, uint32_t seed);
 
 /* Two tables (main + sub-band) derived from one seed, computed independently on each end */
-void zlrs_fhss_init_dual(zlrs_fhss_t *fhss, uint8_t main_domain_id,
-			 uint8_t sub_domain_id, uint32_t seed);
+void zlrs_fhss_init_dual(zlrs_fhss_t *fhss, uint8_t main_domain_id, uint8_t sub_domain_id,
+			 uint32_t seed);
 
 /* Sub-band mix: how many of every 4 slots land on sub-G (0/1/2/4 = 0/25/50/100%) */
 uint8_t zlrs_fhss_mix_slots(uint8_t mix);

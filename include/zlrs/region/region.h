@@ -19,9 +19,9 @@ extern "C" {
 
 typedef struct {
 	const char *name;
-	uint8_t domain;      /* ZLRS_DOMAIN_* */
-	uint8_t band;        /* ZLRS_BAND_*: which sub-G hardware this region needs */
-	uint32_t low_hz;     /* band edge, used to validate the channel plan */
+	uint8_t domain;  /* ZLRS_DOMAIN_* */
+	uint8_t band;    /* ZLRS_BAND_*: which sub-G hardware this region needs */
+	uint32_t low_hz; /* band edge, used to validate the channel plan */
 	uint32_t high_hz;
 	int8_t max_tx_power_dbm;
 	uint8_t duty_percent;    /* 0 = unlimited */
@@ -105,8 +105,8 @@ uint8_t zlrs_region_mix_level(const zlrs_region_t *region, uint32_t window_ms,
 			      uint32_t subg_slot_airtime_us);
 
 /* Same for a modulation (a LoRa frame is far longer than FLRC, so duty bites harder) */
-uint32_t zlrs_region_max_frames_per_s_mod(const zlrs_region_t *region,
-					  const zlrs_mod_cfg_t *mod, uint16_t frame_len);
+uint32_t zlrs_region_max_frames_per_s_mod(const zlrs_region_t *region, const zlrs_mod_cfg_t *mod,
+					  uint16_t frame_len);
 
 /*
  * The control link's time plan: frame rate, frame period, per-slot budget and the telemetry
@@ -114,7 +114,7 @@ uint32_t zlrs_region_max_frames_per_s_mod(const zlrs_region_t *region,
  * having to fit one RC frame out plus one telemetry frame in.
  */
 typedef struct {
-	uint32_t rate_hz;        /* effective control frame rate */
+	uint32_t rate_hz; /* effective control frame rate */
 	uint32_t frame_period_us;
 	uint32_t slot_budget_us; /* wait budget per slot */
 	uint8_t tlm_every_n;     /* telemetry every n frames */
@@ -147,4 +147,3 @@ void zlrs_region_control_plan(const zlrs_plan_req_t *req, zlrs_control_plan_t *o
 #ifdef __cplusplus
 }
 #endif
-

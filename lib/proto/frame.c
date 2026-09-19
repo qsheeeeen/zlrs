@@ -7,8 +7,8 @@
 #include <string.h>
 
 #define FRAME_TYPE_SHIFT 2U
-#define FRAME_FLAG_MASK 0x03U
-#define FRAME_TYPE_MAX 0x3FU
+#define FRAME_FLAG_MASK  0x03U
+#define FRAME_TYPE_MAX   0x3FU
 
 uint8_t zlrs_profile_tag_len(zlrs_profile_t profile)
 {
@@ -32,8 +32,7 @@ uint16_t zlrs_frame_encode(const zlrs_frame_t *frame, uint8_t *buf, uint16_t cap
 		return 0U;
 	}
 
-	buf[0] = (uint8_t)((frame->type << FRAME_TYPE_SHIFT) |
-			   (frame->flags & FRAME_FLAG_MASK));
+	buf[0] = (uint8_t)((frame->type << FRAME_TYPE_SHIFT) | (frame->flags & FRAME_FLAG_MASK));
 	buf[1] = (uint8_t)(frame->seq & 0xFFU);
 	buf[2] = (uint8_t)(frame->seq >> 8);
 
@@ -47,8 +46,7 @@ uint16_t zlrs_frame_encode(const zlrs_frame_t *frame, uint8_t *buf, uint16_t cap
 	return len;
 }
 
-bool zlrs_frame_decode(zlrs_frame_t *frame, const uint8_t *buf, uint16_t len,
-		       uint8_t tag_len)
+bool zlrs_frame_decode(zlrs_frame_t *frame, const uint8_t *buf, uint16_t len, uint8_t tag_len)
 {
 	if (len < ZLRS_FRAME_HDR_LEN || tag_len > ZLRS_TAG_LEN) {
 		return false;

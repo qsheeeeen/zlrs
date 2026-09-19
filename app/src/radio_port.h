@@ -33,4 +33,3 @@ void zlrs_radio_port_abort(void);
 
 /* Same time base as the radio backend (k_uptime_get_32) */
 uint32_t zlrs_radio_port_now_ms(void);
-

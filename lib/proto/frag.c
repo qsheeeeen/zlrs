@@ -16,8 +16,7 @@ static void reasm_reset(zlrs_reasm_t *reasm)
 
 static bool reasm_expired(const zlrs_reasm_t *reasm, uint32_t now_ms)
 {
-	return reasm->active &&
-	       (uint32_t)(now_ms - reasm->last_ms) > ZLRS_FRAG_TIMEOUT_MS;
+	return reasm->active && (uint32_t)(now_ms - reasm->last_ms) > ZLRS_FRAG_TIMEOUT_MS;
 }
 
 void zlrs_reasm_init(zlrs_reasm_t *reasm, uint8_t *buf, uint16_t cap)

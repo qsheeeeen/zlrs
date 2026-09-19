@@ -24,12 +24,12 @@ typedef struct {
 } zlrs_led_rgb_t;
 
 typedef struct {
-	bool config_mode;  /* in config mode (the app filters out blink-and-miss sessions, see ports.c) */
-	bool configured;   /* root key present */
-	bool paired;       /* pairing record present */
-	bool failsafe;     /* sending/outputting failsafe values (TX input timeout, RX unconnected) */
-	bool drop_recent;  /* a drop in the last second (passthrough backlog or ARQ give-up) */
-	bool role_tx;      /* role, used only during the boot self-test window */
+	bool config_mode; /* in config mode (the app filters out blink-and-miss sessions, see ports.c) */
+	bool configured; /* root key present */
+	bool paired;     /* pairing record present */
+	bool failsafe;   /* sending/outputting failsafe values (TX input timeout, RX unconnected) */
+	bool drop_recent;   /* a drop in the last second (passthrough backlog or ARQ give-up) */
+	bool role_tx;       /* role, used only during the boot self-test window */
 	uint8_t link_state; /* control link state, ZLRS_STATE_* */
 	uint8_t lq_percent;
 	uint32_t uptime_ms; /* ms since power-up: the first 1.5 s show the role colour */

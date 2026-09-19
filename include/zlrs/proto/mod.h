@@ -61,4 +61,3 @@ uint32_t zlrs_mod_airtime_ms(const zlrs_mod_cfg_t *mod, uint16_t frame_len);
 #ifdef __cplusplus
 }
 #endif
-

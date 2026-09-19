@@ -19,7 +19,7 @@ extern "C" {
 #define ZLRS_TLM_LEN 8U
 
 /* flag bits */
-#define ZLRS_TLM_FLAG_PAIRED 0x0001U
+#define ZLRS_TLM_FLAG_PAIRED  0x0001U
 #define ZLRS_TLM_FLAG_SESSION 0x0002U
 
 typedef struct {
@@ -40,4 +40,3 @@ bool zlrs_tlm_decode(const uint8_t *in, uint16_t len, zlrs_tlm_t *tlm);
 #ifdef __cplusplus
 }
 #endif
-

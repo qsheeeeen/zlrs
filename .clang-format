@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# zlrs follows Zephyr's C style (Linux kernel derived): tabs for indentation,
+# 100 columns, braces on the next line for functions. The only deliberate
+# difference is ReflowComments: the comments in this tree explain *why* and
+# their line breaks are hand-made, so the formatter leaves them alone.
+#
+#   clang-format -i $(git ls-files '*.c' '*.h')
+#
+# References:
+#   - https://clang.llvm.org/docs/ClangFormatStyleOptions.html
+#   - zephyr/.clang-format (the upstream file this one is copied from)
+
+---
+BasedOnStyle: LLVM
+AlignConsecutiveMacros: AcrossComments
+AllowShortBlocksOnASingleLine: Never
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortEnumsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+AttributeMacros:
+  - __aligned
+  - __deprecated
+  - __packed
+  - __printf_like
+  - __syscall
+  - __subsystem
+BitFieldColonSpacing: After
+BreakBeforeBraces: Linux
+ColumnLimit: 100
+ConstructorInitializerIndentWidth: 8
+ContinuationIndentWidth: 8
+ForEachMacros:
+  - 'ARRAY_FOR_EACH'
+  - 'ARRAY_FOR_EACH_PTR'
+  - 'FOR_EACH'
+  - 'SYS_DLIST_FOR_EACH_CONTAINER'
+  - 'SYS_DLIST_FOR_EACH_CONTAINER_SAFE'
+  - 'SYS_DLIST_FOR_EACH_NODE'
+  - 'SYS_DLIST_FOR_EACH_NODE_SAFE'
+  - 'SYS_SLIST_FOR_EACH_CONTAINER'
+  - 'SYS_SLIST_FOR_EACH_CONTAINER_SAFE'
+  - 'SYS_SLIST_FOR_EACH_NODE'
+  - 'SYS_SLIST_FOR_EACH_NODE_SAFE'
+  - 'Z_FOR_EACH'
+  - 'STRUCT_SECTION_FOREACH'
+IndentCaseLabels: false
+IndentGotoLabels: false
+IndentWidth: 8
+InsertBraces: true
+InsertNewlineAtEOF: true
+ReflowComments: false
+SpaceBeforeInheritanceColon: False
+SpaceBeforeParens: ControlStatementsExceptControlMacros
+SortIncludes: Never
+TabWidth: 8
+UseTab: ForContinuationAndIndentation
+WhitespaceSensitiveMacros:
+  - COND_CODE_0
+  - COND_CODE_1
+  - IF_DISABLED
+  - IF_ENABLED
+  - LISTIFY
+  - STRINGIFY
+  - Z_STRINGIFY

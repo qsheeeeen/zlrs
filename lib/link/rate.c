@@ -40,8 +40,7 @@ const zlrs_mod_cfg_t *zlrs_rate_current_mod(const zlrs_rate_ctl_t *ctl)
 	return &ctl->tiers[ctl->current].mod;
 }
 
-bool zlrs_rate_update(zlrs_rate_ctl_t *ctl, uint8_t lq_percent, uint32_t now_ms,
-		      uint8_t *out)
+bool zlrs_rate_update(zlrs_rate_ctl_t *ctl, uint8_t lq_percent, uint32_t now_ms, uint8_t *out)
 {
 	const zlrs_rate_tier_t *tier;
 	uint8_t target = ctl->current;

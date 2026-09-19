@@ -16,15 +16,15 @@
 #include "zlrs/proto/crypto.h"
 
 #define SHA256_LEN 32U
-#define INFO_MAX 96U
+#define INFO_MAX   96U
 
 /* crypto_soft.c carries a copy (each file is self-contained); keep the two in step */
 void zlrs_root_key_from_phrase(const char *phrase, uint8_t out[ZLRS_KEY_LEN])
 {
 	static const char salt[] = ZLRS_KDF_V1_SALT;
 
-	zlrs_pbkdf2_sha256(phrase, (const uint8_t *)salt, sizeof(salt) - 1U,
-			   ZLRS_KDF_V1_ITERATIONS, out);
+	zlrs_pbkdf2_sha256(phrase, (const uint8_t *)salt, sizeof(salt) - 1U, ZLRS_KDF_V1_ITERATIONS,
+			   out);
 }
 
 bool zlrs_ct_equal(const uint8_t *a, const uint8_t *b, size_t len)
@@ -92,7 +92,7 @@ void zlrs_kdf(const uint8_t *key, size_t key_len, const char *label, const uint8
 	      size_t ctx_len, uint8_t *out, size_t out_len)
 {
 	uint8_t info[INFO_MAX];
-	uint8_t salt[SHA256_LEN] = { 0 };
+	uint8_t salt[SHA256_LEN] = {0};
 	const size_t label_len = strlen(label);
 	const size_t info_len = label_len + ctx_len;
 	psa_key_derivation_operation_t op = PSA_KEY_DERIVATION_OPERATION_INIT;
@@ -120,8 +120,8 @@ void zlrs_kdf(const uint8_t *key, size_t key_len, const char *label, const uint8
 	    psa_import_key(&attr, key, key_len, &key_id) == PSA_SUCCESS &&
 	    psa_key_derivation_input_key(&op, PSA_KEY_DERIVATION_INPUT_SECRET, key_id) ==
 		    PSA_SUCCESS &&
-	    psa_key_derivation_input_bytes(&op, PSA_KEY_DERIVATION_INPUT_INFO, info,
-					   info_len) == PSA_SUCCESS &&
+	    psa_key_derivation_input_bytes(&op, PSA_KEY_DERIVATION_INPUT_INFO, info, info_len) ==
+		    PSA_SUCCESS &&
 	    psa_key_derivation_output_bytes(&op, out, out_len) == PSA_SUCCESS) {
 		ok = true;
 	}

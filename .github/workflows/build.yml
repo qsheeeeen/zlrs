@@ -19,6 +19,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  format:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: clang-format
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-format
+          git ls-files '*.c' '*.h' | xargs clang-format --dry-run --Werror
+
   host-tests:
     runs-on: ubuntu-24.04
     timeout-minutes: 15

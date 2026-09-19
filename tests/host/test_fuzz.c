@@ -77,8 +77,7 @@ static void fuzz_frame_decode(rng_t *rng)
 		    (frame.payload < buf || frame.payload + frame.payload_len > buf + len)) {
 			violations++;
 		}
-		if (tag_len > 0U &&
-		    (frame.tag < buf || frame.tag + ZLRS_TAG_LEN > buf + len)) {
+		if (tag_len > 0U && (frame.tag < buf || frame.tag + ZLRS_TAG_LEN > buf + len)) {
 			violations++;
 		}
 		if (zlrs_frame_mac_len(&frame) > len) {
@@ -155,16 +154,16 @@ static void fx_link_init(zlrs_link_t *link, uint8_t arq)
 		0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16,
 		0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
 	};
-	static const uint8_t dev_id[ZLRS_DEV_ID_LEN] = { 0x11, 0x22, 0x33, 0x44 };
-	static const uint8_t peer_id[ZLRS_DEV_ID_LEN] = { 0xaa, 0xbb, 0xcc, 0xdd };
-	static const uint8_t salt[ZLRS_PAIR_SALT_LEN] = { 1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U };
+	static const uint8_t dev_id[ZLRS_DEV_ID_LEN] = {0x11, 0x22, 0x33, 0x44};
+	static const uint8_t peer_id[ZLRS_DEV_ID_LEN] = {0xaa, 0xbb, 0xcc, 0xdd};
+	static const uint8_t salt[ZLRS_PAIR_SALT_LEN] = {1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U};
 	const zlrs_link_cfg_t cfg = {
 		.kind = ZLRS_LINK_DATA,
 		.role = ZLRS_ROLE_TX,
 		.domain = ZLRS_DOMAIN_ISM2400,
 		.sync_slot = ZLRS_SYNC_SLOT_DATA,
 		.profile = ZLRS_PROFILE_P1,
-		.mod = { .modulation = ZLRS_MOD_FLRC, .rate_bps = 2600000U },
+		.mod = {.modulation = ZLRS_MOD_FLRC, .rate_bps = 2600000U},
 		.tx_power_dbm = 10,
 		.rx_timeout_ms = 2U,
 		.sync_period_ms = 2000U,
@@ -300,8 +299,7 @@ static void fuzz_byte_parsers(rng_t *rng)
 		case 1: {
 			cfg_frames++;
 			if (cfg.payload_len > ZLRS_CFG_PAYLOAD_MAX_LEN ||
-			    ZLRS_CFG_PAYLOAD(&cfg) + cfg.payload_len >
-				    cfg.buf + sizeof(cfg.buf)) {
+			    ZLRS_CFG_PAYLOAD(&cfg) + cfg.payload_len > cfg.buf + sizeof(cfg.buf)) {
 				violations++;
 			}
 			break;
@@ -331,7 +329,7 @@ static void fuzz_byte_parsers(rng_t *rng)
 
 void test_fuzz(void)
 {
-	rng_t rng = { .state = 0x2545F491U };
+	rng_t rng = {.state = 0x2545F491U};
 
 	printf("fuzz: frame decode\n");
 	fuzz_frame_decode(&rng);

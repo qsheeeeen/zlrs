@@ -21,7 +21,7 @@ static void test_kdf(void)
 	uint8_t a[ZLRS_SYNC_WORD_LEN];
 	uint8_t b[ZLRS_SYNC_WORD_LEN];
 	uint8_t tag[ZLRS_TAG_LEN];
-	uint8_t ctx[4] = { 1U, 2U, 3U, 4U };
+	uint8_t ctx[4] = {1U, 2U, 3U, 4U};
 
 	printf("kdf\n");
 
@@ -53,7 +53,7 @@ static void test_frame(void)
 {
 	uint8_t buf[ZLRS_FRAME_MAX_LEN];
 	uint8_t payload[ZLRS_RC_PAYLOAD_LEN];
-	uint8_t tag[ZLRS_TAG_LEN] = { 0xde, 0xad, 0xbe, 0xef };
+	uint8_t tag[ZLRS_TAG_LEN] = {0xde, 0xad, 0xbe, 0xef};
 	zlrs_frame_t out;
 	zlrs_frame_t in = {
 		.type = ZLRS_PKT_RC,
@@ -98,8 +98,8 @@ static void test_frame(void)
 
 /* ---- reassembly ---------------------------------------------------------- */
 
-static void push_chunk(zlrs_reasm_t *reasm, uint16_t seq, uint8_t flags,
-		       const char *text, uint32_t now_ms, int *result)
+static void push_chunk(zlrs_reasm_t *reasm, uint16_t seq, uint8_t flags, const char *text,
+		       uint32_t now_ms, int *result)
 {
 	zlrs_frame_t frame = {
 		.type = ZLRS_PKT_DATA_UP,
@@ -212,7 +212,8 @@ static void test_fhss(void)
 		CHECK(fhss.sequence[i] < 13U);
 		seen[fhss.sequence[i]]++;
 		if ((i % 13U) == 0U) {
-			CHECK(fhss.sequence[i] == fhss.sync_channel); /* slot 0 of every block is the sync channel */
+			CHECK(fhss.sequence[i] ==
+			      fhss.sync_channel); /* slot 0 of every block is the sync channel */
 		}
 	}
 	for (uint8_t ch = 0; ch < 13U; ch++) {
@@ -231,8 +232,7 @@ static void test_fhss(void)
 	CHECK(fhss.sequence[fhss.index] == fhss.sync_channel);
 
 	first = zlrs_fhss_current_hz(&fhss);
-	CHECK(first == fhss.domain->start_hz +
-				(uint32_t)fhss.sync_channel * fhss.domain->step_hz);
+	CHECK(first == fhss.domain->start_hz + (uint32_t)fhss.sync_channel * fhss.domain->step_hz);
 	next = zlrs_fhss_next_hz(&fhss);
 	CHECK(next != first);
 	CHECK(fhss.index == 1U);
@@ -246,7 +246,7 @@ static void test_tlm(void)
 	zlrs_tlm_t in;
 	zlrs_tlm_t out;
 	uint8_t buf[ZLRS_TLM_LEN];
-	uint8_t short_buf[ZLRS_TLM_LEN - 1U] = { 0 };
+	uint8_t short_buf[ZLRS_TLM_LEN - 1U] = {0};
 
 	printf("tlm payload\n");
 

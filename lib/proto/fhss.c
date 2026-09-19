@@ -69,8 +69,8 @@ static uint8_t rng_n(uint8_t max)
 	return (max == 0U) ? 0U : (uint8_t)(rng_next() % max);
 }
 
-static uint16_t build_sequence(uint32_t seed, uint8_t channel_count,
-			       uint8_t sync_channel, uint8_t *sequence)
+static uint16_t build_sequence(uint32_t seed, uint8_t channel_count, uint8_t sync_channel,
+			       uint8_t *sequence)
 {
 	uint16_t count;
 
@@ -130,13 +130,12 @@ void zlrs_fhss_init(zlrs_fhss_t *fhss, uint8_t domain_id, uint32_t seed)
 	fhss->domain = &zlrs_fhss_domains[domain_id];
 	fhss->sync_channel = (uint8_t)(fhss->domain->channel_count / 2U);
 	fhss->index = 0U;
-	fhss->sequence_count =
-		build_sequence(seed, fhss->domain->channel_count, fhss->sync_channel,
-			       fhss->sequence);
+	fhss->sequence_count = build_sequence(seed, fhss->domain->channel_count, fhss->sync_channel,
+					      fhss->sequence);
 }
 
-void zlrs_fhss_init_dual(zlrs_fhss_t *fhss, uint8_t main_domain_id,
-			 uint8_t sub_domain_id, uint32_t seed)
+void zlrs_fhss_init_dual(zlrs_fhss_t *fhss, uint8_t main_domain_id, uint8_t sub_domain_id,
+			 uint32_t seed)
 {
 	zlrs_fhss_init(fhss, main_domain_id, seed);
 
@@ -148,14 +147,13 @@ void zlrs_fhss_init_dual(zlrs_fhss_t *fhss, uint8_t main_domain_id,
 	fhss->sub_sync_channel = (uint8_t)(fhss->sub_domain->channel_count / 2U);
 	fhss->sub_index = 0U;
 	/* The sub-table seed differs from the main one: one pair must not hop twice on the same table */
-	fhss->sub_count = build_sequence(seed ^ 0x9E3779B9U,
-					 fhss->sub_domain->channel_count,
+	fhss->sub_count = build_sequence(seed ^ 0x9E3779B9U, fhss->sub_domain->channel_count,
 					 fhss->sub_sync_channel, fhss->sub_sequence);
 }
 
 uint8_t zlrs_fhss_mix_slots(uint8_t mix)
 {
-	static const uint8_t slots[4] = { 0U, 1U, 2U, 4U };
+	static const uint8_t slots[4] = {0U, 1U, 2U, 4U};
 
 	return slots[mix & 0x03U];
 }

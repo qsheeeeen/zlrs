@@ -31,7 +31,7 @@ static int wdt_channel = -1;
 void zlrs_watchdog_arm(void)
 {
 	const struct wdt_timeout_cfg cfg = {
-		.window = { .min = 0U, .max = CONFIG_ZLRS_APP_WATCHDOG_TIMEOUT_MS },
+		.window = {.min = 0U, .max = CONFIG_ZLRS_APP_WATCHDOG_TIMEOUT_MS},
 		.callback = NULL,
 		.flags = WDT_FLAG_RESET_SOC,
 	};

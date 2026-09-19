@@ -14,12 +14,12 @@ LOG_MODULE_REGISTER(zlrs_store, CONFIG_APP_LOG_LEVEL);
 
 /* NVS record ids */
 #define NVS_ID_ROOT_KEY 1U
-#define NVS_ID_DEV_ID 2U
+#define NVS_ID_DEV_ID   2U
 #define NVS_ID_FAILSAFE 4U
-#define NVS_ID_BAUD 5U
-#define NVS_ID_PAIRING 6U
-#define NVS_ID_REGION 7U
-#define NVS_ID_POWER 8U
+#define NVS_ID_BAUD     5U
+#define NVS_ID_PAIRING  6U
+#define NVS_ID_REGION   7U
+#define NVS_ID_POWER    8U
 
 #define NVS_SECTOR_SIZE 4096U
 
@@ -76,8 +76,8 @@ static int write_record(uint16_t id, const void *data, size_t len)
 		return 0;
 	}
 
-	LOG_ERR("nvs_write(id %u, len %u) returned %d: treating as failure", id,
-		(unsigned int)len, rc);
+	LOG_ERR("nvs_write(id %u, len %u) returned %d: treating as failure", id, (unsigned int)len,
+		rc);
 
 	return (rc < 0) ? (int)rc : -EIO;
 }
@@ -155,8 +155,8 @@ int zlrs_store_save_power(int8_t dbm)
 int zlrs_store_erase_all(void)
 {
 	static const uint16_t ids[] = {
-		NVS_ID_ROOT_KEY, NVS_ID_DEV_ID, NVS_ID_FAILSAFE,
-		NVS_ID_BAUD,     NVS_ID_PAIRING, NVS_ID_REGION, NVS_ID_POWER,
+		NVS_ID_ROOT_KEY, NVS_ID_DEV_ID, NVS_ID_FAILSAFE, NVS_ID_BAUD,
+		NVS_ID_PAIRING,  NVS_ID_REGION, NVS_ID_POWER,
 	};
 
 	if (!ready) {

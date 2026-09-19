@@ -22,24 +22,23 @@ extern "C" {
 #endif
 
 /* TX addresses: the usual convention, the receiver does not validate them */
-#define ZLRS_CRSF_ADDR_FC 0xC8U          /* receiver -> FC, handset -> module */
-#define ZLRS_CRSF_ADDR_TX_MODULE 0xEAU   /* module -> handset */
+#define ZLRS_CRSF_ADDR_FC        0xC8U /* receiver -> FC, handset -> module */
+#define ZLRS_CRSF_ADDR_TX_MODULE 0xEAU /* module -> handset */
 
 /* frame types */
 #define ZLRS_CRSF_TYPE_LINK_STATISTICS 0x14U
-#define ZLRS_CRSF_TYPE_RC_CHANNELS 0x16U
+#define ZLRS_CRSF_TYPE_RC_CHANNELS     0x16U
 
 /* Frame length limit comes from CRSF: no more than 64 bytes in total */
-#define ZLRS_CRSF_FRAME_MAX_LEN 64U
-#define ZLRS_CRSF_PAYLOAD_MAX_LEN \
-	(ZLRS_CRSF_FRAME_MAX_LEN - 4U) /* addr + len + type + crc */
+#define ZLRS_CRSF_FRAME_MAX_LEN   64U
+#define ZLRS_CRSF_PAYLOAD_MAX_LEN (ZLRS_CRSF_FRAME_MAX_LEN - 4U) /* addr + len + type + crc */
 
 /* Channel values: 11 bit, 1000-2000 us maps to 172-1811 */
-#define ZLRS_CRSF_CHANNEL_COUNT 16U
-#define ZLRS_CRSF_CHANNEL_MIN 172U
-#define ZLRS_CRSF_CHANNEL_MID 992U
-#define ZLRS_CRSF_CHANNEL_MAX 1811U
-#define ZLRS_CRSF_CHANNEL_MASK 0x07FFU
+#define ZLRS_CRSF_CHANNEL_COUNT  16U
+#define ZLRS_CRSF_CHANNEL_MIN    172U
+#define ZLRS_CRSF_CHANNEL_MID    992U
+#define ZLRS_CRSF_CHANNEL_MAX    1811U
+#define ZLRS_CRSF_CHANNEL_MASK   0x07FFU
 #define ZLRS_CRSF_RC_PAYLOAD_LEN 22U
 
 #define ZLRS_CRSF_LINK_STATS_LEN 10U
@@ -107,9 +106,9 @@ typedef struct {
 	uint8_t uplink_rssi_ant2; /* single antenna here, same value as ant1 */
 	uint8_t uplink_lq;        /* 0–100 % */
 	int8_t uplink_snr_db;
-	uint8_t active_antenna;   /* 0 = antenna 1 */
-	uint8_t rf_mode;          /* see zlrs_crsf_rf_mode() */
-	uint8_t uplink_tx_power;  /* see zlrs_crsf_tx_power_index() */
+	uint8_t active_antenna;  /* 0 = antenna 1 */
+	uint8_t rf_mode;         /* see zlrs_crsf_rf_mode() */
+	uint8_t uplink_tx_power; /* see zlrs_crsf_tx_power_index() */
 	uint8_t downlink_rssi;
 	uint8_t downlink_lq;
 	int8_t downlink_snr_db;
@@ -123,4 +122,3 @@ void zlrs_crsf_link_stats_decode(const uint8_t in[ZLRS_CRSF_LINK_STATS_LEN],
 #ifdef __cplusplus
 }
 #endif
-

@@ -178,8 +178,7 @@ static void data_isr(const struct device *dev, void *user_data)
 				ep->rx_total += (uint32_t)n;
 			}
 
-			if (n > 0 &&
-			    ring_buf_put(&ep->rx, chunk, (uint32_t)n) != (uint32_t)n) {
+			if (n > 0 && ring_buf_put(&ep->rx, chunk, (uint32_t)n) != (uint32_t)n) {
 				ep->rx_dropped++; /* passthrough is best-effort: drop when full */
 			}
 		}
@@ -264,10 +263,8 @@ int zlrs_data_port_init(uint32_t baud)
 			}
 		}
 
-		ring_buf_init(&data_eps[i].rx, sizeof(data_eps[i].rx_mem),
-			      data_eps[i].rx_mem);
-		ring_buf_init(&data_eps[i].tx, sizeof(data_eps[i].tx_mem),
-			      data_eps[i].tx_mem);
+		ring_buf_init(&data_eps[i].rx, sizeof(data_eps[i].rx_mem), data_eps[i].rx_mem);
+		ring_buf_init(&data_eps[i].tx, sizeof(data_eps[i].tx_mem), data_eps[i].tx_mem);
 		data_eps[i].dev = dev;
 		data_eps[i].ready = true;
 		data_ready_ports++;
@@ -312,7 +309,8 @@ uint16_t zlrs_data_port_read(uint8_t *buf, uint16_t len)
 			continue;
 		}
 
-		data_ep_drop_rx(&data_eps[i]); /* drop bytes that arrived on the inactive endpoint */
+		data_ep_drop_rx(
+			&data_eps[i]); /* drop bytes that arrived on the inactive endpoint */
 	}
 
 	return got;
@@ -352,7 +350,7 @@ uint32_t zlrs_data_port_dropped(void)
 /* Frame records are stored as 1 byte length + 1 byte type + payload */
 #define CRSF_FRAME_SLOT_LEN (2U + ZLRS_CRSF_PAYLOAD_MAX_LEN)
 #define CRSF_FRAME_RING_LEN 512U
-#define CRSF_TX_RING_LEN 1024U
+#define CRSF_TX_RING_LEN    1024U
 
 /* One TX buffer per endpoint; dev == NULL means the alias is not wired */
 struct crsf_ep {
@@ -438,7 +436,8 @@ static void crsf_isr(const struct device *dev, void *user_data)
 			}
 
 			if (dev != port_active(&crsf_pair)) {
-				uart_irq_tx_disable(dev); /* queued bytes wait for the endpoint to come back */
+				uart_irq_tx_disable(
+					dev); /* queued bytes wait for the endpoint to come back */
 				continue;
 			}
 
@@ -466,15 +465,13 @@ int zlrs_crsf_port_init(void)
 			continue;
 		}
 
-		ring_buf_init(&crsf_eps[i].tx, sizeof(crsf_eps[i].tx_mem),
-			      crsf_eps[i].tx_mem);
+		ring_buf_init(&crsf_eps[i].tx, sizeof(crsf_eps[i].tx_mem), crsf_eps[i].tx_mem);
 		crsf_eps[i].dev = dev;
 		crsf_eps[i].ready = true;
 		crsf_ready = true;
 
 		if (uart_irq_callback_user_data_set(dev, crsf_isr, &crsf_eps[i]) != 0) {
-			LOG_ERR("CRSF endpoint %s: RX setup failed; endpoint disabled",
-				dev->name);
+			LOG_ERR("CRSF endpoint %s: RX setup failed; endpoint disabled", dev->name);
 			crsf_eps[i].ready = false;
 			continue;
 		}
@@ -499,9 +496,8 @@ bool zlrs_crsf_port_ready(void)
 uint8_t zlrs_crsf_port_write(uint8_t type, const uint8_t *payload, uint8_t payload_len)
 {
 	uint8_t frame[ZLRS_CRSF_FRAME_MAX_LEN];
-	const uint8_t addr = (type == ZLRS_CRSF_TYPE_RC_CHANNELS)
-				     ? ZLRS_CRSF_ADDR_FC
-				     : ZLRS_CRSF_ADDR_TX_MODULE;
+	const uint8_t addr =
+		(type == ZLRS_CRSF_TYPE_RC_CHANNELS) ? ZLRS_CRSF_ADDR_FC : ZLRS_CRSF_ADDR_TX_MODULE;
 	const uint8_t len = zlrs_crsf_encode(frame, addr, type, payload, payload_len);
 	struct crsf_ep *const ep = crsf_ep_of(port_active(&crsf_pair));
 
@@ -558,7 +554,7 @@ uint32_t zlrs_crsf_port_rx_dropped(void)
 
 #if IS_ENABLED(CONFIG_ZLRS_CONFIG)
 
-#define CFG_RX_CHUNK 32U
+#define CFG_RX_CHUNK     32U
 #define CFG_EXIT_POLL_MS 50U
 
 /*
@@ -729,8 +725,8 @@ bool zlrs_config_port_poll_enter(void)
 		    cfg_ops->enter_recovery != NULL) {
 			payload[0] = cmd;
 			payload[1] = ZLRS_CFG_OK;
-			len = zlrs_cfg_encode(reply, sizeof(reply), ZLRS_CFG_CMD_ACK,
-					      payload, sizeof(payload));
+			len = zlrs_cfg_encode(reply, sizeof(reply), ZLRS_CFG_CMD_ACK, payload,
+					      sizeof(payload));
 			(void)cfg_port_write(reply, len);
 			(void)cfg_ops->enter_recovery();
 		}
@@ -799,18 +795,16 @@ static int cfg_read_status(void *ctx, zlrs_cfg_status_t *out)
 		uint8_t stored_region;
 		int8_t stored_power;
 
-		out->region = (zlrs_store_load_region(&stored_region) ==
-			       (int)sizeof(stored_region))
-				      ? stored_region
-				      : ((cfg_ops != NULL && cfg_ops->region != NULL)
-						 ? cfg_ops->region()
-						 : 0U);
-		out->tx_power_dbm = (zlrs_store_load_power(&stored_power) ==
-				     (int)sizeof(stored_power))
-					    ? stored_power
-					    : ((cfg_ops != NULL && cfg_ops->power != NULL)
-						       ? cfg_ops->power()
-						       : 0);
+		out->region =
+			(zlrs_store_load_region(&stored_region) == (int)sizeof(stored_region))
+				? stored_region
+				: ((cfg_ops != NULL && cfg_ops->region != NULL) ? cfg_ops->region()
+										: 0U);
+		out->tx_power_dbm =
+			(zlrs_store_load_power(&stored_power) == (int)sizeof(stored_power))
+				? stored_power
+				: ((cfg_ops != NULL && cfg_ops->power != NULL) ? cfg_ops->power()
+									       : 0);
 	}
 	{
 		uint32_t baud;
@@ -958,9 +952,9 @@ static int cfg_read_image_hash(void *ctx, uint8_t out[ZLRS_CFG_IMAGE_HASH_LEN])
 	(void)ctx;
 
 #ifdef CONFIG_BOOTLOADER_MCUBOOT
-#define MCUBOOT_IMAGE_MAGIC     0x96f3b83dU
-#define MCUBOOT_TLV_INFO_MAGIC  0x6907U
-#define MCUBOOT_TLV_SHA256      0x10U
+#define MCUBOOT_IMAGE_MAGIC    0x96f3b83dU
+#define MCUBOOT_TLV_INFO_MAGIC 0x6907U
+#define MCUBOOT_TLV_SHA256     0x10U
 	struct {
 		uint32_t magic;
 		uint32_t load_addr;
@@ -1017,8 +1011,7 @@ static int cfg_read_image_hash(void *ctx, uint8_t out[ZLRS_CFG_IMAGE_HASH_LEN])
 		len = (uint16_t)tlv[2] | ((uint16_t)tlv[3] << 8);
 
 		if (type == MCUBOOT_TLV_SHA256 && len == ZLRS_CFG_IMAGE_HASH_LEN) {
-			const int rc = flash_area_read(fa, off + 4U, out,
-						       ZLRS_CFG_IMAGE_HASH_LEN);
+			const int rc = flash_area_read(fa, off + 4U, out, ZLRS_CFG_IMAGE_HASH_LEN);
 
 			flash_area_close(fa);
 			return (rc == 0) ? ZLRS_CFG_OK : ZLRS_CFG_E_STATE;
@@ -1057,8 +1050,7 @@ static const zlrs_cfg_backend_t cfg_backend = {
 
 int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 {
-	const uint32_t timeout_ms =
-		(uint32_t)CONFIG_ZLRS_APP_CONFIG_TIMEOUT_S * 1000U;
+	const uint32_t timeout_ms = (uint32_t)CONFIG_ZLRS_APP_CONFIG_TIMEOUT_S * 1000U;
 	uint32_t last_activity_ms = k_uptime_get_32();
 	const uint32_t started_ms = last_activity_ms;
 	bool exit_requested = false;
@@ -1081,8 +1073,7 @@ int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 	 * seconds) and an 8 s watchdog would reset mid-way. Config is attended; re-arm on exit. */
 	zlrs_watchdog_disarm();
 
-	while (!exit_requested &&
-	       (uint32_t)(k_uptime_get_32() - last_activity_ms) < timeout_ms) {
+	while (!exit_requested && (uint32_t)(k_uptime_get_32() - last_activity_ms) < timeout_ms) {
 		uint8_t chunk[CFG_RX_CHUNK];
 		bool any = false;
 		zlrs_led_input_t led_in;

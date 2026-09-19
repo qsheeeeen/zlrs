@@ -18,14 +18,14 @@ extern "C" {
 #endif
 
 typedef struct {
-	uint32_t freq_hz;   /* carrier frequency */
+	uint32_t freq_hz; /* carrier frequency */
 	/*
 	 * Modulation: an FLRC rate or LoRa SF/bandwidth/coding rate/preamble, see
 	 * doc/07-architecture.md 3. The port layer dispatches on modulation into RAC's flrc and lora
 	 * parameter groups.
 	 */
 	zlrs_mod_cfg_t mod;
-	uint8_t sync_slot;  /* sync word slot: 1 control, 2 data, 3 pairing */
+	uint8_t sync_slot; /* sync word slot: 1 control, 2 data, 3 pairing */
 	uint8_t sync_word[ZLRS_SYNC_WORD_LEN];
 	bool is_tx;
 	int8_t tx_power_dbm;
@@ -46,4 +46,3 @@ typedef struct {
 #ifdef __cplusplus
 }
 #endif
-

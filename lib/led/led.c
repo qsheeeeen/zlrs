@@ -12,14 +12,14 @@
 #include <stddef.h>
 
 /* Palette: a handful of colours that stay distinguishable from each other */
-static const zlrs_led_rgb_t off = { 0U, 0U, 0U };
-static const zlrs_led_rgb_t white = { 255U, 255U, 255U };
-static const zlrs_led_rgb_t purple = { 160U, 0U, 200U };
-static const zlrs_led_rgb_t yellow = { 255U, 180U, 0U };
-static const zlrs_led_rgb_t blue = { 0U, 90U, 255U };
-static const zlrs_led_rgb_t green = { 0U, 255U, 0U };
-static const zlrs_led_rgb_t red = { 255U, 0U, 0U };
-static const zlrs_led_rgb_t orange = { 255U, 80U, 0U };
+static const zlrs_led_rgb_t off = {0U, 0U, 0U};
+static const zlrs_led_rgb_t white = {255U, 255U, 255U};
+static const zlrs_led_rgb_t purple = {160U, 0U, 200U};
+static const zlrs_led_rgb_t yellow = {255U, 180U, 0U};
+static const zlrs_led_rgb_t blue = {0U, 90U, 255U};
+static const zlrs_led_rgb_t green = {0U, 255U, 0U};
+static const zlrs_led_rgb_t red = {255U, 0U, 0U};
+static const zlrs_led_rgb_t orange = {255U, 80U, 0U};
 
 /* Scale brightness by a percentage (0-100) */
 static zlrs_led_rgb_t scale(zlrs_led_rgb_t color, uint8_t percent)

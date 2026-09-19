@@ -166,7 +166,7 @@ static void test_phrase_vector(void)
 static void test_frame_codec(void)
 {
 	uint8_t frame[ZLRS_CFG_FRAME_MAX_LEN];
-	uint8_t payload[4] = { 1U, 2U, 3U, 4U };
+	uint8_t payload[4] = {1U, 2U, 3U, 4U};
 	zlrs_cfg_parser_t parser;
 	uint8_t len;
 
@@ -311,18 +311,17 @@ static void test_dispatch(void)
 	{
 		static const char phrase[] = "hello";
 
-		len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_SET_PHRASE,
-					(const uint8_t *)phrase, sizeof(phrase) - 1U, resp,
-					sizeof(resp));
+		len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_SET_PHRASE, (const uint8_t *)phrase,
+					sizeof(phrase) - 1U, resp, sizeof(resp));
 		CHECK(parse_response(resp, len, &parser));
 		CHECK(ZLRS_CFG_PAYLOAD(&parser)[1] == ZLRS_CFG_OK);
-		CHECK(zlrs_test_hex_eq(fake.saved_key, ZLRS_KEY_LEN,
-				       "7e7363b218016d1f319a6389fa20aaf53d2fe21056ffe30566cc3b874e6073f8"));
+		CHECK(zlrs_test_hex_eq(
+			fake.saved_key, ZLRS_KEY_LEN,
+			"7e7363b218016d1f319a6389fa20aaf53d2fe21056ffe30566cc3b874e6073f8"));
 	}
 
 	/* An empty phrase is rejected */
-	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_SET_PHRASE, NULL, 0U, resp,
-				sizeof(resp));
+	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_SET_PHRASE, NULL, 0U, resp, sizeof(resp));
 	CHECK(parse_response(resp, len, &parser));
 	CHECK(ZLRS_CFG_PAYLOAD(&parser)[1] == ZLRS_CFG_E_PARAM);
 
@@ -354,8 +353,7 @@ static void test_dispatch(void)
 	payload[1] = 0x25U;
 	payload[2] = 0x06U; /* 0x00062500 = 400000? see below: 0x25 0x06 -> 0x062500 */
 	payload[3] = 0x00U;
-	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_SET_BAUD, payload, 4U, resp,
-				sizeof(resp));
+	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_SET_BAUD, payload, 4U, resp, sizeof(resp));
 	CHECK(parse_response(resp, len, &parser));
 	CHECK(ZLRS_CFG_PAYLOAD(&parser)[1] == ZLRS_CFG_OK);
 	CHECK(fake.baud_saved);

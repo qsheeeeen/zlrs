@@ -19,4 +19,3 @@ uint8_t zlrs_crc8(const uint8_t *data, size_t len);
 #ifdef __cplusplus
 }
 #endif
-

@@ -65,16 +65,16 @@ static uint8_t resync_every_n;
 static uint16_t data_mtu;
 
 /* Rough control frame airtime: 22 B RC + 3 B header + 4 B tag + 2 B CRC */
-#define CTL_FRAME_LEN 31U
+#define CTL_FRAME_LEN        31U
 /* Telemetry frame: 8 B payload plus header and tag */
-#define CTL_TLM_LEN 15U
+#define CTL_TLM_LEN          15U
 /*
  * Bench bring-up: the two links can each run alone. Control carries RC and pairing,
  * data carries the passthrough; prove them one at a time before combining (doc/12-debug.md 3).
  */
 #define ZLRS_CONTROL_ENABLED IS_ENABLED(CONFIG_ZLRS_APP_LINK_CONTROL)
-#define ZLRS_DATA_ENABLED IS_ENABLED(CONFIG_ZLRS_APP_LINK_DATA)
-#define ZLRS_CRSF_ENABLED IS_ENABLED(CONFIG_ZLRS_APP_CRSF_PORT)
+#define ZLRS_DATA_ENABLED    IS_ENABLED(CONFIG_ZLRS_APP_LINK_DATA)
+#define ZLRS_CRSF_ENABLED    IS_ENABLED(CONFIG_ZLRS_APP_CRSF_PORT)
 
 #define SERIAL_CHUNK_LEN 64U
 #define REPORT_PERIOD_MS 1000U
@@ -101,7 +101,6 @@ static const zlrs_region_t *region;
 static uint8_t region_id;
 static int8_t tx_power_dbm;
 static zlrs_duty_t duty;
-
 
 static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(DT_ALIAS(zlrs_button), gpios);
 static bool button_down;
@@ -135,14 +134,10 @@ static uint32_t led_drop_ms;
  */
 #if IS_ENABLED(CONFIG_ZLRS_APP_RATE_ADAPT)
 static const zlrs_rate_tier_t rate_tiers[] = {
-	{ .mod = { .modulation = ZLRS_MOD_FLRC, .rate_bps = 2600000U },
-	  .min_lq_to_stay = 85U },
-	{ .mod = { .modulation = ZLRS_MOD_FLRC, .rate_bps = 1300000U },
-	  .min_lq_to_stay = 60U },
-	{ .mod = { .modulation = ZLRS_MOD_FLRC, .rate_bps = 650000U },
-	  .min_lq_to_stay = 35U },
-	{ .mod = { .modulation = ZLRS_MOD_FLRC, .rate_bps = 325000U },
-	  .min_lq_to_stay = 0U },
+	{.mod = {.modulation = ZLRS_MOD_FLRC, .rate_bps = 2600000U}, .min_lq_to_stay = 85U},
+	{.mod = {.modulation = ZLRS_MOD_FLRC, .rate_bps = 1300000U}, .min_lq_to_stay = 60U},
+	{.mod = {.modulation = ZLRS_MOD_FLRC, .rate_bps = 650000U}, .min_lq_to_stay = 35U},
+	{.mod = {.modulation = ZLRS_MOD_FLRC, .rate_bps = 325000U}, .min_lq_to_stay = 0U},
 };
 static zlrs_rate_ctl_t rate_ctl;
 #endif
@@ -290,21 +285,20 @@ static void plan_init(void)
 	control_mod = zlrs_mod_flrc(CONFIG_ZLRS_APP_RACING_CONTROL_RATE_BPS);
 	req.want_hz = CONFIG_ZLRS_APP_RACING_CONTROL_RATE_HZ;
 #elif IS_ENABLED(CONFIG_ZLRS_APP_CONTROL_MODULATION_LORA)
-	control_mod = zlrs_region_clamp_mod(
-		ctl_region, zlrs_mod_lora(CONFIG_ZLRS_APP_CONTROL_LORA_SF,
-					  CONFIG_ZLRS_APP_CONTROL_LORA_BW_HZ,
-					  CONFIG_ZLRS_APP_CONTROL_LORA_CR,
-					  CONFIG_ZLRS_APP_CONTROL_LORA_PREAMBLE));
+	control_mod = zlrs_region_clamp_mod(ctl_region,
+					    zlrs_mod_lora(CONFIG_ZLRS_APP_CONTROL_LORA_SF,
+							  CONFIG_ZLRS_APP_CONTROL_LORA_BW_HZ,
+							  CONFIG_ZLRS_APP_CONTROL_LORA_CR,
+							  CONFIG_ZLRS_APP_CONTROL_LORA_PREAMBLE));
 	req.want_hz = CONFIG_ZLRS_APP_LORA_CONTROL_RATE_HZ;
 #else
-	control_mod = zlrs_region_clamp_mod(
-		ctl_region,
-		zlrs_mod_flrc(zlrs_region_clamp_rate(ctl_region,
-						     CONFIG_ZLRS_APP_CONTROL_RATE_BPS)));
+	control_mod = zlrs_region_clamp_mod(ctl_region,
+					    zlrs_mod_flrc(zlrs_region_clamp_rate(
+						    ctl_region, CONFIG_ZLRS_APP_CONTROL_RATE_BPS)));
 	req.want_hz = CONFIG_ZLRS_APP_CONTROL_RATE_HZ;
 #endif
-	data_mod = zlrs_mod_flrc(
-		zlrs_region_clamp_rate(data_region, CONFIG_ZLRS_APP_DATA_RATE_BPS));
+	data_mod =
+		zlrs_mod_flrc(zlrs_region_clamp_rate(data_region, CONFIG_ZLRS_APP_DATA_RATE_BPS));
 	req.mod = &control_mod;
 
 	/*
@@ -342,8 +336,8 @@ static void plan_init(void)
 	data_every_n = plan.data_every_n;
 
 	if (plan.clamped_by_duty) {
-		LOG_WRN("region %s duty %u%%: control rate %u Hz -> %u Hz",
-			region->name, region->duty_percent, (unsigned int)req.want_hz,
+		LOG_WRN("region %s duty %u%%: control rate %u Hz -> %u Hz", region->name,
+			region->duty_percent, (unsigned int)req.want_hz,
 			(unsigned int)plan.rate_hz);
 	}
 	if (plan.clamped_by_airtime) {
@@ -355,8 +349,8 @@ static void plan_init(void)
 	/* CONNECTED sync period converted to frames (doc/09-protocol.md 5.1): 1000 ms fits an
 	 * uint8 at common frame periods, shorter periods get clamped to 255 frames. */
 	if (CONFIG_ZLRS_APP_RESYNC_PERIOD_MS > 0) {
-		const uint32_t frames = ((uint32_t)CONFIG_ZLRS_APP_RESYNC_PERIOD_MS * 1000U) /
-					frame_period_us;
+		const uint32_t frames =
+			((uint32_t)CONFIG_ZLRS_APP_RESYNC_PERIOD_MS * 1000U) / frame_period_us;
 
 		resync_every_n = (uint8_t)MIN(MAX(frames, 1U), 255U);
 	} else {
@@ -386,17 +380,15 @@ static void build_links(void)
 		.second_domain = CONTROL_ON_SUBG ? ZLRS_DOMAIN_ISM2400 : region->domain,
 		.sync_slot = ZLRS_SYNC_SLOT_CONTROL,
 		.profile = IS_ENABLED(CONFIG_ZLRS_APP_SECURITY_PROFILE_P0) ? ZLRS_PROFILE_P0
-									    : ZLRS_PROFILE_P1,
+									   : ZLRS_PROFILE_P1,
 		/* Bench switches, each can be turned off, see doc/12-debug.md 3 */
 		.hopping = IS_ENABLED(CONFIG_ZLRS_APP_FHSS) ? 1U : 0U,
 		.handshake = IS_ENABLED(CONFIG_ZLRS_APP_SESSION_HANDSHAKE) ? 1U : 0U,
 		.telemetry = IS_ENABLED(CONFIG_ZLRS_APP_TELEMETRY) ? 1U : 0U,
 		/* Modulation: narrow-band regions get the LoRa tier, wide ones FLRC (see plan_init) */
 		.mod = control_mod,
-		.tx_power_dbm = CONTROL_ON_SUBG
-					? MIN(tx_power_dbm,
-					      region->max_tx_power_dbm)
-					: tx_power_dbm,
+		.tx_power_dbm = CONTROL_ON_SUBG ? MIN(tx_power_dbm, region->max_tx_power_dbm)
+						: tx_power_dbm,
 		.rx_timeout_ms = 2U,
 		.sync_period_ms = sync_period_for_mod(&control_mod),
 		/*
@@ -436,17 +428,14 @@ static void build_links(void)
 	data_cfg.sync_slot = ZLRS_SYNC_SLOT_DATA;
 	data_cfg.mod = data_mod;
 	data_cfg.tx_power_dbm =
-		CONTROL_ON_SUBG ? tx_power_dbm
-				: MIN(tx_power_dbm,
-				      region->max_tx_power_dbm);
+		CONTROL_ON_SUBG ? tx_power_dbm : MIN(tx_power_dbm, region->max_tx_power_dbm);
 	data_cfg.arq = IS_ENABLED(CONFIG_ZLRS_APP_DATA_ARQ) ? 1U : 0U;
 	/*
 	 * ARQ retransmit timeout derives from the tier: one airtime plus a round trip, floor 30 ms
 	 * (which is what the sub-millisecond FLRC frames end up using).
 	 */
-	data_cfg.arq_timeout_ms = (uint16_t)MAX(
-		ZLRS_ARQ_TIMEOUT_MS,
-		2U * zlrs_mod_airtime_ms(&data_mod, data_mtu + 7U));
+	data_cfg.arq_timeout_ms = (uint16_t)MAX(ZLRS_ARQ_TIMEOUT_MS,
+						2U * zlrs_mod_airtime_ms(&data_mod, data_mtu + 7U));
 	/*
 	 * The data link is best-effort: it sends nothing when idle, so it has no peer-loss check,
 	 * which would otherwise rebuild the session over and over while idle (doc/09-protocol.md 3.7).
@@ -469,8 +458,7 @@ static void build_links(void)
 				start = i;
 			}
 		}
-		zlrs_rate_init(&rate_ctl, rate_tiers, (uint8_t)ARRAY_SIZE(rate_tiers), start,
-			       0U);
+		zlrs_rate_init(&rate_ctl, rate_tiers, (uint8_t)ARRAY_SIZE(rate_tiers), start, 0U);
 	}
 #endif
 
@@ -637,7 +625,6 @@ static void pump_serial(void)
 
 	if (got > 0U) {
 		(void)zlrs_link_write(&link_data, chunk, got); /* queue full: drop the tail */
-
 	}
 }
 
@@ -667,8 +654,8 @@ static void adopt_pairing(void)
 	memcpy(pairing.pair_salt, link_control.pair_salt, ZLRS_PAIR_SALT_LEN);
 	(void)zlrs_store_save_pairing(&pairing);
 
-	LOG_INF("paired with %02x%02x%02x%02x", link_control.peer_id[0],
-		link_control.peer_id[1], link_control.peer_id[2], link_control.peer_id[3]);
+	LOG_INF("paired with %02x%02x%02x%02x", link_control.peer_id[0], link_control.peer_id[1],
+		link_control.peer_id[2], link_control.peer_id[3]);
 }
 
 /*
@@ -694,8 +681,7 @@ static void handle_button(uint32_t now_ms)
 	if (pressed > 0 && button_down && !button_fired &&
 	    (uint32_t)(now_ms - button_since_ms) >= CONFIG_ZLRS_APP_PAIR_HOLD_MS) {
 		button_fired = true;
-		LOG_INF("pairing (button held %u ms)",
-			(unsigned int)(now_ms - button_since_ms));
+		LOG_INF("pairing (button held %u ms)", (unsigned int)(now_ms - button_since_ms));
 		zlrs_link_press(&link_control, now_ms);
 		return;
 	}
@@ -766,8 +752,7 @@ static void crsf_send_link_stats(const zlrs_tlm_t *tlm)
 	stats.downlink_snr_db = link_control.stats.last_snr;
 
 	zlrs_crsf_link_stats_encode(payload, &stats);
-	(void)zlrs_crsf_port_write(ZLRS_CRSF_TYPE_LINK_STATISTICS, payload,
-				   sizeof(payload));
+	(void)zlrs_crsf_port_write(ZLRS_CRSF_TYPE_LINK_STATISTICS, payload, sizeof(payload));
 }
 
 /* RX: rebuild the received RC payload into a CRSF frame for the flight controller */
@@ -832,11 +817,9 @@ static void pump_crsf(uint32_t now_ms)
 	if (IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX)) {
 		/* Handset unplugged or powered off: switch to the preset failsafe values at once */
 		if (rc_input_seen &&
-		    (uint32_t)(now_ms - last_rc_input_ms) >
-			    CONFIG_ZLRS_APP_CRSF_TIMEOUT_MS) {
+		    (uint32_t)(now_ms - last_rc_input_ms) > CONFIG_ZLRS_APP_CRSF_TIMEOUT_MS) {
 			rc_input_seen = false;
-			zlrs_link_set_rc(&link_control, failsafe_payload,
-					 sizeof(failsafe_payload));
+			zlrs_link_set_rc(&link_control, failsafe_payload, sizeof(failsafe_payload));
 			LOG_WRN("CRSF input timeout: sending failsafe values");
 		}
 	} else {
@@ -879,8 +862,7 @@ static void report(uint32_t now_ms)
 		static uint8_t mix_level;
 		uint8_t want = mix_level;
 		const uint32_t window_ms = (uint32_t)(4U * (frame_period_us / 1000U));
-		const uint32_t airtime_us =
-			zlrs_mod_airtime_us(&control_mod, CTL_FRAME_LEN);
+		const uint32_t airtime_us = zlrs_mod_airtime_us(&control_mod, CTL_FRAME_LEN);
 		const uint8_t cap = zlrs_region_mix_level(CONTROL_ON_SUBG ? region : NULL,
 							  window_ms, airtime_us);
 
@@ -893,8 +875,8 @@ static void report(uint32_t now_ms)
 		if (want != mix_level && (uint32_t)(now_ms - mix_last_ms) >= 2000U) {
 			mix_level = want;
 			mix_last_ms = now_ms;
-			LOG_INF("sub-band mix -> %u (LQ %u%%, region cap %u)",
-				mix_level, link_control.stats.lq_percent, cap);
+			LOG_INF("sub-band mix -> %u (LQ %u%%, region cap %u)", mix_level,
+				link_control.stats.lq_percent, cap);
 			zlrs_link_set_mix(&link_control, mix_level);
 			zlrs_link_set_mix(&link_data, mix_level);
 		}
@@ -912,8 +894,8 @@ static void report(uint32_t now_ms)
 		 * Evaluated once a second: if telemetry arrived, judge quality from its RSSI/LQ,
 		 * otherwise take the valid=false timeout path, which goes back to the ceiling.
 		 */
-		if (zlrs_power_update(&power_ctl, fresh, tlm_latest.rssi_dbm,
-				      tlm_latest.lq, now_ms, &next)) {
+		if (zlrs_power_update(&power_ctl, fresh, tlm_latest.rssi_dbm, tlm_latest.lq, now_ms,
+				      &next)) {
 			zlrs_link_set_power(&link_control, next);
 			LOG_INF("tx power -> %d dBm (rssi %d dBm, lq %u%%)", next,
 				tlm_latest.rssi_dbm, tlm_latest.lq);
@@ -930,19 +912,18 @@ static void report(uint32_t now_ms)
 	}
 
 	LOG_INF("%s ctl=%u tlm=%u data=%u serial_drop=%u",
-		IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? "TX" : "RX", counters.rc_rx,
-		counters.tlm_rx, counters.data_rx, zlrs_data_port_dropped());
+		IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? "TX" : "RX", counters.rc_rx, counters.tlm_rx,
+		counters.data_rx, zlrs_data_port_dropped());
 	/* Frames that really went out: only transactions that completed count (see lib/link) */
 	LOG_INF("air: ctl_tx=%u ctl_rx=%u data_tx=%u data_rx=%u fail=%u+%u",
 		link_control.stats.tx_frames, link_control.stats.rx_frames,
-		link_data.stats.tx_frames, link_data.stats.rx_frames,
-		link_control.stats.radio_fail, link_data.stats.radio_fail);
-	LOG_INF("crsf_bad=%u crsf_drop=%u air_drop=%u lq=%u%%",
-		crsf_bad_input, zlrs_crsf_port_rx_dropped(),
-		link_data.stats.data_drop_bytes, link_control.stats.lq_percent);
-	LOG_INF("region %s: max %d dBm, duty denied %u",
-		(region != NULL) ? region->name : "?", region->max_tx_power_dbm,
-		duty.denied);
+		link_data.stats.tx_frames, link_data.stats.rx_frames, link_control.stats.radio_fail,
+		link_data.stats.radio_fail);
+	LOG_INF("crsf_bad=%u crsf_drop=%u air_drop=%u lq=%u%%", crsf_bad_input,
+		zlrs_crsf_port_rx_dropped(), link_data.stats.data_drop_bytes,
+		link_control.stats.lq_percent);
+	LOG_INF("region %s: max %d dBm, duty denied %u", (region != NULL) ? region->name : "?",
+		region->max_tx_power_dbm, duty.denied);
 #if IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)
 	LOG_INF("tx power %d dBm (up %u / down %u / fallback %u)",
 		zlrs_power_current_dbm(&power_ctl), power_ctl.raises, power_ctl.lowers,
@@ -1048,10 +1029,9 @@ static void led_tick(uint32_t now_ms)
 	 * the handset (sending failsafe), or the RX was connected and dropped (outputting failsafe).
 	 * A device that never connected shows its normal state (purple/yellow/cyan), never red.
 	 */
-	in.failsafe = ever_connected &&
-		      (IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX)
-			       ? !rc_input_seen
-			       : (link_control.state != ZLRS_STATE_CONNECTED));
+	in.failsafe = ever_connected && (IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX)
+						 ? !rc_input_seen
+						 : (link_control.state != ZLRS_STATE_CONNECTED));
 
 	zlrs_led_port_update(&in, now_ms);
 }
@@ -1220,10 +1200,10 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "role   : %s", IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? "TX" : "RX");
 	shell_print(sh, "sub-G  : %s (band %d)", ZLRS_SUBG_BAND == ZLRS_BAND_SUBG_LF ? "LF" : "HF",
 		    ZLRS_SUBG_BAND);
-	shell_print(sh, "region : %s (max %d dBm)",
-		    (region != NULL) ? region->name : "?", region->max_tx_power_dbm);
-	shell_print(sh, "control: state %d, lq %u%%, paired %d",
-		    link_control.state, link_control.stats.lq_percent, link_control.paired);
+	shell_print(sh, "region : %s (max %d dBm)", (region != NULL) ? region->name : "?",
+		    region->max_tx_power_dbm);
+	shell_print(sh, "control: state %d, lq %u%%, paired %d", link_control.state,
+		    link_control.stats.lq_percent, link_control.paired);
 	shell_print(sh, "data   : state %d, drop %u B", link_data.state,
 		    link_data.stats.data_drop_bytes);
 	shell_print(sh, "radio  : %s", IS_ENABLED(CONFIG_ZLRS_APP_RADIO) ? "on" : "off (bring-up)");
@@ -1263,8 +1243,8 @@ static int cmd_ports(const struct shell *sh, size_t argc, char **argv)
 
 	for (size_t i = 0U; i < count; i++) {
 		shell_print(sh, "%-16s ready=%d active=%d rx_total=%u rx_dropped=%u",
-			    states[i].name, states[i].ready, states[i].active,
-			    states[i].rx_total, states[i].rx_dropped);
+			    states[i].name, states[i].ready, states[i].active, states[i].rx_total,
+			    states[i].rx_dropped);
 	}
 
 	return 0;
@@ -1334,8 +1314,7 @@ static void mcuboot_dump_slot(const struct shell *sh, const char *name, uint8_t 
 
 		for (size_t i = 0U; i < sizeof(sector) && shown < 12U; i++) {
 			if (sector[i] != 0xFFU) {
-				shell_print(sh, "  -0x%05x = 0x%02x", back * 4096U - i,
-					    sector[i]);
+				shell_print(sh, "  -0x%05x = 0x%02x", back * 4096U - i, sector[i]);
 				shown++;
 			}
 		}
@@ -1371,8 +1350,7 @@ static int cmd_mcuboot(const struct shell *sh, size_t argc, char **argv)
 #endif
 
 SHELL_STATIC_SUBCMD_SET_CREATE(
-	zlrs_cmds,
-	SHELL_CMD(status, NULL, "role / SKU / region / link state", cmd_status),
+	zlrs_cmds, SHELL_CMD(status, NULL, "role / SKU / region / link state", cmd_status),
 	SHELL_CMD(ports, NULL, "state of both data port endpoints", cmd_ports),
 #if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
 	SHELL_CMD(config, NULL, "enter config mode (EXIT returns)", cmd_config),
@@ -1520,20 +1498,19 @@ int main(void)
 	}
 	/* The first two things to look at on the bench: which SKU this board is, which region it runs */
 	LOG_INF("board: sub-G %s (band %d), region %s",
-		ZLRS_SUBG_BAND == ZLRS_BAND_SUBG_LF ? "LF" : "HF", ZLRS_SUBG_BAND,
-		region->name);
+		ZLRS_SUBG_BAND == ZLRS_BAND_SUBG_LF ? "LF" : "HF", ZLRS_SUBG_BAND, region->name);
 	{
 		const int rc = zlrs_region_validate(region, ZLRS_SUBG_BAND, tx_power_dbm);
 
 		/* -5: the region wants different sub-G hardware than this board has, so stay off the air */
 		if (rc == -5) {
-			LOG_ERR("region %s needs another sub-G sku (board band %d)",
-				region->name, ZLRS_SUBG_BAND);
+			LOG_ERR("region %s needs another sub-G sku (board band %d)", region->name,
+				ZLRS_SUBG_BAND);
 			fault_loop();
 		}
 		if (rc == -2) {
-			LOG_WRN("region %s caps tx power at %d dBm (configured %d)",
-				region->name, region->max_tx_power_dbm, tx_power_dbm);
+			LOG_WRN("region %s caps tx power at %d dBm (configured %d)", region->name,
+				region->max_tx_power_dbm, tx_power_dbm);
 		} else if (rc != 0) {
 			LOG_WRN("region check failed (%d): channel plan out of band", rc);
 		}
@@ -1579,8 +1556,7 @@ int main(void)
 		LOG_WRN("button unavailable");
 	}
 
-	LOG_INF("entering superframe loop: %u Hz, %s / %s (%s)",
-		(unsigned int)control_rate_hz,
+	LOG_INF("entering superframe loop: %u Hz, %s / %s (%s)", (unsigned int)control_rate_hz,
 		ZLRS_CONTROL_ENABLED ? "control on" : "control off",
 		ZLRS_DATA_ENABLED ? "data on" : "data off",
 		IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? "TX" : "RX");
