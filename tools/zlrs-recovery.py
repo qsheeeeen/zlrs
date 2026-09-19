@@ -9,8 +9,8 @@
 # device sets the boot-mode flag and reboots into MCUboot recovery (docs/design/10-security.md 10).
 #
 # Usage:
-#   python3 scripts/zlrs-recovery.py --port /dev/ttyACM2   # config port (third CDC in app mode)
-#   python3 scripts/zlrs-recovery.py --self-test           # no device: check the framing
+#   python3 tools/zlrs-recovery.py --port /dev/ttyACM2   # config port (third CDC in app mode)
+#   python3 tools/zlrs-recovery.py --self-test           # no device: check the framing
 #
 # Then upload a signed image with an mcumgr client:
 #   smpmgr --port <recovery port> upgrade zephyr.signed.bin

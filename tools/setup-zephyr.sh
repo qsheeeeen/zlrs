@@ -4,7 +4,7 @@
 #
 # Build the zlrs Zephyr workspace from scratch.
 #
-#   scripts/setup-zephyr.sh [workspace root]    defaults to the directory above the repository
+#   tools/setup-zephyr.sh [workspace root]    defaults to the directory above the repository
 #
 # west T2 topology: this repository is the manifest repository and the manifest is west.yml
 # (pinning zephyr v4.4.0 and usp_zephyr/usp v1.1.2-feature-202604); usp_zephyr is no longer
@@ -98,17 +98,17 @@ fi
 
 echo "==> [5/5] Zephyr's Python build dependencies"
 "${VENV_DIR}/bin/python" -m pip install --quiet --no-warn-script-location \
-	-r "${WS}/zephyr/scripts/requirements-base.txt"
+	-r "${WS}/zephyr/tools/requirements-base.txt"
 
 # MCUboot builds sign the image with imgtool (`west build --sysbuild ... /mcuboot`), whose
 # dependencies are not in Zephyr's requirements-base: without them the build fails at the
 # signing step with "No module named 'cryptography'".
 echo "    imgtool (MCUboot signing) dependencies"
 "${VENV_DIR}/bin/python" -m pip install --quiet --no-warn-script-location \
-	-r "${WS}/bootloader/mcuboot/scripts/requirements.txt"
+	-r "${WS}/bootloader/mcuboot/tools/requirements.txt"
 
 # Host-side tool scripts: pyserial for config mode and the recovery trigger, smpmgr for upgrades
-# (scripts/zlrs-config.py, zlrs-recovery.py, zlrs-update.py).
+# (tools/zlrs-config.py, zlrs-recovery.py, zlrs-update.py).
 echo "    host script dependencies (pyserial / smpmgr)"
 "${VENV_DIR}/bin/python" -m pip install --quiet --no-warn-script-location \
 	pyserial smpmgr
@@ -140,5 +140,5 @@ fi
 
 echo
 echo "next:"
-echo "  source \"${ZLRS_REPO_ROOT}/scripts/zephyr-env.sh\""
+echo "  source \"${ZLRS_REPO_ROOT}/tools/zephyr-env.sh\""
 echo "  zlrs-build     # = cd \$ZLRS_WS && west build -b \$ZLRS_BOARD \$ZLRS_APP"

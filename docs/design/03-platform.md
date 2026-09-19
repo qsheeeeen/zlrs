@@ -52,8 +52,8 @@ Offsets and sizes: [board README](../boards/zlrs/rp2350_zero_core2021/README.md#
 The workspace comes from this repository's `west.yml` (Zephyr v4.4.0, usp_zephyr, usp) and the toolchain is pinned to Zephyr SDK 1.0.0 (a distro `arm-none-eabi-gcc` has newlib without retargetable locking and trips a static assertion):
 
 ```shell
-scripts/setup-zephyr.sh        # about 5 GB the first time
-source scripts/zephyr-env.sh   # once per new shell
+tools/setup-zephyr.sh        # about 5 GB the first time
+source tools/zephyr-env.sh   # once per new shell
 zlrs-build                     # = west build -b $ZLRS_BOARD $ZLRS_APP
 ```
 
@@ -62,6 +62,6 @@ The host tests need no workspace: `make -C tests/host run` compiles the very sam
 ## 6. Flashing
 
 - Without a bootloader: BOOTSEL plus UF2 (`west flash --runner uf2`) or SWD.
-- With MCUboot: two BOOTSEL rounds the first time (the bootloader, then `zephyr.signed.uf2`); afterwards serial recovery does it in one command, `python3 scripts/zlrs-update.py --port /dev/ttyACM1`.
+- With MCUboot: two BOOTSEL rounds the first time (the bootloader, then `zephyr.signed.uf2`); afterwards serial recovery does it in one command, `python3 tools/zlrs-update.py --port /dev/ttyACM1`.
 
 Recovery ports, image confirmation and rollback are described in [08-firmware](08-firmware.md) 6.

@@ -12,8 +12,8 @@
 #
 # Usage:
 #   west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33/hf/mcuboot app
-#   python3 scripts/make-signed-uf2.py            # reads $ZLRS_WS/build by default
-#   python3 scripts/make-signed-uf2.py <build-dir>
+#   python3 tools/make-signed-uf2.py            # reads $ZLRS_WS/build by default
+#   python3 tools/make-signed-uf2.py <build-dir>
 #
 # First flash (no debugger):
 #   1. hold BOOTSEL while plugging USB in, drop <build>/mcuboot/zephyr/zephyr.uf2 on RPI-RP2
@@ -41,7 +41,7 @@ def find_zephyr_base() -> Path:
         if candidate.is_file():
             return parent / "zephyr"
 
-    raise SystemExit("no Zephyr tree: source scripts/zephyr-env.sh or set ZEPHYR_BASE")
+    raise SystemExit("no Zephyr tree: source tools/zephyr-env.sh or set ZEPHYR_BASE")
 
 
 def read_kconfig(config_path: Path) -> dict:

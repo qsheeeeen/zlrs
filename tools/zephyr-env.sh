@@ -3,9 +3,9 @@
 #
 # Enter the zlrs Zephyr build environment.
 #
-#   source scripts/zephyr-env.sh
+#   source tools/zephyr-env.sh
 #
-# The workspace comes from scripts/setup-zephyr.sh and defaults to the parent directory of the
+# The workspace comes from tools/setup-zephyr.sh and defaults to the parent directory of the
 # repository (/home/qs/zlrs-worksapce here). The toolchain is Zephyr SDK 1.0.0, by default at
 # $HOME/zephyr-sdk-1.0.0. Every variable can be preset to override:
 #
@@ -52,9 +52,9 @@ zlrs-build-mcuboot() {
 }
 
 if [ ! -d "${ZLRS_WS}/.west" ]; then
-	echo "zlrs: no west workspace at ${ZLRS_WS}/.west; run \"${ZLRS_REPO_ROOT}/scripts/setup-zephyr.sh\" first" >&2
+	echo "zlrs: no west workspace at ${ZLRS_WS}/.west; run \"${ZLRS_REPO_ROOT}/tools/setup-zephyr.sh\" first" >&2
 elif [ ! -d "${ZEPHYR_BASE}" ] || [ ! -x "${ZLRS_VENV}/bin/west" ]; then
-	echo "zlrs: incomplete workspace (no zephyr/ or .venv/bin/west); re-run \"${ZLRS_REPO_ROOT}/scripts/setup-zephyr.sh\"" >&2
+	echo "zlrs: incomplete workspace (no zephyr/ or .venv/bin/west); re-run \"${ZLRS_REPO_ROOT}/tools/setup-zephyr.sh\"" >&2
 fi
 
 if [ ! -x "${ZLRS_SDK_DIR}/gnu/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc" ] &&

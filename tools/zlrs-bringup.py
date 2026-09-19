@@ -8,9 +8,9 @@
 # (including PBKDF2 into NVS), then re-enter to confirm NVS persistence. Nothing radio.
 #
 # Usage:
-#   python3 scripts/zlrs-bringup.py                # finds ports by-id
-#   python3 scripts/zlrs-bringup.py --config /dev/ttyACM2
-#   python3 scripts/zlrs-bringup.py --self-test    # check the logic without a device
+#   python3 tools/zlrs-bringup.py                # finds ports by-id
+#   python3 tools/zlrs-bringup.py --config /dev/ttyACM2
+#   python3 tools/zlrs-bringup.py --self-test    # check the logic without a device
 #
 # The config port is the third CDC in application mode (...-if04).
 
@@ -60,7 +60,7 @@ def run_config(*args: str) -> tuple[int, str]:
     Run one config command with a generous timeout: set-phrase does 100000 PBKDF2 rounds on the
     device, which is tens of seconds on an M33; a 1 s default would call that "no answer".
     """
-    tool = repo_root() / "scripts" / "zlrs-config.py"
+    tool = repo_root() / "tools" / "zlrs-config.py"
     proc = subprocess.run([sys.executable, str(tool), "--timeout", "120", *args], check=False,
                           capture_output=True, text=True)
     return proc.returncode, (proc.stdout + proc.stderr).strip()
@@ -101,7 +101,7 @@ def self_test() -> int:
         glob.glob = original  # type: ignore[assignment]
 
     # The config tool has to support the formal enter-config-mode entry
-    tool = repo_root() / "scripts" / "zlrs-config.py"
+    tool = repo_root() / "tools" / "zlrs-config.py"
     if "CMD_ENTER" not in tool.read_text(encoding="utf-8"):
         problems.append("the config tool has no CMD_ENTER")
 

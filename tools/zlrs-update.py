@@ -7,7 +7,7 @@
 # port, upload the signed image and wait for the application to come back. No replugging, no
 #
 # Flow (see docs/design/08-firmware.md 6):
-#   1. send the recovery command to the application's config port (scripts/zlrs-recovery.py),
+#   1. send the recovery command to the application's config port (tools/zlrs-recovery.py),
 #      the application sets the boot-mode flag and reboots;
 #   2. MCUboot stops in serial recovery and enumerates as "ZLRS MCUBOOT" (two CDCs: recovery
 #      first, log second); the script finds it by name under /dev/serial/by-id;
@@ -16,10 +16,10 @@
 #   4. wait for the "ZLRS" application ports and report the result.
 #
 # Usage:
-#   python3 scripts/zlrs-update.py --port /dev/ttyACM1            # finds the image itself
-#   python3 scripts/zlrs-update.py --port /dev/ttyACM1 --image build/app/zephyr/zephyr.signed.bin
-#   python3 scripts/zlrs-update.py --recovery-port /dev/ttyACM0 --no-trigger   # already in recovery
-#   python3 scripts/zlrs-update.py --self-test                    # no device needed
+#   python3 tools/zlrs-update.py --port /dev/ttyACM1            # finds the image itself
+#   python3 tools/zlrs-update.py --port /dev/ttyACM1 --image build/app/zephyr/zephyr.signed.bin
+#   python3 tools/zlrs-update.py --recovery-port /dev/ttyACM0 --no-trigger   # already in recovery
+#   python3 tools/zlrs-update.py --self-test                    # no device needed
 #
 # Requires pyserial (for the trigger) and smpmgr (for the upload; pip install smpmgr).
 # Use --client none to keep the script from uploading: it prints the command instead.
@@ -153,12 +153,12 @@ def config_probe_command(port: str) -> list[str]:
     Send one config command (status) to the new image's config port; the upgrade flow decides the
     outcome, see steps [5/6] and [6/6] in main().
     """
-    return [sys.executable, str(repo_root() / "scripts" / "zlrs-config.py"),
+    return [sys.executable, str(repo_root() / "tools" / "zlrs-config.py"),
             "--port", port, "status"]
 
 
 def config_subcmd_command(port: str, subcmd: str) -> list[str]:
-    return [sys.executable, str(repo_root() / "scripts" / "zlrs-config.py"),
+    return [sys.executable, str(repo_root() / "tools" / "zlrs-config.py"),
             "--port", port, "--timeout", "3", subcmd]
 
 
@@ -215,7 +215,7 @@ def image_hash_of(path: Path) -> str | None:
 
 
 def run_trigger(port: str, baud: int) -> int:
-    script = repo_root() / "scripts" / "zlrs-recovery.py"
+    script = repo_root() / "tools" / "zlrs-recovery.py"
     print(f"[1/4] trigger recovery on {port}")
     return subprocess.run(
         [sys.executable, str(script), "--port", port, "--baud", str(baud)], check=False
@@ -261,7 +261,7 @@ def self_test() -> int:
         problems.append(f"host confirm command is wrong: {probe}")
 
     # The trigger step must exist and frame identically to the device (its own self-test checks)
-    recovery = repo_root() / "scripts" / "zlrs-recovery.py"
+    recovery = repo_root() / "tools" / "zlrs-recovery.py"
     if not recovery.is_file():
         problems.append(f"missing {recovery}")
     else:

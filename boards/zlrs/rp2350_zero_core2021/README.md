@@ -90,7 +90,7 @@ Variants without a bootloader flash through BOOTSEL plus a UF2 (`west flash --ru
 
 ```shell
 west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33/hf/mcuboot app
-python3 scripts/make-signed-uf2.py
+python3 tools/make-signed-uf2.py
 ```
 
 1. hold BOOTSEL while plugging USB in and drag `build/mcuboot/zephyr/zephyr.uf2`;
@@ -101,8 +101,8 @@ Once the bootloader runs, the ROM's mass-storage mode does not come back, so bot
 Later upgrades go through MCUboot serial recovery and **USB only** (the data port CDC, see [docs/design/08-firmware.md](../../../docs/design/08-firmware.md) 6); the GP8/GP9 UART stays the application's own data port and is not involved. In bootloader mode USB shows two CDCs (recovery first, console second) and `app/sysbuild/mcuboot.overlay` deletes the CRSF one, so scripts find ports by `/dev/serial/by-id/...MCUBOOT...` and cannot reuse the application's `ttyACM1`:
 
 ```shell
-python3 scripts/zlrs-recovery.py --port /dev/ttyACM1   # trigger recovery from the application
-python3 scripts/zlrs-update.py --port /dev/ttyACM1     # trigger, upload, wait for the application
+python3 tools/zlrs-recovery.py --port /dev/ttyACM1   # trigger recovery from the application
+python3 tools/zlrs-update.py --port /dev/ttyACM1     # trigger, upload, wait for the application
 ```
 
 ## 5. Board defaults

@@ -23,8 +23,8 @@ The Core2021's sub-G comes in two SKUs, so there are two board variants:
 ## Build and flash
 
 ```shell
-scripts/setup-zephyr.sh        # about 5 GB the first time
-source scripts/zephyr-env.sh   # once per new shell
+tools/setup-zephyr.sh        # about 5 GB the first time
+source tools/zephyr-env.sh   # once per new shell
 zlrs-build                     # = west build -b $ZLRS_BOARD $ZLRS_APP
 cd "$ZLRS_WS" && west flash    # openocd by default, or --runner uf2/probe-rs/jlink
 ```
@@ -33,30 +33,30 @@ MCUboot builds (recommended: later upgrades need no BOOTSEL):
 
 ```shell
 zlrs-build-mcuboot                # = west build --sysbuild -b $ZLRS_BOARD/mcuboot $ZLRS_APP
-python3 scripts/make-signed-uf2.py
+python3 tools/make-signed-uf2.py
 ```
 
 The first flash needs two BOOTSEL rounds: drag `build/mcuboot/zephyr/zephyr.uf2`, then enter BOOTSEL again and drag `build/app/zephyr/zephyr.signed.uf2`. After that one command upgrades it:
 
 ```shell
-python3 scripts/zlrs-update.py --port /dev/ttyACM1
+python3 tools/zlrs-update.py --port /dev/ttyACM1
 ```
 
 The two modes announce different USB names (the application `ZLRS`, the bootloader `ZLRS MCUBOOT`) and scripts find ports under `/dev/serial/by-id/...` rather than hard-coding `ttyACM*`. Boot chain, recovery entries and rollback: [docs/design/08-firmware.md](docs/design/08-firmware.md) 6.
 
-`scripts/zephyr-env.sh` exports `ZLRS_WS` (the workspace root), `ZLRS_APP`, `ZLRS_BOARD` (hf by default, use `.../lf` for LF) and `ZLRS_SDK_DIR` (`~/zephyr-sdk-1.0.0` by default).
+`tools/zephyr-env.sh` exports `ZLRS_WS` (the workspace root), `ZLRS_APP`, `ZLRS_BOARD` (hf by default, use `.../lf` for LF) and `ZLRS_SDK_DIR` (`~/zephyr-sdk-1.0.0` by default).
 
 ## Configuration
 
 USB shows three CDCs: **CRSF, data and config**. The tool sends the enter-config-mode command on the config CDC; the radio stops entirely until it exits. Every user parameter is set at runtime with no firmware rebuild:
 
 ```shell
-python3 scripts/zlrs-config.py --self-test
-python3 scripts/zlrs-config.py --port /dev/ttyACM2 status
-python3 scripts/zlrs-config.py --port /dev/ttyACM2 set-phrase "correct horse battery staple"
-python3 scripts/zlrs-config.py --port /dev/ttyACM2 set-region 3
-python3 scripts/zlrs-config.py --port /dev/ttyACM2 set-failsafe @default
-python3 scripts/zlrs-config.py --port /dev/ttyACM2 exit
+python3 tools/zlrs-config.py --self-test
+python3 tools/zlrs-config.py --port /dev/ttyACM2 status
+python3 tools/zlrs-config.py --port /dev/ttyACM2 set-phrase "correct horse battery staple"
+python3 tools/zlrs-config.py --port /dev/ttyACM2 set-region 3
+python3 tools/zlrs-config.py --port /dev/ttyACM2 set-failsafe @default
+python3 tools/zlrs-config.py --port /dev/ttyACM2 exit
 ```
 
 The command set is in [docs/design/10-security.md](docs/design/10-security.md) 10 and the firmware behaviour in [docs/design/08-firmware.md](docs/design/08-firmware.md) 3.
@@ -86,9 +86,9 @@ The role and link shape decide which timing the firmware runs and are compile-ti
 | firmware (TX or RX) | `zlrs-build` | target `.../m33/hf` by default (use `.../lf` for LF) |
 | firmware plus MCUboot | `zlrs-build-mcuboot` | adds `--sysbuild`, a bootloader and two-slot partitions |
 | host tests | `make -C tests/host run` | protocol core, link layer, CRSF and the config protocol; no hardware, no workspace |
-| bench self-test | `python3 scripts/zlrs-bringup.py` | three CDCs, config mode, config protocol reads and writes, NVS persistence |
-| config tool | `python3 scripts/zlrs-config.py` | read status, write parameters, start pairing, exit |
-| update tool | `python3 scripts/zlrs-update.py` | trigger recovery, upload a signed image, wait for the application |
+| bench self-test | `python3 tools/zlrs-bringup.py` | three CDCs, config mode, config protocol reads and writes, NVS persistence |
+| config tool | `python3 tools/zlrs-config.py` | read status, write parameters, start pairing, exit |
+| update tool | `python3 tools/zlrs-update.py` | trigger recovery, upload a signed image, wait for the application |
 
 The vendor sample (Semtech's `packet_error_rate_flrc`) runs on this board as-is, which is a way to check the toolchain and radio stack on their own.
 
@@ -108,7 +108,7 @@ core/led/              status LED engine (pure C)
 subsys/usb/              USB device stack (usbd context plus every CDC in devicetree)
 include/zlrs/         public headers
 tests/host/           host tests and the two-node simulation
-scripts/              workspace, config, update and self-test scripts
+tools/              workspace, config, update and self-test scripts
 docs/                  design documents (index in docs/README.md)
 zephyr/module.yml     this repository as a Zephyr module
 ```

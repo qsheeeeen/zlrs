@@ -94,7 +94,7 @@ Recovery is **USB only**: in bootloader mode USB shows two CDCs (recovery first,
 3. **The tool sets pending, only the application sets permanent**: the application calls `boot_write_img_confirmed()` after the image runs and the host sends its confirm command.
 4. **Every unconfirmed path has to reset on its own**: the application resets when it is alive but unconfirmed, and the bootloader's watchdog resets it when it hangs, even before USB comes up.
 
-The update sequence (`scripts/zlrs-update.py` runs it end to end):
+The update sequence (`tools/zlrs-update.py` runs it end to end):
 
 | # | Who | What |
 | --- | --- | --- |
@@ -123,7 +123,7 @@ The rollback verdict lives in MCUboot's image trailer and the application only "
 
 **The watchdog** (`CONFIG_ZLRS_APP_WATCHDOG`, off by default) only turns a hang into a reset: the application arms it at `PRE_KERNEL_1` (before the entropy source, so a hung entropy probe still resets) and feeds it from the main loop and config sessions, while on the bootloader side `subsys/bootguard` (`CONFIG_ZLRS_BOOTGUARD`) clears the hardware enable bit first (the driver's `wdt_disable()` does nothing in the next boot, and without this the previous watchdog would interrupt serial recovery). MCUboot then re-arms it with `BOOT_WATCHDOG_TIMEOUT_MS` (30 s) and leaves it running across the jump into the application, so an application that hangs before arming its own still gets reset and rolled back.
 
-One command updates a device: `python3 scripts/zlrs-update.py --port <application config port>` (trigger recovery, wait for the recovery port, read the active slot, write the other one and mark it test, wait for the application, check `image-hash`, send `confirm`). The tool writes pending but **never permanent**: marking an image permanent before it has run cuts off the rollback path. Bricked boards go through BOOTSEL and a UF2 drag (see [12-debug](12-debug.md)). Production images use their own signing key, and changing that key means reflashing the bootloader.
+One command updates a device: `python3 tools/zlrs-update.py --port <application config port>` (trigger recovery, wait for the recovery port, read the active slot, write the other one and mark it test, wait for the application, check `image-hash`, send `confirm`). The tool writes pending but **never permanent**: marking an image permanent before it has run cuts off the rollback path. Bricked boards go through BOOTSEL and a UF2 drag (see [12-debug](12-debug.md)). Production images use their own signing key, and changing that key means reflashing the bootloader.
 
 ## 7. Error-handling rules
 

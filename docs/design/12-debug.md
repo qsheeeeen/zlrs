@@ -50,7 +50,7 @@ Suggested order: `P0` with hopping, handshake and telemetry off, confirming that
 
 ## 4. Debugging on the board
 
-- **Turn the radio off first** (`ZLRS_APP_RADIO=n`) to check USB, ports, config mode and NVS: `python3 scripts/zlrs-bringup.py` does the lot in one command (three CDCs, config mode, config protocol reads and writes, NVS persistence).
+- **Turn the radio off first** (`ZLRS_APP_RADIO=n`) to check USB, ports, config mode and NVS: `python3 tools/zlrs-bringup.py` does the lot in one command (three CDCs, config mode, config protocol reads and writes, NVS persistence).
   With no module attached, use the ready-made config file:
 
   ```shell
@@ -64,7 +64,7 @@ Suggested order: `P0` with hopping, handshake and telemetry off, confirming that
 - **To catch the boot log** use `CONFIG_ZLRS_APP_BOOT_DELAY_MS` (0 by default): it waits that long after USB is up before continuing init, giving the host time to open the console port. Otherwise a panic during init lands on a port nobody has open and you see nothing.
 - **Find ports by name**: the application is `ZLRS`, the bootloader `ZLRS MCUBOOT`; use `/dev/serial/by-id/...`, not `ttyACM*`.
 - **To see whether the radio really transmits, watch the `air:` line** (`CONFIG_ZLRS_APP_STATS_LOG=y`): `ctl_tx` and `data_tx` count only transactions that finished, `fail` counts the failures. With a single board the only thing that goes on air is pairing: after `pair` on the config port a `PAIR_REQ` leaves every 100 ms for a 30 s window, so `ctl_tx` should climb to about 300 with `fail` at 0.
-- **Do not read the console with `cat`**: it goes quiet after a moment and it turns on tty echo, which feeds the device's own log back in as shell input. Read continuously with pyserial instead (a small tool of your own outside `scripts/`).
+- **Do not read the console with `cat`**: it goes quiet after a moment and it turns on tty echo, which feeds the device's own log back in as shell input. Read continuously with pyserial instead (a small tool of your own outside `tools/`).
 - **Over USB/IP forwarding** (usbipd) the CDC's DTR may never arrive, so endpoint choice falls back to "host bytes seen"; `zlrs ports` shows `ready/active/rx_total` for both endpoints when that needs chasing.
 - **Under usbipd a re-enumerating device disappears from WSL entirely** (`/dev/serial/by-id/` goes away): this happens when the application resets into the bootloader or reboots after a slot swap. Re-attach from the Windows side (detach then attach to WSL) and carry on; the update tool stops at "waiting for the recovery or application port", and once the device is back `--recovery-port <port> --no-trigger` continues without starting over.
 - **Radio numbers** (callback latency, frequency-switch cost, packet error rate, throughput) can only be measured on the board, and Semtech's `packet_error_rate_flrc` sample is a ready-made baseline.

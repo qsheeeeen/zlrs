@@ -60,7 +60,7 @@ Config mode is entered by a command the config tool sends on the config CDC; det
 | Without a bootloader | hold BOOTSEL and drag `zephyr.uf2` on, or use SWD | the same |
 | With MCUboot | two BOOTSEL rounds: the bootloader, then `zephyr.signed.uf2` | trigger recovery from the application and upload a signed image with `smpmgr` |
 
-One command upgrades it: `python3 scripts/zlrs-update.py --port /dev/ttyACM1`.
+One command upgrades it: `python3 tools/zlrs-update.py --port /dev/ttyACM1`.
 
 ## 5. Wiring and placement
 

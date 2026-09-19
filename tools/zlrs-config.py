@@ -4,9 +4,9 @@
 #
 # zlrs config tool: talks to the device over the dedicated config CDC.
 #
-#   scripts/zlrs-config.py --port /dev/ttyACM2 status
-#   scripts/zlrs-config.py --port /dev/ttyACM2 set-phrase "correct horse battery staple"
-#   scripts/zlrs-config.py --self-test          # no device: frame byte-for-byte against the C side
+#   tools/zlrs-config.py --port /dev/ttyACM2 status
+#   tools/zlrs-config.py --port /dev/ttyACM2 set-phrase "correct horse battery staple"
+#   tools/zlrs-config.py --self-test          # no device: frame byte-for-byte against the C side
 #
 # Except for `enter`, every command first sends enter-config-mode and waits for the ACK.
 # The three USB CDCs are CRSF, data port and config port (/dev/ttyACM0/1/2).

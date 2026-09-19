@@ -179,4 +179,4 @@ Command set (covering every user parameter, see [08-firmware](08-firmware.md) 3)
 
 Every command gets an `ACK` (the command plus a status code) or a `STATUS`; bad parameters, failed writes and unknown commands all report their own status. Two security-related rules: **the passphrase derivation is fixed on the device**, and **config mode can only be entered from the config CDC** (debug builds also allow the shell on the console, see [12-debug](12-debug.md)).
 
-The repository ships a minimal command-line tool, `scripts/zlrs-config.py` (`--self-test` checks its framing against the firmware); any third-party tool that speaks the same framing works.
+The repository ships a minimal command-line tool, `tools/zlrs-config.py` (`--self-test` checks its framing against the firmware); any third-party tool that speaks the same framing works.

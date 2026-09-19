@@ -35,7 +35,7 @@ config ZLRS_USB_PRODUCT
 	default "ZLRS"
 	help
 	  The update tool finds its ports by name in /dev/serial/by-id: the application is "ZLRS",
-	  the bootloader is "ZLRS MCUBOOT" (see scripts/zlrs-update.py).
+	  the bootloader is "ZLRS MCUBOOT" (see tools/zlrs-update.py).
 
 config ZLRS_USB_MAX_POWER
 	int "USB bMaxPower (units of 2 mA)"

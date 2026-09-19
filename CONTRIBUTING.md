@@ -12,8 +12,8 @@ The workspace is a west T2 workspace: this repository is the manifest
 repository.
 
 ```shell
-scripts/setup-zephyr.sh          # once; pulls ~5 GB of Zephyr and its modules
-source scripts/zephyr-env.sh     # once per shell
+tools/setup-zephyr.sh          # once; pulls ~5 GB of Zephyr and its modules
+source tools/zephyr-env.sh     # once per shell
 zlrs-build                       # plain build, HF SKU by default
 ZLRS_BOARD=rp2350_zero_core2021/rp2350a/m33/lf zlrs-build -d build-lf
 zlrs-build-mcuboot               # application plus MCUboot (sysbuild)
@@ -47,8 +47,8 @@ done
 With a board attached:
 
 ```shell
-python3 scripts/zlrs-bringup.py            # USB, config mode, config protocol, NVS
-python3 scripts/zlrs-update.py --image <signed.bin>   # A/B update with rollback
+python3 tools/zlrs-bringup.py            # USB, config mode, config protocol, NVS
+python3 tools/zlrs-update.py --image <signed.bin>   # A/B update with rollback
 ```
 
 ## Style

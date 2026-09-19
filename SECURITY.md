@@ -7,7 +7,7 @@
   `docs/design/10-security.md`).
 - The configuration channel and the update path (A/B slots, rollback, image
   confirmation).
-- The host tools in `scripts/` when they handle key material or images.
+- The host tools in `tools/` when they handle key material or images.
 
 Out of scope, by design, and documented as such:
 
