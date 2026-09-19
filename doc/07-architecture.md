@@ -74,11 +74,11 @@ Rough numbers: 40% of a 6.67 ms frame for the 2.4G data link is about 650 bytes 
 ```
 include/zlrs/proto/   protocol core headers
 lib/proto/            protocol core: framing, reassembly, FHSS hop tables,
-                                            key derivation and tags. On target the crypto primitives go
-                                            through PSA (lib/proto/crypto_psa.c); the host tests use
-                                            an equivalent pure C implementation (tests/host/crypto_soft.c)
+                      key derivation and tags. On target the crypto primitives go
+                      through PSA (lib/proto/crypto_psa.c); the host tests use
+                      an equivalent pure C implementation (tests/host/crypto_soft.c)
 lib/link/             link layer: sessions and pairing, key derivation and tags,
-                                            frames into RAC transactions, reliable retransmit and rate adaptation
+                      frames into RAC transactions, reliable retransmit and rate adaptation
 lib/crsf/             CRSF codec: RC channel frames and the link statistics frame
 lib/config/           config protocol: framing and dispatch (storage goes to the app by callback)
 lib/region/           region layer: channel plans, power ceilings, duty accounting
