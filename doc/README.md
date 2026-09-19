@@ -1,48 +1,48 @@
-# 文档索引
+# Documentation index
 
-文档分成四块：**产品设计**（需求：要做什么、做到什么程度）、**硬件**、**软件**（这两块是实现）、**开发**（调试与计划）。编号即阅读顺序；每份文档只拥有一类事实，别处只链接。
+The documentation has four parts: **product design** (requirements: what to build and how far to take it), **hardware** and **software** (the implementation), and **development** (debugging and planning). The numbering is the reading order; every document owns one kind of fact and other places link to it.
 
-写作约定：
+Writing rules:
 
-- 只描述**最终形态**。没定下来的地方留白，不写"待确认 / 草稿 / TBD"；过程与进度一律进 [13-roadmap](13-roadmap.md)。
-- 面向使用者：调试相关的内容集中在 [12-debug](12-debug.md)，其它文档不出现。
-- 引脚、别名、分区数字只在[板级 README](../boards/zlrs/rp2350_zero_core2021/README.md) 定义，别处引用。
+- Describe the **final shape** only. Undecided parts stay blank; no "TBD", no drafts. Process and progress belong in [13-roadmap](13-roadmap.md).
+- Written for users: debugging material lives in [12-debug](12-debug.md) and nowhere else.
+- Pins, aliases and partition numbers are defined once in the [board README](../boards/zlrs/rp2350_zero_core2021/README.md); elsewhere only referenced.
 
-## 一、产品设计（需求）
+## 1. Product design (requirements)
 
-| 文档 | 范围 |
+| Document | Scope |
 | --- | --- |
-| [01-product](01-product.md) | 定位、三种链路形态与场景、距离 × 速率目标、性能指标、边界 |
-| [02-vs-elrs](02-vs-elrs.md) | 与 ExpressLRS 的关系：参考了什么、对立在哪 |
+| [01-product](01-product.md) | positioning, the three link shapes and their scenarios, distance x rate targets, performance figures, boundaries |
+| [02-vs-elrs](02-vs-elrs.md) | the relationship with ExpressLRS: what it borrows, where it differs |
 
-## 二、硬件（实现）
+## 2. Hardware (implementation)
 
-| 文档 | 范围 |
+| Document | Scope |
 | --- | --- |
-| [03-platform](03-platform.md) | 目标硬件形态、板级、构建目标、工具链、分区与烧录 |
-| [04-prototype](04-prototype.md) | 现在的原型：两个模块 + USB，按键用杜邦线模拟 |
-| [05-carrier](05-carrier.md) | 载板：USB + 按键 + 两路 6P 串口 + 电源 |
-| [06-radio](06-radio.md) | LR2021 参数摘要 |
+| [03-platform](03-platform.md) | target hardware shape, board, build targets, toolchain, partitions and flashing |
+| [04-prototype](04-prototype.md) | today's prototype: two modules plus USB, button faked with a jumper wire |
+| [05-carrier](05-carrier.md) | the carrier board: USB, button, two 6P serial ports, power |
+| [06-radio](06-radio.md) | LR2021 parameter summary |
 
-## 三、软件（实现）
+## 3. Software (implementation)
 
-| 文档 | 范围 |
+| Document | Scope |
 | --- | --- |
-| [07-architecture](07-architecture.md) | 两条链路、频段角色、分时、时序预算、分层、线程 |
-| [08-firmware](08-firmware.md) | 端口与端点、工作模式、运行期配置、裁剪、错误处理约定 |
-| [09-protocol](09-protocol.md) | 帧格式、链路状态机、会话、同步、可靠传输、跳频与法规 |
-| [10-security](10-security.md) | 身份与密钥、配对、威胁模型、配置协议 |
-| [11-ux](11-ux.md) | 按键语义与状态灯 |
+| [07-architecture](07-architecture.md) | the two links, band roles, time sharing, timing budget, layering, threads |
+| [08-firmware](08-firmware.md) | ports and endpoints, operating modes, runtime configuration, trimming, error handling |
+| [09-protocol](09-protocol.md) | frame format, link state machine, sessions, sync, reliable transfer, hopping and regulation |
+| [10-security](10-security.md) | identity and keys, pairing, threat model, the config protocol |
+| [11-ux](11-ux.md) | button semantics and the status LED |
 
-## 四、开发
+## 4. Development
 
-| 文档 | 范围 |
+| Document | Scope |
 | --- | --- |
-| [12-debug](12-debug.md) | debug overlay、分层调试开关、上板调试方法 |
-| [13-roadmap](13-roadmap.md) | 待办与验收标准 |
+| [12-debug](12-debug.md) | debug overlay, layered bench switches, on-target debugging |
+| [13-roadmap](13-roadmap.md) | to-dos and acceptance criteria |
 
-## 阅读路径
+## Reading paths
 
-- 想把它用起来：[README](../README.md) → [04-prototype](04-prototype.md) → [11-ux](11-ux.md)
-- 想改固件：[01-product](01-product.md) → [07-architecture](07-architecture.md) → [08-firmware](08-firmware.md) → [09-protocol](09-protocol.md)
-- 想了解设计取舍：[01-product](01-product.md) → [02-vs-elrs](02-vs-elrs.md) → [07-architecture](07-architecture.md) → [09-protocol](09-protocol.md) → [10-security](10-security.md)
+- To use it: [README](../README.md) -> [04-prototype](04-prototype.md) -> [11-ux](11-ux.md)
+- To change the firmware: [01-product](01-product.md) -> [07-architecture](07-architecture.md) -> [08-firmware](08-firmware.md) -> [09-protocol](09-protocol.md)
+- To understand the trade-offs: [01-product](01-product.md) -> [02-vs-elrs](02-vs-elrs.md) -> [07-architecture](07-architecture.md) -> [09-protocol](09-protocol.md) -> [10-security](10-security.md)
