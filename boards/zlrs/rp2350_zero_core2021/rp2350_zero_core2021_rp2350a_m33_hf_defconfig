@@ -1,6 +1,5 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# This variant adds nothing at board level: the default region comes from the SKU through
-# ZLRS_APP_REGION in app/Kconfig (see the note there: the bootloader image reads this same
-# defconfig, so application symbols do not belong here).
+# This variant adds nothing at board level: the SKU difference (band, frequency range,
+# calibration, default region) lives in devicetree, see rp2350_zero_core2021_hf.dtsi.

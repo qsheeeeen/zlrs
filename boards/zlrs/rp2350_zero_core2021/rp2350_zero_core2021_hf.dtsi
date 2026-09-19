@@ -22,6 +22,7 @@
 		band = <1>;
 		low-hz = <850000000>;
 		high-hz = <930000000>;
+		default-region = <0>; /* FCC915 */
 	};
 };
 

@@ -37,6 +37,8 @@
 #define ZLRS_RF_BAND DT_PROP(DT_NODELABEL(zlrs_rf), band)
 #define ZLRS_RF_LOW_HZ DT_PROP(DT_NODELABEL(zlrs_rf), low_hz)
 #define ZLRS_RF_HIGH_HZ DT_PROP(DT_NODELABEL(zlrs_rf), high_hz)
+/* Region a fresh board boots with; the config protocol overwrites it in NVS */
+#define ZLRS_DEFAULT_REGION DT_PROP(DT_NODELABEL(zlrs_rf), default_region)
 #define ZLRS_RF_DESIGN                                                                             \
 	(&(const zlrs_rf_design_t){                                                                \
 		.band = ZLRS_RF_BAND, .low_hz = ZLRS_RF_LOW_HZ, .high_hz = ZLRS_RF_HIGH_HZ})

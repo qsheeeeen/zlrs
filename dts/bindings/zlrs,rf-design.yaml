@@ -28,3 +28,12 @@ properties:
     type: int
     required: true
     description: Highest frequency this radio design is built for
+
+  default-region:
+    type: int
+    required: true
+    description: |
+      Region used until NVS holds one (0 = FCC915, 1 = EU868, 2 = CN470, 3 =
+      CN433). It is a board property, not a product decision: the region is
+      runtime configuration, this is only the value a fresh board boots with.
+    enum: [0, 1, 2, 3]

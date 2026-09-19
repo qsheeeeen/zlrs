@@ -30,7 +30,7 @@ Each link has two endpoints (UART and USB CDC); the rule that picks one and the 
 
 The Core2021's sub-G comes in **two different SKUs** with different PA networks and bands, so the board has two variants (one code base, differing in dtsi and default region):
 
-| Target | sub-G hardware | Regions (`CONFIG_ZLRS_APP_REGION`) | Default |
+| Target | sub-G hardware | Regions this design accepts | Default (`default-region`) |
 | --- | --- | --- | --- |
 | `.../rp2350a/m33/hf` | HF: 850-930 MHz | FCC915 (0), EU868 (1) | FCC915 |
 | `.../rp2350a/m33/lf` | LF: 410-510 MHz | CN470 (2), CN433 (3) | CN470 |

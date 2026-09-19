@@ -28,7 +28,7 @@
 #include <zephyr/storage/flash_map.h>
 #endif
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_SHELL)
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_SHELL)
 #include <zephyr/shell/shell.h>
 #endif
 
@@ -907,7 +907,7 @@ static void report(uint32_t now_ms)
 	 * The once-a-second status lines: on for bench work (one glance says what the link is doing),
 	 * off in production. This only gates the logging; the 1 Hz rate and power verdicts are separate.
 	 */
-	if (!IS_ENABLED(CONFIG_ZLRS_APP_STATS_LOG)) {
+	if (!IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)) {
 		return;
 	}
 
@@ -1191,7 +1191,7 @@ static const zlrs_config_ops_t cfg_ops = {
 };
 #endif /* CONFIG_ZLRS_APP_CONFIG_MODE */
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_SHELL)
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_SHELL)
 static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(argc);
@@ -1367,7 +1367,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 	SHELL_SUBCMD_SET_END);
 
 SHELL_CMD_REGISTER(zlrs, &zlrs_cmds, "zlrs debug commands", NULL);
-#endif /* CONFIG_ZLRS_APP_SHELL */
+#endif /* CONFIG_ZLRS_APP_DEBUG_SHELL */
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_ENTROPY_TRNG)
 /*
@@ -1405,11 +1405,14 @@ static int entropy_selftest(void)
 
 int main(void)
 {
-	/* Bench switch: USB is up, so wait for the host to open the console port — otherwise any
-	 * panic log lands on a port nobody has open. Production builds use 0. */
-	if (CONFIG_ZLRS_APP_BOOT_DELAY_MS > 0) {
-		k_msleep(CONFIG_ZLRS_APP_BOOT_DELAY_MS);
+	/* Debug image only (gated in Kconfig, so the symbol does not exist in production builds):
+	 * USB is up, so wait for the host to open the console port — otherwise a panic log lands
+	 * on a port nobody has open. */
+#ifdef CONFIG_ZLRS_APP_DEBUG_BOOT_DELAY_MS
+	if (CONFIG_ZLRS_APP_DEBUG_BOOT_DELAY_MS > 0) {
+		k_msleep(CONFIG_ZLRS_APP_DEBUG_BOOT_DELAY_MS);
 	}
+#endif
 
 	LOG_INF("zlrs %s", APP_VERSION_STRING);
 
@@ -1476,9 +1479,10 @@ int main(void)
 
 	/*
 	 * Region and power ceiling are runtime parameters (the config protocol writes them): use the
-	 * stored value when present, the build-time default otherwise. cfg_op_save_region validates.
+	 * stored value when present, the board's own default otherwise (app/src/caps.h).
+	 * cfg_op_save_region validates whatever it is asked to store.
 	 */
-	region_id = CONFIG_ZLRS_APP_REGION;
+	region_id = ZLRS_DEFAULT_REGION;
 	tx_power_dbm = CONFIG_ZLRS_APP_TX_POWER_DBM;
 	{
 		uint8_t stored_region;

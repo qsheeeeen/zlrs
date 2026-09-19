@@ -1,8 +1,9 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# Board-wide defaults, shared by every target (bare, hf, lf); each variant's _defconfig
-# only carries its own difference, which today is the default region.
+# Board-wide defaults, shared by every target (bare, hf, lf). The variants add nothing
+# here: what makes hf and lf different is devicetree (the `zlrs_rf` radio design, including
+# the region a fresh board boots with).
 
 if BOARD_RP2350_ZERO_CORE2021
 

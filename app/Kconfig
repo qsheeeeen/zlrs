@@ -9,6 +9,17 @@ endmenu
 
 menu "zlrs"
 
+
+config ZLRS_APP_DEBUG
+	bool "Development image (never ship this)"
+	help
+	  Marks an image built for the bench: it allows the ZLRS_APP_DEBUG_* options below, and
+	  nothing that depends on it belongs in a production image. app/debug.conf sets it; the
+	  configs that produce shipped images (app/prj.conf, boards/) must not mention it (CI gate).
+	  See doc/12-debug.md 1.
+
+menu "Hardware and product shape"
+
 config ZLRS_APP_CORE
 	def_bool y
 	select ZLRS_PROTO
@@ -25,133 +36,6 @@ config ZLRS_APP_ROLE_TX
 	default y
 	help
 	  The TX sends control frames and receives telemetry, the RX does the opposite. Both ends run
-
-config ZLRS_APP_REGION
-	int "Region (0 = FCC915, 1 = EU868, 2 = CN470, 3 = CN433)"
-	# The default follows the board SKU: HF modules run 868/915, LF modules run 470/433.
-	# This lives here rather than in the board defconfig because the bootloader image reads
-	# the same board defconfig while ZLRS_APP_* symbols exist only in the application
-	# (assigning them in the bootloader would be an undefined-symbol warning).
-	default 2 if BOARD_RP2350_ZERO_CORE2021_RP2350A_M33_LF
-	default 2 if BOARD_RP2350_ZERO_CORE2021_RP2350A_M33_LF_MCUBOOT
-	default 0
-	range 0 3
-	help
-	  The region picks the control link's band, power ceiling and duty cap (doc/09-protocol.md
-	  5.2 and core/region): EU868 caps duty at 1%, FCC915 and CN470 do not.
-	  HF SKUs accept 0/1, LF SKUs accept 2/3; a mismatch trips the boot check, shows red and
-	  keeps the radio off: regulatory settings do not get to be approximate.
-
-config ZLRS_APP_TX_POWER_DBM
-	int "TX power (dBm)"
-	default 10
-	range -10 22
-
-choice ZLRS_APP_SECURITY_PROFILE
-	prompt "Over-the-air security profile"
-	default ZLRS_APP_SECURITY_PROFILE_P1
-	help
-	  P1 is the production profile: a 4-byte tag on every frame. P0 carries no tag and is for
-	  the bench only. See doc/10-security.md 8.
-
-config ZLRS_APP_SECURITY_PROFILE_P0
-	bool "P0: no tag (debug only)"
-
-config ZLRS_APP_SECURITY_PROFILE_P1
-	bool "P1: 4-byte tag (default)"
-
-endchoice
-
-config ZLRS_APP_FHSS
-	bool "Per-frame frequency hopping"
-	default y
-	help
-	  With this off every frame stays on the sync channel (entry 0 of the hop table), which is
-	  how bring-up separates timing from the hop table. A fixed channel does not satisfy the
-	  FCC 15.247 hopping rules, so bench only, see doc/09-protocol.md 5.2.
-
-config ZLRS_APP_SESSION_HANDSHAKE
-	bool "Session handshake (fresh key per session)"
-	default y
-	help
-	  Off: the pairing-level link_auth doubles as the session key. The RX counts a SYNC as
-	  established and reports back with SESS_RESP, saving a derivation and one confirm message.
-	  The cost is no per-session key rotation: recorded frames stay replayable across sessions.
-	  Bench only, see doc/10-security.md 3.
-
-config ZLRS_APP_TELEMETRY
-	bool "Uplink telemetry on the control link"
-	default y
-	help
-	  Off: the RX sends no telemetry in the uplink slot and the TX opens no receive window, so
-	  the control link degrades to downlink RC only, which is how the RC path gets proven
-	  first. The TX peer-loss check goes with it, or it would rebuild the session with nothing to hear.
-
-config ZLRS_APP_RESYNC_PERIOD_MS
-	int "Periodic SYNC interval while connected (ms, 0 = off)"
-	default 5000
-	range 0 10000
-	help
-	  Once connected, send a SYNC on the sync channel this often: the peer re-aligns its hop
-	  index (crystal drift accumulates into missed hops) and spots a peer reboot or re-pair.
-	  See doc/09-protocol.md 3.6. Converted to frames, at least one.
-
-config ZLRS_APP_STATS_LOG
-	bool "Status lines once a second on the console (bench debugging)"
-	default n
-	help
-	  A few lines a second: frame counters, air-side counters and transaction failures, CRSF and
-	  data port drops, LQ, region and duty, dynamic power. On for the bench, off in production
-	  (it is noise). Logging only: the 1 Hz rate and power verdicts are unaffected.
-
-config ZLRS_APP_BOOT_DELAY_MS
-	int "Wait after USB comes up before continuing init (ms, 0 = no wait)"
-	default 0
-	range 0 30000
-	help
-	  Bench only: give the host time to open the console port (a CDC only transmits once the
-	  host has opened it), so a panic during init is actually visible. Keep 0 in production.
-
-config ZLRS_APP_WATCHDOG
-	bool "Watchdog: reset on a crash or a stuck loop (helps rollback, is not rollback)"
-	default n
-	depends on WATCHDOG
-	help
-	  Armed in PRE_KERNEL_1 (app/src/watchdog.c); feeding happens in the blocking loops, so a
-	  stuck main loop counts as dead too. It only turns a hang into a reset; the rollback verdict
-	  is the image confirm bit (ZLRS_APP_MCUBOOT_CONFIRM). This saves reaching for BOOTSEL.
-
-config ZLRS_APP_WATCHDOG_TIMEOUT_MS
-	int "Watchdog timeout (ms)"
-	default 8000
-	range 100 10000
-	depends on ZLRS_APP_WATCHDOG
-	help
-	  Has to cover the slowest feed interval (PBKDF2 inside config mode) without being too long.
-
-config ZLRS_APP_MCUBOOT_CONFIRM
-	bool "Host confirms the image after an upgrade (MCUboot test/revert rollback)"
-	default y
-	depends on BOOTLOADER_MCUBOOT
-	# The choice under IMG_MANAGER has a single entry (MCUBOOT_IMG_MANAGER); a choice
-	# symbol cannot be selected, so enabling IMG_MANAGER is what picks it
-	select STREAM_FLASH
-	select IMG_MANAGER
-	help
-	  Upgrades run with test semantics: a new image starts unconfirmed and only an explicit,
-	  well-formed confirm command from the host, answered by the device, makes the application
-	  call boot_write_img_confirmed(). No confirm means a reset and rollback; an image that never
-	  comes up rolls back the same way, and with nothing to roll back to MCUboot stays in serial
-	  recovery, which is still flashable. See doc/08-firmware.md 6.
-
-config ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS
-	int "Host confirm timeout (ms)"
-	default 60000
-	range 0 600000
-	depends on ZLRS_APP_MCUBOOT_CONFIRM
-	help
-	  No valid confirm command within this window means a reset and rollback. Leave enough time
-	  for USB enumeration plus the tool. 0 = no wait (a host has to confirm immediately).
 
 config ZLRS_APP_RADIO
 	bool "Radio (USP/RAC + LR2021)"
@@ -187,26 +71,6 @@ config ZLRS_APP_CONFIG_MODE
 	default y
 	select ZLRS_CONFIG
 
-config ZLRS_APP_SHELL
-	bool "Debug shell on the console CDC"
-	default n
-	select SHELL
-	select SHELL_BACKEND_SERIAL
-	help
-	  Opens a shell on the console port: `zlrs status` / `zlrs ports` / `zlrs config` /
-	  `zlrs recovery`. Bench debugging only, off in production.
-
-config ZLRS_APP_PAIRING_BUTTON
-	bool "Long press the button to pair"
-	default y
-	help
-	  Off: the button is unused entirely and pairing can only come from the config tool.
-
-config ZLRS_APP_STATUS_LED
-	bool "Status LED"
-	default y
-	select ZLRS_LED
-
 config ZLRS_APP_UPDATE_TRIGGER
 	bool "Config protocol can enter MCUboot serial recovery"
 	default y
@@ -222,6 +86,76 @@ config ZLRS_APP_UPDATE_TRIGGER
 	  `zlrs recovery` takes the same path. See doc/08-firmware.md 6.
 
 	  Production builds may turn it off; then only the boot window after a reset gets you in.
+
+config ZLRS_APP_PAIRING_BUTTON
+	bool "Long press the button to pair"
+	default y
+	help
+	  Off: the button is unused entirely and pairing can only come from the config tool.
+
+config ZLRS_APP_STATUS_LED
+	bool "Status LED"
+	default y
+	select ZLRS_LED
+
+config ZLRS_APP_ENTROPY_TRNG
+	bool "RP2350 hardware TRNG as the entropy source (zlrs driver)"
+	default y
+	select ZLRS_RP2350_TRNG
+	help
+	  The driver lives in drivers/entropy: probe resets and pre-fetches, reads come from a small
+	  pool, interrupts stay on, waits are bounded and failures are reported, never papered over.
+	  Zephyr's ENTROPY_RPI_PICO_RNG is unusable here: pico-sdk spins with interrupts off and USB dies.
+	  See doc/13-roadmap.md.
+
+config ZLRS_APP_MCUBOOT_CONFIRM
+	bool "Host confirms the image after an upgrade (MCUboot test/revert rollback)"
+	default y
+	depends on BOOTLOADER_MCUBOOT
+	# The choice under IMG_MANAGER has a single entry (MCUBOOT_IMG_MANAGER); a choice
+	# symbol cannot be selected, so enabling IMG_MANAGER is what picks it
+	select STREAM_FLASH
+	select IMG_MANAGER
+	help
+	  Upgrades run with test semantics: a new image starts unconfirmed and only an explicit,
+	  well-formed confirm command from the host, answered by the device, makes the application
+	  call boot_write_img_confirmed(). No confirm means a reset and rollback; an image that never
+	  comes up rolls back the same way, and with nothing to roll back to MCUboot stays in serial
+	  recovery, which is still flashable. See doc/08-firmware.md 6.
+
+config ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS
+	int "Host confirm timeout (ms)"
+	default 60000
+	range 0 600000
+	depends on ZLRS_APP_MCUBOOT_CONFIRM
+	help
+	  No valid confirm command within this window means a reset and rollback. Leave enough time
+	  for USB enumeration plus the tool. 0 = no wait (a host has to confirm immediately).
+
+
+endmenu
+
+menu "Runtime defaults and link parameters"
+
+config ZLRS_APP_TX_POWER_DBM
+	int "TX power (dBm)"
+	default 10
+	range -10 22
+
+choice ZLRS_APP_SECURITY_PROFILE
+	prompt "Over-the-air security profile"
+	default ZLRS_APP_SECURITY_PROFILE_P1
+	help
+	  P1 is the production profile: a 4-byte tag on every frame. P0 carries no tag and is for
+	  the bench only. See doc/10-security.md 8.
+
+config ZLRS_APP_SECURITY_PROFILE_P0
+	bool "P0: no tag (debug only)"
+
+config ZLRS_APP_SECURITY_PROFILE_P1
+	bool "P1: 4-byte tag (default)"
+
+endchoice
 
 choice ZLRS_APP_BAND_ROLE
 	prompt "Band role"
@@ -273,6 +207,30 @@ config ZLRS_APP_RACING_CONTROL_RATE_HZ
 	  2.4G frames can be denser (500 by default), but the superframe still has to fit the two
 	  data windows that moved to sub-G (see doc/07-architecture.md 2).
 
+config ZLRS_APP_CONTROL_RATE_BPS
+	int "Control link rate (bps)"
+	default 1300000
+	depends on ZLRS_APP_CONTROL_MODULATION_FLRC
+
+config ZLRS_APP_CONTROL_RATE_HZ
+	int "Control link frame rate (Hz)"
+	default 150
+	range 50 500
+	depends on ZLRS_APP_CONTROL_MODULATION_FLRC
+	help
+	  150 = general tier (long range, default), 500 = close-in racing.
+	  At 500 Hz each slot has only a few hundred microseconds and only unlimited-duty regions
+	  can sustain it; the effective rate is clamped by the duty cap (core/region, 09-protocol 4.1).
+	  The 500 Hz ceiling is architectural: RAC schedules in whole milliseconds, higher needs burst.
+
+config ZLRS_APP_DATA_RATE_BPS
+	int "Data link rate (bps)"
+	default 2600000
+
+config ZLRS_APP_FLRC_PREAMBLE_BITS
+	int "FLRC preamble length (bits)"
+	default 32
+
 config ZLRS_APP_LORA_CONTROL_RATE_HZ
 	int "LoRa control frame rate (Hz)"
 	default 10
@@ -305,33 +263,18 @@ config ZLRS_APP_CONTROL_LORA_PREAMBLE
 	range 4 32
 	depends on ZLRS_APP_CONTROL_MODULATION_LORA
 
-config ZLRS_APP_CONTROL_RATE_BPS
-	int "Control link rate (bps)"
-	default 1300000
-	depends on ZLRS_APP_CONTROL_MODULATION_FLRC
+config ZLRS_APP_TLM_PERIOD_MS
+	int "RX telemetry period (ms)"
+	default 100
 
-config ZLRS_APP_CONTROL_RATE_HZ
-	int "Control link frame rate (Hz)"
-	default 150
-	range 50 500
-	depends on ZLRS_APP_CONTROL_MODULATION_FLRC
+config ZLRS_APP_RESYNC_PERIOD_MS
+	int "Periodic SYNC interval while connected (ms, 0 = off)"
+	default 5000
+	range 0 10000
 	help
-	  150 = general tier (long range, default), 500 = close-in racing.
-	  At 500 Hz each slot has only a few hundred microseconds and only unlimited-duty regions
-	  can sustain it; the effective rate is clamped by the duty cap (core/region, 09-protocol 4.1).
-	  The 500 Hz ceiling is architectural: RAC schedules in whole milliseconds, higher needs burst.
-
-config ZLRS_APP_DATA_RATE_BPS
-	int "Data link rate (bps)"
-	default 2600000
-
-config ZLRS_APP_FLRC_PREAMBLE_BITS
-	int "FLRC preamble length (bits)"
-	default 32
-
-config ZLRS_APP_ROOT_KEY_HEX
-	string "Root key (64 hex characters, empty = read from NVS)"
-	default ""
+	  Once connected, send a SYNC on the sync channel this often: the peer re-aligns its hop
+	  index (crystal drift accumulates into missed hops) and spots a peer reboot or re-pair.
+	  See doc/09-protocol.md 3.6. Converted to frames, at least one.
 
 config ZLRS_APP_CRSF_TIMEOUT_MS
 	int "Timeout before the TX switches to failsafe values (ms)"
@@ -340,15 +283,58 @@ config ZLRS_APP_CRSF_TIMEOUT_MS
 	  With the handset unplugged or powered off, the TX swaps in the preset failsafe payload
 	  when no RC frame arrives within this window. See doc/09-protocol.md 3.4.
 
-config ZLRS_APP_TLM_PERIOD_MS
-	int "RX telemetry period (ms)"
-	default 100
-
 config ZLRS_APP_CONFIG_TIMEOUT_S
 	int "Config mode idle timeout (s)"
 	default 300
 	help
 	  Config mode exits after this long without a command, see doc/08-firmware.md 2.
+
+config ZLRS_APP_PAIR_HOLD_MS
+	int "Hold time needed to start pairing (ms)"
+	default 1000
+	help
+	  The button has exactly one action: holding it this long starts pairing (doc/11-ux.md).
+	  There is no press-and-hold-at-boot gesture; config mode comes from the config port.
+
+config ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM
+	int "Dynamic power floor (dBm)"
+	default 0
+	range -10 22
+	depends on ZLRS_APP_DYNAMIC_POWER
+
+config ZLRS_APP_ROOT_KEY_HEX
+	string "Root key (64 hex characters, empty = read from NVS)"
+	default ""
+
+
+endmenu
+
+menu "Pending acceptance (see doc/13-roadmap.md)"
+
+config ZLRS_APP_FHSS
+	bool "Per-frame frequency hopping"
+	default y
+	help
+	  With this off every frame stays on the sync channel (entry 0 of the hop table), which is
+	  how bring-up separates timing from the hop table. A fixed channel does not satisfy the
+	  FCC 15.247 hopping rules, so bench only, see doc/09-protocol.md 5.2.
+
+config ZLRS_APP_SESSION_HANDSHAKE
+	bool "Session handshake (fresh key per session)"
+	default y
+	help
+	  Off: the pairing-level link_auth doubles as the session key. The RX counts a SYNC as
+	  established and reports back with SESS_RESP, saving a derivation and one confirm message.
+	  The cost is no per-session key rotation: recorded frames stay replayable across sessions.
+	  Bench only, see doc/10-security.md 3.
+
+config ZLRS_APP_TELEMETRY
+	bool "Uplink telemetry on the control link"
+	default y
+	help
+	  Off: the RX sends no telemetry in the uplink slot and the TX opens no receive window, so
+	  the control link degrades to downlink RC only, which is how the RC path gets proven
+	  first. The TX peer-loss check goes with it, or it would rebuild the session with nothing to hear.
 
 config ZLRS_APP_DATA_ARQ
 	bool "Reliable data transfer (ARQ)"
@@ -383,30 +369,58 @@ config ZLRS_APP_DYNAMIC_POWER
 	  back up. Losing telemetry means the ceiling (the other end is probably gone). Evaluated
 	  once a second; thresholds and hysteresis live in core/link/power.c and wait for measurements.
 
-config ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM
-	int "Dynamic power floor (dBm)"
-	default 0
-	range -10 22
-	depends on ZLRS_APP_DYNAMIC_POWER
-
-config ZLRS_APP_PAIR_HOLD_MS
-	int "Hold time needed to start pairing (ms)"
-	default 1000
+config ZLRS_APP_WATCHDOG
+	bool "Watchdog: reset on a crash or a stuck loop (helps rollback, is not rollback)"
+	default n
+	depends on WATCHDOG
 	help
-	  The button has exactly one action: holding it this long starts pairing (doc/11-ux.md).
-	  There is no press-and-hold-at-boot gesture; config mode comes from the config port.
+	  Armed in PRE_KERNEL_1 (app/src/watchdog.c); feeding happens in the blocking loops, so a
+	  stuck main loop counts as dead too. It only turns a hang into a reset; the rollback verdict
+	  is the image confirm bit (ZLRS_APP_MCUBOOT_CONFIRM). This saves reaching for BOOTSEL.
 
+config ZLRS_APP_WATCHDOG_TIMEOUT_MS
+	int "Watchdog timeout (ms)"
+	default 8000
+	range 100 10000
+	depends on ZLRS_APP_WATCHDOG
+	help
+	  Has to cover the slowest feed interval (PBKDF2 inside config mode) without being too long.
+
+
+endmenu
+
+menu "Debug image (never in production)"
+	depends on ZLRS_APP_DEBUG
+
+config ZLRS_APP_DEBUG_SHELL
+	bool "Debug shell on the console CDC"
+	default n
+	select SHELL
+	select SHELL_BACKEND_SERIAL
+	help
+	  Opens a shell on the console port: `zlrs status` / `zlrs ports` / `zlrs config` /
+	  `zlrs recovery`. Bench debugging only, off in production.
+
+config ZLRS_APP_DEBUG_STATS_LOG
+	bool "Status lines once a second on the console (bench debugging)"
+	default n
+	help
+	  A few lines a second: frame counters, air-side counters and transaction failures, CRSF and
+	  data port drops, LQ, region and duty, dynamic power. On for the bench, off in production
+	  (it is noise). Logging only: the 1 Hz rate and power verdicts are unaffected.
+
+config ZLRS_APP_DEBUG_BOOT_DELAY_MS
+	int "Wait after USB comes up before continuing init (ms, 0 = no wait)"
+	default 0
+	range 0 30000
+	help
+	  Bench only: give the host time to open the console port (a CDC only transmits once the
+	  host has opened it), so a panic during init is actually visible. Keep 0 in production.
+
+
+endmenu
 endmenu
 
 module = APP
 module-str = app
 source "subsys/logging/Kconfig.template.log_config"
-config ZLRS_APP_ENTROPY_TRNG
-	bool "RP2350 hardware TRNG as the entropy source (zlrs driver)"
-	default y
-	select ZLRS_RP2350_TRNG
-	help
-	  The driver lives in drivers/entropy: probe resets and pre-fetches, reads come from a small
-	  pool, interrupts stay on, waits are bounded and failures are reported, never papered over.
-	  Zephyr's ENTROPY_RPI_PICO_RNG is unusable here: pico-sdk spins with interrupts off and USB dies.
-	  See doc/13-roadmap.md.

@@ -23,6 +23,7 @@
 		band = <0>;
 		low-hz = <410000000>;
 		high-hz = <510000000>;
+		default-region = <2>; /* CN470 */
 	};
 };
 

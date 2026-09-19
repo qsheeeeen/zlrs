@@ -8,7 +8,7 @@ A debug build is a normal build plus two files:
 
 | File | Contents |
 | --- | --- |
-| `app/debug.conf` | enables the console CDC, the shell, the watchdog and the bench switches (see 3) |
+| `app/debug.conf` | sets `CONFIG_ZLRS_APP_DEBUG=y`, then enables the console CDC, the shell and the watchdog (see 3) |
 | `app/debug.overlay` | adds a console CDC to the devicetree (`zephyr,console` / `zephyr,shell-uart`) and fills in the nodes the debug entries need |
 
 Attach them at build time:
@@ -20,13 +20,15 @@ west build -b "$ZLRS_BOARD" "$ZLRS_APP" -- \
 
 Production firmware has no console CDC and no shell; its three CDCs are CRSF, data and config (see [08-firmware](08-firmware.md) 1).
 
+`CONFIG_ZLRS_APP_DEBUG` is the marker for "this image is a development image": the options named `ZLRS_APP_DEBUG_*` depend on it, and shipped configurations (`app/prj.conf`, everything under `boards/`) may not mention it or any `DEBUG_` option. `tools/gates.sh` enforces that, so a bench-only switch cannot quietly end up in a released image.
+
 ## 2. Debug entries
 
 These exist in debug builds only; the supported paths are in [10-security](10-security.md) 10 and [08-firmware](08-firmware.md) 2:
 
 | Entry | How to use it |
 | --- | --- |
-| shell `zlrs config` / `status` / `ports` / `recovery` | gated by `CONFIG_ZLRS_APP_SHELL`, run on the console CDC |
+| shell `zlrs config` / `status` / `ports` / `recovery` | gated by `CONFIG_ZLRS_APP_DEBUG_SHELL`, run on the console CDC |
 
 ## 3. Layered bench switches
 
@@ -43,6 +45,8 @@ Do not bring everything up at once: turn one layer off at a time, and if the res
 | `CONFIG_ZLRS_APP_DYNAMIC_POWER=n` | fixed TX power | `power: *` |
 | `CONFIG_ZLRS_APP_LINK_CONTROL=n` / `ZLRS_APP_LINK_DATA=n` | one link only | compile check (both SKUs are in CI) |
 | `CONFIG_ZLRS_APP_RADIO=n` | the radio sits out (`app/src/radio_null.c`): no USP/RAC init, no transactions, each one finishes at once as "sent, nothing heard"; ports, config, button, LED and NVS work as usual | compile check plus on-board USB, ports and config |
+
+These switches cut *shape*, not a feature that is merely unproven: they are part of the product definition (the shapes in [01-product](01-product.md)) and stay. Features that are on or off only because they have not been accepted on hardware yet are listed as a ledger in [13-roadmap](13-roadmap.md), under "Pending defaults".
 | `CONFIG_ZLRS_APP_CRSF_PORT=n` | the CRSF port stays uninitialised: the TX sends only the configured failsafe values | compile check |
 | `CONFIG_ZLRS_APP_STATUS_LED=n` | no status LED | compile check |
 
@@ -61,9 +65,9 @@ Suggested order: `P0` with hopping, handshake and telemetry off, confirming that
 
   **Radio on with no Core2021 attached means a dark board**: the vendored `lr20xx_hal_wait_on_busy()` spins waiting for BUSY (its `k_usleep` is commented out) with a 600 s default timeout and a `k_oops()` when it expires; it runs on the main thread at the highest priority, so the USB stack never gets the CPU and you see no LED, no USB enumeration and an application reset by the 8 s watchdog over and over. Nothing to do with the application: attach the module and it works.
 - **Leave the watchdog on** while debugging (`CONFIG_ZLRS_APP_WATCHDOG=y`): a bad image resets itself and MCUboot's test/revert rolls it back, parking in serial recovery without touching BOOTSEL.
-- **To catch the boot log** use `CONFIG_ZLRS_APP_BOOT_DELAY_MS` (0 by default): it waits that long after USB is up before continuing init, giving the host time to open the console port. Otherwise a panic during init lands on a port nobody has open and you see nothing.
+- **To catch the boot log** use `CONFIG_ZLRS_APP_DEBUG_BOOT_DELAY_MS` (0 by default): it waits that long after USB is up before continuing init, giving the host time to open the console port. Otherwise a panic during init lands on a port nobody has open and you see nothing.
 - **Find ports by name**: the application is `ZLRS`, the bootloader `ZLRS MCUBOOT`; use `/dev/serial/by-id/...`, not `ttyACM*`.
-- **To see whether the radio really transmits, watch the `air:` line** (`CONFIG_ZLRS_APP_STATS_LOG=y`): `ctl_tx` and `data_tx` count only transactions that finished, `fail` counts the failures. With a single board the only thing that goes on air is pairing: after `pair` on the config port a `PAIR_REQ` leaves every 100 ms for a 30 s window, so `ctl_tx` should climb to about 300 with `fail` at 0.
+- **To see whether the radio really transmits, watch the `air:` line** (`CONFIG_ZLRS_APP_DEBUG_STATS_LOG=y`): `ctl_tx` and `data_tx` count only transactions that finished, `fail` counts the failures. With a single board the only thing that goes on air is pairing: after `pair` on the config port a `PAIR_REQ` leaves every 100 ms for a 30 s window, so `ctl_tx` should climb to about 300 with `fail` at 0.
 - **Do not read the console with `cat`**: it goes quiet after a moment and it turns on tty echo, which feeds the device's own log back in as shell input. Read continuously with pyserial instead (a small tool of your own outside `tools/`).
 - **Over USB/IP forwarding** (usbipd) the CDC's DTR may never arrive, so endpoint choice falls back to "host bytes seen"; `zlrs ports` shows `ready/active/rx_total` for both endpoints when that needs chasing.
 - **Under usbipd a re-enumerating device disappears from WSL entirely** (`/dev/serial/by-id/` goes away): this happens when the application resets into the bootloader or reboots after a slot swap. Re-attach from the Windows side (detach then attach to WSL) and carry on; the update tool stops at "waiting for the recovery or application port", and once the device is back `--recovery-port <port> --no-trigger` continues without starting over.
