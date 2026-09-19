@@ -19,11 +19,8 @@
 
 #include <psa/crypto.h>
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_UPDATE_TRIGGER)
+#if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
 #include <zephyr/retention/bootmode.h>
-#endif
-
-#if IS_ENABLED(CONFIG_ZLRS_APP_MCUBOOT_CONFIRM)
 #include <zephyr/dfu/mcuboot.h>
 #include <zephyr/storage/flash_map.h>
 #endif
@@ -588,7 +585,7 @@ static void run_slot(uint8_t slot)
 	zlrs_radio_port_drain();
 }
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_UPDATE_TRIGGER)
+#if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
 /*
  * Reboot into MCUboot serial recovery: set the boot-mode flag (retained SRAM, survives a reset),
  * which makes MCUboot wait for a signed image. The only entries are the config protocol's
@@ -952,7 +949,7 @@ static void fault_loop(void)
 {
 	zlrs_led_input_t in;
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_MCUBOOT_CONFIRM)
+#if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
 	if (!boot_is_img_confirmed()) {
 		/* Give the host 2 s to read the log or step in, then reset to roll back */
 		LOG_ERR("fault on unconfirmed image: rebooting to roll back");
@@ -1044,7 +1041,7 @@ static void led_tick(uint32_t now_ms)
  */
 static void confirm_image(void)
 {
-#if IS_ENABLED(CONFIG_ZLRS_APP_MCUBOOT_CONFIRM)
+#if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
 	static bool confirmed;
 
 	if (confirmed) {
@@ -1159,7 +1156,7 @@ static int cfg_op_factory_reset(void)
 	return ZLRS_CFG_OK;
 }
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_UPDATE_TRIGGER)
+#if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
 static int cfg_op_recovery(void)
 {
 	enter_serial_recovery(); /* does not return */
@@ -1183,7 +1180,7 @@ static const zlrs_config_ops_t cfg_ops = {
 	.save_power = cfg_op_save_power,
 	.erase_pair = cfg_op_erase_pair,
 	.factory_reset = cfg_op_factory_reset,
-#if IS_ENABLED(CONFIG_ZLRS_APP_UPDATE_TRIGGER)
+#if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
 	.enter_recovery = cfg_op_recovery,
 #endif
 	.region = cfg_op_region,
@@ -1250,7 +1247,7 @@ static int cmd_ports(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_UPDATE_TRIGGER)
+#if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
 static int cmd_recovery(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(argc);
@@ -1355,7 +1352,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 #if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
 	SHELL_CMD(config, NULL, "enter config mode (EXIT returns)", cmd_config),
 #endif
-#if IS_ENABLED(CONFIG_ZLRS_APP_UPDATE_TRIGGER)
+#if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
 	SHELL_CMD(recovery, NULL, "reboot into MCUboot serial recovery", cmd_recovery),
 #endif
 #if IS_ENABLED(CONFIG_ZLRS_APP_ENTROPY_TRNG)

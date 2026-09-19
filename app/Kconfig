@@ -74,22 +74,6 @@ config ZLRS_APP_CONFIG_MODE
 	default y
 	select ZLRS_CONFIG
 
-config ZLRS_APP_UPDATE_TRIGGER
-	bool "Config protocol can enter MCUboot serial recovery"
-	default y
-	depends on BOOTLOADER_MCUBOOT
-	select RETENTION
-	select RETENTION_BOOT_MODE
-	select RETAINED_MEM
-	select REBOOT
-	help
-	  The tool sends a recovery command on the config port; the device sets the boot-mode flag
-	  and reboots into MCUboot serial recovery, waiting for a signed image. That is how a healthy
-	  device gets upgraded without unplugging USB or pressing reset; the debug shell's
-	  `zlrs recovery` takes the same path. See doc/08-firmware.md 6.
-
-	  Production builds may turn it off; then only the boot window after a reset gets you in.
-
 config ZLRS_APP_PAIRING_BUTTON
 	bool "Long press the button to pair"
 	default y
@@ -111,23 +95,10 @@ config ZLRS_APP_ENTROPY_TRNG
 	  Zephyr's ENTROPY_RPI_PICO_RNG is unusable here: pico-sdk spins with interrupts off and USB dies.
 	  See doc/13-roadmap.md.
 
-# Not a switch: an application running under MCUboot is always confirmed by the host before it
-# counts as this build's firmware. Turning the mechanism off would mean every upgrade rolls back
-# on the next reset, which is a different product, not a configuration (doc/08-firmware.md 6).
-config ZLRS_APP_MCUBOOT_CONFIRM
-	def_bool BOOTLOADER_MCUBOOT
-	# The choice under IMG_MANAGER has a single entry (MCUBOOT_IMG_MANAGER); a choice
-	# symbol cannot be selected, so enabling IMG_MANAGER is what picks it
-	select STREAM_FLASH
-	select IMG_MANAGER
-	help
-	  This only says whether the image runs under MCUboot; it is not user selectable. Upgrades
-	  run with test semantics: a new image starts unconfirmed and only an explicit,
-	  well-formed confirm command from the host, answered by the device, makes the application
-	  call boot_write_img_confirmed(). No confirm means a reset and rollback; an image that never
-	  comes up rolls back the same way, and with nothing to roll back to MCUboot stays in serial
-	  recovery, which is still flashable. See doc/08-firmware.md 6.
-
+# The only knob on the upgrade path: how long the host has to confirm. The mechanism itself
+# (an image under MCUboot stays unconfirmed until the host says so, then either becomes
+# permanent or is rolled back) has no switch — the /mcuboot board variant brings the image
+# manager and the boot mode with it. See doc/08-firmware.md 6.
 config ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS
 	int "Host confirm timeout (ms)"
 	default 60000
@@ -381,7 +352,7 @@ config ZLRS_APP_WATCHDOG
 	help
 	  Armed in PRE_KERNEL_1 (app/src/watchdog.c); feeding happens in the blocking loops, so a
 	  stuck main loop counts as dead too. It only turns a hang into a reset; the rollback verdict
-	  is the image confirm bit (ZLRS_APP_MCUBOOT_CONFIRM). This saves reaching for BOOTSEL.
+	  is MCUboot's image confirm bit (doc/08-firmware.md 6). This saves reaching for BOOTSEL.
 
 config ZLRS_APP_WATCHDOG_TIMEOUT_MS
 	int "Watchdog timeout (ms)"

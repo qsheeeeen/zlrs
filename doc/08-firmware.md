@@ -83,6 +83,8 @@ There are three ways into serial recovery, none of them needing the button:
 
 The boot-mode flag lives in 4 bytes at the start of SRAM (retained RAM) and both the application and the bootloader use the same DT. `CONFIG_BOOT_SERIAL_PIN_RESET` is deliberately off: on RP2350 POWMAN's `HAD_RUN` bit is mapped to `RESET_PIN`, which is broader than "the reset button was pressed".
 
+None of the three entries is a switch: a build that runs under MCUboot has all of them, always — being upgradeable without touching the board is what the bootloader is for. A target without a bootloader (`.../m33/hf`, `.../m33/lf`) is flashed with a programmer and has no recovery path at all.
+
 The window is 2 s rather than something shorter: after a confirm timeout or a watchdog reset that window lets the host get back into recovery and reflash on its own. The cost is that every boot waits that long, which is a fair price for a button-free path.
 
 Recovery is **USB only**: in bootloader mode USB shows two CDCs (recovery first, console second) and neither CRSF nor config is present. The application is `ZLRS`, the bootloader `ZLRS MCUBOOT`, and scripts find ports under `/dev/serial/by-id/...`.
