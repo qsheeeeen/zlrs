@@ -16,7 +16,7 @@
 
 - **载板打样**：[05-carrier](05-carrier.md) 的两层板。
 - **轻量版**：裁掉 USB 与数据口，只留控制链路。
-- **RP2350 TRNG**（进行中，默认关）：Zephyr 的 `entropy_rpi_pico` 走 pico-sdk 的关中断忙等，打开后 USB 枚举不出来（板上复现过，只能 BOOTSEL 抢救）。`drivers/trng/` 里已经写了 zlrs 自己的驱动（不关中断、等待有界、失败不兜底、退出时报错），但**取数时序还没对上**：直接读 `ehr_data[0]` 会连续拿到同一份数据，照 pico-sdk 改成"等 `trng_busy` 清零后读全部 4 个 EHR 字"后仍然过不了开机自检（设备 halt、USB 消失）。下一步要么把 pico-sdk 的采样时序逐行对齐（含 `sample_cnt1`/`trng_debug_control` 与再次采样的等待条件），要么换熵源（ROSC 随机位）。默认必须保持关（`CONFIG_ZLRS_APP_ENTROPY_TRNG=n`），CSPRNG 走 Zephyr 默认路径。
+- **RP2350 TRNG**（已上板验证，默认开）：Zephyr 的 `entropy_rpi_pico` 不能用（pico-sdk 取数时关中断忙等，USB 直接停摆，板上复现过）。`drivers/trng/` 是 zlrs 自己的驱动：probe 里软复位 + 配置 + 预取，取数走两块的小池子，**不关中断、不拿自旋锁**，超时/检查不过就报错（不做软件兜底）。寄存器时序照 datasheet 12.12 与 bootrom；采样数取 100——datasheet 建议的 20–25 在 RP2350 上过不了内部 Von Neumann 检查（板上实测多块报 32 bit 连 0/连 1），100 档连跑 10 块全干净。板上验证：开机自检 `entropy self-test ok`、`zlrs entropy` 连跑 25 次全过、运行 150 s 以上不被看门狗复位。
 
 ### 升级链路
 

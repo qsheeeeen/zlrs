@@ -66,4 +66,4 @@ west build -b "$ZLRS_BOARD" "$ZLRS_APP" -- \
 - 写短语的 PBKDF2 要几十秒 → 会话期间必须关看门狗。
 - RP2350 的看门狗在 `SYSRESETREQ` 后还开着 → 串口恢复只活 ~1.5 s（应用侧重启前 disarm，bootloader 侧清硬件 `ENABLE` 位）。
 - 自定义 DT 节点写进 `/chosen` 读不到（只导出 `zephyr,` 前缀）→ SKU 用独立节点。
-- RP2350 TRNG 取数时长时间关中断 → USB 死掉（默认关，见 [13-roadmap](13-roadmap.md)）。
+- RP2350 的 TRNG：Zephyr 树里的 `entropy_rpi_pico` 取数时长时间关中断 → USB 死掉；zlrs 自己的驱动在 `drivers/trng/`（默认开，见 [13-roadmap](13-roadmap.md)）。

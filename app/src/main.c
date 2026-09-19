@@ -912,9 +912,15 @@ static void report(uint32_t now_ms)
  * 状态灯：把链路状态翻译成 lib/led 的输入，见 doc/11-ux.md。
  * 每 20 Hz 刷一次（zlrs_led_port_update 内部限速）。
  */
+#if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
+static void enter_config_mode(void);
+#endif
+
 /*
- * 配置不合法（比如地区与本机 SKU 不匹配）时的安全态：不进超帧、不发射频，
- * 只亮红灯让人看见。法规相关的错误宁可停机，也不能"凑合发"。
+ * 致命错误（地区与 SKU 不匹配、熵源自检不过、PSA 起不来……）时的状态：
+ * **报警但不锁死**——红灯 + 配置口继续在线，主机仍然能进配置模式、触发串口
+ * 恢复、把设备刷回来。法规/安全问题宁可不停发，但要保证"永远刷得动"，
+ * 否则一次坏镜像就得拆机按 BOOTSEL。
  */
 static void fault_loop(void)
 {
@@ -926,9 +932,20 @@ static void fault_loop(void)
 	in.role_tx = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX);
 	in.uptime_ms = 60000U; /* 越过开机自检窗口，立刻进告警 */
 
+	LOG_ERR("fault state: not transmitting; config port stays available for flashing");
+
 	for (;;) {
+		zlrs_watchdog_feed();
 		zlrs_led_port_update(&in, k_uptime_get_32());
-		k_msleep(50);
+
+#if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
+		/* 配置口活着：进配置模式、`recovery` 命令、重新刷机都还能走 */
+		if (zlrs_config_port_poll_enter()) {
+			enter_config_mode();
+		}
+#endif
+
+		k_msleep(20);
 	}
 }
 
@@ -1324,6 +1341,15 @@ int main(void)
 		LOG_ERR("store unavailable: keys, pairing and failsafe will not persist");
 	}
 
+#if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
+	/*
+	 * 配置口尽早起来：后面任何一步判定致命（熵源、地区/SKU、PSA）都会进
+	 * fault_loop，那条路径要靠配置口保持"刷得动"。
+	 */
+	(void)zlrs_config_port_init();
+	zlrs_config_set_ops(&cfg_ops);
+#endif
+
 #if IS_ENABLED(CONFIG_ZLRS_APP_ENTROPY_TRNG)
 	/* 熵源坏了就别往下走：后面的密钥生成与设备标识全依赖它 */
 	if (entropy_selftest() != 0) {
@@ -1399,12 +1425,6 @@ int main(void)
 		}
 		(void)zlrs_data_port_init(baud);
 	}
-
-#if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
-	/* 配置口常驻：配置工具在它上面发"进配置模式"，主循环里轮询 */
-	(void)zlrs_config_port_init();
-	zlrs_config_set_ops(&cfg_ops);
-#endif
 
 	zlrs_link_set_rc(&link_control, rc_payload, sizeof(rc_payload));
 	if (ZLRS_CRSF_ENABLED) {

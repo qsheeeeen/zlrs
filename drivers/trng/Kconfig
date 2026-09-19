@@ -10,9 +10,10 @@ config ZLRS_RP2350_TRNG
 	depends on DT_HAS_ZLRS_RP2350_TRNG_ENABLED && ENTROPY_GENERATOR
 	select ENTROPY_HAS_DRIVER
 	help
-	  直接读 RP2350 TRNG 寄存器：不关中断、等待有界（超时退化成软件熵）。
-	  Zephyr 自带的 entropy_rpi_pico 走 pico-sdk get_rand_64()，取数时关中断
-	  忙等，会让 USB 停摆——所以这台上不用它，见 doc/13-roadmap.md。
+	  按 RP2350 datasheet 12.12 直接操作 TRNG 寄存器：每块 192 bit 读满 6 个
+	  EHR 字，取数走小池子、等待有界，不关中断、不拿自旋锁。Zephyr 自带的
+	  entropy_rpi_pico 走 pico-sdk get_rand_64()，取数时关中断忙等，会让 USB
+	  停摆——所以这台上不用它，见 doc/13-roadmap.md。
 
 if ZLRS_RP2350_TRNG
 
