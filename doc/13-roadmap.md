@@ -16,7 +16,7 @@
 
 - **载板打样**：[05-carrier](05-carrier.md) 的两层板。
 - **轻量版**：裁掉 USB 与数据口，只留控制链路。
-- **RP2350 TRNG**：pico-sdk 的取数路径长时间关中断会让 USB 死掉；要么写"有界超时 + 不长时间关中断"的取数路径，要么换熵源。当前默认关闭（`CONFIG_ENTROPY_RPI_PICO_RNG=n`）。
+- **RP2350 TRNG**（已在板上复现）：打开 `CONFIG_ENTROPY_RPI_PICO_RNG=y` 刷进去后，Windows 侧还能看到 VID:PID `2fe3:0004`，但 CDC 接口起不来、WSL 重挂也拿不到 tty——USB 功能死了，只能按 BOOTSEL 刷回。pico-sdk 的取数路径长时间关中断是根因；要么写"有界超时 + 不长时间关中断"的取数路径，要么换熵源。当前默认关闭（`CONFIG_ENTROPY_RPI_PICO_RNG=n`）。
 
 ### 升级链路
 
