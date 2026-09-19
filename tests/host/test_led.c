@@ -2,8 +2,8 @@
  * Copyright (c) 2026 zlrs contributors
  * SPDX-License-Identifier: Apache-2.0
  *
- * 状态灯测试：优先级、每个状态的节奏（亮/灭窗口）、LQ 亮度分档、
- * 以及"只用颜色区分是不可靠的"——每个状态同时有节奏差异。
+ * Status LED tests: priorities, the cadence of every state (on/off windows), LQ brightness
+ * steps, and the rule that colour alone is unreliable: every state also differs in cadence.
  */
 
 #include "test.h"
@@ -26,15 +26,15 @@ static void test_config_mode_wins(void)
 	memset(&in, 0, sizeof(in));
 	in.uptime_ms = 10000U;
 	in.config_mode = true;
-	in.failsafe = true; /* 这两条同时成立时，灯只表现配置模式 */
+	in.failsafe = true; /* with both set, the LED only shows config mode */
 	in.link_state = ZLRS_STATE_SEARCHING;
 
-	/* 白，1 秒周期里亮 500 ms */
+	/* White, on for 500 ms out of a 1 s period */
 	CHECK(!is_off(zlrs_led_frame(&in, 0U)));
 	CHECK(is_off(zlrs_led_frame(&in, 500U)));
 	CHECK(!is_off(zlrs_led_frame(&in, 2000U)));
 
-	/* 关掉配置模式：失控保护接管（红，1 Hz、亮 800 ms——最长的亮窗=最紧急） */
+	/* Config mode off: failsafe takes over (red, 1 Hz, 800 ms on: the longest window is the alert) */
 	in.config_mode = false;
 	CHECK(!is_off(zlrs_led_frame(&in, 0U)));
 	CHECK(!is_off(zlrs_led_frame(&in, 500U)));
@@ -51,20 +51,20 @@ static void test_link_states(void)
 	memset(&in, 0, sizeof(in));
 	in.uptime_ms = 10000U;
 	in.link_state = ZLRS_STATE_UNCONFIGURED;
-	/* 紫 0.5 Hz、黄 1 Hz：两者 t=0 亮、t=500 灭 */
+	/* Purple at 0.5 Hz, yellow at 1 Hz: both are on at t=0 and off at t=500 */
 	CHECK(!is_off(zlrs_led_frame(&in, 0U)));
 	CHECK(is_off(zlrs_led_frame(&in, 500U)));
 	in.link_state = ZLRS_STATE_UNPAIRED;
 	CHECK(!is_off(zlrs_led_frame(&in, 0U)));
 	CHECK(is_off(zlrs_led_frame(&in, 500U)));
 
-	/* 配对中：1 Hz，亮 300 ms */
+	/* Pairing: 1 Hz, 300 ms on */
 	in.link_state = ZLRS_STATE_PAIRING;
 	CHECK(!is_off(zlrs_led_frame(&in, 0U)));
 	CHECK(is_off(zlrs_led_frame(&in, 500U)));
 	CHECK(!is_off(zlrs_led_frame(&in, 1000U)));
 
-	/* 搜索中：0.5 Hz，亮 150 ms */
+	/* Searching: 0.5 Hz, 150 ms on */
 	in.link_state = ZLRS_STATE_SEARCHING;
 	CHECK(!is_off(zlrs_led_frame(&in, 0U)));
 	CHECK(is_off(zlrs_led_frame(&in, 200U)));
@@ -77,7 +77,7 @@ static void test_failsafe_while_connected(void)
 
 	printf("led: failsafe wins over connected\n");
 
-	/* TX 连着链路但没有手台输入：红压过绿 */
+	/* TX connected but with no handset input: red wins over green */
 	memset(&in, 0, sizeof(in));
 	in.uptime_ms = 10000U;
 	in.link_state = ZLRS_STATE_CONNECTED;
@@ -90,7 +90,7 @@ static void test_failsafe_while_connected(void)
 		CHECK(f.r > 0U);
 	}
 
-	/* 没连上过就不该由调用方置 failsafe：未配对显示黄（r、g 都有、b 最低） */
+	/* Never connected means no failsafe from the caller: unpaired shows yellow (no blue) */
 	memset(&in, 0, sizeof(in));
 	in.uptime_ms = 10000U;
 	in.link_state = ZLRS_STATE_UNPAIRED;
@@ -120,29 +120,29 @@ static void test_connected_lq(void)
 	in.paired = true;
 	in.link_state = ZLRS_STATE_CONNECTED;
 
-	/* RX（绿是主题色）：常亮，不同时刻颜色一样 */
+	/* RX (green theme): steady, the colour is the same at different moments */
 	in.lq_percent = 90U;
 	strong = zlrs_led_frame(&in, 0U);
 	CHECK(!is_off(strong));
-	CHECK(memcmp(&strong, &rx_green30, sizeof(strong)) == 0); /* 绿 255 × 30% */
+	CHECK(memcmp(&strong, &rx_green30, sizeof(strong)) == 0); /* green 255 x 30% */
 	{
 		const zlrs_led_rgb_t later = zlrs_led_frame(&in, 777U);
 
 		CHECK(memcmp(&strong, &later, sizeof(strong)) == 0);
 	}
 
-	/* LQ 掉档：亮度降一档，颜色不变（性能退化不是异常） */
+	/* LQ drops a tier: brightness steps down, the colour does not (degradation is not an alert) */
 	in.lq_percent = 60U;
 	weak = zlrs_led_frame(&in, 0U);
 	CHECK(memcmp(&weak, &rx_green18, sizeof(weak)) == 0); /* 18% */
 
-	/* LQ 很差：还是主题色，只是更暗——不换红/琥珀 */
+	/* LQ is bad: still the theme colour, only darker, never red or amber */
 	in.lq_percent = 20U;
 	bad = zlrs_led_frame(&in, 0U);
 	CHECK(memcmp(&bad, &rx_green10, sizeof(bad)) == 0);
 	CHECK(bad.r == 0U);
 
-	/* TX 的主题色是蓝：同样的链路状态换成蓝色系 */
+	/* The TX theme is blue: the same link state comes out in blue */
 	in.role_tx = true;
 	bad = zlrs_led_frame(&in, 0U);
 	CHECK(memcmp(&bad, &tx_blue10, sizeof(bad)) == 0);
@@ -167,13 +167,13 @@ static void test_drop_overlay(void)
 	in.drop_recent = true;
 
 	base = zlrs_led_frame(&in, 500U);
-	flashed = zlrs_led_frame(&in, 50U); /* 每 2 秒单闪 120 ms */
+	flashed = zlrs_led_frame(&in, 50U); /* one 120 ms flash every 2 s */
 
 	CHECK(!is_off(flashed));
 	CHECK(flashed.r > base.r);
 	CHECK(memcmp(&base, &green30, sizeof(base)) == 0);
 
-	/* 没有丢弃时不会闪 */
+	/* No drops means no flash */
 	in.drop_recent = false;
 	{
 		const zlrs_led_rgb_t quiet = zlrs_led_frame(&in, 50U);
@@ -181,7 +181,7 @@ static void test_drop_overlay(void)
 		CHECK(memcmp(&quiet, &base, sizeof(base)) == 0);
 	}
 
-	/* 未连接时不叠加：t=50 时是搜索态的主题色（这台是 TX → 蓝），不是丢弃的橙色 */
+	/* No overlay while unconnected: at t=50 it is the searching theme colour, not drop orange */
 	in.role_tx = true;
 	in.link_state = ZLRS_STATE_SEARCHING;
 	in.drop_recent = true;
@@ -193,7 +193,7 @@ static void test_drop_overlay(void)
 	}
 }
 
-/* 开机自检：前 1.5 秒亮角色色，之后进入状态显示 */
+/* Boot self-test: the role colour for 1.5 s, then the state display takes over */
 static void test_boot_role(void)
 {
 	zlrs_led_input_t in;
@@ -205,20 +205,20 @@ static void test_boot_role(void)
 	in.link_state = ZLRS_STATE_UNPAIRED;
 	in.uptime_ms = 0U;
 
-	/* TX：蓝 */
+	/* TX: blue */
 	{
 		const zlrs_led_rgb_t tx = zlrs_led_frame(&in, 0U);
 
 		CHECK(tx.b > tx.r && tx.b > tx.g);
 	}
-	/* RX：绿 */
+	/* RX: green */
 	in.role_tx = false;
 	{
 		const zlrs_led_rgb_t rx = zlrs_led_frame(&in, 0U);
 
 		CHECK(rx.g > rx.r && rx.g > rx.b);
 	}
-	/* 自检窗口结束：回到"未配对"的黄色 1 Hz 慢闪 */
+	/* Self-test window over: back to the unpaired yellow blink */
 	in.uptime_ms = 2000U;
 	{
 		const zlrs_led_rgb_t later = zlrs_led_frame(&in, 0U);

@@ -2,11 +2,11 @@
  * Copyright (c) 2026 zlrs contributors
  * SPDX-License-Identifier: Apache-2.0
  *
- * 畸形输入：给三个有状态的解析器（空口帧、配置帧、CRSF）喂随机字节与"接近合法"
- * 的变体，断言它们只会拒绝、不会越界或跑飞。种子写死，失败可复现。
+ * Malformed input: feed three stateful parsers (air frame, config frame, CRSF) random bytes and
+ * near-legal variants, and assert they only reject, never overrun or run away. Seeds are fixed.
  *
- * 单独跑能验证逻辑不变量；主机测试默认就带 ASan + UBSan（`make -C tests/host run`），
- * 越界读写与未定义行为会被 sanitizer 直接抓出来。想多跑几轮：
+ * On its own it checks the logic invariants; the host tests carry ASan + UBSan by default
+ * (`make -C tests/host run`), so overruns and UB surface immediately. For more rounds:
  * `make -C tests/host run FUZZ_ITERS=2000000`。
  */
 
@@ -21,7 +21,7 @@
 #include "zlrs/proto/frame.h"
 
 #ifndef FUZZ_ITERS
-#define FUZZ_ITERS 20000U /* 可以用 make FUZZ_ITERS=... 覆盖 */
+#define FUZZ_ITERS 20000U /* override with make FUZZ_ITERS=... */
 #endif
 #define FUZZ_BUF_LEN 128U
 
@@ -48,7 +48,7 @@ static void rng_fill(rng_t *rng, uint8_t *out, uint16_t len)
 	}
 }
 
-/* ---- 空口帧：解出来的视图必须都落在输入缓冲区内 ---- */
+/* ---- air frames: every decoded view has to stay inside the input buffer ---- */
 
 static void fuzz_frame_decode(rng_t *rng)
 {
@@ -64,7 +64,7 @@ static void fuzz_frame_decode(rng_t *rng)
 
 		rng_fill(rng, buf, len);
 		if (len >= ZLRS_FRAME_HDR_LEN && (rng_next(rng) % 4U) == 0U) {
-			/* 类型字段取合法值，让解析器往下走 */
+			/* Use a legal type so the parser goes further */
 			buf[0] = (uint8_t)(((rng_next(rng) % 11U) << 2) | (buf[0] & 0x03U));
 		}
 
@@ -85,7 +85,7 @@ static void fuzz_frame_decode(rng_t *rng)
 			violations++;
 		}
 
-		/* 解出来再编回去，应当逐字节一致（含 tag） */
+		/* Decode and encode again: byte-identical, tag included */
 		if (zlrs_frame_encode(&frame, pack, sizeof(pack)) != len) {
 			violations++;
 		} else if (memcmp(pack, buf, len) != 0) {
@@ -94,10 +94,10 @@ static void fuzz_frame_decode(rng_t *rng)
 	}
 
 	CHECK(violations == 0U);
-	CHECK(decoded > 0U); /* 别把用例跑成空转 */
+	CHECK(decoded > 0U); /* do not let the case spin without doing work */
 }
 
-/* ---- 链路入口：随机字节 + 接近合法的帧（含 tag）都喂进去 ---- */
+/* ---- link entry: random bytes plus near-legal frames (tag included) ---- */
 
 static void fx_on_rc(void *ctx, const uint8_t *payload, uint16_t len)
 {
@@ -199,7 +199,7 @@ static void fx_link_init(zlrs_link_t *link, uint8_t arq)
 	zlrs_link_set_peer(link, peer_id, salt, 0U);
 }
 
-/* 造一帧形状与 tag 都合法的空口帧；调用方再随机破坏它 */
+/* Build an air frame with a legal shape and tag; the caller then corrupts it at random */
 static uint16_t fx_make_frame(rng_t *rng, uint8_t *out, uint16_t cap, const uint8_t *key)
 {
 	uint8_t payload[ZLRS_PAYLOAD_MAX_LEN];
@@ -243,11 +243,11 @@ static void fuzz_link_rx(rng_t *rng)
 		uint16_t len = fx_make_frame(rng, buf, sizeof(buf), link->link_auth_in);
 
 		if (len == 0U || (rng_next(rng) % 3U) == 0U) {
-			/* 纯随机字节 */
+			/* pure random bytes */
 			len = (uint16_t)(rng_next(rng) % 70U);
 			rng_fill(rng, buf, len);
 		} else {
-			/* 合法帧上翻几位，或在随机位置截断 */
+			/* Flip some bits of a legal frame, or truncate it at a random offset */
 			uint8_t flips = (uint8_t)(1U + (rng_next(rng) % 4U));
 
 			for (uint8_t f = 0U; f < flips; f++) {
@@ -261,21 +261,21 @@ static void fuzz_link_rx(rng_t *rng)
 		now_ms += 7U;
 		zlrs_link_rx(link, buf, len, -60, 0, now_ms);
 
-		/* 状态机必须停在合法状态上 */
+		/* The state machine must end in a legal state */
 		if (link->state > ZLRS_STATE_CONNECTED) {
 			violations++;
 		}
 	}
 
 	CHECK(violations == 0U);
-	/* 拒绝过东西，说明真的走到解析逻辑里了 */
+	/* Something was rejected, so the parser really ran */
 	CHECK(best_effort.stats.rx_bad_frame + best_effort.stats.rx_bad_tag +
 		      arq.stats.rx_bad_frame + arq.stats.rx_bad_tag >
 	      0U);
 	CHECK(best_effort.stats.rx_frames + arq.stats.rx_frames > 0U);
 }
 
-/* ---- 配置帧与 CRSF：逐字节喂随机流 ---- */
+/* ---- config frames and CRSF: random streams fed byte by byte ---- */
 
 static void fuzz_byte_parsers(rng_t *rng)
 {
@@ -290,7 +290,7 @@ static void fuzz_byte_parsers(rng_t *rng)
 
 	for (uint32_t i = 0; i < FUZZ_ITERS; i++) {
 		if ((rng_next(rng) % 64U) == 0U) {
-			zlrs_cfg_parser_init(&cfg); /* 时不时重同步 */
+			zlrs_cfg_parser_init(&cfg); /* resynchronise now and then */
 		}
 		if ((rng_next(rng) % 64U) == 0U) {
 			zlrs_crsf_parser_init(&crsf);
@@ -325,7 +325,7 @@ static void fuzz_byte_parsers(rng_t *rng)
 	}
 
 	CHECK(violations == 0U);
-	CHECK(cfg_frames < FUZZ_ITERS); /* 随机流不该凑出成片的配置帧 */
+	CHECK(cfg_frames < FUZZ_ITERS); /* a random stream must not produce frame after frame */
 	CHECK(crsf_frames < FUZZ_ITERS);
 }
 
