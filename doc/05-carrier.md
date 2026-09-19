@@ -1,65 +1,65 @@
-# 载板
+# Carrier board
 
-目标形态：把 RP2350-Zero 与 Core2021 的连线固定在一块 PCB 上，对外给 USB-C、按键与两路 6P 串口，由 5V 供电。两层板，没有射频布局约束（模块自带匹配网络与天线座）。
+Target shape: fix the wiring between the RP2350-Zero and the Core2021 onto one PCB, exposing USB-C, a button and two 6P serial ports, powered from 5 V. Two layers, with no RF layout constraints (the module carries its own matching network and antenna connector).
 
-原型（两模块直接连线）见 [04-prototype](04-prototype.md)；引脚与别名的定义见[板级 README](../boards/zlrs/rp2350_zero_core2021/README.md)。
+The prototype (two modules wired directly) is in [04-prototype](04-prototype.md); pins and aliases are defined in the [board README](../boards/zlrs/rp2350_zero_core2021/README.md).
 
-## 1. 端口
+## 1. Ports
 
-| 口 | 型号 | 内容 |
+| Port | Part | Carries |
 | --- | --- | --- |
-| J1（CRSF） | JST-GH 1.25 mm，6P，卧式 | Pixhawk Telemetry Port 线序：`5V_IN` + CRSF |
-| J2（数据） | JST-GH 1.25 mm，6P，卧式 | 同一套线序：`5V_IN` + 数据口 UART1 |
-| USB-C | RP2350-Zero 模块自带 | 数据、配置、烧写；不引到 PCB |
-| SW1 按键 | SMD 轻触 3×4 mm | GP12 ↔ GND：长按配对 |
-| 状态灯 | 模块自带 WS2812（GP16） | PCB 上不引 |
+| J1 (CRSF) | JST-GH 1.25 mm, 6P, right-angle | Pixhawk telemetry port order: `5V_IN` + CRSF |
+| J2 (data) | JST-GH 1.25 mm, 6P, right-angle | same order: `5V_IN` + data port UART1 |
+| USB-C | on the RP2350-Zero module | data, config, flashing; not routed on the PCB |
+| SW1 button | SMD tactile 3x4 mm | GP12 to GND: hold to pair |
+| Status LED | WS2812 on the module (GP16) | not routed on the PCB |
 
-### 1.1 6P 线序（DS-009 Telemetry Port，外设侧视角）
+### 1.1 6P pin order (DS-009 telemetry port, seen from the peripheral)
 
-排线是 1:1 的，**方向交叉发生在外设侧**（飞控的 pin 2 是 TX 输出，本板的 pin 2 就是 RX 输入）；不做硬件流控，CTS / RTS 悬空。
+The cable is 1:1 and **the crossover happens at the peripheral** (the FC's pin 2 is a TX output, so pin 2 here is an RX input). No hardware flow control: CTS and RTS stay unconnected.
 
-| pin | 飞控侧 | 本板 | 接到 |
+| pin | Flight controller side | This board | Wired to |
 | --- | --- | --- | --- |
-| 1（红线） | VCC +5V | `5V_IN` | 模块 5V 脚 |
-| 2 | TX（飞控输出） | RX | UART0_RX = GP1（J2 为 GP9） |
-| 3 | RX（飞控输入） | TX | UART0_TX = GP0（J2 为 GP8） |
-| 4 | CTS | 悬空 | 不做流控 |
-| 5 | RTS | 悬空 | 不做流控 |
+| 1 (red) | VCC +5V | `5V_IN` | the module's 5 V pin |
+| 2 | TX (FC output) | RX | UART0_RX = GP1 (GP9 on J2) |
+| 3 | RX (FC input) | TX | UART0_TX = GP0 (GP8 on J2) |
+| 4 | CTS | unconnected | no flow control |
+| 5 | RTS | unconnected | no flow control |
 | 6 | GND | GND | GND |
 
-两个口的 `5V_IN` 各自经一颗肖特基（SS14 / BAT54）后并到 5V 轨：从任一口取电，两口同时接电源也不反灌。
+Each port's `5V_IN` goes through its own Schottky (SS14 / BAT54) before joining the 5 V rail: either port can power the board and feeding both does not back-feed.
 
-## 2. 网络
+## 2. Nets
 
-模块之间：
+Between the modules:
 
-| 信号 | Zero | Core2021 |
+| Signal | Zero | Core2021 |
 | --- | --- | --- |
-| SPI0 SCK / MOSI / MISO / CS | GP6 / GP7 / GP4 / GP5 | 对应脚 |
-| BUSY / NRESET / DIO8 | GP13 / GP14 / GP15 | 对应脚 |
-| 电源 | 3V3、GND | 3V3、GND（3V3 由 Zero 供） |
+| SPI0 SCK / MOSI / MISO / CS | GP6 / GP7 / GP4 / GP5 | the matching pins |
+| BUSY / NRESET / DIO8 | GP13 / GP14 / GP15 | the matching pins |
+| Power | 3V3, GND | 3V3, GND (3V3 comes from the Zero) |
 
-对外：
+To the outside:
 
-| 网络 | 连接 |
+| Net | Connection |
 | --- | --- |
-| `5V_IN` | J1 / J2 第 1 针 → 各自的二极管 → 输入保护 → Zero 的 5V 脚 |
-| `CRSF_TX` / `CRSF_RX` | J1 第 3 / 第 2 针 ↔ GP0 / GP1 |
-| `DATA_TX` / `DATA_RX` | J2 第 3 / 第 2 针 ↔ GP8 / GP9 |
-| `GND` | J1、J2、两个模块、铺铜 |
+| `5V_IN` | J1 / J2 pin 1 -> its own diode -> input protection -> the Zero's 5 V pin |
+| `CRSF_TX` / `CRSF_RX` | J1 pins 3 / 2 to GP0 / GP1 |
+| `DATA_TX` / `DATA_RX` | J2 pins 3 / 2 to GP8 / GP9 |
+| `GND` | J1, J2, both modules, the copper pour |
 
-## 3. 电源
+## 3. Power
 
-- `5V_IN` → 自恢复保险 + TVS → 100 µF + 10 µF + 0.1 µF → Zero 的 5V 脚
-- Core2021 侧就近加 10 µF + 0.1 µF
-- GND 两面整块铺铜，模块焊盘附近多打过孔
+- `5V_IN` -> resettable fuse + TVS -> 100 uF + 10 uF + 0.1 uF -> the Zero's 5 V pin
+- Add 10 uF + 0.1 uF next to the Core2021
+- Pour GND on both sides and add vias near the module pads
 
-## 4. 机械与装配
+## 4. Mechanics and assembly
 
-- **两面贴装**：Top = RP2350-Zero（元件面朝上），Bottom = Core2021（元件面朝下）
-- USB-C 那一侧让模块探出载板 2–3 mm，方便插线；天线座在相反的短边，该方向留 15–20 mm 净空（不铺铜、不走线、不放器件）
-- 安装孔 2 个，Ø2.2 mm（M2），对角放置，不落在模块投影范围内
-- 按键放 Bottom 面（Top 面基本被 Zero 占满）
-- SPI 走线尽量短（< 20 mm），不跨天线净空区；5V / 3V3 走线 ≥ 0.5 mm
-- 邮票孔焊盘按模块图纸（外延 0.3 mm、四周留 0.2 mm 装配余量）
-- J1 / J2 用卧式，放同一长边、离开天线净空区，丝印标 `5V/GND` 与 `TX/RX`
+- **Parts on both sides**: top = RP2350-Zero (components facing up), bottom = Core2021 (facing down)
+- Let the module overhang the carrier by 2-3 mm on the USB-C side so cables fit; the antenna connector sits on the opposite short edge, which needs 15-20 mm of clearance (no copper, no traces, no parts)
+- Two mounting holes, 2.2 mm for M2, on opposite corners, clear of the modules' footprint
+- The button goes on the bottom (the top is mostly covered by the Zero)
+- Keep SPI traces short (under 20 mm) and out of the antenna clearance; 5 V and 3V3 traces at least 0.5 mm wide
+- Castellation pads follow the module drawing (0.3 mm extension, 0.2 mm assembly margin all round)
+- J1 and J2 are right-angle, on the same long edge away from the antenna clearance, silkscreened `5V/GND` and `TX/RX`
