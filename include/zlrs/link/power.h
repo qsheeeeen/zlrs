@@ -1,7 +1,7 @@
 /*
- * 动态发射功率：按对端遥测回报的上行 RSSI/LQ 升降本端功率；收不到遥测就直接回到
- * 上限（那一头多半掉线，先打满再谈省电）。与速率自适应同一套策略骨架：连续窗口
- * + 保持时间 + 滞回，阈值待实测标定，见 doc/09-protocol.md 4.5。
+ * Dynamic TX power: follow the uplink RSSI/LQ the peer reports; losing telemetry goes straight
+ * back to the ceiling (the peer is probably gone, and reach beats saving power). Same skeleton
+ * as rate adaptation (windows, hold time, hysteresis); thresholds await calibration (09-protocol 4.5).
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -16,41 +16,41 @@ extern "C" {
 #endif
 
 typedef struct {
-	/* 策略参数 */
-	int8_t min_dbm;      /* 信号好时最低降到这 */
-	int8_t max_dbm;      /* 上限：配置功率与地区上限取小 */
-	int8_t step_db;      /* 每次调整的步长 */
-	int8_t rssi_low_dbm; /* 低于它就升功率 */
-	int8_t rssi_high_dbm;/* 高于它（且 LQ 够好）才降功率 */
-	uint8_t lq_low;      /* LQ 低于它就升功率（%） */
-	uint8_t lq_high;     /* LQ 高于它才降功率（%） */
-	uint8_t windows;     /* 连续多少个样本才动一次 */
-	uint32_t hold_ms;    /* 两次调整之间的最小间隔 */
-	uint32_t tlm_timeout_ms; /* 多久没有遥测就回到上限 */
+	/* policy parameters */
+	int8_t min_dbm;      /* floor when the signal is good */
+	int8_t max_dbm;      /* ceiling: the smaller of configured power and region cap */
+	int8_t step_db;      /* step size per adjustment */
+	int8_t rssi_low_dbm; /* below this, raise power */
+	int8_t rssi_high_dbm;/* above this (and with good LQ), lower power */
+	uint8_t lq_low;      /* below this LQ (%), raise power */
+	uint8_t lq_high;     /* above this LQ (%), lower power */
+	uint8_t windows;     /* consecutive samples needed before an adjustment */
+	uint32_t hold_ms;    /* minimum gap between adjustments */
+	uint32_t tlm_timeout_ms; /* telemetry silence before returning to the ceiling */
 
-	/* 状态 */
+	/* state */
 	int8_t current_dbm;
 	uint8_t good;
 	uint8_t bad;
 	uint32_t last_change_ms;
 	uint32_t last_tlm_ms;
 	bool tlm_seen;
-	uint32_t raises;   /* 升功率次数 */
-	uint32_t lowers;   /* 降功率次数 */
-	uint32_t fallbacks;/* 因遥测超时回到上限的次数 */
+	uint32_t raises;   /* power increases */
+	uint32_t lowers;   /* power decreases */
+	uint32_t fallbacks;/* returns to the ceiling after a telemetry timeout */
 } zlrs_power_ctl_t;
 
 /*
- * configured_dbm：配置/地区允许的上限（动态功率不会超过它）
- * floor_dbm：最低功率（配置项）
+ * configured_dbm: the ceiling config and region allow (dynamic power never exceeds it)
+ * floor_dbm: the lowest power (a Kconfig knob)
  */
 void zlrs_power_init(zlrs_power_ctl_t *ctl, int8_t configured_dbm, int8_t floor_dbm,
 		     uint32_t now_ms);
 
 /*
- * 每次收到遥测（valid = true，rssi 是本端信号在对端测到的 dBm）或定时轮询
- * （valid = false，用于遥测超时判定）时调用。
- * 需要改变时返回 true，并把新功率写进 *out_dbm。
+ * Call on every telemetry frame (valid = true, rssi is our signal as measured by the peer) or
+ * on a periodic poll (valid = false, used for the telemetry timeout).
+ * Returns true when a change is due and writes the new power into *out_dbm.
  */
 bool zlrs_power_update(zlrs_power_ctl_t *ctl, bool valid, int16_t rssi_dbm,
 		       uint8_t lq_percent, uint32_t now_ms, int8_t *out_dbm);

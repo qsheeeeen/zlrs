@@ -1,6 +1,6 @@
 /*
- * 射频抽象：链路层只说"发什么/收多长"，落到芯片由移植层实现
- * （设备上是 usp_zephyr 的 RAC，主机测试上是模拟射频）。
+ * Radio abstraction: the link layer only says what to send and how long to listen, the port
+ * layer turns that into hardware (USP/RAC on target, a simulated radio in host tests).
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -18,27 +18,27 @@ extern "C" {
 #endif
 
 typedef struct {
-	uint32_t freq_hz;   /* 载波频率 */
+	uint32_t freq_hz;   /* carrier frequency */
 	/*
-	 * 调制档：FLRC 的速率或 LoRa 的 SF/带宽/编码率/前导码，见
-	 * doc/07-architecture.md 第 3 节。移植层按 modulation 分派到 RAC 的 flrc /
-	 * lora 参数组。
+	 * Modulation: an FLRC rate or LoRa SF/bandwidth/coding rate/preamble, see
+	 * doc/07-architecture.md 3. The port layer dispatches on modulation into RAC's flrc and lora
+	 * parameter groups.
 	 */
 	zlrs_mod_cfg_t mod;
-	uint8_t sync_slot;  /* 同步字槽：1 控制、2 数据、3 配对 */
+	uint8_t sync_slot;  /* sync word slot: 1 control, 2 data, 3 pairing */
 	uint8_t sync_word[ZLRS_SYNC_WORD_LEN];
 	bool is_tx;
 	int8_t tx_power_dbm;
-	uint16_t size;        /* 发送字节数 */
-	uint16_t max_rx_size; /* 接收缓冲上限 */
-	uint16_t timeout_ms;  /* 接收窗口 */
-	uint8_t *buf;         /* 收发共用缓冲，接收结果写回这里 */
+	uint16_t size;        /* bytes to send */
+	uint16_t max_rx_size; /* receive buffer cap */
+	uint16_t timeout_ms;  /* receive window */
+	uint8_t *buf;         /* shared TX/RX buffer, received data lands here */
 } zlrs_radio_req_t;
 
 typedef struct {
-	/* 提交一次事务，成功返回 0；结果通过 zlrs_link_complete() 回报 */
+	/* Submit one transaction, 0 on success; the result comes back via zlrs_link_complete() */
 	int (*submit)(void *ctx, const zlrs_radio_req_t *req);
-	/* 32 位随机数，用于会话与配对 nonce；移植层接 TRNG */
+	/* 32-bit random number for session and pairing nonces; the port layer uses the TRNG */
 	uint32_t (*random)(void *ctx);
 	void *ctx;
 } zlrs_radio_ops_t;

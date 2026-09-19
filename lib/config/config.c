@@ -1,5 +1,5 @@
 /*
- * 配置协议，见 include/zlrs/config/config.h。
+ * Config protocol, see include/zlrs/config/config.h.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -226,7 +226,7 @@ static uint8_t handle_set_phrase(const zlrs_cfg_backend_t *backend, const uint8_
 	memcpy(phrase, payload, len);
 	phrase[len] = '\0';
 
-	/* 派生规则固定在设备侧：salt 带版本号、迭代次数不可由工具改 */
+	/* The derivation is fixed on the device: the salt carries a version, the tool cannot pick rounds */
 	zlrs_root_key_from_phrase(phrase, key);
 	rc = backend->save_root_key(backend->ctx, key);
 
@@ -246,7 +246,7 @@ uint8_t zlrs_cfg_dispatch(const zlrs_cfg_backend_t *backend, uint8_t cmd,
 
 	switch (cmd) {
 	case ZLRS_CFG_CMD_ENTER:
-		/* 进配置模式由应用在会话外处理；走到这里说明已经在会话里 */
+		/* Entering config mode is the application's job outside a session; here we are already in one */
 		return ack_frame(out, out_len, cmd, ZLRS_CFG_OK);
 	case ZLRS_CFG_CMD_STATUS: {
 		zlrs_cfg_status_t status;
@@ -281,7 +281,7 @@ uint8_t zlrs_cfg_dispatch(const zlrs_cfg_backend_t *backend, uint8_t cmd,
 			return ack_frame(out, out_len, cmd, (uint8_t)rc);
 		}
 
-		/* 版本串按字节发，去掉尾部填充的 0 */
+		/* Send the build string byte by byte, without the trailing NUL padding */
 		uint8_t n = 0U;
 
 		while (n < sizeof(build) && build[n] != '\0') {
@@ -361,7 +361,7 @@ uint8_t zlrs_cfg_dispatch(const zlrs_cfg_backend_t *backend, uint8_t cmd,
 		return ack_frame(out, out_len, cmd,
 				 (uint8_t)backend->save_power(backend->ctx, (int8_t)payload[0]));
 	case ZLRS_CFG_CMD_EXIT:
-		/* 退出由应用处理（一般是重启），这里只确认收到 */
+		/* The application handles the exit (usually a reboot), here we only acknowledge it */
 		return ack_frame(out, out_len, cmd, ZLRS_CFG_OK);
 	case ZLRS_CFG_CMD_FACTORY_RESET:
 		if (backend->factory_reset == NULL) {

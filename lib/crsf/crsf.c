@@ -1,5 +1,5 @@
 /*
- * CRSF 帧编解码，见 include/zlrs/crsf/crsf.h。
+ * CRSF framing, see include/zlrs/crsf/crsf.h.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -10,16 +10,16 @@
 
 #include "zlrs/proto/crc.h"
 
-/* 解析阶段认识的地址字节；其它字节在空闲态直接丢掉 */
+/* Address bytes the parser accepts; anything else is dropped while idle */
 static bool valid_address(uint8_t byte)
 {
 	switch (byte) {
-	case 0x00U: /* 广播 */
+	case 0x00U: /* broadcast */
 	case ZLRS_CRSF_ADDR_FC:
-	case 0xECU: /* 接收机 */
-	case 0xEEU: /* 模块 */
+	case 0xECU: /* receiver */
+	case 0xEEU: /* module */
 	case ZLRS_CRSF_ADDR_TX_MODULE:
-	case 0xEFU: /* 配置口 */
+	case 0xEFU: /* config port */
 		return true;
 	default:
 		return false;
@@ -52,7 +52,7 @@ enum zlrs_crsf_result zlrs_crsf_feed(zlrs_crsf_parser_t *p, uint8_t byte)
 	if (p->len == 1U) {
 		const uint8_t len_field = byte;
 
-		/* len 字段含 type 与 crc，最小 2 字节；整帧不超过 64 字节 */
+		/* The len field covers type and crc, at least 2 bytes; a whole frame never exceeds 64 */
 		if (len_field < 2U || (uint16_t)len_field + 2U > ZLRS_CRSF_FRAME_MAX_LEN) {
 			p->len = 0U;
 			p->need = 0U;
@@ -67,7 +67,7 @@ enum zlrs_crsf_result zlrs_crsf_feed(zlrs_crsf_parser_t *p, uint8_t byte)
 	}
 
 	if (p->len >= p->need) {
-		/* 上一次已经收完但没被取走，丢弃后重新同步 */
+		/* The previous frame was never collected: drop it and resynchronise */
 		p->len = 0U;
 		p->need = 0U;
 		return zlrs_crsf_feed(p, byte);
@@ -172,15 +172,15 @@ uint8_t zlrs_crsf_rssi_from_dbm(int16_t dbm)
 		return 0U;
 	}
 
-	/* CRSF 用正数表示强度，且饱和在 8 bit */
+	/* CRSF reports strength as a positive number, saturated at 8 bits */
 	return (uint8_t)((-dbm > 255) ? 255 : -dbm);
 }
 
 uint8_t zlrs_crsf_tx_power_index(int8_t dbm)
 {
-	/* 索引 → mW，与 CRSF 的功率档一致 */
+	/* index -> mW, matching CRSF's power tiers */
 	static const uint16_t milliwatts[] = { 0U, 10U, 25U, 100U, 500U, 1000U, 2000U, 250U, 50U };
-	uint32_t thousandths = 1000U; /* 1 mW，以 1/1000 mW 为单位 */
+	uint32_t thousandths = 1000U; /* 1 mW, counted in 1/1000 mW */
 	uint16_t want_mw;
 	uint8_t best = 0U;
 
@@ -188,14 +188,14 @@ uint8_t zlrs_crsf_tx_power_index(int8_t dbm)
 		return 0U;
 	}
 
-	/* dBm → mW：每 1 dBm 乘 10^0.1 ≈ 1.2589，只用整数运算 */
+	/* dBm -> mW: each dBm multiplies by 10^0.1 ~ 1.2589, integer arithmetic only */
 	for (int8_t step = 0; step < dbm && step < 36; step++) {
 		thousandths = (thousandths * 1259U) / 1000U;
 	}
-	/* 每步都截断，最后四舍五入回整毫瓦，避免 10 dBm 掉到 9 mW */
+	/* Truncate per step and round back to whole mW so 10 dBm does not become 9 mW */
 	want_mw = (uint16_t)((thousandths + 500U) / 1000U);
 
-	/* 取不超过实际功率的最大档 */
+	/* Highest tier that does not exceed the real power */
 	for (uint8_t i = 0U; i < sizeof(milliwatts) / sizeof(milliwatts[0]); i++) {
 		if (milliwatts[i] <= want_mw && milliwatts[i] >= milliwatts[best]) {
 			best = i;
@@ -217,13 +217,13 @@ uint8_t zlrs_crsf_rf_mode(uint32_t rate_bps)
 	case 325000U:
 		return 3U;
 	default:
-		return 0xFFU; /* 未知档 */
+		return 0xFFU; /* unknown tier */
 	}
 }
 
 /*
- * LoRa 档没有"速率"这个说法，用 0x10 | SF 编码：手台侧只要求两端一致，
- * 至少要能看出"这是 LoRa、SF 多少"。见 doc/07-architecture.md 第 3 节。
+ * LoRa tiers have no "rate", so they are encoded as 0x10 | SF: the handset only needs both
+ * ends to agree, and "LoRa, this SF" has to be visible (see doc/07-architecture.md 3).
  */
 uint8_t zlrs_crsf_rf_mode_mod(const zlrs_mod_cfg_t *mod)
 {

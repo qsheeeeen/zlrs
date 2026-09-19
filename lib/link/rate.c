@@ -1,5 +1,5 @@
 /*
- * 速率自适应策略，见 include/zlrs/link/rate.h。
+ * Rate adaptation policy, see include/zlrs/link/rate.h.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -14,7 +14,7 @@ void zlrs_rate_init(zlrs_rate_ctl_t *ctl, const zlrs_rate_tier_t *tiers, uint8_t
 	ctl->tiers = tiers;
 	ctl->count = count;
 	ctl->current = (start < count) ? start : 0U;
-	ctl->hysteresis = 10U; /* 默认 10 个百分点，标定时可改 */
+	ctl->hysteresis = 10U; /* 10 percentage points by default, tunable when calibrating */
 	ctl->windows = 3U;
 	ctl->hold_ms = 2000U;
 	ctl->last_ms = now_ms;
@@ -52,21 +52,21 @@ bool zlrs_rate_update(zlrs_rate_ctl_t *ctl, uint8_t lq_percent, uint32_t now_ms,
 
 	tier = &ctl->tiers[ctl->current];
 
-	/* 保持时间内不计窗口：连续窗口要从"可以换档"的那一刻开始算 */
+	/* No windows during the hold time: counting restarts when a tier change is allowed */
 	if ((uint32_t)(now_ms - ctl->last_ms) < ctl->hold_ms) {
 		ctl->good = 0U;
 		ctl->bad = 0U;
 		return false;
 	}
 
-	/* 守不住当前档 → 连续几个窗口都差就降到更慢的一档（下标 +1） */
+	/* Cannot hold this tier: several bad windows in a row drop to the next slower one (index +1) */
 	if (lq_percent < tier->min_lq_to_stay) {
 		ctl->bad++;
 		ctl->good = 0U;
 	} else if (ctl->current > 0U &&
 		   lq_percent >= (uint8_t)(ctl->tiers[ctl->current - 1U].min_lq_to_stay +
 					   ctl->hysteresis)) {
-		/* 富余到能撑住更快的一档 → 连续几个窗口都富余就升档 */
+		/* Comfortable enough for a faster tier: several good windows in a row move up */
 		ctl->good++;
 		ctl->bad = 0U;
 	} else {

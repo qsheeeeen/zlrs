@@ -1,8 +1,8 @@
 /*
- * 状态灯的颜色与节奏，见 include/zlrs/led/led.h。
+ * Status LED colours and cadence, see include/zlrs/led/led.h.
  *
- * 亮度上限刻意压得低（<= 30%）：这是给眼睛看的指示，不是照明；
- * 省电、也不至于在夜里刺眼。
+ * Brightness is deliberately capped low (<= 30%): this is an indicator for the eye, not a
+ * light source. It saves power and does not glare at night.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -11,7 +11,7 @@
 
 #include <stddef.h>
 
-/* 调色板：颜色只取几种，保证互相区分得开 */
+/* Palette: a handful of colours that stay distinguishable from each other */
 static const zlrs_led_rgb_t off = { 0U, 0U, 0U };
 static const zlrs_led_rgb_t white = { 255U, 255U, 255U };
 static const zlrs_led_rgb_t purple = { 160U, 0U, 200U };
@@ -21,7 +21,7 @@ static const zlrs_led_rgb_t green = { 0U, 255U, 0U };
 static const zlrs_led_rgb_t red = { 255U, 0U, 0U };
 static const zlrs_led_rgb_t orange = { 255U, 80U, 0U };
 
-/* 按百分比调亮度（0–100） */
+/* Scale brightness by a percentage (0-100) */
 static zlrs_led_rgb_t scale(zlrs_led_rgb_t color, uint8_t percent)
 {
 	zlrs_led_rgb_t out;
@@ -34,9 +34,9 @@ static zlrs_led_rgb_t scale(zlrs_led_rgb_t color, uint8_t percent)
 }
 
 /*
- * 闪烁：周期 period_ms 里亮 on_ms，其余时间灭。
- * 灯语约定：周期不短于 1 秒（最快 1 Hz），紧急程度用颜色 + 占空比表达，
- * 不靠更快的闪烁——见 doc/11-ux.md。
+ * Blink: on for on_ms out of every period_ms, off the rest of the time.
+ * Convention: periods are at least one second (1 Hz at most) and urgency comes from colour
+ * plus duty cycle, never from faster blinking. See doc/11-ux.md.
  */
 static zlrs_led_rgb_t blink(zlrs_led_rgb_t color, uint32_t now_ms, uint32_t period_ms,
 			    uint32_t on_ms)
@@ -44,29 +44,29 @@ static zlrs_led_rgb_t blink(zlrs_led_rgb_t color, uint32_t now_ms, uint32_t peri
 	return ((now_ms % period_ms) < on_ms) ? color : off;
 }
 
-/* 每 period_ms 闪一次（单闪），用于在常亮状态上叠加提示 */
+/* One flash every period_ms, used to overlay a hint on a steady colour */
 static bool single_flash(uint32_t now_ms, uint32_t period_ms, uint32_t on_ms)
 {
 	return (now_ms % period_ms) < on_ms;
 }
 
 /*
- * 主题色：TX 蓝、RX 绿。链路正常时只出现主题色，用节奏与亮度区分状态。
- * 性能退化（LQ 低）不换色——那只是"变得不那么好"，不是异常。
+ * Theme colour: blue for TX, green for RX. A healthy link only ever shows the theme colour,
+ * with cadence and brightness marking the state. Low LQ is not an error, so the colour stays.
  */
 static zlrs_led_rgb_t theme_color(const zlrs_led_input_t *in)
 {
 	return in->role_tx ? blue : green;
 }
 
-/* 链路状态 → 颜色与节奏；只有 CONNECTED 会用到 LQ */
+/* Link state -> colour and cadence; only CONNECTED looks at LQ */
 static zlrs_led_rgb_t link_state_frame(const zlrs_led_input_t *in, uint32_t now_ms)
 {
 	const zlrs_led_rgb_t theme = theme_color(in);
 
 	switch (in->link_state) {
 	case ZLRS_STATE_CONNECTED:
-		/* 主题色常亮，LQ 只改亮度：>=80 亮 30%，50–79 亮 18%，<50 亮 10% */
+		/* Steady theme colour, LQ only changes brightness: >=80 30%, 50-79 18%, <50 10% */
 		if (in->lq_percent >= 80U) {
 			return scale(theme, 30U);
 		}
@@ -79,11 +79,11 @@ static zlrs_led_rgb_t link_state_frame(const zlrs_led_input_t *in, uint32_t now_
 	case ZLRS_STATE_SEARCHING:
 		return blink(scale(theme, 40U), now_ms, 2000U, 150U);
 	case ZLRS_STATE_UNPAIRED:
-		/* 异常色之一（TX/RX 共用）：等你配对 */
+		/* One of the shared alert colours: waiting for pairing */
 		return blink(scale(yellow, 40U), now_ms, 1000U, 120U);
 	case ZLRS_STATE_UNCONFIGURED:
 	default:
-		/* 异常色之一（TX/RX 共用）：等你写根密钥 */
+		/* One of the shared alert colours: waiting for a root key */
 		return blink(scale(purple, 40U), now_ms, 2000U, 200U);
 	}
 }
@@ -96,25 +96,25 @@ zlrs_led_rgb_t zlrs_led_frame(const zlrs_led_input_t *in, uint32_t now_ms)
 		return off;
 	}
 
-	/* 1. 配置模式：白，0.5 Hz 慢闪 */
+	/* 1. Config mode: white, slow blink */
 	if (in->config_mode) {
 		return blink(scale(white, 30U), now_ms, 1000U, 500U);
 	}
 
-	/* 2. 开机自检：前 1.5 秒主题色常亮（蓝 = TX，绿 = RX），一眼分得出角色 */
+	/* 2. Boot self-test: steady theme colour for 1.5 s (blue = TX, green = RX) */
 	if (in->uptime_ms < 1500U) {
 		return scale(theme_color(in), 30U);
 	}
 
-	/* 3. 失控保护：红，5 Hz 快闪——"没有可用链路"最要紧 */
+	/* 3. Failsafe: red, fast blink — "no usable link" matters most */
 	if (in->failsafe) {
 		return blink(scale(red, 60U), now_ms, 1000U, 800U);
 	}
 
-	/* 4. 链路状态 */
+	/* 4. link state */
 	frame = link_state_frame(in, now_ms);
 
-	/* 5. 丢弃提示：只在已连接时常亮的基础上每 2 秒单闪一次 */
+	/* 5. Drop hint: a single flash every 2 s on top of the steady CONNECTED colour */
 	if (in->link_state == ZLRS_STATE_CONNECTED && in->drop_recent &&
 	    single_flash(now_ms, 2000U, 300U)) {
 		frame = scale(orange, 60U);

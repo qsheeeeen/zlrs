@@ -1,5 +1,5 @@
 /*
- * 动态发射功率策略，见 include/zlrs/link/power.h。
+ * Dynamic TX power policy, see include/zlrs/link/power.h.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -26,7 +26,7 @@ void zlrs_power_init(zlrs_power_ctl_t *ctl, int8_t configured_dbm, int8_t floor_
 	ctl->max_dbm = configured_dbm;
 	ctl->min_dbm = (floor_dbm < configured_dbm) ? floor_dbm : configured_dbm;
 	ctl->step_db = 3;
-	/* 阈值是占位值：上板按实测的 RSSI/LQ-误包率曲线再标定 */
+	/* Placeholder thresholds: calibrate them against measured RSSI/LQ vs. PER curves */
 	ctl->rssi_low_dbm = -95;
 	ctl->rssi_high_dbm = -70;
 	ctl->lq_low = 90U;
@@ -35,7 +35,7 @@ void zlrs_power_init(zlrs_power_ctl_t *ctl, int8_t configured_dbm, int8_t floor_
 	ctl->hold_ms = 2000U;
 	ctl->tlm_timeout_ms = 1000U;
 
-	/* 起手用上限：没拿到遥测之前没有任何降功率的理由 */
+	/* Start at the ceiling: without telemetry there is no reason to lower power */
 	ctl->current_dbm = configured_dbm;
 	ctl->good = 0U;
 	ctl->bad = 0U;
@@ -56,11 +56,11 @@ bool zlrs_power_update(zlrs_power_ctl_t *ctl, bool valid, int16_t rssi_dbm,
 		       uint8_t lq_percent, uint32_t now_ms, int8_t *out_dbm)
 {
 	if (valid) {
-		/* 刚收到遥测：这次调用只看质量，不判超时 */
+		/* Fresh telemetry: this call judges quality, not the timeout */
 		ctl->tlm_seen = true;
 		ctl->last_tlm_ms = now_ms;
 	} else {
-		/* 轮询路径：只有这里才判"遥测断了没有" */
+		/* Polling path: only here is the telemetry timeout checked */
 		if (!ctl->tlm_seen ||
 		    (uint32_t)(now_ms - ctl->last_tlm_ms) < ctl->tlm_timeout_ms) {
 			return false;
@@ -72,7 +72,7 @@ bool zlrs_power_update(zlrs_power_ctl_t *ctl, bool valid, int16_t rssi_dbm,
 			return false;
 		}
 
-		/* 先回到上限，等重新收到遥测再谈省电 */
+		/* Back to the ceiling first; saving power can wait for telemetry to return */
 		ctl->current_dbm = ctl->max_dbm;
 		ctl->fallbacks++;
 		ctl->last_change_ms = now_ms;
@@ -83,7 +83,7 @@ bool zlrs_power_update(zlrs_power_ctl_t *ctl, bool valid, int16_t rssi_dbm,
 		return true;
 	}
 
-	/* 保持时间内不计窗口：连续样本从"可以调整"的那一刻开始算 */
+	/* No windows during the hold time: counting restarts when an adjustment is allowed */
 	if ((uint32_t)(now_ms - ctl->last_change_ms) < ctl->hold_ms) {
 		ctl->good = 0U;
 		ctl->bad = 0U;
@@ -107,7 +107,7 @@ bool zlrs_power_update(zlrs_power_ctl_t *ctl, bool valid, int16_t rssi_dbm,
 
 		if (next == ctl->current_dbm) {
 			ctl->bad = 0U;
-			return false; /* 已经在上限 */
+			return false; /* already at the ceiling */
 		}
 		ctl->current_dbm = next;
 		ctl->raises++;
@@ -116,7 +116,7 @@ bool zlrs_power_update(zlrs_power_ctl_t *ctl, bool valid, int16_t rssi_dbm,
 
 		if (next == ctl->current_dbm) {
 			ctl->good = 0U;
-			return false; /* 已经在下限 */
+			return false; /* already at the floor */
 		}
 		ctl->current_dbm = next;
 		ctl->lowers++;
