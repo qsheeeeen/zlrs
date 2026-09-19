@@ -1,23 +1,23 @@
-# LR2021 关键参数
+# LR2021 key parameters
 
-来源：Semtech LR2021 Final Datasheet Rev. 1.1（DS.LR2021，2025-10-14，共 236 页）。这里只摘录与 zlrs 相关的部分：速率与灵敏度、模式切换时序、SPI/IRQ 接口与引脚。我们怎么用这些参数见 [07-architecture](07-architecture.md) 与 [09-protocol](09-protocol.md)，板级标定见[板级 README](../boards/zlrs/rp2350_zero_core2021/README.md)。
+Source: Semtech LR2021 Final Datasheet Rev. 1.1 (DS.LR2021, 2025-10-14, 236 pages). Only what zlrs uses is excerpted here: rates and sensitivity, mode-switch timing, the SPI/IRQ interface and the pins. How those numbers are used: [07-architecture](07-architecture.md) and [09-protocol](09-protocol.md); board calibration: the [board README](../boards/zlrs/rp2350_zero_core2021/README.md).
 
-## 器件定位
+## Where the part sits
 
-- LoRa Plus 家族首颗芯片，第 4 代 LoRa IP。
-- **半双工**收发机，单 switchless 前端，LF/HF 两路 PA/LNA。
-- 频率范围 150–2500 MHz：sub-GHz 150–960 MHz 走 LF 路径；S-band 与 2.4 GHz ISM 走 HF 路径。
-- 与 SX126x / SX127x / SX128x / LR11xx 家族向后兼容；FLRC 与 SX128x 的 FLRC 兼容。
-- 同一时刻只能在一个频段工作，但频段间切换开销很小。
+- The first chip of the LoRa Plus family, with the fourth generation of LoRa IP.
+- A **half-duplex** transceiver with a single switchless front end and separate LF/HF PA and LNA paths.
+- 150-2500 MHz: sub-GHz 150-960 MHz on the LF path, S-band and 2.4 GHz ISM on the HF path.
+- Backwards compatible with the SX126x / SX127x / SX128x / LR11xx families; FLRC matches the SX128x.
+- One band at a time, but switching between them is cheap.
 
-## 调制与速率
+## Modulation and rates
 
-- LoRa、(G)FSK、(G)MSK、FLRC、4-FSK、O-QPSK、OOK、DBPSK（仅发）、LR-FHSS（仅发）。
-- FLRC 最高 2.6 Mbps，sub-GHz 与 2.4 GHz 都支持。
+- LoRa, (G)FSK, (G)MSK, FLRC, 4-FSK, O-QPSK, OOK, DBPSK (TX only) and LR-FHSS (TX only).
+- FLRC runs up to 2.6 Mbps on both sub-GHz and 2.4 GHz.
 
-### FLRC 速率与带宽（Table 18-1）
+### FLRC rates and bandwidth (Table 18-1)
 
-| 宏 | 原始速率 Rb | DSB 带宽 |
+| Macro | Raw rate Rb | DSB bandwidth |
 | --- | --- | --- |
 | `FLRC_BR_2_600_BW_2_6` | 2.6 Mbps | 2666 kHz |
 | `FLRC_BR_2_080_BW_2_6` | 2.08 Mbps | 2666 kHz |
@@ -28,9 +28,9 @@
 | `FLRC_BR_0_325_BW_0_3` | 0.325 Mbps | 300 kHz |
 | `FLRC_BR_0_260_BW_0_3` | 0.26 Mbps | 300 kHz |
 
-### FLRC 有效速率（Table 18-2，受 FEC 编码率影响）
+### FLRC effective rate (Table 18-2, shaped by the FEC coding rate)
 
-| 原始速率 | CR=1 | CR=3/4 | CR=2/3 | CR=1/2 |
+| Raw rate | CR=1 | CR=3/4 | CR=2/3 | CR=1/2 |
 | --- | --- | --- | --- | --- |
 | 2.6 Mbps | 2.6 | 1.95 | 1.73 | 1.3 |
 | 2.08 Mbps | 2.08 | 1.56 | 1.38 | 1.04 |
@@ -41,9 +41,9 @@
 | 0.325 Mbps | 0.325 | 0.244 | 0.216 | 0.163 |
 | 0.26 Mbps | 0.26 | 0.195 | 0.173 | 0.13 |
 
-### FLRC 灵敏度（1% PER，CR 3/4，rx_boost=7）
+### FLRC sensitivity (1% PER, CR 3/4, rx_boost=7)
 
-| 速率 | sub-GHz @915 MHz | 2.4 GHz |
+| Rate | sub-GHz at 915 MHz | 2.4 GHz |
 | --- | --- | --- |
 | 2.6 Mbps | -101.5 dBm | -99 dBm |
 | 2.08 Mbps | -102.5 dBm | -100 dBm |
@@ -54,7 +54,7 @@
 | 0.325 Mbps | -110 dBm | -108 dBm |
 | 0.26 Mbps | -111 dBm | -108.5 dBm |
 
-### LoRa 灵敏度（64 字节载荷，1% PER，CR 4/5）
+### LoRa sensitivity (64-byte payload, 1% PER, CR 4/5)
 
 | SF | sub-GHz @1000 kHz BW | 2.4 GHz @200 kHz BW |
 | --- | --- | --- |
@@ -67,82 +67,82 @@
 | 11 | -130 dBm | -134.5 dBm |
 | 12 | -132.5 dBm | -137.5 dBm |
 
-LoRa 符号率 = `BW / 2^SF`。前导码建议 SF5/SF6 用 ≥12 符号，其余 ≥8 符号。
+LoRa symbol rate = `BW / 2^SF`. The datasheet suggests at least 12 preamble symbols for SF5/SF6 and at least 8 otherwise.
 
-## 模式切换时间（Table 3-23，typical）
+## Mode switch times (Table 3-23, typical)
 
-定义：NSS 上升沿结束请求模式切换的 SPI 事务，到 BUSY 拉低之间的时间。
+Defined as the time from the NSS rising edge that ends the mode-switch SPI transaction to BUSY going low.
 
-| 符号 | 描述 | typ |
+| Symbol | Description | typ |
 | --- | --- | --- |
-| `TSHFOSC` | HF 晶振唤醒（±10 ppm 内） | 700 µs |
-| `PLL_LOCK` | 合成器锁定 | 32 µs |
-| `TSPDRCS` | Sleep → STDBY_RC 冷启动 | 6 ms |
-| `TSPDRCW` | Sleep → STDBY_RC 热启动（保留上下文） | 1 ms |
-| `TSRCXO` | STDBY_RC → STDBY_XOSC | 43 µs |
-| `TSRCFS` | STDBY_RC → FS | 76 µs |
-| `TSRCRX` | STDBY_RC → Rx | 115 µs |
-| `TSRCTX` | STDBY_RC → Tx | 106 µs |
-| `TSXOFS` | STDBY_XOSC → FS | 44 µs |
-| `TSXORX` | STDBY_XOSC → Rx | 84 µs |
-| `TSXOTX` | STDBY_XOSC → Tx | 76 µs |
-| `TSFSRX1` | FS → Rx（LoRa） | 53 µs |
-| `TSFSRX2` | FS → Rx（FSK/FLRC） | 37 µs |
-| `TSFSTX1` | FS → Tx | 45 µs |
-| `TSRXFS1/2` | Rx → FS | 10 / 11 µs |
-| `TSTXFS` | Tx → FS | 54 µs |
-| `TSTXRX` | Tx → Rx | 91 µs |
-| `TSRXTX` | Rx → Tx | 107 µs |
+| `TSHFOSC` | HF crystal wake-up (within 10 ppm) | 700 us |
+| `PLL_LOCK` | synthesiser lock | 32 us |
+| `TSPDRCS` | Sleep to STDBY_RC, cold start | 6 ms |
+| `TSPDRCW` | Sleep to STDBY_RC, warm start (context kept) | 1 ms |
+| `TSRCXO` | STDBY_RC to STDBY_XOSC | 43 us |
+| `TSRCFS` | STDBY_RC to FS | 76 us |
+| `TSRCRX` | STDBY_RC to Rx | 115 us |
+| `TSRCTX` | STDBY_RC to Tx | 106 us |
+| `TSXOFS` | STDBY_XOSC to FS | 44 us |
+| `TSXORX` | STDBY_XOSC to Rx | 84 us |
+| `TSXOTX` | STDBY_XOSC to Tx | 76 us |
+| `TSFSRX1` | FS to Rx (LoRa) | 53 us |
+| `TSFSRX2` | FS to Rx (FSK/FLRC) | 37 us |
+| `TSFSTX1` | FS to Tx | 45 us |
+| `TSRXFS1/2` | Rx to FS | 10 / 11 us |
+| `TSTXFS` | Tx to FS | 54 us |
+| `TSTXRX` | Tx to Rx | 91 us |
+| `TSRXTX` | Rx to Tx | 107 us |
 
-超帧里怎么用这些数字见 [07-architecture](07-architecture.md) 第 4 节。
+How the superframe uses these numbers: [07-architecture](07-architecture.md) 4.
 
-## SPI 与主机接口
+## SPI and the host interface
 
-- 命令分两类：**normal command**（会拉 BUSY，需等待完成）与 **direct read/write**（立即执行，不拉 BUSY）。低延迟的 FIFO 访问走后者。
-- BUSY 在 NSS 下降沿拉高，命令处理完成后拉低。
-- `SetPacketType` 只能在 Standby RC / Standby XOSC / FS 模式下执行。
-- 命令空间：`0x01xx` 系统配置类，`0x02xx` 射频配置类。
+- Two kinds of command: **normal commands** (raise BUSY and have to be waited for) and **direct read/write** (executed at once, no BUSY). Low-latency FIFO access uses the latter.
+- BUSY goes high on the NSS falling edge and low once the command is done.
+- `SetPacketType` only works in Standby RC, Standby XOSC or FS mode.
+- Command space: `0x01xx` for system configuration, `0x02xx` for radio configuration.
 
-### 与调度相关的命令
+### Commands that matter for scheduling
 
-| 命令 | Opcode | 用途 |
+| Command | Opcode | Purpose |
 | --- | --- | --- |
-| `SetRfFrequency` | 0x0200 | 设载波频率（Hz，32 位） |
-| `SetRxPath` | 0x0201 | 选 LF/HF 接收路径 + rx_boost |
-| `SetStandby` | 0x0128 | RC / XOSC 待机 |
-| `SetFs` | 0x0129 | 进入频率合成模式 |
-| `SetRx` / `SetTx` | — | 进入收发 |
-| `SetRxTxFallbackMode` | — | 收发结束后的归档模式 |
-| `SetAutoRxTx` | 0x0211 | Tx 后按 Delay 自动转 Rx，Timeout 控制驻留 |
-| `SetRxDutyCycle` | 0x0210 | 周期性 Rx 窗口 + Sleep，可配合 CAD |
-| `SetDefaultRxTxTimeout` | 0x0215 | 默认收发超时 |
-| `CalibFE` | 0x0123 | 按 LF/HF 路径标定前端（4 MHz 步进） |
-| `SetDioIrqConfig` | 0x0118 | 把 IRQ 映射到 DIO |
-| `GetAndClearIrqStatus` | 0x0117 | 读取并清除中断状态 |
+| `SetRfFrequency` | 0x0200 | set the carrier frequency (Hz, 32-bit) |
+| `SetRxPath` | 0x0201 | pick the LF/HF receive path and rx_boost |
+| `SetStandby` | 0x0128 | standby on RC or XOSC |
+| `SetFs` | 0x0129 | enter frequency synthesis |
+| `SetRx` / `SetTx` | - | start receive or transmit |
+| `SetRxTxFallbackMode` | - | where to land after a transfer |
+| `SetAutoRxTx` | 0x0211 | Tx switches to Rx after Delay, Timeout bounds the stay |
+| `SetRxDutyCycle` | 0x0210 | periodic Rx windows with sleep, can work with CAD |
+| `SetDefaultRxTxTimeout` | 0x0215 | default transfer timeout |
+| `CalibFE` | 0x0123 | calibrate the front end per LF/HF path (4 MHz steps) |
+| `SetDioIrqConfig` | 0x0118 | map IRQs onto DIO pins |
+| `GetAndClearIrqStatus` | 0x0117 | read and clear interrupt status |
 
-### IRQ 位（Table 5-17 节选）
+### IRQ bits (excerpt of Table 5-17)
 
-| Bit | 名称 | 含义 |
+| Bit | Name | Meaning |
 | --- | --- | --- |
-| 5 | `PreambleDetected` | 前导码检测 |
-| 7 | `CadDetected` | 信道活动检测成功 |
-| 18 | `RxDone` | 收包完成 |
-| 19 | `TxDone` | 发包完成 |
-| 20 | `CadDone` | CAD 结束 |
-| 21 | `Timeout` | 收发超时 |
-| 22 | `CrcError` | CRC 错误 |
-| 23 | `LenError` | 长度错误 |
-| 24 | `AddrError` | 地址不匹配 |
-| 2 | `RngReqVld` | 收到有效测距请求 |
-| 16 | `Error` | 非命令类错误 |
-| 17 | `CmdError` | 主机命令失败 |
+| 5 | `PreambleDetected` | preamble detected |
+| 7 | `CadDetected` | channel activity detected |
+| 18 | `RxDone` | receive finished |
+| 19 | `TxDone` | transmit finished |
+| 20 | `CadDone` | CAD finished |
+| 21 | `Timeout` | transfer timed out |
+| 22 | `CrcError` | CRC error |
+| 23 | `LenError` | length error |
+| 24 | `AddrError` | address mismatch |
+| 2 | `RngReqVld` | a valid ranging request arrived |
+| 16 | `Error` | a non-command error |
+| 17 | `CmdError` | a host command failed |
 
-## 引脚要点（QFN32）
+## Pin notes (QFN32)
 
-- `RFO_LF1` / `RFO_LF2`：LF PA 输出（sub-GHz）
-- `RFI_LF`：LF 接收输入
-- `RFI_HF`：HF 接收输入
-- `RFO_HF`：HF PA 输出（2.4 GHz）
-- `VTCXO`：可为外部 TCXO 供电，电压由 `SetTcxoMode` 配置
+- `RFO_LF1` / `RFO_LF2`: LF PA outputs (sub-GHz)
+- `RFI_LF`: LF receive input
+- `RFI_HF`: HF receive input
+- `RFO_HF`: HF PA output (2.4 GHz)
+- `VTCXO`: can power an external TCXO, with the voltage set by `SetTcxoMode`
 
-switchless 前端要求 LF/HF 各自的匹配网络共存。本板用的 Core2021 模块自带匹配网络，且用的是晶振而非 TCXO（`tcxo-*` 保持关断，`reg-mode` 用 DC/DC），见[板级 README](../boards/zlrs/rp2350_zero_core2021/README.md)。
+The switchless front end needs matching networks for LF and HF to coexist. The Core2021 module used here carries them, and it uses a crystal rather than a TCXO (`tcxo-*` stays off, `reg-mode` uses DC/DC); see the [board README](../boards/zlrs/rp2350_zero_core2021/README.md).
