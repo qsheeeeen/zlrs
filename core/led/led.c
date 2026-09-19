@@ -36,7 +36,7 @@ static zlrs_led_rgb_t scale(zlrs_led_rgb_t color, uint8_t percent)
 /*
  * Blink: on for on_ms out of every period_ms, off the rest of the time.
  * Convention: periods are at least one second (1 Hz at most) and urgency comes from colour
- * plus duty cycle, never from faster blinking. See docs/design/11-ux.md.
+ * plus duty cycle, never from faster blinking. See doc/11-ux.md.
  */
 static zlrs_led_rgb_t blink(zlrs_led_rgb_t color, uint32_t now_ms, uint32_t period_ms,
 			    uint32_t on_ms)

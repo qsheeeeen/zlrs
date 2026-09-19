@@ -121,7 +121,7 @@ Three consequences:
 | `boards/` | one directory per hardware combination: devicetree, defconfig, README with the pin/alias table | contain C |
 | `tools/` | host-side helpers: config, recovery, update, bring-up self-test, UF2 packaging | be needed to build firmware |
 | `tests/host/` | host build of `core/` plus the two-node radio simulation | need hardware |
-| `docs/` | design documents and the documentation index | duplicate facts owned by another document |
+| `doc/` | design documents and the documentation index | duplicate facts owned by another document |
 
 The `core/` boundary is what makes the protocol testable on a host, so it is
 enforced mechanically (section 6).

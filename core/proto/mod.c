@@ -1,5 +1,5 @@
 /*
- * Modulation and airtime model, see include/zlrs/proto/mod.h and docs/design/07-architecture.md 3.
+ * Modulation and airtime model, see include/zlrs/proto/mod.h and doc/07-architecture.md 3.
  *
  * SPDX-License-Identifier: Apache-2.0
  */

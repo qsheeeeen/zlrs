@@ -14,7 +14,7 @@ target_sources(app PRIVATE
   src/watchdog.c
 )
 
-# One of two radio backends (see docs/design/12-debug.md 3):
+# One of two radio backends (see doc/12-debug.md 3):
 #   ZLRS_APP_RADIO=y (default) -> USP/RAC straight to the LR2021
 #   ZLRS_APP_RADIO=n         -> null backend, everything except the radio
 if(CONFIG_ZLRS_APP_RADIO)

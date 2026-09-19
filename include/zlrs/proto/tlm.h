@@ -2,7 +2,7 @@
  * Over-the-air telemetry payload: the RX reports the link quality it measures and the TX turns
  * it into a CRSF statistics frame (0x14). CRSF frames are not reused as payload: that format
  * belongs to the ground side (address and CRC included). The numbers are uplink (RX measuring
- * TX->RX); downlink is measured by the TX itself, see docs/design/07-architecture.md 3.
+ * TX->RX); downlink is measured by the TX itself, see doc/07-architecture.md 3.
  *
  * SPDX-License-Identifier: Apache-2.0
  */

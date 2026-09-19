@@ -1,5 +1,5 @@
 /*
- * RP2350 hardware TRNG entropy source (zlrs driver, see docs/design/13-roadmap.md).
+ * RP2350 hardware TRNG entropy source (zlrs driver, see doc/13-roadmap.md).
  *
  * Why not Zephyr's entropy_rpi_pico: that path calls pico-sdk's get_rand_64(), which takes
  * a spinlock and disables interrupts, and only returns once 192 ROSC samples have filled the

@@ -5,7 +5,7 @@ config ZLRS_LED
 	bool "Status LED patterns (state -> colour and cadence)"
 	select ZLRS_LINK
 	help
-	  Maps link state and alerts onto one pixel's colour and cadence (table: docs/design/11-ux.md).
+	  Maps link state and alerts onto one pixel's colour and cadence (table: doc/11-ux.md).
 	  Pure C, see tests/host; the strip driver lives in the application (app/src/led_port.c).
 
 module = ZLRS_LED

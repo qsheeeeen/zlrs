@@ -37,7 +37,7 @@ config ZLRS_APP_REGION
 	default 0
 	range 0 3
 	help
-	  The region picks the control link's band, power ceiling and duty cap (docs/design/09-protocol.md
+	  The region picks the control link's band, power ceiling and duty cap (doc/09-protocol.md
 	  5.2 and core/region): EU868 caps duty at 1%, FCC915 and CN470 do not.
 	  HF SKUs accept 0/1, LF SKUs accept 2/3; a mismatch trips the boot check, shows red and
 	  keeps the radio off: regulatory settings do not get to be approximate.
@@ -52,7 +52,7 @@ choice ZLRS_APP_SECURITY_PROFILE
 	default ZLRS_APP_SECURITY_PROFILE_P1
 	help
 	  P1 is the production profile: a 4-byte tag on every frame. P0 carries no tag and is for
-	  the bench only. See docs/design/10-security.md 8.
+	  the bench only. See doc/10-security.md 8.
 
 config ZLRS_APP_SECURITY_PROFILE_P0
 	bool "P0: no tag (debug only)"
@@ -68,7 +68,7 @@ config ZLRS_APP_FHSS
 	help
 	  With this off every frame stays on the sync channel (entry 0 of the hop table), which is
 	  how bring-up separates timing from the hop table. A fixed channel does not satisfy the
-	  FCC 15.247 hopping rules, so bench only, see docs/design/09-protocol.md 5.2.
+	  FCC 15.247 hopping rules, so bench only, see doc/09-protocol.md 5.2.
 
 config ZLRS_APP_SESSION_HANDSHAKE
 	bool "Session handshake (fresh key per session)"
@@ -77,7 +77,7 @@ config ZLRS_APP_SESSION_HANDSHAKE
 	  Off: the pairing-level link_auth doubles as the session key. The RX counts a SYNC as
 	  established and reports back with SESS_RESP, saving a derivation and one confirm message.
 	  The cost is no per-session key rotation: recorded frames stay replayable across sessions.
-	  Bench only, see docs/design/10-security.md 3.
+	  Bench only, see doc/10-security.md 3.
 
 config ZLRS_APP_TELEMETRY
 	bool "Uplink telemetry on the control link"
@@ -94,7 +94,7 @@ config ZLRS_APP_RESYNC_PERIOD_MS
 	help
 	  Once connected, send a SYNC on the sync channel this often: the peer re-aligns its hop
 	  index (crystal drift accumulates into missed hops) and spots a peer reboot or re-pair.
-	  See docs/design/09-protocol.md 3.6. Converted to frames, at least one.
+	  See doc/09-protocol.md 3.6. Converted to frames, at least one.
 
 config ZLRS_APP_STATS_LOG
 	bool "Status lines once a second on the console (bench debugging)"
@@ -142,7 +142,7 @@ config ZLRS_APP_MCUBOOT_CONFIRM
 	  well-formed confirm command from the host, answered by the device, makes the application
 	  call boot_write_img_confirmed(). No confirm means a reset and rollback; an image that never
 	  comes up rolls back the same way, and with nothing to roll back to MCUboot stays in serial
-	  recovery, which is still flashable. See docs/design/08-firmware.md 6.
+	  recovery, which is still flashable. See doc/08-firmware.md 6.
 
 config ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS
 	int "Host confirm timeout (ms)"
@@ -159,7 +159,7 @@ config ZLRS_APP_RADIO
 	help
 	  Off: the radio sits out entirely (app/src/radio_null.c) while the link state machines and
 	  everything else keep running. Use it with no Core2021 attached: the LR20xx HAL k_oops()es
-	  when BUSY never arrives. See docs/design/12-debug.md 3.
+	  when BUSY never arrives. See doc/12-debug.md 3.
 
 config ZLRS_APP_LINK_CONTROL
 	bool "Control link (RC + telemetry + pairing)"
@@ -219,7 +219,7 @@ config ZLRS_APP_UPDATE_TRIGGER
 	  The tool sends a recovery command on the config port; the device sets the boot-mode flag
 	  and reboots into MCUboot serial recovery, waiting for a signed image. That is how a healthy
 	  device gets upgraded without unplugging USB or pressing reset; the debug shell's
-	  `zlrs recovery` takes the same path. See docs/design/08-firmware.md 6.
+	  `zlrs recovery` takes the same path. See doc/08-firmware.md 6.
 
 	  Production builds may turn it off; then only the boot window after a reset gets you in.
 
@@ -229,7 +229,7 @@ choice ZLRS_APP_BAND_ROLE
 	help
 	  Long-range mode (default): control owns sub-G (distance), data owns 2.4G (throughput).
 	  Racing mode swaps them: control takes 2.4G alone (short airtime, high frame rate) and data
-	  moves to sub-G under the regional rules (or is turned off). See docs/design/07-architecture.md 2.
+	  moves to sub-G under the regional rules (or is turned off). See doc/07-architecture.md 2.
 
 config ZLRS_APP_BAND_ROLE_SUBG_CONTROL
 	bool "Long range: control on sub-G, data on 2.4G"
@@ -244,7 +244,7 @@ choice ZLRS_APP_CONTROL_MODULATION
 	default ZLRS_APP_CONTROL_MODULATION_FLRC
 	depends on ZLRS_APP_BAND_ROLE_SUBG_CONTROL
 	help
-	  Modulation is per link (docs/design/07-architecture.md 3): data always runs FLRC on 2.4G, while
+	  Modulation is per link (doc/07-architecture.md 3): data always runs FLRC on 2.4G, while
 	  control can move to the LoRa long-range tier, the way out when the narrow band
 	  (868/470/433) cannot fit wide FLRC. The superframe period follows the slower link.
 
@@ -271,7 +271,7 @@ config ZLRS_APP_RACING_CONTROL_RATE_HZ
 	depends on ZLRS_APP_BAND_ROLE_SUBG_DATA
 	help
 	  2.4G frames can be denser (500 by default), but the superframe still has to fit the two
-	  data windows that moved to sub-G (see docs/design/07-architecture.md 2).
+	  data windows that moved to sub-G (see doc/07-architecture.md 2).
 
 config ZLRS_APP_LORA_CONTROL_RATE_HZ
 	int "LoRa control frame rate (Hz)"
@@ -338,7 +338,7 @@ config ZLRS_APP_CRSF_TIMEOUT_MS
 	default 100
 	help
 	  With the handset unplugged or powered off, the TX swaps in the preset failsafe payload
-	  when no RC frame arrives within this window. See docs/design/09-protocol.md 3.4.
+	  when no RC frame arrives within this window. See doc/09-protocol.md 3.4.
 
 config ZLRS_APP_TLM_PERIOD_MS
 	int "RX telemetry period (ms)"
@@ -348,7 +348,7 @@ config ZLRS_APP_CONFIG_TIMEOUT_S
 	int "Config mode idle timeout (s)"
 	default 300
 	help
-	  Config mode exits after this long without a command, see docs/design/08-firmware.md 2.
+	  Config mode exits after this long without a command, see doc/08-firmware.md 2.
 
 config ZLRS_APP_DATA_ARQ
 	bool "Reliable data transfer (ARQ)"
@@ -356,7 +356,7 @@ config ZLRS_APP_DATA_ARQ
 	help
 	  On by default: the receiver acknowledges payloads and the sender retransmits the window
 	  until it is acked. Costs latency and RAM; off means best-effort (drop when full, count it).
-	  See docs/design/09-protocol.md 4.3.
+	  See doc/09-protocol.md 4.3.
 
 config ZLRS_APP_SUB_BAND_MIX
 	bool "Sub-band mixing (move slots between 2.4G and sub-G by LQ)"
@@ -364,14 +364,14 @@ config ZLRS_APP_SUB_BAND_MIX
 	help
 	  When LQ drops, telemetry slots move to sub-G first, then the data link, and only then the
 	  RC downlink; recovery moves them back in reverse. The duty cap bounds it; see
-	  docs/design/09-protocol.md 5.1.
+	  doc/09-protocol.md 5.1.
 
 config ZLRS_APP_RATE_ADAPT
 	bool "Adapt the rate tier to link quality"
 	default n
 	depends on ZLRS_APP_CONTROL_MODULATION_FLRC
 	help
-	  Thresholds need measured curves (see docs/design/13-roadmap.md), so this is off by default;
+	  Thresholds need measured curves (see doc/13-roadmap.md), so this is off by default;
 	  turn it on and the tier table and hysteresis in app/src/main.c take over.
 
 config ZLRS_APP_DYNAMIC_POWER
@@ -393,7 +393,7 @@ config ZLRS_APP_PAIR_HOLD_MS
 	int "Hold time needed to start pairing (ms)"
 	default 1000
 	help
-	  The button has exactly one action: holding it this long starts pairing (docs/design/11-ux.md).
+	  The button has exactly one action: holding it this long starts pairing (doc/11-ux.md).
 	  There is no press-and-hold-at-boot gesture; config mode comes from the config port.
 
 endmenu
@@ -409,4 +409,4 @@ config ZLRS_APP_ENTROPY_TRNG
 	  The driver lives in drivers/entropy: probe resets and pre-fetches, reads come from a small
 	  pool, interrupts stay on, waits are bounded and failures are reported, never papered over.
 	  Zephyr's ENTROPY_RPI_PICO_RNG is unusable here: pico-sdk spins with interrupts off and USB dies.
-	  See docs/design/13-roadmap.md.
+	  See doc/13-roadmap.md.

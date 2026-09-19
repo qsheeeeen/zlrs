@@ -92,7 +92,7 @@ static void test_mod_lora_reference(void)
 
 /*
  * The 10 Hz LoRa tier has to fit one RC frame out plus one telemetry frame in: the quantitative
- * version of "the superframe period follows the slower link" (docs/design/07-architecture.md 3).
+ * version of "the superframe period follows the slower link" (doc/07-architecture.md 3).
  */
 static void test_mod_lora_control_budget(void)
 {

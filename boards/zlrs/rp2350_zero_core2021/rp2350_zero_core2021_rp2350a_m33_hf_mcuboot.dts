@@ -21,7 +21,7 @@
 #include "rp2350_zero_core2021_partitions_mcuboot.dtsi"
 
 /* The boot-mode area the application uses to enter serial recovery: the RP2350 overlay in the
-  * Zephyr tree keeps 4 bytes at the start of SRAM and moves sram0 aside (docs/design/08-firmware.md 6). */
+  * Zephyr tree keeps 4 bytes at the start of SRAM and moves sram0 aside (doc/08-firmware.md 6). */
 #include <vendor/raspberrypi/rp2350-boot-mode-retention.dtsi>
 
 / {

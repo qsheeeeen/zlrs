@@ -1,5 +1,5 @@
 /*
- * Over-the-air frame format, see docs/design/09-protocol.md 2. Preamble, sync word, CRC and length
+ * Over-the-air frame format, see doc/09-protocol.md 2. Preamble, sync word, CRC and length
  * belong to the LR2021 hardware and are not repeated in the frame; multi-byte fields are little-endian.
  *
  * SPDX-License-Identifier: Apache-2.0
@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-/* Packet types (a 6-bit space, see docs/design/09-protocol.md 2.2) */
+/* Packet types (a 6-bit space, see doc/09-protocol.md 2.2) */
 typedef enum {
 	ZLRS_PKT_RC = 0,        /* TX -> RX: RC channels */
 	ZLRS_PKT_TLM = 1,       /* RX -> TX: telemetry */
@@ -35,7 +35,7 @@ typedef enum {
 #define ZLRS_FLAG_MORE    0x01U /* more fragments follow */
 #define ZLRS_FLAG_ACK_REQ 0x02U /* acknowledgement requested */
 
-/* Security profiles, see docs/design/10-security.md 8 */
+/* Security profiles, see doc/10-security.md 8 */
 typedef enum {
 	ZLRS_PROFILE_P0 = 0, /* no tag, no encryption, debug only */
 	ZLRS_PROFILE_P1 = 1, /* 4 B tag */

@@ -10,7 +10,7 @@
 #
 # Except for `enter`, every command first sends enter-config-mode and waits for the ACK.
 # The three USB CDCs are CRSF, data port and config port (/dev/ttyACM0/1/2).
-# Framing and the command table: docs/design/10-security.md 10 and include/zlrs/config/config.h.
+# Framing and the command table: doc/10-security.md 10 and include/zlrs/config/config.h.
 #
 # Standard library only; talking to a device needs pyserial (pip install pyserial).
 
