@@ -62,7 +62,8 @@ west build -b "$ZLRS_BOARD" "$ZLRS_APP" -- \
   **射频打开而 Core2021 没接会黑灯**：vendored 的 `lr20xx_hal_wait_on_busy()` 在等 BUSY 的死循环里忙等（`k_usleep` 被注释掉了），默认超时 600 s，超时还 `k_oops()`；它跑在主线程（最高优先级），USB 栈拿不到 CPU，表现是"灯不亮 + USB 完全不枚举 + 应用被 8 s 看门狗反复复位"。这与应用代码无关，模块接上就正常。
 - **看门狗**在调试期建议打开（`CONFIG_ZLRS_APP_WATCHDOG=y`）：刷坏的镜像会自己复位，配合 MCUboot 的 test/revert 自动回滚，停在串口恢复里，不用按 BOOTSEL。
 - **恢复口按名字找**：应用是 `ZLRS`、bootloader 是 `ZLRS MCUBOOT`，用 `/dev/serial/by-id/...` 而不是 `ttyACM*`。
-- **不要用 `cat` 读 console**：会把 tty 回显打开，设备日志被回送成 shell 输入。
+- **判断"射频到底发出去了没有"，看每秒状态日志的 `air:` 那一行**（`CONFIG_ZLRS_APP_STATS_LOG=y`）：`ctl_tx` / `data_tx` 只统计事务真的做完的帧，`fail` 是事务失败次数。只有一块板时唯一能上空的路径是配对——配置口 `pair` 之后 30 s 窗口里每 100 ms 一个 `PAIR_REQ`，`ctl_tx` 该涨到 300 上下，`fail` 保持 0。
+- **不要用 `cat` 读 console**：读一小会儿就收不到东西了，而且会把 tty 回显打开、设备日志被回送成 shell 输入。用 pyserial 那种一直读的方式（`scripts/` 之外的自备小工具就行）。
 - **USB/IP 转发**（usbipd）下 CDC 的 DTR 可能送不到，端点选择依赖"收到过主机字节"，排查端点问题时用 `zlrs ports` 看两块端点的 `ready/active/rx_total`。
 - **射频相关的量**（回调延迟、换频开销、误包率、吞吐）只能在板上量，可以直接用 Semtech 官方 `packet_error_rate_flrc` 示例做对照。
 
@@ -76,4 +77,6 @@ west build -b "$ZLRS_BOARD" "$ZLRS_APP" -- \
 - RP2350 的看门狗在 `SYSRESETREQ` 后还开着 → 串口恢复只活 ~1.5 s（应用侧重启前 disarm，bootloader 侧清硬件 `ENABLE` 位）。
 - 自定义 DT 节点写进 `/chosen` 读不到（只导出 `zephyr,` 前缀）→ SKU 用独立节点。
 - RP2350 TRNG 取数时长时间关中断 → USB 死掉（默认关，见 [13-roadmap](13-roadmap.md)）。
-- 给 bootloader 把恢复窗口拉长（`app/sysbuild/mcuboot-debug.conf`）之后，主机先枚举了 bootloader 的 USB，应用再接管时主机不会重新枚举——应用起不来，看门狗复位，看起来像"应用坏了"。正常构建的 300 ms 窗口碰不到；应用侧另外在 `lib/usb/usb_dev.c` 里把 USB 控制器按住复位 100 ms，逼主机重新枚举。
+- 射频事务提交成功却一个包都发不出去：RAC 的 planner 要有人在主循环里推 `smtc_rac_run_engine()`，漏了就永远停在 `RP_STATUS_TASK_INIT`，而且**不报错**——现象是 `air: ctl_tx=0`、`fail=0`。官方示例的主循环里都有这一句。
+- 配置口触发配对后配对窗口立刻过期：主循环的 `now_ms` 是在进配置会话**之前**取的，会话里发生的事（配对按键）用的时钟比它晚，`now_ms - state_ms` 是负的、无符号相减直接下溢 → 第一次 tick 就判成窗口到期。会话结束后重新取一次时钟。
+- 给 bootloader 把恢复窗口拉长（`app/sysbuild/mcuboot-debug.conf`）之后，主机先枚举了 bootloader 的 USB，应用再接管时主机不会重新枚举——应用起不来，看门狗复位，看起来像"应用坏了"。正常构建的 2 s 窗口碰不到；应用侧另外在 `lib/usb/usb_dev.c` 里把 USB 控制器按住复位 100 ms，逼主机重新枚举。

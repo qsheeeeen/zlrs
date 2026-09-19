@@ -43,7 +43,7 @@
 
 **不带 bootloader**：code 1 MB + storage 3 MB（NVS：根密钥、设备标识、配对记录、失控值、波特率）。
 
-**带 MCUboot**：mcuboot 128 KB + slot0 832 KB + slot1 832 KB + storage 2.25 MB；签名镜像落在 slot0（flash 地址 `0x10020000`）。启动链 RP2350 bootrom → MCUboot（验签）→ slot0，换槽用 `swap using offset`，升级失败可回滚。
+**带 MCUboot**：mcuboot 128 KB + slot0 832 KB + slot1 832 KB + storage 2.25 MB；签名镜像落在 slot0（flash 地址 `0x10020000`）。启动链 RP2350 bootrom → MCUboot（验签）→ slot0，换槽用 `swap using move`（`swap using offset` 在这块板上换得进去、回不来），升级失败可回滚。
 
 具体偏移与大小见[板级 README](../boards/zlrs/rp2350_zero_core2021/README.md#4-分区与启动)；升级流程与恢复入口见 [08-firmware](08-firmware.md) 第 6 节。
 

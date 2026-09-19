@@ -78,17 +78,19 @@
 | 入口 | 什么时候生效 |
 | --- | --- |
 | 应用侧触发 | 配置协议里的"进恢复"命令（调试构建也可以用 shell 的 `zlrs recovery`）→ 置 boot mode 并重启 |
-| 启动窗口 | 每次复位后 300 ms 内收到合法 mcumgr 帧 |
+| 启动窗口 | 每次复位后 2 s 内收到合法 mcumgr 帧（`CONFIG_BOOT_SERIAL_WAIT_FOR_DFU_TIMEOUT`） |
 | 没有可启动镜像 | 校验失败 / 镜像为空，停在恢复模式 |
 
 boot mode 标志放在 SRAM 起始处的 4 字节（retained RAM），应用与 bootloader 共用同一份 DT。`CONFIG_BOOT_SERIAL_PIN_RESET` 故意没开：RP2350 把 POWMAN 的 `HAD_RUN` 位映射成 `RESET_PIN`，语义比"按了复位键"宽。
+
+窗口取 2 s 而不是更短：应用确认超时或看门狗复位之后，主机靠这一段窗口就能自己重新进恢复刷机。代价是每次启动都等这么久——这条"不用按键"的通道值这个价。
 
 恢复通道**只走 USB**：bootloader 模式下 USB 只有两块 CDC（第 1 块恢复、第 2 块控制台），CRSF 与配置那块都不在。应用是 `ZLRS`、bootloader 是 `ZLRS MCUBOOT`，脚本按 `/dev/serial/by-id/...` 找口。
 
 **升级**：一次性烧录（BOOTSEL 写 bootloader + 首版应用）之后，后续固件更新**不需要再碰板子**——包括新固件起不来、USB 起不来、上位机没确认、镜像写坏这些情况。四条不变量：
 
 1. **bootloader 不参与升级**（`0x000000` 那 128 KB 只有 BOOTSEL 能写）。它是固定的恢复入口；要换它就得按键。
-2. **升级一律写非活跃槽**：`CONFIG_MCUBOOT_SERIAL_DIRECT_IMAGE_UPLOAD=n`，由 MCUboot 挑槽，升级工具不指定槽。
+2. **升级一律写非活跃槽**：MCUboot 的串口恢复上传默认写**主槽**（`flash_area_id_from_multi_image_slot()` 的 0 是 PRIMARY），那是直接盖掉正在跑的那一版，没有 pending、不会回滚。所以 `CONFIG_MCUBOOT_SERIAL_DIRECT_IMAGE_UPLOAD=y` 让工具能点名物理槽，而"哪个是非活跃槽"由工具自己查（`image state-read` 里 active 的是当前的，另一个就是要写的；槽号从 1 数）。
 3. **pending 由工具设，permanent 只由应用设**：镜像跑起来、上位机发来确认命令之后，应用才调 `boot_write_img_confirmed()`。
 4. **任何"没确认"的路径都必须能自己复位**：应用活着但没确认 → 应用自己复位；应用挂死（哪怕在 USB 起来之前）→ bootloader 侧的看门狗复位。
 
@@ -99,7 +101,7 @@ boot mode 标志放在 SRAM 起始处的 4 字节（retained RAM），应用与 
 | 1 | 工具 | 应用配置口发"进恢复"命令（置 boot mode 标志） |
 | 2 | 应用 | 应答并重启 |
 | 3 | MCUboot | 进串口恢复，起 USB（两块 CDC） |
-| 4 | 工具 | 上传镜像 → MCUboot 写**非活跃槽**并标 pending（test） |
+| 4 | 工具 | 上传镜像到**非活跃槽**（先查 `image state-read`）并标 pending（test） |
 | 5 | MCUboot | 复位 → 换槽（`swap using move`）→ 跑新镜像，此时仍是"未确认" |
 | 6 | 工具 | 等新镜像配置口回来，比对 `image-hash` 是否就是刚上传的那一版 |
 | 7 | 工具 → 应用 | 发 `confirm` 命令；应用据此调 `boot_write_img_confirmed()`，这一版转正 |
@@ -121,7 +123,7 @@ boot mode 标志放在 SRAM 起始处的 4 字节（retained RAM），应用与 
 
 **看门狗**（`CONFIG_ZLRS_APP_WATCHDOG`，默认关）只负责"把卡死变成复位"：应用侧在 `PRE_KERNEL_1` 武装（排在熵源初始化之前，熵源 probe 挂了也复位得回来）、主循环与配置会话里喂；bootloader 侧由 `lib/bootguard`（`CONFIG_ZLRS_BOOTGUARD`）先清掉硬件 `ENABLE` 位（驱动的 `wdt_disable()` 在复位后的新一局里无效，否则串口恢复会被上轮看门狗打断），随后 MCUboot 用 `BOOT_WATCHDOG_TIMEOUT_MS`（30 s）重新武装，跳进应用后这一层还开着——应用连自己的看门狗都没武装就挂住时，靠它复位回滚。
 
-一条命令升级：`python3 scripts/zlrs-update.py --port <应用配置口>`（触发进恢复 → 等恢复口 → 上传，由 MCUboot 自己写进**非活跃槽**并标成待试跑 → 等应用回来 → 发一条 `status` 确认）。工具不指定槽、也不写"永久"：镜像还没跑起来就标永久，等于自己把回滚这条路切掉。救砖走 BOOTSEL + 拖 UF2（见 [12-debug](12-debug.md)）。量产镜像用自己的签名密钥，换密钥要重烧 bootloader。
+一条命令升级：`python3 scripts/zlrs-update.py --port <应用配置口>`（触发进恢复 → 等恢复口 → 查活跃槽、写另一个槽、标成待试跑 → 等应用回来 → 核对 `image-hash` → 发 `confirm`）。工具写 pending，但**不写永久**：镜像还没跑起来就标永久，等于自己把回滚这条路切掉。救砖走 BOOTSEL + 拖 UF2（见 [12-debug](12-debug.md)）。量产镜像用自己的签名密钥，换密钥要重烧 bootloader。
 
 ## 7. 错误处理约定
 

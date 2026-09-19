@@ -338,9 +338,9 @@ def main() -> int:
             print("找不到 smpmgr：pip install smpmgr", file=sys.stderr)
             return 1
 
-    # 不指定槽：MCUboot 自己把镜像写进非活跃槽并标成待试跑
-    # 写哪个槽由工具查：MCUboot 的串口恢复默认写主槽（直接盖掉当前版本），
-    # 必须点名非活跃槽才走 A/B。
+    # 写哪个槽由工具点名：MCUboot 的串口恢复默认写主槽（直接盖掉当前版本），
+    # 只有点名非活跃槽才走 A/B。哪个是非活跃槽从 image state-read 里查。
+    # 查不到就退回 slot1（当前跑 slot0 的情况）。
     target_slot = None
     if client is not None:
         target_slot = inactive_slot(client, args.recovery_port, args.baud)

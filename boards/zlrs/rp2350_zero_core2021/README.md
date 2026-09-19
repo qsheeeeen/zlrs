@@ -84,7 +84,7 @@ west build -b rp2350_zero_core2021/rp2350a/m33/lf app   # 470 / 433
 | image-1（slot1） | 0x0F0000 | 832 KB | 升级镜像落这里，MCUboot 换槽 |
 | storage | 0x1C0000 | 2.25 MB | 同上面的 NVS |
 
-启动链：RP2350 bootrom → MCUboot（校验 slot0 的签名）→ 应用。换槽方式 `swap using offset`（不需要 scratch 分区，升级后可以回滚）。启动链、镜像确认与恢复入口的机制见 [doc/08-firmware.md](../../../doc/08-firmware.md) 第 6 节。
+启动链：RP2350 bootrom → MCUboot（校验 slot0 的签名）→ 应用。换槽方式 `swap using move`（不需要 scratch 分区，升级后可以回滚；`swap using offset` 在这块板上换得进去、回不来）。启动链、镜像确认与恢复入口的机制见 [doc/08-firmware.md](../../../doc/08-firmware.md) 第 6 节。
 
 不带 bootloader 的变体烧写走 BOOTSEL + UF2（`west flash --runner uf2`）或 SWD（openocd / probe-rs / jlink）。带 MCUboot 的第一次烧写要**两轮 BOOTSEL**：
 
