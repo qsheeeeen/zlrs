@@ -1,125 +1,125 @@
-# 系统架构
+# System architecture
 
-本文写系统怎么搭起来：两条链路怎么分工、频段角色怎么配、分时怎么排、时间预算怎么算、代码怎么分层、线程与回调怎么约定。产品形态见 [01-product](01-product.md)，平台见 [03-platform](03-platform.md)，协议见 [09-protocol](09-protocol.md)。
+How the system is put together: how the two links divide the work, how band roles are configured, how time is shared, how the timing budget is computed, how the code is layered and what the threading and callback contracts are. Product: [01-product](01-product.md); platform: [03-platform](03-platform.md); protocol: [09-protocol](09-protocol.md).
 
-## 1. 两条链路
+## 1. The two links
 
-| 链路 | 默认频段 | 调制 | 承载 | 优化目标 |
+| Link | Default band | Modulation | Carries | Optimised for |
 | --- | --- | --- | --- | --- |
-| 控制链路 | sub-GHz | FLRC | CRSF（通道下行 + 遥测上行） | 距离与稳定性 |
-| 数传链路 | 2.4 GHz | FLRC | 串口透传字节流 | 帧率与吞吐 |
+| Control | sub-GHz | FLRC | CRSF (channels down, telemetry up) | distance and stability |
+| Data | 2.4 GHz | FLRC | a passthrough byte stream | rate and throughput |
 
-两条链路各跑一份相同的状态机，**互相独立**：一条断了不影响另一条。但它们共用一颗射频、一个 MCU、一路供电——**不是冗余链路**，只是在干扰层面互为备份；射频芯片或电源故障会让两条一起失效。
+Each link runs its own copy of the same state machine and they are **independent**: losing one does not touch the other. They do share a radio, an MCU and a supply, so they are **not redundant links**, only mutual backup against interference; a radio or supply failure takes both down.
 
-不做频段自动故障切换：切换判据需要真实干扰数据才能标定，而两条链路状态独立已经覆盖了干扰层面的备份需求。
+There is no automatic band failover: calibrating the trigger needs real interference data, and two independent link states already cover the backup need at the interference level.
 
-## 2. 频段与子带混合
+## 2. Bands and sub-band mixing
 
-每条链路各有一张**跨子带跳频表**：同一张表里既有 2.4G 频点也有 sub-G 频点，按混合比 `r`（四档 0 / 25 / 50 / 100 %）交错。TX 决定 `r`，在 `SYNC` 里带表版本，RX 从下一个同步帧起按新表跳——本质是"跳一次大一点的频率"，不需要额外的会合协议。
+Each link has one **cross-sub-band hop table**: 2.4G and sub-G frequencies in the same table, interleaved by the mix ratio `r` (four levels: 0 / 25 / 50 / 100%). The TX decides `r` and carries a table version in `SYNC`; the RX hops on the new table from the next sync frame. In essence it is "a frequency hop, just a bigger one", so no extra rendezvous protocol is needed.
 
-两条链路（控制、数传）时分复用同一颗射频、各自独立，`r` 按链路各自算；单 UART 板只编其中一条。
+The two links (control and data) time-share the radio and stay independent, each with its own `r`; a single-UART board compiles only one of them.
 
-时隙迁移顺序固定：**遥测 → 数传 → RC 下行**。`r` 先挪不关键的包，RC 最后动，所以延迟是阶梯式下降而不是随机抖动。
+The migration order is fixed: **telemetry, then data, then the RC downlink**. `r` moves the least critical traffic first and the RC last, so latency steps down instead of jittering.
 
-同步字的派生标签按**角色**命名（`sync/control` / `sync/data`），不按频段，所以子带混合不影响密钥结构（[10-security](10-security.md) 第 3 节）。
+Sync word derivation labels are named after the **role** (`sync/control`, `sync/data`) rather than the band, so sub-band mixing leaves the key structure untouched ([10-security](10-security.md) 3).
 
-**法规门只作用在 sub-G 的时隙上**：2.4G 没有地区表；`r` 的上限由地区占空比反推（EU868 1% 下约 10 帧/秒），超过就压档并告警。
+**The regulatory gate only applies to sub-G slots**: 2.4G has no region table. The ceiling for `r` is derived from the regional duty cap (about 10 frames per second at EU868's 1%), and going over it clamps the tier and warns.
 
-超帧周期按"最慢的那条链路"算：数传窗口按 `data_every_n` 摊进每一帧，控制帧率被它拖下来多少由时间计划算出来。
+The superframe period follows the slower link: data windows amortise into every frame through `data_every_n`, and the time plan works out how far that drags the control rate down.
 
-## 3. 分时与调度
+## 3. Time sharing and scheduling
 
-分时不自己写调度器，而是把两条链路注册成两个 RAC 客户端，用优先级让 radio planner 仲裁：
+Rather than writing a scheduler, the two links register as two RAC clients and priorities let the radio planner arbitrate:
 
-| 链路 | RAC 优先级 | 调度方式 |
+| Link | RAC priority | How it is scheduled |
 | --- | --- | --- |
-| 控制链路 | `RAC_HIGH_PRIORITY` | 超帧由应用排序，RAC 侧 `ASAP` |
-| 数传链路 | `RAC_MEDIUM_PRIORITY` | 控制链路空出来的时隙，`ASAP` |
+| Control | `RAC_HIGH_PRIORITY` | the application orders the superframe, RAC runs `ASAP` |
+| Data | `RAC_MEDIUM_PRIORITY` | the slots control leaves idle, `ASAP` |
 
-时隙顺序由应用保证：RAC 的排期粒度是毫秒，而超帧时隙是亚毫秒级，所以应用按超帧推进、逐个提交事务，RAC 只负责尽快执行。超帧的具体形状见 [09-protocol](09-protocol.md) 第 4 节。
+The application guarantees the slot order: RAC schedules in milliseconds while superframe slots are sub-millisecond, so the application walks the superframe and submits transactions one by one while RAC only has to run them promptly. The superframe shape is in [09-protocol](09-protocol.md) 4.
 
-两条链路默认都用 FLRC。改调制类型（FLRC ↔ LoRa）在射频侧比单纯改频率贵得多，共用调制能让每次切换只改频率。**调制按链路各自选**：默认 `CONFIG_ZLRS_APP_CONTROL_MODULATION_FLRC`，要更远时切 `CONFIG_ZLRS_APP_CONTROL_MODULATION_LORA`（默认 SF7 / BW125 / CR 4/5）；窄带地区用 0.325 Mbps 的窄带 FLRC，数传链路始终留在 2.4G 跑 FLRC。
+Both links default to FLRC. Changing modulation (FLRC to LoRa) costs far more on the radio side than changing frequency, so sharing a modulation keeps every switch to a frequency change. **Modulation is per link**: `CONFIG_ZLRS_APP_CONTROL_MODULATION_FLRC` by default, switching to `CONFIG_ZLRS_APP_CONTROL_MODULATION_LORA` (SF7 / BW125 / CR 4/5) when more range is needed; narrow-band regions use 0.325 Mbps FLRC, and the data link always stays on 2.4G FLRC.
 
-## 4. 时序预算与速率档
+## 4. Timing budget and rate tiers
 
-取自 LR2021 datasheet Rev 1.1 Table 3-23（typical 值），完整表见 [06-radio](06-radio.md)：
+From LR2021 datasheet Rev 1.1 Table 3-23 (typical values); the full table is in [06-radio](06-radio.md):
 
-| 符号 | 含义 | typ |
+| Symbol | Meaning | typ |
 | --- | --- | --- |
-| `PLL_LOCK` | 合成器锁定 | 32 µs |
-| `TSFSTX1` | FS → Tx | 45 µs |
-| `TSFSRX2` | FS → Rx（FSK／FLRC） | 37 µs |
-| `TSTXRX` | Tx → Rx | 91 µs |
-| `TSRXTX` | Rx → Tx | 107 µs |
-| `TSXORX` | STDBY_XOSC → Rx | 84 µs |
-| `TSXOTX` | STDBY_XOSC → Tx | 76 µs |
+| `PLL_LOCK` | synthesiser lock | 32 us |
+| `TSFSTX1` | FS to Tx | 45 us |
+| `TSFSRX2` | FS to Rx (FSK/FLRC) | 37 us |
+| `TSTXRX` | Tx to Rx | 91 us |
+| `TSRXTX` | Rx to Tx | 107 us |
+| `TSXORX` | STDBY_XOSC to Rx | 84 us |
+| `TSXOTX` | STDBY_XOSC to Tx | 76 us |
 
-一次「sub-G 发 → 2.4G 收」的切换约 `Tx→FS(54) + PLL(32) + FS→Rx(37) ≈ 123 µs`，来回约 250 µs。按 150 Hz 控制帧率（周期 6.67 ms）算，切换开销约 3.7%。
+One "transmit on sub-G, receive on 2.4G" switch costs about `Tx->FS(54) + PLL(32) + FS->Rx(37) = 123 us`, roughly 250 us for the round trip. At a 150 Hz control rate (6.67 ms per frame) that is about 3.7%.
 
-收发路径按频率自动分流：`ral_lr20xx_bsp_get_rx_cfg()` 在 `freq >= 1.6 GHz` 时选 HF 通道，否则 LF——所以我们只管填频率。
+The front end follows the frequency automatically: `ral_lr20xx_bsp_get_rx_cfg()` picks the HF path at `freq >= 1.6 GHz` and the LF path otherwise, so all we do is fill in a frequency.
 
-### 速率档
+### Rate tiers
 
-| 档位 | FLRC 原始速率 | 有效速率（CR 3/4） | 用途 |
+| Tier | FLRC raw rate | Effective rate (CR 3/4) | Used for |
 | --- | --- | --- | --- |
-| 近距高速 | 2.6 Mbps | 1.95 Mbps | 2.4G 时隙（`r=0` 的控制链路与数传链路） |
-| 均衡 | 1.3 Mbps | 0.975 Mbps | 双频混合的控制链路 |
-| 远距 | 0.65 Mbps | 0.488 Mbps | 控制链路降级 |
-| 兜底 | 0.325 Mbps | 0.244 Mbps | 窄带地区 |
+| Close-in, fast | 2.6 Mbps | 1.95 Mbps | 2.4G slots (control at `r=0` and the data link) |
+| Balanced | 1.3 Mbps | 0.975 Mbps | the control link while mixing bands |
+| Long range | 0.65 Mbps | 0.488 Mbps | the control link stepping down |
+| Floor | 0.325 Mbps | 0.244 Mbps | narrow-band regions |
 
-粗算：6.67 ms 周期里分 40% 给 2.4G 数传 ≈ 650 字节/周期 ≈ **97 kB/s**。
+Rough numbers: 40% of a 6.67 ms frame for the 2.4G data link is about 650 bytes per frame, so roughly **97 kB/s**.
 
-## 5. 软件分层
+## 5. Software layering
 
 ```
-include/zlrs/proto/   协议核心头文件
-lib/proto/            协议核心：帧编解码、分片重组、FHSS 跳频表、
-                      密钥派生与标签。密码学原语在设备侧走 PSA
-                      （lib/proto/crypto_psa.c），主机测试另有一份
-                      等价的纯 C 实现（tests/host/crypto_soft.c）
-lib/link/             链路层：会话与配对、密钥派生与标签、
-                      把帧翻译成 RAC 事务；可靠重传与速率自适应策略
-lib/crsf/             CRSF 端口编解码：RC 通道帧与链路统计帧
-lib/config/           配置协议：帧格式与命令分发（落盘通过回调交给应用）
-lib/region/           地区配置层：信道表、功率上限、占空比记账
-lib/led/              状态灯模式引擎：状态 → 颜色与节奏
-lib/usb/              USB 设备栈：usbd context + devicetree 里的全部 CDC
-app/                  Zephyr 应用：线程与超帧、端口层、射频移植、按键与持久化
-tests/host/           主机侧单测（不依赖 Zephyr）
+include/zlrs/proto/   protocol core headers
+lib/proto/            protocol core: framing, reassembly, FHSS hop tables,
+                                            key derivation and tags. On target the crypto primitives go
+                                            through PSA (lib/proto/crypto_psa.c); the host tests use
+                                            an equivalent pure C implementation (tests/host/crypto_soft.c)
+lib/link/             link layer: sessions and pairing, key derivation and tags,
+                                            frames into RAC transactions, reliable retransmit and rate adaptation
+lib/crsf/             CRSF codec: RC channel frames and the link statistics frame
+lib/config/           config protocol: framing and dispatch (storage goes to the app by callback)
+lib/region/           region layer: channel plans, power ceilings, duty accounting
+lib/led/              status LED engine: state to colour and cadence
+lib/usb/              USB device stack: usbd context plus every CDC in devicetree
+app/                  Zephyr application: threads and superframe, ports, radio port, button, storage
+tests/host/           host tests (no Zephyr dependency)
 ```
 
-分层原则：协议核心与链路层都能在主机上编译测试（同一个 `lib/`，同一份源码）；`lib/link/` 只依赖射频抽象接口，`app/` 才依赖 Zephyr 与 USP。射频侧的一切——SPI 时序、校准、频段选择、收发调度——都在 `usp_zephyr` 里。
+The rule: the protocol core and the link layer both compile and run on the host (the same `lib/` sources); `lib/link/` only depends on the radio abstraction while `app/` depends on Zephyr and USP. Everything on the radio side (SPI timing, calibration, band selection, transfer scheduling) lives in `usp_zephyr`.
 
-发射前还要过一道**地区门**：`lib/region` 给出该地区的信道表、功率上限与占空比上限，额度用完的时隙就让出去，次数计入日志。见 [09-protocol](09-protocol.md) 5.2。
+Every transmission also passes a **regulatory gate**: `lib/region` provides the region's channel plan, power ceiling and duty cap; a slot with no budget left is given up and counted in the log. See [09-protocol](09-protocol.md) 5.2.
 
-## 6. 线程模型与回调契约
+## 6. Threading model and callback contract
 
-### 6.1 线程划分
+### 6.1 Threads
 
-| 线程 | 优先级 | 职责 |
+| Thread | Priority | Responsibility |
 | --- | --- | --- |
-| RAC 线程（USP 提供） | `-4` | 跑 radio planner，派发收发回调 |
-| 链路线程（`main`） | `-2` | 链路状态机、组装/提交事务、处理结果 |
-| 串口 | 中断上下文 | 环形缓冲收发，不做射频相关决策 |
+| RAC thread (from USP) | `-4` | runs the radio planner and dispatches transfer callbacks |
+| Link thread (`main`) | `-2` | link state machines, building and submitting transactions, handling results |
+| Serial | interrupt context | ring-buffered transfers, no radio decisions |
 
-采用协作式多线程（`CONFIG_USP_MAIN_THREAD=y`、`CONFIG_USP_THREADS_MUTEXES=n`）：RAC API 直调，没有互斥锁开销；链路逻辑全是 I/O 驱动、会频繁让出。代价是串口突发处理太久会推迟射频事件，所以串口收发切成小块并及时让出。USP 的另外两种线程模式见 usp_zephyr 的 `doc/THREAD_MANAGEMENT.md`。
+Threads are cooperative (`CONFIG_USP_MAIN_THREAD=y`, `CONFIG_USP_THREADS_MUTEXES=n`): RAC calls go in directly with no mutex cost, and the link logic is I/O driven and yields often. The price is that a long serial burst delays radio events, so serial transfers are cut into small pieces that yield promptly. USP's other two threading modes are described in usp_zephyr's `doc/THREAD_MANAGEMENT.md`.
 
-配置模式不在链路线程里跑：它由主循环（`main()`）进入，会话期间射频停（见 [08-firmware](08-firmware.md) 第 2 节）。
+Config mode does not run on the link thread: the main loop (`main()`) enters it and the radio stops for the session (see [08-firmware](08-firmware.md) 2).
 
-### 6.2 回调契约
+### 6.2 Callback contract
 
-`callback_post_radio_transaction` 在 RAC 线程上下文里执行，只允许：
+`callback_post_radio_transaction` runs in the RAC thread context and may only:
 
-1. 记录 `rp_status_t` 与收到的长度；
-2. 把结果投递给链路线程（`k_sem` / `k_msgq`）；
-3. 返回。
+1. record the `rp_status_t` and the received length;
+2. hand the result to the link thread (`k_sem` / `k_msgq`);
+3. return.
 
-不在回调里做校验、不在回调里翻协议栈、不在回调里碰串口，**也不在回调里提交下一个事务**：抢占式 + 互斥锁模式下那是对 `rac_api_mutex` 重复加锁，属于官方示例未覆盖的路径。
+It does not validate, does not walk the protocol stack, does not touch the serial ports and **does not submit the next transaction**: under preemption plus mutexes that would re-lock `rac_api_mutex`, a path the vendor samples never cover.
 
-### 6.3 与 USP 的集成约束
+### 6.3 Integration constraints with USP
 
-RAC 的初始化由应用负责：`SMTC_SW_PLATFORM_INIT()` 只等 USP 线程就绪，它不会调用 `smtc_rac_init()`——官方示例里是应用自己调。日志模块从 USP v1.1.2 起由 `usp_zephyr` 自己注册，应用侧不用再补 `LOG_MODULE_REGISTER(usp, ...)`。
+The application initialises RAC itself: `SMTC_SW_PLATFORM_INIT()` only waits for the USP thread and never calls `smtc_rac_init()`; the vendor samples call it from the application too. Since USP v1.1.2 `usp_zephyr` registers the log module itself, so the application no longer needs `LOG_MODULE_REGISTER(usp, ...)`.
 
-## 7. 诊断
+## 7. Diagnostics
 
-诊断**不另建通道**：链路质量走 CRSF 既有的链路统计帧（见 [09-protocol](09-protocol.md) 2.7）。数传链路的溢出与丢弃字节数没有现成的 CRSF 字段承载，不上报，只在配置协议的 `STATUS` 里带计数。
+Diagnostics **add no extra channel**: link quality rides the existing CRSF link statistics frame (see [09-protocol](09-protocol.md) 2.7). The data link's overflow and dropped bytes have no CRSF field to travel in, so they are not reported over the air, only counted in the config protocol's `STATUS`.
