@@ -1,60 +1,60 @@
-# 与 ExpressLRS 的关系
+# Relationship with ExpressLRS
 
-本文是 zlrs 与 ExpressLRS（ELRS）关系的唯一出处：参考了什么、对立在哪。其它文档不重复对比，需要时引用本文。
+This is the single source for how zlrs relates to ExpressLRS (ELRS): what it borrows and where it differs. Other documents do not repeat the comparison; they link here.
 
-ELRS 侧的数字全部来自其官方文档与源码，链接见文末；对比的是 v4.1。
+Every ELRS figure comes from its official documentation and source, linked at the end; the comparison is against v4.1.
 
-## 参考
+## What we borrow
 
-- **性能目标**：控制帧率、灵敏度、数传吞吐这些指标直接对标 ELRS 的公开数字（见 [01-product](01-product.md) 第 3 节）。
-- **可靠传输**：数传默认走确认 + 重传（累计 ACK，窗口 4 帧），思路同 ELRS 的 AirPort/MAVLink；差别是我们用独立的确认帧而不是包头 1 bit。见 [09-protocol](09-protocol.md) 4.3。
-- **跳频与法规**：逐包跳频、同步信道、按地区的功率与占空比约束，与 ELRS 是同一路做法；差异是我们把地区表做进运行期配置并加了 SKU 一致性校验。
-- **周期同步**：连接态稀疏（ELRS 是 5 s）、搜索态密集，这个节奏照抄 ELRS。
+- **Performance targets**: control rate, sensitivity and data throughput are measured against ELRS's published numbers (see [01-product](01-product.md) 3).
+- **Reliable transfer**: the data link defaults to acknowledgements plus retransmits (cumulative ACKs, a 4-frame window), the same idea as ELRS's AirPort/MAVLink; the difference is a separate ack frame instead of a single header bit. See [09-protocol](09-protocol.md) 4.3.
+- **Hopping and regulation**: per-frame hopping, the sync channel and regional power and duty limits follow the same approach as ELRS; the difference is that our region tables are runtime configuration with an added SKU consistency check.
+- **Periodic sync**: sparse while connected (ELRS uses 5 s) and dense while searching, a cadence copied from ELRS.
 
-## 对立
+## Where we differ
 
-- **协议不兼容**：不与官方 ELRS 逐字节兼容，不共用绑定与跳频参数，也不支持 ELRS 的硬件模块。
-- **不做生态**：没有 Lua 参数协议、Model Match、VTX 控制、Backpack、BLE 手柄这类手台/飞控生态集成。
-- **定位不同**：ELRS 是遥控链路生态（几百个硬件目标、WiFi 配置与 OTA、社区实测数据）；zlrs 是一条"控制 + 数传"的自有链路，重点在逐包认证、数传吞吐与法规合规。
-- **可验证性做法不同**：ELRS 靠成熟的 CI 与社区实测；我们靠纯 C 分层 + 主机双节点仿真 + 脚本自检。
+- **Not protocol compatible**: no byte-level compatibility with stock ELRS, no shared binding or hopping parameters and no support for ELRS hardware modules.
+- **No ecosystem**: none of the handset or flight-controller ecosystem work: no Lua parameter protocol, Model Match, VTX control, Backpack or BLE gamepad.
+- **Different positioning**: ELRS is an RC-link ecosystem (hundreds of hardware targets, WiFi config and OTA, community measurements); zlrs is one link of its own carrying control and data, focused on per-frame authentication, data throughput and regulatory compliance.
+- **Verification differs**: ELRS relies on mature CI and community testing; we rely on pure C layering, a two-node host simulation and script self-tests.
 
-## 逐项对比
+## Item by item
 
-| 维度 | ExpressLRS v4.1 | zlrs |
+| Dimension | ExpressLRS v4.1 | zlrs |
 | --- | --- | --- |
-| 定位与形态 | 遥控链路生态：TX 模块、接收机、SPI 接收机、Backpack，几百个 target | 一条链路：RP2350-Zero + Core2021 板，hf/lf 两个 SKU 变体 |
-| 频段与调制 | 900M：LoRa 25–250 Hz，另有 K1000；2.4G：LoRa、FLRC `F500`/`F1000`、DVDA；双频模块可跨频段 | 控制链路可 FLRC（2.6/1.3/0.65/0.325 Mbps）或 LoRa（SF5–12），数传固定 2.4G FLRC；单颗射频分时，调制按链路各自选 |
-| 控制帧率 | 25–1000 Hz | 150 / 500 Hz 已实现，1000 Hz 是目标（全 2.4G，`r=0`） |
-| 控制协议 | CRSF 输入/输出，16 通道；手台侧 Lua 参数 | CRSF 输入/输出，16 通道；无 Lua |
-| 接收机输出 | CRSF / SBUS / SUMD / DJI RS2 / HoTT / PWM / SPI | 只有 CRSF（UART 或 USB CDC） |
-| 数传 | AirPort（空口透明串口）；MAVLink 透传（几百 bps～几 kbps） | 专用 2.4G 链路，~97 kB/s 量级；默认可靠重传（ARQ），可选 best-effort |
-| 遥测 | LINK 包 512 ms 周期 + DATA 包；MSP/MAVLink/GPS/VTX | 8 B TLM + CRSF 链路统计帧，字段按 CRSF 要求填 |
-| 安全 | 绑定短语官方明确"不是密码、不是密钥，只用于防撞"；无逐包认证 | 根密钥 → HKDF 派生；每包 HMAC-SHA256 截断 4 B（分方向，防反射）；配对与会话双方出 nonce；序号防重放；另有 P0 极致性能档（无 tag） |
-| 配对/防串 | Binding Phrase 或传统按键；Model Match；Loan Model | 配置工具写根密钥 + 长按按键三次握手；一台设备一个对端 |
-| 动态功率 | 有（依赖遥测） | 有（默认开）：按遥测 RSSI/LQ 每秒评估，3 dB 步长 |
-| 配置 | Lua、WebUI、Configurator（编译期 Regulatory Domain） | 专用配置 CDC + 运行期配置协议（地区、功率上限等都在里面）；无 WiFi/Lua |
-| 升级 | WiFi OTA、Betaflight passthrough、DFU、串口 | UF2（BOOTSEL）+ SWD；带 MCUboot 的变体支持串口恢复 DFU（签名 + 回滚），无无线 OTA |
-| 法规 | 编译期预设 | 运行期四张地区表 + SKU/band 一致性校验 + 占空比记账 + 速率/帧率压档 |
-| 外设集成 | Serial VTX、Team Racing、Trainer、Sentinel、Backpack、BLE | 无 |
-| 双频用法 | Gemini 双发分集；Xrossband 双频冗余（**两个射频同时发**） | 一颗射频**跨子带跳频**：两个频段共同构成一条链路，按 `r` 混合，不冗余也不分集 |
-| 固件与角色 | TX 与 RX 是不同 target | 同一份固件，角色一个 Kconfig |
+| Positioning and shape | an RC-link ecosystem: TX modules, receivers, SPI receivers, Backpack, hundreds of targets | one link: an RP2350-Zero plus Core2021 board in hf and lf SKU variants |
+| Bands and modulation | 900M: LoRa 25-250 Hz plus K1000; 2.4G: LoRa, FLRC `F500`/`F1000`, DVDA; dual-band modules can cross bands | control can be FLRC (2.6/1.3/0.65/0.325 Mbps) or LoRa (SF5-12), data is always 2.4G FLRC; one radio time-shared, modulation chosen per link |
+| Control rate | 25-1000 Hz | 150 and 500 Hz implemented, 1000 Hz is the target (all 2.4G, `r=0`) |
+| Control protocol | CRSF in and out, 16 channels; Lua parameters on the handset | CRSF in and out, 16 channels; no Lua |
+| Receiver output | CRSF / SBUS / SUMD / DJI RS2 / HoTT / PWM / SPI | CRSF only (UART or USB CDC) |
+| Data link | AirPort (a transparent serial over the air); MAVLink passthrough (hundreds of bps to a few kbps) | a dedicated 2.4G link around 97 kB/s; reliable transfer (ARQ) by default, best-effort optional |
+| Telemetry | LINK packets every 512 ms plus DATA packets; MSP, MAVLink, GPS, VTX | an 8 B TLM frame plus the CRSF link statistics frame, fields filled as CRSF requires |
+| Security | the binding phrase is explicitly "not a password and not a key, only anti-collision"; no per-frame authentication | root key -> HKDF derivation; every frame carries a 4 B truncated HMAC-SHA256 tag (directional, so reflections fail); both ends contribute nonces to pairing and sessions; sequence numbers stop replays; a P0 profile (no tag) exists for maximum performance |
+| Pairing and cross-talk | binding phrase or the classic button; Model Match; Loan Model | the config tool writes a root key, a long press runs the handshake; one device, one peer |
+| Dynamic power | yes, driven by telemetry | yes, on by default: judged once a second from telemetry RSSI/LQ, 3 dB steps |
+| Configuration | Lua, WebUI, Configurator (compile-time regulatory domain) | a dedicated config CDC with the runtime config protocol (region, power ceiling and more); no WiFi or Lua |
+| Updates | WiFi OTA, Betaflight passthrough, DFU, serial | UF2 (BOOTSEL) and SWD; MCUboot variants support serial-recovery DFU with signatures and rollback; no wireless OTA |
+| Regulation | compile-time presets | four runtime region tables plus SKU/band checks, duty accounting and rate/frame-rate clamping |
+| Peripheral integration | Serial VTX, Team Racing, Trainer, Sentinel, Backpack, BLE | none |
+| Dual-band use | Gemini dual-transmit diversity; Xrossband dual-band redundancy (**two radios transmitting at once**) | one radio **hops across sub-bands**: the two bands form one link mixed by `r`, neither redundant nor diversity |
+| Firmware and roles | separate TX and RX targets | one firmware, the role is a Kconfig option |
 
-## 差距（按优先级）
+## Gaps, in priority order
 
-1. **1000 Hz**：ELRS 的 `F1000` 已量产；我们还在 500 Hz，1000 Hz 需要控制链路自己拥有射频（IRQ 驱动逐帧收发）。
-2. **手台侧生态**：Lua、Model Match、VTX 控制、头追/教练/团队赛——都不做，靠 CRSF 与飞控/手台互通。
-3. **LoRa 档验证**：软件已实现，灵敏度与误包率曲线尚未实测。
-4. **无线 OTA**：板子没有 WiFi，要做就得走 2.4G 数传链路。
-5. **硬件覆盖**：只有一块板；轻量版还没有实物。
+1. **1000 Hz**: ELRS's `F1000` ships; we are at 500 Hz, and 1000 Hz needs the control link to own the radio, driving frames from IRQs.
+2. **Handset-side ecosystem**: Lua, Model Match, VTX control, head tracking, trainer and team racing are all out of scope; CRSF is the way in and out.
+3. **LoRa tier verification**: implemented in software, but sensitivity and packet error rate curves are not measured yet.
+4. **Wireless OTA**: the board has no WiFi, so it would have to run over the 2.4G data link.
+5. **Hardware coverage**: one board exists; the lightweight variant has no hardware yet.
 
-## 我们独有的
+## What is ours alone
 
-- **逐包认证**：ELRS 官方写明绑定短语不是密钥；我们每包都有 HMAC 标签、会话密钥与防重放。
-- **数传是主力**：专用 2.4G 链路 + 默认可靠重传，量级上比 AirPort/MAVLink 高两三个数量级。
-- **法规进软件**：SKU 校验、占空比记账、帧率与速率压档都在运行期生效。
-- **运行期配置**：地区、功率上限这类参数不用重编固件。
+- **Per-frame authentication**: ELRS states that its binding phrase is not a key; every one of our frames carries an HMAC tag, session keys and replay protection.
+- **The data link is a first-class citizen**: a dedicated 2.4G link with reliable transfer by default, two to three orders of magnitude above AirPort/MAVLink.
+- **Regulation in software**: SKU checks, duty accounting and rate clamping all take effect at runtime.
+- **Runtime configuration**: region and power ceiling need no firmware rebuild.
 
-## 数据来源
+## Sources
 
 - <https://www.expresslrs.org/info/signal-health/>
 - <https://www.expresslrs.org/quick-start/binding/>
@@ -63,4 +63,4 @@ ELRS 侧的数字全部来自其官方文档与源码，链接见文末；对比
 - <https://www.expresslrs.org/info/telem-bandwidth/>
 - <https://www.expresslrs.org/software/dynamic-transmit-power/>
 - <https://www.expresslrs.org/quick-start/firmware-options/>
-- ELRS 源码（同步间隔、`stubbornAck`、`OTA_Sync_s`）：<https://github.com/ExpressLRS/ExpressLRS>
+- ELRS source (sync interval, `stubbornAck`, `OTA_Sync_s`): <https://github.com/ExpressLRS/ExpressLRS>
