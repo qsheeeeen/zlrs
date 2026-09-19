@@ -51,6 +51,15 @@ west build -b "$ZLRS_BOARD" "$ZLRS_APP" -- \
 ## 4. 上板调试方法
 
 - **先关射频**（`ZLRS_APP_RADIO=n`）验证 USB、端口、配置模式与 NVS：`python3 scripts/zlrs-bringup.py` 一条命令跑完（三块 CDC → 配置模式 → 配置协议读写 → NVS 持久化）。
+  模块没接时用现成的配置文件：
+
+  ```shell
+  west build -b "$ZLRS_BOARD" "$ZLRS_APP" -- \
+    -DEXTRA_CONF_FILE="$ZLRS_REPO_ROOT/app/debug.conf;$ZLRS_REPO_ROOT/app/bringup-noradio.conf" \
+    -DDTC_OVERLAY_FILE="$ZLRS_REPO_ROOT/app/debug.overlay"
+  ```
+
+  **射频打开而 Core2021 没接会黑灯**：vendored 的 `lr20xx_hal_wait_on_busy()` 在等 BUSY 的死循环里忙等（`k_usleep` 被注释掉了），默认超时 600 s，超时还 `k_oops()`；它跑在主线程（最高优先级），USB 栈拿不到 CPU，表现是"灯不亮 + USB 完全不枚举 + 应用被 8 s 看门狗反复复位"。这与应用代码无关，模块接上就正常。
 - **看门狗**在调试期建议打开（`CONFIG_ZLRS_APP_WATCHDOG=y`）：刷坏的镜像会自己复位，配合 MCUboot 的 test/revert 自动回滚，停在串口恢复里，不用按 BOOTSEL。
 - **恢复口按名字找**：应用是 `ZLRS`、bootloader 是 `ZLRS MCUBOOT`，用 `/dev/serial/by-id/...` 而不是 `ttyACM*`。
 - **不要用 `cat` 读 console**：会把 tty 回显打开，设备日志被回送成 shell 输入。
@@ -66,4 +75,5 @@ west build -b "$ZLRS_BOARD" "$ZLRS_APP" -- \
 - 写短语的 PBKDF2 要几十秒 → 会话期间必须关看门狗。
 - RP2350 的看门狗在 `SYSRESETREQ` 后还开着 → 串口恢复只活 ~1.5 s（应用侧重启前 disarm，bootloader 侧清硬件 `ENABLE` 位）。
 - 自定义 DT 节点写进 `/chosen` 读不到（只导出 `zephyr,` 前缀）→ SKU 用独立节点。
-- RP2350 的 TRNG：Zephyr 树里的 `entropy_rpi_pico` 取数时长时间关中断 → USB 死掉；zlrs 自己的驱动在 `drivers/trng/`（默认开，见 [13-roadmap](13-roadmap.md)）。
+- RP2350 TRNG 取数时长时间关中断 → USB 死掉（默认关，见 [13-roadmap](13-roadmap.md)）。
+- 给 bootloader 把恢复窗口拉长（`app/sysbuild/mcuboot-debug.conf`）之后，主机先枚举了 bootloader 的 USB，应用再接管时主机不会重新枚举——应用起不来，看门狗复位，看起来像"应用坏了"。正常构建的 300 ms 窗口碰不到；应用侧另外在 `lib/usb/usb_dev.c` 里把 USB 控制器按住复位 100 ms，逼主机重新枚举。
