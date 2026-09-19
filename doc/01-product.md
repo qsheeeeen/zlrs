@@ -47,7 +47,7 @@ Performance is measured against ExpressLRS v4.1's published numbers (details in 
 | sub-G sensitivity | 900M LoRa at 25-250 Hz, -112 to -123 dBm | LoRa SF7 at -118 dBm (sub-G, 64 B, 1% PER) |
 | Data throughput | about 445-700 B/s in MAVLink mode, tier dependent | about 97 kB/s on 2.4G FLRC, two to three orders of magnitude higher |
 | Reliable transfer | a 1-bit ack (`stubbornAck`) plus resending the current payload, 16 message slots | same idea, on by default |
-| Regulation | compile-time regulatory domain presets | four runtime region tables, SKU checking and duty accounting |
+| Regulation | compile-time regulatory domain presets | four runtime region tables, radio-design checking and duty accounting |
 
 Full chip figures are in [06-radio](06-radio.md).
 

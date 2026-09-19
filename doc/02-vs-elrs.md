@@ -8,7 +8,7 @@ Every ELRS figure comes from its official documentation and source, linked at th
 
 - **Performance targets**: control rate, sensitivity and data throughput are measured against ELRS's published numbers (see [01-product](01-product.md) 3).
 - **Reliable transfer**: the data link defaults to acknowledgements plus retransmits (cumulative ACKs, a 4-frame window), the same idea as ELRS's AirPort/MAVLink; the difference is a separate ack frame instead of a single header bit. See [09-protocol](09-protocol.md) 4.3.
-- **Hopping and regulation**: per-frame hopping, the sync channel and regional power and duty limits follow the same approach as ELRS; the difference is that our region tables are runtime configuration with an added SKU consistency check.
+- **Hopping and regulation**: per-frame hopping, the sync channel and regional power and duty limits follow the same approach as ELRS; the difference is that our region tables are runtime configuration with an added radio-design consistency check.
 - **Periodic sync**: sparse while connected (ELRS uses 5 s) and dense while searching, a cadence copied from ELRS.
 
 ## Where we differ
@@ -34,7 +34,7 @@ Every ELRS figure comes from its official documentation and source, linked at th
 | Dynamic power | yes, driven by telemetry | yes, on by default: judged once a second from telemetry RSSI/LQ, 3 dB steps |
 | Configuration | Lua, WebUI, Configurator (compile-time regulatory domain) | a dedicated config CDC with the runtime config protocol (region, power ceiling and more); no WiFi or Lua |
 | Updates | WiFi OTA, Betaflight passthrough, DFU, serial | UF2 (BOOTSEL) and SWD; MCUboot variants support serial-recovery DFU with signatures and rollback; no wireless OTA |
-| Regulation | compile-time presets | four runtime region tables plus SKU/band checks, duty accounting and rate/frame-rate clamping |
+| Regulation | compile-time presets | four runtime region tables plus radio-design checks, duty accounting and rate/frame-rate clamping |
 | Peripheral integration | Serial VTX, Team Racing, Trainer, Sentinel, Backpack, BLE | none |
 | Dual-band use | Gemini dual-transmit diversity; Xrossband dual-band redundancy (**two radios transmitting at once**) | one radio **hops across sub-bands**: the two bands form one link mixed by `r`, neither redundant nor diversity |
 | Firmware and roles | separate TX and RX targets | one firmware, the role is a Kconfig option |
@@ -51,7 +51,7 @@ Every ELRS figure comes from its official documentation and source, linked at th
 
 - **Per-frame authentication**: ELRS states that its binding phrase is not a key; every one of our frames carries an HMAC tag, session keys and replay protection.
 - **The data link is a first-class citizen**: a dedicated 2.4G link with reliable transfer by default, two to three orders of magnitude above AirPort/MAVLink.
-- **Regulation in software**: SKU checks, duty accounting and rate clamping all take effect at runtime.
+- **Regulation in software**: radio-design checks, duty accounting and rate clamping all take effect at runtime.
 - **Runtime configuration**: region and power ceiling need no firmware rebuild.
 
 ## Sources

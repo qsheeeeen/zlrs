@@ -44,7 +44,7 @@ While in config mode:
 | root key / passphrase | the device derives the root key from a passphrase with PBKDF2, or you can write a 64-character hex key directly |
 | failsafe values | a 22-byte CRSF channel payload, shipped to the peer during pairing |
 | data port baud rate | effective on the next boot |
-| region | 0 = FCC915, 1 = EU868, 2 = CN470, 3 = CN433; checked against the local SKU on write and refused on a mismatch (see [09-protocol](09-protocol.md) 5.2); **effective on the next boot** |
+| region | 0 = FCC915, 1 = EU868, 2 = CN470, 3 = CN433; checked against the board's radio design on write (band and frequency coverage) and refused on a mismatch (see [09-protocol](09-protocol.md) 5.2); **effective on the next boot** |
 | TX power ceiling | never above the chosen region's limit; **effective on the next boot** |
 | pairing | start pairing (immediately), erase pairing (next boot) |
 | factory reset | wipes NVS (keys, pairing, failsafe, baud, region, power); effective on the next boot |

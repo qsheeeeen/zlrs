@@ -299,7 +299,7 @@ A `SYNC` on a resync frame is tagged with the pairing-level `link_auth`, so an o
 - Some sub-bands of ETSI EN 300 220 carry duty limits (1% or 10%) that directly bound the control rate and the share of slots the data link may use.
 - 2.4G ISM has no hopping requirement.
 
-This lives in `core/region`: four tables (FCC915 with no duty limit, EU868 at 1% per 60 s, CN470, CN433), `zlrs_region_validate()` at boot checks that the region's sub-G hardware matches the board (HF SKU for 868/915, LF SKU for 470/433, and a mismatch means a red alert and no radio), every transmission is booked against the duty budget, and a slot with none left is given up and counted.
+This lives in `core/region`: four tables (FCC915 with no duty limit, EU868 at 1% per 60 s, CN470, CN433), and `zlrs_region_validate()` checks a region against the board's radio design — the design has to be the band the region needs (HF for 868/915, LF for 470/433) and its frequency range has to cover the region's band edges. A mismatch means a red alert and no radio, whether it is found at boot or rejected when the configuration tries to set it. Every transmission is booked against the duty budget, and a slot with none left is given up and counted.
 
 Channel spacing follows the modulation bandwidth: CN470 uses 300 kHz spacing (96 channels) while CN433 is only 1.74 MHz wide and fits five 300 kHz channels. Narrow-band regions carry a `max_rate_bps`, and a configuration above it is clamped to 0.325 Mbps narrow-band FLRC.
 

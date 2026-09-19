@@ -168,7 +168,7 @@ Command set (covering every user parameter, see [08-firmware](08-firmware.md) 3)
 | write root key | 64 hex characters |
 | write failsafe values | a 22-byte CRSF channel payload |
 | set data port baud rate | effective on the next boot |
-| set region | validated against the local SKU on write, refused on mismatch; effective on the next boot |
+| set region | validated against the board's radio design on write, refused on mismatch; effective on the next boot |
 | set power ceiling | never above the chosen region's limit; effective on the next boot |
 | factory reset | wipes NVS, effective on the next boot |
 | enter recovery | sets the boot-mode flag and reboots into MCUboot serial recovery |

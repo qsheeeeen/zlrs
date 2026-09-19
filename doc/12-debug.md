@@ -77,7 +77,7 @@ Suggested order: `P0` with hopping, handshake and telemetry off, confirming that
 - Using `uart_poll_in/out` in config mode answers no command at all (go through the port layer's ISR buffers).
 - PBKDF2 for a passphrase takes tens of seconds, so the watchdog has to be disarmed for the session.
 - RP2350's watchdog is still armed after `SYSRESETREQ`, leaving serial recovery alive for about 1.5 s (the application disarms before resetting, the bootloader clears the hardware enable bit).
-- A custom devicetree node in `/chosen` cannot be read (only `zephyr,`-prefixed properties are exported), so the SKU lives in its own node.
+- A custom devicetree node in `/chosen` cannot be read (only `zephyr,`-prefixed properties are exported), so the radio design lives in its own node.
 - Long interrupt masking while reading the RP2350 TRNG kills USB (off by default; see [13-roadmap](13-roadmap.md)).
 - A radio transaction submits fine and no frame ever leaves: the RAC planner needs someone to pump `smtc_rac_run_engine()` in the main loop, and without it the transaction sits in `RP_STATUS_TASK_INIT` forever **without reporting an error**; the symptom is `air: ctl_tx=0` and `fail=0`. Every vendor sample's main loop has that call.
 - Pairing triggered from the config port expires at once: the main loop's `now_ms` is taken **before** the config session, and anything stamped inside it (the pairing press) is later, so `now_ms - state_ms` goes negative, the unsigned subtraction underflows and the first tick calls the window expired. Re-read the clock after the session.
