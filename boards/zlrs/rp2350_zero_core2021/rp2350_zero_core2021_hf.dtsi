@@ -4,7 +4,7 @@
  * Sub-G calibration is per SKU: HF (850-930 MHz) and LF (410-510 MHz) have different PA
  * networks, so power tables and calibration frequencies cannot be shared. The values are
  * references (HF from Semtech's Wio-LR2021 at 902 MHz, LF measured at 470 MHz) and get
- * recalibrated for the Core2021 PA network; the acceptance criteria are in docs/design/13-roadmap.md.
+ * recalibrated for the Core2021 PA network; the acceptance criteria are in doc/13-roadmap.md.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -13,12 +13,15 @@
 
 / {
 	/*
-	 * Sub-G hardware: HF. The region has to match it, see core/region.
-	 * It cannot live in /chosen: DT macros do not read custom-prefixed chosen properties.
+	 * Radio design: HF. The region has to fit inside this band and range (see
+	 * core/region). It cannot live in /chosen: DT macros do not read
+	 * custom-prefixed chosen properties.
 	 */
-	zlrs_subg_band: subg-band {
-		compatible = "zlrs,subg-band";
+	zlrs_rf: zlrs-rf {
+		compatible = "zlrs,rf-design";
 		band = <1>;
+		low-hz = <850000000>;
+		high-hz = <930000000>;
 	};
 };
 

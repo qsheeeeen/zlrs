@@ -20,7 +20,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "board.h"
+#include "caps.h"
 #include "led_port.h"
 #include "store.h"
 #include "watchdog.h"
@@ -41,11 +41,11 @@ struct port_pair {
 };
 
 static const struct port_pair crsf_pair = {
-#if DT_NODE_EXISTS(DT_ALIAS(zlrs_crsf_uart))
-	.uart = DEVICE_DT_GET(DT_ALIAS(zlrs_crsf_uart)),
+#if DT_NODE_EXISTS(DT_ALIAS(zlrs_control_uart))
+	.uart = DEVICE_DT_GET(DT_ALIAS(zlrs_control_uart)),
 #endif
-#if DT_NODE_EXISTS(DT_ALIAS(zlrs_crsf_cdc))
-	.cdc = DEVICE_DT_GET(DT_ALIAS(zlrs_crsf_cdc)),
+#if DT_NODE_EXISTS(DT_ALIAS(zlrs_control_cdc))
+	.cdc = DEVICE_DT_GET(DT_ALIAS(zlrs_control_cdc)),
 #endif
 };
 
@@ -481,7 +481,7 @@ int zlrs_crsf_port_init(void)
 	}
 
 	if (!crsf_ready) {
-		LOG_WRN("no zlrs-crsf-uart / zlrs-crsf-cdc alias: CRSF port disabled");
+		LOG_WRN("no zlrs-control-uart / zlrs-control-cdc alias: CRSF port disabled");
 		return -1;
 	}
 
@@ -626,7 +626,7 @@ static void cfg_port_isr(const struct device *dev, void *user_data)
 
 int zlrs_config_port_init(void)
 {
-#if DT_NODE_EXISTS(DT_ALIAS(zlrs_config_cdc))
+#if ZLRS_PORT_CONFIG
 	const struct device *const dev = DEVICE_DT_GET(DT_ALIAS(zlrs_config_cdc));
 
 	if (!device_is_ready(dev)) {
@@ -789,7 +789,7 @@ static int cfg_read_status(void *ctx, zlrs_cfg_status_t *out)
 	}
 	memcpy(out->dev_id, cfg_link->dev_id, ZLRS_DEV_ID_LEN);
 	out->lq_percent = cfg_link->stats.lq_percent;
-	out->band = ZLRS_SUBG_BAND;
+	out->band = ZLRS_RF_BAND;
 	{
 		/* Report the stored value first (just written, not yet live), the runtime one otherwise */
 		uint8_t stored_region;
@@ -917,7 +917,7 @@ static int cfg_enter_recovery(void *ctx)
 	return cfg_ops->enter_recovery();
 }
 
-/* Host confirms this upgrade; the whole flow depends on it (see docs/design/08-firmware.md 6) */
+/* Host confirms this upgrade; the whole flow depends on it (see doc/08-firmware.md 6) */
 static int cfg_confirm_image(void *ctx)
 {
 	(void)ctx;

@@ -21,7 +21,7 @@
 
 / {
 	aliases {
-		/delete-property/ zlrs-crsf-cdc;
+		/delete-property/ zlrs-control-cdc;
 		/delete-property/ zlrs-config-cdc;
 		/* zlrs-data-cdc points at the CDC used for recovery, keep it */
 	};

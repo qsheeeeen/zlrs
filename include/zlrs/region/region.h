@@ -1,6 +1,6 @@
 /*
  * Region layer: turns "where is this used" into a channel plan, power ceiling and duty
- * cap (docs/design/09-protocol.md 5.2). Validation at boot and limiting before TX are separate.
+ * cap (doc/09-protocol.md 5.2). Validation at boot and limiting before TX are separate.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -35,6 +35,18 @@ typedef enum {
 	ZLRS_BAND_SUBG_HF = 1,
 } zlrs_band_t;
 
+/*
+ * The radio design a region has to fit: which sub-G hardware this is plus the
+ * frequency range that hardware can actually reach. The board declares it
+ * (devicetree node zlrs_rf), the region table declares the rules, and
+ * validation checks one against the other instead of matching a board name.
+ */
+typedef struct {
+	uint8_t band;    /* ZLRS_BAND_* */
+	uint32_t low_hz; /* coverage of the radio design */
+	uint32_t high_hz;
+} zlrs_rf_design_t;
+
 enum {
 	ZLRS_REGION_FCC915 = 0,
 	ZLRS_REGION_EU868,
@@ -46,11 +58,13 @@ enum {
 const zlrs_region_t *zlrs_region_get(uint8_t id);
 
 /*
- * Check that region, local sub-G hardware, channel plan and TX power agree with each other:
- * the band has to match the board, every channel has to fit the band, power has to respect
- * the ceiling. Returns 0 when fine, negative otherwise (the value only feeds the log).
+ * Check that region, radio design, channel plan and TX power agree with each other: the
+ * design has to be the right band and cover the region's band edges, every channel has to
+ * fit the band, power has to respect the ceiling. Returns 0 when fine, negative otherwise
+ * (the value only feeds the log). -5 = wrong band, -6 = design does not cover the region.
  */
-int zlrs_region_validate(const zlrs_region_t *region, uint8_t band, int8_t tx_power_dbm);
+int zlrs_region_validate(const zlrs_region_t *region, const zlrs_rf_design_t *rf,
+			 int8_t tx_power_dbm);
 
 /* Rate ceiling from the band width: clamp the configured value, return what is usable */
 uint32_t zlrs_region_clamp_rate(const zlrs_region_t *region, uint32_t rate_bps);
@@ -94,7 +108,7 @@ uint32_t zlrs_region_max_frames_per_s(const zlrs_region_t *region, uint32_t rate
 				      uint16_t frame_len);
 
 /*
- * Regulatory ceiling for the sub-band mix (docs/design/09-protocol.md 5.1): how many of the 4 slots
+ * Regulatory ceiling for the sub-band mix (doc/09-protocol.md 5.1): how many of the 4 slots
  * may land on sub-G. Regions without a duty limit (duty_percent = 0) return 3 = 100%; the
  * others are folded as window length x duty into the four levels (0/1/2/4 slots) and get the
  * highest one that still fits.

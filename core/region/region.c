@@ -101,18 +101,23 @@ const zlrs_region_t *zlrs_region_get(uint8_t id)
 	return &regions[id];
 }
 
-int zlrs_region_validate(const zlrs_region_t *region, uint8_t band, int8_t tx_power_dbm)
+int zlrs_region_validate(const zlrs_region_t *region, const zlrs_rf_design_t *rf,
+			 int8_t tx_power_dbm)
 {
 	const zlrs_fhss_domain_t *domain;
 	uint32_t first;
 	uint32_t last;
 
-	if (region == NULL || region->domain >= ZLRS_DOMAIN_COUNT) {
+	if (region == NULL || rf == NULL || region->domain >= ZLRS_DOMAIN_COUNT) {
 		return -1;
 	}
-	/* Region and local sub-G hardware must match: an LF board cannot do 915, an HF one cannot do 470/433 */
-	if (region->band != band) {
+	/* The radio design has to be the band the region needs: LF cannot do 915, HF cannot do 470/433 */
+	if (region->band != rf->band) {
 		return -5;
+	}
+	/* And it has to actually cover the region's band edges, not merely claim the right SKU */
+	if (region->low_hz < rf->low_hz || region->high_hz > rf->high_hz) {
+		return -6;
 	}
 	if (tx_power_dbm > region->max_tx_power_dbm) {
 		return -2;

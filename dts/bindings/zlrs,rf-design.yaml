@@ -1,0 +1,30 @@
+# Copyright (c) 2026 zlrs contributors
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  The radio design: which sub-G hardware this board carries and the frequency
+  range it can actually reach. A region is accepted when its band and band
+  edges fit inside this design (see zlrs_region_validate() in core/region), so
+  the software validates hardware capability instead of a board name.
+
+  The node is declared once per board variant (HF or LF SKU) and also carries
+  the calibration data for that PA network.
+
+compatible: "zlrs,rf-design"
+
+properties:
+  band:
+    type: int
+    required: true
+    description: 0 = LF (410-510 MHz), 1 = HF (850-930 MHz)
+    enum: [0, 1]
+
+  low-hz:
+    type: int
+    required: true
+    description: Lowest frequency this radio design is built for
+
+  high-hz:
+    type: int
+    required: true
+    description: Highest frequency this radio design is built for

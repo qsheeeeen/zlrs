@@ -10,39 +10,56 @@
 
 #include "zlrs/region/region.h"
 
+/* The two radio designs the prototype ships with (see the boards directory) */
+static const zlrs_rf_design_t rf_lf = { .band = ZLRS_BAND_SUBG_LF,
+					.low_hz = 410000000U,
+					.high_hz = 510000000U };
+static const zlrs_rf_design_t rf_hf = { .band = ZLRS_BAND_SUBG_HF,
+					.low_hz = 850000000U,
+					.high_hz = 930000000U };
+
 static void test_tables(void)
 {
 	for (uint8_t i = 0U; i < ZLRS_REGION_COUNT; i++) {
 		const zlrs_region_t *region = zlrs_region_get(i);
+		const zlrs_rf_design_t *rf =
+			(region->band == ZLRS_BAND_SUBG_HF) ? &rf_hf : &rf_lf;
 
 		CHECK(region != NULL);
 		CHECK(region->name != NULL);
 		/* Matching band, power within the ceiling: must pass */
-		CHECK(zlrs_region_validate(region, region->band, region->max_tx_power_dbm) == 0);
+		CHECK(zlrs_region_validate(region, rf, region->max_tx_power_dbm) == 0);
 		/* A little over the ceiling has to be refused */
 		if (region->max_tx_power_dbm < 22) {
-			CHECK(zlrs_region_validate(region, region->band,
+			CHECK(zlrs_region_validate(region, rf,
 						   (int8_t)(region->max_tx_power_dbm + 1)) != 0);
 		}
 		/* A band mismatch has to be refused: an LF board cannot do 915, an HF one cannot do 470/433 */
-		CHECK(zlrs_region_validate(region,
-					   (region->band == ZLRS_BAND_SUBG_HF) ? ZLRS_BAND_SUBG_LF
-									       : ZLRS_BAND_SUBG_HF,
-					   region->max_tx_power_dbm) != 0);
+		CHECK(zlrs_region_validate(
+			      region,
+			      (region->band == ZLRS_BAND_SUBG_HF) ? &rf_lf : &rf_hf,
+			      region->max_tx_power_dbm) == -5);
+		/* Right band but a design that does not cover the region's edges: also refused */
+		{
+			const zlrs_rf_design_t narrow = { .band = rf->band,
+							  .low_hz = region->high_hz,
+							  .high_hz = region->high_hz };
+
+			CHECK(zlrs_region_validate(region, &narrow,
+						   region->max_tx_power_dbm) == -6);
+		}
 	}
 
 	CHECK(zlrs_region_get(ZLRS_REGION_COUNT) == NULL);
-	CHECK(zlrs_region_validate(NULL, ZLRS_BAND_SUBG_HF, 0) != 0);
+	CHECK(zlrs_region_validate(NULL, &rf_hf, 0) != 0);
+	CHECK(zlrs_region_validate(zlrs_region_get(ZLRS_REGION_FCC915), NULL, 0) != 0);
 
 	/* On the prototype: the HF board accepts FCC915/EU868, the LF board CN470/CN433 */
-	CHECK(zlrs_region_validate(zlrs_region_get(ZLRS_REGION_FCC915), ZLRS_BAND_SUBG_HF, 10) ==
-	      0);
-	CHECK(zlrs_region_validate(zlrs_region_get(ZLRS_REGION_FCC915), ZLRS_BAND_SUBG_LF, 10) ==
-	      -5);
-	CHECK(zlrs_region_validate(zlrs_region_get(ZLRS_REGION_CN470), ZLRS_BAND_SUBG_LF, 10) == 0);
-	CHECK(zlrs_region_validate(zlrs_region_get(ZLRS_REGION_CN433), ZLRS_BAND_SUBG_LF, 10) == 0);
-	CHECK(zlrs_region_validate(zlrs_region_get(ZLRS_REGION_CN433), ZLRS_BAND_SUBG_HF, 10) ==
-	      -5);
+	CHECK(zlrs_region_validate(zlrs_region_get(ZLRS_REGION_FCC915), &rf_hf, 10) == 0);
+	CHECK(zlrs_region_validate(zlrs_region_get(ZLRS_REGION_FCC915), &rf_lf, 10) == -5);
+	CHECK(zlrs_region_validate(zlrs_region_get(ZLRS_REGION_CN470), &rf_lf, 10) == 0);
+	CHECK(zlrs_region_validate(zlrs_region_get(ZLRS_REGION_CN433), &rf_lf, 10) == 0);
+	CHECK(zlrs_region_validate(zlrs_region_get(ZLRS_REGION_CN433), &rf_hf, 10) == -5);
 }
 
 /* Rate ceiling: narrow bands pull the configured rate down */
@@ -198,7 +215,7 @@ static void test_control_plan(void)
 }
 
 /*
- * LoRa long-range tier (docs/design/07-architecture.md 3): a frame is tens of ms, so airtime decides
+ * LoRa long-range tier (doc/07-architecture.md 3): a frame is tens of ms, so airtime decides
  * the frame rate, not the configured number.
  */
 static void test_lora_plan(void)
@@ -244,7 +261,7 @@ static void test_lora_plan(void)
 }
 
 /*
- * Racing mode (docs/design/07-architecture.md 2): control owns 2.4G, has no region table and the duty
+ * Racing mode (doc/07-architecture.md 2): control owns 2.4G, has no region table and the duty
  * gate does not touch it; the link that moved to sub-G (data) is the regulated one, and its
  * windows amortise into the superframe through data_every_n, trimming the peak rate.
  */
@@ -277,7 +294,7 @@ static void test_racing_plan(void)
 }
 
 /*
- * 1000 Hz timing budget (docs/design/09-protocol.md 4.1): at 2.6 Mbps a 31 B RC frame takes 108 us and
+ * 1000 Hz timing budget (doc/09-protocol.md 4.1): at 2.6 Mbps a 31 B RC frame takes 108 us and
  * a frame is 1000 us, so the four slots separate cleanly. The protocol side is fine; whether it
  * runs depends on driving the radio directly (RAC schedules in whole milliseconds).
  */

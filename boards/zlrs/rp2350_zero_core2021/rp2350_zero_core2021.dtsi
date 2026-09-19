@@ -28,9 +28,9 @@
 	};
 	aliases {
 		lora-transceiver = &lora_core2021;
-		zlrs-crsf-uart = &uart0;
+		zlrs-control-uart = &uart0;
 		zlrs-data-uart = &uart1;
-		zlrs-crsf-cdc = &cdc_acm_uart0;
+		zlrs-control-cdc = &cdc_acm_uart0;
 		zlrs-data-cdc = &cdc_acm_uart1;
 		zlrs-config-cdc = &cdc_acm_uart2;
 		zlrs-button = &zlrs_button;
@@ -69,7 +69,7 @@
  * Hardware watchdog (RP2350 wdt0): armed when the application starts and fed from the main
  * loop. A crash or a stuck thread resets the chip, which MCUboot's test/revert turns into a
  * rollback, and with nothing left to boot it stops in serial recovery: no BOOTSEL needed.
- * See docs/design/08-firmware.md 6.
+ * See doc/08-firmware.md 6.
  */
 &wdt0 {
 	status = "okay";
@@ -97,7 +97,7 @@
 };
 
 /*
- * The on-board WS2812B (GP16, one pixel) is the status LED, see docs/design/11-ux.md: driven through
+ * The on-board WS2812B (GP16, one pixel) is the status LED, see doc/11-ux.md: driven through
  * PIO0, wired the same way as upstream waveshare/rp2350_zero.
  */
 &pio0 {
@@ -129,8 +129,8 @@
 };
 
 /*
- * The CDCs on USB (docs/design/08-firmware.md 1):
- *   cdc_acm_uart0 = CRSF (alias zlrs-crsf-cdc)
+ * The CDCs on USB (doc/08-firmware.md 1):
+ *   cdc_acm_uart0 = CRSF (alias zlrs-control-cdc)
  *   cdc_acm_uart1 = data port (alias zlrs-data-cdc)
  *   cdc_acm_uart2 = config port (alias zlrs-config-cdc): config protocol, enter config mode
  *   cdc_acm_uart3 = console (kernel log + shell): off by default, the debug overlay enables it
