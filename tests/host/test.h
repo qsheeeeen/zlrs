@@ -1,5 +1,5 @@
 /*
- * 主机侧测试的小工具。
+ * Small helpers for the host-side tests.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -22,7 +22,7 @@ extern unsigned int zlrs_test_failures;
 		}                                                                   \
 	} while (0)
 
-/* 与十六进制串比较，大小写不敏感 */
+/* Compare against a hex string, case-insensitive */
 int zlrs_test_hex_eq(const uint8_t *data, size_t len, const char *hex);
 
 void test_proto(void);

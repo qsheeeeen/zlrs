@@ -1,23 +1,23 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# 协议核心与链路层的主机侧测试（不跑 Zephyr，也不需要 west 工作区）：
+# Host-side tests for the protocol core and the link layer (no Zephyr, no west workspace):
 #
 #   make -C tests/host run
 #
-# 协议核心与链路层用的是 lib/ 里跟设备侧同一份源码；密码学是本目录下的
-# crypto_soft.c（同接口、零依赖，设备侧那份走 PSA）。所以这里只要一个 C 编译器，
-# 不用先搭工作区。
+# The protocol core and link layer use the same lib/ sources as the device; crypto comes from
+# crypto_soft.c here (same interface, no dependencies, the device uses PSA). All this needs is a
+# C compiler; no workspace setup.
 
 CC      ?= cc
-# -MMD -MP：把头文件依赖写进 .d，改头文件后自动重编，避免旧对象混着新布局
+# -MMD -MP: header dependencies go into .d files so a changed header rebuilds, no stale layout
 CFLAGS  ?= -std=c11 -O2 -Wall -Wextra -Werror -MMD -MP
 CPPFLAGS += -I../../include
 
-# 默认就带 ASan + UBSan：主机测试是抓越界与未定义行为最便宜的地方，忘了开等于白跑。
-#   SANITIZE=0  关掉，换快一点的构建（单独目录，两边不会互相污染）
-#   LEAKS=1     打开 LeakSanitizer。默认关：lib 与用例里没有任何动态分配，而且受限
-#               容器缺 ptrace 时 LeakSanitizer 直接起不来
+# ASan + UBSan are on by default: the host is the cheapest place to catch overruns and UB.
+#   SANITIZE=0  turn them off for a faster build (separate directory, no cross-contamination)
+#   LEAKS=1     enable LeakSanitizer. Off by default: nothing allocates here, and restricted
+#               containers without ptrace cannot start LeakSanitizer at all
 SANITIZE ?= 1
 LEAKS    ?= 0
 ifeq ($(SANITIZE),1)
@@ -29,7 +29,7 @@ else
 BUILD   := build
 endif
 
-# 模糊测试的迭代次数（默认见 test_fuzz.c）
+# Fuzz iterations (the default lives in test_fuzz.c)
 ifneq ($(FUZZ_ITERS),)
 CPPFLAGS += -DFUZZ_ITERS=$(FUZZ_ITERS)
 endif

@@ -1,18 +1,18 @@
 /*
  * SPDX-License-Identifier: Apache-2.0
  *
- * 密码学实现（**主机专用**）：纯 C、无依赖。设备侧一律走 lib/proto/crypto_psa.c
- * （Zephyr 的 PSA Crypto）；这一份只在主机侧测试里用，作用有两个：
+ * Crypto implementation (**host only**): pure C, no dependencies. The device always uses
+ * lib/proto/crypto_psa.c (Zephyr's PSA Crypto); this copy exists for the host tests, twice over:
  *
- *   1. 跑固定向量，把 KDF / tag / 短语派生的语义钉死；
- *   2. 跑协议仿真——主机上没有 PSA 可用，协议层需要一个能用的后端。
+ *   1. run the fixed vectors that pin down KDF, tag and passphrase derivation;
+ *   2. run the protocol simulation, which needs a working backend without PSA on the host.
  *
- * 它与 PSA 后端必须给出同一串字节，否则设备与主机配出来的钥匙对不上。
+ * It must produce the same bytes as the PSA backend or device and host derive different keys.
  *
- * 固定向量见 tests/host/test_proto.c（HKDF 与 tag 各一组，独立来源）。
+ * The fixed vectors live in tests/host/test_proto.c (one HKDF set, one tag set, independent).
  *
- * 文件是自包含的：短语派生与定长比较这两个小工具也在本文件末尾（设备侧的
- * crypto_psa.c 里同样有一份）。两者必须给出同一串字节。
+ * The file is self-contained: passphrase derivation and constant-time comparison also live at
+ * the end here, as they do in crypto_psa.c. Both must produce identical bytes.
  */
 
 #include "zlrs/proto/crypto.h"
@@ -146,7 +146,7 @@ void zlrs_sha256_final(zlrs_sha256_ctx_t *ctx, uint8_t out[SHA256_LEN])
 	pad[0] = 0x80U;
 	pad_len = (ctx->buf_len < 56U) ? (56U - ctx->buf_len) : (120U - ctx->buf_len);
 
-	/* 长度字段按大端追加在填充之后 */
+	/* The length field is appended big-endian after the padding */
 	for (uint8_t i = 0; i < 8U; i++) {
 		pad[pad_len + i] = (uint8_t)(bits >> (56U - 8U * i));
 	}
@@ -312,7 +312,7 @@ void zlrs_pbkdf2_sha256(const char *phrase, const uint8_t *salt, size_t salt_len
 	block[salt_len + 2U] = 0U;
 	block[salt_len + 3U] = 1U;
 
-	/* 输出长度等于 SHA-256 输出，单块即可 */
+	/* The output length equals SHA-256's, so one block is enough */
 	zlrs_hmac_sha256(pw, pw_len, block, salt_len + 4U, u);
 	memcpy(t, u, sizeof(t));
 
@@ -340,7 +340,7 @@ void zlrs_tag(const uint8_t *key, size_t key_len, const uint8_t *data, size_t le
 	memset(mac, 0, sizeof(mac));
 }
 
-/* 设备侧的 crypto_psa.c 里也有一份（各文件自包含），改动要两边同步 */
+/* crypto_psa.c carries a copy (each file is self-contained); keep the two in step */
 void zlrs_root_key_from_phrase(const char *phrase, uint8_t out[ZLRS_KEY_LEN])
 {
 	static const char salt[] = ZLRS_KDF_V1_SALT;

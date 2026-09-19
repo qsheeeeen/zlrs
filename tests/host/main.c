@@ -2,12 +2,12 @@
  * Copyright (c) 2026 zlrs contributors
  * SPDX-License-Identifier: Apache-2.0
  *
- * 协议核心与链路层的主机侧测试。两者都不依赖 Zephyr，可以直接在本机跑：
+ * Host-side tests for the protocol core and the link layer. Neither needs Zephyr, so they run
  *
  *   make -C tests/host run
  *
- * 期望值来源：SHA-256 / HMAC / HKDF / PBKDF2 用 RFC 向量，CRC 用标准向量，
- * 链路行为用双节点仿真（模拟射频，不接硬件）。
+ * Expected values: RFC vectors for SHA-256 / HMAC / HKDF / PBKDF2, standard vectors for CRC,
+ * and a two-node simulation (a fake radio, no hardware) for link behaviour.
  */
 
 #include "test.h"
