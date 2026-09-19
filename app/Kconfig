@@ -26,10 +26,13 @@ config ZLRS_APP_CORE
 	select ZLRS_LINK
 	select ZLRS_REGION
 	select ZLRS_CRSF
+	select ZLRS_CONFIG
+	select ZLRS_LED
 	help
-	  The four layers the application always needs: framing and hopping, superframe and
-	  pairing, the regulatory gate, the CRSF codec. It has no visible switch, it only selects
-	  them. Optional libraries (config protocol, status LED, USB) are selected by their own knobs.
+	  The pure C layers every image carries: framing and hopping, superframe and pairing, the
+	  regulatory gate, the CRSF codec, the config protocol and the LED patterns. They have no
+	  visible switch; whether there is a port or a LED to use them with comes from devicetree
+	  (app/src/caps.h), and USB is selected by the board.
 
 config ZLRS_APP_ROLE_TX
 	bool "Build as the TX role"
@@ -60,40 +63,6 @@ config ZLRS_APP_LINK_DATA
 	default y
 	help
 	  Off: only the control link runs, which is how RC and telemetry get proven on their own.
-
-config ZLRS_APP_CRSF_PORT
-	bool "CRSF port (handset <-> module, receiver -> flight controller)"
-	default y
-	select ZLRS_CRSF
-	help
-	  Off: the CRSF port is never initialised, so the TX always sends the configured failsafe
-	  values and the RX does not drive a flight controller. For air-only bench runs.
-
-config ZLRS_APP_CONFIG_MODE
-	bool "Config protocol can enter config mode"
-	default y
-	select ZLRS_CONFIG
-
-config ZLRS_APP_PAIRING_BUTTON
-	bool "Long press the button to pair"
-	default y
-	help
-	  Off: the button is unused entirely and pairing can only come from the config tool.
-
-config ZLRS_APP_STATUS_LED
-	bool "Status LED"
-	default y
-	select ZLRS_LED
-
-config ZLRS_APP_ENTROPY_TRNG
-	bool "RP2350 hardware TRNG as the entropy source (zlrs driver)"
-	default y
-	select ZLRS_RP2350_TRNG
-	help
-	  The driver lives in drivers/entropy: probe resets and pre-fetches, reads come from a small
-	  pool, interrupts stay on, waits are bounded and failures are reported, never papered over.
-	  Zephyr's ENTROPY_RPI_PICO_RNG is unusable here: pico-sdk spins with interrupts off and USB dies.
-	  See doc/13-roadmap.md.
 
 # The only knob on the upgrade path: how long the host has to confirm. The mechanism itself
 # (an image under MCUboot stays unconfirmed until the host says so, then either becomes
@@ -126,7 +95,8 @@ choice ZLRS_APP_SECURITY_PROFILE
 	  the bench only. See doc/10-security.md 8.
 
 config ZLRS_APP_SECURITY_PROFILE_P0
-	bool "P0: no tag (debug only)"
+	# Selecting P0 is a bench move (no tag at all), so only a debug image may do it.
+	bool "P0: no tag (debug image only)" if ZLRS_APP_DEBUG
 
 config ZLRS_APP_SECURITY_PROFILE_P1
 	bool "P1: 4-byte tag (default)"
@@ -278,34 +248,31 @@ config ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM
 	range -10 22
 	depends on ZLRS_APP_DYNAMIC_POWER
 
-config ZLRS_APP_ROOT_KEY_HEX
-	string "Root key (64 hex characters, empty = read from NVS)"
-	default ""
-
-
 endmenu
 
 menu "Pending acceptance (see doc/13-roadmap.md)"
 
 config ZLRS_APP_FHSS
-	bool "Per-frame frequency hopping"
+	# These five features are on in any image that goes on air; a debug image may switch one
+	# off to isolate a layer (doc/12-debug.md 3), a production configuration cannot.
+	bool "Per-frame frequency hopping" if ZLRS_APP_DEBUG
 	default y
 	help
 	  With this off every frame stays on the sync channel (entry 0 of the hop table), which is
 	  how bring-up separates timing from the hop table. A fixed channel does not satisfy the
-	  FCC 15.247 hopping rules, so bench only, see doc/09-protocol.md 5.2.
+	  FCC 15.247 hopping rules: debug images only, see doc/09-protocol.md 5.2.
 
 config ZLRS_APP_SESSION_HANDSHAKE
-	bool "Session handshake (fresh key per session)"
+	bool "Session handshake (fresh key per session)" if ZLRS_APP_DEBUG
 	default y
 	help
 	  Off: the pairing-level link_auth doubles as the session key. The RX counts a SYNC as
 	  established and reports back with SESS_RESP, saving a derivation and one confirm message.
 	  The cost is no per-session key rotation: recorded frames stay replayable across sessions.
-	  Bench only, see doc/10-security.md 3.
+	  Debug images only, see doc/10-security.md 3.
 
 config ZLRS_APP_TELEMETRY
-	bool "Uplink telemetry on the control link"
+	bool "Uplink telemetry on the control link" if ZLRS_APP_DEBUG
 	default y
 	help
 	  Off: the RX sends no telemetry in the uplink slot and the TX opens no receive window, so
@@ -313,7 +280,7 @@ config ZLRS_APP_TELEMETRY
 	  first. The TX peer-loss check goes with it, or it would rebuild the session with nothing to hear.
 
 config ZLRS_APP_DATA_ARQ
-	bool "Reliable data transfer (ARQ)"
+	bool "Reliable data transfer (ARQ)" if ZLRS_APP_DEBUG
 	default y
 	help
 	  On by default: the receiver acknowledges payloads and the sender retransmits the window
@@ -321,7 +288,7 @@ config ZLRS_APP_DATA_ARQ
 	  See doc/09-protocol.md 4.3.
 
 config ZLRS_APP_SUB_BAND_MIX
-	bool "Sub-band mixing (move slots between 2.4G and sub-G by LQ)"
+	bool "Sub-band mixing (move slots between 2.4G and sub-G by LQ)" if ZLRS_APP_DEBUG
 	default y
 	help
 	  When LQ drops, telemetry slots move to sub-G first, then the data link, and only then the

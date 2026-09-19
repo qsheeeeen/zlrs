@@ -71,7 +71,11 @@ static uint16_t data_mtu;
  */
 #define ZLRS_CONTROL_ENABLED IS_ENABLED(CONFIG_ZLRS_APP_LINK_CONTROL)
 #define ZLRS_DATA_ENABLED    IS_ENABLED(CONFIG_ZLRS_APP_LINK_DATA)
-#define ZLRS_CRSF_ENABLED    IS_ENABLED(CONFIG_ZLRS_APP_CRSF_PORT)
+/* The CRSF port is part of the control link, and its presence is a devicetree fact: if the
+ * board has the port at all, the control link uses it. */
+#define ZLRS_CRSF_ENABLED (ZLRS_CONTROL_ENABLED && ZLRS_PORT_CTRL_FIXED)
+/* Same shape for the config port: the CDC in devicetree is the whole answer */
+#define ZLRS_CONFIG_ENABLED ZLRS_PORT_CONFIG
 
 #define SERIAL_CHUNK_LEN 64U
 #define REPORT_PERIOD_MS 1000U
@@ -108,7 +112,7 @@ static uint32_t button_since_ms;
 static void crsf_send_rc(const uint8_t *payload, uint8_t len);
 static void crsf_send_link_stats(const zlrs_tlm_t *tlm);
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_ENTROPY_TRNG)
+#if IS_ENABLED(CONFIG_ZLRS_RP2350_TRNG)
 /* Entropy self-test (defined above main); used by the boot check and the shell command */
 static int entropy_selftest(void);
 #endif
@@ -474,15 +478,8 @@ static void load_identity(void)
 	bool have_root_key = false;
 	const uint32_t now_ms = zlrs_radio_port_now_ms();
 
-	/* Root key: the build-time one wins (bench use), otherwise read NVS */
-	if (strlen(CONFIG_ZLRS_APP_ROOT_KEY_HEX) > 0U) {
-		if (zlrs_store_parse_hex_key(CONFIG_ZLRS_APP_ROOT_KEY_HEX, root_key) == 0) {
-			have_root_key = true;
-		} else {
-			LOG_ERR("CONFIG_ZLRS_APP_ROOT_KEY_HEX is not 64 hex characters");
-		}
-	}
-	if (!have_root_key && zlrs_store_load_root_key(root_key) == (int)ZLRS_KEY_LEN) {
+	/* Root key: NVS only, written once with the config tool (set-phrase / set-key-hex) */
+	if (zlrs_store_load_root_key(root_key) == (int)ZLRS_KEY_LEN) {
 		have_root_key = true;
 	}
 
@@ -664,7 +661,7 @@ static void handle_button(uint32_t now_ms)
 	const int pressed = gpio_pin_get_dt(&button);
 
 	/* Bench builds can drop button pairing; the button then does nothing at all */
-	if (!IS_ENABLED(CONFIG_ZLRS_APP_PAIRING_BUTTON) || !ZLRS_CONTROL_ENABLED) {
+	if (!ZLRS_HAS_BUTTON || !ZLRS_CONTROL_ENABLED) {
 		return;
 	}
 
@@ -932,7 +929,7 @@ static void report(uint32_t now_ms)
  * Status LED: translate the link state into core/led inputs, see doc/11-ux.md.
  * Refreshed at 20 Hz (zlrs_led_port_update rate-limits internally).
  */
-#if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
+#if ZLRS_CONFIG_ENABLED
 static void enter_config_mode(void);
 #endif
 
@@ -970,7 +967,7 @@ static void fault_loop(void)
 		zlrs_watchdog_feed();
 		zlrs_led_port_update(&in, k_uptime_get_32());
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
+#if ZLRS_CONFIG_ENABLED
 		/* Config port alive: config mode, the recovery command and reflashing all still work */
 		if (zlrs_config_port_poll_enter()) {
 			enter_config_mode();
@@ -1000,7 +997,7 @@ static void led_tick(uint32_t now_ms)
 	zlrs_led_input_t in;
 	const uint32_t drops = link_data.stats.data_drop_bytes;
 
-	if (!IS_ENABLED(CONFIG_ZLRS_APP_STATUS_LED)) {
+	if (!ZLRS_HAS_LED) {
 		return;
 	}
 
@@ -1071,7 +1068,7 @@ static void confirm_image(void)
 #endif
 }
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
+#if ZLRS_CONFIG_ENABLED
 /* The shell entry only sets this flag: the session runs in the main loop (superframe stopped,
  * data port not stolen by the passthrough), see the main loop. */
 static atomic_t config_request;
@@ -1186,7 +1183,7 @@ static const zlrs_config_ops_t cfg_ops = {
 	.region = cfg_op_region,
 	.power = cfg_op_power,
 };
-#endif /* CONFIG_ZLRS_APP_CONFIG_MODE */
+#endif /* ZLRS_CONFIG_ENABLED */
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_SHELL)
 static int cmd_status(const struct shell *sh, size_t argc, char **argv)
@@ -1208,7 +1205,7 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
+#if ZLRS_CONFIG_ENABLED
 static int cmd_config(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(argc);
@@ -1260,7 +1257,7 @@ static int cmd_recovery(const struct shell *sh, size_t argc, char **argv)
 }
 #endif
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_ENTROPY_TRNG)
+#if IS_ENABLED(CONFIG_ZLRS_RP2350_TRNG)
 static int cmd_entropy(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(argc);
@@ -1349,13 +1346,13 @@ static int cmd_mcuboot(const struct shell *sh, size_t argc, char **argv)
 SHELL_STATIC_SUBCMD_SET_CREATE(
 	zlrs_cmds, SHELL_CMD(status, NULL, "role / SKU / region / link state", cmd_status),
 	SHELL_CMD(ports, NULL, "state of both data port endpoints", cmd_ports),
-#if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
+#if ZLRS_CONFIG_ENABLED
 	SHELL_CMD(config, NULL, "enter config mode (EXIT returns)", cmd_config),
 #endif
 #if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
 	SHELL_CMD(recovery, NULL, "reboot into MCUboot serial recovery", cmd_recovery),
 #endif
-#if IS_ENABLED(CONFIG_ZLRS_APP_ENTROPY_TRNG)
+#if IS_ENABLED(CONFIG_ZLRS_RP2350_TRNG)
 	SHELL_CMD(entropy, NULL, "entropy self-test (two 32-byte TRNG blocks)", cmd_entropy),
 #endif
 #if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
@@ -1366,7 +1363,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 SHELL_CMD_REGISTER(zlrs, &zlrs_cmds, "zlrs debug commands", NULL);
 #endif /* CONFIG_ZLRS_APP_DEBUG_SHELL */
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_ENTROPY_TRNG)
+#if IS_ENABLED(CONFIG_ZLRS_RP2350_TRNG)
 /*
  * Entropy self-test: read two 32-byte blocks in a row; both must succeed and differ.
  * On failure, report it — no software fallback. A broken hardware entropy source is broken;
@@ -1398,7 +1395,7 @@ static int entropy_selftest(void)
 
 	return 0;
 }
-#endif /* CONFIG_ZLRS_APP_ENTROPY_TRNG */
+#endif /* CONFIG_ZLRS_RP2350_TRNG */
 
 int main(void)
 {
@@ -1434,16 +1431,10 @@ int main(void)
 		LOG_WRN("bring-up: data link off, no serial passthrough");
 	}
 	if (!ZLRS_CRSF_ENABLED) {
-		LOG_WRN("bring-up: CRSF port off, TX sends the configured failsafe values");
+		LOG_WRN("no CRSF port on this board, TX sends the configured failsafe values");
 	}
-	if (!IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)) {
-		LOG_WRN("bring-up: config mode off, this build cannot be configured");
-	}
-	if (!IS_ENABLED(CONFIG_ZLRS_APP_PAIRING_BUTTON)) {
-		LOG_WRN("bring-up: pairing button off");
-	}
-	if (!IS_ENABLED(CONFIG_ZLRS_APP_STATUS_LED)) {
-		LOG_WRN("bring-up: status led off");
+	if (!ZLRS_CONFIG_ENABLED) {
+		LOG_WRN("no config port on this board, parameters can only come from the defaults");
 	}
 	if (!IS_ENABLED(CONFIG_ZLRS_APP_RADIO)) {
 		LOG_WRN("bring-up: radio off, no USP/RAC and no LR2021 traffic");
@@ -1458,7 +1449,7 @@ int main(void)
 		LOG_ERR("store unavailable: keys, pairing and failsafe will not persist");
 	}
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
+#if ZLRS_CONFIG_ENABLED
 	/*
 	 * Bring the config port up early: any later fatal step (entropy, region/SKU, PSA) lands in
 	 * fault_loop, and that path stays flashable only while the config port is alive.
@@ -1467,7 +1458,7 @@ int main(void)
 	zlrs_config_set_ops(&cfg_ops);
 #endif
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_ENTROPY_TRNG)
+#if IS_ENABLED(CONFIG_ZLRS_RP2350_TRNG)
 	/* A dead entropy source stops the boot: key generation and the device id depend on it */
 	if (entropy_selftest() != 0) {
 		fault_loop();
@@ -1524,7 +1515,7 @@ int main(void)
 		}
 	}
 	zlrs_duty_init(&duty, region, 0U);
-	if (IS_ENABLED(CONFIG_ZLRS_APP_STATUS_LED)) {
+	if (ZLRS_HAS_LED) {
 		(void)zlrs_led_port_init();
 	}
 
@@ -1580,7 +1571,7 @@ int main(void)
 		zlrs_watchdog_feed();
 		confirm_image();
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE)
+#if ZLRS_CONFIG_ENABLED
 		/* All config-mode entries converge here: config port command, shell, debug magic.
 		 * During the session the superframe pauses, the radio stops, the data port drops bytes. */
 		if (zlrs_config_port_poll_enter() || atomic_cas(&config_request, 1, 0)) {

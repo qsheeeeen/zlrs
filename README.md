@@ -76,8 +76,7 @@ The role and link shape decide which timing the firmware runs and are compile-ti
 | `CONFIG_ZLRS_APP_DATA_ARQ` | see [doc/13-roadmap.md](doc/13-roadmap.md) | reliable retransmit on the data link; the target is on by default |
 | `CONFIG_ZLRS_APP_RATE_ADAPT` | n | move rate tiers by LQ; thresholds await measurement |
 | `CONFIG_ZLRS_APP_DYNAMIC_POWER` | y | dynamic power; the floor is `CONFIG_ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM` |
-| `CONFIG_ZLRS_APP_CONFIG_MODE` | y | config mode; debug builds also have a shell entry ([doc/12-debug.md](doc/12-debug.md)) |
-| `CONFIG_ZLRS_APP_ROOT_KEY_HEX` | empty | for bench work: build a root key in and skip the config step (the normal path still uses the tool) |
+| bench switches (P0, hopping off, radio off, …) | [doc/12-debug.md](doc/12-debug.md) 3 | debug images only: a production build always runs the whole stack |
 
 ## What this builds
 

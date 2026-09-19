@@ -72,7 +72,7 @@ After pairing, this device cannot hear other pairs at the physical layer, spendi
 - `tag` = HMAC-SHA256 truncated to 4 B over `header` + `seq` + `payload`; the key is directional, see [10-security](10-security.md) 3.
 - HMAC-SHA256 keeps the identity layer on a single primitive: PBKDF2, HKDF and the MAC all sit in one function family.
 - **P2 comes last**: encryption is implemented once everything else is done.
-- The profile is a compile-time setting (`CONFIG_ZLRS_APP_SECURITY_PROFILE_P0`, `_P1`, `_P2`) and the profile declared in `SYNC` has to match the local one.
+- The profile is chosen at build time (`CONFIG_ZLRS_APP_SECURITY_PROFILE_P1` is the production profile; `_P0` carries no tag and is selectable in debug images only) and the profile declared in `SYNC` has to match the local one. It becomes a runtime setting with the rest of the configuration protocol ([organization](organization.md) 4).
 
 ### 2.4 Control payload and rate tiers
 

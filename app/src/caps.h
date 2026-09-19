@@ -56,22 +56,6 @@
 #error "data link enabled but this board has no data port (zlrs-data-uart/-cdc)"
 #endif
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_CRSF_PORT) && !ZLRS_PORT_CTRL_FIXED
-#error "CRSF port enabled but this board has no control port (zlrs-control-uart/-cdc)"
-#endif
-
-#if IS_ENABLED(CONFIG_ZLRS_APP_CONFIG_MODE) && !ZLRS_PORT_CONFIG
-#error "config mode enabled but this board has no config CDC (zlrs-config-cdc)"
-#endif
-
-#if IS_ENABLED(CONFIG_ZLRS_APP_STATUS_LED) && !ZLRS_HAS_LED
-#error "status LED enabled but this board has no zlrs-led alias"
-#endif
-
-#if IS_ENABLED(CONFIG_ZLRS_APP_PAIRING_BUTTON) && !ZLRS_HAS_BUTTON
-#error "pairing button enabled but this board has no zlrs-button alias"
-#endif
-
 #if IS_ENABLED(CONFIG_ZLRS_APP_WATCHDOG) && !ZLRS_HAS_WDT
 #error "watchdog enabled but this board has no watchdog device"
 #endif

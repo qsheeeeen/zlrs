@@ -135,7 +135,8 @@ enforced mechanically (section 6).
 | Which link the single port carries | runtime, default at compile time | config protocol, stored in NVS |
 | Role TX / RX | runtime, default at compile time | config protocol, stored in NVS |
 | Security profile `P0` / `P1` / `P2` | runtime, default at compile time | config protocol, stored in NVS; declared in `SYNC`, both ends must agree |
-| USB presence, LED, button, watchdog | compile time | capability macros |
+| USB, config port, LED, button, watchdog, radio design | devicetree | `app/src/caps.h`; there is no Kconfig switch to disagree with the board |
+| Bench isolation (radio off, hopping off, P0, …) | compile time, debug images only | `ZLRS_APP_DEBUG_*`, see [12-debug](12-debug.md) 3 |
 | Region, power ceiling, rate tier, frame rate, ARQ, baud rate, failsafe values, pairing | runtime | config protocol, stored in NVS |
 
 Two properties follow from this split and are worth stating explicitly:
