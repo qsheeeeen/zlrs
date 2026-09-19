@@ -3,8 +3,8 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * 带 MCUboot 的 LF 变体（470 / 433）。组合顺序同 hf/mcuboot，只是第 4 步换成
- * LF SKU 的 sub-G 标定。
+ * LF variant with MCUboot (470 / 433). Same composition as hf/mcuboot with step 4 swapped for
+ * the LF SKU's sub-G calibration.
  */
 
 /dts-v1/;
@@ -15,16 +15,16 @@
 #include "rp2350_zero_core2021.dtsi"
 #include "rp2350_zero_core2021_lf.dtsi"
 
-/* 分区：mcuboot 128 KB / slot0 832 KB / slot1 832 KB / storage 2.25 MB */
+/* Partitions: mcuboot 128 KB / slot0 832 KB / slot1 832 KB / storage 2.25 MB */
 #include "rp2350_zero_core2021_partitions_mcuboot.dtsi"
 
-/* 应用侧"进串口恢复"用的 boot mode 区（同 hf/mcuboot） */
+/* The boot-mode area the application uses to enter serial recovery (same as hf/mcuboot) */
 #include <vendor/raspberrypi/rp2350-boot-mode-retention.dtsi>
 
 / {
 	chosen {
 		zephyr,code-partition = &slot0_partition;
-		/* 串口恢复只走 USB（数据口那块 CDC），同 hf/mcuboot */
+		/* Serial recovery is USB only (the data port CDC), same as hf/mcuboot */
 		zephyr,uart-mcumgr = &cdc_acm_uart1;
 	};
 };

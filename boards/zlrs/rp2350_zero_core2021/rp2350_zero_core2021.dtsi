@@ -1,6 +1,6 @@
 /*
- * Waveshare RP2350-Zero（RP2350A，4 MB flash）+ Waveshare Core2021（LR2021）的
- * 板级定义。接线与选型见同目录 README.md。
+ * Board definition for the Waveshare RP2350-Zero (RP2350A, 4 MB flash) plus the Waveshare
+ * Core2021 (LR2021). Wiring and part choices: README.md in this directory.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -17,14 +17,14 @@
 		zephyr,sram = &sram0;
 		zephyr,flash = &flash0;
 		zephyr,flash-controller = &qmi;
-		/* 控制台默认关闭：debug overlay 打开 cdc_acm_uart3 后才存在 */
+		/* Console off by default: it only exists once the debug overlay enables cdc_acm_uart3 */
 		zephyr,console = &cdc_acm_uart3;
 		zephyr,shell-uart = &cdc_acm_uart3;
 		zephyr,lorawan-transceiver = &lora_core2021;
-		/* 熵源用 zlrs 自己的 TRNG 驱动（有界等待、不关中断，见 drivers/trng） */
+		/* Entropy comes from the zlrs TRNG driver (bounded waits, no interrupt masking; drivers/trng) */
 		zephyr,entropy = &rng;
-		/* zephyr,code-partition 由各变体自己给：不带 bootloader 的是 code，
-		 * 带 MCUboot 的是 slot0（见同目录 README 的分区表） */
+		/* Each variant sets zephyr,code-partition itself: code without a bootloader, slot0 with one
+		 * (see the partition table in this directory's README) */
 	};
 	aliases {
 		lora-transceiver = &lora_core2021;
@@ -37,7 +37,7 @@
 		zlrs-led = &zlrs_led;
 		led-strip = &zlrs_led;
 		watchdog0 = &wdt0;
-		/* USP 官方示例（packet_error_rate_flrc 等）认这个别名 */
+		/* The vendor USP samples (packet_error_rate_flrc and friends) expect this alias */
 		smtc-user-button = &zlrs_button;
 	};
 
@@ -52,9 +52,9 @@
 };
 
 /*
- * RP2350 TRNG：SoC 自带的 rng@400f0000 节点（reg 给的是块基址）换成 zlrs
- * 自己的驱动。Zephyr 树里绑 `raspberrypi,pico-rng` 的那个走 pico-sdk 的关中断
- * 忙等取数，会让 USB 停摆，见 drivers/trng/rp2350_trng.c 的文件头。
+ * RP2350 TRNG: the SoC's rng@400f0000 node (reg gives the block base) is switched to the zlrs
+ * driver. The one in the Zephyr tree that binds `raspberrypi,pico-rng` goes through pico-sdk's
+ * interrupt-off busy wait and stops USB, see the header of drivers/trng/rp2350_trng.c.
  */
 &rng {
 	compatible = "zlrs,rp2350-trng";
@@ -66,16 +66,16 @@
 };
 
 /*
- * 硬件看门狗（RP2350 wdt0）：应用起来就武装，主循环里喂。崩溃（fatal error）
- * 或线程卡死时芯片自动复位，配合 MCUboot 的 test/revert：没被确认的镜像会被
- * 回滚，回滚后没有可用镜像就停在串口恢复里——上板调试时不用再按 BOOTSEL。
- * 见 doc/08-firmware.md 第 5 节。
+ * Hardware watchdog (RP2350 wdt0): armed when the application starts and fed from the main
+ * loop. A crash or a stuck thread resets the chip, which MCUboot's test/revert turns into a
+ * rollback, and with nothing left to boot it stops in serial recovery: no BOOTSEL needed.
+ * See doc/08-firmware.md 6.
  */
 &wdt0 {
 	status = "okay";
 };
 
-/* CRSF：GP0 = TX / GP1 = RX，接手台或飞控，420000 是 CRSF 协议的波特率 */
+/* CRSF: GP0 = TX / GP1 = RX, to the handset or flight controller; 420000 is CRSF's baud rate */
 &uart0 {
 	status = "okay";
 	current-speed = <420000>;
@@ -83,7 +83,7 @@
 	pinctrl-names = "default";
 };
 
-/* 数据口：透传/配置，GP8 = TX / GP9 = RX */
+/* Data port: passthrough, GP8 = TX / GP9 = RX */
 &uart1 {
 	status = "okay";
 	current-speed = <115200>;
@@ -91,14 +91,14 @@
 	pinctrl-names = "default";
 };
 
-/* RP2350 硬件 TRNG：给 CSPRNG 供熵（v4.4 起树内有驱动） */
+/* RP2350 hardware TRNG feeding the CSPRNG */
 &rng {
 	status = "okay";
 };
 
 /*
- * 板载 WS2812B（GP16，单像素）当状态灯，见 doc/11-ux.md：
- * 用 PIO0 驱动，接法与上游 waveshare/rp2350_zero 一致。
+ * The on-board WS2812B (GP16, one pixel) is the status LED, see doc/11-ux.md: driven through
+ * PIO0, wired the same way as upstream waveshare/rp2350_zero.
  */
 &pio0 {
 	status = "okay";
@@ -115,9 +115,9 @@
 			gpios = <&gpio0 16 GPIO_ACTIVE_HIGH>;
 			chain-length = <1>;
 			/*
-			 * WS2812B 的物理字节顺序是 GRB：这里要按灯珠的顺序声明，
-			 * 否则红绿互换（实测发红显示绿、发蓝显示紫）。上游
-			 * waveshare rp2350_zero 写的是 RGB，是同一个坑。
+			 * The WS2812B's physical byte order is GRB, so declare it the way the part expects, or red and
+			 * green swap (measured: red shows green, blue shows purple). Upstream waveshare rp2350_zero
+			 * writes RGB and falls into the same trap.
 			 */
 			color-mapping = <LED_COLOR_ID_GREEN
 					 LED_COLOR_ID_RED
@@ -129,14 +129,14 @@
 };
 
 /*
- * USB 上的 CDC（doc/08-firmware.md 第 1 节）：
- *   cdc_acm_uart0 = CRSF（别名 zlrs-crsf-cdc）
- *   cdc_acm_uart1 = 数据口（别名 zlrs-data-cdc）
- *   cdc_acm_uart2 = 配置口（别名 zlrs-config-cdc）：配置协议、进配置模式
- *   cdc_acm_uart3 = 控制台（kernel log + shell）：默认关闭，debug overlay 打开
+ * The CDCs on USB (doc/08-firmware.md 1):
+ *   cdc_acm_uart0 = CRSF (alias zlrs-crsf-cdc)
+ *   cdc_acm_uart1 = data port (alias zlrs-data-cdc)
+ *   cdc_acm_uart2 = config port (alias zlrs-config-cdc): config protocol, enter config mode
+ *   cdc_acm_uart3 = console (kernel log + shell): off by default, the debug overlay enables it
  *
- * 前两块是链路的 USB 端点，与各自的 UART 二选一（app/src/ports.c）；配置口与
- * 控制台只在 USB 上。
+ * The first two are the links' USB endpoints and compete with their UARTs (app/src/ports.c);
+ * the config port and console exist on USB only.
  */
 zephyr_udc0: &usbd {
 	status = "okay";
@@ -163,9 +163,9 @@ zephyr_udc0: &usbd {
 	};
 };
 
-/* 4 MB QSPI flash。分区表不在公共 dtsi 里：不带 bootloader 的变体用
- * partitions_1m.dtsi（1 MB code + 3 MB storage），带 MCUboot 的变体用
- * Zephyr 树里的 raspberrypi/partitions_4M_sysbuild.dtsi。 */
+/* 4 MB QSPI flash. The partition table is not in the common dtsi: variants without a bootloader
+ * use partitions_1m.dtsi (1 MB code + 3 MB storage) and MCUboot variants use the Zephyr
+ * tree's raspberrypi/partitions_4M_sysbuild.dtsi. */
 &flash0 {
 	reg = <0x10000000 DT_SIZE_M(4)>;
 };
@@ -188,7 +188,7 @@ zephyr_udc0: &usbd {
 		// RX boost offset, from 0 (no RX boost) to 7 (max RX boost)
 		rx-boost-cfg = <7>;
 
-		/* 控制线放在 GP13–GP15：GP16 是板载 WS2812，GP16 以上那段接线不方便 */
+		/* Control lines sit on GP13-GP15: GP16 drives the on-board WS2812 and wiring above it is awkward */
 		reset-gpios = <&gpio0 14 GPIO_ACTIVE_LOW>; // NRESET
 
 		busy-gpios = <&gpio0 13 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>; // BUSY

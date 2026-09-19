@@ -1,7 +1,7 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# RP2350-Zero 自带 BOOTSEL，拖 UF2 是最省事的烧写方式；调试口是 SWD。
+# The RP2350-Zero has BOOTSEL, so dragging a UF2 is the easiest way to flash; debug is SWD.
 
 if("${RPI_PICO_DEBUG_ADAPTER}" STREQUAL "")
   set(RPI_PICO_DEBUG_ADAPTER "cmsis-dap")
@@ -9,7 +9,7 @@ endif()
 
 board_runner_args(openocd --cmd-pre-init "source [find interface/${RPI_PICO_DEBUG_ADAPTER}.cfg]")
 board_runner_args(openocd --cmd-pre-init "source [find target/rp2350.cfg]")
-# 适配器速度按接口配置里的值，没设的按树莓派文档给 5000
+# Adapter speed comes from the interface config, defaulting to 5000 as the Raspberry Pi docs say
 board_runner_args(openocd --cmd-pre-init "set_adapter_speed_if_not_set 5000")
 
 board_runner_args(probe-rs "--chip=RP235x")

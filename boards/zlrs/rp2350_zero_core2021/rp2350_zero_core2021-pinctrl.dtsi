@@ -7,7 +7,7 @@
 #include <zephyr/dt-bindings/pinctrl/rpi-pico-rp2350a-pinctrl.h>
 
 &pinctrl {
-	/* CRSF：RP2350-Zero 上就是 Pico 的那对默认引脚，接手台/飞控 */
+	/* CRSF: the pair that is Pico's default on the RP2350-Zero, wired to handset or FC */
 	uart0_default: uart0_default {
 		group1 {
 			pinmux = <UART0_TX_P0>;
@@ -19,7 +19,7 @@
 		};
 	};
 
-	/* 射频 SPI0：避开 GP16（板上 WS2812B 的数据脚） */
+	/* Radio SPI0: stays clear of GP16, the on-board WS2812B data pin */
 	zlrs_spi0_default: zlrs_spi0_default {
 		group1 {
 			pinmux = <SPI0_SCK_P6>, <SPI0_TX_P7>;
@@ -31,7 +31,7 @@
 		};
 	};
 
-	/* 数据串口：透传口 */
+	/* Data UART: the passthrough port */
 	zlrs_uart1_default: zlrs_uart1_default {
 		group1 {
 			pinmux = <UART1_TX_P8>;
@@ -43,7 +43,7 @@
 		};
 	};
 
-	/* 板载 WS2812B 的数据脚（GP16）交给 PIO0，接法与上游 waveshare 板一致 */
+	/* The on-board WS2812B data pin (GP16) goes to PIO0, wired as on the upstream waveshare board */
 	ws2812_pio0_default: ws2812_pio0_default {
 		ws2812 {
 			pinmux = <PIO0_P16>;

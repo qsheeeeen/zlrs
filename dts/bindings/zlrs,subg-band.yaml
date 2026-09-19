@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 description: |
-  本机 sub-G 硬件（Core2021 的 SKU）：0 = LF（470/433），1 = HF（868/915）。
-  地区必须与它匹配（LF 板跑不了 915），见 lib/region 的 zlrs_region_validate()。
+  Local sub-G hardware (the Core2021 SKU): 0 = LF (470/433), 1 = HF (868/915).
+  The region has to match it (an LF board cannot do 915), see zlrs_region_validate() in lib/region.
 
 compatible: "zlrs,subg-band"
 

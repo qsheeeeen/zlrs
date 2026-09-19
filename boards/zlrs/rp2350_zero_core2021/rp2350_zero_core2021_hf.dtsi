@@ -1,10 +1,10 @@
 /*
- * HF SKU（Core2021-HF，850–930 MHz：868 / 915 都用它）
+ * HF SKU (Core2021-HF, 850-930 MHz: both 868 and 915 use it)
  *
- * sub-G 的标定表按 SKU 分家：HF（850–930 MHz）与 LF（410–510 MHz）的 PA 网络
- * 不同，功率表与前端标定频点都不能共用。表里给的是参考值（HF 取自 Semtech
- * Wio-LR2021 @902 MHz，LF 是 470 MHz 实测），上板后按 Core2021 的 PA 网络重标
- * ——验收标准见 doc/13-roadmap.md。
+ * Sub-G calibration is per SKU: HF (850-930 MHz) and LF (410-510 MHz) have different PA
+ * networks, so power tables and calibration frequencies cannot be shared. The values are
+ * references (HF from Semtech's Wio-LR2021 at 902 MHz, LF measured at 470 MHz) and get
+ * recalibrated for the Core2021 PA network; the acceptance criteria are in doc/13-roadmap.md.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -13,8 +13,8 @@
 
 / {
 	/*
-	 * sub-G 硬件：HF。地区必须与它匹配，见 lib/region。
-	 * 不能写在 /chosen 里（自定义前缀的 chosen 属性 DT 宏读不到）。
+	 * Sub-G hardware: HF. The region has to match it, see lib/region.
+	 * It cannot live in /chosen: DT macros do not read custom-prefixed chosen properties.
 	 */
 	zlrs_subg_band: subg-band {
 		compatible = "zlrs,subg-band";

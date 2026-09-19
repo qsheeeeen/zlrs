@@ -3,10 +3,10 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * 带 MCUboot 的 HF 变体（868 / 915）。组合顺序：
- * 1. SoC 公共部分（rp2350a）  2. 核相关部分（Cortex-M33）
- * 3. 板级公共部分  4. HF SKU 的 sub-G 标定
- * 5. MCUboot 分区表（见同目录 README 与 partitions_mcuboot.dtsi）
+ * HF variant with MCUboot (868 / 915). Composition order:
+ * 1. SoC common part (rp2350a)  2. core part (Cortex-M33)
+ * 3. board common part        4. HF SKU sub-G calibration
+ * 5. MCUboot partition table (see the README and partitions_mcuboot.dtsi)
  */
 
 /dts-v1/;
@@ -17,21 +17,21 @@
 #include "rp2350_zero_core2021.dtsi"
 #include "rp2350_zero_core2021_hf.dtsi"
 
-/* 分区：mcuboot 128 KB / slot0 832 KB / slot1 832 KB / storage 2.25 MB */
+/* Partitions: mcuboot 128 KB / slot0 832 KB / slot1 832 KB / storage 2.25 MB */
 #include "rp2350_zero_core2021_partitions_mcuboot.dtsi"
 
-/* 应用侧"进串口恢复"用的 boot mode 区：Zephyr 树里 RP2350 专用的小覆盖，
- * 在 SRAM 起始处留 4 字节并把 sram0 让开（见 doc/08-firmware.md 第 5 节） */
+/* The boot-mode area the application uses to enter serial recovery: the RP2350 overlay in the
+  * Zephyr tree keeps 4 bytes at the start of SRAM and moves sram0 aside (doc/08-firmware.md 6). */
 #include <vendor/raspberrypi/rp2350-boot-mode-retention.dtsi>
 
 / {
 	chosen {
-		/* 应用链接进 slot0：MCUboot 校验通过后从这里启动 */
+		/* The application links into slot0: MCUboot boots it from there once the signature checks out */
 		zephyr,code-partition = &slot0_partition;
 		/*
-		 * MCUboot 的串口恢复只走 USB：指向数据口那块 CDC
-		 * （`cdc_acm_uart1`，板载 USB-C 枚举出来的第二个口）。插一根 USB 线
-		 * 就能升级，不需要 UART 转接板；GP8/GP9 那路 UART 仍然留给应用。
+		 * MCUboot serial recovery is USB only: it points at the data port CDC (`cdc_acm_uart1`, the
+		 * second port the on-board USB-C enumerates). One USB cable is enough to upgrade, no UART
+		 * adapter needed, and the GP8/GP9 UART stays with the application. */
 		 */
 		zephyr,uart-mcumgr = &cdc_acm_uart1;
 	};

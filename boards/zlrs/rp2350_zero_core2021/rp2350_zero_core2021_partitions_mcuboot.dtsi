@@ -3,15 +3,15 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * 带 MCUboot 的分区表（4 MB）。布局与 Zephyr 树里 raspberrypi/
- * partitions_4M_sysbuild.dtsi 同形，只把 bootloader 从 64 KB 放宽到 128 KB：
- * 实测带串口恢复（mcumgr over UART）的 MCUboot 已经占掉 61.6 KB（96%），
- * 再加代码就没地方了；128 KB 给后续"USB CDC 恢复"之类的配置留了余量。
+ * Partition table with MCUboot (4 MB). The layout matches the Zephyr tree's raspberrypi/
+ * partitions_4M_sysbuild.dtsi except that the bootloader grows from 64 KB to 128 KB: the
+ * measured MCUboot with serial recovery (mcumgr over UART) already takes 61.6 KB, 96% of 64 KB,
+ * leaving no room for more code; 128 KB leaves headroom for USB CDC recovery and the like.
  *
- *   0x000000  mcuboot   128 KB   RP2350 bootrom 从这里启动
- *   0x020000  slot0     832 KB   应用（signed）——zephyr,code-partition
- *   0x0F0000  slot1     832 KB   升级镜像落这里，MCUboot 换槽
- *   0x1C0000  storage  2.25 MB   NVS：根密钥、设备标识、配对记录、失控值
+ *   0x000000  mcuboot   128 KB   RP2350 bootrom starts here
+ *   0x020000  slot0     832 KB   application (signed), zephyr,code-partition
+ *   0x0F0000  slot1     832 KB   upgrade images land here, MCUboot swaps
+ *   0x1C0000  storage  2.25 MB   NVS: root key, device id, pairing record, failsafe values
  */
 
 &flash0 {

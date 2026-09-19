@@ -1,7 +1,7 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 
-description: zlrs 的 RP2350 TRNG 熵源（有界等待、不关中断）
+description: zlrs RP2350 TRNG entropy source (bounded waits, interrupts stay on)
 
 compatible: "zlrs,rp2350-trng"
 

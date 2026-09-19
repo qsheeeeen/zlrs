@@ -6,10 +6,10 @@
 
 /dts-v1/;
 
-/* 构建系统要求有按 cpucluster 命名的板级 dts，按顺序组合：
- * 1. SoC 公共部分（rp2350a）  2. 核相关部分（Cortex-M33）
- * 3. 板级公共部分  4. HF SKU 的 sub-G 标定（868 / 915）
- * 5. 分区表（不带 bootloader：1 MB code + 3 MB storage）
+/* The build system wants a board dts named after the cpucluster; it composes, in order:
+ * 1. SoC common part (rp2350a)  2. core part (Cortex-M33)
+ * 3. board common part        4. HF SKU sub-G calibration (868 / 915)
+ * 5. partition table (no bootloader: 1 MB code + 3 MB storage)
  */
 #include <raspberrypi/rpi_pico/rp2350a.dtsi>
 #include <raspberrypi/rpi_pico/m33.dtsi>
