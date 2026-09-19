@@ -36,7 +36,7 @@
 | 信号 | Zero | Core2021 |
 | --- | --- | --- |
 | SPI0 SCK / MOSI / MISO / CS | GP6 / GP7 / GP4 / GP5 | 对应脚 |
-| BUSY / NRESET / DIO8 | GP20 / GP21 / GP22 | 对应脚 |
+| BUSY / NRESET / DIO8 | GP13 / GP14 / GP15 | 对应脚 |
 | 电源 | 3V3、GND | 3V3、GND（3V3 由 Zero 供） |
 
 对外：

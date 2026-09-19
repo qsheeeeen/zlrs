@@ -12,9 +12,9 @@
 | --- | --- | --- | --- |
 | SPI0 SCK / MOSI / MISO | GP6 / GP7 / GP4 | `lora-transceiver` = `lora_core2021` | 射频总线，`spi-max-frequency` 16 MHz |
 | SPI0 CS | GP5 | 同上（`cs-gpios`） | 普通 GPIO 片选，与 Semtech 自家 shield 做法一致 |
-| BUSY | GP20 | 同上（`busy-gpios`） | 模块忙，高有效，内部上拉 |
-| NRESET | GP21 | 同上（`reset-gpios`） | 复位，低有效 |
-| DIO8 | GP22 | 同上（`dios/dio@8`） | IRQ，高有效，内部下拉 |
+| BUSY | GP13 | 同上（`busy-gpios`） | 模块忙，高有效，内部上拉 |
+| NRESET | GP14 | 同上（`reset-gpios`） | 复位，低有效 |
+| DIO8 | GP15 | 同上（`dios/dio@8`） | IRQ，高有效，内部下拉 |
 | UART0 TX / RX | GP0 / GP1 | `zlrs-crsf-uart` = `uart0` | CRSF，420000，接手台/飞控 |
 | UART1 TX / RX | GP8 / GP9 | `zlrs-data-uart` = `uart1` | 透传/配置口，默认 115200（NVS 可改） |
 | 按键 | GP12 | `zlrs-button`、`smtc-user-button` | 对地，内部上拉；本板没焊，留给自接按键 |
@@ -22,7 +22,7 @@
 | USB-C（原生 USB） | — | `zephyr_udc0` = `usbd` | 三块 CDC：`cdc_acm_uart0`（`zlrs-crsf-cdc`）、`cdc_acm_uart1`（`zlrs-data-cdc`）、`cdc_acm_uart2`（控制台，`zephyr,console`） |
 | 看门狗 | — | `watchdog0` = `wdt0` | 应用侧 `CONFIG_ZLRS_APP_WATCHDOG` 打开才武装 |
 
-射频总线没用 Pico 默认的 GP16–19：GP16 在 RP2350-Zero 上是板载 WS2812B 的数据脚，留给状态灯。`smtc-user-button` 是 USP 官方示例要的别名，挂了它 `usp_zephyr/samples/usp/**` 就能直接在这块板上编。
+射频总线和三根控制线都放在 **GP15 及以下**：GP16 是 RP2350-Zero 的板载 WS2812B 数据脚（留给状态灯），再往上的那段在原型上接线不方便，所以 SPI 用 GP4–GP7、控制线用 GP13–GP15。`smtc-user-button` 是 USP 官方示例要的别名，挂了它 `usp_zephyr/samples/usp/**` 就能直接在这块板上编。
 
 每条链路有两块端点（UART + USB CDC），二选一的规则与配置模式入口见 [doc/08-firmware.md](../../../doc/08-firmware.md) 第 1 节，物理接口清单见 [doc/04-prototype.md](../../../doc/04-prototype.md) 第 2、3 节。
 

@@ -188,9 +188,10 @@ zephyr_udc0: &usbd {
 		// RX boost offset, from 0 (no RX boost) to 7 (max RX boost)
 		rx-boost-cfg = <7>;
 
-		reset-gpios = <&gpio0 21 GPIO_ACTIVE_LOW>; // NRESET
+		/* 控制线放在 GP13–GP15：GP16 是板载 WS2812，GP16 以上那段接线不方便 */
+		reset-gpios = <&gpio0 14 GPIO_ACTIVE_LOW>; // NRESET
 
-		busy-gpios = <&gpio0 20 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>; // BUSY
+		busy-gpios = <&gpio0 13 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>; // BUSY
 
 		reg-mode = <0x02 /* LR20XX_REG_MODE_DCDC */>;
 
@@ -397,7 +398,7 @@ zephyr_udc0: &usbd {
 			dio@8 {
 				reg = <8>;
 				function = <0x01 /* LR20XX_SYSTEM_DIO_FUNC_IRQ */>;
-				dio-gpios = <&gpio0 22 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>; // DIO8
+				dio-gpios = <&gpio0 15 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>; // DIO8
 				irq-mask = <0xffff07ff /* LR20XX_SYSTEM_IRQ_ALL_MASK */>;
 			};
 		};

@@ -23,10 +23,12 @@
 | --- | --- | --- | --- |
 | SPI0 SCK / MOSI / MISO | GP6 / GP7 / GP4 | 对应脚 | 总线 16 MHz |
 | SPI0 CS | GP5 | 对应脚 | 普通 GPIO 片选（`cs-gpios`），不用硬件 CSN |
-| BUSY | GP20 | BUSY | 高有效，内部上拉 |
-| NRESET | GP21 | NRESET | 低有效 |
-| DIO8（IRQ） | GP22 | DIO8 | 高有效，内部下拉 |
+| BUSY | GP13 | BUSY | 高有效，内部上拉 |
+| NRESET | GP14 | NRESET | 低有效 |
+| DIO8（IRQ） | GP15 | DIO8 | 高有效，内部下拉 |
 | 3V3 / GND | 3V3、GND | 3V3、GND | 由 Zero 供 |
+
+七根线全在 **GP15 及以下**（SPI 在 GP4–GP7，控制线在 GP13–GP15）：GP16 是板上 WS2812B 的数据脚，再往上的那段引脚在原型上不好接。
 
 两路 UART（GP0/GP1 = CRSF，GP8/GP9 = 数据口）留在模块焊盘上，原型上悬空；控制台不走引脚，只在 USB 上。
 
@@ -63,5 +65,5 @@ USB-C 一个口，按运行模式以不同面孔出现：
 ## 5. 接线与摆放
 
 - 3V3 由 Zero 供 Core2021，两块模块共地。
-- SPI 跳线尽量短；GP16 被板载 WS2812B 占着，所以射频 SPI 用 GP4–GP7。
+- SPI 跳线尽量短；GP16 被板载 WS2812B 占着，射频总线用 GP4–GP7、控制线用 GP13–GP15，都在 GP15 及以下。
 - 天线座那一侧留 15–20 mm 净空（不贴金属、不过线）。
