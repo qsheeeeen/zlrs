@@ -65,6 +65,7 @@ west build -b "$ZLRS_BOARD" "$ZLRS_APP" -- \
 - **判断"射频到底发出去了没有"，看每秒状态日志的 `air:` 那一行**（`CONFIG_ZLRS_APP_STATS_LOG=y`）：`ctl_tx` / `data_tx` 只统计事务真的做完的帧，`fail` 是事务失败次数。只有一块板时唯一能上空的路径是配对——配置口 `pair` 之后 30 s 窗口里每 100 ms 一个 `PAIR_REQ`，`ctl_tx` 该涨到 300 上下，`fail` 保持 0。
 - **不要用 `cat` 读 console**：读一小会儿就收不到东西了，而且会把 tty 回显打开、设备日志被回送成 shell 输入。用 pyserial 那种一直读的方式（`scripts/` 之外的自备小工具就行）。
 - **USB/IP 转发**（usbipd）下 CDC 的 DTR 可能送不到，端点选择依赖"收到过主机字节"，排查端点问题时用 `zlrs ports` 看两块端点的 `ready/active/rx_total`。
+- **usbipd 转发下设备重新枚举会整个从 WSL 掉口**（`/dev/serial/by-id/` 都消失）：应用复位进 bootloader、或换槽之后重启，都会碰到。在 Windows 侧重挂（detach → attach 到 WSL）再接着干；升级工具此时会停在"等恢复口/等应用口"，设备回来以后用 `--recovery-port <恢复口> --no-trigger` 继续，不必从头再触发一遍。
 - **射频相关的量**（回调延迟、换频开销、误包率、吞吐）只能在板上量，可以直接用 Semtech 官方 `packet_error_rate_flrc` 示例做对照。
 
 ## 5. 踩过的坑（保留一行摘要，细节在代码注释里）
