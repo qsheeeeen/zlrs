@@ -14,9 +14,9 @@ target_sources(app PRIVATE
   src/watchdog.c
 )
 
-# 射频后端二选一（见 doc/12-debug.md 第 3 节）：
-#   ZLRS_APP_RADIO=y（默认）→ USP/RAC 那条路，直连 LR2021
-#   ZLRS_APP_RADIO=n        → 空后端，Core2021 还没接上时只跑射频以外的部分
+# One of two radio backends (see doc/12-debug.md 3):
+#   ZLRS_APP_RADIO=y (default) -> USP/RAC straight to the LR2021
+#   ZLRS_APP_RADIO=n         -> null backend, everything except the radio
 if(CONFIG_ZLRS_APP_RADIO)
   target_sources(app PRIVATE src/radio_rac.c)
 else()
