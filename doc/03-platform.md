@@ -1,67 +1,67 @@
-# 硬件平台
+# Hardware platform
 
-本文写 zlrs 跑在什么上：目标形态、板级、构建目标、工具链、镜像布局与烧录。端口与工作模式见 [08-firmware](08-firmware.md)，实物见 [04-prototype](04-prototype.md) 与 [05-carrier](05-carrier.md)。
+What zlrs runs on: target shapes, board, build targets, toolchain, image layout and flashing. Ports and operating modes are in [08-firmware](08-firmware.md); the physical builds in [04-prototype](04-prototype.md) and [05-carrier](05-carrier.md).
 
-## 1. 目标形态
+## 1. Target shapes
 
-| 形态 | 内容 |
+| Shape | What it is |
 | --- | --- |
-| **原型** | 微雪 RP2350-Zero + 微雪 Core2021 两块模块用线连起来，对外只有 USB-C，见 [04-prototype](04-prototype.md) |
-| **载板** | 把两模块的连线做成 PCB，对外给 USB-C、按键与两路 6P 串口，见 [05-carrier](05-carrier.md) |
-| **轻量版** | 裁掉 USB 与数据口，只留控制链路，见 [08-firmware](08-firmware.md) 第 4 节 |
+| **Prototype** | a Waveshare RP2350-Zero and a Waveshare Core2021 wired together, exposing USB-C only; see [04-prototype](04-prototype.md) |
+| **Carrier board** | the same wiring turned into a PCB exposing USB-C, a button and two 6P serial ports; see [05-carrier](05-carrier.md) |
+| **Lightweight** | USB and the data port trimmed away, control link only; see [08-firmware](08-firmware.md) 4 |
 
-三个形态（原型 / 载板 / 轻量版）共用同一份固件与同一套板级定义，差别只在 devicetree 与 Kconfig。
+All three shapes share one firmware and one board definition; only devicetree and Kconfig differ.
 
-## 2. 板级
+## 2. Board
 
-| 项目 | 选择 |
+| Item | Choice |
 | --- | --- |
-| 射频 | Semtech LR2021（QFN32），SPI + BUSY + DIO；参数见 [06-radio](06-radio.md) |
-| 主控 | 微雪 RP2350-Zero：RP2350A（Cortex-M33）、4 MB QSPI flash、原生 USB、板载 WS2812B |
-| 射频模块 | 微雪 Core2021，sub-G 分 HF（850–930 MHz）与 LF（410–510 MHz）两个 SKU |
-| 板级定义 | `boards/zlrs/rp2350_zero_core2021/`：引脚、别名、SKU 标定表、flash 分区 |
+| Radio | Semtech LR2021 (QFN32), SPI + BUSY + DIO; parameters in [06-radio](06-radio.md) |
+| MCU board | Waveshare RP2350-Zero: RP2350A (Cortex-M33), 4 MB QSPI flash, native USB, on-board WS2812B |
+| Radio module | Waveshare Core2021, with HF (850-930 MHz) and LF (410-510 MHz) sub-G SKUs |
+| Board definition | `boards/zlrs/rp2350_zero_core2021/`: pins, aliases, SKU calibration tables, flash partitions |
 | Zephyr | v4.4.0 |
-| 射频栈 | `usp_zephyr` + `usp` v1.1.2-feature-202604（RAC/RALF 层） |
-| 仓库拓扑 | T2：zlrs 自己当 manifest 仓库并存放应用 |
+| Radio stack | `usp_zephyr` plus `usp` v1.1.2-feature-202604 (the RAC/RALF layers) |
+| Repository topology | T2: zlrs is the manifest repository and holds the application |
 
-引脚、别名与分区的权威定义见[板级 README](../boards/zlrs/rp2350_zero_core2021/README.md)。
+Pins, aliases and partitions are defined in the [board README](../boards/zlrs/rp2350_zero_core2021/README.md).
 
-## 3. 构建目标
+## 3. Build targets
 
-四个目标，两个 SKU × 是否带 bootloader：
+Four targets: two SKUs times with or without a bootloader.
 
-| 构建目标 | 说明 |
+| Target | Notes |
 | --- | --- |
-| `rp2350_zero_core2021/rp2350a/m33/hf` | HF SKU（868 / 915），应用直接放 flash |
-| `rp2350_zero_core2021/rp2350a/m33/lf` | LF SKU（470 / 433），应用直接放 flash |
-| `.../m33/hf/mcuboot` | 同上，多一个 MCUboot 与两槽分区，构建要加 `--sysbuild` |
-| `.../m33/lf/mcuboot` | 同上 |
+| `rp2350_zero_core2021/rp2350a/m33/hf` | HF SKU (868 / 915), the application sits directly in flash |
+| `rp2350_zero_core2021/rp2350a/m33/lf` | LF SKU (470 / 433), the application sits directly in flash |
+| `.../m33/hf/mcuboot` | the same plus MCUboot and two-slot partitions; build with `--sysbuild` |
+| `.../m33/lf/mcuboot` | the same |
 
-`west boards` 里还会带出同一个 SoC 的 `rp2350a/hazard3` qualifier，本板没有对应的 dts（不跑 RISC-V 核）。
+`west boards` also lists the same SoC's `rp2350a/hazard3` qualifier; there is no dts for it here (no RISC-V cores).
 
-## 4. 镜像布局
+## 4. Image layout
 
-**不带 bootloader**：code 1 MB + storage 3 MB（NVS：根密钥、设备标识、配对记录、失控值、波特率）。
+**Without a bootloader**: 1 MB code plus 3 MB storage (NVS: root key, device id, pairing record, failsafe values, baud rate).
 
-**带 MCUboot**：mcuboot 128 KB + slot0 832 KB + slot1 832 KB + storage 2.25 MB；签名镜像落在 slot0（flash 地址 `0x10020000`）。启动链 RP2350 bootrom → MCUboot（验签）→ slot0，换槽用 `swap using move`（`swap using offset` 在这块板上换得进去、回不来），升级失败可回滚。
+**With MCUboot**: mcuboot 128 KB, slot0 832 KB, slot1 832 KB and 2.25 MB storage; the signed image lives in slot0 (flash address `0x10020000`). Boot chain: RP2350 bootrom -> MCUboot (signature check) -> slot0, with `swap using move` for slot swaps (`swap using offset` goes in but never comes back on this board) and rollback after a failed upgrade.
 
-具体偏移与大小见[板级 README](../boards/zlrs/rp2350_zero_core2021/README.md#4-分区与启动)；升级流程与恢复入口见 [08-firmware](08-firmware.md) 第 6 节。
+Offsets and sizes: [board README](../boards/zlrs/rp2350_zero_core2021/README.md#4-partitions-and-boot). Upgrade flow and recovery entries: [08-firmware](08-firmware.md) 6.
 
-## 5. 工具链与构建
+## 5. Toolchain and build
 
-工作区用本仓库的 `west.yml` 建（Zephyr v4.4.0、usp_zephyr、usp），工具链固定 Zephyr SDK 1.0.0（发行版 `arm-none-eabi-gcc` 的 newlib 没开 retargetable locking，会撞静态断言）：
+The workspace comes from this repository's `west.yml` (Zephyr v4.4.0, usp_zephyr, usp) and the toolchain is pinned to Zephyr SDK 1.0.0 (a distro `arm-none-eabi-gcc` has newlib without retargetable locking and trips a static assertion):
 
 ```shell
-scripts/setup-zephyr.sh        # 首次约 5 GB
-source scripts/zephyr-env.sh   # 每个新 shell 一次
+scripts/setup-zephyr.sh        # about 5 GB the first time
+source scripts/zephyr-env.sh   # once per new shell
 zlrs-build                     # = west build -b $ZLRS_BOARD $ZLRS_APP
 ```
 
-主机侧测试不碰工作区：`make -C tests/host run` 只编译 `lib/` 里那同一份源码。命令与依赖的完整列表见 [README](../README.md)。
+The host tests need no workspace: `make -C tests/host run` compiles the very same sources from `lib/`. The full command and dependency list is in the [README](../README.md).
 
-## 6. 烧录
+## 6. Flashing
 
-- 不带 bootloader：BOOTSEL + UF2（`west flash --runner uf2`）或 SWD。
-- 带 MCUboot：第一次两轮 BOOTSEL（先 bootloader，再 `zephyr.signed.uf2`）；之后走串口恢复，一条命令 `python3 scripts/zlrs-update.py --port /dev/ttyACM1`。
+- Without a bootloader: BOOTSEL plus UF2 (`west flash --runner uf2`) or SWD.
+- With MCUboot: two BOOTSEL rounds the first time (the bootloader, then `zephyr.signed.uf2`); afterwards serial recovery does it in one command, `python3 scripts/zlrs-update.py --port /dev/ttyACM1`.
 
-恢复口、镜像确认与回滚的机制见 [08-firmware](08-firmware.md) 第 6 节。
+Recovery ports, image confirmation and rollback are described in [08-firmware](08-firmware.md) 6.
