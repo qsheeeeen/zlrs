@@ -56,7 +56,7 @@ def default_image() -> Path:
     return workspace_root() / "build" / "app" / "zephyr" / "zephyr.signed.bin"
 
 
-def find_by_id(hint: str, exclude: str | None = None) -> list[str]:
+def find_by_id(hint: str, exclude: str | None = None, serial: str | None = None) -> list[str]:
     """Find serial ports by their /dev/serial/by-id name (case-insensitive)."""
     found = []
     for path in sorted(glob.glob(f"{BY_ID_DIR}/*")):
@@ -65,15 +65,26 @@ def find_by_id(hint: str, exclude: str | None = None) -> list[str]:
             continue
         if exclude is not None and exclude.upper() in name:
             continue
+        if serial is not None and serial.upper() not in name:
+            continue
         found.append(path)
     return found
 
 
-def wait_for_by_id(hint: str, timeout_s: float, exclude: str | None = None) -> str | None:
+def app_config_ports(serial: str | None = None) -> list[str]:
+    """Application config ports (the third CDC, ...-if04), optionally of one module only."""
+    return [
+        p for p in find_by_id(APP_PORT_HINT, exclude=RECOVERY_PORT_HINT, serial=serial)
+        if p.endswith("-if04")
+    ]
+
+
+def wait_for_by_id(hint: str, timeout_s: float, exclude: str | None = None,
+                   serial: str | None = None) -> str | None:
     """Wait for a port whose name contains hint to appear (USB re-enumeration takes time)."""
     deadline = time.monotonic() + timeout_s
     while True:
-        found = find_by_id(hint, exclude)
+        found = find_by_id(hint, exclude, serial)
         if found:
             return found[0]
         if time.monotonic() >= deadline:
@@ -129,7 +140,9 @@ def slot_upload_command(client: str, port: str, image: Path, baud: int,
 def inactive_slot(client: str, port: str, baud: int) -> int | None:
     """
     Ask MCUboot which slot is running (the active one in `image state-read`) and return the other.
-    Returns None when unknown (callers fall back to 1: the app links into slot0, so slot1 is free).
+    Returns 0 when no slot is active (a blank device: the first image goes straight into slot0,
+    a pending image in slot1 would never be swapped in), and None when the answer is unreadable
+    (callers then fall back to 1: the app links into slot0, so slot1 is free).
     """
     result = subprocess.run([client, "--port", port, "--baudrate", str(baud),
                              "image", "state-read"],
@@ -145,7 +158,12 @@ def inactive_slot(client: str, port: str, baud: int) -> int | None:
         elif line.startswith("active=") and line.split("=", 1)[1].strip().rstrip(",") == "True":
             active = slot
 
-    return None if active is None else 1 - active
+    if active is None:
+        # No active image: treat it as an install, not an upgrade. This also covers the case
+        # where MCUboot answered but every slot had active=None.
+        return 0 if slot is not None else None
+
+    return 1 - active
 
 
 def config_probe_command(port: str) -> list[str]:
@@ -284,6 +302,7 @@ def self_test() -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Trigger recovery and upgrade the device firmware")
     parser.add_argument("--port", help="application config port (for the trigger), e.g. /dev/ttyACM2")
+    parser.add_argument("--serial", help="pick a module by USB serial substring (with several plugged in)")
     parser.add_argument("--recovery-port", help="bootloader recovery port; skips the search")
     parser.add_argument("--image", help="signed image path (defaults to <workspace>/build/app/zephyr/zephyr.signed.bin)")
     parser.add_argument("--baud", type=int, default=DEFAULT_BAUD, help=f"serial baud rate (default {DEFAULT_BAUD})")
@@ -308,10 +327,13 @@ def main() -> int:
     # 1. trigger
     if not args.no_trigger:
         if args.port is None:
-            ports = find_by_id(APP_PORT_HINT, exclude=RECOVERY_PORT_HINT)
+            ports = app_config_ports(args.serial)
             if not ports:
                 parser.error("no application config port (...-if04) found; pass --port")
-            args.port = next((p for p in ports if p.endswith("-if04")), ports[0])
+            if len(ports) > 1:
+                parser.error("several modules are plugged in: pick one with --serial, or name its "
+                             "config port with --port:\n  " + "\n  ".join(ports))
+            args.port = ports[0]
         if run_trigger(args.port, args.baud) != 0:
             print("trigger failed: the device did not answer on the config port", file=sys.stderr)
             return 1
@@ -378,14 +400,14 @@ def main() -> int:
 
     if not args.no_wait and client is not None:
         print(f"[4/6] waiting for the application ports (name contains {APP_PORT_HINT}, not {RECOVERY_PORT_HINT})")
-        port = wait_for_by_id(APP_PORT_HINT, args.timeout, exclude=RECOVERY_PORT_HINT)
+        port = wait_for_by_id(APP_PORT_HINT, args.timeout, exclude=RECOVERY_PORT_HINT,
+                              serial=args.serial)
         if port is None:
             print("the application ports never came back. The upgrade runs with test semantics: the next "
                   "reset rolls back to the previous image; retry once it is back on the old one (08-firmware 6)",
                   file=sys.stderr)
             return 1
-        app_port = next((p for p in find_by_id(APP_PORT_HINT, exclude=RECOVERY_PORT_HINT)
-                         if p.endswith("-if04")), port)
+        app_port = next((p for p in app_config_ports(args.serial)), port)
         print(f"    application is up: {app_port}")
     else:
         print("[4/6] skipping the wait for application ports")
