@@ -1860,6 +1860,21 @@ void zlrs_link_pair_ctx(const zlrs_link_t *link, uint8_t out[ZLRS_PAIR_CTX_LEN])
 	ordered_pair_salt(link, &out[2U * ZLRS_DEV_ID_LEN]);
 }
 
+const zlrs_radio_req_t *zlrs_link_listen(zlrs_link_t *link)
+{
+	if (link->state != ZLRS_STATE_CONNECTED && link->state != ZLRS_STATE_SEARCHING) {
+		return NULL;
+	}
+
+	if (link->cfg.kind == ZLRS_LINK_CONTROL) {
+		return submit_rx(link, slot_freq_hz(link, SLOT_RC), link->cfg.sync_slot,
+				 link->sync_word, link->cfg.rx_timeout_ms);
+	}
+
+	return submit_rx(link, slot_freq_hz(link, SLOT_DATA), link->cfg.sync_slot,
+			 link->sync_word, link->cfg.rx_timeout_ms);
+}
+
 void zlrs_link_set_mix(zlrs_link_t *link, uint8_t mix)
 {
 	link->sub_mix_default = (uint8_t)(mix & 0x03U);

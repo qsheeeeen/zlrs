@@ -691,10 +691,24 @@ static void run_slot(uint8_t slot)
 	const zlrs_radio_req_t *req;
 
 	if (data_slot ? !ZLRS_DATA_ENABLED : !ZLRS_CONTROL_ENABLED) {
-		return; /* this link is not enabled in this build */
+		/*
+		 * Single-link build: the slots the disabled link would have used are free air time, so
+		 * spend them listening on the data channel. It roughly doubles the receive duty (or more,
+		 * with two free slots) and gives a weak peer the extra chances it needs.
+		 */
+		if (data_slot || !ZLRS_DATA_ENABLED) {
+			return;
+		}
+		link = &link_data;
+		req = zlrs_link_listen(link);
+		if (req == NULL) {
+			return;
+		}
+		/* Attribute the completion to this slot, not to the link's own last one */
+		link->slot = slot;
+	} else {
+		req = zlrs_link_slot(link, slot, now_ms);
 	}
-
-	req = zlrs_link_slot(link, slot, now_ms);
 
 	if (req == NULL) {
 		return;

@@ -359,6 +359,14 @@ void zlrs_link_rederive(zlrs_link_t *link);
 #define ZLRS_PAIR_CTX_LEN (2U * ZLRS_DEV_ID_LEN + ZLRS_PAIR_SALT_LEN)
 void zlrs_link_pair_ctx(const zlrs_link_t *link, uint8_t out[ZLRS_PAIR_CTX_LEN]);
 
+/*
+ * Open one receive window on this link's own channel, outside the superframe's own slot. A build
+ * with one link has slots the other one does not use, and listening there is free air time for the
+ * side that is only receiving: on the bench it takes the receive duty from about 40% to nearly
+ * always, which is what a weak peer needs.
+ */
+const zlrs_radio_req_t *zlrs_link_listen(zlrs_link_t *link);
+
 /* Change modulation at runtime (rate adaptation); effective with the next transaction */
 void zlrs_link_set_mod(zlrs_link_t *link, const zlrs_mod_cfg_t *mod);
 
