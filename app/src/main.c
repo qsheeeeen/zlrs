@@ -656,6 +656,15 @@ static zlrs_radio_diag_t radio_diag;
  */
 #define ZLRS_PHASE_DEADBAND_US 1000
 
+/*
+ * A lock with no hits cannot correct anything, so a link that has heard nothing for a while sweeps
+ * its phase instead: stretching the pacing a little every frame walks the two ends' windows across
+ * each other until something is heard. Without this, a pair that drifted into a bad alignment (or
+ * paired up in one) stays deaf, and no amount of retrying on either side can recover.
+ */
+#define ZLRS_PHASE_SCAN_AFTER_MS 300U
+#define ZLRS_PHASE_SCAN_STEP_US  900U
+
 static uint32_t frame_start_us;
 static uint32_t slot_off_us[4]; /* where the slot's transaction really started in our frame */
 static int32_t phase_adj_us;
@@ -663,6 +672,7 @@ static bool phase_adj_set;   /* one correction per frame: several receptions wou
 static int32_t phase_last_us; /* what the last correction was, for the bench log */
 static int32_t phase_err_us;  /* residual the last correction was computed from */
 static uint32_t phase_hits;   /* corrections since the last report */
+static uint32_t last_rx_any_ms; /* any successful reception, either link: the scan trigger */
 
 static uint32_t now_us(void)
 {
@@ -754,17 +764,22 @@ static void run_slot(uint8_t slot)
 
 			waited_us += ZLRS_RADIO_PUMP_STEP_US;
 		}
-
-		if (!done) {
-			/* Not back within budget: abort and finish the link transaction so nothing stalls */
-			zlrs_radio_port_abort();
-			zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0,
-					   zlrs_radio_port_now_ms());
-			return;
-		}
+		ARG_UNUSED(done);
 	}
 
 	zlrs_radio_port_drain();
+
+	/*
+	 * The port's completion semaphore is shared by both links, so "the wait returned" is not the
+	 * same as "this link's transaction finished": the other link's completion can wake this wait.
+	 * What matters is whether the link still has a request outstanding — if it does, abort and
+	 * finish it here. Skipping this left the request pending forever (the old code only aborted on a
+	 * timeout, and the wait had "succeeded"), which is the wedge that made a link go deaf for good.
+	 */
+	if (link->req_pending) {
+		zlrs_radio_port_abort();
+		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_radio_port_now_ms());
+	}
 
 	if (!phase_adj_set && link->stats.slot_hit[slot] != hit_before) {
 		/*
@@ -797,6 +812,7 @@ static void run_slot(uint8_t slot)
 		phase_err_us = err;
 		phase_hits++;
 		phase_adj_set = true;
+		last_rx_any_ms = now_ms;
 	}
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
@@ -1620,6 +1636,8 @@ static void print_link(const struct shell *sh, const char *name, const zlrs_link
 		    link->stats.tx_retries, link->stats.tx_arq_drop, link->stats.rx_dup,
 		    link->stats.rx_out_of_order, link->stats.rx_frag_drop,
 		    link->stats.data_drop_bytes);
+	shell_print(sh, "        cadence tlm=1/%u data=1/%u resync=1/%u", link->cfg.tlm_every_n,
+		    link->cfg.data_every_n, link->cfg.resync_every_n);
 	/* The exact KDF context the link derives from: byte compare of two ends settles the rest */
 	{
 		uint8_t ctx[ZLRS_PAIR_CTX_LEN];
@@ -2249,10 +2267,21 @@ int main(void)
 		const uint64_t elapsed_us = k_cyc_to_us_floor64(k_cycle_get_64() - start_cyc);
 		const uint32_t pacing_us = frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE;
 		/* The phase lock's correction lands here, once per frame */
-		const int64_t remain_us = (int64_t)pacing_us - (int64_t)elapsed_us +
-					  (int64_t)phase_adj_us;
+		int64_t remain_us = (int64_t)pacing_us - (int64_t)elapsed_us + (int64_t)phase_adj_us;
 
 		phase_adj_us = 0;
+
+		/*
+		 * Deaf link: sweep instead of waiting for a hit that only the aligned case can produce.
+		 * The two ends sweep in *opposite* directions (the roles are fixed): if both stretched their
+		 * frames the same way the relative phase would never move and the pair would stay deaf.
+		 * Sweeping apart walks the windows across each other within a few frames, and the first
+		 * frame that lands hands over to the lock above.
+		 */
+		if ((uint32_t)(now_ms - last_rx_any_ms) > ZLRS_PHASE_SCAN_AFTER_MS) {
+			remain_us += role_tx ? (int64_t)ZLRS_PHASE_SCAN_STEP_US
+					     : -(int64_t)ZLRS_PHASE_SCAN_STEP_US;
+		}
 
 		if (remain_us > 0) {
 			k_usleep((int32_t)remain_us);

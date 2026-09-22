@@ -197,6 +197,12 @@ zephyr_udc0: &usbd {
 
 		lf-clk = <0x00 /* LR20XX_SYSTEM_LFCLK_RC */>;
 
+		/*
+		 * 0 = the driver leaves the radio in XTAL mode, which is what the vendor's own LR20xx boards
+		 * use. A real TCXO wakeup time here is not free: the RAC sleeps the radio between
+		 * transactions, so every transaction would wait out the TCXO startup, and at a millisecond
+		 * slot budget that aborts every send (measured: the link stopped transmitting entirely).
+		 */
 		tcxo-voltage = <0x02 /* LR20XX_SYSTEM_TCXO_CTRL_1_8V */>;
 		tcxo-wakeup-time = <0>;
 

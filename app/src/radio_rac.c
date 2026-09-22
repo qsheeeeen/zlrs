@@ -414,6 +414,16 @@ void zlrs_radio_port_abort(void)
 	diag.overruns++;
 	(void)SMTC_SW_PLATFORM(smtc_rac_abort_radio_submit(control_client.access_id));
 	(void)SMTC_SW_PLATFORM(smtc_rac_abort_radio_submit(data_client.access_id));
+
+	/*
+	 * Drop any completion the aborted transaction still owes: it would otherwise wake the next
+	 * wait, which would take "the semaphore was given" for "my transaction finished" and skip the
+	 * finish path on a request that never completed.
+	 */
+	control_client.done = false;
+	data_client.done = false;
+	while (k_sem_take(&done_sem, K_NO_WAIT) == 0) {
+	}
 }
 
 uint32_t zlrs_radio_port_now_ms(void)
