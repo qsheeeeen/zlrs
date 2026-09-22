@@ -635,25 +635,41 @@ typedef struct {
 } bench_t;
 
 static bench_t bench;
-static uint32_t frame_start_us;
 static uint32_t prev_frame_start_us;
 static zlrs_radio_diag_t radio_diag;
+#endif
+
+/*
+ * Superframe phase lock. The two ends run their own frames, and a receive window only catches the
+ * peer when the two are aligned: before this, the measured hit rate was a few percent of frames,
+ * which is what kept the passthrough crawling. When a frame does arrive, its offset inside our own
+ * frame says how far the peer's frame boundary is from ours (the sender transmits at the start of
+ * its slot), so the end-of-frame sleep is corrected by half of that error, clamped to a couple of
+ * slots. Both ends do this, so they meet in the middle.
+ */
+#define ZLRS_PHASE_MAX_US 2000
+
+static uint32_t frame_start_us;
+static uint32_t slot_off_us[4];
+static int32_t phase_adj_us;
+static bool phase_adj_set;   /* one correction per frame: several receptions would fight */
+static int32_t phase_last_us; /* what the last correction was, for the bench log */
 
 static uint32_t now_us(void)
 {
 	return (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64());
 }
-#endif
 
 static void run_slot(uint8_t slot)
 {
 	const bool data_slot = (slot == ZLRS_SLOT_DATA_A || slot == ZLRS_SLOT_DATA_B);
 	zlrs_link_t *link = data_slot ? &link_data : &link_control;
 	const uint32_t now_ms = zlrs_radio_port_now_ms();
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
 	const uint32_t slot_start_us = now_us();
 	const uint32_t hit_before = link->stats.slot_hit[slot];
-#endif
+	const uint32_t slot_off = slot_start_us - frame_start_us;
+
+	slot_off_us[slot] = slot_off;
 	/* The duty-cycle gate only applies to whichever link is on sub-G */
 	const bool on_subg = data_slot ? (CONTROL_ON_SUBG == 0) : (CONTROL_ON_SUBG != 0);
 	const zlrs_radio_req_t *req;
@@ -715,6 +731,22 @@ static void run_slot(uint8_t slot)
 	}
 
 	zlrs_radio_port_drain();
+
+	if (!phase_adj_set && link->stats.slot_hit[slot] != hit_before) {
+		/* A frame arrived: correct the frame phase by half the residual error */
+		const uint32_t offset_us = now_us() - frame_start_us;
+		int32_t err = (int32_t)offset_us - (int32_t)slot_off;
+		int32_t adj = -err / 2;
+
+		if (adj > ZLRS_PHASE_MAX_US) {
+			adj = ZLRS_PHASE_MAX_US;
+		} else if (adj < -ZLRS_PHASE_MAX_US) {
+			adj = -ZLRS_PHASE_MAX_US;
+		}
+		phase_adj_us = adj;
+		phase_last_us = adj;
+		phase_adj_set = true;
+	}
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
 	{
@@ -1099,13 +1131,13 @@ static void report(uint32_t now_ms)
 	 * across the window range is the signature of two free-running frames.
 	 */
 	LOG_INF("tm : frame=%u us (%u..%u) slot=%u/%u/%u/%u max=%u/%u/%u/%u rx=slot%u+%u (%u..%u)"
-		" txn=%u early=%u",
+		" txn=%u early=%u adj=%d",
 		bench.frame_us_last, bench.frame_us_min, bench.frame_us_max,
 		bench.slot_us_last[0], bench.slot_us_last[1], bench.slot_us_last[2],
 		bench.slot_us_last[3], bench.slot_us_max[0], bench.slot_us_max[1],
-		bench.slot_us_max[2], bench.slot_us_max[3], bench.rx_slot, bench.rx_offset_us,
-		bench.rx_offset_min, bench.rx_offset_max, radio_diag.transactions,
-		radio_diag.rx_early);
+		    bench.slot_us_max[2], bench.slot_us_max[3], bench.rx_slot, bench.rx_offset_us,
+		    bench.rx_offset_min, bench.rx_offset_max, radio_diag.transactions,
+		    radio_diag.rx_early, (int)phase_last_us);
 	{
 		LOG_INF("rd : stale_irq=%u(%08x) late_irq=%u overruns=%u rx_win=%u tx=%u us rx=%u us",
 			radio_diag.stale_irq, radio_diag.stale_irq_bits, radio_diag.late_irq,
@@ -2052,10 +2084,11 @@ int main(void)
 		 * ends must agree on exactly.
 		 */
 		const uint64_t start_cyc = k_cycle_get_64();
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
 		const uint32_t start_us = now_us();
 
 		frame_start_us = start_us;
+		phase_adj_set = false;
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
 		if (bench.frames > 0U) {
 			bench.frame_us_last = start_us - prev_frame_start_us;
 			if (bench.frame_us_min == 0U || bench.frame_us_last < bench.frame_us_min) {
@@ -2108,7 +2141,11 @@ int main(void)
 		report(now_ms);
 
 		const uint64_t elapsed_us = k_cyc_to_us_floor64(k_cycle_get_64() - start_cyc);
-		const int64_t remain_us = (int64_t)frame_period_us - (int64_t)elapsed_us;
+		/* The phase lock's correction lands here, once per frame */
+		const int64_t remain_us = (int64_t)frame_period_us - (int64_t)elapsed_us +
+					  (int64_t)phase_adj_us;
+
+		phase_adj_us = 0;
 
 		if (remain_us > 0) {
 			k_usleep((int32_t)remain_us);

@@ -86,17 +86,29 @@ static bool cdc_opened(const struct device *dev)
  * leaves the endpoint unselected (its bytes are dropped as "not the active one"). So a second
  * signal counts: host bytes seen. The ISRs record it before checking the active endpoint.
  */
-#define HOST_SEEN_MAX PORT_MAX * 2
-static const struct device *host_seen_devs[HOST_SEEN_MAX];
+/*
+ * A stray byte is not evidence: an unconnected (or briefly floating) line can produce one, and
+ * switching a port to it sends the passthrough data into a cable that has nothing on the other end.
+ * A real peer sends a stream, so a few bytes count and one does not.
+ */
+#define HOST_SEEN_MIN_BYTES 4U
+#define HOST_SEEN_MAX       PORT_MAX * 2
 
-static void host_seen_mark(const struct device *dev)
+static struct host_seen {
+	const struct device *dev;
+	uint32_t bytes;
+} host_seen_table[HOST_SEEN_MAX];
+
+static void host_seen_mark(const struct device *dev, uint32_t bytes)
 {
-	for (size_t i = 0U; i < ARRAY_SIZE(host_seen_devs); i++) {
-		if (host_seen_devs[i] == dev) {
+	for (size_t i = 0U; i < ARRAY_SIZE(host_seen_table); i++) {
+		if (host_seen_table[i].dev == dev) {
+			host_seen_table[i].bytes += bytes;
 			return;
 		}
-		if (host_seen_devs[i] == NULL) {
-			host_seen_devs[i] = dev;
+		if (host_seen_table[i].dev == NULL) {
+			host_seen_table[i].dev = dev;
+			host_seen_table[i].bytes = bytes;
 			return;
 		}
 	}
@@ -104,9 +116,9 @@ static void host_seen_mark(const struct device *dev)
 
 static bool host_seen_any(const struct device *dev)
 {
-	for (size_t i = 0U; i < ARRAY_SIZE(host_seen_devs); i++) {
-		if (host_seen_devs[i] == dev) {
-			return true;
+	for (size_t i = 0U; i < ARRAY_SIZE(host_seen_table); i++) {
+		if (host_seen_table[i].dev == dev) {
+			return host_seen_table[i].bytes >= HOST_SEEN_MIN_BYTES;
 		}
 	}
 
@@ -121,8 +133,19 @@ static const struct device *port_active(const struct port_pair *pair)
 
 	if (uart_ok && cdc_ok) {
 		const bool cdc_in_use = cdc_opened(pair->cdc) || host_seen_any(pair->cdc);
+		const bool uart_in_use = host_seen_any(pair->uart);
 
-		return cdc_in_use ? pair->cdc : pair->uart;
+		/*
+		 * USB is the port the host is already on; the UART only wins once something is actually
+		 * talking on it. With the old "UART unless the CDC is in use" rule, a board that receives
+		 * air data but never gets a host write (the receive side of a passthrough) kept routing to
+		 * a UART that on the bench has nothing attached, and the data went nowhere.
+		 */
+		if (cdc_in_use || !uart_in_use) {
+			return pair->cdc;
+		}
+
+		return pair->uart;
 	}
 
 	if (uart_ok) {
@@ -174,7 +197,7 @@ static void data_isr(const struct device *dev, void *user_data)
 
 			if (n > 0) {
 				/* Record the evidence first: endpoint choice depends on it, see port_active() */
-				host_seen_mark(dev);
+				host_seen_mark(dev, (uint32_t)n);
 				ep->rx_total += (uint32_t)n;
 			}
 
@@ -390,7 +413,7 @@ static void crsf_isr(const struct device *dev, void *user_data)
 
 			if (n > 0) {
 				/* Record the evidence first: endpoint choice depends on it, see port_active() */
-				host_seen_mark(dev);
+				host_seen_mark(dev, (uint32_t)n);
 			}
 
 			/* Check the active endpoint after recording: the first frame must not be lost to lag */

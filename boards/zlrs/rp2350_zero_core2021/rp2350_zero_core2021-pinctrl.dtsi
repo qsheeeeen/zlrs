@@ -16,6 +16,10 @@
 		group2 {
 			pinmux = <UART0_RX_P1>;
 			input-enable;
+			/* Unconnected RX must idle high: a floating pin produces phantom bytes,
+			 * and one phantom byte is enough to make the port layer pick this UART
+			 * over the USB CDC (app/src/ports.c, host_seen_any). */
+			bias-pull-up;
 		};
 	};
 
@@ -40,6 +44,8 @@
 		group2 {
 			pinmux = <UART1_RX_P9>;
 			input-enable;
+			/* Same as the CRSF UART: idle high when nothing is attached */
+			bias-pull-up;
 		};
 	};
 
