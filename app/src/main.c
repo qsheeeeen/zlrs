@@ -1110,12 +1110,80 @@ static void pump_crsf(uint32_t now_ms)
 	}
 }
 
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
+/*
+ * Bench: measure one link over a few seconds. Receive windows, how many of them heard a frame, and
+ * frames sent, all as a rate: that is the number a marginal antenna or a misaligned slot shows up
+ * in, and it is what tells a receiver problem apart from a protocol one.
+ */
+typedef struct {
+	uint32_t wins;
+	uint32_t hits;
+	uint32_t tx;
+} rate_snap_t;
+
+static rate_snap_t rate_snapshot(const zlrs_link_t *link)
+{
+	rate_snap_t s;
+
+	s.wins = link->stats.slot_rx[0] + link->stats.slot_rx[1] + link->stats.slot_rx[2] +
+		 link->stats.slot_rx[3];
+	s.hits = link->stats.slot_hit[0] + link->stats.slot_hit[1] + link->stats.slot_hit[2] +
+		 link->stats.slot_hit[3];
+	s.tx = link->stats.tx_frames;
+
+	return s;
+}
+
+/*
+ * Most recent one-second window, kept up to date by report(). The shell command must not block:
+ * sleeping in the shell thread stalls the console CDC and the host drops the device (measured).
+ */
+static struct {
+	uint32_t wins;
+	uint32_t hits;
+	uint32_t tx;
+	uint8_t state;
+} rate_last[2];
+
+static void rate_update(uint8_t idx, const zlrs_link_t *link, const rate_snap_t *before,
+			uint32_t span_ms)
+{
+	const rate_snap_t now = rate_snapshot(link);
+	const uint32_t wins = now.wins - before->wins;
+	const uint32_t hits = now.hits - before->hits;
+	const uint32_t tx = now.tx - before->tx;
+	const uint32_t span = (span_ms != 0U) ? span_ms : 1U;
+
+	rate_last[idx].wins = (wins * 1000U) / span;
+	rate_last[idx].hits = (hits * 1000U) / span;
+	rate_last[idx].tx = (tx * 1000U) / span;
+	rate_last[idx].state = link->state;
+}
+#endif
+
 static void report(uint32_t now_ms)
 {
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
+	/* Per-second link rates for `zlrs rate` (see below) */
+	static rate_snap_t rate_before[2];
+	static uint32_t rate_ms;
+#endif
+
 	if ((uint32_t)(now_ms - last_report_ms) < REPORT_PERIOD_MS) {
 		return;
 	}
 	last_report_ms = now_ms;
+
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
+	rate_update(0U, &link_control, &rate_before[0],
+		    (rate_ms != 0U) ? now_ms - rate_ms : REPORT_PERIOD_MS);
+	rate_update(1U, &link_data, &rate_before[1],
+		    (rate_ms != 0U) ? now_ms - rate_ms : REPORT_PERIOD_MS);
+	rate_before[0] = rate_snapshot(&link_control);
+	rate_before[1] = rate_snapshot(&link_data);
+	rate_ms = now_ms;
+#endif
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_RATE_ADAPT)
 	{
@@ -1773,68 +1841,23 @@ static int cmd_rxwin(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
-/*
- * Bench: measure one link over a few seconds. Receive windows, how many of them heard a frame, and
- * frames sent, all as a rate: that is the number a marginal antenna or a misaligned slot shows up
- * in, and it is what tells a receiver problem apart from a protocol one.
- */
-typedef struct {
-	uint32_t wins;
-	uint32_t hits;
-	uint32_t tx;
-} rate_snap_t;
-
-static rate_snap_t rate_snapshot(const zlrs_link_t *link)
-{
-	rate_snap_t s;
-
-	s.wins = link->stats.slot_rx[0] + link->stats.slot_rx[1] + link->stats.slot_rx[2] +
-		 link->stats.slot_rx[3];
-	s.hits = link->stats.slot_hit[0] + link->stats.slot_hit[1] + link->stats.slot_hit[2] +
-		 link->stats.slot_hit[3];
-	s.tx = link->stats.tx_frames;
-
-	return s;
-}
-
-static void rate_line(const struct shell *sh, const char *name, const zlrs_link_t *link,
-		      const rate_snap_t *before, uint32_t secs)
-{
-	const rate_snap_t now = rate_snapshot(link);
-	const uint32_t wins = now.wins - before->wins;
-	const uint32_t hits = now.hits - before->hits;
-	const uint32_t tx = now.tx - before->tx;
-	const uint32_t permille = (wins != 0U) ? (hits * 1000U) / wins : 0U;
-
-	shell_print(sh, "%-7s %u wins/s, %u got/s (%u.%u%% of windows), %u tx/s, state %u", name,
-		    (unsigned int)(wins / secs), (unsigned int)(hits / secs),
-		    (unsigned int)(permille / 10U), (unsigned int)(permille % 10U),
-		    (unsigned int)(tx / secs), link->state);
-}
-
 static int cmd_rate(const struct shell *sh, size_t argc, char **argv)
 {
-	rate_snap_t ctl_before;
-	rate_snap_t dat_before;
-	uint32_t secs = 5U;
+	static const char *const names[2] = {"control", "data"};
 
-	if (argc > 1) {
-		secs = (uint32_t)strtoul(argv[1], NULL, 0);
-		if (secs == 0U) {
-			secs = 1U;
-		}
-		if (secs > 60U) {
-			secs = 60U;
-		}
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	for (uint8_t i = 0U; i < 2U; i++) {
+		const uint32_t wins = rate_last[i].wins;
+		const uint32_t hits = rate_last[i].hits;
+		const uint32_t permille = (wins != 0U) ? (hits * 1000U) / wins : 0U;
+
+		shell_print(sh, "%-7s %u wins/s, %u got/s (%u.%u%% of windows), %u tx/s, state %u",
+			    names[i], (unsigned int)wins, (unsigned int)hits,
+			    (unsigned int)(permille / 10U), (unsigned int)(permille % 10U),
+			    (unsigned int)rate_last[i].tx, rate_last[i].state);
 	}
-
-	ctl_before = rate_snapshot(&link_control);
-	dat_before = rate_snapshot(&link_data);
-	k_sleep(K_SECONDS(secs));
-
-	shell_print(sh, "over %u s:", (unsigned int)secs);
-	rate_line(sh, "control", &link_control, &ctl_before, secs);
-	rate_line(sh, "data", &link_data, &dat_before, secs);
 
 	return 0;
 }
