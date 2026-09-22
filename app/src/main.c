@@ -1545,9 +1545,16 @@ int main(void)
 	/* Debug image only (gated in Kconfig, so the symbol does not exist in production builds):
 	 * USB is up, so wait for the host to open the console port — otherwise a panic log lands
 	 * on a port nobody has open. */
+	/*
+	 * Debug image only: wait for the host to open the console port. Feed the watchdog while
+	 * waiting — it is armed before main() runs, so a wait longer than its timeout would reset the
+	 * device mid-boot (and look exactly like a broken image).
+	 */
 #ifdef CONFIG_ZLRS_APP_DEBUG_BOOT_DELAY_MS
-	if (CONFIG_ZLRS_APP_DEBUG_BOOT_DELAY_MS > 0) {
-		k_msleep(CONFIG_ZLRS_APP_DEBUG_BOOT_DELAY_MS);
+	for (uint32_t waited = 0U; waited < (uint32_t)CONFIG_ZLRS_APP_DEBUG_BOOT_DELAY_MS;
+	     waited += 100U) {
+		zlrs_watchdog_feed();
+		k_msleep(MIN(100U, (uint32_t)CONFIG_ZLRS_APP_DEBUG_BOOT_DELAY_MS - waited));
 	}
 #endif
 
