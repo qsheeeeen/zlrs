@@ -634,16 +634,15 @@ static const zlrs_radio_req_t *send_data_arq(zlrs_link_t *link, uint32_t now_ms)
 	if (timeout) {
 		if (link->arq_retries >= ZLRS_ARQ_MAX_RETRIES) {
 			/*
-			 * Retries exhausted: give this run up (count it), clear the window, reset the sequence
-			 * number and fire a resync so the receiver drops the half message and starts over.
-			 * Without this, later data would be stitched onto a stream full of holes.
+			 * Retries exhausted on the head frame: ask the receiver to drop its half message and keep
+			 * the bytes. Throwing them away (what this used to do) is data loss on a passthrough, and
+			 * the receiver's assembly has to be reset either way or a restart would be stitched onto
+			 * the half message that is already there. The head frame stays in the window, so the run
+			 * resumes from exactly where it stopped once the air is usable again.
 			 */
-			arq_release_oldest(link, false);
-			link->arq_used = 0U;
-			link->arq_run_bytes = 0U;
 			link->arq_retries = 0U;
-			link->arq_seq = 0U;
 			link->arq_resync = true;
+			link->stats.tx_arq_drop++;
 			return NULL;
 		}
 

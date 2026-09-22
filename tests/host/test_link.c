@@ -1556,22 +1556,21 @@ static void test_arq_giveup(void)
 	memset(chunk, 0x33U, sizeof(chunk));
 	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
 
-	/* Downlink dead: the first 128-byte run must be given up and counted, never wedged forever */
+	/* Downlink dead: the run is restarted (counted), and nothing is thrown away */
 	sim.drop_data_down = 100000;
 	sim_run(&sim, 400U);
 
 	CHECK(sim.tx.data.stats.tx_retries > 0U);
 	CHECK(sim.tx.data.stats.tx_arq_drop >= 1U);
-	CHECK(sim.tx.data.stats.data_drop_bytes >= 128U);
-	CHECK(sim.tx.data.stats.data_drop_bytes < sizeof(chunk));
+	CHECK(sim.tx.data.stats.data_drop_bytes == 0U);
+	CHECK(sim.tx.data.queue_count == sizeof(chunk));
 
-	/* Link restored: after the resync handshake the remaining bytes keep flowing */
+	/* Link restored: after the resync handshake every byte still arrives, in order */
 	sim.drop_data_down = 0;
 	SIM_UNTIL(&sim, sim.tx.data.queue_count == 0U, 4000);
 	CHECK(sim.tx.data.queue_count == 0U);
-	CHECK(sim.tx.data.stats.data_drop_bytes < sizeof(chunk));
-	CHECK(sim.rx.stream_len > 0U);
-	CHECK(sim.rx.stream_len <= sizeof(chunk));
+	CHECK(sim.tx.data.stats.data_drop_bytes == 0U);
+	CHECK(sim.rx.stream_len == sizeof(chunk));
 	for (uint16_t i = 0U; i < sim.rx.stream_len; i++) {
 		CHECK(sim.rx.stream[i] == 0x33U);
 	}

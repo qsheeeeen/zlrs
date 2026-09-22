@@ -154,7 +154,7 @@ typedef struct {
 	uint32_t rx_dup;
 	uint32_t rx_out_of_order; /* ARQ: drops caused by sequence-number jumps */
 	uint32_t tx_retries;      /* ARQ: retransmissions */
-	uint32_t tx_arq_drop;     /* ARQ: frames given up after the retries ran out */
+	uint32_t tx_arq_drop;     /* ARQ: runs restarted after the retries ran out (bytes are kept) */
 	uint32_t rx_frag_drop;
 	uint32_t rx_syncs;      /* SYNC frames received */
 	uint32_t tx_syncs;      /* SYNC frames sent */

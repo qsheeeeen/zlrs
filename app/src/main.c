@@ -1632,7 +1632,7 @@ static void print_link(const struct shell *sh, const char *name, const zlrs_link
 		    le32(link->pair_key), le32(&link->pair_key[4]), le32(&link->pair_key[8]),
 		    le32(&link->pair_key[12]));
 	/* Data path health: what the ARQ gave up on, and what the reassembler threw away */
-	shell_print(sh, "        arq retx=%u gave_up=%u | rx dup=%u ooo=%u frag_drop=%u lost=%u B",
+	shell_print(sh, "        arq retx=%u restarts=%u | rx dup=%u ooo=%u frag_drop=%u lost=%u B",
 		    link->stats.tx_retries, link->stats.tx_arq_drop, link->stats.rx_dup,
 		    link->stats.rx_out_of_order, link->stats.rx_frag_drop,
 		    link->stats.data_drop_bytes);
