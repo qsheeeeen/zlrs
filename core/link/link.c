@@ -175,9 +175,16 @@ static void ordered_ids(const zlrs_link_t *link, uint8_t out[2U * ZLRS_DEV_ID_LE
 	const uint8_t *b = link->peer_id;
 	bool swap = false;
 
-	for (uint8_t i = 0; i < ZLRS_DEV_ID_LEN && !swap; i++) {
+	/*
+	 * Lexicographic, first differing byte decides. Stopping at the first byte that is *greater*
+	 * instead (a later byte can then flip the order) makes the result depend on which end asks:
+	 * the two ends would concatenate the ids in opposite orders, derive different pair keys from
+	 * the same record and strand the handshake in SEARCHING.
+	 */
+	for (uint8_t i = 0; i < ZLRS_DEV_ID_LEN; i++) {
 		if (a[i] != b[i]) {
 			swap = a[i] > b[i];
+			break;
 		}
 	}
 
@@ -1440,7 +1447,9 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot, uin
 				}
 				if ((uint32_t)(now_ms - link->last_pair_tx_ms) <
 				    link->cfg.pair_period_ms) {
-					return NULL;
+					/* Nothing to send this slot: listen instead. The peer's phase is unknown, so
+					 * every extra window is another chance to hear it. */
+					return pair_rx(link, link->cfg.rx_timeout_ms);
 				}
 				return send_pair(link, ZLRS_PKT_PAIR_REQ, link->pair_nonce, 0U,
 						 now_ms);
@@ -1451,12 +1460,16 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot, uin
 		if (tx_side) {
 			return pair_rx(link, link->cfg.rx_timeout_ms);
 		}
-		if (link->pair_wait_cfm &&
-		    (uint32_t)(now_ms - link->last_pair_tx_ms) >= link->cfg.pair_period_ms) {
-			return send_pair(link, ZLRS_PKT_PAIR_RESP, link->pair_nonce,
-					 link->pair_nonce_b, now_ms);
+		if (link->pair_wait_cfm) {
+			if ((uint32_t)(now_ms - link->last_pair_tx_ms) >=
+			    link->cfg.pair_period_ms) {
+				return send_pair(link, ZLRS_PKT_PAIR_RESP, link->pair_nonce,
+						 link->pair_nonce_b, now_ms);
+			}
+			/* Between repeats: listen, for the same reason as the initiator above */
+			return pair_rx(link, link->cfg.rx_timeout_ms);
 		}
-		return NULL;
+		return pair_rx(link, link->cfg.rx_timeout_ms);
 	}
 
 	if (link->state == ZLRS_STATE_SEARCHING) {
@@ -1488,8 +1501,8 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot, uin
 				if (link->sess_cfm_due) {
 					/*
 					 * Enter CONNECTED as soon as the confirm goes out, so both ends advance the hop table from
-					 * the same frame and the indices cannot drift. If the peer never hears the confirm, the
-					 * peer-loss check pulls us back.
+					 * the same frame and the indices cannot drift. The confirm itself is repeated by the
+					 * CONNECTED slot below until the peer is known to have heard one.
 					 */
 					const zlrs_radio_req_t *req = send_sess_cfm(link);
 
@@ -1527,7 +1540,11 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot, uin
 			return submit_rx(link, sync_freq_hz(link), link->cfg.sync_slot,
 					 link->sync_word, link->cfg.rx_timeout_ms);
 		}
-		if (link->sess_resp_due) {
+		/*
+		 * Repeat the answer until the confirm arrives: one shot per SYNC would leave the handshake
+		 * waiting for the next resync frame whenever that single frame is lost.
+		 */
+		if (link->sess_resp_due || link->session_pending) {
 			return send_sess_resp(link);
 		}
 		return NULL;
@@ -1540,7 +1557,7 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot, uin
 	if (down) {
 		advance_hop(link);
 		if (tx_side) {
-			/* Owing a session confirm: send it, and this whole frame stays on the sync channel */
+			/* Owing a confirm: send it, and this whole frame stays on the sync channel */
 			if (link->sess_cfm_due) {
 				return send_sess_cfm(link);
 			}
@@ -1564,6 +1581,16 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot, uin
 					 link->sync_word, link->cfg.rx_timeout_ms);
 		}
 		return NULL;
+	}
+
+	/*
+	 * Fresh session: a peer that has not heard the confirm yet is still answering on the sync
+	 * channel, so keep a window there for a moment instead of switching straight to telemetry.
+	 * Without it a single lost confirm strands that peer until the next resync frame.
+	 */
+	if (tx_side && (uint32_t)(now_ms - link->state_ms) < ZLRS_SESS_CONFIRM_MS) {
+		return submit_rx(link, sync_freq_hz(link), link->cfg.sync_slot, link->sync_word,
+				 link->cfg.rx_timeout_ms);
 	}
 
 	/*
@@ -1625,8 +1652,8 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 			if (a) {
 				if (link->sess_cfm_due) {
 					/*
-					 * The data link has no telemetry to wait for, so sending the confirm counts as established;
-					 * if the peer never hears it, the peer-loss check drags this side back to SEARCHING.
+					 * Repeat the confirm (the peer leaves SEARCHING on one of them) and only then count the
+					 * session as established.
 					 */
 					const zlrs_radio_req_t *req = send_sess_cfm(link);
 
@@ -1655,7 +1682,8 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 			return submit_rx(link, sync_freq_hz(link), link->cfg.sync_slot,
 					 link->sync_word, link->cfg.rx_timeout_ms);
 		}
-		if (link->sess_resp_due) {
+		/* Same as the control link: keep answering until the confirm arrives */
+		if (link->sess_resp_due || link->session_pending) {
 			return send_sess_resp(link);
 		}
 		return NULL;
@@ -1716,6 +1744,15 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 		if (req != NULL) {
 			return req;
 		}
+	}
+
+	/*
+	 * Fresh session on the data link as well: keep a window on the sync channel where a peer that
+	 * missed the confirm is still repeating its answer.
+	 */
+	if (tx_side && (uint32_t)(now_ms - link->state_ms) < ZLRS_SESS_CONFIRM_MS) {
+		return submit_rx(link, sync_freq_hz(link), link->cfg.sync_slot, link->sync_word,
+				 link->cfg.rx_timeout_ms);
 	}
 
 	return submit_rx(link, slot_freq_hz(link, SLOT_DATA), link->cfg.sync_slot, link->sync_word,

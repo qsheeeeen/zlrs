@@ -877,6 +877,74 @@ static void test_pairing_lost_confirm(void)
 	CHECK(memcmp(sim.tx.ctl.sync_word, sim.rx.ctl.sync_word, ZLRS_SYNC_WORD_LEN) == 0);
 }
 
+/*
+ * The pair key comes from a KDF context built out of both ids in a canonical order. That order has
+ * to come out the same on both ends for *every* id pair: with these ids the first byte says "no
+ * swap" on one end while a later byte says "swap" on the other, which is how two ends that agreed
+ * on the whole record still derived different keys and never reached CONNECTED.
+ */
+static void test_pairing_id_order(void)
+{
+	static const uint8_t dev_a[ZLRS_DEV_ID_LEN] = {0xf8, 0x89, 0x3f, 0x95};
+	static const uint8_t dev_b[ZLRS_DEV_ID_LEN] = {0x58, 0xaa, 0x34, 0x89};
+	const uint8_t salt[ZLRS_PAIR_SALT_LEN] = {0x70, 0xb3, 0xcf, 0x1c,
+						  0x25, 0x4e, 0x51, 0x99};
+	sim_t sim;
+
+	printf("link: pairing derives one key for both ends\n");
+	sim_init(&sim);
+
+	zlrs_link_set_dev_id(&sim.tx.ctl, dev_a);
+	zlrs_link_set_dev_id(&sim.rx.ctl, dev_b);
+	zlrs_link_set_peer(&sim.tx.ctl, dev_b, salt, sim.now_ms);
+	zlrs_link_set_peer(&sim.rx.ctl, dev_a, salt, sim.now_ms);
+	CHECK(memcmp(sim.tx.ctl.pair_key, sim.rx.ctl.pair_key, ZLRS_KEY_LEN) == 0);
+	CHECK(memcmp(sim.tx.ctl.sync_word, sim.rx.ctl.sync_word, ZLRS_SYNC_WORD_LEN) == 0);
+
+	/* ... and with the roles the other way round, which is the direction that used to break */
+	zlrs_link_set_dev_id(&sim.tx.ctl, dev_b);
+	zlrs_link_set_dev_id(&sim.rx.ctl, dev_a);
+	zlrs_link_set_peer(&sim.tx.ctl, dev_a, salt, sim.now_ms);
+	zlrs_link_set_peer(&sim.rx.ctl, dev_b, salt, sim.now_ms);
+	CHECK(memcmp(sim.tx.ctl.pair_key, sim.rx.ctl.pair_key, ZLRS_KEY_LEN) == 0);
+}
+
+/*
+ * A lost session confirm must not strand the link either: the responder repeats its answer while it
+ * has no session, and the initiator keeps a window on the sync channel for a moment after entering
+ * CONNECTED, so one lost confirm costs a few frames instead of waiting for the resync cadence.
+ */
+static void test_session_lost_confirm(void)
+{
+	sim_t sim;
+
+	printf("link: session survives a lost confirm\n");
+	sim_init(&sim);
+
+	zlrs_link_press(&sim.tx.ctl, sim.now_ms);
+	zlrs_link_press(&sim.rx.ctl, sim.now_ms);
+	SIM_UNTIL(&sim,
+		  sim.tx.ctl.state == ZLRS_STATE_SEARCHING &&
+			  sim.rx.ctl.state == ZLRS_STATE_SEARCHING,
+		  2000);
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_SEARCHING);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_SEARCHING);
+
+	/* Wait for the answer, then drop the single frame that would confirm it */
+	SIM_UNTIL(&sim, sim.rx.ctl.session_pending, 400);
+	CHECK(sim.rx.ctl.session_pending);
+	sim.drop_down = 1;
+	SIM_UNTIL(&sim,
+		  sim.tx.ctl.state == ZLRS_STATE_CONNECTED &&
+			  sim.rx.ctl.state == ZLRS_STATE_CONNECTED,
+		  600);
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.tx.ctl.stats.sess_cfm_tx > 1U);
+	CHECK(sim.rx.ctl.stats.sess_resp_tx > 1U);
+	CHECK(sim.tx.ctl.fhss.index == sim.rx.ctl.fhss.index);
+}
+
 static void test_session(void)
 {
 	sim_t sim;
@@ -2173,7 +2241,9 @@ void test_link(void)
 	test_pairing();
 	test_pairing_repeat_req();
 	test_pairing_lost_confirm();
+	test_pairing_id_order();
 	test_session();
+	test_session_lost_confirm();
 	test_reflection();
 	test_pairing_rotation();
 	test_session_replay();

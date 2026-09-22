@@ -32,9 +32,16 @@ extern "C" {
  * a message is heard or missed by luck: every step repeats until the next one shows up. The
  * initiator sends this many PAIR_CFM before it calls the handshake done.
  */
-#define ZLRS_PAIR_CFM_REPEATS 8U
+#define ZLRS_PAIR_CFM_REPEATS 16U
 /* Frames between two listen windows on the pairing channel while SEARCHING (see control_slot) */
 #define ZLRS_PAIR_SCAN_FRAMES 4U
+/*
+ * Session confirm window. Same story as pairing: the two ends only share a slot phase once the
+ * session is up. For this long after entering CONNECTED the initiator keeps listening on the sync
+ * channel, where a responder that missed the confirm is still repeating its answer, and answers
+ * each repeat with another confirm.
+ */
+#define ZLRS_SESS_CONFIRM_MS 500U
 
 /* Superframe slots, see doc/09-protocol.md 4.1 */
 #define ZLRS_SLOT_CTL_DOWN 0U /* TX -> RX: RC frame (the RX side is a receive window) */
