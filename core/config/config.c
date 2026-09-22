@@ -373,6 +373,11 @@ uint8_t zlrs_cfg_dispatch(const zlrs_cfg_backend_t *backend, uint8_t cmd, const 
 		}
 		return ack_frame(out, out_len, cmd,
 				 (uint8_t)backend->save_profile(backend->ctx, payload[0]));
+	case ZLRS_CFG_CMD_NEW_DEV_ID:
+		if (payload_len != 0U || backend->new_dev_id == NULL) {
+			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_PARAM);
+		}
+		return ack_frame(out, out_len, cmd, (uint8_t)backend->new_dev_id(backend->ctx));
 	case ZLRS_CFG_CMD_EXIT:
 		/* The application handles the exit (usually a reboot), here we only acknowledge it */
 		return ack_frame(out, out_len, cmd, ZLRS_CFG_OK);

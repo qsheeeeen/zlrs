@@ -62,6 +62,7 @@ While in config mode:
 | region | 0 = FCC915, 1 = EU868, 2 = CN470, 3 = CN433; a fresh board starts on its radio design's `default-region`, and a write is checked against that design (band and frequency coverage) and refused on a mismatch; effective on the next boot |
 | TX power ceiling | never above the chosen region's limit; effective on the next boot |
 | role TX / RX | one firmware runs either end; effective on the next boot |
+| device id | generated from the TRNG on the first boot; `new-dev-id` replaces it at once and erases the pairing record |
 | security profile | `p1` is the production profile, `p0` (no tag) is refused unless this is a debug image, `p2` is not implemented yet; effective on the next boot, and the peer has to run the same profile |
 | pairing | start pairing at once, erase the pairing record (next boot) |
 | factory reset | wipes NVS (keys, pairing, failsafe, baud, region, power, role, profile); effective on the next boot |

@@ -9,7 +9,8 @@ implementation: `core/proto/crypto*.c` and `core/link/link.c`.
 Two values identify a device and its group:
 
 - **Device id** (4 bytes): generated from the TRNG on the first boot and stored in NVS. It is
-  not secret; it is how two ends name each other.
+  not secret; it is how two ends name each other. `new-dev-id` makes a fresh one on demand,
+  which drops the pairing record because the key tree is derived from it.
 - **Root key** (32 bytes): the shared secret of a group. It is written once with the config tool
   (a 64-character hex key, or a passphrase the device derives), never leaves the device and is
   the root of every derived value.
@@ -161,6 +162,7 @@ response frames, documented by `include/zlrs/config/config.h` and implemented in
 | set power ceiling | never above the chosen region's limit, next boot |
 | set role | `tx` or `rx`, next boot |
 | set profile | `p0` (debug images only), `p1`, `p2` (not implemented), next boot |
+| new device id | makes a fresh device id from the TRNG and stores it; the pairing record is erased with it (the peer knows the old id) |
 | factory reset | wipes NVS, next boot |
 | enter recovery | sets the boot-mode flag and reboots into MCUboot serial recovery |
 | read build string | which version is running after an upgrade |

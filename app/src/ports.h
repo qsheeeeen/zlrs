@@ -52,6 +52,7 @@ typedef struct {
 	int (*save_power)(int8_t dbm);
 	int (*save_role)(uint8_t role);
 	int (*save_profile)(uint8_t profile);
+	int (*new_dev_id)(void);
 	int (*erase_pair)(void);
 	int (*factory_reset)(void);
 	int (*enter_recovery)(void);

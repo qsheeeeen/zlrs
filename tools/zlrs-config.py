@@ -32,6 +32,7 @@ CMD_SET_REGION = 0x22
 CMD_SET_POWER = 0x23
 CMD_SET_ROLE = 0x24
 CMD_SET_PROFILE = 0x25
+CMD_NEW_DEV_ID = 0x26
 CMD_EXIT = 0x30
 CMD_FACTORY_RESET = 0x40
 CMD_RECOVERY = 0x41
@@ -152,6 +153,7 @@ def self_test() -> int:
         ("set-power", CMD_SET_POWER, bytes([20]), "a55a032301140a"),
         ("set-role", CMD_SET_ROLE, bytes([1]), "a55a0324010150"),
         ("set-profile", CMD_SET_PROFILE, bytes([2]), "a55a0325010279"),
+        ("new-dev-id", CMD_NEW_DEV_ID, b"", "a55a032600df"),
         ("factory-reset", CMD_FACTORY_RESET, b"", "a55a034000ef"),
         ("recovery", CMD_RECOVERY, b"", "a55a034100e4"),
         ("build", CMD_BUILD, b"", "a55a031200f6"),
@@ -365,6 +367,8 @@ def main() -> int:
     profile.add_argument("profile", choices=["p0", "p1", "p2"],
                          help="P0 has no tag (debug images only), P1 is the production profile, "
                               "P2 is not implemented yet")
+    sub.add_parser("new-dev-id",
+                   help="make a fresh device id (drops the pairing record; read status for the new one)")
     sub.add_parser("factory-reset")
     sub.add_parser("recovery")
     sub.add_parser("build", help="read the build string")
@@ -424,6 +428,9 @@ def main() -> int:
         expect = True
     elif args.command == "set-profile":
         frame = encode(CMD_SET_PROFILE, bytes([int(args.profile[1])]))
+        expect = True
+    elif args.command == "new-dev-id":
+        frame = encode(CMD_NEW_DEV_ID, b"")
         expect = True
     elif args.command == "factory-reset":
         frame, expect = encode(CMD_FACTORY_RESET), True

@@ -907,6 +907,17 @@ static int cfg_save_profile(void *ctx, uint8_t profile)
 	return cfg_ops->save_profile(profile);
 }
 
+static int cfg_new_dev_id(void *ctx)
+{
+	(void)ctx;
+
+	if (cfg_ops == NULL || cfg_ops->new_dev_id == NULL) {
+		return ZLRS_CFG_E_STATE;
+	}
+
+	return cfg_ops->new_dev_id();
+}
+
 static int cfg_erase_pair(void *ctx)
 {
 	(void)ctx;
@@ -1062,6 +1073,7 @@ static const zlrs_cfg_backend_t cfg_backend = {
 	.save_power = cfg_save_power,
 	.save_role = cfg_save_role,
 	.save_profile = cfg_save_profile,
+	.new_dev_id = cfg_new_dev_id,
 	.pair = cfg_pair,
 	.erase_pair = cfg_erase_pair,
 	.factory_reset = cfg_factory_reset,

@@ -39,6 +39,7 @@ extern "C" {
 #define ZLRS_CFG_CMD_SET_POWER     0x23U /* 1-byte signed dBm */
 #define ZLRS_CFG_CMD_SET_ROLE      0x24U /* 1-byte role (0 = TX, 1 = RX) */
 #define ZLRS_CFG_CMD_SET_PROFILE   0x25U /* 1-byte profile (0 = P0, 1 = P1, 2 = P2) */
+#define ZLRS_CFG_CMD_NEW_DEV_ID    0x26U /* make a fresh device id (drops the pairing record) */
 #define ZLRS_CFG_CMD_EXIT          0x30U /* leave config mode */
 #define ZLRS_CFG_CMD_FACTORY_RESET 0x40U /* wipe NVS */
 #define ZLRS_CFG_CMD_RECOVERY      0x41U /* reboot into MCUboot serial recovery */
@@ -96,6 +97,8 @@ typedef struct {
 	/* Role and security profile are runtime settings too; both take effect on the next boot */
 	int (*save_role)(void *ctx, uint8_t role);
 	int (*save_profile)(void *ctx, uint8_t profile);
+	/* Replace the device id with a fresh one (the pairing record goes with it) */
+	int (*new_dev_id)(void *ctx);
 	int (*pair)(void *ctx);
 	int (*erase_pair)(void *ctx);
 	int (*factory_reset)(void *ctx);

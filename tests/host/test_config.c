@@ -25,6 +25,7 @@ typedef struct {
 	bool role_saved;
 	uint8_t profile;
 	bool profile_saved;
+	uint32_t new_dev_id_count;
 	int store_rc; /* error code save_root_key should return */
 	bool image_confirmed;
 } fake_dev_t;
@@ -147,6 +148,15 @@ static int fake_save_profile(void *ctx, uint8_t profile)
 	return ZLRS_CFG_OK;
 }
 
+static int fake_new_dev_id(void *ctx)
+{
+	fake_dev_t *dev = ctx;
+
+	dev->new_dev_id_count++;
+
+	return ZLRS_CFG_OK;
+}
+
 static const zlrs_cfg_backend_t backend = {
 	.save_root_key = fake_save_key,
 	.read_status = fake_read_status,
@@ -154,6 +164,7 @@ static const zlrs_cfg_backend_t backend = {
 	.save_baud = fake_save_baud,
 	.save_role = fake_save_role,
 	.save_profile = fake_save_profile,
+	.new_dev_id = fake_new_dev_id,
 	.pair = fake_pair,
 	.confirm_image = fake_confirm_image,
 	.read_build = fake_read_build,
@@ -424,6 +435,19 @@ static void test_dispatch(void)
 				sizeof(resp));
 	CHECK(parse_response(resp, len, &parser));
 	CHECK(ZLRS_CFG_PAYLOAD(&parser)[1] == ZLRS_CFG_E_PARAM);
+
+	/* NEW_DEV_ID takes no payload and has to reach the backend */
+	fake.new_dev_id_count = 0U;
+	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_NEW_DEV_ID, NULL, 0U, resp, sizeof(resp));
+	CHECK(parse_response(resp, len, &parser));
+	CHECK(ZLRS_CFG_PAYLOAD(&parser)[1] == ZLRS_CFG_OK);
+	CHECK(fake.new_dev_id_count == 1U);
+
+	/* A payload is a parameter error, and the backend is not called */
+	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_NEW_DEV_ID, payload, 1U, resp, sizeof(resp));
+	CHECK(parse_response(resp, len, &parser));
+	CHECK(ZLRS_CFG_PAYLOAD(&parser)[1] == ZLRS_CFG_E_PARAM);
+	CHECK(fake.new_dev_id_count == 1U);
 
 	/* EXIT and an unknown command */
 	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_EXIT, NULL, 0U, resp, sizeof(resp));

@@ -102,6 +102,8 @@ static const zlrs_region_t *region;
 static uint8_t region_id;
 static int8_t tx_power_dbm;
 static zlrs_duty_t duty;
+/* Identity: read or generated once at boot, before anything that could use it (doc/10-security.md 1) */
+static uint8_t device_id[ZLRS_DEV_ID_LEN];
 
 /*
  * Role and security profile: runtime settings with a compile-time default (set-role /
@@ -493,28 +495,88 @@ static void build_links(void)
 #endif
 }
 
+/* An all-zero device id is not an identity: it is what a failed read or a lazy RNG leaves behind */
+static bool dev_id_is_zero(const uint8_t id[ZLRS_DEV_ID_LEN])
+{
+	for (size_t i = 0U; i < ZLRS_DEV_ID_LEN; i++) {
+		if (id[i] != 0U) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+/*
+ * A fresh device id from the TRNG. The entropy device is read directly: sys_rand32_get() goes
+ * through the CSPRNG, which is seeded lazily and was observed handing back zeros during boot.
+ * A zero read is not an identity and is reported as a failure.
+ */
+static bool make_device_id(uint8_t out[ZLRS_DEV_ID_LEN])
+{
+	const struct device *const entropy_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_entropy));
+	uint8_t block[32];
+	int rc;
+
+	if (!device_is_ready(entropy_dev)) {
+		LOG_ERR("no dev id: entropy device not ready");
+		return false;
+	}
+	/* Read a full block, the size the driver and the self-test are known to handle */
+	rc = entropy_get_entropy(entropy_dev, block, sizeof(block));
+	if (rc != 0) {
+		LOG_ERR("no dev id: entropy read failed (%d)", rc);
+		return false;
+	}
+	memcpy(out, block, ZLRS_DEV_ID_LEN);
+	memset(block, 0, sizeof(block));
+	if (dev_id_is_zero(out)) {
+		LOG_ERR("no dev id: entropy returned zeros");
+		return false;
+	}
+
+	return true;
+}
+
+/*
+ * Boot identity: the stored id wins; a missing record and an all-zero one both count as absent
+ * (a zero id would collide with every other device that came up the same way).
+ */
+static bool ensure_device_id(void)
+{
+	if (zlrs_store_load_dev_id(device_id) == (int)ZLRS_DEV_ID_LEN &&
+	    !dev_id_is_zero(device_id)) {
+		LOG_INF("dev id %02x%02x%02x%02x (NVS)", device_id[0], device_id[1], device_id[2],
+			device_id[3]);
+		return true;
+	}
+
+	if (!make_device_id(device_id)) {
+		return false;
+	}
+	if (zlrs_store_save_dev_id(device_id) != 0) {
+		LOG_WRN("dev id not persisted, it changes on the next boot");
+	}
+	LOG_INF("dev id %02x%02x%02x%02x (new)", device_id[0], device_id[1], device_id[2],
+		device_id[3]);
+
+	return true;
+}
+
 static void load_identity(void)
 {
 	uint8_t root_key[ZLRS_KEY_LEN];
-	uint8_t dev_id[ZLRS_DEV_ID_LEN];
 	zlrs_store_pairing_t pairing;
 	bool have_root_key = false;
 	const uint32_t now_ms = zlrs_radio_port_now_ms();
+
+	zlrs_link_set_dev_id(&link_control, device_id);
+	zlrs_link_set_dev_id(&link_data, device_id);
 
 	/* Root key: NVS only, written once with the config tool (set-phrase / set-key-hex) */
 	if (zlrs_store_load_root_key(root_key) == (int)ZLRS_KEY_LEN) {
 		have_root_key = true;
 	}
-
-	/* Device id: generated on first boot and stored in NVS, see doc/10-security.md 2 */
-	if (zlrs_store_load_dev_id(dev_id) != (int)ZLRS_DEV_ID_LEN) {
-		const uint32_t rnd = sys_rand32_get();
-
-		memcpy(dev_id, &rnd, sizeof(dev_id));
-		(void)zlrs_store_save_dev_id(dev_id);
-	}
-	zlrs_link_set_dev_id(&link_control, dev_id);
-	zlrs_link_set_dev_id(&link_data, dev_id);
 
 	if (!have_root_key) {
 		LOG_WRN("no root key: staying off air until one is written (doc/10-security.md)");
@@ -1195,6 +1257,31 @@ static int cfg_op_erase_pair(void)
 	return ZLRS_CFG_OK;
 }
 
+/*
+ * Fresh device id on demand: the id is part of the key derivation, so the pairing record that
+ * was built on the old one has to go with it (the peer would reject the new id anyway).
+ */
+static int cfg_op_new_dev_id(void)
+{
+	uint8_t fresh[ZLRS_DEV_ID_LEN];
+
+	if (!make_device_id(fresh)) {
+		return ZLRS_CFG_E_STATE;
+	}
+	if (zlrs_store_save_dev_id(fresh) != 0) {
+		return ZLRS_CFG_E_STORE;
+	}
+	(void)zlrs_store_erase_pairing();
+
+	memcpy(device_id, fresh, sizeof(device_id));
+	zlrs_link_set_dev_id(&link_control, device_id);
+	zlrs_link_set_dev_id(&link_data, device_id);
+	LOG_INF("dev id %02x%02x%02x%02x (new, pairing dropped)", device_id[0], device_id[1],
+		device_id[2], device_id[3]);
+
+	return ZLRS_CFG_OK;
+}
+
 static int cfg_op_factory_reset(void)
 {
 	if (zlrs_store_erase_all() != 0) {
@@ -1230,6 +1317,7 @@ static const zlrs_config_ops_t cfg_ops = {
 	.save_power = cfg_op_save_power,
 	.save_role = cfg_op_save_role,
 	.save_profile = cfg_op_save_profile,
+	.new_dev_id = cfg_op_new_dev_id,
 	.erase_pair = cfg_op_erase_pair,
 	.factory_reset = cfg_op_factory_reset,
 #if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
@@ -1484,9 +1572,6 @@ int main(void)
 	/*
 	 * Bring NVS up first: region, power, keys, pairing, failsafe values and baud all come from
 	 * it. A broken NVS is survivable, but the consequences are worth spelling out: nothing can
-	/*
-	 * Bring NVS up first: region, power, keys, pairing, failsafe values and baud all come from
-	 * it. A broken NVS is survivable, but the consequences are worth spelling out: nothing can
 	 * be read or written, so the device stays unconfigured and off the air. store logs its own error.
 	 */
 	if (zlrs_store_init() != 0) {
@@ -1508,6 +1593,11 @@ int main(void)
 		fault_loop();
 	}
 #endif
+
+	/* Identity comes before anything that could use it; without one, stay off the air */
+	if (!ensure_device_id()) {
+		fault_loop();
+	}
 
 	/*
 	 * Region and power ceiling are runtime parameters (the config protocol writes them): use the
