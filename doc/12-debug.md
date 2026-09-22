@@ -135,6 +135,14 @@ One line each; details live in code comments.
   pump `smtc_rac_run_engine()` in the main loop, and without it the transaction sits in
   `RP_STATUS_TASK_INIT` forever **without reporting an error**; the symptom is `air: ctl_tx=0`
   and `fail=0`.
+- `-Dmcuboot_EXTRA_CONF_FILE=<file>` **replaces** the bootloader configuration sysbuild would
+  read from `app/sysbuild/mcuboot.conf`, it does not add to it: a bootloader built with only the
+  debug file has no serial recovery at all. Always list the normal file first:
+  `-Dmcuboot_EXTRA_CONF_FILE="$ZLRS_REPO_ROOT/app/sysbuild/mcuboot.conf;$ZLRS_REPO_ROOT/app/sysbuild/mcuboot-debug.conf"`.
+- The bootloader's 2 s recovery window is too short to enumerate through USB/IP forwarding
+  (usbipd): the host never sees the port before the bootloader gives up and boots the
+  application. A bench board therefore wants the stretched window
+  (`app/sysbuild/mcuboot-debug.conf`, 15 s) — or the application has to ask for recovery.
 - Pairing triggered from the config port expires at once if the session's clock is captured
   before the session runs: the pairing press is stamped later, the unsigned subtraction
   underflows, and the first tick calls the window expired. Re-read the clock after the session.
