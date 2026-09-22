@@ -196,7 +196,13 @@ typedef struct {
  */
 #define ZLRS_ARQ_WINDOW      4U
 #define ZLRS_ARQ_TIMEOUT_MS  30U
-#define ZLRS_ARQ_MAX_RETRIES 6U
+/*
+ * Retries before a run is given up and counted. The air path is far from perfect (on the bench a
+ * frame gets through in maybe a third of the attempts), so the budget has to cover a bad streak:
+ * at 6 the head frame was abandoned often enough to drop hundreds of bytes in one go and leave the
+ * receiver with a half message. 20 attempts is still well under a second at the retry cadence.
+ */
+#define ZLRS_ARQ_MAX_RETRIES 20U
 
 typedef struct {
 	zlrs_link_cfg_t cfg;

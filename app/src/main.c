@@ -15,6 +15,7 @@
 #include <zephyr/random/random.h>
 #include <zephyr/sys/reboot.h>
 
+#include <stdlib.h>
 #include <string.h>
 
 #include <psa/crypto.h>
@@ -1600,6 +1601,11 @@ static void print_link(const struct shell *sh, const char *name, const zlrs_link
 	shell_print(sh, "        key=%08x%08x%08x%08x",
 		    le32(link->pair_key), le32(&link->pair_key[4]), le32(&link->pair_key[8]),
 		    le32(&link->pair_key[12]));
+	/* Data path health: what the ARQ gave up on, and what the reassembler threw away */
+	shell_print(sh, "        arq retx=%u gave_up=%u | rx dup=%u ooo=%u frag_drop=%u lost=%u B",
+		    link->stats.tx_retries, link->stats.tx_arq_drop, link->stats.rx_dup,
+		    link->stats.rx_out_of_order, link->stats.rx_frag_drop,
+		    link->stats.data_drop_bytes);
 	/* The exact KDF context the link derives from: byte compare of two ends settles the rest */
 	{
 		uint8_t ctx[ZLRS_PAIR_CTX_LEN];
@@ -1688,6 +1694,38 @@ static int cmd_kdf(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 #endif
+
+/*
+ * Bench: stretch the data link's receive window. A steady-state window is a couple of
+ * milliseconds in a multi-millisecond frame, so almost everything depends on the two ends being
+ * phased; this takes the phase out of the question and asks whether the receive path works at all
+ * (continuous listening, peer transmitting). 0 restores the build's value.
+ */
+static uint16_t rxwin_default;
+static uint16_t acqwin_default;
+
+static int cmd_rxwin(const struct shell *sh, size_t argc, char **argv)
+{
+	unsigned long ms = 0UL;
+
+	if (argc > 1) {
+		ms = strtoul(argv[1], NULL, 0);
+		if (ms > 500UL) {
+			ms = 500UL;
+		}
+	}
+	if (rxwin_default == 0U) {
+		rxwin_default = link_data.cfg.rx_timeout_ms;
+		acqwin_default = link_data.cfg.acq_timeout_ms;
+	}
+	link_data.cfg.rx_timeout_ms = (uint16_t)ms;
+	link_data.cfg.acq_timeout_ms = (uint16_t)ms;
+
+	shell_print(sh, "data link window = %lu ms (default %u); `zlrs link` shows wins and hits",
+		    ms, rxwin_default);
+
+	return 0;
+}
 
 /* Bench: show the pair key, re-derive it from the record on hand, show it again */
 static int cmd_rekey(const struct shell *sh, size_t argc, char **argv)
@@ -1870,6 +1908,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 	SHELL_CMD(kdf, NULL, "run the HKDF-SHA256 test vector", cmd_kdf),
 #endif
 	SHELL_CMD(rekey, NULL, "re-derive the control link keys from its record", cmd_rekey),
+	SHELL_CMD(rxwin, " [ms]", "stretch the data link receive window (bench)", cmd_rxwin),
 	SHELL_CMD(ports, NULL, "state of both data port endpoints", cmd_ports),
 #if ZLRS_CONFIG_ENABLED
 	SHELL_CMD(config, NULL, "enter config mode (EXIT returns)", cmd_config),
