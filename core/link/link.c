@@ -345,6 +345,7 @@ static void session_activate(zlrs_link_t *link, uint16_t hop_index)
 	link->stats.lq_expected = 0U;
 	/* The ARQ window is session state too: in-flight frames are void, their bytes stay queued */
 	link->arq_used = 0U;
+	link->arq_run_bytes = 0U;
 	link->arq_retries = 0U;
 	link->arq_seq = 0U;
 	link->arq_rx_started = false;
@@ -580,6 +581,7 @@ static void arq_release_oldest(zlrs_link_t *link, bool delivered)
 
 	for (uint8_t i = 1U; i < link->arq_used; i++) {
 		link->arq_len[i - 1U] = link->arq_len[i];
+		link->arq_more[i - 1U] = link->arq_more[i];
 	}
 
 	link->arq_used--;
@@ -638,6 +640,7 @@ static const zlrs_radio_req_t *send_data_arq(zlrs_link_t *link, uint32_t now_ms)
 			 */
 			arq_release_oldest(link, false);
 			link->arq_used = 0U;
+			link->arq_run_bytes = 0U;
 			link->arq_retries = 0U;
 			link->arq_seq = 0U;
 			link->arq_resync = true;
@@ -648,9 +651,9 @@ static const zlrs_radio_req_t *send_data_arq(zlrs_link_t *link, uint32_t now_ms)
 		link->stats.tx_retries++;
 		link->arq_sent_ms = now_ms;
 
-		/* Retransmit the head frame: same sequence number and length, MORE reflects what is left */
+		/* Retransmit the head frame: same sequence number, length and MORE as the original */
 		return arq_send_slot(link, 0U, link->arq_seq, link->arq_len[0],
-				     link->queue_count > link->arq_len[0]);
+				     link->arq_more[0] != 0U);
 	}
 
 	if (link->arq_used >= ZLRS_ARQ_WINDOW) {
@@ -662,15 +665,27 @@ static const zlrs_radio_req_t *send_data_arq(zlrs_link_t *link, uint32_t now_ms)
 
 	{
 		uint16_t take = (uint16_t)(link->queue_count - inflight);
-		const bool more = take > link->cfg.data_mtu;
 		const uint8_t index = link->arq_used;
 		const uint16_t seq = (uint16_t)(link->arq_seq + index);
+		bool more = take > link->cfg.data_mtu;
 
 		if (more) {
 			take = link->cfg.data_mtu;
 		}
+		/*
+		 * The receiver assembles a run until it sees the frame without MORE, and it can only hold
+		 * ZLRS_REASM_BUF_LEN bytes. Close the run early enough that this frame still fits inside that
+		 * buffer: a write larger than the buffer then arrives as several messages instead of being
+		 * dropped whole (which is what happened when the run grew past the receiver's limit).
+		 */
+		if (more && ((uint32_t)link->arq_run_bytes + take + link->cfg.data_mtu >
+			     ZLRS_REASM_BUF_LEN)) {
+			more = false;
+		}
+		link->arq_run_bytes = more ? (uint16_t)(link->arq_run_bytes + take) : 0U;
 
 		link->arq_len[index] = take;
+		link->arq_more[index] = more ? 1U : 0U;
 		link->arq_used++;
 
 		if (link->arq_used == 1U) {
@@ -774,6 +789,17 @@ static const zlrs_radio_req_t *send_data(zlrs_link_t *link, uint32_t now_ms)
 		take = link->cfg.data_mtu;
 		flags = ZLRS_FLAG_MORE;
 	}
+	/*
+	 * Same run limit as the ARQ path: the receiver assembles until it sees a frame without MORE and
+	 * can only hold ZLRS_REASM_BUF_LEN bytes, so a longer run has to be cut into separate messages
+	 * here instead of arriving as one run the peer has to throw away.
+	 */
+	if ((flags & ZLRS_FLAG_MORE) != 0U &&
+	    ((uint32_t)link->arq_run_bytes + take + link->cfg.data_mtu > ZLRS_REASM_BUF_LEN)) {
+		flags = 0U;
+	}
+	link->arq_run_bytes =
+		((flags & ZLRS_FLAG_MORE) != 0U) ? (uint16_t)(link->arq_run_bytes + take) : 0U;
 
 	for (uint16_t i = 0; i < take; i++) {
 		payload[i] = link->tx_queue[(link->queue_head + i) % ZLRS_LINK_TX_QUEUE_LEN];
@@ -1815,6 +1841,11 @@ void zlrs_link_set_root_key(zlrs_link_t *link, const uint8_t root_key[ZLRS_KEY_L
 void zlrs_link_set_dev_id(zlrs_link_t *link, const uint8_t dev_id[ZLRS_DEV_ID_LEN])
 {
 	memcpy(link->dev_id, dev_id, ZLRS_DEV_ID_LEN);
+}
+
+uint16_t zlrs_link_tx_space(const zlrs_link_t *link)
+{
+	return (uint16_t)(ZLRS_LINK_TX_QUEUE_LEN - link->queue_count);
 }
 
 void zlrs_link_rederive(zlrs_link_t *link)

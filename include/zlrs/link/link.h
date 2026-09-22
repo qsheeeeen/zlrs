@@ -186,7 +186,13 @@ typedef struct {
 	uint32_t data_drop_bytes;
 } zlrs_link_stats_t;
 
-#define ZLRS_LINK_TX_QUEUE_LEN 512U
+/*
+ * Bytes the link will hold for the air. ARQ keeps a frame in this queue until the peer
+ * acknowledges it, so the queue has to cover the in-flight window plus whatever the application
+ * hands over in the meantime; at 512 a single 512-byte write filled it and everything after that
+ * was dropped before it ever reached the air.
+ */
+#define ZLRS_LINK_TX_QUEUE_LEN 4096U
 #define ZLRS_LINK_TLM_MAX_LEN  32U
 
 /*
@@ -197,12 +203,14 @@ typedef struct {
 #define ZLRS_ARQ_WINDOW      4U
 #define ZLRS_ARQ_TIMEOUT_MS  30U
 /*
- * Retries before a run is given up and counted. The air path is far from perfect (on the bench a
- * frame gets through in maybe a third of the attempts), so the budget has to cover a bad streak:
- * at 6 the head frame was abandoned often enough to drop hundreds of bytes in one go and leave the
- * receiver with a half message. 20 attempts is still well under a second at the retry cadence.
+ * Retries before a run is given up and counted. Giving up is expensive: the head frame is thrown
+ * away *and* the stream resyncs, so everything the receiver had buffered for that run goes too.
+ * The air path is far from perfect (on the bench a frame gets through in maybe a third of the
+ * attempts), so the budget has to cover long bad streaks; 64 tries is about two seconds at the
+ * retry cadence, which is the most a stalled frame should ever cost before the resync path takes
+ * over.
  */
-#define ZLRS_ARQ_MAX_RETRIES 20U
+#define ZLRS_ARQ_MAX_RETRIES 64U
 
 typedef struct {
 	zlrs_link_cfg_t cfg;
@@ -299,9 +307,13 @@ typedef struct {
 	/* ARQ sender: lengths of the frames in flight, head frame at [0] */
 	uint16_t arq_seq;
 	uint16_t arq_len[ZLRS_ARQ_WINDOW];
+	/* MORE flag of each window frame: a retransmit has to reproduce the frame, run boundary included */
+	uint8_t arq_more[ZLRS_ARQ_WINDOW];
 	uint8_t arq_used;
 	uint8_t arq_retries;
 	uint32_t arq_sent_ms;
+	/* Bytes already queued into the run that is being sent (0 = the next frame starts a new one) */
+	uint16_t arq_run_bytes;
 	/* ARQ receiver: highest in-order sequence number plus a pending cumulative ACK */
 	uint16_t arq_rx_seq;
 	bool arq_rx_started;
@@ -329,6 +341,12 @@ void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg, const zlrs_ra
 void zlrs_link_set_root_key(zlrs_link_t *link, const uint8_t root_key[ZLRS_KEY_LEN],
 			    uint32_t now_ms);
 void zlrs_link_set_dev_id(zlrs_link_t *link, const uint8_t dev_id[ZLRS_DEV_ID_LEN]);
+
+/*
+ * Room left in the air-side queue. Callers that own a byte source (a UART, a CDC) should take no
+ * more than this: zlrs_link_write() drops the tail it cannot take, and dropped input is gone.
+ */
+uint16_t zlrs_link_tx_space(const zlrs_link_t *link);
 
 /*
  * Recompute the pairing-level keys from the record the link holds now (ids, salt, root key).

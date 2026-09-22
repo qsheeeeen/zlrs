@@ -157,8 +157,13 @@ static const struct device *port_active(const struct port_pair *pair)
 
 /* ===== 2. data port: passthrough ========================================== */
 
-#define DATA_RX_RING_LEN 1024U
-#define DATA_TX_RING_LEN 1024U
+/*
+ * Sized for the air side: an ARQ frame can carry several hundred bytes and the host drains the
+ * port in bursts, so a kilobyte per direction left both ends dropping data that had already been
+ * received correctly.
+ */
+#define DATA_RX_RING_LEN 4096U
+#define DATA_TX_RING_LEN 4096U
 
 /* One buffer set per endpoint; dev == NULL means the alias is not wired */
 struct data_ep {
@@ -169,6 +174,7 @@ struct data_ep {
 	uint8_t tx_mem[DATA_TX_RING_LEN];
 	uint32_t rx_dropped;
 	uint32_t rx_total; /* bytes received (one of the endpoint-choice inputs) */
+	uint32_t tx_dropped; /* bytes the air side handed over that the host side had no room for */
 	bool ready;
 };
 
@@ -353,8 +359,23 @@ uint16_t zlrs_data_port_write(const uint8_t *buf, uint16_t len)
 		/* tx_enable returns void; a failed send only shows up as a peer timeout or retransmit */
 		uart_irq_tx_enable(ep->dev);
 	}
+	if (written < len) {
+		/* Counted, not silent: this is passthrough data the host may never see */
+		ep->tx_dropped += (uint32_t)(len - written);
+	}
 
 	return (uint16_t)written;
+}
+
+uint32_t zlrs_data_port_tx_dropped(void)
+{
+	uint32_t dropped = 0U;
+
+	for (size_t i = 0U; i < PORT_MAX; i++) {
+		dropped += data_eps[i].tx_dropped;
+	}
+
+	return dropped;
 }
 
 uint32_t zlrs_data_port_dropped(void)

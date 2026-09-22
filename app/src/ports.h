@@ -42,6 +42,8 @@ uint16_t zlrs_data_port_write(const uint8_t *buf, uint16_t len);
 
 /* Bytes never delivered: dropped when full plus those received on the inactive endpoint */
 uint32_t zlrs_data_port_dropped(void);
+/* Bytes the air side handed to the port that the host side had no room for */
+uint32_t zlrs_data_port_tx_dropped(void);
 
 /* Used during config mode: drop bytes from both endpoints (counted, never delivered) */
 void zlrs_data_port_discard_rx(void);

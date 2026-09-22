@@ -851,15 +851,29 @@ static void pump_serial(void)
 {
 	uint8_t chunk[SERIAL_CHUNK_LEN];
 	uint16_t got;
+	uint16_t room;
 
 	if (!ZLRS_DATA_ENABLED) {
 		return; /* no data link: nothing to forward from the UART */
 	}
 
-	got = zlrs_data_port_read(chunk, sizeof(chunk));
+	/*
+	 * Never take more from the port than the air-side queue can hold: everything the port hands
+	 * over is already out of its ring, so a partial write is data thrown away. Sizing the read to
+	 * the queue keeps it in the ring until there is room for it.
+	 */
+	room = zlrs_link_tx_space(&link_data);
+	if (room == 0U) {
+		return;
+	}
+	if (room > sizeof(chunk)) {
+		room = (uint16_t)sizeof(chunk);
+	}
+
+	got = zlrs_data_port_read(chunk, room);
 
 	if (got > 0U) {
-		(void)zlrs_link_write(&link_data, chunk, got); /* queue full: drop the tail */
+		(void)zlrs_link_write(&link_data, chunk, got);
 	}
 }
 
@@ -1148,9 +1162,9 @@ static void report(uint32_t now_ms)
 
 	zlrs_radio_port_diag(&radio_diag);
 
-	LOG_INF("%s ctl=%u tlm=%u data=%u serial_drop=%u",
+	LOG_INF("%s ctl=%u tlm=%u data=%u serial_drop=%u host_drop=%u",
 		role_tx ? "TX" : "RX", counters.rc_rx, counters.tlm_rx,
-		counters.data_rx, zlrs_data_port_dropped());
+		counters.data_rx, zlrs_data_port_dropped(), zlrs_data_port_tx_dropped());
 	/* Frames that really went out, per slot: only transactions that completed count (core/link) */
 	LOG_INF("air: ctl_tx=%u ctl_rx=%u data_tx=%u data_rx=%u fail=%u+%u | slot tx %u/%u/%u/%u",
 		link_control.stats.tx_frames, link_control.stats.rx_frames,

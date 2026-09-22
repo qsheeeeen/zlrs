@@ -1214,6 +1214,29 @@ static void test_data_passthrough(void)
 	CHECK(memcmp(sim.tx.stream, reverse, sizeof(reverse)) == 0);
 }
 
+/*
+ * A write larger than the receiver's reassembly buffer must still arrive whole. The sender marks
+ * "more" while it has bytes left, so one long write used to become one run the peer could not
+ * hold: the reassembler dropped it (correctly) and the bytes were simply gone.
+ */
+static void test_data_long_write(void)
+{
+	sim_t sim;
+	static uint8_t payload[1024];
+
+	printf("link: data write longer than the reassembly buffer\n");
+	sim_init(&sim);
+	pair_and_connect(&sim);
+
+	for (uint16_t i = 0; i < sizeof(payload); i++) {
+		payload[i] = (uint8_t)(i * 3U + 11U);
+	}
+	CHECK(zlrs_link_write(&sim.tx.data, payload, sizeof(payload)) == sizeof(payload));
+	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(payload), 6000);
+	CHECK(sim.rx.stream_len == sizeof(payload));
+	CHECK(memcmp(sim.rx.stream, payload, sizeof(payload)) == 0);
+	CHECK(sim.rx.data.stats.rx_frag_drop == 0U);
+}
 static void test_rx_rejects(void)
 {
 	sim_t sim;
@@ -1441,8 +1464,8 @@ static void test_backpressure(void)
 	sim_init(&sim);
 	memset(chunk, 0x5AU, sizeof(chunk));
 
-	/* A 512-byte queue: fill it, and everything beyond must count as dropped */
-	for (uint8_t i = 0U; i < 4U; i++) {
+	/* Fill the air-side queue exactly, and everything beyond must count as dropped */
+	for (uint16_t i = 0U; i < ZLRS_LINK_TX_QUEUE_LEN / sizeof(chunk); i++) {
 		accepted =
 			(uint16_t)(accepted + zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)));
 	}
@@ -2254,6 +2277,7 @@ void test_link(void)
 	test_seq_wrap();
 	test_control_payloads();
 	test_data_passthrough();
+	test_data_long_write();
 	test_rx_rejects();
 	test_frag_drop();
 	test_recovery();
