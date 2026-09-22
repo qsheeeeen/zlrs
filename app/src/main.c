@@ -1773,6 +1773,72 @@ static int cmd_rxwin(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+/*
+ * Bench: measure one link over a few seconds. Receive windows, how many of them heard a frame, and
+ * frames sent, all as a rate: that is the number a marginal antenna or a misaligned slot shows up
+ * in, and it is what tells a receiver problem apart from a protocol one.
+ */
+typedef struct {
+	uint32_t wins;
+	uint32_t hits;
+	uint32_t tx;
+} rate_snap_t;
+
+static rate_snap_t rate_snapshot(const zlrs_link_t *link)
+{
+	rate_snap_t s;
+
+	s.wins = link->stats.slot_rx[0] + link->stats.slot_rx[1] + link->stats.slot_rx[2] +
+		 link->stats.slot_rx[3];
+	s.hits = link->stats.slot_hit[0] + link->stats.slot_hit[1] + link->stats.slot_hit[2] +
+		 link->stats.slot_hit[3];
+	s.tx = link->stats.tx_frames;
+
+	return s;
+}
+
+static void rate_line(const struct shell *sh, const char *name, const zlrs_link_t *link,
+		      const rate_snap_t *before, uint32_t secs)
+{
+	const rate_snap_t now = rate_snapshot(link);
+	const uint32_t wins = now.wins - before->wins;
+	const uint32_t hits = now.hits - before->hits;
+	const uint32_t tx = now.tx - before->tx;
+	const uint32_t permille = (wins != 0U) ? (hits * 1000U) / wins : 0U;
+
+	shell_print(sh, "%-7s %u wins/s, %u got/s (%u.%u%% of windows), %u tx/s, state %u", name,
+		    (unsigned int)(wins / secs), (unsigned int)(hits / secs),
+		    (unsigned int)(permille / 10U), (unsigned int)(permille % 10U),
+		    (unsigned int)(tx / secs), link->state);
+}
+
+static int cmd_rate(const struct shell *sh, size_t argc, char **argv)
+{
+	rate_snap_t ctl_before;
+	rate_snap_t dat_before;
+	uint32_t secs = 5U;
+
+	if (argc > 1) {
+		secs = (uint32_t)strtoul(argv[1], NULL, 0);
+		if (secs == 0U) {
+			secs = 1U;
+		}
+		if (secs > 60U) {
+			secs = 60U;
+		}
+	}
+
+	ctl_before = rate_snapshot(&link_control);
+	dat_before = rate_snapshot(&link_data);
+	k_sleep(K_SECONDS(secs));
+
+	shell_print(sh, "over %u s:", (unsigned int)secs);
+	rate_line(sh, "control", &link_control, &ctl_before, secs);
+	rate_line(sh, "data", &link_data, &dat_before, secs);
+
+	return 0;
+}
+
 /* Bench: show the pair key, re-derive it from the record on hand, show it again */
 static int cmd_rekey(const struct shell *sh, size_t argc, char **argv)
 {
@@ -1955,6 +2021,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 #endif
 	SHELL_CMD(rekey, NULL, "re-derive the control link keys from its record", cmd_rekey),
 	SHELL_CMD(rxwin, " [ms]", "stretch the data link receive window (bench)", cmd_rxwin),
+	SHELL_CMD(rate, " [s]", "measure windows/hits/frames per second per link", cmd_rate),
 	SHELL_CMD(ports, NULL, "state of both data port endpoints", cmd_ports),
 #if ZLRS_CONFIG_ENABLED
 	SHELL_CMD(config, NULL, "enter config mode (EXIT returns)", cmd_config),
