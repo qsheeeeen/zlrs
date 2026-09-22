@@ -111,6 +111,16 @@ switches to hide but debts: `doc/13-roadmap.md`, "Pending defaults".
 - **Radio numbers** (callback latency, frequency-switch cost, packet error rate, throughput) can
   only be measured on the board; Semtech's `packet_error_rate_flrc` sample is a ready-made
   baseline.
+- **After every flash, verify both ends**: `zlrs-config.py --serial <s> confirm` and compare
+  `image-hash` with the image that was built. An upload that the host never confirms rolls back
+  at the next boot, and two boards running different images measure like two boards on different
+  bands — the numbers look like a radio fault and mean nothing.
+- **`zlrs rate`** prints the last second per link: receive windows, how many of them heard a
+  frame, frames sent and the state. That is the number to compare when a link misbehaves; a
+  receiver problem shows up as a hit rate near zero with the window count unchanged.
+- **`zlrs rxwin <ms>`** stretches the data link's receive window (0 restores it). With the window
+  at tens of milliseconds the receiver is effectively listening continuously, which separates
+  "the two ends are not aligned" from "the receiver does not hear frames at all".
 
 ## 5. Traps we have hit
 
@@ -150,3 +160,27 @@ One line each; details live in code comments.
   enumerate the bootloader's USB first, and it will not re-enumerate when the application takes
   over, so the application never comes up and the watchdog resets it; it looks like a broken
   image. The normal 2 s window never hits this.
+- A radio port that reports "the transaction finished" is not enough: the completion semaphore is
+  shared by both links, so the other link's completion can wake a wait whose own request is still
+  outstanding. The link layer now checks its own request after draining and aborts it if it is
+  still pending; without that, `req_pending` stayed set forever and every later `submit` was
+  refused — the link goes deaf permanently and only a reboot brings it back.
+- An ARQ that gives up by throwing the head frame away is a passthrough that silently loses
+  hundreds of bytes. Retry exhaustion now restarts the run (the receiver drops its half message,
+  the bytes stay queued) so a bad air path costs time, never data.
+- Sending one confirmation for the pairing and session handshakes is a coin flip: the two ends do
+  not share a slot phase while they are still finding each other. Both handshakes repeat, and the
+  initiator keeps listening where a peer that missed the confirm is still answering.
+- Two free-running superframes do not stay aligned, and a phase lock cannot correct anything until
+  it hears a frame (which is what it is trying to fix). Links that have heard nothing for 300 ms
+  therefore sweep their frame phase (opposite directions per role — the same direction on both
+  ends moves nothing) until the first frame lands.
+- `tcxo-wakeup-time` must stay 0 on this module: any non-zero value makes the radio wait out the
+  TCXO before every transaction, the RAC sleeps the radio between transactions, and the wait
+  overruns the slot budget so nothing is transmitted at all (`air: data_tx=0`).
+- Blocking inside a shell command (`k_sleep`) stalls the console CDC badly enough that the host
+  drops the device over USB/IP; bench commands read snapshots maintained by the report loop
+  instead.
+- Re-attaching a board through `usbipd` re-enumerates its USB and the application boots again
+  (uptime restarts). Detach and attach only when the port is really missing, and expect the first
+  few seconds of console output to be boot noise.
