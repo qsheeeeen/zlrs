@@ -210,6 +210,12 @@ application, check the image hash and send `confirm`. The tool writes pending bu
 permanent**. Bricked boards go through BOOTSEL and a UF2 drag (see [12-debug](12-debug.md)).
 Production images use their own signing key; changing that key means reflashing the bootloader.
 
+**An image dragged onto BOOTSEL has no rollback**: it goes straight into slot0 with an empty
+trailer, which MCUboot treats as the initial image — it boots it without asking for a
+confirmation and there is nothing to revert to. That path is for the first flash (and for rescue),
+not for day-to-day updates: an app that resets during init then simply loops. The rollback lives
+in the tool's path, where the image arrives in the inactive slot marked for test.
+
 ## 6. Error handling
 
 - **A fatal fault stops the air, not the device**: a region/radio-design mismatch, a PSA
