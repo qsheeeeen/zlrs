@@ -343,7 +343,7 @@ def main() -> int:
     # 2. wait for the bootloader recovery port
     if args.recovery_port is None:
         print(f"[2/4] waiting for the bootloader recovery port (name contains {RECOVERY_PORT_HINT}, up to {args.timeout:g} s)")
-        args.recovery_port = wait_for_by_id(RECOVERY_PORT_HINT, args.timeout)
+        args.recovery_port = wait_for_by_id(RECOVERY_PORT_HINT, args.timeout, serial=args.serial)
         if args.recovery_port is None:
             print("no recovery port appeared. Device up but not in recovery? Check the boot-mode flag "
                       "(doc/08-firmware.md 6), "
