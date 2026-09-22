@@ -15,6 +15,8 @@
 #include <smtc_rac_api.h>
 #include <smtc_sw_platform_helper.h>
 
+#include "ral.h"
+
 LOG_MODULE_REGISTER(zlrs_radio_rac, CONFIG_APP_LOG_LEVEL);
 
 typedef struct {
@@ -26,11 +28,46 @@ typedef struct {
 	uint16_t rx_len;
 	int16_t rssi;
 	int8_t snr;
+	uint32_t submit_us; /* when the transaction went in, for the window duration counters */
+	uint16_t timeout_ms;
+	bool is_tx;
 } rac_client_t;
 
 static rac_client_t control_client;
 static rac_client_t data_client;
 static K_SEM_DEFINE(done_sem, 0, 1);
+
+/* Port-level bench counters, see radio_port.h */
+static zlrs_radio_diag_t diag;
+
+void zlrs_radio_port_diag(zlrs_radio_diag_t *out)
+{
+	if (out != NULL) {
+		*out = diag;
+	}
+}
+
+/*
+ * Leave no IRQ behind for the next transaction. The radio holds its IRQ latch until the status is
+ * read: a bit left over from an earlier slot would complete the next transaction early (or wake
+ * the planner with no task, which is what its "no more task activated" trace is), so read and
+ * count them here. The vendor sample never hits this because its engine runs in its own thread and
+ * drains every event as it comes.
+ */
+static void drain_radio_irq(void)
+{
+	ralf_t *radio = smtc_rac_get_radio();
+	ral_irq_t irq = 0;
+
+	if (radio == NULL) {
+		return;
+	}
+	if (ral_get_and_clear_irq_status(&radio->ral, &irq) == RAL_STATUS_OK &&
+	    (uint32_t)irq != 0U) {
+		diag.stale_irq++;
+		diag.stale_irq_bits = (uint32_t)irq;
+	}
+}
 
 static uint32_t port_random(void *ctx)
 {
@@ -180,6 +217,9 @@ static bool radio_fail_logged;
 
 static void client_complete(rac_client_t *client, rp_status_t status)
 {
+	const uint32_t now_us = (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64());
+	const uint32_t took_us = now_us - client->submit_us;
+
 	client->status = ZLRS_RADIO_OK;
 	client->rx_len = 0U;
 	client->rssi = 0;
@@ -204,6 +244,18 @@ static void client_complete(rac_client_t *client, rp_status_t status)
 			LOG_ERR("radio transaction failed (rp_status %d)", (int)status);
 		}
 		break;
+	}
+
+	if (client->is_tx) {
+		diag.tx_us_last = took_us;
+	} else {
+		diag.rx_us_last = took_us;
+		diag.rx_windows++;
+		/* A packet ends the window early; anything else this far in is an early close */
+		if (client->rx_len == 0U &&
+		    took_us + 500U < (uint32_t)client->timeout_ms * 1000U) {
+			diag.rx_early++;
+		}
 	}
 
 	client->done = true;
@@ -269,6 +321,12 @@ static int port_submit(void *ctx, const zlrs_radio_req_t *req)
 {
 	rac_client_t *client = ctx;
 	smtc_rac_context_t *rac = client->ctx;
+
+	drain_radio_irq();
+	diag.transactions++;
+	client->submit_us = (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64());
+	client->timeout_ms = req->timeout_ms;
+	client->is_tx = req->is_tx;
 
 	rac->smtc_rac_data_buffer_setup.tx_payload_buffer = req->buf;
 	rac->smtc_rac_data_buffer_setup.size_of_tx_payload_buffer = req->size;
@@ -338,12 +396,22 @@ void zlrs_radio_port_drain(void)
 {
 	const uint32_t now_ms = zlrs_radio_port_now_ms();
 
+	/*
+	 * A transaction that just closed has had its IRQ consumed by the planner; anything latched
+	 * here arrived outside a transaction, which is exactly the condition the engine reports with
+	 * "no more task activated". Counting it shows whether that trace has a real source.
+	 */
+	if (smtc_rac_is_irq_flag_pending()) {
+		diag.late_irq++;
+	}
+
 	drain_client(&control_client, now_ms);
 	drain_client(&data_client, now_ms);
 }
 
 void zlrs_radio_port_abort(void)
 {
+	diag.overruns++;
 	(void)SMTC_SW_PLATFORM(smtc_rac_abort_radio_submit(control_client.access_id));
 	(void)SMTC_SW_PLATFORM(smtc_rac_abort_radio_submit(data_client.access_id));
 }

@@ -104,6 +104,13 @@ void zlrs_radio_port_abort(void)
 	/* Nothing is pending on the chip, so nothing to abort */
 }
 
+void zlrs_radio_port_diag(zlrs_radio_diag_t *out)
+{
+	if (out != NULL) {
+		*out = (zlrs_radio_diag_t){0};
+	}
+}
+
 uint32_t zlrs_radio_port_now_ms(void)
 {
 	return k_uptime_get_32();

@@ -97,6 +97,20 @@ static zlrs_mod_cfg_t data_mod;
 #define CONTROL_ON_SUBG 1
 #endif
 
+/* Fingerprint for the bench output: enough to compare two ends, not enough to leak the key */
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_SHELL) || IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
+static uint32_t fingerprint(const uint8_t *data, size_t len)
+{
+	uint32_t h = 2166136261U;
+
+	for (size_t i = 0U; i < len; i++) {
+		h = (h ^ data[i]) * 16777619U;
+	}
+
+	return h;
+}
+#endif
+
 /* Region: picks the band, the power ceiling and the duty accounting */
 static const zlrs_region_t *region;
 static uint8_t region_id;
@@ -599,11 +613,47 @@ static void load_identity(void)
 /* Tick while pumping the RAC engine: fine enough not to stretch a slot, coarse enough not to spin */
 #define ZLRS_RADIO_PUMP_STEP_US 200U
 
+/*
+ * Bench timing. The superframe is paced, but every slot inside it lasts as long as its own
+ * transaction, so where a slot sits in the frame depends on the radio work of that frame; and
+ * nothing aligns the two ends' frame phases. These counters are how that shows up in numbers:
+ * the frame period measured with the cycle counter, the slots, and where in our frame the peer's
+ * frames actually land.
+ */
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
+typedef struct {
+	uint32_t frames;
+	uint32_t frame_us_last; /* measured period of the last frame */
+	uint32_t frame_us_min;
+	uint32_t frame_us_max;
+	uint32_t slot_us_last[4];
+	uint32_t slot_us_max[4];
+	uint32_t rx_slot;      /* slot the last frame landed in */
+	uint32_t rx_offset_us; /* where in the frame it landed */
+	uint32_t rx_offset_min;
+	uint32_t rx_offset_max;
+} bench_t;
+
+static bench_t bench;
+static uint32_t frame_start_us;
+static uint32_t prev_frame_start_us;
+static zlrs_radio_diag_t radio_diag;
+
+static uint32_t now_us(void)
+{
+	return (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64());
+}
+#endif
+
 static void run_slot(uint8_t slot)
 {
 	const bool data_slot = (slot == ZLRS_SLOT_DATA_A || slot == ZLRS_SLOT_DATA_B);
 	zlrs_link_t *link = data_slot ? &link_data : &link_control;
 	const uint32_t now_ms = zlrs_radio_port_now_ms();
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
+	const uint32_t slot_start_us = now_us();
+	const uint32_t hit_before = link->stats.slot_hit[slot];
+#endif
 	/* The duty-cycle gate only applies to whichever link is on sub-G */
 	const bool on_subg = data_slot ? (CONTROL_ON_SUBG == 0) : (CONTROL_ON_SUBG != 0);
 	const zlrs_radio_req_t *req;
@@ -665,6 +715,29 @@ static void run_slot(uint8_t slot)
 	}
 
 	zlrs_radio_port_drain();
+
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
+	{
+		const uint32_t took_us = now_us() - slot_start_us;
+
+		bench.slot_us_last[slot] = took_us;
+		if (took_us > bench.slot_us_max[slot]) {
+			bench.slot_us_max[slot] = took_us;
+		}
+		if (link->stats.slot_hit[slot] != hit_before) {
+			const uint32_t offset_us = now_us() - frame_start_us;
+
+			bench.rx_slot = slot;
+			bench.rx_offset_us = offset_us;
+			if (bench.rx_offset_max == 0U || offset_us > bench.rx_offset_max) {
+				bench.rx_offset_max = offset_us;
+			}
+			if (bench.rx_offset_min == 0U || offset_us < bench.rx_offset_min) {
+				bench.rx_offset_min = offset_us;
+			}
+		}
+	}
+#endif
 }
 
 #if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
@@ -990,14 +1063,72 @@ static void report(uint32_t now_ms)
 		return;
 	}
 
+	zlrs_radio_port_diag(&radio_diag);
+
 	LOG_INF("%s ctl=%u tlm=%u data=%u serial_drop=%u",
 		role_tx ? "TX" : "RX", counters.rc_rx, counters.tlm_rx,
 		counters.data_rx, zlrs_data_port_dropped());
-	/* Frames that really went out: only transactions that completed count (see core/link) */
-	LOG_INF("air: ctl_tx=%u ctl_rx=%u data_tx=%u data_rx=%u fail=%u+%u",
+	/* Frames that really went out, per slot: only transactions that completed count (core/link) */
+	LOG_INF("air: ctl_tx=%u ctl_rx=%u data_tx=%u data_rx=%u fail=%u+%u | slot tx %u/%u/%u/%u",
 		link_control.stats.tx_frames, link_control.stats.rx_frames,
 		link_data.stats.tx_frames, link_data.stats.rx_frames, link_control.stats.radio_fail,
-		link_data.stats.radio_fail);
+		link_data.stats.radio_fail, link_control.stats.slot_tx[0],
+		link_control.stats.slot_tx[1], link_control.stats.slot_tx[2],
+		link_control.stats.slot_tx[3]);
+	/* Why frames were dropped on the way in: no tag match, bad shape, or nothing heard at all */
+	LOG_INF("rx : bad_tag=%u bad_frame=%u dup=%u ooo=%u syncs=%u resync=%u | rssi %d..%d",
+		link_control.stats.rx_bad_tag, link_control.stats.rx_bad_frame,
+		link_control.stats.rx_dup, link_control.stats.rx_out_of_order,
+		link_control.stats.rx_syncs, link_control.stats.hop_resync,
+		link_control.stats.rssi_min, link_control.stats.rssi_max);
+	/*
+	 * Listen windows per slot and how many of them heard a frame: a window that almost never
+	 * hears anything is a phase problem, not a range problem (see zlrs link for the rest).
+	 */
+	LOG_INF("win : ctl rx %u/%u/%u/%u got %u/%u/%u/%u | sync tx=%u rx=%u resp %u+%u cfm %u+%u",
+		link_control.stats.slot_rx[0], link_control.stats.slot_rx[1],
+		link_control.stats.slot_rx[2], link_control.stats.slot_rx[3],
+		link_control.stats.slot_hit[0], link_control.stats.slot_hit[1],
+		link_control.stats.slot_hit[2], link_control.stats.slot_hit[3],
+		link_control.stats.tx_syncs, link_control.stats.rx_syncs,
+		link_control.stats.sess_resp_tx, link_control.stats.sess_resp_rx,
+		link_control.stats.sess_cfm_tx, link_control.stats.sess_cfm_rx);
+	/*
+	 * Superframe timing, cycle-counter measured: the frame both ends pace to, the length of each
+	 * of our slots, and where in our frame the peer's frames landed. A peer slot that slides
+	 * across the window range is the signature of two free-running frames.
+	 */
+	LOG_INF("tm : frame=%u us (%u..%u) slot=%u/%u/%u/%u max=%u/%u/%u/%u rx=slot%u+%u (%u..%u)"
+		" txn=%u early=%u",
+		bench.frame_us_last, bench.frame_us_min, bench.frame_us_max,
+		bench.slot_us_last[0], bench.slot_us_last[1], bench.slot_us_last[2],
+		bench.slot_us_last[3], bench.slot_us_max[0], bench.slot_us_max[1],
+		bench.slot_us_max[2], bench.slot_us_max[3], bench.rx_slot, bench.rx_offset_us,
+		bench.rx_offset_min, bench.rx_offset_max, radio_diag.transactions,
+		radio_diag.rx_early);
+	{
+		LOG_INF("rd : stale_irq=%u(%08x) late_irq=%u overruns=%u rx_win=%u tx=%u us rx=%u us",
+			radio_diag.stale_irq, radio_diag.stale_irq_bits, radio_diag.late_irq,
+			radio_diag.overruns, radio_diag.rx_windows, radio_diag.tx_us_last,
+			radio_diag.rx_us_last);
+	}
+	/* Fingerprints (not the keys): comparing two ends needs to be possible from the log alone */
+	LOG_INF("key: ctl pair=%08x word=%08x root=%08x a=%08x b=%08x hop=%u state=%u"
+		" wait_cfm=%u cfm=%u/%u rssi=%d",
+		fingerprint(link_control.pair_key, sizeof(link_control.pair_key)),
+		fingerprint(link_control.sync_word, sizeof(link_control.sync_word)),
+		fingerprint(link_control.root_key, sizeof(link_control.root_key)),
+		link_control.pair_nonce, link_control.pair_nonce_b,
+		link_control.fhss.index,
+		link_control.state, link_control.pair_wait_cfm ? 1U : 0U,
+		(unsigned int)link_control.pair_cfm_sent,
+		link_control.pair_cfm_pending ? 1U : 0U, link_control.stats.last_rssi);
+	/* Pairing handshake traffic: which of the three messages is the one going missing */
+	LOG_INF("pair: ctl tx %u/%u/%u rx %u/%u/%u rej=%u",
+		link_control.stats.pair_req_tx, link_control.stats.pair_resp_tx,
+		link_control.stats.pair_cfm_tx, link_control.stats.pair_req_rx,
+		link_control.stats.pair_resp_rx, link_control.stats.pair_cfm_rx,
+		link_control.stats.pair_rejects);
 	LOG_INF("crsf_bad=%u crsf_drop=%u air_drop=%u lq=%u%%", crsf_bad_input,
 		zlrs_crsf_port_rx_dropped(), link_data.stats.data_drop_bytes,
 		link_control.stats.lq_percent);
@@ -1008,6 +1139,15 @@ static void report(uint32_t now_ms)
 		zlrs_power_current_dbm(&power_ctl), power_ctl.raises, power_ctl.lowers,
 		power_ctl.fallbacks);
 #endif
+
+	/* Every line above covers one second: the next one gets a fresh timing window */
+	bench.frame_us_min = 0U;
+	bench.frame_us_max = 0U;
+	bench.rx_offset_min = 0U;
+	bench.rx_offset_max = 0U;
+	for (uint8_t i = 0U; i < 4U; i++) {
+		bench.slot_us_max[i] = 0U;
+	}
 }
 
 /*
@@ -1329,6 +1469,158 @@ static const zlrs_config_ops_t cfg_ops = {
 #endif /* ZLRS_CONFIG_ENABLED */
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_SHELL)
+/* Little-endian u32 out of an id or key, for bench output that has to be comparable */
+static uint32_t le32(const uint8_t *p)
+{
+	return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
+	       ((uint32_t)p[3] << 24);
+}
+
+static void print_link(const struct shell *sh, const char *name, const zlrs_link_t *link)
+{
+	/* Little-endian u32 out of the pairing salt, printed as the two nonces they are */
+	const uint8_t *salt = link->pair_salt;
+	const uint32_t salt_a = le32(salt);
+	const uint32_t salt_b = le32(&salt[4]);
+
+	shell_print(sh, "%-7s state=%u paired=%u sess=%u freq=%u hop=%u pair_key=%08x word=%08x",
+		    name, link->state, link->paired ? 1U : 0U, link->session_valid ? 1U : 0U,
+		    zlrs_fhss_current_hz(&link->fhss), link->fhss.index,
+		    fingerprint(link->pair_key, sizeof(link->pair_key)),
+		    fingerprint(link->sync_word, sizeof(link->sync_word)));
+	shell_print(sh, "        tx=%u rx=%u fail=%u rssi=%d..%d lq=%u%%",
+		    link->stats.tx_frames, link->stats.rx_frames, link->stats.radio_fail,
+		    link->stats.rssi_min, link->stats.rssi_max, link->stats.lq_percent);
+	shell_print(sh, "        slot tx %u/%u/%u/%u rx %u/%u/%u/%u got %u/%u/%u/%u fail %u/%u/%u/%u",
+		    link->stats.slot_tx[0], link->stats.slot_tx[1], link->stats.slot_tx[2],
+		    link->stats.slot_tx[3], link->stats.slot_rx[0], link->stats.slot_rx[1],
+		    link->stats.slot_rx[2], link->stats.slot_rx[3], link->stats.slot_hit[0],
+		    link->stats.slot_hit[1], link->stats.slot_hit[2], link->stats.slot_hit[3],
+		    link->stats.slot_fail[0], link->stats.slot_fail[1], link->stats.slot_fail[2],
+		    link->stats.slot_fail[3]);
+	shell_print(sh, "        pair tx %u/%u/%u rx %u/%u/%u rej=%u sent=%u pending=%u wait=%u",
+		    link->stats.pair_req_tx, link->stats.pair_resp_tx, link->stats.pair_cfm_tx,
+		    link->stats.pair_req_rx, link->stats.pair_resp_rx, link->stats.pair_cfm_rx,
+		    link->stats.pair_rejects, link->pair_cfm_sent,
+		    link->pair_cfm_pending ? 1U : 0U, link->pair_wait_cfm ? 1U : 0U);
+	shell_print(sh, "        sync tx=%u rx=%u resp %u+%u cfm %u+%u",
+		    link->stats.tx_syncs, link->stats.rx_syncs, link->stats.sess_resp_tx,
+		    link->stats.sess_resp_rx, link->stats.sess_cfm_tx, link->stats.sess_cfm_rx);
+	/* Paired ends must agree on the id pair and the salt: a mismatch here is why keys differ */
+	shell_print(sh, "        dev=%08x peer=%08x salt=%08x/%08x root=%08x auth=%08x",
+		    le32(link->dev_id), le32(link->peer_id), salt_a, salt_b,
+		    fingerprint(link->root_key, sizeof(link->root_key)),
+		    fingerprint(link->auth_key, sizeof(link->auth_key)));
+	/* Raw key words: two ends must agree byte for byte, fingerprints hide which half differs */
+	shell_print(sh, "        key=%08x%08x%08x%08x",
+		    le32(link->pair_key), le32(&link->pair_key[4]), le32(&link->pair_key[8]),
+		    le32(&link->pair_key[12]));
+	/* The exact KDF context the link derives from: byte compare of two ends settles the rest */
+	{
+		uint8_t ctx[ZLRS_PAIR_CTX_LEN];
+
+		zlrs_link_pair_ctx(link, ctx);
+		shell_print(sh, "        raw dev=%02x%02x%02x%02x peer=%02x%02x%02x%02x",
+			    link->dev_id[0], link->dev_id[1], link->dev_id[2], link->dev_id[3],
+			    link->peer_id[0], link->peer_id[1], link->peer_id[2], link->peer_id[3]);
+		shell_print(sh, "        ctx=%02x%02x%02x%02x%02x%02x%02x%02x"
+				"%02x%02x%02x%02x%02x%02x%02x%02x",
+			    ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6], ctx[7],
+			    ctx[8], ctx[9], ctx[10], ctx[11], ctx[12], ctx[13], ctx[14], ctx[15]);
+	}
+}
+
+static int cmd_link(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	print_link(sh, "control", &link_control);
+	print_link(sh, "data", &link_data);
+	shell_print(sh, "bench  frame=%u us (%u..%u) slot=%u/%u/%u/%u rx=slot%u+%u (%u..%u)",
+		    bench.frame_us_last, bench.frame_us_min, bench.frame_us_max,
+		    bench.slot_us_last[0], bench.slot_us_last[1], bench.slot_us_last[2],
+		    bench.slot_us_last[3], bench.rx_slot, bench.rx_offset_us, bench.rx_offset_min,
+		    bench.rx_offset_max);
+	shell_print(sh, "radio  txn=%u stale_irq=%u(%08x) late_irq=%u overruns=%u rx_win=%u early=%u",
+		    radio_diag.transactions, radio_diag.stale_irq, radio_diag.stale_irq_bits,
+		    radio_diag.late_irq, radio_diag.overruns, radio_diag.rx_windows,
+		    radio_diag.rx_early);
+
+	return 0;
+}
+
+#if IS_ENABLED(CONFIG_ZLRS_APP_RADIO)
+/*
+ * KDF self test: RFC 5869 case 1 (IKM 0x0b*22, zero salt, info 0xf0..0xf9). Two ends that derive
+ * different keys from the same pairing inputs have either a different input or a broken KDF, and
+ * this tells those apart without a second device.
+ */
+static int cmd_kdf(const struct shell *sh, size_t argc, char **argv)
+{
+	static const uint8_t ikm[22] = {
+		0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b,
+		0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b,
+	};
+	static const uint8_t info[10] = {0xf0, 0xf1, 0xf2, 0xf3, 0xf4,
+					 0xf5, 0xf6, 0xf7, 0xf8, 0xf9};
+	static const uint8_t want[32] = {
+		0x3c, 0xb2, 0x5f, 0x25, 0xfa, 0xac, 0xd5, 0x7a, 0x90, 0x43, 0x4f,
+		0x64, 0xd0, 0x36, 0x2f, 0x2a, 0x2d, 0x2d, 0x0a, 0x90, 0xcf, 0x1a,
+		0x5a, 0x4c, 0x5d, 0xb0, 0x2d, 0x56, 0xec, 0xc4, 0xc5, 0xbf,
+	};
+	uint8_t out[32];
+	uint8_t ikm_fixed[32];
+	uint8_t ctx_fixed[16];
+	uint8_t pair_out[32];
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	/* Empty label: the info the KDF builds is then exactly the vector's info */
+	zlrs_kdf(ikm, sizeof(ikm), "", info, sizeof(info), out, sizeof(out));
+	shell_print(sh, "kdf hkdf-sha256 %s", memcmp(out, want, sizeof(want)) == 0 ? "ok" : "FAIL");
+	shell_print(sh, "  got  %02x%02x%02x%02x%02x%02x%02x%02x...", out[0], out[1], out[2],
+		    out[3], out[4], out[5], out[6], out[7]);
+	shell_print(sh, "  want %02x%02x%02x%02x%02x%02x%02x%02x...", want[0], want[1], want[2],
+		    want[3], want[4], want[5], want[6], want[7]);
+
+	/*
+	 * Same call the pairing makes, but with fixed inputs: two boards that disagree here disagree
+	 * inside the KDF, not in the record they feed it.
+	 */
+	for (uint8_t i = 0U; i < sizeof(ikm_fixed); i++) {
+		ikm_fixed[i] = i;
+	}
+	for (uint8_t i = 0U; i < sizeof(ctx_fixed); i++) {
+		ctx_fixed[i] = (uint8_t)(0x40U + i);
+	}
+	zlrs_kdf(ikm_fixed, sizeof(ikm_fixed), "zlrs/pair", ctx_fixed, sizeof(ctx_fixed),
+		 pair_out, sizeof(pair_out));
+	shell_print(sh, "kdf fixed %08x%08x%08x%08x", le32(pair_out), le32(&pair_out[4]),
+		    le32(&pair_out[8]), le32(&pair_out[12]));
+
+	return 0;
+}
+#endif
+
+/* Bench: show the pair key, re-derive it from the record on hand, show it again */
+static int cmd_rekey(const struct shell *sh, size_t argc, char **argv)
+{
+	const uint32_t before = fingerprint(link_control.pair_key, ZLRS_KEY_LEN);
+	uint32_t after;
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	zlrs_link_rederive(&link_control);
+	after = fingerprint(link_control.pair_key, ZLRS_KEY_LEN);
+	shell_print(sh, "ctl pair_key %08x -> %08x %s", before, after,
+		    (before == after) ? "same" : "CHANGED");
+
+	return 0;
+}
+
 static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(argc);
@@ -1488,6 +1780,11 @@ static int cmd_mcuboot(const struct shell *sh, size_t argc, char **argv)
 
 SHELL_STATIC_SUBCMD_SET_CREATE(
 	zlrs_cmds, SHELL_CMD(status, NULL, "role / SKU / region / link state", cmd_status),
+	SHELL_CMD(link, NULL, "per-link state, frequency, hop index and key fingerprints", cmd_link),
+#if IS_ENABLED(CONFIG_ZLRS_APP_RADIO)
+	SHELL_CMD(kdf, NULL, "run the HKDF-SHA256 test vector", cmd_kdf),
+#endif
+	SHELL_CMD(rekey, NULL, "re-derive the control link keys from its record", cmd_rekey),
 	SHELL_CMD(ports, NULL, "state of both data port endpoints", cmd_ports),
 #if ZLRS_CONFIG_ENABLED
 	SHELL_CMD(config, NULL, "enter config mode (EXIT returns)", cmd_config),
@@ -1749,7 +2046,28 @@ int main(void)
 	 */
 
 	for (;;) {
-		const int64_t start_us = k_uptime_get() * 1000;
+		/*
+		 * Pacing uses the cycle counter, not the millisecond tick: at a 6.7 ms frame a 1 ms tick
+		 * granularity would jitter the frame by ±15%, and the frame period is the one thing both
+		 * ends must agree on exactly.
+		 */
+		const uint64_t start_cyc = k_cycle_get_64();
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
+		const uint32_t start_us = now_us();
+
+		frame_start_us = start_us;
+		if (bench.frames > 0U) {
+			bench.frame_us_last = start_us - prev_frame_start_us;
+			if (bench.frame_us_min == 0U || bench.frame_us_last < bench.frame_us_min) {
+				bench.frame_us_min = bench.frame_us_last;
+			}
+			if (bench.frame_us_last > bench.frame_us_max) {
+				bench.frame_us_max = bench.frame_us_last;
+			}
+		}
+		prev_frame_start_us = start_us;
+		bench.frames++;
+#endif
 
 		zlrs_watchdog_feed();
 		confirm_image();
@@ -1789,8 +2107,8 @@ int main(void)
 		led_tick(now_ms);
 		report(now_ms);
 
-		const int64_t elapsed_us = k_uptime_get() * 1000 - start_us;
-		const int64_t remain_us = (int64_t)frame_period_us - elapsed_us;
+		const uint64_t elapsed_us = k_cyc_to_us_floor64(k_cycle_get_64() - start_cyc);
+		const int64_t remain_us = (int64_t)frame_period_us - (int64_t)elapsed_us;
 
 		if (remain_us > 0) {
 			k_usleep((int32_t)remain_us);

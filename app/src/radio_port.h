@@ -33,3 +33,28 @@ void zlrs_radio_port_abort(void);
 
 /* Same time base as the radio backend (k_uptime_get_32) */
 uint32_t zlrs_radio_port_now_ms(void);
+
+/*
+ * Bench counters of the port itself: how many transactions ran, and how often the radio had an
+ * IRQ latched when nothing was being waited for. A non-zero stale count means an event from an
+ * earlier transaction survived into the next slot (frames get completed early or the planner
+ * finds an interrupt with no task).
+ */
+typedef struct {
+	uint32_t transactions;
+	uint32_t stale_irq;      /* transactions that started with a radio IRQ still latched */
+	uint32_t stale_irq_bits; /* the latched bits of the last such IRQ */
+	uint32_t late_irq;       /* engine calls that found the planner's IRQ flag set with no wait */
+	uint32_t overruns;       /* transactions aborted because the slot budget ran out */
+	/*
+	 * Receive windows that came back long before their timeout: a window that closes early either
+	 * heard something (fine) or was cut short by an event that belonged to another transaction,
+	 * which is how frames go missing without a single error counter moving.
+	 */
+	uint32_t rx_windows;
+	uint32_t rx_early;      /* windows that ended in well under the programmed timeout */
+	uint32_t rx_us_last;    /* duration of the last completed transaction, microseconds */
+	uint32_t tx_us_last;
+} zlrs_radio_diag_t;
+
+void zlrs_radio_port_diag(zlrs_radio_diag_t *out);
