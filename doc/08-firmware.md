@@ -207,14 +207,18 @@ One command updates a device:
 `python3 tools/zlrs-update.py --port <application config port>` — trigger recovery, wait for
 the recovery port, read the active slot, write the other one and mark it test, wait for the
 application, check the image hash and send `confirm`. The tool writes pending but **never
-permanent**. Bricked boards go through BOOTSEL and a UF2 drag (see [12-debug](12-debug.md)).
+permanent**. A broken *application* is recovered through the bootloader too (serial recovery is
+always reachable); only a broken *bootloader* needs BOOTSEL and a UF2 drag
+(see [12-debug](12-debug.md)).
 Production images use their own signing key; changing that key means reflashing the bootloader.
 
 **An image dragged onto BOOTSEL has no rollback**: it goes straight into slot0 with an empty
 trailer, which MCUboot treats as the initial image — it boots it without asking for a
-confirmation and there is nothing to revert to. That path is for the first flash (and for rescue),
-not for day-to-day updates: an app that resets during init then simply loops. The rollback lives
-in the tool's path, where the image arrives in the inactive slot marked for test.
+confirmation and there is nothing to revert to; an app that resets during init then simply
+loops. **The application is therefore never installed as a UF2**: BOOTSEL carries the bootloader
+image only, and every application image — first install included — goes in through the bootloader
+(serial recovery on a blank board, the config port afterwards). That is the only path on which
+the signature check, the confirmation and the rollback apply.
 
 ## 6. Error handling
 

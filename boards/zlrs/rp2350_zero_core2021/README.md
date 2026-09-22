@@ -126,7 +126,7 @@ bring-up, see [doc/12-debug.md](../../../doc/12-debug.md) 5).
 | storage | 0x100000 | 3 MB | NVS: root key, device id, pairing, failsafe, baud, region, power, role, profile |
 
 Boot chain: RP2350 bootrom to the application (drag `zephyr.uf2` onto the ROM's `RPI-RP2`
-volume).
+volume). This layout has no bootloader: no upgrade path and no rollback, so it is for bring-up.
 
 **hf/mcuboot and lf/mcuboot with MCUboot** (`rp2350_zero_core2021_partitions_mcuboot.dtsi`):
 
@@ -143,20 +143,30 @@ but never comes back on this board). Image confirmation and recovery entries are
 [doc/08-firmware.md](../../../doc/08-firmware.md) 5.
 
 Variants without a bootloader flash through BOOTSEL plus a UF2 (`west flash --runner uf2`) or SWD
-(openocd, probe-rs, jlink). MCUboot variants need **two BOOTSEL rounds** the first time:
+(openocd, probe-rs, jlink). On the MCUboot variants BOOTSEL carries the **bootloader image
+only**; the application is always installed and updated through the bootloader:
 
 ```shell
 west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33/hf/mcuboot app
-python3 tools/make-signed-uf2.py
 ```
 
-1. hold BOOTSEL while plugging USB in and drag `build/mcuboot/zephyr/zephyr.uf2`;
-2. hold BOOTSEL and plug in again, then drag the application's `zephyr.signed.uf2`.
+1. hold BOOTSEL while plugging USB in and drag `build/mcuboot/zephyr/zephyr.uf2`; the board
+   reboots and parks in MCUboot serial recovery (there is no application yet);
+2. upload the application through that recovery port; on a board that already runs an
+   application, the same command is aimed at its config port instead:
 
-Once the bootloader runs, the ROM's mass-storage mode does not come back, so both rounds are
-needed. **Note**: the `zephyr.uf2` in the application directory is unsigned and MCUboot rejects
-it (its base is the flash start, not slot0), so bootloader builds only ever drag
-`zephyr.signed.uf2`.
+```shell
+python3 tools/zlrs-update.py --serial <serial> \
+  --recovery-port /dev/serial/by-id/usb-zlrs_ZLRS_MCUBOOT_<serial>-if00 --no-trigger \
+  --image build/app/zephyr/zephyr.signed.bin        # first flash
+python3 tools/zlrs-update.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04
+# later updates
+```
+
+**The application is never dragged on as a UF2**: an image written that way lands in slot0 with
+an empty trailer, which MCUboot treats as the initial image — no confirmation, no rollback. Only
+the bootloader image goes through BOOTSEL. (The `zephyr.uf2` in an application build directory is
+the unsigned image based at the flash start: MCUboot rejects it.)
 
 Later upgrades go through MCUboot serial recovery and **USB only**, triggered from the
 application's config port:

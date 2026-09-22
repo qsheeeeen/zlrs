@@ -66,11 +66,19 @@ Config mode is entered by a command the tool sends on the config CDC; details in
 | Variant | First time | Afterwards |
 | --- | --- | --- |
 | Without a bootloader | hold BOOTSEL and drag `zephyr.uf2` on, or use SWD | the same |
-| With MCUboot | two BOOTSEL rounds: the bootloader, then `zephyr.signed.uf2` | one command, through the application's config port |
+| With MCUboot | BOOTSEL drags the **bootloader** only; the application then goes in through the bootloader's serial recovery port | one command, through the application's config port |
 
 ```shell
+python3 tools/zlrs-update.py --serial <serial> \
+  --recovery-port /dev/serial/by-id/usb-zlrs_ZLRS_MCUBOOT_<serial>-if00 --no-trigger \
+  --image build/app/zephyr/zephyr.signed.bin        # first flash
 python3 tools/zlrs-update.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04
+# later updates
 ```
+
+**The application is never installed as a UF2**: BOOTSEL is the bootloader's door, and everything
+with an application in it goes through the bootloader so that signature checks, confirmation and
+rollback apply ([08-firmware](08-firmware.md) 5).
 
 ## 5. Wiring and placement
 

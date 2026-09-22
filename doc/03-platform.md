@@ -108,13 +108,21 @@ against a host shim. The full command and dependency list is in the [README](../
 ## 6. Flashing
 
 - Without a bootloader: BOOTSEL plus UF2 (`west flash --runner uf2`) or SWD (openocd, probe-rs,
-  jlink).
-- With MCUboot: two BOOTSEL rounds the first time (the bootloader, then `zephyr.signed.uf2`);
-  afterwards one command does it, through the application's config port:
+  jlink). That is a bring-up path, not a product one: no upgrade, no rollback.
+- With MCUboot: BOOTSEL carries the **bootloader** image only. The board then parks in serial
+  recovery (no application yet) and the application goes in through that recovery port; every
+  later update is the same command aimed at the running application's config port:
 
 ```shell
+python3 tools/zlrs-update.py --serial <serial> \
+  --recovery-port /dev/serial/by-id/usb-zlrs_ZLRS_MCUBOOT_<serial>-if00 --no-trigger \
+  --image build/app/zephyr/zephyr.signed.bin        # first flash
 python3 tools/zlrs-update.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04
+# later updates
 ```
+
+The application is never dragged on as a UF2: that path has no rollback
+([08-firmware](08-firmware.md) 5).
 
 Recovery ports, image confirmation and rollback are described in [08-firmware](08-firmware.md) 5.
 

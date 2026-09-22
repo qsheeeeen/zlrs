@@ -10,6 +10,9 @@
 #      app/src/caps.h, so supporting a board is a devicetree job, not a code change.
 #   3. shipped configurations carry no ZLRS_APP_DEBUG_* option. Those exist for bench images;
 #      the marker symbol CONFIG_ZLRS_APP_DEBUG lives in app/debug.conf only.
+#   4. the application is never installed as a UF2: BOOTSEL carries the bootloader image only,
+#      every application image goes through the bootloader (doc/08-firmware.md 5). A document or
+#      tool that brings the app-UF2 path back fails here.
 #
 # Usage: tools/gates.sh
 
@@ -40,6 +43,14 @@ shipped=$(git ls-files 'app' 'boards' | grep -E '\.(conf|defconfig)$' | grep -v 
 
 if [ -n "$shipped" ] && hit=$(printf '%s\n' "$shipped" | xargs grep -n 'ZLRS_APP_DEBUG'); then
 	bad "a shipped configuration carries a debug option:"
+	echo "$hit"
+fi
+
+hit=$(grep -rn -e 'signed\.uf2' -e 'make-signed-uf2' doc README.md boards/*/*/README.md tools \
+	2>/dev/null | grep -v '^tools/gates.sh:')
+
+if [ -n "$hit" ]; then
+	bad "the application-as-UF2 path is forbidden:"
 	echo "$hit"
 fi
 

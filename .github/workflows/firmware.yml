@@ -148,8 +148,9 @@ jobs:
               -DCONFIG_ZLRS_APP_BAND_ROLE_SUBG_CONTROL=n
           done
 
-      # MCUboot: sysbuild builds the bootloader together with the signed application for both SKUs,
-      # and also exercises the script that wraps a signed image into a UF2 for the first flash
+      # MCUboot: sysbuild builds the bootloader together with the signed application for both SKUs.
+      # The application is installed and updated through the bootloader (serial recovery), never
+      # dragged on as a UF2: BOOTSEL is for the bootloader image only.
       - name: build (mcuboot, both skus)
         run: |
           set -x
@@ -157,19 +158,20 @@ jobs:
           for board in rp2350_zero_core2021/rp2350a/m33/hf rp2350_zero_core2021/rp2350a/m33/lf; do
             sku="${board##*/}"
             west build --sysbuild -b "${board}/mcuboot" zlrs/app -d "build-${sku}-mcuboot"
-            python3 zlrs/tools/make-signed-uf2.py "build-${sku}-mcuboot"
+            # No application UF2 may exist: BOOTSEL carries the bootloader image only
+            test ! -e "build-${sku}-mcuboot/app/zephyr/zephyr.signed.uf2"
           done
 
-      - name: upload uf2
+      - name: upload images
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: rp2350_zero_core2021-uf2
+          name: rp2350_zero_core2021-images
           path: |
+            build-hf-mcuboot/mcuboot/zephyr/zephyr.uf2
+            build-lf-mcuboot/mcuboot/zephyr/zephyr.uf2
+            build-hf-mcuboot/app/zephyr/zephyr.signed.bin
+            build-lf-mcuboot/app/zephyr/zephyr.signed.bin
             build/zephyr/zephyr.uf2
             build-lf/zephyr/zephyr.uf2
-            build-hf-mcuboot/mcuboot/zephyr/zephyr.uf2
-            build-hf-mcuboot/app/zephyr/zephyr.signed.uf2
-            build-lf-mcuboot/mcuboot/zephyr/zephyr.uf2
-            build-lf-mcuboot/app/zephyr/zephyr.signed.uf2
           if-no-files-found: ignore

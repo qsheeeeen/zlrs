@@ -42,7 +42,7 @@ ELRS's official documentation and source, linked at the end; the comparison is a
 | Pairing and cross-talk | binding phrase or the classic button; Model Match; Loan Model | the config tool writes a root key, a long press runs the handshake; one device, one peer |
 | Dynamic power | yes, driven by telemetry | yes, on by default: judged once a second from telemetry RSSI/LQ, 3 dB steps |
 | Configuration | Lua, WebUI, Configurator (compile-time regulatory domain) | a dedicated config CDC with the runtime config protocol (region, power ceiling, role, profile and more); no WiFi or Lua |
-| Updates | WiFi OTA, Betaflight passthrough, DFU, serial | UF2 (BOOTSEL) and SWD; MCUboot variants support serial-recovery DFU with signatures and rollback; no wireless OTA |
+| Updates | WiFi OTA, Betaflight passthrough, DFU, serial | the bootloader is flashed once through BOOTSEL; every application image goes through serial-recovery DFU with signatures, confirmation and rollback; SWD for debug; no wireless OTA |
 | Regulation | compile-time presets | four runtime region tables plus radio-design checks, duty accounting and rate/frame-rate clamping |
 | Peripheral integration | Serial VTX, Team Racing, Trainer, Sentinel, Backpack, BLE | none |
 | Dual-band use | Gemini dual-transmit diversity; Xrossband dual-band redundancy (**two radios transmitting at once**) | one radio **hops across sub-bands**: the two bands form one link mixed by `r`, neither redundant nor diversity |

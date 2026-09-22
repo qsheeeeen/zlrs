@@ -36,26 +36,32 @@ The Core2021's sub-G comes in two SKUs, so there are two board variants:
 ```shell
 tools/setup-zephyr.sh         # about 5 GB the first time
 source tools/zephyr-env.sh    # once per new shell
-zlrs-build                    # = west build -b $ZLRS_BOARD $ZLRS_APP
-cd "$ZLRS_WS" && west flash    # openocd by default, or --runner uf2/probe-rs/jlink
-```
-
-MCUboot builds (recommended: later upgrades need no BOOTSEL):
-
-```shell
 zlrs-build-mcuboot            # = west build --sysbuild -b $ZLRS_BOARD/mcuboot $ZLRS_APP
-python3 tools/make-signed-uf2.py
 ```
 
-The first flash needs two BOOTSEL rounds: drag `build/mcuboot/zephyr/zephyr.uf2`, then enter
-BOOTSEL again and drag `build/app/zephyr/zephyr.signed.uf2`. After that one command upgrades it,
-through the application's config port:
+**The application is never flashed as a UF2**: every installation and every update goes through
+the bootloader. BOOTSEL carries the bootloader image only; after that, the tool does the rest.
+The first flash of a board:
+
+1. hold BOOTSEL while plugging USB in and drag `build/mcuboot/zephyr/zephyr.uf2` onto the
+   `RPI-RP2` volume — the board reboots and parks in MCUboot serial recovery, because there is no
+   application yet;
+2. upload the application through that recovery port:
+
+   ```shell
+   python3 tools/zlrs-update.py --serial <serial> \
+     --recovery-port /dev/serial/by-id/usb-zlrs_ZLRS_MCUBOOT_<serial>-if00 --no-trigger \
+     --image build/app/zephyr/zephyr.signed.bin
+   ```
+
+Later updates are one command from the running application, through its config port:
 
 ```shell
 python3 tools/zlrs-update.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04
 ```
 
-The tool finds the bootloader's recovery port by itself. The two modes announce different USB
+The tool finds the bootloader's recovery port by itself, verifies the image hash after the reboot
+and only then confirms it — an image that does not come up rolls back. The two modes announce different USB
 names (the application `ZLRS`, the bootloader `ZLRS MCUBOOT`), and scripts find ports under
 `/dev/serial/by-id/...` rather than hard-coding `ttyACM*`. Boot chain, recovery entries and
 rollback: [doc/08-firmware.md](doc/08-firmware.md) 5.
@@ -107,8 +113,8 @@ control port, a config CDC, a button or a LED is a devicetree fact (`app/src/cap
 
 | Artifact | Command | Notes |
 | --- | --- | --- |
-| firmware (TX or RX) | `zlrs-build` | target `.../m33/hf` by default (use `.../lf` for LF) |
-| firmware plus MCUboot | `zlrs-build-mcuboot` | adds `--sysbuild`, a bootloader and two-slot partitions |
+| firmware plus MCUboot | `zlrs-build-mcuboot` | the supported image: `--sysbuild`, a bootloader and two-slot partitions |
+| firmware without a bootloader | `zlrs-build` | bring-up only: SWD or a UF2, no upgrade path, no rollback |
 | debug image | `zlrs-build` + `app/debug.conf` + `app/debug.overlay` | console CDC, shell, stats logging |
 | host tests | `make -C tests/host run` | protocol core, link layer, CRSF, config protocol, LED; no hardware, no workspace |
 | bench self-test | `python3 tools/zlrs-bringup.py` | ports, config mode, config protocol reads and writes, NVS persistence |
