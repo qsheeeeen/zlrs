@@ -744,6 +744,139 @@ static void test_pairing(void)
 	CHECK(!sim.tx.ctl.paired);
 }
 
+/* Little-endian u32 into a payload: the pairing messages carry the two nonces that way */
+static void pair_put_u32(uint8_t *p, uint32_t v)
+{
+	p[0] = (uint8_t)v;
+	p[1] = (uint8_t)(v >> 8);
+	p[2] = (uint8_t)(v >> 16);
+	p[3] = (uint8_t)(v >> 24);
+}
+
+/*
+ * A repeated PAIR_REQ must not restart the responder's half of the handshake: the initiator
+ * repeats the request until it hears an answer, and the confirmation it finally sends echoes the
+ * responder nonce from that answer. Drawing a fresh nonce per repeat made that check reject the
+ * confirmation, so the initiator went to SEARCHING while the responder stayed in PAIRING.
+ */
+static void test_pairing_repeat_req(void)
+{
+	sim_t sim;
+	uint8_t payload[2U * ZLRS_DEV_ID_LEN + ZLRS_PAIR_SALT_LEN + 1U + ZLRS_RC_PAYLOAD_LEN];
+	uint8_t frame[ZLRS_FRAME_MAX_LEN];
+	const uint32_t nonce_a = 0x11111111U;
+	const uint32_t other_a = 0x22222222U;
+	uint32_t first_b = 0U;
+	uint16_t len;
+
+	printf("link: pairing survives repeated requests\n");
+	sim_init(&sim);
+
+	zlrs_link_press(&sim.rx.ctl, sim.now_ms);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_PAIRING);
+
+	for (int round = 0; round < 2; round++) {
+		memset(payload, 0, sizeof(payload));
+		memcpy(&payload[0], sim.tx.dev_id, ZLRS_DEV_ID_LEN);
+		pair_put_u32(&payload[2U * ZLRS_DEV_ID_LEN], nonce_a);
+		len = build_data_frame(frame, ZLRS_PKT_PAIR_REQ, 0U, 0U, payload, sizeof(payload),
+				       sim.tx.ctl.auth_key);
+		CHECK(len > 0U);
+		sim_inject(&sim, &sim.rx.ctl, frame, len);
+
+		if (round == 0) {
+			first_b = sim.rx.ctl.pair_nonce_b;
+			CHECK(sim.rx.ctl.pair_wait_cfm);
+		} else {
+			/* Same initiator nonce: keep the answer that is already on its way */
+			CHECK(sim.rx.ctl.pair_nonce_b == first_b);
+		}
+	}
+
+	/* A new initiator nonce is a new handshake and does get a fresh responder nonce */
+	memset(payload, 0, sizeof(payload));
+	memcpy(&payload[0], sim.tx.dev_id, ZLRS_DEV_ID_LEN);
+	pair_put_u32(&payload[2U * ZLRS_DEV_ID_LEN], other_a);
+	len = build_data_frame(frame, ZLRS_PKT_PAIR_REQ, 0U, 0U, payload, sizeof(payload),
+			       sim.tx.ctl.auth_key);
+	CHECK(len > 0U);
+	sim_inject(&sim, &sim.rx.ctl, frame, len);
+	CHECK(sim.rx.ctl.pair_nonce == other_a);
+	CHECK(sim.rx.ctl.pair_nonce_b != first_b);
+
+	/* The confirmation reaches the responder: it commits the salt and moves on */
+	{
+		const uint32_t a = sim.rx.ctl.pair_nonce;
+		const uint32_t b = sim.rx.ctl.pair_nonce_b;
+
+		memset(payload, 0, sizeof(payload));
+		memcpy(&payload[0], sim.tx.dev_id, ZLRS_DEV_ID_LEN);
+		memcpy(&payload[ZLRS_DEV_ID_LEN], sim.rx.dev_id, ZLRS_DEV_ID_LEN);
+		pair_put_u32(&payload[2U * ZLRS_DEV_ID_LEN], a);
+		pair_put_u32(&payload[2U * ZLRS_DEV_ID_LEN + 4U], b);
+		len = build_data_frame(frame, ZLRS_PKT_PAIR_CFM, 0U, 0U, payload, sizeof(payload),
+				       sim.tx.ctl.auth_key);
+		CHECK(len > 0U);
+		sim_inject(&sim, &sim.rx.ctl, frame, len);
+		CHECK(sim.rx.ctl.paired);
+		CHECK(sim.rx.ctl.state == ZLRS_STATE_SEARCHING);
+
+		/* The responder then repeats its answer; the initiator answers it again */
+		memset(payload, 0, sizeof(payload));
+		memcpy(&payload[0], sim.tx.dev_id, ZLRS_DEV_ID_LEN);
+		memcpy(&payload[ZLRS_DEV_ID_LEN], sim.rx.dev_id, ZLRS_DEV_ID_LEN);
+		pair_put_u32(&payload[2U * ZLRS_DEV_ID_LEN], a);
+		pair_put_u32(&payload[2U * ZLRS_DEV_ID_LEN + 4U], b);
+		len = build_data_frame(frame, ZLRS_PKT_PAIR_RESP, 0U, 0U, payload, sizeof(payload),
+				       sim.tx.ctl.auth_key);
+		CHECK(len > 0U);
+
+		sim.tx.ctl.paired = true;
+		sim.tx.ctl.state = ZLRS_STATE_SEARCHING;
+		sim.tx.ctl.pair_nonce = a;
+		sim.tx.ctl.pair_cfm_pending = false;
+		sim_inject(&sim, &sim.tx.ctl, frame, len);
+		CHECK(sim.tx.ctl.pair_cfm_pending);
+	}
+}
+
+/*
+ * A confirm that never arrives must not strand the pairing. The two ends run their own slot phases
+ * on air, so one PAIR_CFM per handshake is a coin flip: the initiator repeats the confirm, and the
+ * responder keeps repeating its answer until it hears one.
+ */
+static void test_pairing_lost_confirm(void)
+{
+	sim_t sim;
+
+	printf("link: pairing survives a lost confirm\n");
+	sim_init(&sim);
+
+	zlrs_link_press(&sim.tx.ctl, sim.now_ms);
+	zlrs_link_press(&sim.rx.ctl, sim.now_ms);
+
+	/* Let the request and the answer through, then drop the first confirms on the floor */
+	SIM_UNTIL(&sim, sim.rx.ctl.pair_wait_cfm, 200);
+	CHECK(sim.rx.ctl.pair_wait_cfm);
+	sim.drop_down = 4;
+
+	/* The responder hears a later repeat and finishes */
+	SIM_UNTIL(&sim, sim.rx.ctl.state == ZLRS_STATE_SEARCHING, 400);
+	CHECK(sim.rx.ctl.state == ZLRS_STATE_SEARCHING);
+	CHECK(sim.rx.ctl.paired);
+	CHECK(sim.rx.ctl.stats.pair_cfm_rx >= 1U);
+	CHECK(sim.tx.ctl.stats.pair_cfm_tx > 1U);
+	CHECK(sim.tx.ctl.stats.pair_req_tx > 0U);
+	CHECK(sim.rx.ctl.stats.pair_resp_tx > 1U); /* the answer repeated while it waited */
+
+	SIM_UNTIL(&sim, sim.tx.ctl.state == ZLRS_STATE_SEARCHING, 400);
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_SEARCHING);
+	CHECK(sim.tx.ctl.paired);
+	/* Both ends keep the same pair salt, or the keys they derive would differ */
+	CHECK(memcmp(sim.tx.ctl.pair_salt, sim.rx.ctl.pair_salt, ZLRS_PAIR_SALT_LEN) == 0);
+	CHECK(memcmp(sim.tx.ctl.sync_word, sim.rx.ctl.sync_word, ZLRS_SYNC_WORD_LEN) == 0);
+}
+
 static void test_session(void)
 {
 	sim_t sim;
@@ -2038,6 +2171,8 @@ static void test_high_frame_rate(void)
 void test_link(void)
 {
 	test_pairing();
+	test_pairing_repeat_req();
+	test_pairing_lost_confirm();
 	test_session();
 	test_reflection();
 	test_pairing_rotation();

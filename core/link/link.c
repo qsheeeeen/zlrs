@@ -242,7 +242,7 @@ static void derive_by_endpoints(const zlrs_link_t *link, const char *label, cons
 
 static void derive_pair(zlrs_link_t *link)
 {
-	uint8_t ctx[2U * ZLRS_DEV_ID_LEN + ZLRS_PAIR_SALT_LEN];
+	uint8_t ctx[ZLRS_PAIR_CTX_LEN];
 	uint8_t seed[4];
 	uint8_t ctrl_word[ZLRS_SYNC_WORD_LEN];
 	uint8_t data_word[ZLRS_SYNC_WORD_LEN];
@@ -253,8 +253,7 @@ static void derive_pair(zlrs_link_t *link)
 	 * pair_key, and re-pairing changes the nonces, which replaces the whole subtree below
 	 * (see doc/10-security.md 3).
 	 */
-	ordered_ids(link, ctx);
-	ordered_pair_salt(link, &ctx[2U * ZLRS_DEV_ID_LEN]);
+	zlrs_link_pair_ctx(link, ctx);
 	zlrs_kdf(link->root_key, ZLRS_KEY_LEN, LABEL_PAIR, ctx, sizeof(ctx), link->pair_key,
 		 ZLRS_KEY_LEN);
 	derive_by_endpoints(link, LABEL_LINK_AUTH, NULL, 0U, link->link_auth_out,
@@ -473,6 +472,7 @@ static const zlrs_radio_req_t *send_sync(zlrs_link_t *link, uint32_t now_ms)
 	len = build_frame(link, ZLRS_PKT_SYNC, 0U, payload, sizeof(payload),
 			  tag_key_for(link, ZLRS_PKT_SYNC, true));
 	link->last_sync_ms = now_ms;
+	link->stats.tx_syncs++;
 
 	/* SYNC always goes out on the sync channel */
 	return submit_tx(link, len, sync_freq_hz(link), link->cfg.sync_slot, link->sync_word);
@@ -492,6 +492,7 @@ static const zlrs_radio_req_t *send_sess_resp(zlrs_link_t *link)
 	len = build_frame(link, ZLRS_PKT_SESS_RESP, 0U, payload, sizeof(payload),
 			  tag_key_for(link, ZLRS_PKT_SESS_RESP, true));
 	link->sess_resp_due = false;
+	link->stats.sess_resp_tx++;
 
 	/* Still on the sync channel: the TX is in SEARCHING and listens there */
 	return submit_tx(link, len, sync_freq_hz(link), link->cfg.sync_slot, link->sync_word);
@@ -517,6 +518,7 @@ static const zlrs_radio_req_t *send_sess_cfm(zlrs_link_t *link)
 	len = build_frame(link, ZLRS_PKT_SESS_CFM, 0U, payload, sizeof(payload),
 			  tag_key_for(link, ZLRS_PKT_SESS_CFM, true));
 	link->sess_cfm_due = false;
+	link->stats.sess_cfm_tx++;
 
 	return submit_tx(link, len, sync_freq_hz(link), link->cfg.sync_slot, link->sync_word);
 }
@@ -808,6 +810,20 @@ static const zlrs_radio_req_t *send_pair(zlrs_link_t *link, uint8_t type, uint32
 	uint8_t payload[PAIR_PAYLOAD_LEN];
 	uint16_t len;
 
+	switch (type) {
+	case ZLRS_PKT_PAIR_REQ:
+		link->stats.pair_req_tx++;
+		break;
+	case ZLRS_PKT_PAIR_RESP:
+		link->stats.pair_resp_tx++;
+		break;
+	case ZLRS_PKT_PAIR_CFM:
+		link->stats.pair_cfm_tx++;
+		break;
+	default:
+		break;
+	}
+
 	pair_payload_fill(link, payload, nonce_a, nonce_b);
 	len = build_frame(link, type, 0U, payload, sizeof(payload), tag_key_for(link, type, true));
 	link->last_pair_tx_ms = now_ms;
@@ -906,6 +922,7 @@ static void pairing_complete(zlrs_link_t *link, uint32_t now_ms)
 	derive_pair(link);
 	link->paired = true;
 	link->pair_cfm_pending = false;
+	link->pair_cfm_sent = 0U;
 	link->pair_wait_cfm = false;
 	set_state(link, ZLRS_STATE_SEARCHING, now_ms);
 	link->last_rx_ms = now_ms;
@@ -1036,6 +1053,14 @@ static void handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 	link->stats.last_rssi = link->stats.last_rssi; /* rssi is written by the port layer */
 }
 
+/* A pairing frame that arrived but does not belong to this handshake counts, it is a symptom */
+static bool pair_reject(zlrs_link_t *link)
+{
+	link->stats.pair_rejects++;
+
+	return false;
+}
+
 static bool handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
 {
 	const uint8_t *dev_a = frame->payload;
@@ -1045,7 +1070,7 @@ static bool handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame, uint
 	const bool initiator = (link->cfg.role == ZLRS_ROLE_TX);
 
 	if (frame->payload_len != PAIR_PAYLOAD_LEN) {
-		return false;
+		return pair_reject(link);
 	}
 
 	nonce_a = rd32(&frame->payload[2U * ZLRS_DEV_ID_LEN]);
@@ -1053,13 +1078,35 @@ static bool handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame, uint
 
 	switch (frame->type) {
 	case ZLRS_PKT_PAIR_REQ:
-		/* Responder: remember the initiator's id and nonce, answer PAIR_RESP next slot */
+		link->stats.pair_req_rx++;
+		break;
+	case ZLRS_PKT_PAIR_RESP:
+		link->stats.pair_resp_rx++;
+		break;
+	case ZLRS_PKT_PAIR_CFM:
+		link->stats.pair_cfm_rx++;
+		break;
+	default:
+		break;
+	}
+
+	switch (frame->type) {
+	case ZLRS_PKT_PAIR_REQ:
+		/*
+		 * Responder: remember the initiator's id and nonce, answer PAIR_RESP next slot. The
+		 * responder nonce is only drawn once per handshake: the initiator repeats PAIR_REQ until
+		 * it hears the response, and a fresh nonce per repeat would make the confirmation it
+		 * finally sends fail the check below (the reply it answered had another nonce).
+		 */
 		if (initiator) {
-			return false;
+			return pair_reject(link);
 		}
 		memcpy(link->peer_id, dev_a, ZLRS_DEV_ID_LEN);
-		link->pair_nonce = nonce_a;
-		link->pair_nonce_b = link_random(link, now_ms);
+		/* Only a different initiator nonce starts a new handshake (repeats keep this answer) */
+		if (link->pair_nonce != nonce_a) {
+			link->pair_nonce = nonce_a;
+			link->pair_nonce_b = link_random(link, now_ms);
+		}
 		link->pair_wait_cfm = true;
 
 		/* The TX ships failsafe values (the flag is set only if it has them): store and hand over */
@@ -1077,33 +1124,34 @@ static bool handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame, uint
 	case ZLRS_PKT_PAIR_RESP:
 		/* Initiator: confirm both its id and its nonce came back */
 		if (!initiator) {
-			return false;
+			return pair_reject(link);
 		}
 		if (!zlrs_ct_equal(dev_a, link->dev_id, ZLRS_DEV_ID_LEN) ||
 		    nonce_a != link->pair_nonce) {
-			return false;
+			return pair_reject(link);
 		}
 		memcpy(link->peer_id, dev_b, ZLRS_DEV_ID_LEN);
 		link->pair_nonce_b = nonce_b;
+		link->last_pair_rx_ms = now_ms;
 		link->pair_cfm_pending = true;
 		return true;
 
 	case ZLRS_PKT_PAIR_CFM:
 		/* Responder: both nonces are back, pairing is done */
 		if (initiator) {
-			return false;
+			return pair_reject(link);
 		}
 		if (!zlrs_ct_equal(dev_a, link->peer_id, ZLRS_DEV_ID_LEN) ||
 		    !zlrs_ct_equal(dev_b, link->dev_id, ZLRS_DEV_ID_LEN) ||
 		    nonce_a != link->pair_nonce || nonce_b != link->pair_nonce_b) {
-			return false;
+			return pair_reject(link);
 		}
 		link->pair_wait_cfm = false;
 		pairing_complete(link, now_ms);
 		return true;
 
 	default:
-		return false;
+		return pair_reject(link);
 	}
 }
 
@@ -1171,6 +1219,7 @@ static int handle_sess_cfm(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_
 	 * Which hop index to adopt: use the one in the confirm when present (during a mid-session
 	 * re-handshake that is the peer's current index), otherwise fall back to the SYNC's.
 	 */
+	link->stats.sess_cfm_rx++;
 	session_activate(
 		link, (frame->payload_len >= 6U)
 			      ? (uint16_t)(frame->payload[4] | ((uint16_t)frame->payload[5] << 8))
@@ -1202,6 +1251,7 @@ static bool handle_sess_resp(zlrs_link_t *link, const zlrs_frame_t *frame, uint3
 	if (nonce_t != link->sess_nonce_t) {
 		return false;
 	}
+	link->stats.sess_resp_rx++;
 
 	/*
 	 * Simplified handshake: the peer is saying "I heard you". The key is static and there is no
@@ -1267,7 +1317,12 @@ static int handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 
 	if (frame.type == ZLRS_PKT_PAIR_REQ || frame.type == ZLRS_PKT_PAIR_RESP ||
 	    frame.type == ZLRS_PKT_PAIR_CFM) {
-		if (link->state != ZLRS_STATE_PAIRING) {
+		/*
+		 * SEARCHING as well: the responder repeats its answer until the confirmation arrives, and
+		 * an initiator that already moved on has to be able to answer that repeat with another
+		 * confirmation (the handshake has no other acknowledgement).
+		 */
+		if (link->state != ZLRS_STATE_PAIRING && link->state != ZLRS_STATE_SEARCHING) {
 			return -1;
 		}
 		return handle_pair_frame(link, &frame, now_ms) ? 0 : -1;
@@ -1361,11 +1416,26 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot, uin
 		if (down) {
 			if (tx_side) {
 				if (link->pair_cfm_pending) {
+					/*
+					 * Confirmation repeats: the two ends share no slot phase while pairing, so
+					 * a single one is a coin flip. The responder repeats its answer until it
+					 * hears a confirm, and the confirm is repeated here for the same reason.
+					 */
+					if (link->pair_cfm_sent >= ZLRS_PAIR_CFM_REPEATS) {
+						pairing_complete(link, now_ms);
+						return NULL;
+					}
+					if ((uint32_t)(now_ms - link->last_pair_tx_ms) <
+					    link->cfg.pair_period_ms) {
+						return NULL;
+					}
 					const zlrs_radio_req_t *req =
 						send_pair(link, ZLRS_PKT_PAIR_CFM, link->pair_nonce,
 							  link->pair_nonce_b, now_ms);
 
-					pairing_complete(link, now_ms);
+					if (req != NULL) {
+						link->pair_cfm_sent++;
+					}
 					return req;
 				}
 				if ((uint32_t)(now_ms - link->last_pair_tx_ms) <
@@ -1392,6 +1462,29 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot, uin
 	if (link->state == ZLRS_STATE_SEARCHING) {
 		if (tx_side) {
 			if (down) {
+				/*
+				 * A peer whose confirms were all lost keeps repeating its answer; answering again
+				 * is what unsticks it, and that costs this frame's SYNC at most.
+				 */
+				if (link->pair_cfm_pending) {
+					if (link->pair_cfm_sent >= ZLRS_PAIR_CFM_REPEATS) {
+						link->pair_cfm_pending = false;
+						return NULL;
+					}
+					if ((uint32_t)(now_ms - link->last_pair_tx_ms) >=
+					    link->cfg.pair_period_ms) {
+						const zlrs_radio_req_t *req =
+							send_pair(link, ZLRS_PKT_PAIR_CFM,
+								  link->pair_nonce,
+								  link->pair_nonce_b, now_ms);
+
+						if (req != NULL) {
+							link->pair_cfm_sent++;
+						}
+						return req;
+					}
+					return NULL;
+				}
 				if (link->sess_cfm_due) {
 					/*
 					 * Enter CONNECTED as soon as the confirm goes out, so both ends advance the hop table from
@@ -1418,7 +1511,15 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot, uin
 				return send_sync(link, now_ms);
 			}
 
-			/* The initiator listens for the peer's telemetry in the uplink slot */
+			/*
+			 * The initiator listens for the peer's telemetry in the uplink slot, but takes the
+			 * pairing channel now and then: a peer that never heard a confirm is still answering
+			 * there, and this window is the only way to hear it and finish its pairing.
+			 */
+			if ((link->frame_index % ZLRS_PAIR_SCAN_FRAMES) ==
+			    (ZLRS_PAIR_SCAN_FRAMES - 1U)) {
+				return pair_rx(link, link->cfg.rx_timeout_ms);
+			}
 			return submit_rx(link, sync_freq_hz(link), link->cfg.sync_slot,
 					 link->sync_word, link->cfg.rx_timeout_ms);
 		}
@@ -1673,6 +1774,19 @@ void zlrs_link_set_dev_id(zlrs_link_t *link, const uint8_t dev_id[ZLRS_DEV_ID_LE
 	memcpy(link->dev_id, dev_id, ZLRS_DEV_ID_LEN);
 }
 
+void zlrs_link_rederive(zlrs_link_t *link)
+{
+	if (link->configured && link->paired) {
+		derive_pair(link);
+	}
+}
+
+void zlrs_link_pair_ctx(const zlrs_link_t *link, uint8_t out[ZLRS_PAIR_CTX_LEN])
+{
+	ordered_ids(link, out);
+	ordered_pair_salt(link, &out[2U * ZLRS_DEV_ID_LEN]);
+}
+
 void zlrs_link_set_mix(zlrs_link_t *link, uint8_t mix)
 {
 	link->sub_mix_default = (uint8_t)(mix & 0x03U);
@@ -1724,12 +1838,15 @@ void zlrs_link_press(zlrs_link_t *link, uint32_t now_ms)
 	link->pair_nonce = link_random(link, now_ms);
 	link->pair_nonce_b = link_random(link, link->pair_nonce);
 	link->pair_cfm_pending = false;
+	link->pair_cfm_sent = 0U;
 	link->pair_wait_cfm = false;
 	set_state(link, ZLRS_STATE_PAIRING, now_ms);
 }
 
 const zlrs_radio_req_t *zlrs_link_slot(zlrs_link_t *link, uint8_t slot, uint32_t now_ms)
 {
+	link->slot = slot;
+
 	if (link->cfg.kind == ZLRS_LINK_CONTROL) {
 		return control_slot(link, slot, now_ms);
 	}
@@ -1741,6 +1858,7 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 			uint32_t now_ms)
 {
 	const bool was_tx = link->req_is_tx;
+	const uint8_t slot = (link->slot < 4U) ? link->slot : 0U;
 
 	link->req_pending = false;
 	link->stats.last_rssi = rssi;
@@ -1748,6 +1866,7 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 
 	if (status != ZLRS_RADIO_OK) {
 		link->stats.radio_fail++;
+		link->stats.slot_fail[slot]++;
 		if (was_tx) {
 			/* On a failed send, push the bytes we already took back into the queue */
 			link->queue_count = (uint16_t)(link->queue_count + link->pending_data_len);
@@ -1757,6 +1876,7 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 	}
 
 	if (was_tx) {
+		link->stats.slot_tx[slot]++;
 		link->stats.tx_frames++;
 		link->stats.tx_bytes = (uint32_t)(link->stats.tx_bytes + link->req.size);
 		link->queue_head = (uint16_t)((link->queue_head + link->pending_data_len) %
@@ -1766,7 +1886,17 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 		return;
 	}
 
+	link->stats.slot_rx[slot]++;
+	if (rssi != 0) {
+		if (link->stats.rssi_min == 0 || rssi < link->stats.rssi_min) {
+			link->stats.rssi_min = rssi;
+		}
+		if (rssi > link->stats.rssi_max) {
+			link->stats.rssi_max = rssi;
+		}
+	}
 	if (rx_len > 0U) {
+		link->stats.slot_hit[slot]++;
 		(void)handle_rx(link, rx_len, now_ms);
 	}
 }

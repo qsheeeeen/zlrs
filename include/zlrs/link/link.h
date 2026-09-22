@@ -27,6 +27,15 @@ extern "C" {
 #define ZLRS_LINK_CONTROL 0U
 #define ZLRS_LINK_DATA    1U
 
+/*
+ * Pairing handshake (doc/09-protocol.md 3.3). The two ends share no slot phase while pairing, so
+ * a message is heard or missed by luck: every step repeats until the next one shows up. The
+ * initiator sends this many PAIR_CFM before it calls the handshake done.
+ */
+#define ZLRS_PAIR_CFM_REPEATS 8U
+/* Frames between two listen windows on the pairing channel while SEARCHING (see control_slot) */
+#define ZLRS_PAIR_SCAN_FRAMES 4U
+
 /* Superframe slots, see doc/09-protocol.md 4.1 */
 #define ZLRS_SLOT_CTL_DOWN 0U /* TX -> RX: RC frame (the RX side is a receive window) */
 #define ZLRS_SLOT_CTL_UP   1U /* RX -> TX: TLM frame (the TX side is a receive window) */
@@ -121,6 +130,11 @@ typedef struct {
 	uint32_t tx_bytes;
 	uint32_t rx_frames;
 	uint32_t rx_bytes;
+	/* Transactions per superframe slot (ZLRS_SLOT_*): sent, listened, heard a frame, failed */
+	uint32_t slot_tx[4];
+	uint32_t slot_rx[4];
+	uint32_t slot_hit[4];
+	uint32_t slot_fail[4];
 	uint32_t rx_bad_tag;
 	uint32_t rx_bad_frame;
 	uint32_t rx_dup;
@@ -128,12 +142,27 @@ typedef struct {
 	uint32_t tx_retries;      /* ARQ: retransmissions */
 	uint32_t tx_arq_drop;     /* ARQ: frames given up after the retries ran out */
 	uint32_t rx_frag_drop;
-	uint32_t rx_syncs;      /* SYNC frames received while connected */
+	uint32_t rx_syncs;      /* SYNC frames received */
+	uint32_t tx_syncs;      /* SYNC frames sent */
+	uint32_t sess_resp_rx;  /* TX: peer answered a SYNC */
+	uint32_t sess_resp_tx;  /* RX: answered a SYNC */
+	uint32_t sess_cfm_rx;   /* RX: session confirmed */
+	uint32_t sess_cfm_tx;   /* TX: confirmations sent */
 	uint32_t mix_changes;   /* how often a new sub-band mix was adopted */
 	uint32_t mix_fallbacks; /* fallbacks to the default mix after missing new SYNC versions */
 	uint32_t hop_resync;    /* hop-index corrections received through SYNC */
+	/* Pairing handshake frames sent and received, per message type: this handshake loses frames */
+	uint32_t pair_req_tx;
+	uint32_t pair_resp_tx;
+	uint32_t pair_cfm_tx;
+	uint32_t pair_req_rx;
+	uint32_t pair_resp_rx;
+	uint32_t pair_cfm_rx;
+	uint32_t pair_rejects; /* pairing frames that arrived with a foreign id or nonce */
 	uint32_t radio_fail;
 	int16_t last_rssi;
+	int16_t rssi_min; /* weakest and strongest frame heard: the bench looks at the spread */
+	int16_t rssi_max;
 	int8_t last_snr; /* the radio stack cannot provide it under FLRC, see doc/06-radio.md */
 	/* Uplink quality: frames really received in the last window vs. what the sequence predicts */
 	uint8_t lq_percent;
@@ -210,8 +239,10 @@ typedef struct {
 	uint32_t last_rx_ms;
 	uint32_t last_sync_ms;
 	uint32_t last_pair_tx_ms;
-	bool pair_cfm_pending; /* TX got PAIR_RESP, send PAIR_CFM in the next downlink slot */
-	bool pair_wait_cfm;    /* RX answered PAIR_RESP, waiting for PAIR_CFM */
+	uint32_t last_pair_rx_ms; /* last PAIR_RESP: tells a repeated answer from a silent responder */
+	bool pair_cfm_pending;    /* TX got PAIR_RESP: PAIR_CFM due in the downlink slots */
+	uint8_t pair_cfm_sent;    /* PAIR_CFM of this handshake already sent */
+	bool pair_wait_cfm;       /* RX answered PAIR_RESP, waiting for PAIR_CFM */
 	/*
 	 * Simplified handshake (cfg.handshake = 0): the RX enters CONNECTED on a SYNC but keeps
 	 * answering SESS_RESP until the peer's first frame arrives: it may still be SEARCHING.
@@ -268,6 +299,7 @@ typedef struct {
 	zlrs_radio_req_t req;
 	bool req_is_tx;
 	bool req_pending;
+	uint8_t slot; /* ZLRS_SLOT_*: the slot the pending transaction serves (stats and logs) */
 } zlrs_link_t;
 
 void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg, const zlrs_radio_ops_t *radio,
@@ -277,6 +309,17 @@ void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg, const zlrs_ra
 void zlrs_link_set_root_key(zlrs_link_t *link, const uint8_t root_key[ZLRS_KEY_LEN],
 			    uint32_t now_ms);
 void zlrs_link_set_dev_id(zlrs_link_t *link, const uint8_t dev_id[ZLRS_DEV_ID_LEN]);
+
+/*
+ * Recompute the pairing-level keys from the record the link holds now (ids, salt, root key).
+ * Bench entry: two ends that show the same record but different keys can be told apart by
+ * re-deriving on both and comparing again.
+ */
+void zlrs_link_rederive(zlrs_link_t *link);
+
+/* The exact bytes the pairing KDF is fed with: both ids (sorted) then the salt (sorted) */
+#define ZLRS_PAIR_CTX_LEN (2U * ZLRS_DEV_ID_LEN + ZLRS_PAIR_SALT_LEN)
+void zlrs_link_pair_ctx(const zlrs_link_t *link, uint8_t out[ZLRS_PAIR_CTX_LEN]);
 
 /* Change modulation at runtime (rate adaptation); effective with the next transaction */
 void zlrs_link_set_mod(zlrs_link_t *link, const zlrs_mod_cfg_t *mod);
