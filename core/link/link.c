@@ -844,6 +844,12 @@ static const zlrs_radio_req_t *pair_rx(zlrs_link_t *link, uint16_t timeout_ms)
 			 timeout_ms);
 }
 
+/* Acquisition uses its own window length, see zlrs_link_cfg_t */
+static uint16_t acq_timeout_ms(const zlrs_link_t *link)
+{
+	return (link->cfg.acq_timeout_ms != 0U) ? link->cfg.acq_timeout_ms : link->cfg.rx_timeout_ms;
+}
+
 /* ---- receive: dispatch --------------------------------------------------- */
 
 static void handle_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
@@ -1449,16 +1455,16 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot, uin
 				    link->cfg.pair_period_ms) {
 					/* Nothing to send this slot: listen instead. The peer's phase is unknown, so
 					 * every extra window is another chance to hear it. */
-					return pair_rx(link, link->cfg.rx_timeout_ms);
+					return pair_rx(link, acq_timeout_ms(link));
 				}
 				return send_pair(link, ZLRS_PKT_PAIR_REQ, link->pair_nonce, 0U,
 						 now_ms);
 			}
-			return pair_rx(link, link->cfg.rx_timeout_ms);
+			return pair_rx(link, acq_timeout_ms(link));
 		}
 
 		if (tx_side) {
-			return pair_rx(link, link->cfg.rx_timeout_ms);
+			return pair_rx(link, acq_timeout_ms(link));
 		}
 		if (link->pair_wait_cfm) {
 			if ((uint32_t)(now_ms - link->last_pair_tx_ms) >=
@@ -1467,9 +1473,9 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot, uin
 						 link->pair_nonce_b, now_ms);
 			}
 			/* Between repeats: listen, for the same reason as the initiator above */
-			return pair_rx(link, link->cfg.rx_timeout_ms);
+			return pair_rx(link, acq_timeout_ms(link));
 		}
-		return pair_rx(link, link->cfg.rx_timeout_ms);
+		return pair_rx(link, acq_timeout_ms(link));
 	}
 
 	if (link->state == ZLRS_STATE_SEARCHING) {
@@ -1531,14 +1537,14 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot, uin
 			 */
 			if ((link->frame_index % ZLRS_PAIR_SCAN_FRAMES) ==
 			    (ZLRS_PAIR_SCAN_FRAMES - 1U)) {
-				return pair_rx(link, link->cfg.rx_timeout_ms);
+				return pair_rx(link, acq_timeout_ms(link));
 			}
 			return submit_rx(link, sync_freq_hz(link), link->cfg.sync_slot,
-					 link->sync_word, link->cfg.rx_timeout_ms);
+					 link->sync_word, acq_timeout_ms(link));
 		}
 		if (down) {
 			return submit_rx(link, sync_freq_hz(link), link->cfg.sync_slot,
-					 link->sync_word, link->cfg.rx_timeout_ms);
+					 link->sync_word, acq_timeout_ms(link));
 		}
 		/*
 		 * Repeat the answer until the confirm arrives: one shot per SYNC would leave the handshake
@@ -1578,7 +1584,7 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot, uin
 	if (link->sess_cfm_due) {
 		if (tx_side) {
 			return submit_rx(link, sync_freq_hz(link), link->cfg.sync_slot,
-					 link->sync_word, link->cfg.rx_timeout_ms);
+					 link->sync_word, acq_timeout_ms(link));
 		}
 		return NULL;
 	}
@@ -1600,7 +1606,7 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot, uin
 	if (sync_frame(link)) {
 		if (tx_side) {
 			return submit_rx(link, sync_freq_hz(link), link->cfg.sync_slot,
-					 link->sync_word, link->cfg.rx_timeout_ms);
+					 link->sync_word, acq_timeout_ms(link));
 		}
 		if (link->cfg.telemetry == 0U) {
 			return NULL;
@@ -1615,7 +1621,7 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot, uin
 	if (link->announce) {
 		if (tx_side) {
 			return submit_rx(link, sync_freq_hz(link), link->cfg.sync_slot,
-					 link->sync_word, link->cfg.rx_timeout_ms);
+					 link->sync_word, acq_timeout_ms(link));
 		}
 		return send_sess_resp(link);
 	}
@@ -1676,11 +1682,11 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 			}
 			/* The initiator waits for the peer's first frame in the uplink slot */
 			return submit_rx(link, sync_freq_hz(link), link->cfg.sync_slot,
-					 link->sync_word, link->cfg.rx_timeout_ms);
+					 link->sync_word, acq_timeout_ms(link));
 		}
 		if (a) {
 			return submit_rx(link, sync_freq_hz(link), link->cfg.sync_slot,
-					 link->sync_word, link->cfg.rx_timeout_ms);
+					 link->sync_word, acq_timeout_ms(link));
 		}
 		/* Same as the control link: keep answering until the confirm arrives */
 		if (link->sess_resp_due || link->session_pending) {
@@ -1984,6 +1990,15 @@ void zlrs_link_tick(zlrs_link_t *link, uint32_t now_ms)
 		break;
 
 	case ZLRS_STATE_CONNECTED:
+		/*
+		 * Grace after entering CONNECTED: the peer may still be leaving SEARCHING (it needs to
+		 * hear one of our confirms), and its first telemetry cannot arrive until it does. Running
+		 * the peer-loss check inside that window would roll a new session and restart the
+		 * handshake before it ever had a chance to finish.
+		 */
+		if ((uint32_t)(now_ms - link->state_ms) <= ZLRS_SESS_CONFIRM_MS) {
+			break;
+		}
 		if (link->cfg.peer_timeout_ms > 0U &&
 		    (uint32_t)(now_ms - link->last_rx_ms) > link->cfg.peer_timeout_ms) {
 			link->session_valid = false;

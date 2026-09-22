@@ -81,6 +81,13 @@ typedef struct {
 	zlrs_mod_cfg_t mod;
 	int8_t tx_power_dbm;
 	uint16_t rx_timeout_ms;   /* one receive window */
+	/*
+	 * Receive window while pairing or searching (0 = rx_timeout_ms). Acquisition happens before the
+	 * two ends share a slot phase, so it needs a longer window than steady state: a short window
+	 * catches the peer only by luck, and a handshake that depends on luck is what keeps two boards
+	 * that are otherwise fine from ever pairing.
+	 */
+	uint16_t acq_timeout_ms;
 	uint16_t sync_period_ms;  /* SYNC period while SEARCHING */
 	uint16_t peer_timeout_ms; /* peer-loss timeout */
 	uint16_t pair_period_ms;  /* PAIR_REQ repeat period */

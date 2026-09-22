@@ -430,6 +430,8 @@ static void build_links(void)
 		.tx_power_dbm = CONTROL_ON_SUBG ? MIN(tx_power_dbm, region->max_tx_power_dbm)
 						: tx_power_dbm,
 		.rx_timeout_ms = 2U,
+		/* Acquisition window: the pairing and search states have no shared slot phase yet */
+		.acq_timeout_ms = 8U,
 		.sync_period_ms = sync_period_for_mod(&control_mod),
 		/*
 		 * Telemetry is the TX-side liveness proof: with it off there is nothing to hear, so the
@@ -632,6 +634,8 @@ typedef struct {
 	uint32_t rx_offset_us; /* where in the frame it landed */
 	uint32_t rx_offset_min;
 	uint32_t rx_offset_max;
+	uint32_t submit_us_last; /* the port's own submit path (radio config + enqueue) */
+	uint32_t submit_us_max;
 } bench_t;
 
 static bench_t bench;
@@ -644,16 +648,20 @@ static zlrs_radio_diag_t radio_diag;
  * peer when the two are aligned: before this, the measured hit rate was a few percent of frames,
  * which is what kept the passthrough crawling. When a frame does arrive, its offset inside our own
  * frame says how far the peer's frame boundary is from ours (the sender transmits at the start of
- * its slot), so the end-of-frame sleep is corrected by half of that error, clamped to a couple of
- * slots. Both ends do this, so they meet in the middle.
+ * its slot), so the end-of-frame sleep is corrected by that error, clamped to a quarter frame.
+ * Both ends do this, so they meet in the middle. Hits are rare before the lock takes (that is the
+ * problem it solves), so the correction takes the whole error at once and only ignores the last
+ * millisecond: a proportional controller would need minutes of hits to walk a half-frame offset.
  */
-#define ZLRS_PHASE_MAX_US 2000
+#define ZLRS_PHASE_DEADBAND_US 1000
 
 static uint32_t frame_start_us;
-static uint32_t slot_off_us[4];
+static uint32_t slot_off_us[4]; /* where the slot's transaction really started in our frame */
 static int32_t phase_adj_us;
 static bool phase_adj_set;   /* one correction per frame: several receptions would fight */
 static int32_t phase_last_us; /* what the last correction was, for the bench log */
+static int32_t phase_err_us;  /* residual the last correction was computed from */
+static uint32_t phase_hits;   /* corrections since the last report */
 
 static uint32_t now_us(void)
 {
@@ -667,9 +675,6 @@ static void run_slot(uint8_t slot)
 	const uint32_t now_ms = zlrs_radio_port_now_ms();
 	const uint32_t slot_start_us = now_us();
 	const uint32_t hit_before = link->stats.slot_hit[slot];
-	const uint32_t slot_off = slot_start_us - frame_start_us;
-
-	slot_off_us[slot] = slot_off;
 	/* The duty-cycle gate only applies to whichever link is on sub-G */
 	const bool on_subg = data_slot ? (CONTROL_ON_SUBG == 0) : (CONTROL_ON_SUBG != 0);
 	const zlrs_radio_req_t *req;
@@ -697,6 +702,20 @@ static void run_slot(uint8_t slot)
 		return;
 	}
 
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
+	/* How much of a slot goes into the port's own submit path (vs. the air) */
+	bench.submit_us_last = now_us() - slot_start_us;
+	if (bench.submit_us_last > bench.submit_us_max) {
+		bench.submit_us_max = bench.submit_us_last;
+	}
+#endif
+
+	/*
+	 * The transaction starts when the port's submit returns, so that is the phase reference: the
+	 * window (or the transmission) is where the peer's frame boundary shows up.
+	 */
+	slot_off_us[slot] = now_us() - frame_start_us;
+
 	/*
 	 * Pump the RAC engine while waiting for the transaction to finish. The vendor's
 	 * immediate_radio_access sample is exactly "run_engine + wait for event": without it the
@@ -706,8 +725,22 @@ static void run_slot(uint8_t slot)
 	{
 		uint32_t waited_us = 0U;
 		bool done = false;
+		/*
+		 * A listening slot is allowed to run as long as its window: the acquisition windows are
+		 * deliberately longer than a steady-state one, and cutting them off at the slot budget is
+		 * what turned "no shared phase yet" into "never hear the peer at all".
+		 */
+		uint32_t budget_us = slot_budget_us;
 
-		while (waited_us < slot_budget_us) {
+		if (!req->is_tx) {
+			const uint32_t window_us = (uint32_t)req->timeout_ms * 1000U + 500U;
+
+			if (window_us > budget_us) {
+				budget_us = window_us;
+			}
+		}
+
+		while (waited_us < budget_us) {
 #if IS_ENABLED(CONFIG_ZLRS_APP_RADIO)
 			/* Only the RAC backend needs pumping; the null backend completes inline. */
 			SMTC_SW_PLATFORM_VOID(smtc_rac_run_engine());
@@ -733,18 +766,35 @@ static void run_slot(uint8_t slot)
 	zlrs_radio_port_drain();
 
 	if (!phase_adj_set && link->stats.slot_hit[slot] != hit_before) {
-		/* A frame arrived: correct the frame phase by half the residual error */
+		/*
+		 * A frame arrived: err is how much later than our own slot start it showed up, so the
+		 * peer's frame is that far behind ours and our next frame has to start that much later
+		 * (positive adj lengthens the sleep). Getting this sign wrong drives the two ends apart
+		 * instead of together, and no amount of retries recovers from that.
+		 */
 		const uint32_t offset_us = now_us() - frame_start_us;
-		int32_t err = (int32_t)offset_us - (int32_t)slot_off;
-		int32_t adj = -err / 2;
+		int32_t err = (int32_t)offset_us - (int32_t)slot_off_us[slot];
+		const int32_t frame_us = (int32_t)(frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE);
+		int32_t adj = 0;
 
-		if (adj > ZLRS_PHASE_MAX_US) {
-			adj = ZLRS_PHASE_MAX_US;
-		} else if (adj < -ZLRS_PHASE_MAX_US) {
-			adj = -ZLRS_PHASE_MAX_US;
+		/*
+		 * Deadband: a hit inside the window is close enough. Outside it, take the whole error at
+		 * once, clamped to a quarter frame so one bad measurement cannot throw the phase.
+		 */
+		if (err > ZLRS_PHASE_DEADBAND_US || err < -ZLRS_PHASE_DEADBAND_US) {
+			const int32_t limit = frame_us / 4;
+
+			adj = err;
+			if (adj > limit) {
+				adj = limit;
+			} else if (adj < -limit) {
+				adj = -limit;
+			}
 		}
 		phase_adj_us = adj;
 		phase_last_us = adj;
+		phase_err_us = err;
+		phase_hits++;
 		phase_adj_set = true;
 	}
 
@@ -1131,13 +1181,15 @@ static void report(uint32_t now_ms)
 	 * across the window range is the signature of two free-running frames.
 	 */
 	LOG_INF("tm : frame=%u us (%u..%u) slot=%u/%u/%u/%u max=%u/%u/%u/%u rx=slot%u+%u (%u..%u)"
-		" txn=%u early=%u adj=%d",
+		" txn=%u early=%u lock=%u err=%d adj=%d submit=%u/%u us",
 		bench.frame_us_last, bench.frame_us_min, bench.frame_us_max,
 		bench.slot_us_last[0], bench.slot_us_last[1], bench.slot_us_last[2],
 		bench.slot_us_last[3], bench.slot_us_max[0], bench.slot_us_max[1],
 		    bench.slot_us_max[2], bench.slot_us_max[3], bench.rx_slot, bench.rx_offset_us,
 		    bench.rx_offset_min, bench.rx_offset_max, radio_diag.transactions,
-		    radio_diag.rx_early, (int)phase_last_us);
+		    radio_diag.rx_early, phase_hits, (int)phase_err_us, (int)phase_last_us,
+		    bench.submit_us_last, bench.submit_us_max);
+	phase_hits = 0U;
 	{
 		LOG_INF("rd : stale_irq=%u(%08x) late_irq=%u overruns=%u rx_win=%u tx=%u us rx=%u us",
 			radio_diag.stale_irq, radio_diag.stale_irq_bits, radio_diag.late_irq,
@@ -1177,6 +1229,7 @@ static void report(uint32_t now_ms)
 	bench.frame_us_max = 0U;
 	bench.rx_offset_min = 0U;
 	bench.rx_offset_max = 0U;
+	bench.submit_us_max = 0U;
 	for (uint8_t i = 0U; i < 4U; i++) {
 		bench.slot_us_max[i] = 0U;
 	}
@@ -2141,8 +2194,9 @@ int main(void)
 		report(now_ms);
 
 		const uint64_t elapsed_us = k_cyc_to_us_floor64(k_cycle_get_64() - start_cyc);
+		const uint32_t pacing_us = frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE;
 		/* The phase lock's correction lands here, once per frame */
-		const int64_t remain_us = (int64_t)frame_period_us - (int64_t)elapsed_us +
+		const int64_t remain_us = (int64_t)pacing_us - (int64_t)elapsed_us +
 					  (int64_t)phase_adj_us;
 
 		phase_adj_us = 0;

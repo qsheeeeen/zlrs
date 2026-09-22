@@ -173,6 +173,19 @@ config ZLRS_APP_DATA_RATE_BPS
 	int "Data link rate (bps)"
 	default 2600000
 
+config ZLRS_APP_PACING_SCALE
+	int "Superframe pacing scale (bench)"
+	default 1
+	range 1 8
+	help
+	  Multiplies the sleep that pads a superframe, without changing the plan the links work
+	  from. The radio port costs a couple of milliseconds per transaction (band and PLL
+	  reconfiguration), so at a dense plan the loop is work bound: the frame ends up longer
+	  than the plan and jitters with whatever each frame had to do, which leaves the two ends
+	  free running and keeps the phase lock from ever being able to act. Scaling the pacing
+	  leaves the loop idle at the end of the frame, which is exactly the room the lock needs
+	  to line the two ends up (doc/12-debug.md 3).
+
 config ZLRS_APP_FLRC_PREAMBLE_BITS
 	int "FLRC preamble length (bits)"
 	default 32
