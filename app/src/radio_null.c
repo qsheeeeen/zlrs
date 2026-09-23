@@ -124,6 +124,46 @@ void zlrs_radio_direct_apply(void)
 {
 }
 
+void zlrs_radio_direct_counts(uint32_t *tx_done, uint32_t *rx_pkt, uint32_t *rx_timeout,
+			      uint32_t *no_status, uint32_t *last_nonzero)
+{
+	if (tx_done != NULL) *tx_done = 0U;
+	if (rx_pkt != NULL) *rx_pkt = 0U;
+	if (rx_timeout != NULL) *rx_timeout = 0U;
+	if (no_status != NULL) *no_status = 0U;
+	if (last_nonzero != NULL) *last_nonzero = 0U;
+}
+
+void zlrs_radio_direct_irq_stats(uint32_t *poll_hits, uint32_t *last_status)
+{
+	if (poll_hits != NULL) {
+		*poll_hits = 0U;
+	}
+	if (last_status != NULL) {
+		*last_status = 0U;
+	}
+}
+
+void zlrs_radio_direct_stats(uint32_t *calls, uint32_t *deferred)
+{
+	if (calls != NULL) {
+		*calls = 0U;
+	}
+	if (deferred != NULL) {
+		*deferred = 0U;
+	}
+}
+
+uint32_t zlrs_radio_direct_resets(void)
+{
+	return 0U;
+}
+
+bool zlrs_radio_port_direct_busy(void)
+{
+	return false;
+}
+
 void zlrs_radio_port_diag(zlrs_radio_diag_t *out)
 {
 	if (out != NULL) {

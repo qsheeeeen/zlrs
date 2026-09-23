@@ -578,6 +578,7 @@ static bool ensure_device_id(void)
 	if (!make_device_id(device_id)) {
 		return false;
 	}
+
 	if (zlrs_store_save_dev_id(device_id) != 0) {
 		LOG_WRN("dev id not persisted, it changes on the next boot");
 	}
@@ -623,6 +624,10 @@ static void load_identity(void)
 /* Tick while pumping the RAC engine: fine enough not to stretch a slot, coarse enough not to spin */
 #define ZLRS_RADIO_PUMP_STEP_US 200U
 
+/* Poll period of a direct transaction: one status read is tens of microseconds, so this is the
+ * trade between reaction time and how much of the slot the polling itself eats */
+#define ZLRS_RADIO_DIRECT_POLL_US 200U
+
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
 /*
  * Engine cost: one pass does the radio programming and the IRQ handling for a transaction, so how
@@ -649,6 +654,7 @@ static uint32_t raw_bench_ms;
 static void radio_wait_done(uint32_t budget_us)
 {
 	uint32_t waited_us = 0U;
+	uint32_t spins = 0U;
 
 	while (waited_us < budget_us) {
 #if IS_ENABLED(CONFIG_ZLRS_APP_RADIO)
@@ -668,6 +674,22 @@ static void radio_wait_done(uint32_t budget_us)
 		}
 #endif
 #endif
+		/*
+		 * The direct backend is paced by its own status register, not by the completion semaphore:
+		 * that semaphore is shared with the planner, so a frame the *control* link just finished
+		 * would end this wait with the data transaction still on air. Polling here is what makes a
+		 * direct transaction cost what the air costs, instead of the other link's traffic.
+		 */
+		if (zlrs_radio_port_direct_busy()) {
+			if (zlrs_radio_port_irq_pending()) {
+				zlrs_radio_port_drain();
+				return;
+			}
+			k_usleep(ZLRS_RADIO_DIRECT_POLL_US);
+			waited_us += ZLRS_RADIO_DIRECT_POLL_US;
+			continue;
+		}
+
 		if (zlrs_radio_port_wait_us(0U) == 0) {
 			return; /* this transaction is done */
 		}
@@ -677,8 +699,21 @@ static void radio_wait_done(uint32_t budget_us)
 		 * pending does the wait mean "the radio is working and we are waiting for it".
 		 */
 		if (zlrs_radio_port_irq_pending()) {
+			/*
+			 * The port says an interrupt is waiting, so pump again right away. This branch must
+			 * still be bounded: the completion semaphore is shared, and one consumed elsewhere
+			 * leaves the flag set with nothing left to wake us — spinning there starves the log
+			 * thread and stops the watchdog feed, which looks like a hung board (radio_rac.c,
+			 * "zlrs direct on" was exactly that). Give up after a while and let the caller drain
+			 * the latched status.
+			 */
+			if (++spins > 4000U) {
+				return;
+			}
 			continue;
 		}
+
+		spins = 0U;
 
 		(void)zlrs_radio_port_wait_us(ZLRS_RADIO_PUMP_STEP_US);
 		waited_us += ZLRS_RADIO_PUMP_STEP_US;
@@ -747,6 +782,24 @@ static uint32_t now_us(void)
 {
 	return (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64());
 }
+
+/*
+ * Init breadcrumbs. The main thread can be stuck in a place where the console, the shell and the
+ * logging thread all still work, so the only way to see how far init got is memory the other
+ * threads can read: no console I/O on this path (printk on a USB CDC console can block precisely
+ * when the host is not draining it, which is what made the first attempt at this useless).
+ */
+static volatile uint8_t init_trace[24];
+static volatile uint8_t init_trace_len;
+
+static void trace_add(char c)
+{
+	if (init_trace_len < sizeof(init_trace)) {
+		init_trace[init_trace_len++] = (uint8_t)c;
+	}
+}
+
+#define TRACE(c) trace_add(c)
 
 static void run_slot(uint8_t slot)
 {
@@ -1458,6 +1511,9 @@ static void enter_config_mode(void);
  * Exception: a test image (not yet confirmed by the host) resets on a fatal error so that
  * MCUboot rolls back — a flashable fault state is no reason to keep a broken build running.
  */
+/* Set when the entropy self-test never passed: keys then come from a weaker source */
+static bool entropy_degraded;
+
 static void fault_loop(void)
 {
 	zlrs_led_input_t in;
@@ -1603,6 +1659,7 @@ static void enter_config_mode(void)
 		}
 	}
 	memcpy(rc_payload, failsafe_payload, sizeof(rc_payload));
+	TRACE('2');
 	zlrs_link_set_rc(&link_control, rc_payload, sizeof(rc_payload));
 
 	LOG_INF("config mode done, back to normal");
@@ -1964,6 +2021,24 @@ static int cmd_direct(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+/* Bench: print the init breadcrumbs (see trace_add) */
+static int cmd_trace(const struct shell *sh, size_t argc, char **argv)
+{
+	char buf[sizeof(init_trace) + 1];
+	const uint8_t len = init_trace_len;
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	for (uint8_t i = 0U; i < len; i++) {
+		buf[i] = (char)init_trace[i];
+	}
+	buf[len] = '\0';
+	shell_print(sh, "init trace: [%s] len=%u", buf, (unsigned int)len);
+
+	return 0;
+}
+
 /* Bench: ask the log store to mount again and print the error it returns */
 static int cmd_logstore(const struct shell *sh, size_t argc, char **argv)
 {
@@ -2131,7 +2206,9 @@ static void bench_raw_at_boot(void)
 			k_usleep(200);
 			continue;
 		}
-		(void)bench_wait(&link_data, req, role_tx ? 5000U : 120000U);
+		/* The direct backend programs the radio itself per transaction, which needs more room than
+		 * the planner path: give the bench a budget that is not the thing being measured. */
+		(void)bench_wait(&link_data, req, role_tx ? 100000U : 120000U);
 		zlrs_watchdog_feed();
 
 		{
@@ -2183,6 +2260,9 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 	ARG_UNUSED(argv);
 
 	shell_print(sh, "role   : %s", role_tx ? "TX" : "RX");
+	if (entropy_degraded) {
+		shell_print(sh, "entropy: DEGRADED (self-test failed at boot)");
+	}
 	shell_print(sh, "sub-G  : %s (band %d)", ZLRS_RF_BAND == ZLRS_BAND_SUBG_LF ? "LF" : "HF",
 		    ZLRS_RF_BAND);
 	shell_print(sh, "region : %s (max %d dBm)", (region != NULL) ? region->name : "?",
@@ -2248,7 +2328,28 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 	ARG_UNUSED(argv);
 
 	zlrs_radio_port_diag(&diag);
-	shell_print(sh, "data path: %s", zlrs_radio_direct_enabled() ? "direct" : "planner");
+	{
+		uint32_t calls = 0U;
+		uint32_t deferred = 0U;
+
+		uint32_t poll_hits = 0U;
+		uint32_t last_status = 0U;
+
+		zlrs_radio_direct_stats(&calls, &deferred);
+		zlrs_radio_direct_irq_stats(&poll_hits, &last_status);
+		{
+			uint32_t tx_done = 0U, rx_pkt = 0U, rx_to = 0U, none = 0U, nz = 0U;
+
+			zlrs_radio_direct_counts(&tx_done, &rx_pkt, &rx_to, &none, &nz);
+			shell_print(sh, "direct irq: polls=%u last=%08x | tx_done=%u rx_pkt=%u "
+					"rx_timeout=%u no_status=%u last_nonzero=%08x",
+				    poll_hits, last_status, tx_done, rx_pkt, rx_to, none, nz);
+		}
+		shell_print(sh, "data path: %s (switch tried %u, deferred %u)",
+			    zlrs_radio_direct_enabled() ? "direct" : "planner", calls, deferred);
+		shell_print(sh, "direct recovery: %u standby cycles after a silent transaction",
+			    zlrs_radio_direct_resets());
+	}
 	shell_print(sh, "txn=%u overruns=%u stale=%u late=%u rx_win=%u early=%u",
 		    diag.transactions, diag.overruns, diag.stale_irq, diag.late_irq, diag.rx_windows,
 		    diag.rx_early);
@@ -2378,6 +2479,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 	SHELL_CMD(ports, NULL, "state of both data port endpoints", cmd_ports),
 	SHELL_CMD(radio, NULL, "radio port timing: submit breakdown and wait", cmd_radio),
 	SHELL_CMD(logstore, NULL, "mount the log filesystem and report the result", cmd_logstore),
+	SHELL_CMD(trace, NULL, "print the init breadcrumbs", cmd_trace),
 	SHELL_CMD(direct, " [on|off]", "data link radio backend (direct FLRC vs RAC planner)",
 		  cmd_direct),
 #if ZLRS_CONFIG_ENABLED
@@ -2436,6 +2538,7 @@ static int entropy_selftest(void)
 
 int main(void)
 {
+	TRACE('0');
 	/* Debug image only (gated in Kconfig, so the symbol does not exist in production builds):
 	 * USB is up, so wait for the host to open the console port — otherwise a panic log lands
 	 * on a port nobody has open. */
@@ -2452,7 +2555,9 @@ int main(void)
 	}
 #endif
 
+	TRACE('M');
 	LOG_INF("zlrs %s", APP_VERSION_STRING);
+	TRACE('V');
 
 	/* What the build is, and what this board has: ports and peripherals come from devicetree,
 	 * so a missing one is reported without being an error (app/src/caps.h) */
@@ -2475,6 +2580,7 @@ int main(void)
 	 * it. A broken NVS is survivable, but the consequences are worth spelling out: nothing can
 	 * be read or written, so the device stays unconfigured and off the air. store logs its own error.
 	 */
+	TRACE('S');
 	if (zlrs_store_init() != 0) {
 		LOG_ERR("store unavailable: keys, pairing and failsafe will not persist");
 	}
@@ -2486,18 +2592,41 @@ int main(void)
 	 */
 	(void)zlrs_config_port_init();
 	zlrs_config_set_ops(&cfg_ops);
+	TRACE('C');
 #endif
 
 #if IS_ENABLED(CONFIG_ZLRS_RP2350_TRNG)
-	/* A dead entropy source stops the boot: key generation and the device id depend on it */
-	if (entropy_selftest() != 0) {
-		fault_loop();
+	/*
+	 * The entropy source is retried and then reported rather than fatal. Parking the whole
+	 * application in fault_loop() over a self-test means the device cannot be reached at all —
+	 * no link, no config, nothing to debug — and the TRNG does come back on its own after a
+	 * reset far more often than not. A device that boots and says "entropy is degraded" is
+	 * strictly more useful than one that blinks forever.
+	 */
+	{
+		int rc = -1;
+
+		for (uint8_t try = 0U; try < 3U; try++) {
+			rc = entropy_selftest();
+			if (rc == 0) {
+				break;
+			}
+			k_msleep(20);
+		}
+		TRACE('E');
+		if (rc != 0) {
+			entropy_degraded = true;
+			LOG_ERR("entropy self-test failed (%d) after 3 tries: running degraded", rc);
+		}
 	}
 #endif
 
 	/* Identity comes before anything that could use it; without one, stay off the air */
 	if (!ensure_device_id()) {
-		fault_loop();
+		TRACE('I');
+		LOG_ERR("no device id: staying off the air until one can be made");
+	} else {
+		TRACE('D');
 	}
 
 	/*
@@ -2599,9 +2728,12 @@ int main(void)
 	/* Wait for the USP/RAC thread, then init RAC (see doc/07-architecture.md 6) */
 #if IS_ENABLED(CONFIG_ZLRS_APP_RADIO)
 	SMTC_SW_PLATFORM_INIT();
+	TRACE('a');
 	SMTC_SW_PLATFORM_VOID(smtc_rac_init());
+	TRACE('b');
 #endif
 
+	TRACE('1');
 	plan_init();
 	build_links();
 	crypto_init();
@@ -2623,7 +2755,9 @@ int main(void)
 		(void)zlrs_crsf_port_init();
 	}
 
+	TRACE('c');
 	if (zlrs_radio_port_init(&link_control, &link_data) != 0) {
+		TRACE('X');
 		LOG_ERR("RAC init failed");
 		return 0;
 	}
@@ -2632,6 +2766,9 @@ int main(void)
 		LOG_WRN("button unavailable");
 	}
 
+	TRACE('d');
+	/* Take the requested radio backend before the bench, or the bench would measure the old one */
+	zlrs_radio_direct_apply();
 	/* Debug images only: run the raw radio bench before the superframe takes over */
 	bench_raw_at_boot();
 
@@ -2692,6 +2829,7 @@ int main(void)
 		/* A radio backend switch waits for the frame boundary (see zlrs_radio_direct_apply) */
 		zlrs_radio_direct_apply();
 
+		TRACE('L');
 		run_slot(ZLRS_SLOT_CTL_DOWN);
 		run_slot(ZLRS_SLOT_CTL_UP);
 		run_slot(ZLRS_SLOT_DATA_A);

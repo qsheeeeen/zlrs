@@ -51,6 +51,22 @@ void zlrs_radio_direct_set(bool enabled);
 /* Apply a requested switch at a point where no transaction is in flight (once per frame) */
 void zlrs_radio_direct_apply(void);
 
+/* Bench: how often the switch was tried and how often it had to wait for the data link */
+void zlrs_radio_direct_stats(uint32_t *calls, uint32_t *deferred);
+
+/* Bench: how often polling the status register found the completion, and what it read */
+void zlrs_radio_direct_irq_stats(uint32_t *poll_hits, uint32_t *last_status);
+
+/* Bench: how often a transaction that reported nothing had to be recovered with a standby cycle */
+uint32_t zlrs_radio_direct_resets(void);
+
+/* True while the direct backend has a transaction in flight (it completes by polling, not by wait) */
+bool zlrs_radio_port_direct_busy(void);
+
+/* Per-transaction outcome of the direct backend: what the radio reported, if anything */
+void zlrs_radio_direct_counts(uint32_t *tx_done, uint32_t *rx_pkt, uint32_t *rx_timeout,
+			      uint32_t *no_status, uint32_t *last_nonzero);
+
 /*
  * Bench counters of the port itself: how many transactions ran, and how often the radio had an
  * IRQ latched when nothing was being waited for. A non-zero stale count means an event from an

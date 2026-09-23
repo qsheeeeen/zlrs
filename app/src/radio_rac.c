@@ -57,6 +57,7 @@ typedef struct {
 	const zlrs_radio_req_t *req; /* the transaction in flight, owned by the link */
 	volatile bool pending;   /* the port started a transaction and owes a completion */
 	volatile bool irq;       /* the DIO line went active for it (set from the IRQ path) */
+	volatile uint32_t irq_status; /* last status read, so polling and the ISR can both feed it */
 	uint32_t submit_us;      /* when the transaction went in, for the duration counters */
 	/* What the radio is programmed with right now, so an unchanged slot can skip the setup */
 	ralf_params_flrc_t cfg;
@@ -64,6 +65,58 @@ typedef struct {
 } flrc_client_t;
 
 static flrc_client_t direct;
+
+/* Switch bookkeeping for `zlrs radio`: whether the direct path ever engaged and why not */
+static uint32_t direct_apply_calls;
+static uint32_t direct_apply_deferred;
+static uint32_t direct_poll_hits;
+static uint32_t direct_resets;
+static uint32_t direct_tx_done;
+static uint32_t direct_rx_pkt;
+static uint32_t direct_rx_timeout;
+static uint32_t direct_no_status;
+static uint32_t direct_last_nonzero;
+static bool direct_needs_reset; /* the last transaction timed out with an empty status */
+
+/*
+ * Per-transaction outcome, the number that says whether the radio does anything at all: no_status
+ * means the transaction timed out with the status register still empty (the chip never started),
+ * while tx_done/rx_pkt with a silent peer means the parameters are wrong.
+ */
+void zlrs_radio_direct_counts(uint32_t *tx_done, uint32_t *rx_pkt, uint32_t *rx_timeout,
+			      uint32_t *no_status, uint32_t *last_nonzero)
+{
+	if (tx_done != NULL) *tx_done = direct_tx_done;
+	if (rx_pkt != NULL) *rx_pkt = direct_rx_pkt;
+	if (rx_timeout != NULL) *rx_timeout = direct_rx_timeout;
+	if (no_status != NULL) *no_status = direct_no_status;
+	if (last_nonzero != NULL) *last_nonzero = direct_last_nonzero;
+}
+
+void zlrs_radio_direct_irq_stats(uint32_t *poll_hits, uint32_t *last_status)
+{
+	if (poll_hits != NULL) {
+		*poll_hits = direct_poll_hits;
+	}
+	if (last_status != NULL) {
+		*last_status = direct.irq_status;
+	}
+}
+
+void zlrs_radio_direct_stats(uint32_t *calls, uint32_t *deferred)
+{
+	if (calls != NULL) {
+		*calls = direct_apply_calls;
+	}
+	if (deferred != NULL) {
+		*deferred = direct_apply_deferred;
+	}
+}
+
+uint32_t zlrs_radio_direct_resets(void)
+{
+	return direct_resets;
+}
 
 /* Built below, next to the RAC path they are shared with */
 static ral_flrc_raw_bit_rate_t raw_bit_rate(uint32_t rate_bps);
@@ -150,25 +203,34 @@ void zlrs_radio_direct_set(bool enabled)
 
 void zlrs_radio_direct_apply(void)
 {
-	ral_t *ral;
-
 	if (direct_requested == direct_enabled) {
 		return;
 	}
-	if (direct.pending || control_client.link == NULL || data_client.link == NULL ||
-	    control_client.link->req_pending || data_client.link->req_pending) {
-		return; /* a transaction is in flight, take the switch next frame */
+	/*
+	 * Only the data link's own request matters: the control link keeps a transaction in flight
+	 * almost continuously while it searches, and waiting for that starves the switch (it never
+	 * engages at all, which is what happened once the control link was active). Slots run one at a
+	 * time, and the switch takes effect at a frame boundary, so the radio is idle here.
+	 */
+	direct_apply_calls++;
+	if (direct.pending || data_client.link == NULL || data_client.link->req_pending) {
+		direct_apply_deferred++;
+		return; /* the data link is busy, take the switch next frame */
 	}
 
+	LOG_WRN("direct: applying switch");
 	direct_enabled = direct_requested;
 	/* The other backend programmed the radio: this one starts from its own configuration */
 	direct.cfg_valid = false;
-	ral = direct_radio();
-	if (ral != NULL) {
-		(void)SMTC_SW_PLATFORM(ral_set_standby(ral, RAL_STANDBY_CFG_RC));
-		(void)SMTC_SW_PLATFORM(ral_clear_irq_status(ral, RAL_IRQ_ALL));
-	}
-	LOG_INF("data link radio path -> %s", direct_enabled ? "direct FLRC" : "RAC planner");
+	/*
+	 * No RAL call here on purpose. Touching the radio while switching (standby, clearing IRQs) is
+	 * what turned `zlrs direct on` into a reset: those go through the driver's SPI path, and a radio
+	 * left in a state the driver does not expect makes the transfer wait for a completion that never
+	 * comes. The first transaction programs the radio anyway, so the switch is just a flag.
+	 */
+	/* LOG_*, not printk: the console is a USB CDC and a write to it blocks when the host is not
+	 * reading, which is how this switch reset the board instead of switching it. */
+	LOG_WRN("data link radio path -> %s", direct_enabled ? "direct FLRC" : "RAC planner");
 }
 
 /* Port-level bench counters, see radio_port.h */
@@ -224,6 +286,27 @@ static int direct_submit(const zlrs_radio_req_t *req)
 		return -1;
 	}
 
+	/*
+	 * Take the radio out of whatever the planner left it in. The planner puts the radio to sleep
+	 * after every transaction it runs (that is where the 1.1 ms wake-up cost comes from), and a
+	 * sleeping chip accepts a start command and reports OK without putting anything on air — which
+	 * is exactly what the direct path did: its transactions completed, its counter climbed, and the
+	 * peer heard nothing. Standby here is the same state the planner's arbiter moves it to.
+	 */
+	(void)SMTC_SW_PLATFORM(ral_set_standby(ral, RAL_STANDBY_CFG_XOSC));
+	if (direct_needs_reset) {
+		/*
+		 * The last transaction ended with the status register still empty: the radio was left
+		 * busy or wedged, and simply starting the next one repeats the outcome (two thirds of the
+		 * direct transactions were timing out). Put it back to a known state first.
+		 */
+		direct_needs_reset = false;
+		direct_resets++;
+		(void)SMTC_SW_PLATFORM(ral_clear_irq_status(ral, RAL_IRQ_ALL));
+		(void)SMTC_SW_PLATFORM(ral_set_standby(ral, RAL_STANDBY_CFG_RC));
+		(void)SMTC_SW_PLATFORM(ral_set_standby(ral, RAL_STANDBY_CFG_XOSC));
+	}
+
 	cfg.rf_freq_in_hz = req->freq_hz;
 	cfg.output_pwr_in_dbm = req->tx_power_dbm;
 	cfg.is_tx = req->is_tx;
@@ -265,13 +348,18 @@ static int direct_submit(const zlrs_radio_req_t *req)
 		return -1;
 	}
 
+
+
+	LOG_INF("direct: submit %s len %u freq %u", req->is_tx ? "tx" : "rx", req->size, req->freq_hz);
 	direct.submit_us = (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64());
 	direct.req = req;
 	diag.transactions++;
 	/* Set before starting: the completion belongs to this port from the moment it runs */
 	direct.irq = false;
+	direct.irq_status = 0U;
 	direct.pending = true;
 
+	LOG_INF("direct: programmed, starting");
 	if (req->is_tx) {
 		if (SMTC_SW_PLATFORM(ral_set_pkt_payload(ral, req->buf, req->size)) != RAL_STATUS_OK) {
 			direct.pending = false;
@@ -310,22 +398,33 @@ static void direct_drain(uint32_t now_ms)
 		return;
 	}
 
+	LOG_INF("direct: drain");
 	direct.pending = false;
 	if (ral == NULL) {
 		zlrs_link_complete(direct.link, ZLRS_RADIO_FAIL, 0U, 0, 0, now_ms);
 		return;
 	}
 
-	if (SMTC_SW_PLATFORM(ral_get_and_clear_irq_status(ral, &irq)) != RAL_STATUS_OK) {
+	if (direct.irq_status != 0U) {
+		irq = (ral_irq_t)direct.irq_status; /* the poll already read and cleared it */
+		direct.irq_status = 0U;
+	} else if (SMTC_SW_PLATFORM(ral_get_and_clear_irq_status(ral, &irq)) != RAL_STATUS_OK) {
 		zlrs_link_complete(direct.link, ZLRS_RADIO_FAIL, 0U, 0, 0, now_ms);
 		return;
 	}
 
+	if ((uint32_t)irq != 0U) {
+		direct_last_nonzero = (uint32_t)irq;
+	}
+
 	if ((irq & RAL_IRQ_TX_DONE) != 0U) {
+		direct_tx_done++;
 		status = ZLRS_RADIO_OK;
 		diag.tx_us_last = (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64()) - direct.submit_us;
 	} else if ((irq & RAL_IRQ_RX_DONE) != 0U) {
 		ral_flrc_rx_pkt_status_t pkt = { 0 };
+
+		direct_rx_pkt++;
 
 		status = ZLRS_RADIO_OK;
 		if (direct.req == NULL ||
@@ -341,10 +440,13 @@ static void direct_drain(uint32_t now_ms)
 		diag.rx_us_last = (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64()) - direct.submit_us;
 	} else if ((irq & RAL_IRQ_RX_TIMEOUT) != 0U) {
 		/* An empty window: the transaction did its job, there was just nothing on the air */
+		direct_rx_timeout++;
 		status = ZLRS_RADIO_OK;
 		diag.rx_windows++;
 		diag.rx_us_last = (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64()) - direct.submit_us;
 	} else {
+		direct_no_status++;
+		direct_needs_reset = true;
 		diag.rx_windows++;
 	}
 
@@ -609,6 +711,10 @@ int zlrs_radio_port_init(zlrs_link_t *control, zlrs_link_t *data)
 		return -1;
 	}
 	direct.link = data;
+#if IS_ENABLED(CONFIG_ZLRS_APP_DIRECT_AT_BOOT)
+	/* Bench: take the direct path from the first frame, no console command involved */
+	direct_requested = true;
+#endif
 
 	/*
 	 * One IRQ line, two owners: the router hands it to whichever backend has a transaction in
@@ -709,11 +815,36 @@ int zlrs_radio_port_wait_us(uint32_t timeout_us)
 bool zlrs_radio_port_irq_pending(void)
 {
 	if (direct.pending) {
-		/* The direct client has work to finish as soon as its interrupt has been seen */
-		return direct.irq;
+		/*
+		 * Ask the radio itself whether the transaction finished. Relying on the DIO interrupt
+		 * alone left every direct transaction timing out with nothing on air (the counter was
+		 * exactly the wait budget), so the status register is polled here as well: one SPI read
+		 * per pass, tens of microseconds, and the completion no longer depends on the DIO path.
+		 */
+		ral_t *ral = direct_radio();
+		ral_irq_t irq = 0;
+
+		if (direct.irq) {
+			return true;
+		}
+		if (ral != NULL &&
+		    RAL_STATUS_OK == SMTC_SW_PLATFORM(ral_get_and_clear_irq_status(ral, &irq)) &&
+		    (uint32_t)irq != 0U) {
+			direct.irq_status = (uint32_t)irq;
+			direct.irq = true;
+			direct_poll_hits++;
+			return true;
+		}
+
+		return false;
 	}
 
 	return smtc_rac_is_irq_flag_pending();
+}
+
+bool zlrs_radio_port_direct_busy(void)
+{
+	return direct.pending;
 }
 
 static void drain_client(rac_client_t *client, uint32_t now_ms)

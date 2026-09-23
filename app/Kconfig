@@ -186,6 +186,14 @@ config ZLRS_APP_PACING_SCALE
 	  leaves the loop idle at the end of the frame, which is exactly the room the lock needs
 	  to line the two ends up (doc/12-debug.md 3).
 
+config ZLRS_APP_DIRECT_AT_BOOT
+	bool "Data link on the direct FLRC backend from the first frame (bench)"
+	default n
+	help
+	  Debug images only. Puts the data link on the direct driver from the first frame instead of
+	  the RAC planner, so the path can be exercised without a console command. The runtime
+	  equivalent is `zlrs direct on` (app/src/radio_rac.c).
+
 config ZLRS_APP_BENCH_RAW_MS
 	int "Raw radio bench at boot (ms, 0 = off)"
 	default 0
