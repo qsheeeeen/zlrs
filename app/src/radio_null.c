@@ -110,6 +110,20 @@ bool zlrs_radio_port_irq_pending(void)
 	return false;
 }
 
+bool zlrs_radio_direct_enabled(void)
+{
+	return false; /* no radio, no choice */
+}
+
+void zlrs_radio_direct_set(bool enabled)
+{
+	ARG_UNUSED(enabled);
+}
+
+void zlrs_radio_direct_apply(void)
+{
+}
+
 void zlrs_radio_port_diag(zlrs_radio_diag_t *out)
 {
 	if (out != NULL) {

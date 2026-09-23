@@ -1913,6 +1913,30 @@ static int cmd_rxwin(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+/*
+ * Bench: pick the data link's radio backend. `on` runs it on the direct FLRC driver (radio stays
+ * awake and programmed across slots), `off` puts it back on the RAC planner. The choice is not
+ * stored: after a reset the link is on whichever path the image boots with.
+ */
+static int cmd_direct(const struct shell *sh, size_t argc, char **argv)
+{
+	if (argc > 1) {
+		if (strcmp(argv[1], "on") == 0) {
+			zlrs_radio_direct_set(true);
+		} else if (strcmp(argv[1], "off") == 0) {
+			zlrs_radio_direct_set(false);
+		} else {
+			shell_error(sh, "usage: zlrs direct [on|off]");
+			return -EINVAL;
+		}
+	}
+
+	shell_print(sh, "data link on the %s path",
+		    zlrs_radio_direct_enabled() ? "direct FLRC" : "RAC planner");
+
+	return 0;
+}
+
 static int cmd_rate(const struct shell *sh, size_t argc, char **argv)
 {
 	static const char *const names[2] = {"control", "data"};
@@ -2184,6 +2208,7 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 	ARG_UNUSED(argv);
 
 	zlrs_radio_port_diag(&diag);
+	shell_print(sh, "data path: %s", zlrs_radio_direct_enabled() ? "direct" : "planner");
 	shell_print(sh, "txn=%u overruns=%u stale=%u late=%u rx_win=%u early=%u",
 		    diag.transactions, diag.overruns, diag.stale_irq, diag.late_irq, diag.rx_windows,
 		    diag.rx_early);
@@ -2312,6 +2337,8 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 	SHELL_CMD(listen, " [ms] [n]", "raw mode: n receive windows of that length", cmd_listen),
 	SHELL_CMD(ports, NULL, "state of both data port endpoints", cmd_ports),
 	SHELL_CMD(radio, NULL, "radio port timing: submit breakdown and wait", cmd_radio),
+	SHELL_CMD(direct, " [on|off]", "data link radio backend (direct FLRC vs RAC planner)",
+		  cmd_direct),
 #if ZLRS_CONFIG_ENABLED
 	SHELL_CMD(config, NULL, "enter config mode (EXIT returns)", cmd_config),
 #endif
@@ -2618,6 +2645,9 @@ int main(void)
 		const uint32_t now_ms = zlrs_radio_port_now_ms();
 
 		/* Four slots share a frame: over-budget transactions are dropped, they do not stretch it */
+		/* A radio backend switch waits for the frame boundary (see zlrs_radio_direct_apply) */
+		zlrs_radio_direct_apply();
+
 		run_slot(ZLRS_SLOT_CTL_DOWN);
 		run_slot(ZLRS_SLOT_CTL_UP);
 		run_slot(ZLRS_SLOT_DATA_A);

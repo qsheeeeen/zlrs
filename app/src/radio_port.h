@@ -42,6 +42,16 @@ uint32_t zlrs_radio_port_now_ms(void);
 bool zlrs_radio_port_irq_pending(void);
 
 /*
+ * Bench switch for the data link's backend: on = direct FLRC driver, off = RAC planner. Kept in
+ * RAM on purpose, so a fault in the new path costs a reset and the board comes back on the path
+ * it booted with.
+ */
+bool zlrs_radio_direct_enabled(void);
+void zlrs_radio_direct_set(bool enabled);
+/* Apply a requested switch at a point where no transaction is in flight (once per frame) */
+void zlrs_radio_direct_apply(void);
+
+/*
  * Bench counters of the port itself: how many transactions ran, and how often the radio had an
  * IRQ latched when nothing was being waited for. A non-zero stale count means an event from an
  * earlier transaction survived into the next slot (frames get completed early or the planner
