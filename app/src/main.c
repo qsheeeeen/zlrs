@@ -628,6 +628,16 @@ static void load_identity(void)
  * trade between reaction time and how much of the slot the polling itself eats */
 #define ZLRS_RADIO_DIRECT_POLL_US 200U
 
+/*
+ * How many engine passes the wait loop runs back to back when the port says an IRQ is waiting.
+ * A pass is the expensive half of the wait (tens of microseconds typical, milliseconds when it
+ * programs the radio), and the condition it bounds is a latched interrupt that belongs to nobody:
+ * the completion semaphore is shared, so the other link can consume the wakeup and leave this wait
+ * with a flag that never clears. The old code spun there forever, which starved the log thread and
+ * stopped the watchdog feed; a bound in the thousands costs the frame its whole slot budget.
+ */
+#define ZLRS_RADIO_IRQ_SPINS 16U
+
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
 /*
  * Engine cost: one pass does the radio programming and the IRQ handling for a transaction, so how
@@ -700,14 +710,12 @@ static void radio_wait_done(uint32_t budget_us)
 		 */
 		if (zlrs_radio_port_irq_pending()) {
 			/*
-			 * The port says an interrupt is waiting, so pump again right away. This branch must
-			 * still be bounded: the completion semaphore is shared, and one consumed elsewhere
-			 * leaves the flag set with nothing left to wake us — spinning there starves the log
-			 * thread and stops the watchdog feed, which looks like a hung board (radio_rac.c,
-			 * "zlrs direct on" was exactly that). Give up after a while and let the caller drain
-			 * the latched status.
+			 * An interrupt is waiting, so pump again right away; the engine is what consumes it.
+			 * Stop after a few passes anyway: a flag nobody can consume (a latched one, see
+			 * ZLRS_RADIO_IRQ_SPINS) would otherwise park the main loop here, and the caller's
+			 * drain is what reports the transaction.
 			 */
-			if (++spins > 4000U) {
+			if (++spins > ZLRS_RADIO_IRQ_SPINS) {
 				return;
 			}
 			continue;
