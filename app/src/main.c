@@ -34,6 +34,9 @@
 #include <pico/bootrom.h>
 #endif
 
+/* app/src/log_store.c: mount the log filesystem on demand (bench) */
+int zlrs_log_store_probe(void);
+
 #if IS_ENABLED(CONFIG_ZLRS_APP_RADIO)
 #include <smtc_rac_api.h>
 #include <smtc_sw_platform_helper.h>
@@ -1961,6 +1964,19 @@ static int cmd_direct(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+/* Bench: ask the log store to mount again and print the error it returns */
+static int cmd_logstore(const struct shell *sh, size_t argc, char **argv)
+{
+	const int rc = zlrs_log_store_probe();
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	shell_print(sh, "log store mount: %d", rc);
+
+	return 0;
+}
+
 static int cmd_rate(const struct shell *sh, size_t argc, char **argv)
 {
 	static const char *const names[2] = {"control", "data"};
@@ -2361,6 +2377,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 	SHELL_CMD(listen, " [ms] [n]", "raw mode: n receive windows of that length", cmd_listen),
 	SHELL_CMD(ports, NULL, "state of both data port endpoints", cmd_ports),
 	SHELL_CMD(radio, NULL, "radio port timing: submit breakdown and wait", cmd_radio),
+	SHELL_CMD(logstore, NULL, "mount the log filesystem and report the result", cmd_logstore),
 	SHELL_CMD(direct, " [on|off]", "data link radio backend (direct FLRC vs RAC planner)",
 		  cmd_direct),
 #if ZLRS_CONFIG_ENABLED

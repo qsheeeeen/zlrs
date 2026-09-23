@@ -34,6 +34,11 @@ void zlrs_log_store_absent(void)
 {
 	LOG_WRN("no log partition on this board, logs are not kept across reboots");
 }
+
+int zlrs_log_store_probe(void)
+{
+	return -ENODEV;
+}
 #else
 
 LOG_MODULE_REGISTER(zlrs_log_store, CONFIG_APP_LOG_LEVEL);
@@ -51,16 +56,45 @@ static struct fs_mount_t log_mnt = {
 
 static bool log_mounted;
 
-/* Mount, and on a partition that has never held a filesystem, format it and try again */
+static int log_store_mount(void);
+
+/*
+ * Bench entry: run the mount again on demand and report what it returned, so a board with no
+ * mounted log store can say why without another reboot (main.c: `zlrs logstore`).
+ */
+int zlrs_log_store_probe(void)
+{
+	int rc;
+
+	if (log_mounted) {
+		return 0;
+	}
+
+	rc = log_store_mount();
+
+	return (int)rc;
+}
+
+/* Mount, and on a partition that has never held a filesystem, erase it and mount again */
 static int log_store_mount(void)
 {
 	int rc = fs_mount(&log_mnt);
 
 	if (rc != 0) {
-		LOG_WRN("log filesystem unreadable (%d), formatting the partition", rc);
-		rc = fs_mkfs(FS_LITTLEFS, (uintptr_t)FIXED_PARTITION_ID(log_partition), NULL, 0);
-		if (rc == 0) {
+		/*
+		 * Never-formatted or corrupt: erase the whole area and mount again, which is the littlefs
+		 * recipe from samples/subsys/fs/littlefs. Erasing rather than fs_mkfs() also means a
+		 * device whose log store got damaged recovers on its own instead of losing the feature.
+		 */
+		const struct flash_area *area;
+
+		LOG_WRN("log filesystem unreadable (%d), erasing the partition", rc);
+		if (flash_area_open(FIXED_PARTITION_ID(log_partition), &area) == 0) {
+			(void)flash_area_flatten(area, 0, area->fa_size);
+			flash_area_close(area);
 			rc = fs_mount(&log_mnt);
+		} else {
+			LOG_ERR("cannot open the log partition to erase it");
 		}
 	}
 
@@ -81,7 +115,6 @@ static int log_store_mount(void)
  */
 static int log_store_init(void)
 {
-	return 0;
 	(void)log_store_mount();
 
 	/* A failed mount must not stop the boot: the rest of the device works, only logs stay local */
