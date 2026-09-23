@@ -39,6 +39,7 @@ quietly end up in a released image.
 | `CONFIG_ZLRS_APP_DEBUG_STATS_LOG` | 1 Hz `stats:` line (counters, LQ, duty, dynamic power) and `air:` line (completed transactions per link) |
 | `CONFIG_ZLRS_APP_BENCH_RAW_MS` | the first N ms after boot skip the superframe: the TX role sends complete frames back to back, the RX role opens 100 ms receive windows back to back, and both log frames per second |
 | `CONFIG_ZLRS_APP_DEBUG_BOOT_DELAY_MS` | wait that long after USB is up before continuing init, so a panic during init is visible on an open console |
+| `CONFIG_ZLRS_APP_DIRECT_AT_BOOT` | put the data link on the direct FLRC backend from the first frame (the runtime equivalent is `zlrs direct on`); see 6 |
 
 The shell is gated by `CONFIG_ZLRS_APP_DEBUG_SHELL` and runs on the console CDC; the supported
 configuration paths are in [10-security](10-security.md) 9 and [08-firmware](08-firmware.md) 3.
@@ -116,6 +117,26 @@ switches to hide but debts: `doc/13-roadmap.md`, "Pending defaults".
   `image-hash` with the image that was built. An upload that the host never confirms rolls back
   at the next boot, and two boards running different images measure like two boards on different
   bands — the numbers look like a radio fault and mean nothing.
+- **How a bench board is flashed, and why the image must be confirmed**: `smpmgr upgrade --slot 1
+  <img>` writes the secondary slot and marks a test swap, MCUboot swaps it in, and the application
+  only makes that permanent once the host confirms (`confirm_image()` in `app/src/main.c`). Until
+  then it reboots itself after `CONFIG_ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS` (60 s) so MCUboot can
+  revert — and with nothing valid in the other slot, MCUboot ends up in serial recovery instead of
+  booting the application. From the host that reads as "the board reboots every minute and then
+  looks dead", which is easy to mistake for a firmware crash. For bench work either confirm within
+  the first minute (`zlrs-config.py --serial <s> confirm`) or write the primary slot directly and
+  permanently: `smpmgr upgrade --slot 0 --confirm <img>`. The second form skips the rollback safety
+  net on purpose; it is for benches with serial recovery in reach, not for anything shipped.
+- **A debug bootloader shows its USB for 15 s before the application starts**
+  (`app/sysbuild/mcuboot-debug.conf`: `CONFIG_BOOT_SERIAL_WAIT_FOR_DFU_TIMEOUT=15000`). Every
+  reset therefore has a window in which only the `ZLRS MCUBOOT` ports exist and the application
+  has not started; tools that look for the application port have to wait through it.
+- **Do not chatter the console**: opening and closing the console CDC over usbipd a few times in a
+  row leaves the stream delivering tens of bytes per second while the device stays enumerated, and
+  it does not recover by reading harder. The board is not necessarily dead — its radio work and its
+  config port are separate code paths — but the console is the wrong instrument from then on. Hold
+  one connection open for the whole session, and reboot the board (or re-attach it) before
+  measuring anything that depends on console output.
 - **`zlrs rate`** prints the last second per link: receive windows, how many of them heard a
   frame, frames sent and the state. That is the number to compare when a link misbehaves; a
   receiver problem shows up as a hit rate near zero with the window count unchanged.
@@ -231,3 +252,33 @@ One line each; details live in code comments.
 - Re-attaching a board through `usbipd` re-enumerates its USB and the application boots again
   (uptime restarts). Detach and attach only when the port is really missing, and expect the first
   few seconds of console output to be boot noise.
+
+## 6. The direct FLRC experiment
+
+The planner path costs milliseconds per transaction: it programs the radio per slot, sleeps it
+between transactions and pays the HAL's wake-up (5), against a slot budget that is a quarter of a
+frame. The vendor's direct-driver-access path exists for exactly that reason — program the radio
+once, keep it awake, start transactions back to back — so the data link has a second backend to
+measure against: `app/src/radio_rac.c` (`direct_submit` / `direct_drain`), switched at runtime with
+`zlrs direct on|off` and at boot with `CONFIG_ZLRS_APP_DIRECT_AT_BOOT` (bench images only).
+
+What it does today, measured on two boards (A TX, B RX, 2.4G data channel, hopping off, both on the
+direct backend, `CONFIG_ZLRS_APP_BENCH_RAW_MS=8000`):
+
+- the TX side transmits and collects `RAL_IRQ_TX_DONE` for almost every transaction
+  (`tx_done` 371, `no_status` 7 in 8 s, ~46 frames/s before the wait loop was fixed to complete on
+  its own poll),
+- the RX side hears **nothing** (`raw bench: 0 frames`), so the two ends do not agree on air
+  parameters, or the peer's receive window never lands on the frames,
+- and the TX side stops emitting after a few seconds inside a radio call; the watchdog then resets
+  the board. The last line in the log is a `direct: submit`, so the hang is in the SPI/radio access,
+  not in the link layer.
+
+`zlrs radio` reports what the experiment depends on: `direct irq:` (polls, `tx_done`, `rx_pkt`,
+`rx_timeout`, `no_status`, last non-zero status), `data path:` (which backend the data link uses,
+and how often the switch was deferred) and `direct recovery:` (how often a transaction that
+reported nothing had to be recovered with a standby cycle).
+
+The default is the planner. The backend stays in the tree as an experiment because the measurement
+it produces is the one that decides whether a high-rate link is possible on this radio at all — but
+it is not a product path until the two failures above are understood.
