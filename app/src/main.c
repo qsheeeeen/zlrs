@@ -1980,6 +1980,71 @@ static int cmd_listen(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+/*
+ * Raw radio bench at boot, see CONFIG_ZLRS_APP_BENCH_RAW_MS. The role decides the direction: the TX
+ * role sends complete frames back to back, the RX role opens 100 ms windows back to back. Both log
+ * once a second, which is all the host needs — the console stays usable because nothing has to be
+ * typed while this runs.
+ */
+static void bench_raw_at_boot(void)
+{
+	uint32_t left_ms = (uint32_t)CONFIG_ZLRS_APP_BENCH_RAW_MS;
+	uint32_t last_ms = zlrs_radio_port_now_ms();
+	uint32_t tx0 = link_data.stats.tx_frames;
+	uint32_t rx0 = link_data.stats.rx_frames;
+	static uint8_t payload[32];
+	const uint32_t start_ms = last_ms;
+	uint32_t seq = 0U;
+
+	if (left_ms == 0U) {
+		return;
+	}
+
+	LOG_INF("raw bench: %s for %u ms", role_tx ? "blast" : "listen",
+		(unsigned int)left_ms);
+
+	while ((uint32_t)(zlrs_radio_port_now_ms() - start_ms) < left_ms) {
+		const zlrs_radio_req_t *req;
+
+		if (role_tx) {
+			for (uint8_t i = 0U; i < sizeof(payload); i++) {
+				payload[i] = (uint8_t)(seq + i);
+			}
+			req = zlrs_link_blast(&link_data, payload, sizeof(payload));
+			if (req != NULL) {
+				seq++;
+			}
+		} else {
+			req = zlrs_link_listen_raw(&link_data, 100U);
+		}
+		if (req == NULL) {
+			k_usleep(200);
+			continue;
+		}
+		(void)bench_wait(&link_data, req, role_tx ? 5000U : 120000U);
+		zlrs_watchdog_feed();
+
+		{
+			const uint32_t now = zlrs_radio_port_now_ms();
+
+			if ((uint32_t)(now - last_ms) >= 1000U) {
+				const uint32_t tx = link_data.stats.tx_frames - tx0;
+				const uint32_t rx = link_data.stats.rx_frames - rx0;
+
+				LOG_INF("raw: %s %u tx/s, %u rx/s, rssi %d",
+					role_tx ? "blast" : "listen", (unsigned int)tx,
+					(unsigned int)rx, link_data.stats.last_rssi);
+				tx0 = link_data.stats.tx_frames;
+				rx0 = link_data.stats.rx_frames;
+				last_ms = now;
+			}
+		}
+	}
+
+	LOG_INF("raw bench done: %u frames sent, %u heard", (unsigned int)seq,
+		(unsigned int)(link_data.stats.rx_frames - rx0));
+}
+
 /* Bench: show the pair key, re-derive it from the record on hand, show it again */
 static int cmd_rekey(const struct shell *sh, size_t argc, char **argv)
 {
@@ -2414,6 +2479,9 @@ int main(void)
 	if (!gpio_is_ready_dt(&button) || gpio_pin_configure_dt(&button, GPIO_INPUT) != 0) {
 		LOG_WRN("button unavailable");
 	}
+
+	/* Debug images only: run the raw radio bench before the superframe takes over */
+	bench_raw_at_boot();
 
 	LOG_INF("entering superframe loop: %u Hz, %s / %s (%s)", (unsigned int)control_rate_hz,
 		ZLRS_CONTROL_ENABLED ? "control on" : "control off",
