@@ -11,10 +11,7 @@
  *   0x000000  mcuboot   128 KB   RP2350 bootrom starts here
  *   0x020000  slot0     832 KB   application (signed), zephyr,code-partition
  *   0x0F0000  slot1     832 KB   upgrade images land here, MCUboot swaps
- *   0x1C0000  log        1 MB    LittleFS the log backend writes to (doc/15-log.md)
- *   0x2C0000  coredump 128 KB    one whole-thread coredump, MCUboot leaves it alone
- *   0x2E0000  storage   32 KB    NVS: root key, device id, pairing record, failsafe, settings
- *   0x300000  (free)    1 MB     unallocated until the measured log volume says otherwise
+ *   0x1C0000  storage  2.25 MB   NVS: root key, device id, pairing record, failsafe values
  */
 
 &flash0 {
@@ -40,37 +37,9 @@
 			reg = <0xf0000 0xd0000>;
 		};
 
-		/*
-		 * Everything above the two slots is diagnostics first: 1 MB of log files on a
-		 * power-fail-safe LittleFS, then one coredump (whole thread set), and only then the
-		 * configuration store — nine keys totalling under a hundred bytes, so eight NVS
-		 * sectors are years of config writes with the wear leveling that matters. The
-		 * remaining 1 MB stays unallocated until the log volume says what to do with it.
-		 */
-		log_partition: partition@1c0000 {
-			label = "log";
-			reg = <0x1c0000 0x100000>;
-		};
-
-		coredump_partition: partition@2c0000 {
-			label = "coredump";
-			reg = <0x2c0000 0x20000>;
-		};
-
-		storage_partition: partition@2e0000 {
+		storage_partition: partition@1c0000 {
 			label = "storage";
-			reg = <0x2e0000 0x8000>;
+			reg = <0x1c0000 0x240000>;
 		};
-	};
-};
-
-/*
- * MCUboot and the application both build this table; only the application has a coredump
- * backend, so the alias lives here rather than in the shared base file (which the
- * bootloader-less variants include as well).
- */
-/ {
-	aliases {
-		coredump-partition = &coredump_partition;
 	};
 };

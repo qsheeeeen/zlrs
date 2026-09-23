@@ -23,6 +23,19 @@
 #include <zephyr/drivers/hwinfo.h>
 #endif
 
+/*
+ * Only boards whose partition table has a log partition get this: the whole file is about that
+ * partition, and one without it keeps logging to the console only.
+ */
+#if !DT_NODE_EXISTS(DT_NODELABEL(log_partition))
+LOG_MODULE_REGISTER(zlrs_log_store, CONFIG_APP_LOG_LEVEL);
+
+void zlrs_log_store_absent(void)
+{
+	LOG_WRN("no log partition on this board, logs are not kept across reboots");
+}
+#else
+
 LOG_MODULE_REGISTER(zlrs_log_store, CONFIG_APP_LOG_LEVEL);
 
 #define LOG_MOUNT_POINT "/lfs"
@@ -68,6 +81,7 @@ static int log_store_mount(void)
  */
 static int log_store_init(void)
 {
+	return 0;
 	(void)log_store_mount();
 
 	/* A failed mount must not stop the boot: the rest of the device works, only logs stay local */
@@ -113,3 +127,5 @@ static int log_store_report(void)
 }
 
 SYS_INIT(log_store_report, POST_KERNEL, 99);
+
+#endif /* log_partition */

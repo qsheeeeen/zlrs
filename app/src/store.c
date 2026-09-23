@@ -44,7 +44,22 @@ int zlrs_store_init(void)
 
 	rc = nvs_mount(&fs);
 	if (rc != 0) {
-		LOG_ERR("NVS mount failed (%d)", rc);
+		/*
+		 * A settings area that cannot be mounted is wiped and mounted again: the device must keep
+		 * working with defaults (pairing, role and the rest are re-set from the config port) rather
+		 * than refuse to start. It also covers the area holding data from a different layout.
+		 */
+		const struct flash_area *area;
+
+		LOG_WRN("NVS mount failed (%d), erasing the settings area", rc);
+		if (flash_area_open(PARTITION_ID(storage_partition), &area) == 0) {
+			(void)flash_area_flatten(area, 0, area->fa_size);
+			flash_area_close(area);
+			rc = nvs_mount(&fs);
+		}
+	}
+	if (rc != 0) {
+		LOG_ERR("NVS mount failed (%d), running without stored settings", rc);
 		return rc;
 	}
 
