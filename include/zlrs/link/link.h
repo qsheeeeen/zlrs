@@ -367,6 +367,14 @@ void zlrs_link_pair_ctx(const zlrs_link_t *link, uint8_t out[ZLRS_PAIR_CTX_LEN])
  */
 const zlrs_radio_req_t *zlrs_link_listen(zlrs_link_t *link);
 
+/*
+ * Bench-only raw radio access, no state machine and no ARQ in the way:
+ * blast() sends one complete frame right now, listen_raw() opens one window of the given length.
+ * They answer "does the radio hear the peer at all" independently of slots, phases and retries.
+ */
+const zlrs_radio_req_t *zlrs_link_blast(zlrs_link_t *link, const uint8_t *data, uint16_t len);
+const zlrs_radio_req_t *zlrs_link_listen_raw(zlrs_link_t *link, uint16_t timeout_ms);
+
 /* Change modulation at runtime (rate adaptation); effective with the next transaction */
 void zlrs_link_set_mod(zlrs_link_t *link, const zlrs_mod_cfg_t *mod);
 

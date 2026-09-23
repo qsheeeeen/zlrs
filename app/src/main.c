@@ -851,6 +851,22 @@ static void run_slot(uint8_t slot)
 		}
 	}
 #endif
+
+	/*
+	 * Pad the slot out to its budget. A slot lasts as long as its own transaction otherwise, and
+	 * the two ends never run the same mix: one transmits while the other listens, each taking a
+	 * different number of microseconds. Over four slots those differences add up to milliseconds,
+	 * so the peer's window and our transmission land in different parts of the frame even when the
+	 * frames themselves are aligned — the windows only catch a frame now and then. A fixed slot
+	 * length makes both ends' slot boundaries identical, which is what any alignment needs.
+	 */
+	{
+		const uint32_t took_us = now_us() - slot_start_us;
+
+		if (took_us < slot_budget_us) {
+			k_usleep((int32_t)(slot_budget_us - took_us));
+		}
+	}
 }
 
 #if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
@@ -1862,6 +1878,108 @@ static int cmd_rate(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+/*
+ * Bench: raw radio test, run inside the shell command so it is self-contained and bounded.
+ * `zlrs blast [n]` sends n complete frames back to back, `zlrs listen [ms] [n]` opens n windows of
+ * the given length; both report what actually happened. No slots, no phases, no ARQ: this is the
+ * measurement that says whether the two radios can hear each other at all.
+ */
+static bool bench_wait(zlrs_link_t *link, const zlrs_radio_req_t *req, uint32_t budget_us)
+{
+	uint32_t waited_us = 0U;
+
+	if (link->radio.submit(link->radio.ctx, req) != 0) {
+		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_radio_port_now_ms());
+		return false;
+	}
+
+	while (waited_us < budget_us) {
+#if IS_ENABLED(CONFIG_ZLRS_APP_RADIO)
+		SMTC_SW_PLATFORM_VOID(smtc_rac_run_engine());
+#endif
+		if (zlrs_radio_port_wait_us(ZLRS_RADIO_PUMP_STEP_US) == 0) {
+			break;
+		}
+		waited_us += ZLRS_RADIO_PUMP_STEP_US;
+	}
+
+	zlrs_radio_port_drain();
+	if (link->req_pending) {
+		zlrs_radio_port_abort();
+		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_radio_port_now_ms());
+		return false;
+	}
+
+	return true;
+}
+
+static int cmd_blast(const struct shell *sh, size_t argc, char **argv)
+{
+	uint8_t payload[32];
+	uint32_t count = (argc > 1) ? (uint32_t)strtoul(argv[1], NULL, 0) : 50U;
+	uint32_t sent = 0U;
+	uint32_t failed = 0U;
+	const uint32_t t0 = zlrs_radio_port_now_ms();
+
+	if (count > 2000U) {
+		count = 2000U;
+	}
+
+	for (uint32_t i = 0U; i < count; i++) {
+		const zlrs_radio_req_t *req;
+
+		for (uint8_t j = 0U; j < sizeof(payload); j++) {
+			payload[j] = (uint8_t)(i + j);
+		}
+		req = zlrs_link_blast(&link_data, payload, sizeof(payload));
+		if (req == NULL || !bench_wait(&link_data, req, 20000U)) {
+			failed++;
+		} else {
+			sent++;
+		}
+	}
+
+	shell_print(sh, "blast: %u of %u frames sent in %u ms (fail %u)",
+		    (unsigned int)sent, (unsigned int)count,
+		    (unsigned int)(zlrs_radio_port_now_ms() - t0), (unsigned int)failed);
+
+	return 0;
+}
+
+static int cmd_listen(const struct shell *sh, size_t argc, char **argv)
+{
+	const uint32_t ms = (argc > 1) ? (uint32_t)strtoul(argv[1], NULL, 0) : 100U;
+	uint32_t count = (argc > 2) ? (uint32_t)strtoul(argv[2], NULL, 0) : 20U;
+	const uint32_t frames0 = link_data.stats.rx_frames;
+	uint32_t windows = 0U;
+	uint32_t worst_rssi = 0;
+
+	if (ms < 5U || ms > 500U) {
+		shell_print(sh, "window must be 5..500 ms");
+		return -EINVAL;
+	}
+	if (count > 200U) {
+		count = 200U;
+	}
+
+	for (uint32_t i = 0U; i < count; i++) {
+		const zlrs_radio_req_t *req = zlrs_link_listen_raw(&link_data, (uint16_t)ms);
+
+		if (req == NULL) {
+			break;
+		}
+		windows++;
+		(void)bench_wait(&link_data, req, ms * 1000U + 20000U);
+		worst_rssi = link_data.stats.last_rssi;
+	}
+
+	shell_print(sh, "listen: %u windows of %u ms, %u frames heard, last rssi %d",
+		    (unsigned int)windows, (unsigned int)ms,
+		    (unsigned int)(link_data.stats.rx_frames - frames0), worst_rssi);
+
+	return 0;
+}
+
 /* Bench: show the pair key, re-derive it from the record on hand, show it again */
 static int cmd_rekey(const struct shell *sh, size_t argc, char **argv)
 {
@@ -2045,6 +2163,8 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 	SHELL_CMD(rekey, NULL, "re-derive the control link keys from its record", cmd_rekey),
 	SHELL_CMD(rxwin, " [ms]", "stretch the data link receive window (bench)", cmd_rxwin),
 	SHELL_CMD(rate, " [s]", "measure windows/hits/frames per second per link", cmd_rate),
+	SHELL_CMD(blast, " [n]", "raw mode: send frames back to back on the data channel", cmd_blast),
+	SHELL_CMD(listen, " [ms] [n]", "raw mode: n receive windows of that length", cmd_listen),
 	SHELL_CMD(ports, NULL, "state of both data port endpoints", cmd_ports),
 #if ZLRS_CONFIG_ENABLED
 	SHELL_CMD(config, NULL, "enter config mode (EXIT returns)", cmd_config),
