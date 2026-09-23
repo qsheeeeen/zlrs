@@ -30,6 +30,10 @@
 #include <zephyr/shell/shell.h>
 #endif
 
+#ifdef PICO_RP2350
+#include <pico/bootrom.h>
+#endif
+
 #if IS_ENABLED(CONFIG_ZLRS_APP_RADIO)
 #include <smtc_rac_api.h>
 #include <smtc_sw_platform_helper.h>
@@ -922,6 +926,26 @@ static void run_slot(uint8_t slot)
  * which makes MCUboot wait for a signed image. The only entries are the config protocol's
  * recovery command and the debug shell, see doc/10-security.md 10.
  */
+#ifdef PICO_RP2350
+/*
+ * Bench: hand the board to the ROM's USB bootloader. The bootloader image is the one thing the
+ * application cannot replace through MCUboot (it is what runs MCUboot), and the ROM entry saves
+ * reaching for the BOOTSEL button every time: the board re-enumerates as a USB drive and the
+ * .uf2 can be copied in.
+ */
+static int cmd_bootsel(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	shell_print(sh, "rebooting into the RP2350 ROM bootloader (USB drive)");
+	k_msleep(50);
+	reset_usb_boot(0, 0); /* does not return */
+
+	return 0;
+}
+#endif
+
 static void enter_serial_recovery(void)
 {
 	LOG_WRN("update trigger: rebooting into MCUboot serial recovery");
@@ -2344,6 +2368,9 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 #endif
 #if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
 	SHELL_CMD(recovery, NULL, "reboot into MCUboot serial recovery", cmd_recovery),
+#endif
+#ifdef PICO_RP2350
+	SHELL_CMD(bootsel, NULL, "reboot into the RP2350 ROM bootloader (USB drive)", cmd_bootsel),
 #endif
 #if IS_ENABLED(CONFIG_ZLRS_RP2350_TRNG)
 	SHELL_CMD(entropy, NULL, "entropy self-test (two 32-byte TRNG blocks)", cmd_entropy),
