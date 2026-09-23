@@ -36,6 +36,16 @@ static void session_activate(zlrs_link_t *link, uint16_t hop_index);
 static void roll_session(zlrs_link_t *link, uint32_t now_ms);
 static void lq_account(zlrs_link_t *link, uint16_t seq);
 
+/*
+ * Start a fresh reassembly. Only ARQ can hand the reassembler every frame of a run, so only ARQ
+ * may keep a half run alive indefinitely (see zlrs_reasm_set_expiry).
+ */
+static void reasm_restart(zlrs_link_t *link)
+{
+	zlrs_reasm_init(&link->reasm, link->reasm_buf, sizeof(link->reasm_buf));
+	zlrs_reasm_set_expiry(&link->reasm, link->cfg.arq == 0U);
+}
+
 static uint32_t rd32(const uint8_t *p)
 {
 	return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
@@ -339,6 +349,11 @@ static void session_activate(zlrs_link_t *link, uint16_t hop_index)
 	link->sess_resp_due = false;
 	link->last_rx_seq = 0xFFFFU;
 	link->tx_seq = 0U;
+	/*
+	 * A half message from the old session must not be stitched onto the new one: the peer's
+	 * sequence numbers restart, so what arrives next belongs to a different stream.
+	 */
+	reasm_restart(link);
 	/* Sequence numbers restart per session; the LQ window must not span sessions */
 	link->lq_last_seq = 0U;
 	link->stats.lq_rx = 0U;
@@ -746,7 +761,7 @@ static void handle_ack(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t no
 
 	if ((flags & ZLRS_ARQ_ACK_RESYNC) != 0U) {
 		/* The peer gave up and restarts: drop the half message, answer "no progress yet" */
-		zlrs_reasm_init(&link->reasm, link->reasm_buf, sizeof(link->reasm_buf));
+		reasm_restart(link);
 		link->arq_rx_started = false;
 		link->arq_rx_seq = 0U;
 		link->arq_ack_pending = true;
@@ -1816,7 +1831,7 @@ void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg, const zlrs_ra
 		link->ev = *events;
 	}
 
-	zlrs_reasm_init(&link->reasm, link->reasm_buf, sizeof(link->reasm_buf));
+	reasm_restart(link);
 	link->last_rx_seq = 0xFFFFU;
 	link->stats.lq_percent = 100U;
 	link->state = ZLRS_STATE_UNCONFIGURED;

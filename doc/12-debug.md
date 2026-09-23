@@ -37,6 +37,7 @@ quietly end up in a released image.
 | shell `zlrs entropy` | entropy self-test (two 32-byte TRNG blocks) |
 | shell `zlrs mcuboot` | image state as MCUboot sees it (slot headers, confirm bit, copy state) |
 | `CONFIG_ZLRS_APP_DEBUG_STATS_LOG` | 1 Hz `stats:` line (counters, LQ, duty, dynamic power) and `air:` line (completed transactions per link) |
+| `CONFIG_ZLRS_APP_BENCH_RAW_MS` | the first N ms after boot skip the superframe: the TX role sends complete frames back to back, the RX role opens 100 ms receive windows back to back, and both log frames per second |
 | `CONFIG_ZLRS_APP_DEBUG_BOOT_DELAY_MS` | wait that long after USB is up before continuing init, so a panic during init is visible on an open console |
 
 The shell is gated by `CONFIG_ZLRS_APP_DEBUG_SHELL` and runs on the console CDC; the supported
@@ -121,6 +122,12 @@ switches to hide but debts: `doc/13-roadmap.md`, "Pending defaults".
 - **`zlrs rxwin <ms>`** stretches the data link's receive window (0 restores it). With the window
   at tens of milliseconds the receiver is effectively listening continuously, which separates
   "the two ends are not aligned" from "the receiver does not hear frames at all".
+- **The raw radio bench separates the radio from the scheduler**: with
+  `CONFIG_ZLRS_APP_BENCH_RAW_MS` the TX role blasts complete frames and the RX role listens in
+  100 ms windows, no slots and no phases involved. On this bench that reads 142 of 143 frames per
+  second at -42 dBm, so a superframe that delivers far less is a timing problem, not a radio,
+  band, sync word or framing problem. It runs by itself at boot, which matters because a long
+  radio transaction can drop the forwarded console.
 
 ## 5. Traps we have hit
 
@@ -168,6 +175,10 @@ One line each; details live in code comments.
 - An ARQ that gives up by throwing the head frame away is a passthrough that silently loses
   hundreds of bytes. Retry exhaustion now restarts the run (the receiver drops its half message,
   the bytes stay queued) so a bad air path costs time, never data.
+- A reassembler timeout is data loss once ARQ is on: the retransmit of the frame after the one
+  that already arrived can take longer than 100 ms on a lossy slot, and expiring the half run
+  drops bytes the ACK already covered. The passthrough symptom is a periodic hole of one frame
+  (~248 B) in every ~750 B. ARQ now keeps a half run alive; only the best-effort path expires.
 - Sending one confirmation for the pairing and session handshakes is a coin flip: the two ends do
   not share a slot phase while they are still finding each other. Both handshakes repeat, and the
   initiator keeps listening where a peer that missed the confirm is still answering.

@@ -136,10 +136,17 @@ amortises the data window over the frames in between.
 
 ### 4.2 Fragmentation
 
-Messages larger than one frame are split with `MORE` and reassembled strictly in `seq` order; a
-gap, an oversize message or a 100 ms timeout drops the whole run (the reassembly buffer is
-512 B). The receiver is told to void a half-finished run when the sender gives up, so the layer
-above never sees a stream at the wrong offset.
+Messages larger than one frame are split with `MORE` and reassembled strictly in `seq` order; the
+reassembly buffer is 512 B and the sender closes a run early enough that the receiver never has
+to reject one as oversize. A gap drops the whole run, and the receiver is told to void a
+half-finished run when the sender gives up, so the layer above never sees a stream at the wrong
+offset.
+
+The 100 ms half-run timeout (`ZLRS_FRAG_TIMEOUT_MS`) applies to the best-effort path only, where a
+lost frame never comes back and the half message can only be dropped. With ARQ it is off: a
+retransmit may well arrive tens of milliseconds later than the frame before it, and expiring the
+run would throw away bytes the ACK already covered — the loss the sender can neither see nor
+repair.
 
 ### 4.3 Reliable transfer (ARQ)
 
@@ -149,10 +156,10 @@ The data link's default mode:
   payload;
 - the receiver answers with a **cumulative ACK** (2-byte sequence plus a flags byte whose bit 0
   asks for a resync);
-- the sender retransmits the window after 30 ms (`ZLRS_ARQ_TIMEOUT_MS`, raised to twice the
-  airtime when a frame is slow) and gives up after 6 retries;
-- giving up counts the run as dropped, clears the window, restarts the sequence and tells the
-  receiver to void the half message;
+- the sender retransmits the head frame after 30 ms (`ZLRS_ARQ_TIMEOUT_MS`, raised to twice the
+  airtime when a frame is slow), up to 64 times (`ZLRS_ARQ_MAX_RETRIES`);
+- exhausting the retry budget does not throw data away: the sender asks the receiver to void the
+  half message, keeps the bytes queued and starts the run again when the air is usable;
 - the first frame of a session has to start at sequence 0: dropping a run is better than
   handing the layer above a stream at the wrong offset.
 

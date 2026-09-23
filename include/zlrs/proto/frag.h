@@ -1,6 +1,5 @@
 /*
- * Reassembly: strictly in seq order, a gap or a timeout drops the whole run, see
- * doc/09-protocol.md 2.5.
+ * Reassembly: strictly in seq order, a gap drops the whole run, see doc/09-protocol.md 2.5.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -24,6 +23,13 @@ typedef struct {
 	uint16_t expected_seq;
 	uint32_t last_ms;
 	bool active;
+	/*
+	 * Whether a half run expires. On by default, which is right for the best-effort path: a
+	 * frame lost there never comes back, so the half message can only be dropped. ARQ turns it
+	 * off — it retransmits until the frame arrives, so expiring a run does not recover anything,
+	 * it throws away bytes that were already received correctly, and the peer has no way to know.
+	 */
+	bool expire;
 } zlrs_reasm_t;
 
 enum {
@@ -33,6 +39,9 @@ enum {
 };
 
 void zlrs_reasm_init(zlrs_reasm_t *reasm, uint8_t *buf, uint16_t cap);
+
+/* Turn the half-run timeout off (ARQ) or back on (best effort). Call after zlrs_reasm_init(). */
+void zlrs_reasm_set_expiry(zlrs_reasm_t *reasm, bool enabled);
 
 /*
  * Deliver one frame. A frame without MORE (or with no run in progress) takes the single-frame

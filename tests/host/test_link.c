@@ -1513,6 +1513,45 @@ static void test_arq_retransmit(void)
 	CHECK(sim.rx.data.stats.rx_out_of_order > 0U);
 }
 
+/*
+ * ARQ: a run survives a retransmit that lands past the reassembly timeout. On a lossy slot the
+ * head frame of a run is repeated for tens of milliseconds, and a receiver that expires the half
+ * run in the meantime throws away bytes its ACK already covered — the peer is never told, so the
+ * passthrough loses a chunk in the middle of every message.
+ */
+static void test_arq_slow_run(void)
+{
+	sim_t sim;
+	uint8_t want[512];
+
+	printf("link: arq slow run\n");
+
+	sim_init(&sim);
+	sim.tx.data.cfg.arq = 1U;
+	sim.rx.data.cfg.arq = 1U;
+	pair_and_connect(&sim);
+	CHECK(sim.tx.data.state == ZLRS_STATE_CONNECTED);
+
+	for (uint16_t i = 0U; i < sizeof(want); i++) {
+		want[i] = (uint8_t)(i * 5U + 1U);
+	}
+	CHECK(zlrs_link_write(&sim.tx.data, want, sizeof(want)) == sizeof(want));
+
+	/* The first frame of the run lands, the rest of the air goes quiet for longer than the
+	 * reassembly timeout before the retransmit gets through */
+	sim_run(&sim, 1U);
+	sim.drop_data_down = 30;
+	sim_run(&sim, 30U);
+	sim.drop_data_down = 0;
+
+	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(want), 4000);
+
+	CHECK(sim.rx.stream_len == sizeof(want));
+	CHECK(memcmp(sim.rx.stream, want, sizeof(want)) == 0);
+	CHECK(sim.tx.data.stats.tx_retries > 0U);
+	CHECK(sim.tx.data.stats.data_drop_bytes == 0U);
+}
+
 /* ARQ: a duplicated data frame is delivered exactly once */
 static void test_arq_dedup(void)
 {
@@ -2286,6 +2325,7 @@ void test_link(void)
 	test_link_quality();
 	test_backpressure();
 	test_arq_retransmit();
+	test_arq_slow_run();
 	test_arq_dedup();
 	test_arq_giveup();
 	test_rate_adapt();

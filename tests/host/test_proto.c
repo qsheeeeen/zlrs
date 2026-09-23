@@ -158,6 +158,20 @@ static void test_frag(void)
 	CHECK(r == ZLRS_REASM_NONE);
 	push_chunk(&reasm, 51U, ZLRS_FLAG_MORE, "789", 1U, &r);
 	CHECK(r == ZLRS_REASM_DROPPED);
+
+	/*
+	 * ARQ: the sender retransmits frame 61 until it lands, so a run may take arbitrarily long.
+	 * Silently dropping what already arrived loses bytes the peer was told were delivered (the
+	 * ACK covers the frames before the gap), which is exactly how a passthrough loses a chunk
+	 * of every message whenever the air is lossy.
+	 */
+	zlrs_reasm_init(&reasm, buf, sizeof(buf));
+	zlrs_reasm_set_expiry(&reasm, false);
+	push_chunk(&reasm, 60U, ZLRS_FLAG_MORE, "abc", 0U, &r);
+	CHECK(r == ZLRS_REASM_NONE);
+	push_chunk(&reasm, 61U, 0U, "def", ZLRS_FRAG_TIMEOUT_MS * 5U, &r);
+	CHECK(r == ZLRS_REASM_DONE);
+	CHECK(reasm.len == 6U && memcmp(buf, "abcdef", 6U) == 0);
 }
 
 /* ---- hop tables ---------------------------------------------------------- */
