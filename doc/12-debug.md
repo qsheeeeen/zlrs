@@ -179,6 +179,18 @@ One line each; details live in code comments.
   that already arrived can take longer than 100 ms on a lossy slot, and expiring the half run
   drops bytes the ACK already covered. The passthrough symptom is a periodic hole of one frame
   (~248 B) in every ~750 B. ARQ now keeps a half run alive; only the best-effort path expires.
+- **A radio transaction costs milliseconds, not microseconds, on this driver**: the RAC submit
+  alone measures 1.8-2.8 ms (`submit=` in the `tm:` line) and a whole slot 6-14 ms, against a plan
+  whose slot budget is a quarter of a 6.7 ms frame (1667 us). The loop is therefore work bound:
+  four slots take ~24-30 ms, the plan asks for 6.7 ms, and with `CONFIG_ZLRS_APP_PACING_SCALE=1`
+  neither end ever sleeps. Two free-running loops at ~28 ms drift past each other by ~1.5 ms per
+  frame, so a 2 ms receive window rarely lands on the peer's 1 ms frame, the phase lock has almost
+  no hits to work with, and an ARQ'd link ends up delivering a few percent of its frames.
+  Raising the pacing (`CONFIG_ZLRS_APP_PACING_SCALE`) makes both ends sleep and hold their period
+  (measured 53.0 and 55.0 ms at scale 8, i.e. within 2 ms of each other and stable), but a 2 ms
+  window per 53 ms frame still needs the phase to be right, and the lock only ever *lengthens* a
+  frame, so the end that is behind keeps stretching. What a working link needs is a slot budget
+  that covers a whole receive window, which means an honest frame period for this radio port.
 - Sending one confirmation for the pairing and session handshakes is a coin flip: the two ends do
   not share a slot phase while they are still finding each other. Both handshakes repeat, and the
   initiator keeps listening where a peer that missed the confirm is still answering.

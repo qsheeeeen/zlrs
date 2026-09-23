@@ -165,6 +165,7 @@ typedef struct {
 	uint32_t mix_changes;   /* how often a new sub-band mix was adopted */
 	uint32_t mix_fallbacks; /* fallbacks to the default mix after missing new SYNC versions */
 	uint32_t hop_resync;    /* hop-index corrections received through SYNC */
+	uint32_t hop_advances;  /* times this link moved its hop index by itself */
 	/* Pairing handshake frames sent and received, per message type: this handshake loses frames */
 	uint32_t pair_req_tx;
 	uint32_t pair_resp_tx;

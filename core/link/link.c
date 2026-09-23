@@ -1447,6 +1447,7 @@ static void advance_hop(zlrs_link_t *link)
 	}
 
 	if (link->state == ZLRS_STATE_CONNECTED) {
+		link->stats.hop_advances++;
 		(void)zlrs_fhss_next_hz(&link->fhss);
 		/* The sub-G table has its own index: advance it every frame so both ends stay aligned */
 		if (zlrs_fhss_sub_ready(&link->fhss)) {

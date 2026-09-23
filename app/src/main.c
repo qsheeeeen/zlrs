@@ -1697,9 +1697,15 @@ static void print_link(const struct shell *sh, const char *name, const zlrs_link
 	const uint32_t salt_a = le32(salt);
 	const uint32_t salt_b = le32(&salt[4]);
 
-	shell_print(sh, "%-7s state=%u paired=%u sess=%u freq=%u hop=%u pair_key=%08x word=%08x",
+	/*
+	 * hop is the index both ends have to agree on; frame is this end's own frame counter and
+	 * adv how often it has moved the table, which is what shows where a desync comes from.
+	 */
+	shell_print(sh, "%-7s state=%u paired=%u sess=%u freq=%u hop=%u frame=%u adv=%u resync=%u"
+			" pair_key=%08x word=%08x",
 		    name, link->state, link->paired ? 1U : 0U, link->session_valid ? 1U : 0U,
-		    zlrs_fhss_current_hz(&link->fhss), link->fhss.index,
+		    zlrs_fhss_current_hz(&link->fhss), link->fhss.index, link->frame_index,
+		    link->stats.hop_advances, link->stats.hop_resync,
 		    fingerprint(link->pair_key, sizeof(link->pair_key)),
 		    fingerprint(link->sync_word, sizeof(link->sync_word)));
 	shell_print(sh, "        tx=%u rx=%u fail=%u rssi=%d..%d lq=%u%%",
