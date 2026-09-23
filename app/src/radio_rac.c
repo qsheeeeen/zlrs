@@ -220,6 +220,10 @@ static void client_complete(rac_client_t *client, rp_status_t status)
 	const uint32_t now_us = (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64());
 	const uint32_t took_us = now_us - client->submit_us;
 
+	if (took_us > diag.wait_us_max) {
+		diag.wait_us_max = took_us;
+	}
+
 	client->status = ZLRS_RADIO_OK;
 	client->rx_len = 0U;
 	client->rssi = 0;
@@ -321,12 +325,24 @@ static int port_submit(void *ctx, const zlrs_radio_req_t *req)
 {
 	rac_client_t *client = ctx;
 	smtc_rac_context_t *rac = client->ctx;
+	const uint32_t t0 = (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64());
 
 	drain_radio_irq();
+	const uint32_t t1 = (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64());
+
 	diag.transactions++;
-	client->submit_us = (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64());
+	client->submit_us = t1;
 	client->timeout_ms = req->timeout_ms;
 	client->is_tx = req->is_tx;
+	diag.submit_drain_us = t1 - t0;
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
+	/*
+	 * Bench probe: the same read again, with the radio already awake. The gap between the two is
+	 * the wake-up, and it is what makes one SPI access cost a millisecond.
+	 */
+	drain_radio_irq();
+	diag.submit_drain2_us = (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64()) - t1;
+#endif
 
 	rac->smtc_rac_data_buffer_setup.tx_payload_buffer = req->buf;
 	rac->smtc_rac_data_buffer_setup.size_of_tx_payload_buffer = req->size;
@@ -371,12 +387,26 @@ static int port_submit(void *ctx, const zlrs_radio_req_t *req)
 		return -1;
 	}
 
+	{
+		const uint32_t t2 = (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64());
+
+		diag.submit_rac_us = t2 - t1;
+		if ((t2 - t0) > diag.submit_us_max) {
+			diag.submit_us_max = t2 - t0;
+		}
+	}
+
 	return 0;
 }
 
 int zlrs_radio_port_wait_us(uint32_t timeout_us)
 {
 	return k_sem_take(&done_sem, K_USEC(timeout_us));
+}
+
+bool zlrs_radio_port_irq_pending(void)
+{
+	return smtc_rac_is_irq_flag_pending();
 }
 
 static void drain_client(rac_client_t *client, uint32_t now_ms)

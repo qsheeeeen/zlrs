@@ -191,6 +191,30 @@ One line each; details live in code comments.
   window per 53 ms frame still needs the phase to be right, and the lock only ever *lengthens* a
   frame, so the end that is behind keeps stretching. What a working link needs is a slot budget
   that covers a whole receive window, which means an honest frame period for this radio port.
+- **Where those milliseconds come from** (`zlrs radio`, 2.4G data link, hopping off, back-to-back
+  TX from the at-boot raw bench, 142 frames/s = 7.0 ms per transaction):
+
+  | Part | Measured | Why |
+  | --- | --- | --- |
+  | `drain` (one SPI status read) | **1.1-1.2 ms** | the radio is asleep and this is the wake-up: the same read again costs **59-84 us** |
+  | `rac` (submit) | 0.7-0.9 ms | the RAC enqueues a task per transaction |
+  | engine passes | 10 per transaction, 70 us average (max 5.6 ms) | the planner needs several passes to program the radio and to close the transaction |
+  | `wait` (submit to completion) | 3.0 ms | radio programming, airtime, DIO IRQ and the pass that handles it |
+
+  The planner puts the radio to sleep after **every** transaction
+  (`radio_planner.c`, `ral_set_sleep` right before the completion callback) and the HAL adds a
+  500 us sleep when it issues that command, so the wake cost is not avoidable from the application
+  side: a pending task cannot prevent it, because the sleep happens before the callback that could
+  enqueue one. A high-rate link on this chip wants the radio to stay awake and programmed across a
+  frame, which is what the vendor's direct-driver-access path is for.
+- **The IRQ path is not the problem**: `CONFIG_LORA_BASICS_MODEM_DRIVERS_EVENT_TRIGGER_NO_THREAD`
+  (callback straight from the GPIO ISR) changed the back-to-back rate by nothing measurable (139
+  vs 138 frames/s). The RAC's IRQ callback only sets a flag and gives a semaphore, so either mode
+  is safe, but the delayed workqueue hop is not where the milliseconds are.
+- **The console drops log lines in bursts**: the reported `TX/air/rx/win/tm/rd/key` group loses
+  lines whenever the host reads in bursts, and the line that carries the numbers under test is
+  often one of them. Anything a measurement depends on needs a shell command (`zlrs radio`,
+  `zlrs link`) or a counter the tooling reads, never a log line.
 - Sending one confirmation for the pairing and session handshakes is a coin flip: the two ends do
   not share a slot phase while they are still finding each other. Both handshakes repeat, and the
   initiator keeps listening where a peer that missed the confirm is still answering.

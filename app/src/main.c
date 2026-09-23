@@ -616,6 +616,68 @@ static void load_identity(void)
 /* Tick while pumping the RAC engine: fine enough not to stretch a slot, coarse enough not to spin */
 #define ZLRS_RADIO_PUMP_STEP_US 200U
 
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
+/*
+ * Engine cost: one pass does the radio programming and the IRQ handling for a transaction, so how
+ * long a pass takes and how many of them a transaction needs is the difference between a slot
+ * budget in microseconds and one in milliseconds.
+ */
+static uint32_t pump_us_max;
+static uint32_t pump_us_sum;
+static uint32_t pump_us_last;
+static uint32_t pump_calls;
+/* Result of the at-boot raw bench, kept for `zlrs radio`: the console drops the log line often */
+static uint32_t raw_bench_frames;
+static uint32_t raw_bench_ms;
+#endif
+
+/*
+ * Wait for the current transaction to finish, pumping the RAC engine while it runs. This is the
+ * vendor's immediate_radio_access loop: pump the engine, and sleep only when the planner has
+ * nothing going on. Sleeping between every pass (which is what this did) adds the sleep to every
+ * state transition the engine has to take — the radio programming alone is several passes, so the
+ * slot cost picked up milliseconds that had nothing to do with the air. `budget_us` bounds the
+ * whole wait; the caller decides what a timeout means.
+ */
+static void radio_wait_done(uint32_t budget_us)
+{
+	uint32_t waited_us = 0U;
+
+	while (waited_us < budget_us) {
+#if IS_ENABLED(CONFIG_ZLRS_APP_RADIO)
+		const uint32_t t0 = (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64());
+
+		SMTC_SW_PLATFORM_VOID(smtc_rac_run_engine());
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
+		{
+			const uint32_t took = (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64()) - t0;
+
+			pump_us_last = took;
+			pump_us_sum += took;
+			pump_calls++;
+			if (took > pump_us_max) {
+				pump_us_max = took;
+			}
+		}
+#endif
+#endif
+		if (zlrs_radio_port_wait_us(0U) == 0) {
+			return; /* this transaction is done */
+		}
+
+		/*
+		 * The planner still has an IRQ to handle: pump again at once. Only when it has nothing
+		 * pending does the wait mean "the radio is working and we are waiting for it".
+		 */
+		if (zlrs_radio_port_irq_pending()) {
+			continue;
+		}
+
+		(void)zlrs_radio_port_wait_us(ZLRS_RADIO_PUMP_STEP_US);
+		waited_us += ZLRS_RADIO_PUMP_STEP_US;
+	}
+}
+
 /*
  * Bench timing. The superframe is paced, but every slot inside it lasts as long as its own
  * transaction, so where a slot sits in the frame depends on the radio work of that frame; and
@@ -748,8 +810,6 @@ static void run_slot(uint8_t slot)
 	 * The done_sem timeout doubles as the tick; the whole wait counts against the slot budget.
 	 */
 	{
-		uint32_t waited_us = 0U;
-		bool done = false;
 		/*
 		 * A listening slot is allowed to run as long as its window: the acquisition windows are
 		 * deliberately longer than a steady-state one, and cutting them off at the slot budget is
@@ -765,20 +825,7 @@ static void run_slot(uint8_t slot)
 			}
 		}
 
-		while (waited_us < budget_us) {
-#if IS_ENABLED(CONFIG_ZLRS_APP_RADIO)
-			/* Only the RAC backend needs pumping; the null backend completes inline. */
-			SMTC_SW_PLATFORM_VOID(smtc_rac_run_engine());
-#endif
-
-			if (zlrs_radio_port_wait_us(ZLRS_RADIO_PUMP_STEP_US) == 0) {
-				done = true;
-				break;
-			}
-
-			waited_us += ZLRS_RADIO_PUMP_STEP_US;
-		}
-		ARG_UNUSED(done);
+		radio_wait_done(budget_us);
 	}
 
 	zlrs_radio_port_drain();
@@ -1324,6 +1371,9 @@ static void report(uint32_t now_ms)
 			radio_diag.stale_irq, radio_diag.stale_irq_bits, radio_diag.late_irq,
 			radio_diag.overruns, radio_diag.rx_windows, radio_diag.tx_us_last,
 			radio_diag.rx_us_last);
+		/* Where a transaction's milliseconds go: the drain + RAC submit, and the wait after */
+		LOG_INF("rd2: drain=%u rac=%u submit max=%u wait max=%u us", radio_diag.submit_drain_us,
+			radio_diag.submit_rac_us, radio_diag.submit_us_max, radio_diag.wait_us_max);
 	}
 	/* Fingerprints (not the keys): comparing two ends needs to be possible from the log alone */
 	LOG_INF("key: ctl pair=%08x word=%08x root=%08x a=%08x b=%08x hop=%u state=%u"
@@ -1892,22 +1942,12 @@ static int cmd_rate(const struct shell *sh, size_t argc, char **argv)
  */
 static bool bench_wait(zlrs_link_t *link, const zlrs_radio_req_t *req, uint32_t budget_us)
 {
-	uint32_t waited_us = 0U;
-
 	if (link->radio.submit(link->radio.ctx, req) != 0) {
 		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_radio_port_now_ms());
 		return false;
 	}
 
-	while (waited_us < budget_us) {
-#if IS_ENABLED(CONFIG_ZLRS_APP_RADIO)
-		SMTC_SW_PLATFORM_VOID(smtc_rac_run_engine());
-#endif
-		if (zlrs_radio_port_wait_us(ZLRS_RADIO_PUMP_STEP_US) == 0) {
-			break;
-		}
-		waited_us += ZLRS_RADIO_PUMP_STEP_US;
-	}
+	radio_wait_done(budget_us);
 
 	zlrs_radio_port_drain();
 	if (link->req_pending) {
@@ -2049,6 +2089,11 @@ static void bench_raw_at_boot(void)
 
 	LOG_INF("raw bench done: %u frames sent, %u heard", (unsigned int)seq,
 		(unsigned int)(link_data.stats.rx_frames - rx0));
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
+	/* Kept for `zlrs radio`: the console drops this line often enough to lose the measurement */
+	raw_bench_frames = seq;
+	raw_bench_ms = (uint32_t)CONFIG_ZLRS_APP_BENCH_RAW_MS;
+#endif
 }
 
 /* Bench: show the pair key, re-derive it from the record on hand, show it again */
@@ -2122,6 +2167,35 @@ static int cmd_ports(const struct shell *sh, size_t argc, char **argv)
 			    states[i].name, states[i].ready, states[i].active, states[i].rx_total,
 			    states[i].rx_dropped);
 	}
+
+	return 0;
+}
+
+/*
+ * Bench: where the milliseconds in a transaction go. The per-second log line carrying this gets
+ * dropped by the console whenever the host reads in bursts, and this is the number the timing
+ * work turns on, so it has to be readable on demand.
+ */
+static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
+{
+	zlrs_radio_diag_t diag;
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	zlrs_radio_port_diag(&diag);
+	shell_print(sh, "txn=%u overruns=%u stale=%u late=%u rx_win=%u early=%u",
+		    diag.transactions, diag.overruns, diag.stale_irq, diag.late_irq, diag.rx_windows,
+		    diag.rx_early);
+	shell_print(sh, "submit drain=%u/%u us rac=%u us (max %u) | wait max=%u us",
+		    diag.submit_drain_us, diag.submit_drain2_us, diag.submit_rac_us,
+		    diag.submit_us_max, diag.wait_us_max);
+	shell_print(sh, "last tx=%u us rx=%u us", diag.tx_us_last, diag.rx_us_last);
+	shell_print(sh, "engine pass last=%u max=%u avg=%u us, %u passes",
+		    pump_us_last, pump_us_max, (pump_calls > 0U) ? (pump_us_sum / pump_calls) : 0U,
+		    pump_calls);
+	shell_print(sh, "raw bench: %u frames in %u ms (%u per second)", raw_bench_frames,
+		    raw_bench_ms, (raw_bench_ms > 0U) ? ((raw_bench_frames * 1000U) / raw_bench_ms) : 0U);
 
 	return 0;
 }
@@ -2237,6 +2311,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 	SHELL_CMD(blast, " [n]", "raw mode: send frames back to back on the data channel", cmd_blast),
 	SHELL_CMD(listen, " [ms] [n]", "raw mode: n receive windows of that length", cmd_listen),
 	SHELL_CMD(ports, NULL, "state of both data port endpoints", cmd_ports),
+	SHELL_CMD(radio, NULL, "radio port timing: submit breakdown and wait", cmd_radio),
 #if ZLRS_CONFIG_ENABLED
 	SHELL_CMD(config, NULL, "enter config mode (EXIT returns)", cmd_config),
 #endif

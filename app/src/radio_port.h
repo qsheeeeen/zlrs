@@ -35,6 +35,13 @@ void zlrs_radio_port_abort(void);
 uint32_t zlrs_radio_port_now_ms(void);
 
 /*
+ * Does the port have an interrupt waiting to be handled? A caller that pumps the engine in its own
+ * loop uses this to decide between "pump again right away" and "sleep and let the radio work":
+ * the planner needs several passes per transaction and a sleep between them costs milliseconds.
+ */
+bool zlrs_radio_port_irq_pending(void);
+
+/*
  * Bench counters of the port itself: how many transactions ran, and how often the radio had an
  * IRQ latched when nothing was being waited for. A non-zero stale count means an event from an
  * earlier transaction survived into the next slot (frames get completed early or the planner
@@ -55,6 +62,23 @@ typedef struct {
 	uint32_t rx_early;      /* windows that ended in well under the programmed timeout */
 	uint32_t rx_us_last;    /* duration of the last completed transaction, microseconds */
 	uint32_t tx_us_last;
+	/*
+	 * Where the time in a transaction goes. `submit` is measured from the moment the link hands
+	 * the request over to the port to the moment the RAC accepted it: the drain (one SPI status
+	 * read), whatever the driver does per request, and the RAC submit itself (radio wake-up plus
+	 * programming over SPI). `wait` is the time from there to the completion callback, so a
+	 * transaction is submit + wait and the two numbers say which half to attack.
+	 */
+	uint32_t submit_drain_us;
+	/*
+	 * The same status read again, right after the first one. The first read of a transaction is
+	 * what wakes a sleeping radio; if this second one is far cheaper, that difference is the
+	 * wake-up and the price of the planner sleeping the radio between transactions.
+	 */
+	uint32_t submit_drain2_us;
+	uint32_t submit_rac_us;
+	uint32_t submit_us_max;
+	uint32_t wait_us_max;
 } zlrs_radio_diag_t;
 
 void zlrs_radio_port_diag(zlrs_radio_diag_t *out);

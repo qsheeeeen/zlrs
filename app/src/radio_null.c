@@ -104,6 +104,12 @@ void zlrs_radio_port_abort(void)
 	/* Nothing is pending on the chip, so nothing to abort */
 }
 
+bool zlrs_radio_port_irq_pending(void)
+{
+	/* No chip: every transaction completes inline, so nothing is ever waiting */
+	return false;
+}
+
 void zlrs_radio_port_diag(zlrs_radio_diag_t *out)
 {
 	if (out != NULL) {
