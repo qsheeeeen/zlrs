@@ -17,13 +17,18 @@
  *     100 samples it names: 10 blocks in a row came out clean, at a proportional time cost.
  *   - A block is 6 EHR_DATA words; reading the last one clears the result registers and starts
  *     the next block (12.12.3).
- *   - Generation time is unpredictable and occasionally exceeds 100x the average, so 12.12.4
- *     suggests a small pool and kicking off the next generation whenever a slot frees up. Probe
- *     starts the first block (no scheduler yet, so it cannot wait), so reads never start from zero.
+ *   - Generation time is unpredictable and occasionally exceeds 100x the average (12.12.4), so the
+ *     wait per block is bounded by a timeout and a block that fails a check is discarded and a new
+ *     one started. Probe starts the first block (there is no scheduler yet, so it cannot wait).
  *
  * Two hard rules: no interrupts disabled, no spinlocks; and bounded waits (timeout = error).
  * **No software fallback**: a failed read or a failed entropy check is a failure, reported
  * upward (CSPRNG / PSA / boot self-test). Random numbers that merely look fine are not acceptable.
+ *
+ * A request reads fresh blocks straight into the caller's buffer and stops the source when it is
+ * done. An earlier version kept a pool of ready blocks and handed out of it; the second read then
+ * came back as zeros while the first looked fine, which is how a device ended up with no id at all.
+ * Reading block by block leaves no bookkeeping that can drift out of step with the hardware.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -53,13 +58,6 @@ LOG_MODULE_REGISTER(zlrs_trng, CONFIG_ZLRS_TRNG_LOG_LEVEL);
 #define TRNG_BLOCK_WORDS 6U
 #define TRNG_BLOCK_BYTES (TRNG_BLOCK_WORDS * sizeof(uint32_t))
 
-/*
- * The pool holds two blocks: one for the read in progress, one in reserve while the hardware
- * keeps generating: the "small pool" of datasheet 12.12.4.
- */
-#define TRNG_POOL_BLOCKS 2U
-#define TRNG_POOL_BYTES  (TRNG_POOL_BLOCKS * TRNG_BLOCK_BYTES)
-
 /* Generation occasionally exceeds 100x the average (12.12.4), so the timeout is that order */
 #define TRNG_BLOCK_TIMEOUT_MS 1000U
 #define TRNG_POLL_INTERVAL_MS 1U
@@ -85,10 +83,6 @@ struct trng_config {
 };
 
 struct trng_data {
-	/* The pool: reads come from here, the hardware is only waited on when it runs dry */
-	uint8_t pool[TRNG_POOL_BYTES];
-	uint16_t pool_head; /* next byte to hand out */
-	uint16_t pool_len;  /* bytes left after pool_head */
 	/* RND_SRC_EN is set: a block is being generated or is ready to collect */
 	bool running;
 	/* Reads wait on hardware and the entropy API has to be thread safe */
@@ -199,99 +193,40 @@ static int trng_wait_block(const struct trng_config *cfg, uint32_t start)
 	}
 }
 
-/* Move the leftover bytes to the front so the next block fits in whole */
-static void trng_pool_compact(struct trng_data *data)
-{
-	if (data->pool_head == 0U) {
-		return;
-	}
-
-	if (data->pool_len > 0U) {
-		memmove(data->pool, &data->pool[data->pool_head], data->pool_len);
-	}
-
-	data->pool_head = 0U;
-}
-
-/* How many blocks the pool can still take */
-static size_t trng_pool_room(struct trng_data *data)
-{
-	trng_pool_compact(data);
-
-	return (sizeof(data->pool) - data->pool_len) / TRNG_BLOCK_BYTES;
-}
-
-/* Read all 6 words into the pool: the last read clears the registers and starts the next block */
-static void trng_pool_put_block(const struct trng_config *cfg, struct trng_data *data)
+/* One block, copied out of the EHR: reading the last word starts the next block */
+static void trng_read_block(const struct trng_config *cfg, uint8_t *out)
 {
 	const trng_hw_t *trng = cfg->regs;
-	const size_t at = (size_t)data->pool_head + data->pool_len;
-
-	__ASSERT_NO_MSG((sizeof(data->pool) - at) >= TRNG_BLOCK_BYTES);
 
 	for (uint8_t i = 0U; i < TRNG_BLOCK_WORDS; i++) {
-		sys_put_le32(trng->ehr_data[i], &data->pool[at + (i * sizeof(uint32_t))]);
+		sys_put_le32(trng->ehr_data[i], &out[i * sizeof(uint32_t)]);
 	}
-
-	data->pool_len += TRNG_BLOCK_BYTES;
 }
 
-/* Wait for one block to land in the pool. 0 = the pool grew by one */
-static int trng_pool_refill(const struct trng_config *cfg, struct trng_data *data)
+/*
+ * One block into out, retrying the machine state after a block that failed a check. Returns 0 or
+ * the errno of the last attempt; a slow block keeps its place in the machine and is waited on
+ * again, so an attempt only ends when the block is discarded or ready.
+ */
+static int trng_block(const struct trng_config *cfg, struct trng_data *data, uint8_t *out)
 {
-	const uint32_t start = k_uptime_get_32();
+	int rc = -EIO;
 
 	for (uint8_t attempt = 0U; attempt < TRNG_BLOCK_ATTEMPTS; attempt++) {
-		int rc;
-
-		if (trng_pool_room(data) == 0U) {
-			return -ENOSPC;
-		}
-
 		trng_start(cfg, data);
-
-		rc = trng_wait_block(cfg, start);
+		rc = trng_wait_block(cfg, k_uptime_get_32());
 		if (rc == 0) {
-			trng_pool_put_block(cfg, data);
+			trng_read_block(cfg, out);
 			return 0;
 		}
 		if (rc == -ETIMEDOUT) {
-			/* It may simply be slow (12.12.4): leave the machine state alone, the next read keeps waiting */
-			return rc;
+			continue;
 		}
 
 		trng_recover(cfg, data);
 	}
 
-	return -EIO;
-}
-
-/* Pool full: disable the source. Room left: collect the finished block and keep generating */
-static void trng_pool_top_up(const struct trng_config *cfg, struct trng_data *data)
-{
-	for (;;) {
-		uint32_t isr;
-
-		if (trng_pool_room(data) == 0U) {
-			trng_stop(cfg, data);
-			return;
-		}
-
-		isr = cfg->regs->rng_isr;
-		if ((isr & TRNG_RNG_ISR_EHR_VALID_BITS) != 0U) {
-			trng_pool_put_block(cfg, data);
-			continue;
-		}
-
-		/* Not ready yet: restart only after an idle stop or a bad block, otherwise let it run */
-		if (!data->running ||
-		    (isr & (TRNG_RNG_ISR_VN_ERR_BITS | TRNG_RNG_ISR_CRNGT_ERR_BITS |
-			    TRNG_RNG_ISR_AUTOCORR_ERR_BITS)) != 0U) {
-			trng_recover(cfg, data);
-		}
-
-		return;
-	}
+	return rc;
 }
 
 static int trng_get_entropy(const struct device *dev, uint8_t *buf, uint16_t len)
@@ -313,27 +248,25 @@ static int trng_get_entropy(const struct device *dev, uint8_t *buf, uint16_t len
 	k_mutex_lock(&data->lock, K_FOREVER);
 
 	while (off < len) {
-		size_t n;
+		/*
+		 * The EHR hands out whole blocks and reading it clears the block, so a request that is
+		 * not a multiple of the block size takes a fresh block for its tail and keeps the first
+		 * bytes of it. Callers ask for 32 bytes, which is the same cost either way.
+		 */
+		uint8_t block[TRNG_BLOCK_BYTES];
+		const uint16_t take = MIN((uint16_t)TRNG_BLOCK_BYTES, (uint16_t)(len - off));
 
-		if (data->pool_len == 0U) {
-			rc = trng_pool_refill(cfg, data);
-			if (rc != 0) {
-				LOG_ERR("TRNG block read failed (%d)", rc);
-				break;
-			}
+		rc = trng_block(cfg, data, block);
+		if (rc != 0) {
+			LOG_ERR("TRNG block read failed (%d)", rc);
+			break;
 		}
 
-		n = MIN((size_t)data->pool_len, (size_t)(len - off));
-		memcpy(&buf[off], &data->pool[data->pool_head], n);
-		data->pool_head += (uint16_t)n;
-		data->pool_len -= (uint16_t)n;
-		off += (uint16_t)n;
+		memcpy(&buf[off], block, take);
+		off += take;
 	}
 
-	if (rc == 0) {
-		trng_pool_top_up(cfg, data);
-	}
-
+	trng_stop(cfg, data);
 	k_mutex_unlock(&data->lock);
 
 	return rc;
