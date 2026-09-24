@@ -626,14 +626,7 @@ static void load_identity(void)
  * trade between reaction time and how much of the slot the polling itself eats */
 #define ZLRS_RADIO_DIRECT_POLL_US 200U
 
-/*
- * How many engine passes the wait loop runs back to back when the port says an IRQ is waiting.
- * A pass is the expensive half of the wait (tens of microseconds typical, milliseconds when it
- * programs the radio), and the condition it bounds is a latched interrupt that belongs to nobody:
- * the completion semaphore is shared, so the other link can consume the wakeup and leave this wait
- * with a flag that never clears. The old code spun there forever, which starved the log thread and
- * stopped the watchdog feed; a bound in the thousands costs the frame its whole slot budget.
- */
+/* Engine passes to run back to back on a pending IRQ; bounded, the flag can belong to nobody */
 #define ZLRS_RADIO_IRQ_SPINS 16U
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
@@ -652,12 +645,10 @@ static uint32_t raw_bench_ms;
 #endif
 
 /*
- * Wait for the current transaction to finish, pumping the RAC engine while it runs. This is the
- * vendor's immediate_radio_access loop: pump the engine, and sleep only when the planner has
- * nothing going on. Sleeping between every pass (which is what this did) adds the sleep to every
- * state transition the engine has to take — the radio programming alone is several passes, so the
- * slot cost picked up milliseconds that had nothing to do with the air. `budget_us` bounds the
- * whole wait; the caller decides what a timeout means.
+ * Wait for the current transaction, pumping the RAC engine while it runs (the vendor's
+ * immediate_radio_access loop). Sleep only when the planner has nothing going on: sleeping between
+ * every pass added milliseconds per slot that had nothing to do with the air. `budget_us` bounds
+ * the wait; the caller decides what a timeout means.
  */
 static void radio_wait_done(uint32_t budget_us)
 {
@@ -684,12 +675,8 @@ static void radio_wait_done(uint32_t budget_us)
 		}
 #endif
 #endif
-		/*
-		 * The direct backend is paced by its own status register, not by the completion semaphore:
-		 * that semaphore is shared with the planner, so a frame the *control* link just finished
-		 * would end this wait with the data transaction still on air. Polling here is what makes a
-		 * direct transaction cost what the air costs, instead of the other link's traffic.
-		 */
+		/* Direct transactions poll their own status: the shared semaphore would end this wait on
+		 * the other link's completion, with the data transaction still on air. */
 		if (zlrs_radio_port_direct_busy()) {
 			if (zlrs_radio_port_irq_pending()) {
 				zlrs_radio_port_drain();
@@ -709,12 +696,7 @@ static void radio_wait_done(uint32_t budget_us)
 		 * pending does the wait mean "the radio is working and we are waiting for it".
 		 */
 		if (zlrs_radio_port_irq_pending()) {
-			/*
-			 * An interrupt is waiting, so pump again right away; the engine is what consumes it.
-			 * Stop after a few passes anyway: a flag nobody can consume (a latched one, see
-			 * ZLRS_RADIO_IRQ_SPINS) would otherwise park the main loop here, and the caller's
-			 * drain is what reports the transaction.
-			 */
+			/* The engine consumes it; give up after a few passes (ZLRS_RADIO_IRQ_SPINS) */
 			if (++spins > ZLRS_RADIO_IRQ_SPINS) {
 				return;
 			}
@@ -1404,12 +1386,8 @@ static void report(uint32_t now_ms)
 #endif
 
 	/*
-	 * The once-a-second status lines: on for bench work (one glance says what the link is doing),
-	 * off in production. This only gates the logging; the 1 Hz rate and power verdicts are separate.
-	 *
-	 * Compile-time, not a runtime `if`: the counters these lines read (bench, radio_diag) only
-	 * exist when the option is on, so a runtime test would still reference them and a production
-	 * build would not compile.
+	 * The once-a-second status lines: bench only, logging only (the 1 Hz rate and the power verdicts
+	 * are separate). A compile-time guard, because the counters it reads only exist when it is on.
 	 */
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
 	zlrs_radio_port_diag(&radio_diag);
@@ -1830,13 +1808,9 @@ static const zlrs_config_ops_t cfg_ops = {
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
 /*
- * Bench helpers shared by the shell commands and the at-boot raw bench: run one radio
- * transaction and report whether it finished. Not part of a shipped image (CONFIG_ZLRS_APP_DEBUG).
- *
- * Bench: raw radio test, run inside the shell command so it is self-contained and bounded.
- * `zlrs blast [n]` sends n complete frames back to back, `zlrs listen [ms] [n]` opens n windows of
- * the given length; both report what actually happened. No slots, no phases, no ARQ: this is the
- * measurement that says whether the two radios can hear each other at all.
+ * Bench helpers: run one radio transaction and report whether it finished. Debug images only — the
+ * raw radio test is what says whether the two radios can hear each other at all, with no slots,
+ * phases or ARQ involved (doc/12-debug.md 4).
  */
 static bool bench_wait(zlrs_link_t *link, const zlrs_radio_req_t *req, uint32_t budget_us)
 {

@@ -90,12 +90,8 @@ struct log_file {
 static struct log_file log_files[ZLRS_CFG_LOG_FILES_MAX];
 static uint8_t log_file_count;
 
-/*
- * List the store and sort it by file number. Zephyr's file backend names its files
- * `<prefix><0000>` upward and overwrites the oldest when the count reaches the limit, so the
- * numeric order is the order they were written in — and the newest (the one being appended to) is
- * the last entry, which is what the export needs to know to read a coherent tail.
- */
+/* List the store, smallest file number first: the backend names files `<prefix><0000>` upward and
+ * overwrites the oldest, so numeric order is the order they were written in. */
 static int log_store_scan(void)
 {
 	struct fs_dir_t dir;
@@ -174,11 +170,8 @@ static int log_store_scan(void)
 	return ZLRS_CFG_OK;
 }
 
-/*
- * What the store holds, for the export to walk: file count, which one is newest, and each size.
- * A board with no store says so with E_STATE rather than an empty list, so the host can tell
- * "nothing logged yet" from "no store here".
- */
+/* What the export needs: how many files, which is newest, and each size. No store on this board is
+ * E_STATE, not an empty list — "nothing logged yet" and "no store here" are different answers. */
 int zlrs_log_store_info(zlrs_cfg_log_info_t *out)
 {
 	int rc;
@@ -259,12 +252,8 @@ int zlrs_log_store_probe(void)
 	return (int)rc;
 }
 
-/*
- * Mount the store. A failing mount is retried before anything is thrown away: the whole point of
- * the store is the record of the boot that went wrong, and a transient failure (a reset during a
- * write leaves LittleFS with work to do on the next mount) must not cost exactly that record. Only
- * a store that still refuses to mount is treated as unusable and re-made.
- */
+/* Retry before erasing: a reset during a write leaves LittleFS work to do on the next mount, and
+ * that must not cost the log of the boot that went wrong. */
 static int log_store_mount(void)
 {
 	int rc = -EIO;
@@ -309,17 +298,8 @@ static int log_store_mount(void)
 }
 
 /*
- * Mount after everything the mount needs is up:
- *
- *   - the flash driver (CONFIG_FLASH_INIT_PRIORITY, 50),
- *   - the log core (90 in prj.conf, so the report below lands in the log),
- *   - LittleFS itself: its backend registers with the file system layer at
- *     CONFIG_FILE_SYSTEM_INIT_PRIORITY (99), and mounting before that registers fails with
- *     "file system type not found".
- *
- * That last one is what made the store look empty on a board that had logs: the boot mount failed,
- * the file backend skipped records until something else mounted the file system (the export did),
- * and every log before that moment was gone.
+ * After LittleFS registers itself (CONFIG_FILE_SYSTEM_INIT_PRIORITY, 99): mounting earlier fails
+ * with "file system type not found" and the file backend then skips every record.
  */
 BUILD_ASSERT(CONFIG_FILE_SYSTEM_INIT_PRIORITY < 100,
 	     "the log store mounts at 100: raise it if the file system layer moves later");
