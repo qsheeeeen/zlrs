@@ -48,7 +48,7 @@ Each link has two endpoints (UART and USB CDC); the rule that picks one is in
 [doc/08-firmware.md](../../../doc/08-firmware.md) 1, and the physical interface list is in
 [doc/04-prototype.md](../../../doc/04-prototype.md) 3.
 
-## 2. Two SKUs, four build targets
+## 2. Two SKUs, two build targets
 
 The Core2021's sub-G comes in **two different SKUs** with different PA networks and bands, so the
 board has two variants (one code base, differing in dtsi and the region a fresh board boots with):
@@ -57,17 +57,14 @@ board has two variants (one code base, differing in dtsi and the region a fresh 
 | --- | --- | --- | --- |
 | `.../rp2350a/m33/hf` | HF: 850-930 MHz | FCC915 (0), EU868 (1) | FCC915 |
 | `.../rp2350a/m33/lf` | LF: 410-510 MHz | CN470 (2), CN433 (3) | CN470 |
-| `.../rp2350a/m33/hf/mcuboot` | as hf | as hf | FCC915 |
-| `.../rp2350a/m33/lf/mcuboot` | as lf | as lf | CN470 |
 
-The two `/mcuboot` variants add a bootloader and two-slot firmware partitions and need
-`--sysbuild` (see 4). **Those two shapes are all there is**: the bare
-`rp2350_zero_core2021/rp2350a/m33` has no dts, so building for it falls into `stub.dts` and
-Kconfig errors out.
+Both targets build the application and the bootloader together (`--sysbuild`) from the same flash
+layout (see 4): an image that cannot be updated through the bootloader has no reason to exist, so
+there is no bootloader-less variant and no qualifier that says "with bootloader" either.
 
 ```shell
-west build -b rp2350_zero_core2021/rp2350a/m33/hf app   # 868 / 915
-west build -b rp2350_zero_core2021/rp2350a/m33/lf app   # 470 / 433
+west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33/hf app   # 868 / 915
+west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33/lf app   # 470 / 433
 ```
 
 `west boards` also lists the same SoC's `rp2350a/hazard3` qualifier (the SoC decides those, the
@@ -116,38 +113,29 @@ bring-up, see [doc/12-debug.md](../../../doc/12-debug.md) 5).
 
 ## 4. Partitions and boot
 
-4 MB of flash, two layouts.
-
-**hf and lf without a bootloader** (`rp2350_zero_core2021_partitions_1m.dtsi`):
-
-| Partition | Offset | Size | Purpose |
-| --- | --- | --- | --- |
-| code | 0x000000 | 1 MB | the application image (`zephyr,code-partition`) |
-| storage | 0x100000 | 3 MB | NVS: root key, device id, pairing, failsafe, baud, region, power, role, profile |
-
-Boot chain: RP2350 bootrom to the application (drag `zephyr.uf2` onto the ROM's `RPI-RP2`
-volume). This layout has no bootloader: no upgrade path and no rollback, so it is for bring-up.
-
-**hf/mcuboot and lf/mcuboot with MCUboot** (`rp2350_zero_core2021_partitions_mcuboot.dtsi`):
+4 MB of flash, one layout (`rp2350_zero_core2021_partitions.dtsi`), included by the application
+and the bootloader alike: both are built from the same board target, so the two images cannot
+disagree about where a slot lives.
 
 | Partition | Offset | Size | Purpose |
 | --- | --- | --- | --- |
 | mcuboot | 0x000000 | 128 KB | the bootloader (about 62 KB used, leaving room for USB CDC recovery) |
 | image-0 (slot0) | 0x020000 | 832 KB | the application image (signed, `zephyr,code-partition`) |
 | image-1 (slot1) | 0x0F0000 | 832 KB | where upgrade images land and MCUboot swaps |
-| storage | 0x1C0000 | 2.25 MB | the same NVS as above |
+| log | 0x1C0000 | 1 MB | log store: LittleFS, eight 128 KB files, the oldest overwritten |
+| coredump | 0x2C0000 | 128 KB | coredump backend target for the fault case |
+| storage | 0x2E0000 | 32 KB | the same NVS as above (nine keys, under 100 B of payload) |
 
 Boot chain: RP2350 bootrom, MCUboot (checking slot0's signature), the application. Slot swaps
 use `swap using move` (no scratch partition needed, rollback works; `swap using offset` goes in
 but never comes back on this board). Image confirmation and recovery entries are described in
-[doc/08-firmware.md](../../../doc/08-firmware.md) 5.
+[doc/08-firmware.md](../../../doc/08-firmware.md) 5, the log store in section 7.
 
-Variants without a bootloader flash through BOOTSEL plus a UF2 (`west flash --runner uf2`) or SWD
-(openocd, probe-rs, jlink). On the MCUboot variants BOOTSEL carries the **bootloader image
-only**; the application is always installed and updated through the bootloader:
+BOOTSEL carries the **bootloader image only**; the application is always installed and updated
+through the bootloader:
 
 ```shell
-west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33/hf/mcuboot app
+west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33/hf app
 ```
 
 1. hold BOOTSEL while plugging USB in and drag `build/mcuboot/zephyr/zephyr.uf2`; the board

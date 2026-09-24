@@ -163,9 +163,9 @@ zephyr_udc0: &usbd {
 	};
 };
 
-/* 4 MB QSPI flash. The partition table is not in the common dtsi: variants without a bootloader
- * use partitions_1m.dtsi (1 MB code + 3 MB storage) and MCUboot variants use the Zephyr
- * tree's raspberrypi/partitions_4M_sysbuild.dtsi. */
+/* 4 MB QSPI flash. The layout is not in the common dtsi: each variant's dts includes
+ * rp2350_zero_core2021_partitions.dtsi, which is the flash map the application and the bootloader
+ * are both built with (see the README). */
 &flash0 {
 	reg = <0x10000000 DT_SIZE_M(4)>;
 };

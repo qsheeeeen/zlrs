@@ -66,7 +66,7 @@ config ZLRS_APP_LINK_DATA
 
 # The only knob on the upgrade path: how long the host has to confirm. The mechanism itself
 # (an image under MCUboot stays unconfirmed until the host says so, then either becomes
-# permanent or is rolled back) has no switch — the /mcuboot board variant brings the image
+# permanent or is rolled back) has no switch — the board definition brings the image
 # manager and the boot mode with it. See doc/08-firmware.md 6.
 config ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS
 	int "Host confirm timeout (ms)"

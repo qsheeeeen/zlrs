@@ -2,18 +2,27 @@
  * Copyright (c) 2026 zlrs contributors
  *
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * LF variant (470 / 433). Same composition as hf with step 4 swapped for the LF SKU's sub-G
+ * calibration.
  */
 
 /dts-v1/;
 
-/* The build system wants a board dts named after the cpucluster; it composes, in order:
- * 1. SoC common part (rp2350a)  2. core part (Cortex-M33)
- * 3. board common part        4. LF SKU sub-G calibration (470 / 433)
- * 5. partition table (no bootloader: 1 MB code + 3 MB storage)
- */
 #include <raspberrypi/rpi_pico/rp2350a.dtsi>
 #include <raspberrypi/rpi_pico/m33.dtsi>
 
 #include "rp2350_zero_core2021.dtsi"
 #include "rp2350_zero_core2021_lf.dtsi"
-#include "rp2350_zero_core2021_partitions_1m.dtsi"
+#include "rp2350_zero_core2021_partitions.dtsi"
+
+/* The boot-mode area the application uses to enter serial recovery (same as hf/mcuboot) */
+#include <vendor/raspberrypi/rp2350-boot-mode-retention.dtsi>
+
+/ {
+	chosen {
+		zephyr,code-partition = &slot0_partition;
+		/* Serial recovery is USB only (the data port CDC), same as hf/mcuboot */
+		zephyr,uart-mcumgr = &cdc_acm_uart1;
+	};
+};

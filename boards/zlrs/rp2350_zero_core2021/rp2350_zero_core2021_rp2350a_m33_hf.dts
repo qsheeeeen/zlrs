@@ -2,18 +2,35 @@
  * Copyright (c) 2026 zlrs contributors
  *
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * HF variant (868 / 915). Composition order:
+ * 1. SoC common part (rp2350a)  2. core part (Cortex-M33)
+ * 3. board common part        4. HF SKU sub-G calibration
+ * 5. the flash layout (partitions.dtsi) — the same file the bootloader is built with
  */
 
 /dts-v1/;
 
-/* The build system wants a board dts named after the cpucluster; it composes, in order:
- * 1. SoC common part (rp2350a)  2. core part (Cortex-M33)
- * 3. board common part        4. HF SKU sub-G calibration (868 / 915)
- * 5. partition table (no bootloader: 1 MB code + 3 MB storage)
- */
 #include <raspberrypi/rpi_pico/rp2350a.dtsi>
 #include <raspberrypi/rpi_pico/m33.dtsi>
 
 #include "rp2350_zero_core2021.dtsi"
 #include "rp2350_zero_core2021_hf.dtsi"
-#include "rp2350_zero_core2021_partitions_1m.dtsi"
+#include "rp2350_zero_core2021_partitions.dtsi"
+
+/* The boot-mode area the application uses to enter serial recovery: the RP2350 overlay in the
+  * Zephyr tree keeps 4 bytes at the start of SRAM and moves sram0 aside (doc/08-firmware.md 6). */
+#include <vendor/raspberrypi/rp2350-boot-mode-retention.dtsi>
+
+/ {
+	chosen {
+		/* The application links into slot0: MCUboot boots it from there once the signature checks out */
+		zephyr,code-partition = &slot0_partition;
+		/*
+		 * MCUboot serial recovery is USB only: it points at the data port CDC (`cdc_acm_uart1`, the
+		 * second port the on-board USB-C enumerates). One USB cable is enough to upgrade, no UART
+		 * adapter needed, and the GP8/GP9 UART stays with the application.
+		 */
+		zephyr,uart-mcumgr = &cdc_acm_uart1;
+	};
+};

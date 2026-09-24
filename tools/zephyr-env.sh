@@ -17,8 +17,9 @@ ZLRS_VENV="${ZLRS_VENV:-${ZLRS_WS}/.venv}"
 ZLRS_SDK_DIR="${ZLRS_SDK_DIR:-${HOME}/zephyr-sdk-1.0.0}"
 
 # Board: Waveshare RP2350-Zero plus Core2021, defined under boards/ in this repository.
-# sub-G has two SKUs (two variants): hf = 850-930 MHz (868/915) and
-# lf = 410-510 MHz (470/433). The default follows the HF module on hand.
+# sub-G has two SKUs: hf = 850-930 MHz (868/915) and lf = 410-510 MHz (470/433); each SKU has one
+# buildable variant, the one with MCUboot (every image is installed and updated through the
+# bootloader, see doc/08-firmware.md 5). The default follows the HF module on hand.
 ZLRS_BOARD="${ZLRS_BOARD:-rp2350_zero_core2021/rp2350a/m33/hf}"
 ZLRS_APP="${ZLRS_APP:-${ZLRS_REPO_ROOT}/app}"
 
@@ -41,14 +42,26 @@ export ZEPHYR_SDK_INSTALL_DIR="${ZLRS_SDK_DIR}"
 # so the workspace picks it up automatically; no ZEPHYR_EXTRA_MODULES needed.
 
 # Convenience wrapper: zlrs-build [extra west build arguments]
+#
+# --sysbuild always: the bootloader is part of every image (it is what checks the signature and
+# what the update flow talks to), and building the application alone would produce an unsigned
+# image that nothing can install.
 zlrs-build() {
-	(cd "${ZLRS_WS}" && west build -b "${ZLRS_BOARD}" "${ZLRS_APP}" "$@")
+	(cd "${ZLRS_WS}" && west build --sysbuild -b "${ZLRS_BOARD}" "${ZLRS_APP}" "$@")
 }
 
-# MCUboot builds add a /mcuboot qualifier and need --sysbuild to pull the bootloader in
-# (doc/08-firmware.md 6). LF SKU: ZLRS_BOARD=.../lf zlrs-build-mcuboot
-zlrs-build-mcuboot() {
-	(cd "${ZLRS_WS}" && west build --sysbuild -b "${ZLRS_BOARD}/mcuboot" "${ZLRS_APP}" "$@")
+# Edit loop: rebuild only the application of a tree that was already configured. The bootloader
+# does not change while app/ is being worked on, so this skips it.
+#
+#   zlrs-rebuild-app                          # the default tree, ${ZLRS_WS}/build
+#   ZLRS_BUILD_DIR=build-lf zlrs-rebuild-app   # another one (ZLRS_BUILD_DIR is relative to the
+#                                              # workspace when it is not absolute)
+zlrs-rebuild-app() {
+	case "${ZLRS_BUILD_DIR:-build}" in
+	/*) local dir="${ZLRS_BUILD_DIR}" ;;
+	*) local dir="${ZLRS_WS}/${ZLRS_BUILD_DIR:-build}" ;;
+	esac
+	(cd "${ZLRS_WS}" && west build -d "${dir}" --domain app "$@")
 }
 
 if [ ! -d "${ZLRS_WS}/.west" ]; then

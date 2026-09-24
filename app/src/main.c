@@ -34,9 +34,6 @@
 #include <pico/bootrom.h>
 #endif
 
-/* app/src/log_store.c: mount the log filesystem on demand (bench) */
-int zlrs_log_store_probe(void);
-
 #if IS_ENABLED(CONFIG_ZLRS_APP_RADIO)
 #include <smtc_rac_api.h>
 #include <smtc_sw_platform_helper.h>
@@ -45,6 +42,7 @@ int zlrs_log_store_probe(void);
 #include "ports.h"
 #include "caps.h"
 #include "led_port.h"
+#include "log_store.h"
 #include "radio_port.h"
 #include "store.h"
 #include "watchdog.h"
@@ -668,7 +666,9 @@ static void radio_wait_done(uint32_t budget_us)
 
 	while (waited_us < budget_us) {
 #if IS_ENABLED(CONFIG_ZLRS_APP_RADIO)
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
 		const uint32_t t0 = (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64());
+#endif
 
 		SMTC_SW_PLATFORM_VOID(smtc_rac_run_engine());
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
@@ -991,6 +991,7 @@ static void run_slot(uint8_t slot)
  * recovery command and the debug shell, see doc/10-security.md 10.
  */
 #ifdef PICO_RP2350
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_SHELL)
 /*
  * Bench: hand the board to the ROM's USB bootloader. The bootloader image is the one thing the
  * application cannot replace through MCUboot (it is what runs MCUboot), and the ROM entry saves
@@ -1008,6 +1009,7 @@ static int cmd_bootsel(const struct shell *sh, size_t argc, char **argv)
 
 	return 0;
 }
+#endif /* CONFIG_ZLRS_APP_DEBUG_SHELL */
 #endif
 
 static void enter_serial_recovery(void)
@@ -1404,11 +1406,12 @@ static void report(uint32_t now_ms)
 	/*
 	 * The once-a-second status lines: on for bench work (one glance says what the link is doing),
 	 * off in production. This only gates the logging; the 1 Hz rate and power verdicts are separate.
+	 *
+	 * Compile-time, not a runtime `if`: the counters these lines read (bench, radio_diag) only
+	 * exist when the option is on, so a runtime test would still reference them and a production
+	 * build would not compile.
 	 */
-	if (!IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)) {
-		return;
-	}
-
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
 	zlrs_radio_port_diag(&radio_diag);
 
 	LOG_INF("%s ctl=%u tlm=%u data=%u serial_drop=%u host_drop=%u",
@@ -1500,6 +1503,7 @@ static void report(uint32_t now_ms)
 	for (uint8_t i = 0U; i < 4U; i++) {
 		bench.slot_us_max[i] = 0U;
 	}
+#endif /* CONFIG_ZLRS_APP_DEBUG_STATS_LOG */
 }
 
 /*
@@ -1824,6 +1828,179 @@ static const zlrs_config_ops_t cfg_ops = {
 };
 #endif /* ZLRS_CONFIG_ENABLED */
 
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
+/*
+ * Bench helpers shared by the shell commands and the at-boot raw bench: run one radio
+ * transaction and report whether it finished. Not part of a shipped image (CONFIG_ZLRS_APP_DEBUG).
+ *
+ * Bench: raw radio test, run inside the shell command so it is self-contained and bounded.
+ * `zlrs blast [n]` sends n complete frames back to back, `zlrs listen [ms] [n]` opens n windows of
+ * the given length; both report what actually happened. No slots, no phases, no ARQ: this is the
+ * measurement that says whether the two radios can hear each other at all.
+ */
+static bool bench_wait(zlrs_link_t *link, const zlrs_radio_req_t *req, uint32_t budget_us)
+{
+	if (link->radio.submit(link->radio.ctx, req) != 0) {
+		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_radio_port_now_ms());
+		return false;
+	}
+
+	radio_wait_done(budget_us);
+
+	zlrs_radio_port_drain();
+	if (link->req_pending) {
+		zlrs_radio_port_abort();
+		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_radio_port_now_ms());
+		return false;
+	}
+
+	return true;
+}
+
+static int cmd_blast(const struct shell *sh, size_t argc, char **argv)
+{
+	uint8_t payload[32];
+	uint32_t count = (argc > 1) ? (uint32_t)strtoul(argv[1], NULL, 0) : 50U;
+	uint32_t sent = 0U;
+	uint32_t failed = 0U;
+	const uint32_t t0 = zlrs_radio_port_now_ms();
+
+	if (count > 2000U) {
+		count = 2000U;
+	}
+
+	for (uint32_t i = 0U; i < count; i++) {
+		const zlrs_radio_req_t *req;
+
+		for (uint8_t j = 0U; j < sizeof(payload); j++) {
+			payload[j] = (uint8_t)(i + j);
+		}
+		req = zlrs_link_blast(&link_data, payload, sizeof(payload));
+		if (req == NULL || !bench_wait(&link_data, req, 20000U)) {
+			failed++;
+		} else {
+			sent++;
+		}
+	}
+
+	shell_print(sh, "blast: %u of %u frames sent in %u ms (fail %u)",
+		    (unsigned int)sent, (unsigned int)count,
+		    (unsigned int)(zlrs_radio_port_now_ms() - t0), (unsigned int)failed);
+
+	return 0;
+}
+
+static int cmd_listen(const struct shell *sh, size_t argc, char **argv)
+{
+	const uint32_t ms = (argc > 1) ? (uint32_t)strtoul(argv[1], NULL, 0) : 100U;
+	uint32_t count = (argc > 2) ? (uint32_t)strtoul(argv[2], NULL, 0) : 20U;
+	const uint32_t frames0 = link_data.stats.rx_frames;
+	uint32_t windows = 0U;
+	uint32_t worst_rssi = 0;
+
+	if (ms < 5U || ms > 500U) {
+		shell_print(sh, "window must be 5..500 ms");
+		return -EINVAL;
+	}
+	if (count > 200U) {
+		count = 200U;
+	}
+
+	for (uint32_t i = 0U; i < count; i++) {
+		const zlrs_radio_req_t *req = zlrs_link_listen_raw(&link_data, (uint16_t)ms);
+
+		if (req == NULL) {
+			break;
+		}
+		windows++;
+		(void)bench_wait(&link_data, req, ms * 1000U + 20000U);
+		worst_rssi = link_data.stats.last_rssi;
+	}
+
+	shell_print(sh, "listen: %u windows of %u ms, %u frames heard, last rssi %d",
+		    (unsigned int)windows, (unsigned int)ms,
+		    (unsigned int)(link_data.stats.rx_frames - frames0), worst_rssi);
+
+	return 0;
+}
+
+#if CONFIG_ZLRS_APP_BENCH_RAW_MS > 0
+/*
+ * Raw radio bench at boot, see CONFIG_ZLRS_APP_BENCH_RAW_MS. The role decides the direction: the TX
+ * role sends complete frames back to back, the RX role opens 100 ms windows back to back. Both log
+ * once a second, which is all the host needs — the console stays usable because nothing has to be
+ * typed while this runs.
+ */
+static void bench_raw_at_boot(void)
+{
+	uint32_t left_ms = (uint32_t)CONFIG_ZLRS_APP_BENCH_RAW_MS;
+	uint32_t last_ms = zlrs_radio_port_now_ms();
+	uint32_t tx0 = link_data.stats.tx_frames;
+	uint32_t rx0 = link_data.stats.rx_frames;
+	static uint8_t payload[32];
+	const uint32_t start_ms = last_ms;
+	uint32_t seq = 0U;
+
+	if (left_ms == 0U) {
+		return;
+	}
+
+	LOG_INF("raw bench: %s for %u ms", role_tx ? "blast" : "listen",
+		(unsigned int)left_ms);
+
+	while ((uint32_t)(zlrs_radio_port_now_ms() - start_ms) < left_ms) {
+		const zlrs_radio_req_t *req;
+
+		if (role_tx) {
+			for (uint8_t i = 0U; i < sizeof(payload); i++) {
+				payload[i] = (uint8_t)(seq + i);
+			}
+			req = zlrs_link_blast(&link_data, payload, sizeof(payload));
+			if (req != NULL) {
+				seq++;
+			}
+		} else {
+			req = zlrs_link_listen_raw(&link_data, 100U);
+		}
+		if (req == NULL) {
+			k_usleep(200);
+			continue;
+		}
+		/* The direct backend programs the radio itself per transaction, which needs more room than
+		 * the planner path: give the bench a budget that is not the thing being measured. */
+		(void)bench_wait(&link_data, req, role_tx ? 100000U : 120000U);
+		zlrs_watchdog_feed();
+
+		{
+			const uint32_t now = zlrs_radio_port_now_ms();
+
+			if ((uint32_t)(now - last_ms) >= 1000U) {
+				const uint32_t tx = link_data.stats.tx_frames - tx0;
+				const uint32_t rx = link_data.stats.rx_frames - rx0;
+
+				LOG_INF("raw: %s %u tx/s, %u rx/s, rssi %d",
+					role_tx ? "blast" : "listen", (unsigned int)tx,
+					(unsigned int)rx, link_data.stats.last_rssi);
+				tx0 = link_data.stats.tx_frames;
+				rx0 = link_data.stats.rx_frames;
+				last_ms = now;
+			}
+		}
+	}
+
+	LOG_INF("raw bench done: %u frames sent, %u heard", (unsigned int)seq,
+		(unsigned int)(link_data.stats.rx_frames - rx0));
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
+	/* Kept for `zlrs radio`: the console drops this line often enough to lose the measurement */
+	raw_bench_frames = seq;
+	raw_bench_ms = (uint32_t)CONFIG_ZLRS_APP_BENCH_RAW_MS;
+#endif
+}
+
+#endif /* CONFIG_ZLRS_APP_BENCH_RAW_MS */
+
+#endif /* CONFIG_ZLRS_APP_DEBUG */
+
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_SHELL)
 /* Little-endian u32 out of an id or key, for bench output that has to be comparable */
 static uint32_t le32(const uint8_t *p)
@@ -2082,169 +2259,6 @@ static int cmd_rate(const struct shell *sh, size_t argc, char **argv)
 }
 
 /*
- * Bench: raw radio test, run inside the shell command so it is self-contained and bounded.
- * `zlrs blast [n]` sends n complete frames back to back, `zlrs listen [ms] [n]` opens n windows of
- * the given length; both report what actually happened. No slots, no phases, no ARQ: this is the
- * measurement that says whether the two radios can hear each other at all.
- */
-static bool bench_wait(zlrs_link_t *link, const zlrs_radio_req_t *req, uint32_t budget_us)
-{
-	if (link->radio.submit(link->radio.ctx, req) != 0) {
-		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_radio_port_now_ms());
-		return false;
-	}
-
-	radio_wait_done(budget_us);
-
-	zlrs_radio_port_drain();
-	if (link->req_pending) {
-		zlrs_radio_port_abort();
-		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_radio_port_now_ms());
-		return false;
-	}
-
-	return true;
-}
-
-static int cmd_blast(const struct shell *sh, size_t argc, char **argv)
-{
-	uint8_t payload[32];
-	uint32_t count = (argc > 1) ? (uint32_t)strtoul(argv[1], NULL, 0) : 50U;
-	uint32_t sent = 0U;
-	uint32_t failed = 0U;
-	const uint32_t t0 = zlrs_radio_port_now_ms();
-
-	if (count > 2000U) {
-		count = 2000U;
-	}
-
-	for (uint32_t i = 0U; i < count; i++) {
-		const zlrs_radio_req_t *req;
-
-		for (uint8_t j = 0U; j < sizeof(payload); j++) {
-			payload[j] = (uint8_t)(i + j);
-		}
-		req = zlrs_link_blast(&link_data, payload, sizeof(payload));
-		if (req == NULL || !bench_wait(&link_data, req, 20000U)) {
-			failed++;
-		} else {
-			sent++;
-		}
-	}
-
-	shell_print(sh, "blast: %u of %u frames sent in %u ms (fail %u)",
-		    (unsigned int)sent, (unsigned int)count,
-		    (unsigned int)(zlrs_radio_port_now_ms() - t0), (unsigned int)failed);
-
-	return 0;
-}
-
-static int cmd_listen(const struct shell *sh, size_t argc, char **argv)
-{
-	const uint32_t ms = (argc > 1) ? (uint32_t)strtoul(argv[1], NULL, 0) : 100U;
-	uint32_t count = (argc > 2) ? (uint32_t)strtoul(argv[2], NULL, 0) : 20U;
-	const uint32_t frames0 = link_data.stats.rx_frames;
-	uint32_t windows = 0U;
-	uint32_t worst_rssi = 0;
-
-	if (ms < 5U || ms > 500U) {
-		shell_print(sh, "window must be 5..500 ms");
-		return -EINVAL;
-	}
-	if (count > 200U) {
-		count = 200U;
-	}
-
-	for (uint32_t i = 0U; i < count; i++) {
-		const zlrs_radio_req_t *req = zlrs_link_listen_raw(&link_data, (uint16_t)ms);
-
-		if (req == NULL) {
-			break;
-		}
-		windows++;
-		(void)bench_wait(&link_data, req, ms * 1000U + 20000U);
-		worst_rssi = link_data.stats.last_rssi;
-	}
-
-	shell_print(sh, "listen: %u windows of %u ms, %u frames heard, last rssi %d",
-		    (unsigned int)windows, (unsigned int)ms,
-		    (unsigned int)(link_data.stats.rx_frames - frames0), worst_rssi);
-
-	return 0;
-}
-
-/*
- * Raw radio bench at boot, see CONFIG_ZLRS_APP_BENCH_RAW_MS. The role decides the direction: the TX
- * role sends complete frames back to back, the RX role opens 100 ms windows back to back. Both log
- * once a second, which is all the host needs — the console stays usable because nothing has to be
- * typed while this runs.
- */
-static void bench_raw_at_boot(void)
-{
-	uint32_t left_ms = (uint32_t)CONFIG_ZLRS_APP_BENCH_RAW_MS;
-	uint32_t last_ms = zlrs_radio_port_now_ms();
-	uint32_t tx0 = link_data.stats.tx_frames;
-	uint32_t rx0 = link_data.stats.rx_frames;
-	static uint8_t payload[32];
-	const uint32_t start_ms = last_ms;
-	uint32_t seq = 0U;
-
-	if (left_ms == 0U) {
-		return;
-	}
-
-	LOG_INF("raw bench: %s for %u ms", role_tx ? "blast" : "listen",
-		(unsigned int)left_ms);
-
-	while ((uint32_t)(zlrs_radio_port_now_ms() - start_ms) < left_ms) {
-		const zlrs_radio_req_t *req;
-
-		if (role_tx) {
-			for (uint8_t i = 0U; i < sizeof(payload); i++) {
-				payload[i] = (uint8_t)(seq + i);
-			}
-			req = zlrs_link_blast(&link_data, payload, sizeof(payload));
-			if (req != NULL) {
-				seq++;
-			}
-		} else {
-			req = zlrs_link_listen_raw(&link_data, 100U);
-		}
-		if (req == NULL) {
-			k_usleep(200);
-			continue;
-		}
-		/* The direct backend programs the radio itself per transaction, which needs more room than
-		 * the planner path: give the bench a budget that is not the thing being measured. */
-		(void)bench_wait(&link_data, req, role_tx ? 100000U : 120000U);
-		zlrs_watchdog_feed();
-
-		{
-			const uint32_t now = zlrs_radio_port_now_ms();
-
-			if ((uint32_t)(now - last_ms) >= 1000U) {
-				const uint32_t tx = link_data.stats.tx_frames - tx0;
-				const uint32_t rx = link_data.stats.rx_frames - rx0;
-
-				LOG_INF("raw: %s %u tx/s, %u rx/s, rssi %d",
-					role_tx ? "blast" : "listen", (unsigned int)tx,
-					(unsigned int)rx, link_data.stats.last_rssi);
-				tx0 = link_data.stats.tx_frames;
-				rx0 = link_data.stats.rx_frames;
-				last_ms = now;
-			}
-		}
-	}
-
-	LOG_INF("raw bench done: %u frames sent, %u heard", (unsigned int)seq,
-		(unsigned int)(link_data.stats.rx_frames - rx0));
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
-	/* Kept for `zlrs radio`: the console drops this line often enough to lose the measurement */
-	raw_bench_frames = seq;
-	raw_bench_ms = (uint32_t)CONFIG_ZLRS_APP_BENCH_RAW_MS;
-#endif
-}
-
 /* Bench: show the pair key, re-derive it from the record on hand, show it again */
 static int cmd_rekey(const struct shell *sh, size_t argc, char **argv)
 {
@@ -2777,8 +2791,10 @@ int main(void)
 	TRACE('d');
 	/* Take the requested radio backend before the bench, or the bench would measure the old one */
 	zlrs_radio_direct_apply();
-	/* Debug images only: run the raw radio bench before the superframe takes over */
+#if CONFIG_ZLRS_APP_BENCH_RAW_MS > 0
+	/* Bench images only: run the raw radio bench before the superframe takes over */
 	bench_raw_at_boot();
+#endif
 
 	LOG_INF("entering superframe loop: %u Hz, %s / %s (%s)", (unsigned int)control_rate_hz,
 		ZLRS_CONTROL_ENABLED ? "control on" : "control off",

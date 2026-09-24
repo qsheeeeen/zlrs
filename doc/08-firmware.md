@@ -175,8 +175,8 @@ serial recovery, none needing the button:
 | boot window | a valid mcumgr frame within 2 s of any reset (`CONFIG_BOOT_SERIAL_WAIT_FOR_DFU_TIMEOUT`) |
 | no bootable image | a failed signature check or an empty image parks in recovery |
 
-None of the three is a switch: a build that runs under MCUboot has all of them. A target without
-a bootloader (`.../m33/hf`, `.../m33/lf`) is flashed with a programmer and has no recovery path.
+None of the three is a switch: every build target runs under MCUboot and has all of them (there is
+no bootloader-less target, for the reason in section 5).
 
 The boot-mode flag lives in 4 bytes at the start of SRAM (retained RAM), shared by the
 application and the bootloader. `CONFIG_BOOT_SERIAL_PIN_RESET` is deliberately off: on RP2350
@@ -236,3 +236,25 @@ the signature check, the confirmation and the rollback apply.
   a reset; the rollback verdict is MCUboot's confirm bit.
 - **Regulatory and security mistakes are visible**: a region the radio design cannot cover, a
   missing root key and a lost peer are all distinct LED states ([11-ux](11-ux.md)).
+
+## 7. The log store
+
+A device that reboots on its own is the one case a console cannot help with: the interesting lines
+are the ones before the reset, and a bench board that loses its USB leaves nothing behind. The
+firmware therefore keeps a log store in flash, and it is always on (no switch):
+
+- **Zephyr's own pieces, not a home-grown ring**: `LOG_BACKEND_FS` writes every log record to
+  LittleFS, alongside the console. Eight 128 KB files, the oldest overwritten
+  (`CONFIG_LOG_BACKEND_FS_OVERWRITE`), so the store is a ring that needs no maintenance in the
+  application.
+- **LittleFS owns the hard parts**: power-fail safety and wear leveling. The application only
+  mounts the partition (before the log core enables its backends, see the init priorities in
+  `app/src/log_store.c`) and, on a partition nothing has written yet, erases and mounts it once.
+- **The partition is a build-time property**: boards without a `log_partition` node still build;
+  they log to the console only and say so once at boot.
+- **Export is a host-side operation**: the store is read over the config port, so it works on a
+  board whose radio and console are both misbehaving. `zlrs-config.py logs` dumps the files to a
+  directory; nothing in the firmware has to stop doing its job for the export.
+
+The coredump partition next to it takes the fault case that a log cannot describe (stack, PC,
+registers), and `zlrs mcuboot` reports the image state MCUboot will act on.

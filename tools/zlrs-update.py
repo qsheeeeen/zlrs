@@ -321,7 +321,7 @@ def main() -> int:
 
     image = Path(args.image) if args.image else default_image()
     if not image.is_file():
-        print(f"no signed image at {image}\nbuild one first (zlrs-build-mcuboot) or pass --image", file=sys.stderr)
+        print(f"no signed image at {image}\nbuild one first (zlrs-build) or pass --image", file=sys.stderr)
         return 1
 
     # 1. trigger

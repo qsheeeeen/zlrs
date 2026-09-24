@@ -13,7 +13,7 @@ A debug image is a normal build plus two files:
 | `app/debug.overlay` | adds a console CDC (`cdc_acm_uart3`) to the devicetree and points `zephyr,console` / `zephyr,shell-uart` at it |
 
 ```shell
-west build -b "$ZLRS_BOARD" "$ZLRS_APP" -- \
+west build --sysbuild -b "$ZLRS_BOARD" "$ZLRS_APP" -- \
   -DEXTRA_CONF_FILE="$ZLRS_REPO_ROOT/app/debug.conf" \
   -DDTC_OVERLAY_FILE="$ZLRS_REPO_ROOT/app/debug.overlay"
 ```
@@ -81,7 +81,7 @@ switches to hide but debts: `doc/13-roadmap.md`, "Pending defaults".
   attached, use the ready-made file:
 
   ```shell
-  west build -b "$ZLRS_BOARD" "$ZLRS_APP" -- \
+  west build --sysbuild -b "$ZLRS_BOARD" "$ZLRS_APP" -- \
     -DEXTRA_CONF_FILE="$ZLRS_REPO_ROOT/app/debug.conf;$ZLRS_REPO_ROOT/app/bringup-noradio.conf" \
     -DDTC_OVERLAY_FILE="$ZLRS_REPO_ROOT/app/debug.overlay"
   ```

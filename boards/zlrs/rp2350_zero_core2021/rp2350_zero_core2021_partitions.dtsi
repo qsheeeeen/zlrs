@@ -1,0 +1,73 @@
+/*
+ * Copyright (c) 2026 zlrs contributors
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * The flash layout of this board (4 MB), and the only one: the application image and the MCUboot
+ * image are both built from a dts that includes this file, so the bootloader and the application
+ * can never disagree about where a slot is. Both are built for the same board variant
+ * (`<soc>/<sku>/mcuboot`); the bootloader adds its own overlay on top (app/sysbuild/mcuboot.overlay)
+ * and nothing else.
+ *
+ * The shape follows the Zephyr tree's raspberrypi/partitions_4M_sysbuild.dtsi, with the bootloader
+ * grown from 64 KB to 128 KB: the measured MCUboot with serial recovery (mcumgr over UART) already
+ * takes 61.6 KB, 96% of 64 KB, leaving no room for more code; 128 KB leaves headroom for USB CDC
+ * recovery and the like.
+ *
+ *   0x000000  mcuboot   128 KB   RP2350 bootrom starts here
+ *   0x020000  slot0     832 KB   application (signed), zephyr,code-partition
+ *   0x0F0000  slot1     832 KB   upgrade images land here, MCUboot swaps
+ *   0x1C0000  log         1 MB   log store (LittleFS), ring of 8 x 128 KB files
+ *   0x2C0000  coredump  128 KB   Zephyr coredump backend target
+ *   0x2E0000  storage    32 KB   NVS: root key, device id, pairing record, failsafe values
+ *
+ * The log and coredump partitions cost a third of what used to be NVS space: NVS holds nine keys
+ * under 100 B in total, so 32 KB is generous, while a board that reboots on its own needs the
+ * lines from before the reset (doc/08-firmware.md 7).
+ */
+
+&flash0 {
+	status = "okay";
+
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		boot_partition: partition@0 {
+			label = "mcuboot";
+			reg = <0x0 0x20000>;
+		};
+
+		slot0_partition: partition@20000 {
+			label = "image-0";
+			reg = <0x20000 0xd0000>;
+		};
+
+		slot1_partition: partition@f0000 {
+			label = "image-1";
+			reg = <0xf0000 0xd0000>;
+		};
+
+		log_partition: partition@1c0000 {
+			label = "log";
+			reg = <0x1c0000 0x100000>;
+		};
+
+		coredump_partition: partition@2c0000 {
+			label = "coredump";
+			reg = <0x2c0000 0x20000>;
+		};
+
+		storage_partition: partition@2e0000 {
+			label = "storage";
+			reg = <0x2e0000 0x8000>;
+		};
+	};
+};
+
+/ {
+	aliases {
+		coredump-partition = &coredump_partition;
+	};
+};

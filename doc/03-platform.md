@@ -61,31 +61,34 @@ after flashing is defined.
 
 ## 3. Build targets
 
-Four targets: two SKUs times with or without a bootloader.
+Two targets, one per sub-G SKU, and both are bootloader targets (an image that cannot be updated
+through the bootloader has no reason to exist, see [08-firmware](08-firmware.md) 5):
 
 | Target | Notes |
 | --- | --- |
-| `rp2350_zero_core2021/rp2350a/m33/hf` | HF SKU (868 / 915), the application sits directly in flash |
-| `rp2350_zero_core2021/rp2350a/m33/lf` | LF SKU (470 / 433), the application sits directly in flash |
-| `.../m33/hf/mcuboot` | the same plus MCUboot and two-slot partitions; build with `--sysbuild` |
-| `.../m33/lf/mcuboot` | the same |
+| `rp2350_zero_core2021/rp2350a/m33/hf` | HF SKU (868 / 915), application and bootloader, built with `--sysbuild` |
+| `rp2350_zero_core2021/rp2350a/m33/lf` | LF SKU (470 / 433), the same |
+
+There is no qualifier for the bootloader in the target name: the bootloader is part of every image
+this board builds, not a variant of it.
 
 `west boards` also lists the same SoC's `rp2350a/hazard3` qualifier; there is no dts for it here
 (no RISC-V cores).
 
 ## 4. Image layout
 
-**Without a bootloader** (`rp2350_zero_core2021_partitions_1m.dtsi`): 1 MB of code plus 3 MB of
-storage for NVS.
-
-**With MCUboot** (`rp2350_zero_core2021_partitions_mcuboot.dtsi`): MCUboot (128 KB), slot0
-(832 KB at `0x020000`), slot1 (832 KB at `0x0F0000`) and 2.25 MB of storage; the signed
-application lives in slot0 and upgrades land in slot1. Boot chain: RP2350 bootrom -> MCUboot
-(signature check) -> slot0, with `swap using move` for slot swaps (`swap using offset` goes in
-but never comes back on this board) and rollback after a failed upgrade.
+There is one layout, `rp2350_zero_core2021_partitions.dtsi`, and both images are built from it: the
+application and the bootloader include the same file, from the same board target, so the two can
+never disagree about where a slot is. MCUboot (128 KB), slot0 (832 KB at `0x020000`), slot1
+(832 KB at `0x0F0000`), the log store (1 MB at `0x1C0000`), a coredump partition (128 KB at
+`0x2C0000`) and 32 KB of NVS. The signed application lives in slot0 and upgrades land in slot1.
+Boot chain: RP2350 bootrom -> MCUboot (signature check) -> slot0, with `swap using move` for slot
+swaps (`swap using offset` goes in but never comes back on this board) and rollback after a failed
+upgrade.
 
 NVS keeps the root key, device id, pairing record, failsafe values, baud rate, region, power
-ceiling, role and security profile.
+ceiling, role and security profile — nine keys, under 100 B in total, which is why NVS is small
+and the flash around it goes to the log store ([08-firmware](08-firmware.md) 7).
 
 Offsets and sizes: [board README](../boards/zlrs/rp2350_zero_core2021/README.md#4-partitions-and-boot).
 Upgrade flow and recovery entries: [08-firmware](08-firmware.md) 5.
@@ -99,7 +102,7 @@ retargetable locking and trips a static assertion):
 ```shell
 tools/setup-zephyr.sh        # about 5 GB the first time
 source tools/zephyr-env.sh   # once per new shell
-zlrs-build                   # = west build -b $ZLRS_BOARD $ZLRS_APP
+zlrs-build                   # = west build --sysbuild -b $ZLRS_BOARD $ZLRS_APP
 ```
 
 The host tests need no workspace: `make -C tests/host run` compiles the same `core/` sources

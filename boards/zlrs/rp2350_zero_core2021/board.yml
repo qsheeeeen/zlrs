@@ -10,14 +10,11 @@ board:
       variants:
         # Sub-G hardware comes in two SKUs: HF (850-930 MHz, runs 868/915)
         # and LF (410-510 MHz, runs 470/433). The 2.4G path is identical on both.
+        #
+        # One target per SKU and nothing else: every image of this board is built under MCUboot
+        # (`--sysbuild`), so there is no second shape to name after. Both dts files include the
+        # same flash layout, and the bootloader built from the same target includes it too.
         - name: hf
           cpucluster: m33
-          variants:
-            # MCUboot builds: partitions and the upgrade flow are in the README
-            - name: mcuboot
-              cpucluster: m33
         - name: lf
           cpucluster: m33
-          variants:
-            - name: mcuboot
-              cpucluster: m33

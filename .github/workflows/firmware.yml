@@ -88,7 +88,8 @@ jobs:
           set -x
           . zlrs/tools/zephyr-env.sh
           for board in rp2350_zero_core2021/rp2350a/m33/hf rp2350_zero_core2021/rp2350a/m33/lf; do
-            ZLRS_BOARD="$board" zlrs-build -d "build-bringup-${board##*/}" -- \
+            sku="${board%/*}"; sku="${sku##*/}"
+            ZLRS_BOARD="$board" zlrs-build -d "build-bringup-${sku}" -- \
               -DCONFIG_ZLRS_APP_DEBUG=y \
               -DCONFIG_ZLRS_APP_SECURITY_PROFILE_P0=y \
               -DCONFIG_ZLRS_APP_SECURITY_PROFILE_P1=n \
@@ -107,7 +108,8 @@ jobs:
           set -x
           . zlrs/tools/zephyr-env.sh
           for board in rp2350_zero_core2021/rp2350a/m33/hf rp2350_zero_core2021/rp2350a/m33/lf; do
-            ZLRS_BOARD="$board" zlrs-build -d "build-noradio-${board##*/}" -- \
+            sku="${board%/*}"; sku="${sku##*/}"
+            ZLRS_BOARD="$board" zlrs-build -d "build-noradio-${sku}" -- \
               -DCONFIG_ZLRS_APP_DEBUG=y \
               -DCONFIG_ZLRS_APP_RADIO=n
           done
@@ -122,7 +124,8 @@ jobs:
           set -x
           . zlrs/tools/zephyr-env.sh
           for board in rp2350_zero_core2021/rp2350a/m33/hf rp2350_zero_core2021/rp2350a/m33/lf; do
-            ZLRS_BOARD="$board" zlrs-build -d "build-dataonly-${board##*/}" -- \
+            sku="${board%/*}"; sku="${sku##*/}"
+            ZLRS_BOARD="$board" zlrs-build -d "build-dataonly-${sku}" -- \
               -DCONFIG_ZLRS_APP_LINK_CONTROL=n
           done
 
@@ -132,7 +135,8 @@ jobs:
           set -x
           . zlrs/tools/zephyr-env.sh
           for board in rp2350_zero_core2021/rp2350a/m33/hf rp2350_zero_core2021/rp2350a/m33/lf; do
-            ZLRS_BOARD="$board" zlrs-build -d "build-lora-${board##*/}" -- \
+            sku="${board%/*}"; sku="${sku##*/}"
+            ZLRS_BOARD="$board" zlrs-build -d "build-lora-${sku}" -- \
               -DCONFIG_ZLRS_APP_CONTROL_MODULATION_LORA=y \
               -DCONFIG_ZLRS_APP_CONTROL_MODULATION_FLRC=n
           done
@@ -143,23 +147,24 @@ jobs:
           set -x
           . zlrs/tools/zephyr-env.sh
           for board in rp2350_zero_core2021/rp2350a/m33/hf rp2350_zero_core2021/rp2350a/m33/lf; do
-            ZLRS_BOARD="$board" zlrs-build -d "build-racing-${board##*/}" -- \
+            sku="${board%/*}"; sku="${sku##*/}"
+            ZLRS_BOARD="$board" zlrs-build -d "build-racing-${sku}" -- \
               -DCONFIG_ZLRS_APP_BAND_ROLE_SUBG_DATA=y \
               -DCONFIG_ZLRS_APP_BAND_ROLE_SUBG_CONTROL=n
           done
 
-      # MCUboot: sysbuild builds the bootloader together with the signed application for both SKUs.
-      # The application is installed and updated through the bootloader (serial recovery), never
-      # dragged on as a UF2: BOOTSEL is for the bootloader image only.
-      - name: build (mcuboot, both skus)
+      # Every board target is a bootloader target (there is no bare variant), so the signed image
+      # and the bootloader are always built together. The application is installed and updated
+      # through the bootloader (serial recovery), never dragged on as a UF2.
+      - name: build (signed images for both skus)
         run: |
           set -x
           . zlrs/tools/zephyr-env.sh
           for board in rp2350_zero_core2021/rp2350a/m33/hf rp2350_zero_core2021/rp2350a/m33/lf; do
-            sku="${board##*/}"
-            west build --sysbuild -b "${board}/mcuboot" zlrs/app -d "build-${sku}-mcuboot"
+            sku="${board%/*}"; sku="${sku##*/}"
+            ZLRS_BOARD="$board" zlrs-build -d "build-${sku}"
             # No application UF2 may exist: BOOTSEL carries the bootloader image only
-            test ! -e "build-${sku}-mcuboot/app/zephyr/zephyr.signed.uf2"
+            test ! -e "build-${sku}/app/zephyr/zephyr.signed.uf2"
           done
 
       - name: upload images
@@ -168,10 +173,8 @@ jobs:
         with:
           name: rp2350_zero_core2021-images
           path: |
-            build-hf-mcuboot/mcuboot/zephyr/zephyr.uf2
-            build-lf-mcuboot/mcuboot/zephyr/zephyr.uf2
-            build-hf-mcuboot/app/zephyr/zephyr.signed.bin
-            build-lf-mcuboot/app/zephyr/zephyr.signed.bin
-            build/zephyr/zephyr.uf2
-            build-lf/zephyr/zephyr.uf2
+            build-hf/mcuboot/zephyr/zephyr.uf2
+            build-lf/mcuboot/zephyr/zephyr.uf2
+            build-hf/app/zephyr/zephyr.signed.bin
+            build-lf/app/zephyr/zephyr.signed.bin
           if-no-files-found: ignore

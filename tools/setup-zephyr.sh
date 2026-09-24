@@ -100,7 +100,7 @@ echo "==> [5/5] Zephyr's Python build dependencies"
 "${VENV_DIR}/bin/python" -m pip install --quiet --no-warn-script-location \
 	-r "${WS}/zephyr/tools/requirements-base.txt"
 
-# MCUboot builds sign the image with imgtool (`west build --sysbuild ... /mcuboot`), whose
+# Every image is built with `--sysbuild` and signed by imgtool (MCUboot's tool), whose
 # dependencies are not in Zephyr's requirements-base: without them the build fails at the
 # signing step with "No module named 'cryptography'".
 echo "    imgtool (MCUboot signing) dependencies"
@@ -141,4 +141,4 @@ fi
 echo
 echo "next:"
 echo "  source \"${ZLRS_REPO_ROOT}/tools/zephyr-env.sh\""
-echo "  zlrs-build     # = cd \$ZLRS_WS && west build -b \$ZLRS_BOARD \$ZLRS_APP"
+echo "  zlrs-build     # = cd \$ZLRS_WS && west build --sysbuild -b \$ZLRS_BOARD \$ZLRS_APP"

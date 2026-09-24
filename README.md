@@ -24,19 +24,23 @@ ground standing in for the button. See [doc/04-prototype.md](doc/04-prototype.md
 board is in [doc/05-carrier.md](doc/05-carrier.md), and pins, calibration and partitions are in
 the [board README](boards/zlrs/rp2350_zero_core2021/README.md).
 
-The Core2021's sub-G comes in two SKUs, so there are two board variants:
+The Core2021's sub-G comes in two SKUs, so there are two board targets:
 
 | Target | sub-G | Regions this design accepts | Boots with |
 | --- | --- | --- | --- |
 | `rp2350_zero_core2021/rp2350a/m33/hf` | HF: 850-930 MHz | FCC915 / EU868 | FCC915 |
 | `rp2350_zero_core2021/rp2350a/m33/lf` | LF: 410-510 MHz | CN470 / CN433 | CN470 |
 
+Both SKUs are bootloader targets: the image and the bootloader are built together (`--sysbuild`)
+from the same flash layout, and the application is only ever installed and updated through the
+bootloader.
+
 ## Build and flash
 
 ```shell
 tools/setup-zephyr.sh         # about 5 GB the first time
 source tools/zephyr-env.sh    # once per new shell
-zlrs-build-mcuboot            # = west build --sysbuild -b $ZLRS_BOARD/mcuboot $ZLRS_APP
+zlrs-build                    # = west build --sysbuild -b $ZLRS_BOARD $ZLRS_APP
 ```
 
 **The application is never flashed as a UF2**: every installation and every update goes through
@@ -113,8 +117,8 @@ control port, a config CDC, a button or a LED is a devicetree fact (`app/src/cap
 
 | Artifact | Command | Notes |
 | --- | --- | --- |
-| firmware plus MCUboot | `zlrs-build-mcuboot` | the supported image: `--sysbuild`, a bootloader and two-slot partitions |
-| firmware without a bootloader | `zlrs-build` | bring-up only: SWD or a UF2, no upgrade path, no rollback |
+| application + bootloader | `zlrs-build` | the supported image: `--sysbuild` builds both domains (`<dir>/app/zephyr/zephyr.signed.bin` is what the bootloader installs, `<dir>/mcuboot/zephyr/zephyr.uf2` is the one thing that goes on over BOOTSEL) |
+| application only (edit loop) | `zlrs-rebuild-app -d <dir>` | re-runs the `app` domain in an existing sysbuild tree: the bootloader is already built and does not change while the application is being worked on |
 | debug image | `zlrs-build` + `app/debug.conf` + `app/debug.overlay` | console CDC, shell, stats logging |
 | host tests | `make -C tests/host run` | protocol core, link layer, CRSF, config protocol, LED; no hardware, no workspace |
 | bench self-test | `python3 tools/zlrs-bringup.py` | ports, config mode, config protocol reads and writes, NVS persistence |
