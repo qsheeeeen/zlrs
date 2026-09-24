@@ -1,9 +1,9 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# Board-wide defaults, shared by every target (bare, hf, lf). The variants add nothing
-# here: what makes hf and lf different is devicetree (the `zlrs_rf` radio design, including
-# the region a fresh board boots with).
+# Board-wide defaults, shared by every target (hf, lf). The targets add nothing here: what makes
+# them different is devicetree (the `zlrs_rf` radio design, including the region a fresh board
+# boots with).
 
 if BOARD_RP2350_ZERO_CORE2021
 
@@ -11,7 +11,7 @@ config BUILD_OUTPUT_HEX
 	default y
 
 config BUILD_OUTPUT_UF2
-	default y
+	default n
 
 config CLOCK_CONTROL
 	default y

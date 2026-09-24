@@ -163,8 +163,9 @@ jobs:
           for board in rp2350_zero_core2021/rp2350a/m33/hf rp2350_zero_core2021/rp2350a/m33/lf; do
             sku="${board%/*}"; sku="${sku##*/}"
             ZLRS_BOARD="$board" zlrs-build -d "build-${sku}"
-            # No application UF2 may exist: BOOTSEL carries the bootloader image only
-            test ! -e "build-${sku}/app/zephyr/zephyr.signed.uf2"
+            # BOOTSEL carries the bootloader image only
+            test -e "build-${sku}/mcuboot/zephyr/zephyr.uf2"
+            test ! -e "build-${sku}/app/zephyr/zephyr.uf2"
           done
 
       - name: upload images
