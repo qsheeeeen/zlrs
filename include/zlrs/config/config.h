@@ -44,12 +44,16 @@ extern "C" {
 #define ZLRS_CFG_CMD_FACTORY_RESET 0x40U /* wipe NVS */
 #define ZLRS_CFG_CMD_RECOVERY      0x41U /* reboot into MCUboot serial recovery */
 #define ZLRS_CFG_CMD_CONFIRM       0x42U /* host confirms this upgrade (no confirm = rollback) */
+#define ZLRS_CFG_CMD_LOG_INFO      0x50U /* what the log store holds */
+#define ZLRS_CFG_CMD_LOG_READ      0x51U /* one chunk: log index (1) + offset (4) + length (1) */
 
 /* device -> host */
 #define ZLRS_CFG_CMD_ACK             0x80U /* [cmd][status] */
 #define ZLRS_CFG_CMD_STATUS_RESP     0x81U /* see zlrs_cfg_status_t */
 #define ZLRS_CFG_CMD_BUILD_RESP      0x82U /* build string, at most ZLRS_CFG_BUILD_MAX_LEN */
 #define ZLRS_CFG_CMD_IMAGE_HASH_RESP 0x83U /* ZLRS_CFG_IMAGE_HASH_LEN bytes of image hash */
+#define ZLRS_CFG_CMD_LOG_INFO_RESP   0x90U /* see zlrs_cfg_log_info_t */
+#define ZLRS_CFG_CMD_LOG_DATA_RESP   0x91U /* log index (1) + offset (4) + bytes */
 
 /* status codes */
 #define ZLRS_CFG_OK        0U
@@ -63,6 +67,9 @@ extern "C" {
 #define ZLRS_CFG_PHRASE_MAX_LEN 32U
 #define ZLRS_CFG_BUILD_MAX_LEN  32U
 #define ZLRS_CFG_IMAGE_HASH_LEN 32U
+/* Log store: at most this many files, and this many bytes back per read (one frame's payload) */
+#define ZLRS_CFG_LOG_FILES_MAX 8U
+#define ZLRS_CFG_LOG_CHUNK_MAX 80U
 
 typedef struct {
 	uint8_t version; /* protocol version */
@@ -82,6 +89,17 @@ typedef struct {
 #define ZLRS_CFG_FLAG_KEY     0x01U
 #define ZLRS_CFG_FLAG_PAIRED  0x02U
 #define ZLRS_CFG_FLAG_SESSION 0x04U
+
+/*
+ * What the log store holds: how many files, which one is being appended to (the export walks them
+ * oldest first, so the host needs to know where the ring starts) and the size of each.
+ */
+typedef struct {
+	uint8_t count;  /* files present, 0 when there is no store on this board */
+	uint8_t newest; /* index of the file the backend appends to */
+	uint16_t num[ZLRS_CFG_LOG_FILES_MAX]; /* the number in the file's name, oldest first */
+	uint32_t size[ZLRS_CFG_LOG_FILES_MAX];
+} zlrs_cfg_log_info_t;
 
 /*
  * Device-side actions. Each callback returns ZLRS_CFG_OK or ZLRS_CFG_E_*; ctx comes from
@@ -109,6 +127,13 @@ typedef struct {
 	int (*read_build)(void *ctx, char *out, size_t out_len);
 	/* MCUboot hash of the running image (new build or rolled back one, the tool decides) */
 	int (*read_image_hash)(void *ctx, uint8_t out[ZLRS_CFG_IMAGE_HASH_LEN]);
+	/*
+	 * Log store over the config port: the device only serves bytes here, the host decides what to
+	 * do with them. E_STATE when the board has no store to read.
+	 */
+	int (*log_info)(void *ctx, zlrs_cfg_log_info_t *out);
+	int (*log_read)(void *ctx, uint8_t index, uint32_t offset, uint8_t len, uint8_t *out,
+			uint8_t *out_len);
 	void *ctx;
 } zlrs_cfg_backend_t;
 

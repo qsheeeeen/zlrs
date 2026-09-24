@@ -15,6 +15,7 @@
 # Standard library only; talking to a device needs pyserial (pip install pyserial).
 
 import argparse
+import os
 import sys
 
 SOF = b"\xa5\x5a"
@@ -37,12 +38,20 @@ CMD_EXIT = 0x30
 CMD_FACTORY_RESET = 0x40
 CMD_RECOVERY = 0x41
 CMD_CONFIRM = 0x42
+CMD_LOG_INFO = 0x50
+CMD_LOG_READ = 0x51
 CMD_BUILD = 0x12
 CMD_IMAGE_HASH = 0x13
 ACK = 0x80
 STATUS_RESP = 0x81
 BUILD_RESP = 0x82
 IMAGE_HASH_RESP = 0x83
+LOG_INFO_RESP = 0x90
+LOG_DATA_RESP = 0x91
+
+# One read carries at most this many bytes (a config frame's payload minus its own header)
+LOG_CHUNK_MAX = 80
+LOG_FILES_MAX = 8
 
 STATUS_NAMES = {
     0: "ok",
@@ -279,6 +288,96 @@ def talk(port: str, baud: int, frame: bytes, expect: bool, timeout: float,
         return 1
 
 
+def dump_logs(port: str, baud: int, timeout: float, out_dir: str) -> int:
+	"""Read the whole log store over the config port and write it out file by file.
+
+	The device serves one chunk per request; the framing already has a CRC, so a lost byte shows up
+	as a bad frame instead of as a hole in the log.
+	"""
+	try:
+		import serial  # pyserial
+	except ImportError:
+		print("pyserial required: pip install pyserial", file=sys.stderr)
+		return 2
+
+	import os
+
+	os.makedirs(out_dir, exist_ok=True)
+
+	with serial.Serial(port, baudrate=baud, timeout=timeout) as link:
+		link.write(encode(CMD_ENTER))
+		try:
+			cmd, payload = read_response(link)
+		except TimeoutError as exc:
+			print(f"entering config mode failed: {exc}", file=sys.stderr)
+			return 1
+		if cmd != ACK or payload[1] != 0:
+			print("entering config mode failed", file=sys.stderr)
+			return 1
+
+		link.write(encode(CMD_LOG_INFO))
+		try:
+			cmd, payload = read_response(link)
+		except TimeoutError:
+			print("no answer to the log info request", file=sys.stderr)
+			return 1
+		if cmd == ACK:
+			print(f"log store: {STATUS_NAMES.get(payload[1], hex(payload[1]))}", file=sys.stderr)
+			return 1
+		if cmd != LOG_INFO_RESP or len(payload) < 2:
+			print(f"unexpected response 0x{cmd:02x}", file=sys.stderr)
+			return 1
+
+		count = payload[0]
+		newest = payload[1]
+		if count > LOG_FILES_MAX or len(payload) < 2 + 6 * count:
+			print("log info is malformed", file=sys.stderr)
+			return 1
+
+		files = []
+		for i in range(count):
+			at = 2 + 6 * i
+			num = payload[at] | (payload[at + 1] << 8)
+			size = int.from_bytes(payload[at + 2 : at + 6], "little")
+			files.append((i, num, size))
+
+		print(f"{count} log file(s), newest index {newest}")
+
+		total = 0
+		for index, num, size in files:
+			path = os.path.join(out_dir, f"log.{num:04d}.bin")
+			written = 0
+			with open(path, "wb") as out:
+				while written < size:
+					want = min(LOG_CHUNK_MAX, size - written)
+					body = bytes([index]) + written.to_bytes(4, "little") + bytes([want])
+					link.write(encode(CMD_LOG_READ, body))
+					try:
+						cmd, payload = read_response(link)
+					except TimeoutError:
+						print(f"{path}: timed out at offset {written}", file=sys.stderr)
+						return 1
+					if cmd != LOG_DATA_RESP or len(payload) < 5:
+						print(f"{path}: unexpected response 0x{cmd:02x}", file=sys.stderr)
+						return 1
+					got = payload[5:]
+					if not got:
+						break  # short file (rotation moved on); the size was from before
+					out.write(got)
+					written += len(got)
+			print(f"{path}: {written} bytes")
+			total += written
+
+		link.write(encode(CMD_EXIT))
+		try:
+			read_response(link)
+		except TimeoutError:
+			pass
+
+	print(f"total {total} bytes")
+	return 0
+
+
 def app_ports() -> list[str]:
     """Application-mode modules currently plugged in (by-id, bootloader mode excluded)."""
     import glob
@@ -373,6 +472,9 @@ def main() -> int:
     sub.add_parser("recovery")
     sub.add_parser("build", help="read the build string")
     sub.add_parser("image-hash", help="read the MCUboot hash of the running image (hex)")
+    logs = sub.add_parser("logs", help="dump the flash log store to a directory")
+    logs.add_argument("out_dir", nargs="?", default="zlrs-logs",
+                      help="where the log files are written (default: ./zlrs-logs)")
     sub.add_parser("confirm", help="confirm this upgrade (no confirm means a timeout rollback)")
     sub.add_parser("exit")
 
@@ -394,6 +496,20 @@ def main() -> int:
     if args.command is None:
         parser.print_help()
         return 2
+
+    # The log dump is a sequence of requests, not one frame; it runs its own session.
+    if args.command == "logs":
+        targets = pick_targets(args, parser)
+        rc = 0
+        for port in targets:
+            if len(targets) > 1:
+                print(f"-- {port}")
+            this = dump_logs(port, args.baud, args.timeout,
+                             args.out_dir if len(targets) == 1 else os.path.join(args.out_dir,
+                                                                                os.path.basename(port)))
+            if this != 0:
+                rc = this
+        return rc
 
     if args.command == "enter":
         frame, expect = encode(CMD_ENTER), True

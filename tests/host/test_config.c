@@ -28,6 +28,9 @@ typedef struct {
 	uint32_t new_dev_id_count;
 	int store_rc; /* error code save_root_key should return */
 	bool image_confirmed;
+	uint32_t log_read_offset; /* what the last log read was asked for */
+	uint8_t log_read_len;
+	uint8_t log_read_count;
 } fake_dev_t;
 
 static fake_dev_t fake;
@@ -157,6 +160,52 @@ static int fake_new_dev_id(void *ctx)
 	return ZLRS_CFG_OK;
 }
 
+/* Two "files": the export walks them oldest first and asks for chunks */
+static int fake_log_info(void *ctx, zlrs_cfg_log_info_t *out)
+{
+	(void)ctx;
+
+	out->count = 2U;
+	out->newest = 1U;
+	out->num[0] = 6U;
+	out->num[1] = 7U;
+	out->size[0] = 0x11223344U;
+	out->size[1] = 5U;
+
+	return ZLRS_CFG_OK;
+}
+
+static int fake_log_read(void *ctx, uint8_t index, uint32_t offset, uint8_t len, uint8_t *out,
+			 uint8_t *out_len)
+{
+	fake_dev_t *dev = ctx;
+
+	dev->log_read_offset = offset;
+	dev->log_read_len = len;
+	dev->log_read_count++;
+
+	if (index != 1U) {
+		return ZLRS_CFG_E_PARAM;
+	}
+	/* Like a file: "hello" from offset 1 is "ello" */
+	const char text[] = "hello";
+	uint8_t avail = (uint8_t)(sizeof(text) - 1U);
+
+	if (offset > avail) {
+		offset = avail;
+	}
+	avail = (uint8_t)(avail - offset);
+	if (len > avail) {
+		len = avail;
+	}
+	for (uint8_t i = 0U; i < len; i++) {
+		out[i] = (uint8_t)text[offset + i];
+	}
+	*out_len = len;
+
+	return ZLRS_CFG_OK;
+}
+
 static const zlrs_cfg_backend_t backend = {
 	.save_root_key = fake_save_key,
 	.read_status = fake_read_status,
@@ -169,6 +218,8 @@ static const zlrs_cfg_backend_t backend = {
 	.confirm_image = fake_confirm_image,
 	.read_build = fake_read_build,
 	.read_image_hash = fake_read_image_hash,
+	.log_info = fake_log_info,
+	.log_read = fake_log_read,
 	.ctx = &fake,
 };
 
@@ -458,6 +509,63 @@ static void test_dispatch(void)
 	CHECK(parse_response(resp, len, &parser));
 	CHECK(ZLRS_CFG_PAYLOAD(&parser)[0] == 0x7EU);
 	CHECK(ZLRS_CFG_PAYLOAD(&parser)[1] == ZLRS_CFG_E_UNKNOWN);
+
+	/* Log export: the info frame carries count, newest and per-file number plus size */
+	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_LOG_INFO, NULL, 0U, resp, sizeof(resp));
+	CHECK(parse_response(resp, len, &parser));
+	CHECK(parser.cmd == ZLRS_CFG_CMD_LOG_INFO_RESP);
+	const uint8_t *body = ZLRS_CFG_PAYLOAD(&parser);
+
+	CHECK(parser.payload_len == 2U + 6U * 2U);
+	CHECK(body[0] == 2U);
+	CHECK(body[1] == 1U);
+	CHECK(body[2] == 6U);
+	CHECK(body[3] == 0U);
+	CHECK(body[4] == 0x44U && body[5] == 0x33U && body[6] == 0x22U && body[7] == 0x11U);
+	CHECK(body[8] == 7U);
+	CHECK(body[9] == 0U);
+	CHECK(body[10] == 5U);
+
+	/* A read: index, offset, length in; index, offset, bytes out */
+	payload[0] = 1U;
+	payload[1] = 1U;
+	payload[2] = 0U;
+	payload[3] = 0U;
+	payload[4] = 0U;
+	payload[5] = 4U;
+	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_LOG_READ, payload, 6U, resp, sizeof(resp));
+	CHECK(parse_response(resp, len, &parser));
+	CHECK(parser.cmd == ZLRS_CFG_CMD_LOG_DATA_RESP);
+	CHECK(parser.payload_len == 5U + 4U);
+	body = ZLRS_CFG_PAYLOAD(&parser);
+	CHECK(body[0] == 1U);
+	CHECK(body[1] == 1U && body[2] == 0U && body[3] == 0U && body[4] == 0U);
+	CHECK(memcmp(&body[5], "ello", 4) == 0);
+	CHECK(fake.log_read_offset == 1U);
+	CHECK(fake.log_read_len == 4U);
+
+	/* A read at the end of the file returns an empty chunk, not an error */
+	const uint8_t before = fake.log_read_count;
+
+	payload[1] = 5U;
+	payload[5] = 8U;
+	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_LOG_READ, payload, 6U, resp, sizeof(resp));
+	CHECK(parse_response(resp, len, &parser));
+	CHECK(parser.cmd == ZLRS_CFG_CMD_LOG_DATA_RESP);
+	CHECK(parser.payload_len == 5U);
+	CHECK(fake.log_read_count == (uint8_t)(before + 1U));
+
+	/* A chunk longer than a frame can carry never reaches the backend */
+	payload[5] = ZLRS_CFG_LOG_CHUNK_MAX + 1U;
+	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_LOG_READ, payload, 6U, resp, sizeof(resp));
+	CHECK(parse_response(resp, len, &parser));
+	CHECK(ZLRS_CFG_PAYLOAD(&parser)[1] == ZLRS_CFG_E_PARAM);
+	CHECK(fake.log_read_count == (uint8_t)(before + 1U));
+
+	/* A short payload is a parameter error too */
+	len = zlrs_cfg_dispatch(&backend, ZLRS_CFG_CMD_LOG_READ, payload, 5U, resp, sizeof(resp));
+	CHECK(parse_response(resp, len, &parser));
+	CHECK(ZLRS_CFG_PAYLOAD(&parser)[1] == ZLRS_CFG_E_PARAM);
 }
 
 void test_config(void)

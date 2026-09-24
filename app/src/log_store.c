@@ -19,9 +19,14 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/storage/flash_map.h>
 
+#include <stdio.h>
+#include <string.h>
+
 #if defined(CONFIG_HWINFO)
 #include <zephyr/drivers/hwinfo.h>
 #endif
+
+#include "zlrs/config/config.h"
 
 /*
  * Only boards whose partition table has a log partition get this: the whole file is about that
@@ -39,6 +44,24 @@ int zlrs_log_store_probe(void)
 {
 	return -ENODEV;
 }
+
+int zlrs_log_store_info(zlrs_cfg_log_info_t *out)
+{
+	ARG_UNUSED(out);
+
+	return ZLRS_CFG_E_STATE;
+}
+
+int zlrs_log_store_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *out, uint8_t *out_len)
+{
+	ARG_UNUSED(index);
+	ARG_UNUSED(offset);
+	ARG_UNUSED(len);
+	ARG_UNUSED(out);
+	ARG_UNUSED(out_len);
+
+	return ZLRS_CFG_E_STATE;
+}
 #else
 
 LOG_MODULE_REGISTER(zlrs_log_store, CONFIG_APP_LOG_LEVEL);
@@ -50,13 +73,174 @@ FS_LITTLEFS_DECLARE_DEFAULT_CONFIG(zlrs_log_fs_cfg);
 static struct fs_mount_t log_mnt = {
 	.type = FS_LITTLEFS,
 	.fs_data = &zlrs_log_fs_cfg,
-	.storage_dev = (void *)FIXED_PARTITION_ID(log_partition),
+	.storage_dev = (void *)PARTITION_ID(log_partition),
 	.mnt_point = LOG_MOUNT_POINT,
 };
 
 static bool log_mounted;
 
 static int log_store_mount(void);
+
+/* The ring, smallest file number first: that is the order the host exports them in */
+struct log_file {
+	uint16_t num;
+	uint32_t size;
+};
+
+static struct log_file log_files[ZLRS_CFG_LOG_FILES_MAX];
+static uint8_t log_file_count;
+
+/*
+ * List the store and sort it by file number. Zephyr's file backend names its files
+ * `<prefix><0000>` upward and overwrites the oldest when the count reaches the limit, so the
+ * numeric order is the order they were written in — and the newest (the one being appended to) is
+ * the last entry, which is what the export needs to know to read a coherent tail.
+ */
+static int log_store_scan(void)
+{
+	struct fs_dir_t dir;
+	struct fs_dirent ent;
+	uint8_t found = 0U;
+	int rc;
+
+	log_file_count = 0U;
+
+	if (!log_mounted) {
+		rc = log_store_mount();
+		if (rc != 0) {
+			return ZLRS_CFG_E_STATE;
+		}
+	}
+
+	fs_dir_t_init(&dir);
+	rc = fs_opendir(&dir, LOG_MOUNT_POINT);
+	if (rc != 0) {
+		return ZLRS_CFG_E_STATE;
+	}
+
+	for (;;) {
+		rc = fs_readdir(&dir, &ent);
+		if (rc != 0 || ent.name[0] == '\0') {
+			break;
+		}
+		if (ent.type != FS_DIR_ENTRY_FILE) {
+			continue;
+		}
+
+		/* The backend's names are the prefix plus four digits; anything else is not ours */
+		const char *digits = ent.name + strlen(CONFIG_LOG_BACKEND_FS_FILE_PREFIX);
+		uint16_t num = 0U;
+		uint8_t n = 0U;
+
+		if (strncmp(ent.name, CONFIG_LOG_BACKEND_FS_FILE_PREFIX,
+			    strlen(CONFIG_LOG_BACKEND_FS_FILE_PREFIX)) != 0) {
+			continue;
+		}
+		while (digits[n] >= '0' && digits[n] <= '9' && n < 5U) {
+			num = (uint16_t)((num * 10U) + (uint16_t)(digits[n] - '0'));
+			n++;
+		}
+		if (n == 0U) {
+			continue;
+		}
+
+		if (found < ZLRS_CFG_LOG_FILES_MAX) {
+			/* Insert sorted: at most a handful of files, an insertion sort is plenty */
+			uint8_t at = found;
+
+			while (at > 0U && log_files[at - 1U].num > num) {
+				log_files[at] = log_files[at - 1U];
+				at--;
+			}
+			log_files[at].num = num;
+			log_files[at].size = (uint32_t)ent.size;
+			found++;
+		}
+	}
+
+	(void)fs_closedir(&dir);
+	log_file_count = found;
+
+	/*
+	 * One line per scan: an export that finds nothing is a different bug from one that finds the
+	 * files but cannot read them, and this is the line that tells the two apart on a serial console.
+	 */
+	if (found == 0U) {
+		LOG_WRN("log store: no files under %s", LOG_MOUNT_POINT);
+	} else {
+		LOG_INF("log store: %u file(s), newest log.%04u", found, log_files[found - 1U].num);
+	}
+
+	return ZLRS_CFG_OK;
+}
+
+/*
+ * What the store holds, for the export to walk: file count, which one is newest, and each size.
+ * A board with no store says so with E_STATE rather than an empty list, so the host can tell
+ * "nothing logged yet" from "no store here".
+ */
+int zlrs_log_store_info(zlrs_cfg_log_info_t *out)
+{
+	int rc;
+
+	if (out == NULL) {
+		return ZLRS_CFG_E_PARAM;
+	}
+
+	rc = log_store_scan();
+	if (rc != ZLRS_CFG_OK) {
+		return rc;
+	}
+
+	memset(out, 0, sizeof(*out));
+	out->count = log_file_count;
+	out->newest = (log_file_count > 0U) ? (uint8_t)(log_file_count - 1U) : 0U;
+
+	for (uint8_t i = 0U; i < log_file_count; i++) {
+		out->num[i] = log_files[i].num;
+		out->size[i] = log_files[i].size;
+	}
+
+	return ZLRS_CFG_OK;
+}
+
+/* One chunk of one file. The caller (config protocol) bounds len; a short tail returns short. */
+int zlrs_log_store_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *out, uint8_t *out_len)
+{
+	char path[sizeof(LOG_MOUNT_POINT) + 16U];
+	struct fs_file_t file;
+	ssize_t got;
+	int rc;
+
+	if (out == NULL || out_len == NULL || index >= log_file_count || len == 0U) {
+		return ZLRS_CFG_E_PARAM;
+	}
+
+	(void)snprintf(path, sizeof(path), "%s/%s%04u", LOG_MOUNT_POINT,
+		       CONFIG_LOG_BACKEND_FS_FILE_PREFIX, log_files[index].num);
+
+	fs_file_t_init(&file);
+	rc = fs_open(&file, path, FS_O_READ);
+	if (rc != 0) {
+		return ZLRS_CFG_E_STATE;
+	}
+
+	rc = fs_seek(&file, (off_t)offset, FS_SEEK_SET);
+	if (rc != 0) {
+		(void)fs_close(&file);
+		return ZLRS_CFG_E_PARAM;
+	}
+
+	got = fs_read(&file, out, len);
+	(void)fs_close(&file);
+	if (got < 0) {
+		return ZLRS_CFG_E_STATE;
+	}
+
+	*out_len = (uint8_t)got;
+
+	return ZLRS_CFG_OK;
+}
 
 /*
  * Bench entry: run the mount again on demand and report what it returned, so a board with no
@@ -75,10 +259,26 @@ int zlrs_log_store_probe(void)
 	return (int)rc;
 }
 
-/* Mount, and on a partition that has never held a filesystem, erase it and mount again */
+/*
+ * Mount the store. A failing mount is retried before anything is thrown away: the whole point of
+ * the store is the record of the boot that went wrong, and a transient failure (a reset during a
+ * write leaves LittleFS with work to do on the next mount) must not cost exactly that record. Only
+ * a store that still refuses to mount is treated as unusable and re-made.
+ */
 static int log_store_mount(void)
 {
-	int rc = fs_mount(&log_mnt);
+	int rc = -EIO;
+
+	for (uint8_t attempt = 0U; attempt < 3U; attempt++) {
+		rc = fs_mount(&log_mnt);
+		if (rc == 0) {
+			log_mounted = true;
+			return 0;
+		}
+
+		LOG_WRN("log filesystem mount failed (%d), attempt %u", rc, attempt + 1U);
+		k_msleep(50);
+	}
 
 	if (rc != 0) {
 		/*
@@ -89,7 +289,7 @@ static int log_store_mount(void)
 		const struct flash_area *area;
 
 		LOG_WRN("log filesystem unreadable (%d), erasing the partition", rc);
-		if (flash_area_open(FIXED_PARTITION_ID(log_partition), &area) == 0) {
+		if (flash_area_open(PARTITION_ID(log_partition), &area) == 0) {
 			(void)flash_area_flatten(area, 0, area->fa_size);
 			flash_area_close(area);
 			rc = fs_mount(&log_mnt);
@@ -109,10 +309,21 @@ static int log_store_mount(void)
 }
 
 /*
- * Runs before the log core starts its backends (POST_KERNEL, and the core is pushed to 90 in
- * prj.conf): the file backend opens its log file when it is enabled, and a file system that is not
- * mounted yet would leave it writing nowhere for the rest of the boot.
+ * Mount after everything the mount needs is up:
+ *
+ *   - the flash driver (CONFIG_FLASH_INIT_PRIORITY, 50),
+ *   - the log core (90 in prj.conf, so the report below lands in the log),
+ *   - LittleFS itself: its backend registers with the file system layer at
+ *     CONFIG_FILE_SYSTEM_INIT_PRIORITY (99), and mounting before that registers fails with
+ *     "file system type not found".
+ *
+ * That last one is what made the store look empty on a board that had logs: the boot mount failed,
+ * the file backend skipped records until something else mounted the file system (the export did),
+ * and every log before that moment was gone.
  */
+BUILD_ASSERT(CONFIG_FILE_SYSTEM_INIT_PRIORITY < 100,
+	     "the log store mounts at 100: raise it if the file system layer moves later");
+
 static int log_store_init(void)
 {
 	(void)log_store_mount();
@@ -121,7 +332,7 @@ static int log_store_init(void)
 	return 0;
 }
 
-SYS_INIT(log_store_init, POST_KERNEL, 50);
+SYS_INIT(log_store_init, POST_KERNEL, 100);
 
 /* Log core is up by now, so this report lands in the log and therefore in the log file as well */
 static int log_store_report(void)
@@ -159,6 +370,6 @@ static int log_store_report(void)
 	return 0;
 }
 
-SYS_INIT(log_store_report, POST_KERNEL, 99);
+SYS_INIT(log_store_report, POST_KERNEL, 101);
 
 #endif /* log_partition */

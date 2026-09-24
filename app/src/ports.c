@@ -22,6 +22,7 @@
 
 #include "caps.h"
 #include "led_port.h"
+#include "log_store.h"
 #include "store.h"
 #include "watchdog.h"
 #include "zlrs/config/config.h"
@@ -1108,6 +1109,25 @@ static int cfg_read_image_hash(void *ctx, uint8_t out[ZLRS_CFG_IMAGE_HASH_LEN])
 	return ZLRS_CFG_E_STATE;
 }
 
+/*
+ * The log store lives in its own file (app/src/log_store.c): it is the part of the config
+ * protocol that touches flash, and it works on boards without a log partition too (E_STATE).
+ */
+static int cfg_log_info(void *ctx, zlrs_cfg_log_info_t *out)
+{
+	ARG_UNUSED(ctx);
+
+	return zlrs_log_store_info(out);
+}
+
+static int cfg_log_read(void *ctx, uint8_t index, uint32_t offset, uint8_t len, uint8_t *out,
+			uint8_t *out_len)
+{
+	ARG_UNUSED(ctx);
+
+	return zlrs_log_store_read(index, offset, len, out, out_len);
+}
+
 static const zlrs_cfg_backend_t cfg_backend = {
 	.save_root_key = cfg_save_root_key,
 	.read_status = cfg_read_status,
@@ -1125,6 +1145,8 @@ static const zlrs_cfg_backend_t cfg_backend = {
 	.confirm_image = cfg_confirm_image,
 	.read_build = cfg_read_build,
 	.read_image_hash = cfg_read_image_hash,
+	.log_info = cfg_log_info,
+	.log_read = cfg_log_read,
 };
 
 /* ---- session ------------------------------------------------------------- */

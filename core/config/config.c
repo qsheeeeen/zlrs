@@ -391,6 +391,67 @@ uint8_t zlrs_cfg_dispatch(const zlrs_cfg_backend_t *backend, uint8_t cmd, const 
 			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_STATE);
 		}
 		return ack_frame(out, out_len, cmd, (uint8_t)backend->enter_recovery(backend->ctx));
+	case ZLRS_CFG_CMD_LOG_INFO: {
+		zlrs_cfg_log_info_t info;
+		uint8_t body[2U + (6U * ZLRS_CFG_LOG_FILES_MAX)];
+		uint8_t n = 0U;
+
+		if (backend->log_info == NULL) {
+			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_STATE);
+		}
+
+		memset(&info, 0, sizeof(info));
+
+		const int rc = backend->log_info(backend->ctx, &info);
+
+		if (rc != ZLRS_CFG_OK) {
+			return ack_frame(out, out_len, cmd, (uint8_t)rc);
+		}
+
+		body[n++] = info.count;
+		body[n++] = info.newest;
+
+		for (uint8_t i = 0U; i < info.count; i++) {
+			body[n++] = (uint8_t)(info.num[i] & 0xFFU);
+			body[n++] = (uint8_t)((info.num[i] >> 8) & 0xFFU);
+			body[n++] = (uint8_t)(info.size[i] & 0xFFU);
+			body[n++] = (uint8_t)((info.size[i] >> 8) & 0xFFU);
+			body[n++] = (uint8_t)((info.size[i] >> 16) & 0xFFU);
+			body[n++] = (uint8_t)((info.size[i] >> 24) & 0xFFU);
+		}
+
+		return zlrs_cfg_encode(out, out_len, ZLRS_CFG_CMD_LOG_INFO_RESP, body, n);
+	}
+	case ZLRS_CFG_CMD_LOG_READ: {
+		const uint8_t chunk = 1U + 4U + ZLRS_CFG_LOG_CHUNK_MAX;
+		uint8_t body[chunk];
+		uint8_t got = 0U;
+
+		if (backend->log_read == NULL) {
+			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_STATE);
+		}
+		if (payload_len != 6U || payload[5] > ZLRS_CFG_LOG_CHUNK_MAX) {
+			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_PARAM);
+		}
+
+		const uint32_t offset = (uint32_t)payload[1] | ((uint32_t)payload[2] << 8) |
+					((uint32_t)payload[3] << 16) | ((uint32_t)payload[4] << 24);
+		const int rc = backend->log_read(backend->ctx, payload[0], offset, payload[5], &body[5],
+						 &got);
+
+		if (rc != ZLRS_CFG_OK) {
+			return ack_frame(out, out_len, cmd, (uint8_t)rc);
+		}
+
+		body[0] = payload[0];
+		body[1] = (uint8_t)(offset & 0xFFU);
+		body[2] = (uint8_t)((offset >> 8) & 0xFFU);
+		body[3] = (uint8_t)((offset >> 16) & 0xFFU);
+		body[4] = (uint8_t)((offset >> 24) & 0xFFU);
+
+		return zlrs_cfg_encode(out, out_len, ZLRS_CFG_CMD_LOG_DATA_RESP, body,
+				       (uint8_t)(5U + got));
+	}
 	default:
 		return ack_frame(out, out_len, cmd, ZLRS_CFG_E_UNKNOWN);
 	}
