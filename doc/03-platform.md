@@ -24,7 +24,7 @@ exist) and, for deliberate cuts like "no data link", Kconfig.
 | Radio module | Waveshare Core2021, with HF (850-930 MHz) and LF (410-510 MHz) sub-G SKUs |
 | Board definition | `boards/zlrs/rp2350_zero_core2021/`: pins, aliases, SKU calibration tables, flash partitions |
 | Zephyr | v4.4.0 |
-| Radio stack | `usp_zephyr` plus `usp` v1.1.2-feature-202604 (the RAC/RALF layers) |
+| Radio stack | `usp_zephyr` plus `usp` v1.2.1 (the RAC/RALF layers) |
 | Repository topology | T2: zlrs is the manifest repository and holds the application |
 
 Pins, aliases and partitions are defined in the

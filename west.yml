@@ -26,11 +26,11 @@ manifest:
     - name: usp_zephyr
       path: usp_zephyr
       url: https://github.com/Lora-net/usp_zephyr.git
-      revision: v1.1.2-feature-202604
+      revision: v1.2.1
     - name: usp
       path: modules/lib/usp
       url: https://github.com/Lora-net/usp.git
-      revision: v1.1.2-feature-202604
+      revision: v1.2.1
       submodules: true
   self:
     path: zlrs

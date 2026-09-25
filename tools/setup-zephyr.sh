@@ -7,7 +7,7 @@
 #   tools/setup-zephyr.sh [workspace root]    defaults to the directory above the repository
 #
 # west T2 topology: this repository is the manifest repository and the manifest is west.yml
-# (pinning zephyr v4.4.0 and usp_zephyr/usp v1.1.2-feature-202604); usp_zephyr is no longer
+# (pinning zephyr v4.4.0 and usp_zephyr/usp v1.2.1); usp_zephyr is no longer
 # the manifest repository.
 #
 # Default layout (on this machine: /home/qs/zlrs-worksapce):
@@ -18,8 +18,8 @@
 #   +-- build/               default output directory of west build
 #   +-- zlrs/                this repository == manifest repository (west.yml self.path)
 #   +-- zephyr/              Zephyr v4.4.0 plus the modules it imports
-#   ├── usp_zephyr/          Semtech usp_zephyr v1.1.2-feature-202604
-#   └── modules/lib/usp/     Semtech usp v1.1.2-feature-202604
+#   ├── usp_zephyr/          Semtech usp_zephyr v1.2.1
+#   └── modules/lib/usp/     Semtech usp v1.2.1
 #
 # The toolchain comes from the Zephyr SDK (default $HOME/zephyr-sdk-1.0.0, ZLRS_SDK_DIR overrides):
 # this script only checks and prints the install command when something is missing (a distro

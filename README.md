@@ -198,7 +198,7 @@ is decided but not implemented yet, the design document states the design and
 | Dependency | Version | Notes |
 | --- | --- | --- |
 | Zephyr | v4.4.0 | pinned by [west.yml](west.yml) |
-| usp_zephyr / usp | v1.1.2-feature-202604 | Semtech's radio stack (RAC/RALF) |
+| usp_zephyr / usp | v1.2.1 | Semtech's radio stack (RAC/RALF) |
 | Zephyr SDK | 1.0.0 | install the `arm-zephyr-eabi` toolchain |
 | Cryptography | Zephyr PSA Crypto | KDF and per-frame tags on target; the host tests use an equivalent pure C implementation |
 
