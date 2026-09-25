@@ -199,9 +199,14 @@ not start, USB never comes up, the host never confirms or the image is corrupt. 
 3. **The tool sets pending, only the application sets permanent**: the application calls
    `boot_write_img_confirmed()` after the image runs and the host sends its confirm command.
 4. **Every unconfirmed path resets on its own**: the application resets when it is alive but
-   unconfirmed (60 s after boot by default, `ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS`), and the
-   bootloader's watchdog resets it when it hangs. There is no switch for the confirmation
-   mechanism: an image that runs under MCUboot is always confirmed by the host or rolled back.
+   unconfirmed (60 s after boot by default, `ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS`), the
+   bootloader's watchdog resets it when it hangs, and the application reboots on a fatal error
+   instead of halting (app/src/watchdog.c). A radio that never comes up is one of those fatal
+   errors: the vendored HAL panics once BUSY stays inactive for
+   `..._HAL_WAIT_ON_BUSY_TIMEOUT_MSEC` (1 s here). An upgrade that leaves the board without a
+   working radio therefore rolls back like any other failed image. There is no switch for the
+   confirmation mechanism: an image that runs under MCUboot is always confirmed by the host or
+   rolled back.
 
 One command updates a device:
 `python3 tools/zlrs-update.py --port <application config port>` — trigger recovery, wait for
@@ -228,10 +233,16 @@ the signature check, the confirmation and the rollback apply.
   be entered, reconfigured and reflashed instead of needing BOOTSEL.
 - **A fault on an unconfirmed image reboots instead**: 2 s after the fault the application
   resets and MCUboot rolls back. A flashable fault state is no reason to keep a broken build.
+- **An unexpected fatal error reboots**: an assert, an exception or the vendored radio HAL's
+  `k_oops()` (BUSY never arrives) is not something to sit in on a device whose only other way in
+  is the bootloader. `k_sys_fatal_error_handler()` flushes the log and resets; the coredump is
+  already in flash by then (`z_fatal_error()` writes it before the handler runs). On an
+  unconfirmed image that reset is MCUboot's rollback, which is what makes "the radio did not come
+  up after an upgrade" an upgrade failure.
 - **NVS failure is survivable**: store errors are logged and the device comes up unconfigured
   and off the air rather than guessing defaults.
 - **Entropy is checked at boot**: a dead TRNG stops the boot before any identity is derived.
-- **The watchdog** (debug images today, `CONFIG_ZLRS_APP_WATCHDOG`) is armed in `PRE_KERNEL_1`
+- **The watchdog** (`CONFIG_ZLRS_APP_WATCHDOG`, on in every image) is armed in `PRE_KERNEL_1`
   and fed from the blocking loops, so a stuck main loop counts as dead too. It turns a hang into
   a reset; the rollback verdict is MCUboot's confirm bit.
 - **Regulatory and security mistakes are visible**: a region the radio design cannot cover, a

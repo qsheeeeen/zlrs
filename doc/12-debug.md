@@ -69,7 +69,7 @@ boot, and each has a matching host test.
 | `CONFIG_ZLRS_APP_BAND_ROLE_*` | control on sub-G (long range) or on 2.4G (racing) |
 | `CONFIG_ZLRS_APP_CONTROL_MODULATION_LORA` | LoRa control tier instead of FLRC |
 
-**Features whose default is still open** (rate adaptation, dynamic power, watchdog) are not
+**Features whose default is still open** (rate adaptation, dynamic power) are not
 switches to hide but debts: `doc/13-roadmap.md`, "Pending defaults".
 
 ## 4. Debugging on the board
@@ -77,12 +77,14 @@ switches to hide but debts: `doc/13-roadmap.md`, "Pending defaults".
 - **Bench self-check**: `python3 tools/zlrs-bringup.py` exercises USB, ports, config mode, config
   protocol reads and writes and NVS persistence in one command.
 
-- **With no Core2021 attached the board does not come up**: the vendored
-  `lr20xx_hal_wait_on_busy()` waits for BUSY and then calls `k_oops()`, on the main thread at the
-  highest priority, so you see no LED and no USB enumeration. Nothing to do with the
+- **With no Core2021 attached the board resets in a loop**: the vendored
+  `lr20xx_hal_wait_on_busy()` waits `..._HAL_WAIT_ON_BUSY_TIMEOUT_MSEC` (1 s here) for BUSY and
+  then calls `k_oops()`, on the main thread at the highest priority. The fatal handler reboots
+  the board, so the LED stays red and USB never enumerates for long. Nothing to do with the
   application: attach the module and it works.
-- **Leave the watchdog on** while debugging (`CONFIG_ZLRS_APP_WATCHDOG=y`): a bad image resets
-  itself and MCUboot's test/revert rolls it back, without touching BOOTSEL.
+- **The watchdog is on in every image** (`CONFIG_ZLRS_APP_WATCHDOG`, app/prj.conf): a bad image
+  resets itself and MCUboot's test/revert rolls it back, without touching BOOTSEL. Turn it off
+  with `-DCONFIG_ZLRS_APP_WATCHDOG=n` only for a bench run that must not be reset.
 - **Find ports by name**: the application is `ZLRS`, the bootloader `ZLRS MCUBOOT`; use
   `/dev/serial/by-id/...`, not `ttyACM*`.
 - **To see whether the radio really transmits, watch the `air:` line** (`stats:` logging above):
