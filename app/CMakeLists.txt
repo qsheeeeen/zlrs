@@ -15,14 +15,8 @@ target_sources(app PRIVATE
   src/watchdog.c
 )
 
-# One of two radio backends (see doc/12-debug.md 3):
-#   ZLRS_APP_RADIO=y (default) -> USP/RAC straight to the LR2021
-#   ZLRS_APP_RADIO=n         -> null backend, everything except the radio
-if(CONFIG_ZLRS_APP_RADIO)
-  target_sources(app PRIVATE src/radio_rac.c)
-else()
-  target_sources(app PRIVATE src/radio_null.c)
-endif()
+# The radio backend: USP/RAC straight to the LR2021 (app/src/radio_rac.c).
+target_sources(app PRIVATE src/radio_rac.c)
 
 # Make the application version depend on the git index so that APP_VERSION_STRING
 # reflects the commit even when nothing else in the build changed.

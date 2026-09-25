@@ -1798,13 +1798,13 @@ static void test_cadence(void)
  * Bench switch zero: P0, frames carry no tag. Confirm timing and frame format first and set the
  * whole key path aside (anyone can inject, so bench only).
  */
-static void test_bringup_no_tag(void)
+static void test_isolation_no_tag(void)
 {
 	sim_t sim;
 	uint8_t rc[ZLRS_RC_PAYLOAD_LEN];
 	uint8_t chunk[16];
 
-	printf("link: bring-up without tag (P0)\n");
+	printf("link: isolation without tag (P0)\n");
 
 	sim_init(&sim);
 	sim.tx.ctl.cfg.profile = ZLRS_PROFILE_P0;
@@ -1837,7 +1837,7 @@ static void test_bringup_no_tag(void)
  * Bench switch one: hopping off. Every frame stays on the sync channel (entry 0 of the hop
  * table), so timing and the hop table can be read separately: it may only change frequencies.
  */
-static void test_bringup_fixed_channel(void)
+static void test_isolation_fixed_channel(void)
 {
 	sim_features_t features = sim_features_default;
 	const zlrs_fhss_domain_t *domain = &zlrs_fhss_domains[ZLRS_DOMAIN_FCC915];
@@ -1847,7 +1847,7 @@ static void test_bringup_fixed_channel(void)
 	uint8_t rc[ZLRS_RC_PAYLOAD_LEN];
 	uint8_t chunk[16];
 
-	printf("link: bring-up without hopping\n");
+	printf("link: isolation without hopping\n");
 
 	features.hopping = 0U;
 	sim_init_with(&sim, &features);
@@ -1880,14 +1880,14 @@ static void test_bringup_fixed_channel(void)
  * counts a SYNC as established and keeps reporting with SESS_RESP until the peer speaks.
  * Losing a few report frames must still connect: that is the only new timing here.
  */
-static void test_bringup_no_handshake(void)
+static void test_isolation_no_handshake(void)
 {
 	sim_features_t features = sim_features_default;
 	sim_t sim;
 	uint8_t chunk[16];
 	uint8_t rc[ZLRS_RC_PAYLOAD_LEN];
 
-	printf("link: bring-up without session handshake\n");
+	printf("link: isolation without session handshake\n");
 
 	features.handshake = 0U;
 	sim_init_with(&sim, &features);
@@ -1925,13 +1925,13 @@ static void test_bringup_no_handshake(void)
  * Bench switch three: telemetry off. The control link degrades to downlink RC only: the TX opens
  * no telemetry window (the app drops peer loss with it, doc/12-debug.md 3) and the RX sends none.
  */
-static void test_bringup_no_telemetry(void)
+static void test_isolation_no_telemetry(void)
 {
 	sim_features_t features = sim_features_default;
 	sim_t sim;
 	uint8_t rc[ZLRS_RC_PAYLOAD_LEN];
 
-	printf("link: bring-up without telemetry\n");
+	printf("link: isolation without telemetry\n");
 
 	features.telemetry = 0U;
 	sim_init_with(&sim, &features);
@@ -2332,10 +2332,10 @@ void test_link(void)
 	test_failsafe_push();
 	test_data_idle();
 	test_cadence();
-	test_bringup_no_tag();
-	test_bringup_fixed_channel();
-	test_bringup_no_handshake();
-	test_bringup_no_telemetry();
+	test_isolation_no_tag();
+	test_isolation_fixed_channel();
+	test_isolation_no_handshake();
+	test_isolation_no_telemetry();
 	test_hop_resync();
 	test_sub_mix();
 	test_sub_mix_data_path();

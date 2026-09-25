@@ -37,9 +37,9 @@ if hit=$(grep -rn -E '\b(CONFIG_)?BOARD_[A-Z0-9_]+' app 2>/dev/null); then
 	echo "$hit"
 fi
 
-# Shipped configurations: everything that produces a firmware image. The debug and bring-up
-# configurations are the only places allowed to name a bench switch.
-shipped=$(git ls-files 'app' 'boards' | grep -E '\.(conf|defconfig)$' | grep -v -e debug -e bringup)
+# Shipped configurations: everything that produces a firmware image. A debug configuration is
+# the only place allowed to name a bench switch.
+shipped=$(git ls-files 'app' 'boards' | grep -E '\.(conf|defconfig)$' | grep -v -e debug)
 
 if [ -n "$shipped" ] && hit=$(printf '%s\n' "$shipped" | xargs grep -n 'ZLRS_APP_DEBUG'); then
 	bad "a shipped configuration carries a debug option:"

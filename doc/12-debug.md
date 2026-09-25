@@ -47,20 +47,19 @@ configuration paths are in [10-security](10-security.md) 9 and [08-firmware](08-
 ## 3. Switches for isolating a layer
 
 Do not bring everything up at once: turn one layer off at a time, and if the rest still works
-the fault is not in that layer. Every disabled isolation switch prints a `bring-up:` warning at
+the fault is not in that layer. Every disabled isolation switch prints an `isolation:` warning at
 boot, and each has a matching host test.
 
 **Isolation (debug images only — a production configuration cannot reach them):**
 
 | Switch | With it off | Host test |
 | --- | --- | --- |
-| `CONFIG_ZLRS_APP_SECURITY_PROFILE_P0=y` | frames carry no tag, so timing and frame format come first | `link: bring-up without tag (P0)` |
-| `CONFIG_ZLRS_APP_FHSS=n` | everything stays on the sync channel | `link: bring-up without hopping` |
-| `CONFIG_ZLRS_APP_SESSION_HANDSHAKE=n` | the pairing key becomes the session key | `link: bring-up without session handshake` |
-| `CONFIG_ZLRS_APP_TELEMETRY=n` | the control link carries downlink RC only (the TX peer-loss check goes too) | `link: bring-up without telemetry` |
+| `CONFIG_ZLRS_APP_SECURITY_PROFILE_P0=y` | frames carry no tag, so timing and frame format come first | `link: isolation without tag (P0)` |
+| `CONFIG_ZLRS_APP_FHSS=n` | everything stays on the sync channel | `link: isolation without hopping` |
+| `CONFIG_ZLRS_APP_SESSION_HANDSHAKE=n` | the pairing key becomes the session key | `link: isolation without session handshake` |
+| `CONFIG_ZLRS_APP_TELEMETRY=n` | the control link carries downlink RC only (the TX peer-loss check goes too) | `link: isolation without telemetry` |
 | `CONFIG_ZLRS_APP_DATA_ARQ=n` | the data link falls back to best-effort | `link: arq *`, `link: backpressure` |
 | `CONFIG_ZLRS_APP_SUB_BAND_MIX=n` | one hop table, no sub-G migration | `link: sub-band mix *` |
-| `CONFIG_ZLRS_APP_RADIO=n` | the radio sits out (`app/src/radio_null.c`): no USP/RAC init, every transaction finishes at once as "sent, nothing heard"; ports, config, button, LED and NVS work as usual | compile check plus on-board USB, ports and config |
 
 **Shape (any image may set these — they cut the product):**
 
@@ -75,22 +74,13 @@ switches to hide but debts: `doc/13-roadmap.md`, "Pending defaults".
 
 ## 4. Debugging on the board
 
-- **Turn the radio off first** (`CONFIG_ZLRS_APP_RADIO=n`, debug images only) to check USB,
-  ports, config mode and NVS: `python3 tools/zlrs-bringup.py` does the lot in one command
-  (ports, config mode, config protocol reads and writes, NVS persistence). With no module
-  attached, use the ready-made file:
+- **Bench self-check**: `python3 tools/zlrs-bringup.py` exercises USB, ports, config mode, config
+  protocol reads and writes and NVS persistence in one command.
 
-  ```shell
-  west build --sysbuild -b "$ZLRS_BOARD" "$ZLRS_APP" -- \
-    -DEXTRA_CONF_FILE="$ZLRS_REPO_ROOT/app/debug.conf;$ZLRS_REPO_ROOT/app/bringup-noradio.conf" \
-    -DDTC_OVERLAY_FILE="$ZLRS_REPO_ROOT/app/debug.overlay"
-  ```
-
-  **Radio on with no Core2021 attached means a dark board**: the vendored
-  `lr20xx_hal_wait_on_busy()` spins waiting for BUSY (600 s default, then `k_oops()`), on the
-  main thread at the highest priority, so the USB stack never gets the CPU and you see no LED,
-  no USB enumeration and an application reset by the watchdog over and over. Nothing to do with
-  the application: attach the module and it works.
+- **With no Core2021 attached the board does not come up**: the vendored
+  `lr20xx_hal_wait_on_busy()` waits for BUSY and then calls `k_oops()`, on the main thread at the
+  highest priority, so you see no LED and no USB enumeration. Nothing to do with the
+  application: attach the module and it works.
 - **Leave the watchdog on** while debugging (`CONFIG_ZLRS_APP_WATCHDOG=y`): a bad image resets
   itself and MCUboot's test/revert rolls it back, without touching BOOTSEL.
 - **Find ports by name**: the application is `ZLRS`, the bootloader `ZLRS MCUBOOT`; use

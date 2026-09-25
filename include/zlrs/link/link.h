@@ -98,7 +98,7 @@ typedef struct {
 	uint16_t arq_timeout_ms;
 	/*
 	 * Per-frame hopping. 0 = stay on the sync channel (entry 0 of the hop table), which is how
-	 * bring-up looks at timing and the hop table separately, see doc/12-debug.md 3.
+	 * layer isolation looks at timing and the hop table separately, see doc/12-debug.md 3.
 	 */
 	uint8_t hopping;
 	/*

@@ -1,6 +1,6 @@
 /*
  * Radio port layer: the concrete backends behind zlrs_radio_ops_t (contract: 07-architecture 6.2).
- * CONFIG_ZLRS_APP_RADIO picks one: radio_rac.c (RAC/LR2021) or radio_null.c.
+ * The concrete backend is radio_rac.c (USP/RAC straight to the LR2021).
  *
  * SPDX-License-Identifier: Apache-2.0
  */

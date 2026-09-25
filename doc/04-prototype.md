@@ -21,8 +21,7 @@ ports and modes in [08-firmware](08-firmware.md) 1 and 2.
 
 ## 2. Wiring between the modules
 
-Only used when the radio is enabled; with `CONFIG_ZLRS_APP_RADIO=n` (debug images) nothing
-touches the radio, SPI and the three control lines included.
+Only used by the radio: SPI and its three control lines.
 
 | Signal | RP2350-Zero | Core2021 | Notes |
 | --- | --- | --- | --- |

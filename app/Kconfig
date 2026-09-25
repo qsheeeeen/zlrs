@@ -40,17 +40,6 @@ config ZLRS_APP_ROLE_TX
 	help
 	  The TX sends control frames and receives telemetry, the RX does the opposite. Both ends run
 
-config ZLRS_APP_RADIO
-	# Prompt only in debug images: a shipped module always has its radio, and a production
-	# configuration that tries to turn it off is ignored (Kconfig keeps the default).
-	bool "Radio (USP/RAC + LR2021)" if ZLRS_APP_DEBUG
-	default y
-	help
-	  On in every production build. A debug image may turn it off: the radio then sits out
-	  entirely (app/src/radio_null.c) while the link state machines and everything else keep
-	  running, which is how the software is brought up with no Core2021 attached — the LR20xx
-	  HAL k_oops()es when BUSY never arrives. See doc/12-debug.md 3.
-
 config ZLRS_APP_LINK_CONTROL
 	bool "Control link (RC + telemetry + pairing)"
 	default y
@@ -292,7 +281,7 @@ config ZLRS_APP_FHSS
 	default y
 	help
 	  With this off every frame stays on the sync channel (entry 0 of the hop table), which is
-	  how bring-up separates timing from the hop table. A fixed channel does not satisfy the
+	  how layer isolation separates timing from the hop table. A fixed channel does not satisfy the
 	  FCC 15.247 hopping rules: debug images only, see doc/09-protocol.md 5.2.
 
 config ZLRS_APP_SESSION_HANDSHAKE

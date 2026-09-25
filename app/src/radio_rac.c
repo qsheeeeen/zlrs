@@ -1,5 +1,5 @@
 /*
- * Radio port layer (RAC backend), used when CONFIG_ZLRS_APP_RADIO=y.
+ * Radio port layer (RAC backend).
  * Interface and contract: radio_port.h; callback timing: doc/07-architecture.md 6.2.
  *
  * SPDX-License-Identifier: Apache-2.0

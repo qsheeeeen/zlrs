@@ -34,10 +34,8 @@
 #include <pico/bootrom.h>
 #endif
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_RADIO)
 #include <smtc_rac_api.h>
 #include <smtc_sw_platform_helper.h>
-#endif
 
 #include "ports.h"
 #include "caps.h"
@@ -72,8 +70,8 @@ static uint16_t data_mtu;
 /* Telemetry frame: 8 B payload plus header and tag */
 #define CTL_TLM_LEN          15U
 /*
- * Bench bring-up: the two links can each run alone. Control carries RC and pairing,
- * data carries the passthrough; prove them one at a time before combining (doc/12-debug.md 3).
+ * Isolation: the two links can each run alone. Control carries RC and pairing, data carries the
+ * passthrough; proven one at a time before combining (doc/12-debug.md 3).
  */
 #define ZLRS_CONTROL_ENABLED IS_ENABLED(CONFIG_ZLRS_APP_LINK_CONTROL)
 #define ZLRS_DATA_ENABLED    IS_ENABLED(CONFIG_ZLRS_APP_LINK_DATA)
@@ -656,7 +654,6 @@ static void radio_wait_done(uint32_t budget_us)
 	uint32_t spins = 0U;
 
 	while (waited_us < budget_us) {
-#if IS_ENABLED(CONFIG_ZLRS_APP_RADIO)
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
 		const uint32_t t0 = (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64());
 #endif
@@ -673,7 +670,6 @@ static void radio_wait_done(uint32_t budget_us)
 				pump_us_max = took;
 			}
 		}
-#endif
 #endif
 		/* Direct transactions poll their own status: the shared semaphore would end this wait on
 		 * the other link's completion, with the data transaction still on air. */
@@ -2057,6 +2053,7 @@ static int cmd_link(const struct shell *sh, size_t argc, char **argv)
 
 	print_link(sh, "control", &link_control);
 	print_link(sh, "data", &link_data);
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
 	shell_print(sh, "bench  frame=%u us (%u..%u) slot=%u/%u/%u/%u rx=slot%u+%u (%u..%u)",
 		    bench.frame_us_last, bench.frame_us_min, bench.frame_us_max,
 		    bench.slot_us_last[0], bench.slot_us_last[1], bench.slot_us_last[2],
@@ -2066,11 +2063,11 @@ static int cmd_link(const struct shell *sh, size_t argc, char **argv)
 		    radio_diag.transactions, radio_diag.stale_irq, radio_diag.stale_irq_bits,
 		    radio_diag.late_irq, radio_diag.overruns, radio_diag.rx_windows,
 		    radio_diag.rx_early);
+#endif
 
 	return 0;
 }
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_RADIO)
 /*
  * KDF self test: RFC 5869 case 1 (IKM 0x0b*22, zero salt, info 0xf0..0xf9). Two ends that derive
  * different keys from the same pairing inputs have either a different input or a broken KDF, and
@@ -2122,7 +2119,6 @@ static int cmd_kdf(const struct shell *sh, size_t argc, char **argv)
 
 	return 0;
 }
-#endif
 
 /*
  * Bench: stretch the data link's receive window. A steady-state window is a couple of
@@ -2213,11 +2209,14 @@ static int cmd_logstore(const struct shell *sh, size_t argc, char **argv)
 
 static int cmd_rate(const struct shell *sh, size_t argc, char **argv)
 {
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
 	static const char *const names[2] = {"control", "data"};
+#endif
 
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
 
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
 	for (uint8_t i = 0U; i < 2U; i++) {
 		const uint32_t wins = rate_last[i].wins;
 		const uint32_t hits = rate_last[i].hits;
@@ -2228,11 +2227,13 @@ static int cmd_rate(const struct shell *sh, size_t argc, char **argv)
 			    (unsigned int)(permille / 10U), (unsigned int)(permille % 10U),
 			    (unsigned int)rate_last[i].tx, rate_last[i].state);
 	}
+#else
+	shell_print(sh, "no rate measurements in this image (CONFIG_ZLRS_APP_DEBUG_STATS_LOG=n)");
+#endif
 
 	return 0;
 }
 
-/*
 /* Bench: show the pair key, re-derive it from the record on hand, show it again */
 static int cmd_rekey(const struct shell *sh, size_t argc, char **argv)
 {
@@ -2267,7 +2268,7 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 		    link_control.stats.lq_percent, link_control.paired);
 	shell_print(sh, "data   : state %d, drop %u B", link_data.state,
 		    link_data.stats.data_drop_bytes);
-	shell_print(sh, "radio  : %s", IS_ENABLED(CONFIG_ZLRS_APP_RADIO) ? "on" : "off (bring-up)");
+	shell_print(sh, "radio  : USP/RAC + LR2021");
 
 	return 0;
 }
@@ -2353,11 +2354,13 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 		    diag.submit_drain_us, diag.submit_drain2_us, diag.submit_rac_us,
 		    diag.submit_us_max, diag.wait_us_max);
 	shell_print(sh, "last tx=%u us rx=%u us", diag.tx_us_last, diag.rx_us_last);
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
 	shell_print(sh, "engine pass last=%u max=%u avg=%u us, %u passes",
 		    pump_us_last, pump_us_max, (pump_calls > 0U) ? (pump_us_sum / pump_calls) : 0U,
 		    pump_calls);
 	shell_print(sh, "raw bench: %u frames in %u ms (%u per second)", raw_bench_frames,
 		    raw_bench_ms, (raw_bench_ms > 0U) ? ((raw_bench_frames * 1000U) / raw_bench_ms) : 0U);
+#endif
 
 	return 0;
 }
@@ -2464,9 +2467,7 @@ static int cmd_mcuboot(const struct shell *sh, size_t argc, char **argv)
 SHELL_STATIC_SUBCMD_SET_CREATE(
 	zlrs_cmds, SHELL_CMD(status, NULL, "role / SKU / region / link state", cmd_status),
 	SHELL_CMD(link, NULL, "per-link state, frequency, hop index and key fingerprints", cmd_link),
-#if IS_ENABLED(CONFIG_ZLRS_APP_RADIO)
 	SHELL_CMD(kdf, NULL, "run the HKDF-SHA256 test vector", cmd_kdf),
-#endif
 	SHELL_CMD(rekey, NULL, "re-derive the control link keys from its record", cmd_rekey),
 	SHELL_CMD(rxwin, " [ms]", "stretch the data link receive window (bench)", cmd_rxwin),
 	SHELL_CMD(rate, " [s]", "measure windows/hits/frames per second per link", cmd_rate),
@@ -2558,11 +2559,11 @@ int main(void)
 	/* What the build is, and what this board has: ports and peripherals come from devicetree,
 	 * so a missing one is reported without being an error (app/src/caps.h) */
 	if (!ZLRS_CONTROL_ENABLED) {
-		LOG_WRN("bring-up: control link off, only the data link runs "
+		LOG_WRN("isolation: control link off, only the data link runs "
 			"(pairing needs the control link)");
 	}
 	if (!ZLRS_DATA_ENABLED) {
-		LOG_WRN("bring-up: data link off, no serial passthrough");
+		LOG_WRN("isolation: data link off, no serial passthrough");
 	}
 	if (!ZLRS_CRSF_ENABLED) {
 		LOG_WRN("no CRSF port on this board, TX sends the configured failsafe values");
@@ -2686,19 +2687,16 @@ int main(void)
 
 	/* Bench switches: with these off the link is no longer production-shaped, so say so at boot */
 	if (active_profile != ZLRS_PROFILE_P1) {
-		LOG_WRN("bring-up: security profile P0, frames carry no tag");
+		LOG_WRN("isolation: security profile P0, frames carry no tag");
 	}
 	if (!IS_ENABLED(CONFIG_ZLRS_APP_FHSS)) {
-		LOG_WRN("bring-up: hopping off, every frame stays on the sync channel");
+		LOG_WRN("isolation: hopping off, every frame stays on the sync channel");
 	}
 	if (!IS_ENABLED(CONFIG_ZLRS_APP_SESSION_HANDSHAKE)) {
-		LOG_WRN("bring-up: session handshake off, pairing keys are session keys");
+		LOG_WRN("isolation: session handshake off, pairing keys are session keys");
 	}
 	if (!IS_ENABLED(CONFIG_ZLRS_APP_TELEMETRY)) {
-		LOG_WRN("bring-up: telemetry off, control link is RC-only");
-	}
-	if (!IS_ENABLED(CONFIG_ZLRS_APP_RADIO)) {
-		LOG_WRN("bring-up: radio off, no USP/RAC and no LR2021 traffic");
+		LOG_WRN("isolation: telemetry off, control link is RC-only");
 	}
 	{
 		const int rc = zlrs_region_validate(region, ZLRS_RF_DESIGN, tx_power_dbm);
@@ -2722,12 +2720,10 @@ int main(void)
 	}
 
 	/* Wait for the USP/RAC thread, then init RAC (see doc/07-architecture.md 6) */
-#if IS_ENABLED(CONFIG_ZLRS_APP_RADIO)
 	SMTC_SW_PLATFORM_INIT();
 	TRACE('a');
 	SMTC_SW_PLATFORM_VOID(smtc_rac_init());
 	TRACE('b');
-#endif
 
 	TRACE('1');
 	plan_init();

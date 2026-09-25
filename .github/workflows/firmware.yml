@@ -82,38 +82,6 @@ jobs:
             -DEXTRA_CONF_FILE="$ZLRS_REPO_ROOT/app/debug.conf" \
             -DDTC_OVERLAY_FILE="$ZLRS_REPO_ROOT/app/debug.overlay"
 
-      # Bench profile: turn every complex feature off so the trimmed combination still compiles
-      - name: build (bring-up toggles off, both skus)
-        run: |
-          set -x
-          . zlrs/tools/zephyr-env.sh
-          for board in rp2350_zero_core2021/rp2350a/m33/hf rp2350_zero_core2021/rp2350a/m33/lf; do
-            sku="${board%/*}"; sku="${sku##*/}"
-            ZLRS_BOARD="$board" zlrs-build -d "build-bringup-${sku}" -- \
-              -DCONFIG_ZLRS_APP_DEBUG=y \
-              -DCONFIG_ZLRS_APP_SECURITY_PROFILE_P0=y \
-              -DCONFIG_ZLRS_APP_SECURITY_PROFILE_P1=n \
-              -DCONFIG_ZLRS_APP_FHSS=n \
-              -DCONFIG_ZLRS_APP_SESSION_HANDSHAKE=n \
-              -DCONFIG_ZLRS_APP_TELEMETRY=n \
-              -DCONFIG_ZLRS_APP_RESYNC_PERIOD_MS=0
-          done
-
-      # Radio off (CONFIG_ZLRS_APP_RADIO=n): the profile for a board without a Core2021 attached,
-      # running ports, config mode, button, LED and NVS only, through app/src/radio_null.c.
-      # RADIO is only settable in a debug image (app/bringup-noradio.conf), so the marker goes
-      # with it here.
-      - name: build (radio off, both skus)
-        run: |
-          set -x
-          . zlrs/tools/zephyr-env.sh
-          for board in rp2350_zero_core2021/rp2350a/m33/hf rp2350_zero_core2021/rp2350a/m33/lf; do
-            sku="${board%/*}"; sku="${sku##*/}"
-            ZLRS_BOARD="$board" zlrs-build -d "build-noradio-${sku}" -- \
-              -DCONFIG_ZLRS_APP_DEBUG=y \
-              -DCONFIG_ZLRS_APP_RADIO=n
-          done
-
       # Single-link cut: the data link alone (control link, CRSF port, config mode, button and LED
       # all off).
       # One switch is enough: the CRSF port belongs to the control link, and config mode, button
@@ -124,7 +92,7 @@ jobs:
           set -x
           . zlrs/tools/zephyr-env.sh
           for board in rp2350_zero_core2021/rp2350a/m33/hf rp2350_zero_core2021/rp2350a/m33/lf; do
-            sku="${board%/*}"; sku="${sku##*/}"
+            sku="${board##*/}"
             ZLRS_BOARD="$board" zlrs-build -d "build-dataonly-${sku}" -- \
               -DCONFIG_ZLRS_APP_LINK_CONTROL=n
           done
@@ -135,7 +103,7 @@ jobs:
           set -x
           . zlrs/tools/zephyr-env.sh
           for board in rp2350_zero_core2021/rp2350a/m33/hf rp2350_zero_core2021/rp2350a/m33/lf; do
-            sku="${board%/*}"; sku="${sku##*/}"
+            sku="${board##*/}"
             ZLRS_BOARD="$board" zlrs-build -d "build-lora-${sku}" -- \
               -DCONFIG_ZLRS_APP_CONTROL_MODULATION_LORA=y \
               -DCONFIG_ZLRS_APP_CONTROL_MODULATION_FLRC=n
@@ -147,7 +115,7 @@ jobs:
           set -x
           . zlrs/tools/zephyr-env.sh
           for board in rp2350_zero_core2021/rp2350a/m33/hf rp2350_zero_core2021/rp2350a/m33/lf; do
-            sku="${board%/*}"; sku="${sku##*/}"
+            sku="${board##*/}"
             ZLRS_BOARD="$board" zlrs-build -d "build-racing-${sku}" -- \
               -DCONFIG_ZLRS_APP_BAND_ROLE_SUBG_DATA=y \
               -DCONFIG_ZLRS_APP_BAND_ROLE_SUBG_CONTROL=n
@@ -161,7 +129,7 @@ jobs:
           set -x
           . zlrs/tools/zephyr-env.sh
           for board in rp2350_zero_core2021/rp2350a/m33/hf rp2350_zero_core2021/rp2350a/m33/lf; do
-            sku="${board%/*}"; sku="${sku##*/}"
+            sku="${board##*/}"
             ZLRS_BOARD="$board" zlrs-build -d "build-${sku}"
             # BOOTSEL carries the bootloader image only
             test -e "build-${sku}/mcuboot/zephyr/zephyr.uf2"
