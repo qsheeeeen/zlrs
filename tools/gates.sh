@@ -13,6 +13,9 @@
 #   4. the application is never installed as a UF2: BOOTSEL carries the bootloader image only,
 #      every application image goes through the bootloader (doc/08-firmware.md 5). A document or
 #      tool that brings the app-UF2 path back fails here.
+#   5. the log ring fits its partition: the file backend's FILE_SIZE × FILES_LIMIT has to equal
+#      the log_partition in the board's flash layout, or the ring either wastes flash or
+#      overwrites the coredump partition next to it (doc/15-log.md).
 #
 # Usage: tools/gates.sh
 
@@ -54,8 +57,34 @@ if [ -n "$hit" ]; then
 	echo "$hit"
 fi
 
+app_conf=app/prj.conf
+partitions=boards/zlrs/rp2350_zero_core2021/rp2350_zero_core2021_partitions.dtsi
+
+ring_size=$(sed -n 's/^CONFIG_LOG_BACKEND_FS_FILE_SIZE=\([0-9]*\)$/\1/p' "$app_conf")
+ring_files=$(sed -n 's/^CONFIG_LOG_BACKEND_FS_FILES_LIMIT=\([0-9]*\)$/\1/p' "$app_conf")
+partition_size=$(awk '
+	/^[[:space:]]*log_partition:/ { seen = 1 }
+	seen && /reg = </ {
+		match($0, /0x[0-9a-fA-F]+ 0x[0-9a-fA-F]+/)
+		split(substr($0, RSTART, RLENGTH), halves, " ")
+		print halves[2]
+		exit
+	}' "$partitions")
+
+if [ -z "$ring_size" ] || [ -z "$ring_files" ] || [ -z "$partition_size" ]; then
+	bad "cannot check the log ring against its partition (config or layout missing)"
+else
+	want=$((ring_size * ring_files))
+	have=$((partition_size))
+
+	if [ "$want" -ne "$have" ]; then
+		bad "the log ring is $want bytes (FILE_SIZE × FILES_LIMIT) but log_partition is $have:"
+		echo "  $app_conf and $partitions disagree"
+	fi
+fi
+
 if [ "$fail" -eq 0 ]; then
-	echo "gates: ok (core is pure C, app knows no boards, no debug option in shipped configs)"
+	echo "gates: ok (core is pure C, app knows no boards, no debug option in shipped configs, log ring matches its partition)"
 fi
 
 exit "$fail"

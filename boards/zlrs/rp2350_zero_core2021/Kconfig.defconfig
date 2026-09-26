@@ -4,6 +4,11 @@
 # Board-wide defaults, shared by every target (hf, lf). The targets add nothing here: what makes
 # them different is devicetree (the `zlrs_rf` radio design, including the region a fresh board
 # boots with).
+#
+# This file is also the only configuration layer both images read: the application and the MCUboot
+# image are built for the same board, so anything both of them need (a peripheral, a SoC
+# workaround, the upgrade machinery they share) belongs here and is written once. Per-image
+# deviations live in app/prj.conf, app/debug.conf and app/sysbuild/mcuboot.conf.
 
 if BOARD_RP2350_ZERO_CORE2021
 
@@ -44,6 +49,31 @@ config UART_LINE_CTRL
 	default y
 
 config UART_INTERRUPT_DRIVEN
+	default y
+
+# Flash reads around the XIP cache, or a read after a swap returns a line cached before the write:
+# MCUboot then calls a valid image "signature check failed", and LittleFS mounts "corrupted"
+# (doc/08-firmware.md 7). Both images read flash this way, so it is set once, here.
+config FLASH_RPI_PICO_READ_UNTRANSLATED
+	default y
+
+# The RP2350 TRNG is the zlrs driver (drivers/entropy): Zephyr's own goes through pico-sdk's
+# interrupt-off busy wait and kills USB. Turning it off here, not in the application, keeps the
+# choice with the SoC it belongs to.
+config ENTROPY_RPI_PICO_RNG
+	default n
+
+# The upgrade machinery every image that runs under MCUboot needs: the boot-mode flag lives in
+# retained RAM, and the application and MCUboot both read it to agree on staying in serial
+# recovery (doc/08-firmware.md 6). The image manager and streamed flash are the application's
+# business and live in app/prj.conf.
+config RETAINED_MEM
+	default y
+
+config RETENTION
+	default y
+
+config RETENTION_BOOT_MODE
 	default y
 
 # Link into the devicetree code partition (1 MB), see rp2350_zero_core2021.dtsi: the image

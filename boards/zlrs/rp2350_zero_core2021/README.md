@@ -183,8 +183,17 @@ Defaults that `Kconfig.defconfig` sets for every variant:
   `app/debug.overlay` enables it, so a production image has no shell.
 - Peripherals such as `CONFIG_UART_LINE_CTRL`, `UART_INTERRUPT_DRIVEN`, `GPIO`, `RESET`,
   `CLOCK_CONTROL` and `SERIAL` stay on.
+- `FLASH_RPI_PICO_READ_UNTRANSLATED`: read flash around the XIP cache, or a read after a swap
+  returns a line cached before the write (MCUboot then calls a valid image "signature check
+  failed"). Both images read flash, so it is set here once.
+- `ENTROPY_RPI_PICO_RNG=n`: this board's TRNG is the zlrs driver (`drivers/entropy`); Zephyr's own
+  goes through pico-sdk's interrupt-off busy wait and kills USB.
 
-The `/mcuboot` variants additionally bring what the upgrade path needs, as values rather than
-switches: `CONFIG_STREAM_FLASH`, `CONFIG_IMG_MANAGER` (read image state, confirm, roll back) and
-`CONFIG_RETAINED_MEM` / `CONFIG_RETENTION` / `CONFIG_RETENTION_BOOT_MODE` (the boot-mode flag the
-application sets and MCUboot reads to stay in serial recovery across a reboot).
+The upgrade path adds nothing per SKU: both images are built under MCUboot from the same target and
+the same flash layout (`rp2350_zero_core2021_partitions.dtsi`), and the settings they share live in
+this board's `Kconfig.defconfig`, written once:
+
+- `CONFIG_RETAINED_MEM` / `CONFIG_RETENTION` / `CONFIG_RETENTION_BOOT_MODE`: the boot-mode flag the
+  application sets and MCUboot reads to stay in serial recovery across a reboot;
+- `CONFIG_STREAM_FLASH` / `CONFIG_IMG_MANAGER` are the *application's* participation (confirm this
+  build, roll back one that never came up) and live in `app/prj.conf`.
