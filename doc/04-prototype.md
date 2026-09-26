@@ -62,10 +62,10 @@ Management mode is entered by a command the tool sends on the management CDC; de
 
 ## 4. Flashing
 
-| Variant | First time | Afterwards |
+| Image | First time | Afterwards |
 | --- | --- | --- |
-| Without a bootloader | hold BOOTSEL and drag `zephyr.uf2` on, or use SWD | the same |
-| With MCUboot | BOOTSEL drags the **bootloader** only; the application then goes in through the bootloader's serial recovery port | one command, through the application's management port |
+| Bootloader | hold BOOTSEL and drag its UF2 on, or use SWD | never: only BOOTSEL writes it |
+| Application | through the bootloader's serial recovery port | one command, through the application's management port |
 
 ```shell
 python3 tools/zlrs-update.py --serial <serial> \

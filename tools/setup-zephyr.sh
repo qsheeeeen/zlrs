@@ -13,12 +13,13 @@
 # Default layout (on this machine: /home/qs/zlrs-worksapce):
 #
 #   zlrs-worksapce/          <- west workspace root, called $WS below
-#   +-- .west/               west workspace marker
-#   +-- .venv/               west and the build dependencies (Python venv, ZLRS_VENV overrides)
-#   +-- build/               default output directory of west build
-#   +-- zlrs/                this repository == manifest repository (west.yml self.path)
-#   +-- zephyr/              Zephyr v4.4.0 plus the modules it imports
+#   ├── .west/               west workspace marker
+#   ├── .venv/               west and the build dependencies (Python venv, ZLRS_VENV overrides)
+#   ├── build/               default output directory of west build
+#   ├── zlrs/                this repository == manifest repository (west.yml self.path)
+#   ├── zephyr/              Zephyr v4.4.0 plus the modules it imports
 #   ├── usp_zephyr/          Semtech usp_zephyr v1.2.1
+#   ├── bootloader/mcuboot/  MCUboot: the bootloader image and its imgtool (doc/08-firmware.md 5)
 #   └── modules/lib/usp/     Semtech usp v1.2.1
 #
 # The toolchain comes from the Zephyr SDK (default $HOME/zephyr-sdk-1.0.0, ZLRS_SDK_DIR overrides):
@@ -113,8 +114,8 @@ echo "    imgtool (MCUboot signing) dependencies"
 "${VENV_DIR}/bin/python" -m pip install --quiet --no-warn-script-location \
 	-r "${WS}/bootloader/mcuboot/scripts/requirements.txt"
 
-# Host-side tool scripts: pyserial for config mode and the recovery trigger, smpmgr for upgrades
-# (tools/zlrs-config.py, zlrs-recovery.py, zlrs-update.py).
+# Host-side tool scripts: pyserial for management mode and the recovery trigger, smpmgr for upgrades
+# (tools/zlrs-mgmt.py, zlrs-recovery.py, zlrs-update.py).
 echo "    host script dependencies (pyserial / smpmgr)"
 "${VENV_DIR}/bin/python" -m pip install --quiet --no-warn-script-location \
 	pyserial smpmgr

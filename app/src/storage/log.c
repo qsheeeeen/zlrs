@@ -1,6 +1,6 @@
 /*
  * Log storage: mount the LittleFS the logging subsystem's file backend writes to, and report how
- * the last boot ended. See doc/15-log.md.
+ * the last boot ended. See doc/08-firmware.md 7.
  *
  * Nothing here implements logging: the messages themselves go through Zephyr's logging subsystem
  * and its file backend (LOG_BACKEND_FS), which also owns the file rotation that makes the store a
@@ -272,7 +272,7 @@ static int log_store_mount(void)
 	if (rc != 0) {
 		/*
 		 * Never-formatted or corrupt: erase the whole area and mount again, which is the littlefs
-		 * recipe from samples/subsys/fs/littlefs. Erasing rather than fs_mkfs() also means a
+		 * recipe from Zephyr's samples/subsys/fs/littlefs. Erasing rather than fs_mkfs() also means a
 		 * device whose log store got damaged recovers on its own instead of losing the feature.
 		 */
 		const struct flash_area *area;

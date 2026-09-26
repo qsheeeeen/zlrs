@@ -90,7 +90,8 @@ NVS keeps the root key, device id, pairing record, failsafe values, baud rate, r
 ceiling, role and security profile — nine keys, under 100 B in total, which is why NVS is small
 and the flash around it goes to the log store ([08-firmware](08-firmware.md) 7).
 
-Offsets and sizes: [board README](../boards/zlrs/rp2350_zero_core2021/README.md#4-partitions-and-boot).
+Offsets and sizes: [board README]
+(../boards/zlrs/rp2350_zero_core2021/README.md#4-partitions-and-boot).
 Upgrade flow and recovery entries: [08-firmware](08-firmware.md) 5.
 
 ## 5. Toolchain and build
@@ -110,8 +111,8 @@ against a host shim. The full command and dependency list is in the [README](../
 
 ## 6. Flashing
 
-- Without a bootloader: BOOTSEL plus UF2 (`west flash --runner uf2`) or SWD (openocd, probe-rs,
-  jlink). That is a bring-up path, not a product one: no upgrade, no rollback.
+- The bootloader goes on once: hold BOOTSEL and drag its UF2, or use SWD (openocd, probe-rs,
+  jlink). It never updates itself afterwards.
 - With MCUboot: BOOTSEL carries the **bootloader** image only. The board then parks in serial
   recovery (no application yet) and the application goes in through that recovery port; every
   later update is the same command aimed at the running application's management port:

@@ -10,7 +10,7 @@ Apply from the workspace root (the directory that holds the module checkouts):
 
 | Patch | Why |
 | --- | --- |
-| `usp_zephyr/0001-lr20xx-hal-bounded-busy-and-ready-check.patch` | The LR20xx HAL waits for the radio's BUSY line with a ten-minute timeout and then stops the CPU (`k_oops`). A single wedged SPI access therefore took the whole link down to the watchdog. The patch bounds the wait at 1 s, returns an error instead of stopping, and propagates it through the HAL read/write entry points so callers see a failed access and retry. |
+| `patches/usp_zephyr/0001-lr20xx-hal-bounded-busy-and-ready-check.patch` | The LR20xx HAL waits for the radio's BUSY line with a ten-minute timeout and then stops the CPU (`k_oops`). A single wedged SPI access therefore took the whole link down to the watchdog. The patch bounds the wait at 1 s, returns an error instead of stopping, and propagates it through the HAL read/write entry points so callers see a failed access and retry. |
 
 Both halves are upstream-report-worthy; until they land there, this is how a clean checkout builds
 the image the bench runs.

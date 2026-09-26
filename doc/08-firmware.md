@@ -113,10 +113,10 @@ What a build decides:
 The application only knows aliases (`zlrs-control-uart`, `zlrs-control-cdc`, `zlrs-data-uart`,
 `zlrs-data-cdc`, `zlrs-mgmt-cdc`, `zlrs-button`, `zlrs-led`); a missing alias means "this board
 has no such port or peripheral" and everything still builds. Whether there is a CRSF port, a
-management port, a button or a status LED is therefore a devicetree fact (`app/src/platform/caps.h`),
-not a switch — a switch could only disagree with the board. `ZLRS_APP_CORE` enables the pure C
-libraries every image carries (`ZLRS_PROTO`, `ZLRS_LINK`, `ZLRS_REGION`, `ZLRS_CRSF`,
-`ZLRS_MGMT`, `ZLRS_LED`).
+management port, a button or a status LED is therefore a devicetree fact
+(`app/src/platform/caps.h`), not a switch — a switch could only disagree with the board.
+`ZLRS_APP_CORE` enables the pure C libraries every image carries (`ZLRS_PROTO`, `ZLRS_LINK`,
+`ZLRS_REGION`, `ZLRS_CRSF`, `ZLRS_MGMT`, `ZLRS_LED`).
 
 That header is the whole hardware interface:
 

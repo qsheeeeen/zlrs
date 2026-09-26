@@ -15,7 +15,7 @@
 #      tool that brings the app-UF2 path back fails here.
 #   5. the log ring fits its partition: the file backend's FILE_SIZE × FILES_LIMIT has to equal
 #      the log_partition in the board's flash layout, or the ring either wastes flash or
-#      overwrites the coredump partition next to it (doc/15-log.md).
+#      overwrites the coredump partition next to it (doc/08-firmware.md 7).
 #
 # Usage: tools/gates.sh
 

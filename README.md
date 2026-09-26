@@ -65,10 +65,10 @@ python3 tools/zlrs-update.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if0
 ```
 
 The tool finds the bootloader's recovery port by itself, verifies the image hash after the reboot
-and only then confirms it — an image that does not come up rolls back. The two modes announce different USB
-names (the application `ZLRS`, the bootloader `ZLRS MCUBOOT`), and scripts find ports under
-`/dev/serial/by-id/...` rather than hard-coding `ttyACM*`. Boot chain, recovery entries and
-rollback: [doc/08-firmware.md](doc/08-firmware.md) 5.
+and only then confirms it — an image that does not come up rolls back. The two modes announce
+different USB names (the application `ZLRS`, the bootloader `ZLRS MCUBOOT`), and scripts find
+ports under `/dev/serial/by-id/...` rather than hard-coding `ttyACM*`. Boot chain, recovery
+entries and rollback: [doc/08-firmware.md](doc/08-firmware.md) 5.
 
 `tools/zephyr-env.sh` exports `ZLRS_WS` (the workspace root), `ZLRS_APP`, `ZLRS_BOARD` (hf by
 default, use `.../lf` for LF) and `ZLRS_SDK_DIR` (`~/zephyr-sdk-1.0.0` by default).
@@ -124,7 +124,7 @@ control port, a management CDC, a button or a LED is a devicetree fact (`app/src
 | bench self-test | `python3 tools/zlrs-bringup.py` | ports, management mode, management protocol reads and writes, NVS persistence |
 | management tool | `python3 tools/zlrs-mgmt.py` | read status, write parameters, start pairing, exit |
 | update tool | `python3 tools/zlrs-update.py` | trigger recovery, upload a signed image, wait for the application |
-| tree gates | `tools/gates.sh` | core purity, no board names in `app/`, no debug switch in shipped configs |
+| tree gates | `tools/gates.sh` | core purity, no board names in `app/`, no debug switch in shipped configs, the log ring fits its partition |
 
 The vendor sample (Semtech's `packet_error_rate_flrc`) runs on this board as-is, which is a way to
 check the toolchain and radio stack on their own.
@@ -229,7 +229,7 @@ with this off". ASan and UBSan are on by default.
 | host tests with ASan + UBSan | `build.yml` | protocol and link regressions |
 | tool self-tests (`zlrs-mgmt`, `zlrs-recovery`, `zlrs-update`, `zlrs-bringup`) | `build.yml` | framing drift between tools and firmware |
 | build matrix: both SKUs x plain, debug overlay, bench switches, single-link cuts, LoRa, racing, MCUboot | `firmware.yml` | Kconfig and devicetree combinations that do not compile |
-| `tools/gates.sh`: `core/` has no `#include <zephyr/`, `app/` names no board, shipped configs carry no `ZLRS_APP_DEBUG_*` | `build.yml`, or by hand | platform code leaking into the pure C core, board branching, a debug-only switch shipping in an image |
+| `tools/gates.sh`: `core/` has no `#include <zephyr/`, `app/` names no board, shipped configs carry no `ZLRS_APP_DEBUG_*`, the log ring equals `log_partition` | `build.yml`, or by hand | platform code leaking into the pure C core, board branching, a debug-only switch shipping in an image, a log ring that overruns its partition |
 
 CI runs all of them ([.github/workflows/build.yml](.github/workflows/build.yml),
 [firmware.yml](.github/workflows/firmware.yml)).

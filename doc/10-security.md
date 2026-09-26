@@ -143,10 +143,9 @@ the two are checked against each other with fixed vectors.
 
 ## 9. Management protocol
 
-The management protocol runs on the **management CDC only**, on a local USB connection; physical access
-is the boundary. It is a small framed protocol (`0xA5 0x5A`, version 3, CRC8) with request and
-response frames, documented by `include/zlrs/mgmt/mgmt.h` and implemented in
-`core/mgmt/`.
+The management protocol runs on the **management CDC only**, on a local USB connection; physical
+access is the boundary. It is a small framed protocol (`0xA5 0x5A`, version 3, CRC8) with request
+and response frames, documented by `include/zlrs/mgmt/mgmt.h` and implemented in `core/mgmt/`.
 
 | Host command | Effect |
 | --- | --- |

@@ -126,8 +126,8 @@ switches to hide but debts: `doc/13-roadmap.md`, "Pending defaults".
 - **Do not chatter the console**: opening and closing the console CDC over usbipd a few times in a
   row leaves the stream delivering tens of bytes per second while the device stays enumerated, and
   it does not recover by reading harder. The board is not necessarily dead — its radio work and its
-  management port are separate code paths — but the console is the wrong instrument from then on. Hold
-  one connection open for the whole session, and reboot the board (or re-attach it) before
+  management port are separate code paths — but the console is the wrong instrument from then on.
+  Hold one connection open for the whole session, and reboot the board (or re-attach it) before
   measuring anything that depends on console output.
 - **`zlrs rate`** prints the last second per link: receive windows, how many of them heard a
   frame, frames sent and the state. That is the number to compare when a link misbehaves; a
