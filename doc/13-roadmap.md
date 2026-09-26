@@ -79,7 +79,7 @@ themselves.
 
 | Knob | Default today | What is missing | Afterwards |
 | --- | --- | --- | --- |
-| `ZLRS_APP_RATE_ADAPT` | off | per-tier packet error rate and SNR thresholds, measured with a second module | on, thresholds replaced (the placeholders in `app/src/main.c` are ignored today) |
+| `ZLRS_APP_RATE_ADAPT` | off | per-tier packet error rate and SNR thresholds, measured with a second module | on, thresholds replaced (the placeholders in `app/src/link/rate.c` are ignored today) |
 | `ZLRS_APP_WATCHDOG` | on | a long run on hardware without false resets (PBKDF2 inside config mode is the slowest feed interval) | stays on |
 | `ZLRS_APP_DATA_ARQ` | on | throughput and latency on hardware; the ack can shrink to one header bit once the RX always has a frame to ride along | stays on, window sized from measurements |
 | `ZLRS_APP_DYNAMIC_POWER` | on | thresholds and hysteresis from measured RSSI/SNR | stays on, thresholds replaced |

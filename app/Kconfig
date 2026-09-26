@@ -323,7 +323,7 @@ config ZLRS_APP_RATE_ADAPT
 	depends on ZLRS_APP_CONTROL_MODULATION_FLRC
 	help
 	  Thresholds need measured curves (see doc/13-roadmap.md), so this is off by default;
-	  turn it on and the tier table and hysteresis in app/src/main.c take over.
+	  turn it on and the tier table and hysteresis in app/src/link/rate.c take over.
 
 config ZLRS_APP_DYNAMIC_POWER
 	bool "Adapt TX power to the quality the peer reports"
@@ -331,8 +331,9 @@ config ZLRS_APP_DYNAMIC_POWER
 	depends on ZLRS_APP_TELEMETRY
 	help
 	  With signal to spare, drop power (saves energy, less interference); when it gets tight, come
-	  back up. Losing telemetry means the ceiling (the other end is probably gone). Evaluated
-	  once a second; thresholds and hysteresis live in core/link/power.c and wait for measurements.
+	  back up. Losing telemetry means the ceiling (the other end is probably gone). Applied once a
+	  second from app/src/link/power.c; thresholds and hysteresis live in core/link/power.c and
+	  wait for measurements.
 
 config ZLRS_APP_WATCHDOG
 	bool "Watchdog: reset on a crash or a stuck loop (helps rollback, is not rollback)"

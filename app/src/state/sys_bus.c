@@ -23,6 +23,9 @@ ZBUS_CHAN_DEFINE(zlrs_alert_chan, struct zlrs_alerts, NULL, NULL, ZBUS_OBSERVERS
 ZBUS_CHAN_DEFINE(zlrs_mode_chan, struct zlrs_mode, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
 	ZBUS_MSG_INIT(0));
 
+ZBUS_CHAN_DEFINE(zlrs_input_chan, struct zlrs_input, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
+	ZBUS_MSG_INIT(0));
+
 /*
  * Publishing is fire and forget: the message is already in the channel, so a consumer that missed
  * the notification reads the same value on its next pass (app/src/ui/led.c).
@@ -68,4 +71,18 @@ void zlrs_sys_publish_mode(const struct zlrs_mode *mode)
 	published = true;
 
 	(void)zbus_chan_pub(&zlrs_mode_chan, mode, K_NO_WAIT);
+}
+
+void zlrs_sys_publish_input(const struct zlrs_input *input)
+{
+	static struct zlrs_input last;
+	static bool published;
+
+	if (published && memcmp(&last, input, sizeof(last)) == 0) {
+		return;
+	}
+	last = *input;
+	published = true;
+
+	(void)zbus_chan_pub(&zlrs_input_chan, input, K_NO_WAIT);
 }

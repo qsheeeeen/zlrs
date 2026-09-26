@@ -116,12 +116,13 @@ app/src/               Zephyr application, one directory per layer:
   main.c                 the application: superframe, link wiring, reporting, debug shell
   platform/              what this board is (caps.h), the hardware watchdog, recovery entry
   ports/                 hardware adapters: serial endpoints, radio (USP/RAC)
-  link/                  the links' I/O: data (passthrough) and CRSF
+  link/                  the links' I/O and tuning: data (passthrough), CRSF, rate
+                         adaptation, dynamic power
   config/                config protocol, application side: the CDC (port) and the session
                          with its device commands (mode)
   state/                 system state broadcast (the zbus channels)
-  ui/                    what the user sees: the status LED (state to frame to strip); the
-                         button is still polled in main.c
+  ui/                    what the user sees: the status LED (state to frame to strip) and the
+                         button (its own thread, hold reported on the bus)
   storage/               the flash-backed state: NVS settings and the log ring
 boards/                board definitions (devicetree, defconfig, README)
 dts/bindings/          bindings for zlrs-specific nodes
@@ -158,6 +159,7 @@ the log. See [09-protocol](09-protocol.md) 5.2.
 | RAC thread (from USP) | `-4` | runs the radio planner and dispatches transfer callbacks |
 | Link thread (`main`) | `-2` | link state machines, building and submitting transactions, results, system state broadcast |
 | LED thread (`zlrs_led`) | `7` (preemptive) | renders the system state it subscribes to and writes the WS2812 (`app/src/ui/led.c`) |
+| Button thread (`zlrs_button`) | `8` (preemptive) | samples the button, reports a hold on the bus (`app/src/ui/button.c`) |
 | Serial | interrupt context | ring-buffered transfers, no radio decisions |
 
 Threads are cooperative (`CONFIG_USP_MAIN_THREAD=y`, `CONFIG_USP_THREADS_MUTEXES=n`): RAC calls
@@ -179,6 +181,8 @@ and an open config session. Three rules make that cheap and safe:
 
 - a publisher writes only when the message changed, so the bus carries events, not a heartbeat,
   and the LED thread's own 20 Hz tick drives the blink phase;
+- what the user asked for rides the same bus (a hold of the button), so the link state machine
+  stays on the link thread while the button thread owns the timing;
 - every channel has one owner, because a publisher writes the whole message: two writers on one
   channel would each blank the other's field;
 - publishing costs a channel copy and a notification push, both `K_NO_WAIT`, so the superframe

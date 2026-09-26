@@ -12,6 +12,7 @@
  *   zlrs_link_chan   what the control link is doing (app/src/main.c, every frame)
  *   zlrs_alert_chan  failsafe, faults and passthrough drops (app/src/main.c, then the fault loop)
  *   zlrs_mode_chan   an open config session (app/src/config/mode.c)
+ *   zlrs_input_chan  what the user asked for with the hardware (app/src/ui/button.c)
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -44,7 +45,12 @@ struct zlrs_mode {
 	bool config; /* a config session is open */
 };
 
-ZBUS_CHAN_DECLARE(zlrs_link_chan, zlrs_alert_chan, zlrs_mode_chan);
+/* What the device is being asked for through its hardware; counters, so a late reader still sees it */
+struct zlrs_input {
+	uint32_t button_holds; /* long presses that reached the pairing threshold */
+};
+
+ZBUS_CHAN_DECLARE(zlrs_link_chan, zlrs_alert_chan, zlrs_mode_chan, zlrs_input_chan);
 
 /*
  * Publishers. The callers run every frame; each helper only broadcasts when the message changed,
@@ -53,3 +59,4 @@ ZBUS_CHAN_DECLARE(zlrs_link_chan, zlrs_alert_chan, zlrs_mode_chan);
 void zlrs_sys_publish_link(const struct zlrs_link_status *status);
 void zlrs_sys_publish_alerts(const struct zlrs_alerts *alerts);
 void zlrs_sys_publish_mode(const struct zlrs_mode *mode);
+void zlrs_sys_publish_input(const struct zlrs_input *input);

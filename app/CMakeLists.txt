@@ -11,6 +11,8 @@ target_sources(app PRIVATE
   src/config/port.c
   src/link/crsf.c
   src/link/data.c
+  src/link/power.c
+  src/link/rate.c
   src/main.c
   src/platform/recovery.c
   src/platform/watchdog.c
@@ -19,6 +21,7 @@ target_sources(app PRIVATE
   src/state/sys_bus.c
   src/storage/log.c
   src/storage/settings.c
+  src/ui/button.c
   src/ui/led.c
 )
 

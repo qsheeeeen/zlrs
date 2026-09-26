@@ -9,7 +9,6 @@
 #include <zephyr/app_version.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/entropy.h>
-#include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/random/random.h>
@@ -41,6 +40,8 @@
 #include "config/port.h"
 #include "link/crsf.h"
 #include "link/data.h"
+#include "link/power.h"
+#include "link/rate.h"
 #include "platform/caps.h"
 #include "platform/recovery.h"
 #include "platform/watchdog.h"
@@ -52,8 +53,6 @@
 #include "zlrs/crsf/crsf.h"
 #include "zlrs/config/config.h"
 #include "zlrs/link/link.h"
-#include "zlrs/link/power.h"
-#include "zlrs/link/rate.h"
 #include "zlrs/region/region.h"
 #include "zlrs/proto/tlm.h"
 
@@ -140,11 +139,6 @@ static uint8_t active_profile;
 	(IS_ENABLED(CONFIG_ZLRS_APP_SECURITY_PROFILE_P0) ? ZLRS_PROFILE_P0 : ZLRS_PROFILE_P1)
 
 
-static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(DT_ALIAS(zlrs_button), gpios);
-static bool button_down;
-static bool button_fired; /* pairing already fired for this press */
-static uint32_t button_since_ms;
-
 /* CRSF port I/O (defined below, called from the link callbacks) */
 static void crsf_send_rc(const uint8_t *payload, uint8_t len);
 static void crsf_send_link_stats(const zlrs_tlm_t *tlm);
@@ -161,33 +155,11 @@ static uint32_t last_tlm_up_ms;
 static bool rc_input_seen;
 static uint32_t crsf_bad_input;
 static uint32_t last_report_ms;
+/* Long presses already turned into a pairing request (app/src/ui/button.c) */
+static uint32_t button_holds_seen;
 /* Failsafe means nothing before a first connection: show unconfigured/unpaired/searching, not red */
 static bool ever_connected;
 
-/*
- * Rate adaptation tiers, fastest first. Thresholds wait for measured PER curves,
- * see doc/13-roadmap.md; the numbers here are placeholders, the mechanism ignores them.
- */
-#if IS_ENABLED(CONFIG_ZLRS_APP_RATE_ADAPT)
-static const zlrs_rate_tier_t rate_tiers[] = {
-	{.mod = {.modulation = ZLRS_MOD_FLRC, .rate_bps = 2600000U}, .min_lq_to_stay = 85U},
-	{.mod = {.modulation = ZLRS_MOD_FLRC, .rate_bps = 1300000U}, .min_lq_to_stay = 60U},
-	{.mod = {.modulation = ZLRS_MOD_FLRC, .rate_bps = 650000U}, .min_lq_to_stay = 35U},
-	{.mod = {.modulation = ZLRS_MOD_FLRC, .rate_bps = 325000U}, .min_lq_to_stay = 0U},
-};
-static zlrs_rate_ctl_t rate_ctl;
-#endif
-
-/* Dynamic power: the TX follows the RSSI/LQ the RX reports back */
-#if IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)
-static zlrs_power_ctl_t power_ctl;
-/* Uplink quality from the latest telemetry; the verdict runs at 1 Hz, so stash it here */
-static struct {
-	int16_t rssi_dbm;
-	uint8_t lq;
-	bool fresh;
-} tlm_latest;
-#endif
 static struct {
 	uint32_t rc_rx;
 	uint32_t tlm_rx;
@@ -216,12 +188,8 @@ static void on_tlm(void *ctx, const uint8_t *payload, uint16_t len)
 	if (zlrs_tlm_decode(payload, len, &tlm)) {
 		crsf_send_link_stats(&tlm);
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)
-		/* Just stash it: the verdict runs in report() at 1 Hz, see doc/09-protocol.md 4.5 */
-		tlm_latest.rssi_dbm = -(int16_t)tlm.rssi_neg_dbm;
-		tlm_latest.lq = tlm.lq_percent;
-		tlm_latest.fresh = true;
-#endif
+		/* Just stash it: the power verdict runs in report() at 1 Hz (doc/09-protocol.md 4.5) */
+		zlrs_link_power_telemetry(tlm.rssi_neg_dbm, tlm.lq_percent);
 	}
 }
 
@@ -486,24 +454,11 @@ static void build_links(void)
 	zlrs_link_init(&link_control, &ctl_cfg, zlrs_port_radio_control_ops(), &ctl_ev);
 	zlrs_link_init(&link_data, &data_cfg, zlrs_port_radio_data_ops(), &data_ev);
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_RATE_ADAPT)
-	{
-		uint8_t start = 0U;
+	zlrs_link_rate_init(&ctl_cfg.mod);
 
-		for (uint8_t i = 0U; i < ARRAY_SIZE(rate_tiers); i++) {
-			if (rate_tiers[i].mod.rate_bps == ctl_cfg.mod.rate_bps) {
-				start = i;
-			}
-		}
-		zlrs_rate_init(&rate_ctl, rate_tiers, (uint8_t)ARRAY_SIZE(rate_tiers), start, 0U);
-	}
-#endif
-
-#if IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)
 	/* Ceiling is min(configured power, region cap); the floor is a Kconfig knob */
-	zlrs_power_init(&power_ctl, MIN(tx_power_dbm, region->max_tx_power_dbm),
-			CONFIG_ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM, 0U);
-#endif
+	zlrs_link_power_init(MIN(tx_power_dbm, region->max_tx_power_dbm),
+			     CONFIG_ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM);
 }
 
 static bool ensure_device_id(void)
@@ -996,38 +951,6 @@ static void adopt_pairing(void)
 		link_control.peer_id[2], link_control.peer_id[3]);
 }
 
-/*
- * The button has exactly one action: hold it to the threshold to start pairing (doc/11-ux.md).
- * No short press and no unpair gesture: hold again to re-pair, the new record replaces the old.
- */
-static void handle_button(uint32_t now_ms)
-{
-	const int pressed = gpio_pin_get_dt(&button);
-
-	/* Bench builds can drop button pairing; the button then does nothing at all */
-	if (!ZLRS_HAS_BUTTON || !ZLRS_CONTROL_ENABLED) {
-		return;
-	}
-
-	if (pressed > 0 && !button_down) {
-		button_down = true;
-		button_since_ms = now_ms;
-		button_fired = false;
-		return;
-	}
-
-	if (pressed > 0 && button_down && !button_fired &&
-	    (uint32_t)(now_ms - button_since_ms) >= CONFIG_ZLRS_APP_PAIR_HOLD_MS) {
-		button_fired = true;
-		LOG_INF("pairing (button held %u ms)", (unsigned int)(now_ms - button_since_ms));
-		zlrs_link_press(&link_control, now_ms);
-		return;
-	}
-
-	if (pressed == 0 && button_down) {
-		button_down = false;
-	}
-}
 
 /*
  * Failsafe values default to throttle low and everything else centred, which is what a
@@ -1244,18 +1167,7 @@ static void report(uint32_t now_ms)
 	rate_ms = now_ms;
 #endif
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_RATE_ADAPT)
-	{
-		uint8_t next = 0U;
-
-		if (zlrs_rate_update(&rate_ctl, link_control.stats.lq_percent, now_ms, &next)) {
-			LOG_INF("rate tier -> %u bps (LQ %u%%)",
-				(unsigned int)rate_tiers[next].mod.rate_bps,
-				link_control.stats.lq_percent);
-			zlrs_link_set_mod(&link_control, &rate_tiers[next].mod);
-		}
-	}
-#endif
+	zlrs_link_rate_tick(&link_control, now_ms);
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_SUB_BAND_MIX)
 	/*
@@ -1289,25 +1201,7 @@ static void report(uint32_t now_ms)
 	}
 #endif
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)
-	{
-		int8_t next = 0;
-		const bool fresh = tlm_latest.fresh;
-
-		tlm_latest.fresh = false;
-
-		/*
-		 * Evaluated once a second: if telemetry arrived, judge quality from its RSSI/LQ,
-		 * otherwise take the valid=false timeout path, which goes back to the ceiling.
-		 */
-		if (zlrs_power_update(&power_ctl, fresh, tlm_latest.rssi_dbm, tlm_latest.lq, now_ms,
-				      &next)) {
-			zlrs_link_set_power(&link_control, next);
-			LOG_INF("tx power -> %d dBm (rssi %d dBm, lq %u%%)", next,
-				tlm_latest.rssi_dbm, tlm_latest.lq);
-		}
-	}
-#endif
+	zlrs_link_power_tick(&link_control, now_ms);
 
 	/*
 	 * The once-a-second status lines: bench only, logging only (the 1 Hz rate and the power verdicts
@@ -1391,9 +1285,14 @@ static void report(uint32_t now_ms)
 	LOG_INF("region %s: max %d dBm, duty denied %u", (region != NULL) ? region->name : "?",
 		region->max_tx_power_dbm, duty.denied);
 #if IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)
-	LOG_INF("tx power %d dBm (up %u / down %u / fallback %u)",
-		zlrs_power_current_dbm(&power_ctl), power_ctl.raises, power_ctl.lowers,
-		power_ctl.fallbacks);
+	{
+		int8_t dbm;
+		uint32_t raises, lowers, fallbacks;
+
+		zlrs_link_power_stats(&dbm, &raises, &lowers, &fallbacks);
+		LOG_INF("tx power %d dBm (up %u / down %u / fallback %u)", dbm, raises, lowers,
+			fallbacks);
+	}
 #endif
 
 	/* Every line above covers one second: the next one gets a fresh timing window */
@@ -2535,9 +2434,6 @@ int main(void)
 		return 0;
 	}
 
-	if (!gpio_is_ready_dt(&button) || gpio_pin_configure_dt(&button, GPIO_INPUT) != 0) {
-		LOG_WRN("button unavailable");
-	}
 
 	TRACE('d');
 	/* Take the requested radio backend before the bench, or the bench would measure the old one */
@@ -2620,7 +2516,19 @@ int main(void)
 		adopt_pairing();
 		pump_serial();
 		pump_crsf(now_ms);
-		handle_button(now_ms);
+		/* The button thread reports holds on the bus (app/src/ui/button.c); the pairing request
+		 * itself stays on this thread, where the link state machine lives. */
+		{
+			struct zlrs_input asked;
+
+			if (zbus_chan_read(&zlrs_input_chan, &asked, K_NO_WAIT) == 0 &&
+			    asked.button_holds != button_holds_seen) {
+				button_holds_seen = asked.button_holds;
+				if (ZLRS_CONTROL_ENABLED) {
+					zlrs_link_press(&link_control, now_ms);
+				}
+			}
+		}
 		broadcast_state();
 		report(now_ms);
 
