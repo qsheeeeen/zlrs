@@ -113,7 +113,8 @@ subsys/usb/            USB device stack: usbd context plus every CDC in devicetr
 subsys/bootguard/      bootloader-side watchdog handling
 drivers/entropy/       the RP2350 TRNG driver we own
 app/                   Zephyr application: capabilities, ports, radio adaptation, NVS,
-                       watchdog, button, LED output, superframe, reporting, debug shell
+                       watchdog, button, system state bus, LED thread, superframe, reporting,
+                       debug shell
 boards/                board definitions (devicetree, defconfig, README)
 dts/bindings/          bindings for zlrs-specific nodes
 tools/                 host-side helpers (config, recovery, update, bring-up, UF32 packaging)
@@ -140,7 +141,8 @@ the log. See [09-protocol](09-protocol.md) 5.2.
 | Thread | Priority | Responsibility |
 | --- | --- | --- |
 | RAC thread (from USP) | `-4` | runs the radio planner and dispatches transfer callbacks |
-| Link thread (`main`) | `-2` | link state machines, building and submitting transactions, results |
+| Link thread (`main`) | `-2` | link state machines, building and submitting transactions, results, system state broadcast |
+| LED thread (`zlrs_led`) | `7` (preemptive) | renders the system state it subscribes to and writes the WS2812 (`app/src/led_thread.c`) |
 | Serial | interrupt context | ring-buffered transfers, no radio decisions |
 
 Threads are cooperative (`CONFIG_USP_MAIN_THREAD=y`, `CONFIG_USP_THREADS_MUTEXES=n`): RAC calls
@@ -148,6 +150,28 @@ go in directly with no mutex cost, and the link logic is I/O driven and yields o
 is that a long serial burst delays radio events, so serial transfers are cut into small pieces
 that yield promptly. USP's other threading modes are described in usp_zephyr's
 `doc/THREAD_MANAGEMENT.md`.
+
+The LED thread is the one preemptive thread the application adds, and it is a deliberate exception
+to "the link thread does everything": the strip write (PIO push plus the WS2812 latch delay) is the
+slowest step of the LED path, and the rest of the LED path is pure C that has no business
+stretching a superframe slot. Being preemptive it can only run while the link thread is blocked —
+a cooperative thread is not preempted by it — and it pushes a frame only when the colour changed,
+so the strip is written at the rate the display actually moves.
+
+What the link thread hands over is not a colour but the **system state**, one zbus channel per fact
+(`app/src/sys_bus.h`): the control link's state and quality, the alerts the links produce, and an
+open config session. Three rules make that cheap and safe:
+
+- a publisher writes only when the message changed, so the bus carries events, not a heartbeat,
+  and the LED thread's own 20 Hz tick drives the blink phase;
+- every channel has one owner, because a publisher writes the whole message: two writers on one
+  channel would each blank the other's field;
+- publishing costs a channel copy and a notification push, both `K_NO_WAIT`, so the superframe
+  never waits for a consumer.
+
+The consumer decides what the facts mean — `core/led` holds the colours and the priority order
+(pure C, host-tested) and the LED thread is its only caller, so adding a consumer (a shell, a log
+exporter, telemetry) never touches a producer. See [11-ux](11-ux.md).
 
 Config mode does not run on the link thread either: `main()` enters it, stops submitting
 transactions for the session and runs the config protocol there (see

@@ -129,6 +129,9 @@ That header is the whole hardware interface:
 /* peripherals */
 #define ZLRS_HAS_BUTTON        DT_NODE_EXISTS(DT_ALIAS(zlrs_button))
 #define ZLRS_HAS_LED           DT_NODE_EXISTS(DT_ALIAS(zlrs_led))
+/* a strip is only usable with its driver and the pattern engine in the build */
+#define ZLRS_LED_COMPILED      (IS_ENABLED(CONFIG_LED_STRIP) && IS_ENABLED(CONFIG_ZLRS_LED))
+#define ZLRS_LED_AVAILABLE     (ZLRS_HAS_LED && ZLRS_LED_COMPILED)
 #define ZLRS_HAS_WDT           DT_NODE_EXISTS(DT_NODELABEL(watchdog0))
 #define ZLRS_HAS_NVS           IS_ENABLED(CONFIG_NVS)
 #define ZLRS_HAS_USB           IS_ENABLED(CONFIG_ZLRS_USB)

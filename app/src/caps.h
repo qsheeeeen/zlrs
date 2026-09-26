@@ -29,6 +29,11 @@
 /* ---- peripherals ---- */
 #define ZLRS_HAS_BUTTON DT_NODE_EXISTS(DT_ALIAS(zlrs_button))
 #define ZLRS_HAS_LED DT_NODE_EXISTS(DT_ALIAS(zlrs_led))
+/* A strip is only usable when the driver and the pattern engine are in the build too: trimming
+ * the driver while leaving the alias makes DEVICE_DT_GET reference a device that does not exist
+ * (doc/08-firmware.md 4). */
+#define ZLRS_LED_COMPILED (IS_ENABLED(CONFIG_LED_STRIP) && IS_ENABLED(CONFIG_ZLRS_LED))
+#define ZLRS_LED_AVAILABLE (ZLRS_HAS_LED && ZLRS_LED_COMPILED)
 #define ZLRS_HAS_WDT DT_NODE_EXISTS(DT_ALIAS(watchdog0))
 #define ZLRS_HAS_NVS IS_ENABLED(CONFIG_NVS)
 #define ZLRS_HAS_USB IS_ENABLED(CONFIG_ZLRS_USB)

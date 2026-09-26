@@ -133,7 +133,8 @@ check the toolchain and radio stack on their own.
 
 ```
 app/                     Zephyr application: capabilities, ports, radio adaptation, storage,
-                         watchdog, button, LED, superframe, reporting, debug shell
+                         watchdog, button, system state bus, LED thread, superframe, reporting,
+                         debug shell
 boards/zlrs/             board definitions (RP2350-Zero plus Core2021)
 core/proto/              protocol core: framing, reassembly, hop tables, key derivation and
                          tags, telemetry payload, modulation tiers and the airtime model

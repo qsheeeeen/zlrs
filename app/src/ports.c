@@ -21,9 +21,9 @@
 #include <string.h>
 
 #include "caps.h"
-#include "led_port.h"
 #include "log_store.h"
 #include "store.h"
+#include "sys_bus.h"
 #include "watchdog.h"
 #include "zlrs/config/config.h"
 #include "zlrs/crsf/crsf.h"
@@ -602,13 +602,6 @@ uint32_t zlrs_crsf_port_rx_dropped(void)
 #define CFG_RX_CHUNK     32U
 #define CFG_EXIT_POLL_MS 50U
 
-/*
- * How long the white LED has to show before this counts as "really configuring". The update
- * tool and `zlrs-config.py` open a session per command and leave within ~100 ms; flashing
- * white for that looks like a fault, so the pattern only switches once a session lasts.
- */
-#define CFG_LED_DELAY_MS 500U
-
 /* ---- config port: a dedicated CDC that is always on USB ------------------ */
 
 #define CFG_PORT_RX_RING_LEN 512U
@@ -1155,7 +1148,6 @@ int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 {
 	const uint32_t timeout_ms = (uint32_t)CONFIG_ZLRS_APP_CONFIG_TIMEOUT_S * 1000U;
 	uint32_t last_activity_ms = k_uptime_get_32();
-	const uint32_t started_ms = last_activity_ms;
 	bool exit_requested = false;
 
 	cfg_link = control;
@@ -1176,24 +1168,14 @@ int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 	 * seconds) and an 8 s watchdog would reset mid-way. Config is attended; re-arm on exit. */
 	zlrs_watchdog_disarm();
 
+	/* A mode, not an LED state: the LED thread decides how it looks (app/src/led_thread.c) */
+	zlrs_sys_publish_mode(&(struct zlrs_mode){.config = true});
+
 	while (!exit_requested && (uint32_t)(k_uptime_get_32() - last_activity_ms) < timeout_ms) {
 		uint8_t chunk[CFG_RX_CHUNK];
 		bool any = false;
-		zlrs_led_input_t led_in;
-		const uint32_t now_ms = k_uptime_get_32();
 
 		zlrs_watchdog_feed();
-
-		/* Slow white = not in the normal working state */
-		memset(&led_in, 0, sizeof(led_in));
-		led_in.config_mode = (uint32_t)(now_ms - started_ms) >= CFG_LED_DELAY_MS;
-		led_in.configured = cfg_link->configured;
-		led_in.paired = cfg_link->paired;
-		led_in.role_tx = (cfg_link->cfg.role == ZLRS_ROLE_TX);
-		led_in.link_state = cfg_link->state;
-		led_in.lq_percent = cfg_link->stats.lq_percent;
-		led_in.uptime_ms = now_ms;
-		zlrs_led_port_update(&led_in, led_in.uptime_ms);
 
 		/* Radio stopped in config mode: data port bytes are dropped and counted */
 		zlrs_data_port_discard_rx();
@@ -1229,6 +1211,8 @@ int zlrs_config_mode_run(zlrs_link_t *control, uint8_t *failsafe)
 	}
 
 	LOG_INF("config mode finished");
+
+	zlrs_sys_publish_mode(&(struct zlrs_mode){.config = false});
 
 	zlrs_watchdog_arm();
 

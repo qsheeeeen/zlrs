@@ -39,10 +39,10 @@
 
 #include "ports.h"
 #include "caps.h"
-#include "led_port.h"
 #include "log_store.h"
 #include "radio_port.h"
 #include "store.h"
+#include "sys_bus.h"
 #include "watchdog.h"
 
 #include "zlrs/crsf/crsf.h"
@@ -168,10 +168,8 @@ static uint32_t last_tlm_up_ms;
 static bool rc_input_seen;
 static uint32_t crsf_bad_input;
 static uint32_t last_report_ms;
-static uint32_t led_drop_seen;
 /* Failsafe means nothing before a first connection: show unconfigured/unpaired/searching, not red */
 static bool ever_connected;
-static uint32_t led_drop_ms;
 
 /*
  * Rate adaptation tiers, fastest first. Thresholds wait for measured PER curves,
@@ -1481,8 +1479,8 @@ static void report(uint32_t now_ms)
 }
 
 /*
- * Status LED: translate the link state into core/led inputs, see doc/11-ux.md.
- * Refreshed at 20 Hz (zlrs_led_port_update rate-limits internally).
+ * System state broadcast: the facts other parts of the application render or report
+ * (app/src/sys_bus.h). Facts only — the LED thread turns them into colours (doc/11-ux.md).
  */
 #if ZLRS_CONFIG_ENABLED
 static void enter_config_mode(void);
@@ -1502,7 +1500,10 @@ static bool entropy_degraded;
 
 static void fault_loop(void)
 {
-	zlrs_led_input_t in;
+	const struct zlrs_alerts alerts = {
+		.fault = true,
+		.data_drop_bytes = link_data.stats.data_drop_bytes,
+	};
 
 #if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
 	if (!boot_is_img_confirmed()) {
@@ -1513,17 +1514,15 @@ static void fault_loop(void)
 	}
 #endif
 
-	memset(&in, 0, sizeof(in));
-	in.failsafe = true; /* fast red blink */
-	in.link_state = ZLRS_STATE_SEARCHING;
-	in.role_tx = role_tx;
-	in.uptime_ms = 60000U; /* past the boot self-test window, so the alarm shows at once */
+	/* One fact, once: the fault outranks the boot self-test and shows as the red alert colour
+	 * (app/src/led_thread.c). Nothing else is published here — the links stop, so their last
+	 * snapshot is also the truth. */
+	zlrs_sys_publish_alerts(&alerts);
 
 	LOG_ERR("fault state: not transmitting; config port stays available for flashing");
 
 	for (;;) {
 		zlrs_watchdog_feed();
-		zlrs_led_port_update(&in, k_uptime_get_32());
 
 #if ZLRS_CONFIG_ENABLED
 		/* Config port alive: config mode, the recovery command and reflashing all still work */
@@ -1550,28 +1549,18 @@ static void crypto_init(void)
 	}
 }
 
-static void led_tick(uint32_t now_ms)
+static void broadcast_state(void)
 {
-	zlrs_led_input_t in;
 	const uint32_t drops = link_data.stats.data_drop_bytes;
+	struct zlrs_link_status link;
+	struct zlrs_alerts alerts;
 
-	if (!ZLRS_HAS_LED) {
-		return;
-	}
+	link.role_tx = role_tx;
+	link.configured = link_control.configured;
+	link.paired = link_control.paired;
+	link.state = link_control.state;
+	link.lq_percent = link_control.stats.lq_percent;
 
-	if (drops != led_drop_seen) {
-		led_drop_seen = drops;
-		led_drop_ms = now_ms;
-	}
-
-	memset(&in, 0, sizeof(in));
-	in.configured = link_control.configured;
-	in.paired = link_control.paired;
-	in.role_tx = role_tx;
-	in.link_state = link_control.state;
-	in.lq_percent = link_control.stats.lq_percent;
-	in.uptime_ms = now_ms;
-	in.drop_recent = (drops > 0U) && (uint32_t)(now_ms - led_drop_ms) < 1000U;
 	/* TX without RC input sends failsafe values; an unconnected RX outputs them to the FC */
 	if (link_control.state == ZLRS_STATE_CONNECTED) {
 		ever_connected = true;
@@ -1581,11 +1570,14 @@ static void led_tick(uint32_t now_ms)
 	 * the handset (sending failsafe), or the RX was connected and dropped (outputting failsafe).
 	 * A device that never connected shows its normal state (purple/yellow/cyan), never red.
 	 */
-	in.failsafe = ever_connected && (role_tx
+	alerts.failsafe = ever_connected && (role_tx
 						 ? !rc_input_seen
 						 : (link_control.state != ZLRS_STATE_CONNECTED));
+	alerts.fault = false;
+	alerts.data_drop_bytes = drops;
 
-	zlrs_led_port_update(&in, now_ms);
+	zlrs_sys_publish_link(&link);
+	zlrs_sys_publish_alerts(&alerts);
 }
 
 /*
@@ -2715,9 +2707,8 @@ int main(void)
 		}
 	}
 	zlrs_duty_init(&duty, region, 0U);
-	if (ZLRS_HAS_LED) {
-		(void)zlrs_led_port_init();
-	}
+	/* The status LED comes up on its own thread and reads the state it renders: nothing to
+	 * init here (app/src/led_thread.c, app/src/sys_bus.h) */
 
 	/* Wait for the USP/RAC thread, then init RAC (see doc/07-architecture.md 6) */
 	SMTC_SW_PLATFORM_INIT();
@@ -2840,7 +2831,7 @@ int main(void)
 		pump_serial();
 		pump_crsf(now_ms);
 		handle_button(now_ms);
-		led_tick(now_ms);
+		broadcast_state();
 		report(now_ms);
 
 		const uint64_t elapsed_us = k_cyc_to_us_floor64(k_cycle_get_64() - start_cyc);

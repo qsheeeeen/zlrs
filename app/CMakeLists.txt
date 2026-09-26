@@ -9,9 +9,11 @@ project(app LANGUAGES C)
 target_sources(app PRIVATE
   src/main.c
   src/led_port.c
+  src/led_thread.c
   src/log_store.c
   src/ports.c
   src/store.c
+  src/sys_bus.c
   src/watchdog.c
 )
 
