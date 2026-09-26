@@ -1,6 +1,6 @@
 /*
  * Management protocol: runs on the management CDC while in management mode
- * (table: doc/10-security.md 10). Pure C framing and dispatch: persistence and link actions go to
+ * (table: doc/10-security.md 9). Pure C framing and dispatch: persistence and link actions go to
  * the application through backend callbacks, so the host tests can run every command against a
  * fake one.
  *
@@ -13,7 +13,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "zlrs/proto/config.h"
+#include "zlrs/proto/limits.h"
 
 #ifdef __cplusplus
 extern "C" {

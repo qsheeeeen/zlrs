@@ -1,6 +1,7 @@
 /*
- * Compile-time configuration of the protocol core. Layering: core/proto and core/link depend
- * on no Zephyr and run in host tests; the Zephyr glue lives in app/ only.
+ * Protocol core limits and constants: frame sizes, key lengths, the sync slots, the role
+ * values — everything that is fixed at compile time. Layering: core/proto and core/link depend on
+ * no Zephyr and run in host tests; the Zephyr glue lives in app/ only.
  *
  * SPDX-License-Identifier: Apache-2.0
  */

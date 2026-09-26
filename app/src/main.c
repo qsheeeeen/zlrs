@@ -865,7 +865,7 @@ static void run_slot(uint8_t slot)
 /*
  * Reboot into MCUboot serial recovery: set the boot-mode flag (retained SRAM, survives a reset),
  * which makes MCUboot wait for a signed image. The only entries are the management protocol's
- * recovery command and the debug shell, see doc/10-security.md 10.
+ * recovery command and the debug shell, see doc/10-security.md 9.
  */
 #ifdef PICO_RP2350
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_SHELL)

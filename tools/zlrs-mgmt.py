@@ -10,7 +10,7 @@
 #
 # Except for `enter`, every command first sends enter-management-mode and waits for the ACK.
 # The three USB CDCs are CRSF, data port and management port (/dev/ttyACM0/1/2).
-# Framing and the command table: doc/10-security.md 10 and include/zlrs/mgmt/mgmt.h.
+# Framing and the command table: doc/10-security.md 9 and include/zlrs/mgmt/mgmt.h.
 #
 # Standard library only; talking to a device needs pyserial (pip install pyserial).
 

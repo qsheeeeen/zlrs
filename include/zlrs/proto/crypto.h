@@ -12,7 +12,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "zlrs/proto/config.h"
+#include "zlrs/proto/limits.h"
 
 #ifdef __cplusplus
 extern "C" {

@@ -9,7 +9,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "zlrs/proto/config.h"
+#include "zlrs/proto/limits.h"
 #include "zlrs/proto/frame.h"
 
 #ifdef __cplusplus

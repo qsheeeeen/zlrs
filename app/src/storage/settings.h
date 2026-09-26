@@ -10,7 +10,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "zlrs/proto/config.h"
+#include "zlrs/proto/limits.h"
 
 int zlrs_storage_settings_init(void);
 

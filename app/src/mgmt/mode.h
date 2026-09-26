@@ -4,7 +4,7 @@
  * The host enters it through the management port (mgmt/port.h); the protocol — framing, command
  * dispatch — is core/mgmt and pure C, so every command lands here as a callback. This file is
  * where a command becomes a device action: an NVS write, a pairing, a reboot into recovery
- * (doc/08-firmware.md 2, doc/10-security.md 10).
+ * (doc/08-firmware.md 2, doc/10-security.md 9).
  *
  * The session works on the application's live state, handed in as a context instead of an
  * indirection table: the commands persist values (they take effect on the next boot), so the

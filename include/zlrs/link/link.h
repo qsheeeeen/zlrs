@@ -13,7 +13,7 @@
 #include <stdint.h>
 
 #include "zlrs/link/radio.h"
-#include "zlrs/proto/config.h"
+#include "zlrs/proto/limits.h"
 #include "zlrs/proto/crypto.h"
 #include "zlrs/proto/fhss.h"
 #include "zlrs/proto/frag.h"
