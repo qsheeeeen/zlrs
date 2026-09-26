@@ -32,7 +32,7 @@
 		zlrs-data-uart = &uart1;
 		zlrs-control-cdc = &cdc_acm_uart0;
 		zlrs-data-cdc = &cdc_acm_uart1;
-		zlrs-config-cdc = &cdc_acm_uart2;
+		zlrs-mgmt-cdc = &cdc_acm_uart2;
 		zlrs-button = &zlrs_button;
 		zlrs-led = &zlrs_led;
 		led-strip = &zlrs_led;
@@ -132,11 +132,11 @@
  * The CDCs on USB (doc/08-firmware.md 1):
  *   cdc_acm_uart0 = CRSF (alias zlrs-control-cdc)
  *   cdc_acm_uart1 = data port (alias zlrs-data-cdc)
- *   cdc_acm_uart2 = config port (alias zlrs-config-cdc): config protocol, enter config mode
+ *   cdc_acm_uart2 = management port (alias zlrs-mgmt-cdc): management protocol, enter management mode
  *   cdc_acm_uart3 = console (kernel log + shell): off by default, the debug overlay enables it
  *
  * The first two are the links' USB endpoints and compete with their UARTs (app/src/ports/serial.c);
- * the config port and console exist on USB only.
+ * the management port and console exist on USB only.
  */
 zephyr_udc0: &usbd {
 	status = "okay";

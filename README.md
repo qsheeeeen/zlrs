@@ -58,7 +58,7 @@ The first flash of a board:
      --image build/app/zephyr/zephyr.signed.bin
    ```
 
-Later updates are one command from the running application, through its config port:
+Later updates are one command from the running application, through its management port:
 
 ```shell
 python3 tools/zlrs-update.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04
@@ -73,22 +73,22 @@ rollback: [doc/08-firmware.md](doc/08-firmware.md) 5.
 `tools/zephyr-env.sh` exports `ZLRS_WS` (the workspace root), `ZLRS_APP`, `ZLRS_BOARD` (hf by
 default, use `.../lf` for LF) and `ZLRS_SDK_DIR` (`~/zephyr-sdk-1.0.0` by default).
 
-## Configuration
+## Management
 
-USB shows three CDCs: **control (CRSF), data and config** (debug images add a console, see
-[doc/12-debug.md](doc/12-debug.md)). The tool sends the enter-config-mode command on the config
-CDC; the radio stops entirely until it exits. Every user parameter is set at runtime with no
-firmware rebuild:
+USB shows three CDCs: **control (CRSF), data and management** (debug images add a console, see
+[doc/12-debug.md](doc/12-debug.md)). The tool sends the enter-management-mode command on the
+management CDC; the radio stops entirely until it exits. Every user parameter is set at runtime
+with no firmware rebuild:
 
 ```shell
-python3 tools/zlrs-config.py --self-test
-python3 tools/zlrs-config.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 status
-python3 tools/zlrs-config.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 set-phrase "correct horse battery staple"
-python3 tools/zlrs-config.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 set-region 3
-python3 tools/zlrs-config.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 set-role rx
-python3 tools/zlrs-config.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 set-profile p1
-python3 tools/zlrs-config.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 set-failsafe @default
-python3 tools/zlrs-config.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 exit
+python3 tools/zlrs-mgmt.py --self-test
+python3 tools/zlrs-mgmt.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 status
+python3 tools/zlrs-mgmt.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 set-phrase "correct horse battery staple"
+python3 tools/zlrs-mgmt.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 set-region 3
+python3 tools/zlrs-mgmt.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 set-role rx
+python3 tools/zlrs-mgmt.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 set-profile p1
+python3 tools/zlrs-mgmt.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 set-failsafe @default
+python3 tools/zlrs-mgmt.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 exit
 ```
 
 The command set is in [doc/10-security.md](doc/10-security.md) 9 and the firmware behaviour in
@@ -111,7 +111,7 @@ What a build decides (the full table is in [doc/08-firmware.md](doc/08-firmware.
 | `CONFIG_ZLRS_APP_DEBUG*` | off | debug images only: shell, stats log, boot delay, radio off, hopping off, P0 … see [doc/12-debug.md](doc/12-debug.md) 3 |
 
 The radio and the ports are not in this table on purpose: whether the board has a radio, a
-control port, a config CDC, a button or a LED is a devicetree fact (`app/src/platform/caps.h`).
+control port, a management CDC, a button or a LED is a devicetree fact (`app/src/platform/caps.h`).
 
 ## What this builds
 
@@ -120,9 +120,9 @@ control port, a config CDC, a button or a LED is a devicetree fact (`app/src/pla
 | application + bootloader | `zlrs-build` | the supported image: `--sysbuild` builds both domains (`<dir>/app/zephyr/zephyr.signed.bin` is what the bootloader installs, `<dir>/mcuboot/zephyr/zephyr.uf2` is the one thing that goes on over BOOTSEL) |
 | application only (edit loop) | `zlrs-rebuild-app -d <dir>` | re-runs the `app` domain in an existing sysbuild tree: the bootloader is already built and does not change while the application is being worked on |
 | debug image | `zlrs-build` + `app/debug.conf` + `app/debug.overlay` | console CDC, shell, stats logging |
-| host tests | `make -C tests/host run` | protocol core, link layer, CRSF, config protocol, LED; no hardware, no workspace |
-| bench self-test | `python3 tools/zlrs-bringup.py` | ports, config mode, config protocol reads and writes, NVS persistence |
-| config tool | `python3 tools/zlrs-config.py` | read status, write parameters, start pairing, exit |
+| host tests | `make -C tests/host run` | protocol core, link layer, CRSF, management protocol, LED; no hardware, no workspace |
+| bench self-test | `python3 tools/zlrs-bringup.py` | ports, management mode, management protocol reads and writes, NVS persistence |
+| management tool | `python3 tools/zlrs-mgmt.py` | read status, write parameters, start pairing, exit |
 | update tool | `python3 tools/zlrs-update.py` | trigger recovery, upload a signed image, wait for the application |
 | tree gates | `tools/gates.sh` | core purity, no board names in `app/`, no debug switch in shipped configs |
 
@@ -133,14 +133,14 @@ check the toolchain and radio stack on their own.
 
 ```
 app/src/                 Zephyr application, one directory per layer (doc/07-architecture.md 5):
-                         main.c plus platform/ ports/ link/ config/ state/ ui/ storage/
+                         main.c plus platform/ ports/ link/ mgmt/ state/ ui/ storage/
 boards/zlrs/             board definitions (RP2350-Zero plus Core2021)
 core/proto/              protocol core: framing, reassembly, hop tables, key derivation and
                          tags, telemetry payload, modulation tiers and the airtime model
 core/link/               link layer: state machine, pairing and sessions, superframe slots,
                          the radio abstraction, reliable retransmit, rate and power control
 core/crsf/               CRSF codec
-core/config/             config protocol: framing, dispatch, status encoding
+core/mgmt/             management protocol: framing, dispatch, status encoding
 core/region/             region tables, power and duty accounting, the control time plan
 core/led/                status LED engine
 include/zlrs/            public headers
@@ -149,7 +149,7 @@ subsys/bootguard/        bootloader-side watchdog handling
 drivers/entropy/         the RP2350 TRNG driver we own
 dts/bindings/            bindings for zlrs-specific nodes
 tests/host/              host tests and the two-node simulation
-tools/                   workspace, config, recovery, update, bring-up, gates
+tools/                   workspace, management, recovery, update, bring-up, gates
 doc/                     design documents
 zephyr/module.yml        this repository as a Zephyr module
 ```
@@ -188,7 +188,7 @@ is decided but not implemented yet, the design document states the design and
 | [07-architecture](doc/07-architecture.md) | the two links, band mixing, time sharing, timing budget, layering, threads |
 | [08-firmware](doc/08-firmware.md) | ports and modes, runtime configuration, build-time choices, updates, error handling |
 | [09-protocol](doc/09-protocol.md) | frame format, state machine, pairing and sessions, superframe, ARQ, hopping and regulation |
-| [10-security](doc/10-security.md) | identity and keys, pairing, sessions, profiles, threat model, the config protocol |
+| [10-security](doc/10-security.md) | identity and keys, pairing, sessions, profiles, threat model, the management protocol |
 | [11-ux](doc/11-ux.md) | the button and the status LED |
 | [12-debug](doc/12-debug.md) | debug images, isolation switches and on-target debugging (developers) |
 | [13-roadmap](doc/13-roadmap.md) | to-dos, pending defaults and acceptance criteria |
@@ -207,7 +207,7 @@ is decided but not implemented yet, the design document states the design and
 1. **The board ships with the repository**: `zephyr/module.yml` makes the repository root both
    `board_root` and `dts_root`, so no `--shield` is needed.
 2. **New hardware means devicetree only**: the application knows the aliases
-   (`lora-transceiver`, `zlrs-control-uart`/`-cdc`, `zlrs-data-uart`/`-cdc`, `zlrs-config-cdc`,
+   (`lora-transceiver`, `zlrs-control-uart`/`-cdc`, `zlrs-data-uart`/`-cdc`, `zlrs-mgmt-cdc`,
    `zlrs-button`, `zlrs-led`) and a missing alias trims that port or peripheral automatically.
 3. **The toolchain is the Zephyr SDK**: a distro `arm-none-eabi-gcc` trips a static assertion.
 4. **The image may not grow past its code partition**: overrunning it is a build error.
@@ -215,7 +215,7 @@ is decided but not implemented yet, the design document states the design and
 
 ## Tests
 
-`tests/host` simulates with a fake radio and a fake clock: frame and config codecs, pairing and
+`tests/host` simulates with a fake radio and a fake clock: frame and management codecs, pairing and
 sessions, hop lockstep, replay protection, multi-frame passthrough and loss recovery, ARQ,
 rate and power control, the LED language, peer loss and reconnection, several nodes on one
 channel, malformed input, timestamp and sequence wrap, and every isolation switch "still works
@@ -227,7 +227,7 @@ with this off". ASan and UBSan are on by default.
 | --- | --- | --- |
 | `clang-format --dry-run --Werror` over `git ls-files '*.c' '*.h'` | `build.yml` | style drift |
 | host tests with ASan + UBSan | `build.yml` | protocol and link regressions |
-| tool self-tests (`zlrs-config`, `zlrs-recovery`, `zlrs-update`, `zlrs-bringup`) | `build.yml` | framing drift between tools and firmware |
+| tool self-tests (`zlrs-mgmt`, `zlrs-recovery`, `zlrs-update`, `zlrs-bringup`) | `build.yml` | framing drift between tools and firmware |
 | build matrix: both SKUs x plain, debug overlay, bench switches, single-link cuts, LoRa, racing, MCUboot | `firmware.yml` | Kconfig and devicetree combinations that do not compile |
 | `tools/gates.sh`: `core/` has no `#include <zephyr/`, `app/` names no board, shipped configs carry no `ZLRS_APP_DEBUG_*` | `build.yml`, or by hand | platform code leaking into the pure C core, board branching, a debug-only switch shipping in an image |
 

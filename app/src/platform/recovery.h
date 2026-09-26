@@ -1,7 +1,7 @@
 /*
  * Recovery: hand the board to MCUboot's serial recovery so the host can flash it.
  *
- * Reached from the config protocol (a command) and from the debug shell; both are the same action.
+ * Reached from the management protocol (a command) and from the debug shell: the same action.
  * See doc/08-firmware.md 5 for the boot chain it lands in.
  *
  * Naming: `<dir>/<file>.c` carries `zlrs_<dir>_<file>_*()`, so this is `zlrs_platform_recovery_*()`.

@@ -13,7 +13,7 @@ The firmware presents three CDCs by default:
 | --- | --- | --- |
 | control | CRSF: channels down, telemetry up | UART0 (GP0/GP1, 420000) |
 | data | the passthrough stream | UART1 (GP8/GP9, 115200 by default, changeable in NVS) |
-| **config** | the config protocol: enter config mode, read and write parameters | - |
+| **management** | the management protocol: enter management mode, read and write parameters | - |
 
 Debug builds add one more **console** CDC (kernel log plus shell, see [12-debug](12-debug.md)).
 In bootloader mode the device shows two CDCs (recovery and console) instead.
@@ -30,18 +30,18 @@ alone would leave the CDC unselected and host bytes would be dropped silently as
 active endpoint". The ISR records "a byte arrived" **before** checking the active endpoint, so
 the first frame is never lost to that lag (`zlrs_port_serial_active()` in `app/src/ports/serial.c`).
 
-The two links choose their endpoints independently. The config CDC carries no passthrough
-traffic, only the config protocol; a board without that CDC simply has no config mode.
+The two links choose their endpoints independently. The management CDC carries no passthrough
+traffic, only the management protocol; a board without that CDC simply has no management mode.
 
 ## 2. Operating modes
 
-| Mode | Links | Config CDC | Notes |
+| Mode | Links | Management CDC | Notes |
 | --- | --- | --- | --- |
 | **application** | normal traffic | idle | the usual state |
-| **config** | **radio stopped entirely** (no RX, no TX) | runs the config protocol | entered by a tool command, left on `EXIT` or after 300 s idle |
+| **management** | **radio stopped entirely** (no RX, no TX) | runs the management protocol | entered by a tool command, left on `EXIT` or after 300 s idle |
 | serial recovery | no application | - | bootloader mode, see 5 |
 
-While in config mode:
+While in management mode:
 
 - the radio neither receives nor transmits and the link state freezes;
 - bytes arriving on the data port are **dropped and counted**, never buffered; normal traffic
@@ -75,12 +75,12 @@ Who decides what:
 | --- | --- | --- |
 | Which links a build supports | build time | Kconfig shape switches, gated by capabilities |
 | Which port carries which link on a two-port board | build time | devicetree aliases |
-| Which link the single port carries *(design, not implemented)* | runtime, default from devicetree | config protocol, stored in NVS |
+| Which link the single port carries *(design, not implemented)* | runtime, default from devicetree | management protocol, stored in NVS |
 | Band role and control modulation | build time | Kconfig choices |
 | Role TX / RX, security profile | runtime, default at build time | `set-role` / `set-profile`, stored in NVS |
-| Region, power ceiling, baud rate, failsafe values, pairing | runtime | config protocol, stored in NVS |
+| Region, power ceiling, baud rate, failsafe values, pairing | runtime | management protocol, stored in NVS |
 | Rate tier, frame rate, telemetry period | build time today | the ledger in [13-roadmap](13-roadmap.md) tracks the missing commands |
-| Hardware presence (ports, config channel, button, LED, watchdog, TRNG, radio design) | devicetree | `app/src/platform/caps.h` |
+| Hardware presence (ports, management channel, button, LED, watchdog, TRNG, radio design) | devicetree | `app/src/platform/caps.h` |
 | Bench isolation (`RADIO=n`, hopping off, P0, …) | build time, debug images only | `ZLRS_APP_DEBUG*`, see [12-debug](12-debug.md) 3 |
 
 Two properties follow and are worth stating explicitly: **one image runs both roles** (a field
@@ -111,12 +111,12 @@ What a build decides:
 - this is expressed in devicetree, not in `#ifdef`s.
 
 The application only knows aliases (`zlrs-control-uart`, `zlrs-control-cdc`, `zlrs-data-uart`,
-`zlrs-data-cdc`, `zlrs-config-cdc`, `zlrs-button`, `zlrs-led`); a missing alias means "this board
+`zlrs-data-cdc`, `zlrs-mgmt-cdc`, `zlrs-button`, `zlrs-led`); a missing alias means "this board
 has no such port or peripheral" and everything still builds. Whether there is a CRSF port, a
-config port, a button or a status LED is therefore a devicetree fact (`app/src/platform/caps.h`),
+management port, a button or a status LED is therefore a devicetree fact (`app/src/platform/caps.h`),
 not a switch — a switch could only disagree with the board. `ZLRS_APP_CORE` enables the pure C
 libraries every image carries (`ZLRS_PROTO`, `ZLRS_LINK`, `ZLRS_REGION`, `ZLRS_CRSF`,
-`ZLRS_CONFIG`, `ZLRS_LED`).
+`ZLRS_MGMT`, `ZLRS_LED`).
 
 That header is the whole hardware interface:
 
@@ -124,7 +124,7 @@ That header is the whole hardware interface:
 /* ports */
 #define ZLRS_PORT_CTRL_FIXED   (DT_NODE_EXISTS(DT_ALIAS(zlrs_control_uart)) || DT_NODE_EXISTS(DT_ALIAS(zlrs_control_cdc)))
 #define ZLRS_PORT_DATA_FIXED   (DT_NODE_EXISTS(DT_ALIAS(zlrs_data_uart))    || DT_NODE_EXISTS(DT_ALIAS(zlrs_data_cdc)))
-#define ZLRS_PORT_CONFIG       DT_NODE_EXISTS(DT_ALIAS(zlrs_config_cdc))
+#define ZLRS_PORT_MGMT       DT_NODE_EXISTS(DT_ALIAS(zlrs_mgmt_cdc))
 
 /* peripherals */
 #define ZLRS_HAS_BUTTON        DT_NODE_EXISTS(DT_ALIAS(zlrs_button))
@@ -152,7 +152,7 @@ What the hardware provides also bounds what the software may do:
 | --- | --- | --- |
 | two ports | control link plus data link, or both ports on one link | a third link |
 | one port | one link, role chosen by configuration | two simultaneous links |
-| a config CDC | configuration protocol, config mode, recovery entry | using it as a link endpoint |
+| a management CDC | configuration protocol, management mode, recovery entry | using it as a link endpoint |
 | a button | long press to pair | — (pairing from the tool always works) |
 | a status LED | the LED language ([11-ux](11-ux.md)) | — |
 | NVS | keys, pairing, failsafe, baud, region, power, role, profile | **required**: a board without NVS is rejected |
@@ -171,7 +171,7 @@ serial recovery, none needing the button:
 
 | Entry | When it applies |
 | --- | --- |
-| from the application | the recovery command on the config port (debug builds can also use `zlrs recovery` in the shell), which sets the boot-mode flag and reboots |
+| from the application | the recovery command on the management port (debug builds can also use `zlrs recovery` in the shell), which sets the boot-mode flag and reboots |
 | boot window | a valid mcumgr frame within 2 s of any reset (`CONFIG_BOOT_SERIAL_WAIT_FOR_DFU_TIMEOUT`) |
 | no bootable image | a failed signature check or an empty image parks in recovery |
 
@@ -209,7 +209,7 @@ not start, USB never comes up, the host never confirms or the image is corrupt. 
    rolled back.
 
 One command updates a device:
-`python3 tools/zlrs-update.py --port <application config port>` — trigger recovery, wait for
+`python3 tools/zlrs-update.py --port <application management port>` — trigger recovery, wait for
 the recovery port, read the active slot, write the other one and mark it test, wait for the
 application, check the image hash and send `confirm`. The tool writes pending but **never
 permanent**. A broken *application* is recovered through the bootloader too (serial recovery is
@@ -222,14 +222,14 @@ trailer, which MCUboot treats as the initial image — it boots it without askin
 confirmation and there is nothing to revert to; an app that resets during init then simply
 loops. **The application is therefore never installed as a UF2**: BOOTSEL carries the bootloader
 image only, and every application image — first install included — goes in through the bootloader
-(serial recovery on a blank board, the config port afterwards). That is the only path on which
+(serial recovery on a blank board, the management port afterwards). That is the only path on which
 the signature check, the confirmation and the rollback apply.
 
 ## 6. Error handling
 
 - **A fatal fault stops the air, not the device**: a region/radio-design mismatch, a PSA
   failure or an entropy self-test failure drops into `fault_loop()`, which shows the fast red
-  alarm, keeps feeding the watchdog and keeps the config port serving — so the device can still
+  alarm, keeps feeding the watchdog and keeps the management port serving — so the device can still
   be entered, reconfigured and reflashed instead of needing BOOTSEL.
 - **A fault on an unconfirmed image reboots instead**: 2 s after the fault the application
   resets and MCUboot rolls back. A flashable fault state is no reason to keep a broken build.
@@ -264,8 +264,8 @@ firmware therefore keeps a log store in flash, and it is always on (no switch):
   once.
 - **The partition is a build-time property**: boards without a `log_partition` node still build;
   they log to the console only and say so once at boot.
-- **Export is a host-side operation**: the store is read over the config port, so it works on a
-  board whose radio and console are both misbehaving. `zlrs-config.py logs` dumps the files to a
+- **Export is a host-side operation**: the store is read over the management port, so it works on a
+  board whose radio and console are both misbehaving. `zlrs-mgmt.py logs` dumps the files to a
   directory; nothing in the firmware has to stop doing its job for the export.
 
 The coredump partition next to it takes the fault case that a log cannot describe (stack, PC,

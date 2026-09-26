@@ -26,7 +26,7 @@
 #include <zephyr/drivers/hwinfo.h>
 #endif
 
-#include "zlrs/config/config.h"
+#include "zlrs/mgmt/mgmt.h"
 
 /*
  * Only boards whose partition table has a log partition get this: the whole file is about that
@@ -45,11 +45,11 @@ int zlrs_storage_log_probe(void)
 	return -ENODEV;
 }
 
-int zlrs_storage_log_info(zlrs_cfg_log_info_t *out)
+int zlrs_storage_log_info(zlrs_mgmt_log_info_t *out)
 {
 	ARG_UNUSED(out);
 
-	return ZLRS_CFG_E_STATE;
+	return ZLRS_MGMT_E_STATE;
 }
 
 int zlrs_storage_log_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *out, uint8_t *out_len)
@@ -60,7 +60,7 @@ int zlrs_storage_log_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *
 	ARG_UNUSED(out);
 	ARG_UNUSED(out_len);
 
-	return ZLRS_CFG_E_STATE;
+	return ZLRS_MGMT_E_STATE;
 }
 #else
 
@@ -87,7 +87,7 @@ struct log_file {
 	uint32_t size;
 };
 
-static struct log_file log_files[ZLRS_CFG_LOG_FILES_MAX];
+static struct log_file log_files[ZLRS_MGMT_LOG_FILES_MAX];
 static uint8_t log_file_count;
 
 /* List the store, smallest file number first: the backend names files `<prefix><0000>` upward and
@@ -104,14 +104,14 @@ static int log_store_scan(void)
 	if (!log_mounted) {
 		rc = log_store_mount();
 		if (rc != 0) {
-			return ZLRS_CFG_E_STATE;
+			return ZLRS_MGMT_E_STATE;
 		}
 	}
 
 	fs_dir_t_init(&dir);
 	rc = fs_opendir(&dir, LOG_MOUNT_POINT);
 	if (rc != 0) {
-		return ZLRS_CFG_E_STATE;
+		return ZLRS_MGMT_E_STATE;
 	}
 
 	for (;;) {
@@ -140,7 +140,7 @@ static int log_store_scan(void)
 			continue;
 		}
 
-		if (found < ZLRS_CFG_LOG_FILES_MAX) {
+		if (found < ZLRS_MGMT_LOG_FILES_MAX) {
 			/* Insert sorted: at most a handful of files, an insertion sort is plenty */
 			uint8_t at = found;
 
@@ -167,21 +167,21 @@ static int log_store_scan(void)
 		LOG_INF("log store: %u file(s), newest log.%04u", found, log_files[found - 1U].num);
 	}
 
-	return ZLRS_CFG_OK;
+	return ZLRS_MGMT_OK;
 }
 
 /* What the export needs: how many files, which is newest, and each size. No store on this board is
  * E_STATE, not an empty list — "nothing logged yet" and "no store here" are different answers. */
-int zlrs_storage_log_info(zlrs_cfg_log_info_t *out)
+int zlrs_storage_log_info(zlrs_mgmt_log_info_t *out)
 {
 	int rc;
 
 	if (out == NULL) {
-		return ZLRS_CFG_E_PARAM;
+		return ZLRS_MGMT_E_PARAM;
 	}
 
 	rc = log_store_scan();
-	if (rc != ZLRS_CFG_OK) {
+	if (rc != ZLRS_MGMT_OK) {
 		return rc;
 	}
 
@@ -194,10 +194,10 @@ int zlrs_storage_log_info(zlrs_cfg_log_info_t *out)
 		out->size[i] = log_files[i].size;
 	}
 
-	return ZLRS_CFG_OK;
+	return ZLRS_MGMT_OK;
 }
 
-/* One chunk of one file. The caller (config protocol) bounds len; a short tail returns short. */
+/* One chunk of one file. The caller (management protocol) bounds len; a short tail returns short. */
 int zlrs_storage_log_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *out, uint8_t *out_len)
 {
 	char path[sizeof(LOG_MOUNT_POINT) + 16U];
@@ -206,7 +206,7 @@ int zlrs_storage_log_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *
 	int rc;
 
 	if (out == NULL || out_len == NULL || index >= log_file_count || len == 0U) {
-		return ZLRS_CFG_E_PARAM;
+		return ZLRS_MGMT_E_PARAM;
 	}
 
 	(void)snprintf(path, sizeof(path), "%s/%s%04u", LOG_MOUNT_POINT,
@@ -215,24 +215,24 @@ int zlrs_storage_log_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *
 	fs_file_t_init(&file);
 	rc = fs_open(&file, path, FS_O_READ);
 	if (rc != 0) {
-		return ZLRS_CFG_E_STATE;
+		return ZLRS_MGMT_E_STATE;
 	}
 
 	rc = fs_seek(&file, (off_t)offset, FS_SEEK_SET);
 	if (rc != 0) {
 		(void)fs_close(&file);
-		return ZLRS_CFG_E_PARAM;
+		return ZLRS_MGMT_E_PARAM;
 	}
 
 	got = fs_read(&file, out, len);
 	(void)fs_close(&file);
 	if (got < 0) {
-		return ZLRS_CFG_E_STATE;
+		return ZLRS_MGMT_E_STATE;
 	}
 
 	*out_len = (uint8_t)got;
 
-	return ZLRS_CFG_OK;
+	return ZLRS_MGMT_OK;
 }
 
 /*

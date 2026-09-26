@@ -1820,7 +1820,7 @@ void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg, const zlrs_ra
 	if (link->cfg.data_every_n == 0U) {
 		link->cfg.data_every_n = 1U;
 	}
-	/* Sub-band mix: the initial level comes from config, the TX advances it via SYNC versions */
+	/* Sub-band mix: the initial level comes from the configuration, the TX advances it via SYNC versions */
 	link->sub_mix = (uint8_t)(link->cfg.mix & 0x03U);
 	link->sub_mix_default = link->sub_mix;
 	link->sub_mix_version = 0U;

@@ -11,7 +11,7 @@ Two values identify a device and its group:
 - **Device id** (4 bytes): generated from the TRNG on the first boot and stored in NVS. It is
   not secret; it is how two ends name each other. `new-dev-id` makes a fresh one on demand,
   which drops the pairing record because the key tree is derived from it.
-- **Root key** (32 bytes): the shared secret of a group. It is written once with the config tool
+- **Root key** (32 bytes): the shared secret of a group. It is written once with the management tool
   (a 64-character hex key, or a passphrase the device derives), never leaves the device and is
   the root of every derived value.
 
@@ -125,7 +125,7 @@ one.
 - Input is a **passphrase** (at least 12 characters recommended) or 64 hex characters.
 - PBKDF2-HMAC-SHA256, **100,000 rounds**, fixed salt `zlrs/kdf/v1` that carries the KDF version;
   the derivation runs on the device, so a third-party configurator cannot weaken it.
-- 100,000 rounds take roughly a second on this MCU, which is why config mode disarms the
+- 100,000 rounds take roughly a second on this MCU, which is why management mode disarms the
   watchdog.
 - MAC: HMAC-SHA256 truncated to 4 bytes. Keeping PBKDF2, HKDF and the MAC in one hash family
   means P1 needs no AES.
@@ -141,17 +141,17 @@ On target the primitives go through Zephyr's PSA Crypto (`core/proto/crypto_psa.
 tests use a pure C implementation behind the same interface (`tests/host/crypto_soft.c`), and
 the two are checked against each other with fixed vectors.
 
-## 9. Configuration protocol
+## 9. Management protocol
 
-The config protocol runs on the **config CDC only**, on a local USB connection; physical access
+The management protocol runs on the **management CDC only**, on a local USB connection; physical access
 is the boundary. It is a small framed protocol (`0xA5 0x5A`, version 3, CRC8) with request and
-response frames, documented by `include/zlrs/config/config.h` and implemented in
-`core/config/`.
+response frames, documented by `include/zlrs/mgmt/mgmt.h` and implemented in
+`core/mgmt/`.
 
 | Host command | Effect |
 | --- | --- |
 | read status | role, link state, flags, `dev_id`, `peer_id`, LQ, radio design band, region, security profile, power ceiling, data baud |
-| enter config mode | the formal entry; the radio stops for the session |
+| enter management mode | the formal entry; the radio stops for the session |
 | start pairing | opens the pairing window at once |
 | erase pairing | effective on the next boot |
 | write passphrase | the device derives the root key with PBKDF2 |
@@ -168,7 +168,7 @@ response frames, documented by `include/zlrs/config/config.h` and implemented in
 | read build string | which version is running after an upgrade |
 | read image hash | the update tool's verdict: the image just sent, or an older one after rollback |
 | confirm upgrade | the host confirms this upgrade; without it the image rolls back |
-| exit | leaves config mode |
+| exit | leaves management mode |
 
-The tool that speaks it is `tools/zlrs-config.py`; the update flow built on top is in
+The tool that speaks it is `tools/zlrs-mgmt.py`; the update flow built on top is in
 [08-firmware](08-firmware.md) 5.

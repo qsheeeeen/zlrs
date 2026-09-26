@@ -1760,7 +1760,7 @@ static void test_cadence(void)
 	printf("link: cadence (sparse tlm / data)\n");
 
 	sim_init(&sim);
-	/* Both ends need the same cadence: same firmware, same config */
+	/* Both ends need the same cadence: same firmware, same settings */
 	sim.tx.ctl.cfg.tlm_every_n = 4U;
 	sim.rx.ctl.cfg.tlm_every_n = 4U;
 	sim.tx.data.cfg.data_every_n = 5U;

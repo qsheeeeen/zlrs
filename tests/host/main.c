@@ -46,7 +46,7 @@ int main(void)
 	test_proto();
 	test_link();
 	test_crsf();
-	test_config();
+	test_mgmt();
 	test_region();
 	test_mod();
 	test_led();

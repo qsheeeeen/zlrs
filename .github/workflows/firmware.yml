@@ -82,9 +82,9 @@ jobs:
             -DEXTRA_CONF_FILE="$ZLRS_REPO_ROOT/app/debug.conf" \
             -DDTC_OVERLAY_FILE="$ZLRS_REPO_ROOT/app/debug.overlay"
 
-      # Single-link cut: the data link alone (control link, CRSF port, config mode, button and LED
+      # Single-link cut: the data link alone (control link, CRSF port, management mode, button and LED
       # all off).
-      # One switch is enough: the CRSF port belongs to the control link, and config mode, button
+      # One switch is enough: the CRSF port belongs to the control link, and management mode, button
       # and LED follow devicetree (app/src/platform/caps.h), so cutting the control link takes
       # the CRSF port with it and the rest stays available on a board that has the hardware.
       - name: build (data link only, both skus)

@@ -7,7 +7,7 @@
 # port, upload the signed image and wait for the application to come back. No replugging, no
 #
 # Flow (see doc/08-firmware.md 6):
-#   1. send the recovery command to the application's config port (tools/zlrs-recovery.py),
+#   1. send the recovery command to the application's management port (tools/zlrs-recovery.py),
 #      the application sets the boot-mode flag and reboots;
 #   2. MCUboot stops in serial recovery and enumerates as "ZLRS MCUBOOT" (two CDCs: recovery
 #      first, log second); the script finds it by name under /dev/serial/by-id;
@@ -71,8 +71,8 @@ def find_by_id(hint: str, exclude: str | None = None, serial: str | None = None)
     return found
 
 
-def app_config_ports(serial: str | None = None) -> list[str]:
-    """Application config ports (the third CDC, ...-if04), optionally of one module only."""
+def app_mgmt_ports(serial: str | None = None) -> list[str]:
+    """Application management ports (the third CDC, ...-if04), optionally of one module only."""
     return [
         p for p in find_by_id(APP_PORT_HINT, exclude=RECOVERY_PORT_HINT, serial=serial)
         if p.endswith("-if04")
@@ -166,37 +166,37 @@ def inactive_slot(client: str, port: str, baud: int) -> int | None:
     return 1 - active
 
 
-def config_probe_command(port: str) -> list[str]:
+def mgmt_probe_command(port: str) -> list[str]:
     """
-    Send one config command (status) to the new image's config port; the upgrade flow decides the
+    Send one management command (status) to the new image's management port; the upgrade flow decides the
     outcome, see steps [5/6] and [6/6] in main().
     """
-    return [sys.executable, str(repo_root() / "tools" / "zlrs-config.py"),
+    return [sys.executable, str(repo_root() / "tools" / "zlrs-mgmt.py"),
             "--port", port, "status"]
 
 
-def config_subcmd_command(port: str, subcmd: str) -> list[str]:
-    return [sys.executable, str(repo_root() / "tools" / "zlrs-config.py"),
+def mgmt_subcmd_command(port: str, subcmd: str) -> list[str]:
+    return [sys.executable, str(repo_root() / "tools" / "zlrs-mgmt.py"),
             "--port", port, "--timeout", "3", subcmd]
 
 
-def run_config_subcmd(port: str, subcmd: str) -> tuple[int, str]:
-    """Run one config command, return (rc, output)."""
-    result = subprocess.run(config_subcmd_command(port, subcmd), capture_output=True,
+def run_mgmt_subcmd(port: str, subcmd: str) -> tuple[int, str]:
+    """Run one management command, return (rc, output)."""
+    result = subprocess.run(mgmt_subcmd_command(port, subcmd), capture_output=True,
                             text=True, check=False)
     return result.returncode, f"{result.stdout or ''}{result.stderr or ''}"
 
 
-def run_config_subcmd_retry(port: str, subcmd: str, attempts: int = 5,
+def run_mgmt_subcmd_retry(port: str, subcmd: str, attempts: int = 5,
                             delay: float = 2.0) -> tuple[int, str]:
     """
-    Retrying variant: right after a new image boots the main loop may not serve config sessions
+    Retrying variant: right after a new image boots the main loop may not serve management sessions
     yet (radio init is still running), so the first attempts time out. That is normal, not a
     """
     rc, out = 1, ""
 
     for i in range(attempts):
-        rc, out = run_config_subcmd(port, subcmd)
+        rc, out = run_mgmt_subcmd(port, subcmd)
         if rc == 0:
             return rc, out
         if i + 1 < attempts:
@@ -274,7 +274,7 @@ def self_test() -> int:
     if "--slot" not in slotted or slotted[slotted.index("--slot") + 1] != "2":
         problems.append(f"upload command must name the inactive slot: {slotted}")
 
-    probe = config_probe_command("/dev/ttyACM0")
+    probe = mgmt_probe_command("/dev/ttyACM0")
     if "status" not in probe or "/dev/ttyACM0" not in probe:
         problems.append(f"host confirm command is wrong: {probe}")
 
@@ -301,7 +301,7 @@ def self_test() -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Trigger recovery and upgrade the device firmware")
-    parser.add_argument("--port", help="application config port (for the trigger), e.g. /dev/ttyACM2")
+    parser.add_argument("--port", help="application management port (for the trigger), e.g. /dev/ttyACM2")
     parser.add_argument("--serial", help="pick a module by USB serial substring (with several plugged in)")
     parser.add_argument("--recovery-port", help="bootloader recovery port; skips the search")
     parser.add_argument("--image", help="signed image path (defaults to <workspace>/build/app/zephyr/zephyr.signed.bin)")
@@ -312,7 +312,7 @@ def main() -> int:
     parser.add_argument("--no-wait", action="store_true", help="do not wait for the application ports")
     parser.add_argument("--timeout", type=float, default=15.0, help="how long to wait for ports (s, default 15)")
     parser.add_argument("--no-confirm-check", action="store_true",
-                        help="skip the host confirm (by default a command goes to the new image's config port)")
+                        help="skip the host confirm (by default a command goes to the new image's management port)")
     parser.add_argument("--self-test", action="store_true", help="check paths and commands without a device")
     args = parser.parse_args()
 
@@ -327,15 +327,15 @@ def main() -> int:
     # 1. trigger
     if not args.no_trigger:
         if args.port is None:
-            ports = app_config_ports(args.serial)
+            ports = app_mgmt_ports(args.serial)
             if not ports:
-                parser.error("no application config port (...-if04) found; pass --port")
+                parser.error("no application management port (...-if04) found; pass --port")
             if len(ports) > 1:
                 parser.error("several modules are plugged in: pick one with --serial, or name its "
-                             "config port with --port:\n  " + "\n  ".join(ports))
+                             "management port with --port:\n  " + "\n  ".join(ports))
             args.port = ports[0]
         if run_trigger(args.port, args.baud) != 0:
-            print("trigger failed: the device did not answer on the config port", file=sys.stderr)
+            print("trigger failed: the device did not answer on the management port", file=sys.stderr)
             return 1
     else:
         print("[1/4] skipping the trigger (--no-trigger)")
@@ -407,18 +407,18 @@ def main() -> int:
                   "reset rolls back to the previous image; retry once it is back on the old one (08-firmware 6)",
                   file=sys.stderr)
             return 1
-        app_port = next((p for p in app_config_ports(args.serial)), port)
+        app_port = next((p for p in app_mgmt_ports(args.serial)), port)
         print(f"    application is up: {app_port}")
     else:
         print("[4/6] skipping the wait for application ports")
 
     if app_port is None:
-        print("[5/6] no application config port: cannot verify or confirm, this image rolls back", file=sys.stderr)
+        print("[5/6] no application management port: cannot verify or confirm, this image rolls back", file=sys.stderr)
         return 1
 
     # 5. verify the running image is the one just sent: compare hashes (build strings can match)
     want_hash = image_hash_of(image)
-    rc, out = run_config_subcmd_retry(app_port, "image-hash")
+    rc, out = run_mgmt_subcmd_retry(app_port, "image-hash")
     got_hash = parse_hex_hash(out) if rc == 0 else None
 
     print(f"[5/6] verify the running image: expected {want_hash or '?'}, device reports {got_hash or '?'}")
@@ -435,7 +435,7 @@ def main() -> int:
         print("[6/6] skipping the confirm (--no-confirm-check): this image will not stay, it rolls back")
         return 0
 
-    rc, out = run_config_subcmd_retry(app_port, "confirm")
+    rc, out = run_mgmt_subcmd_retry(app_port, "confirm")
     if out.strip():
         print(out.rstrip())
 
@@ -443,7 +443,7 @@ def main() -> int:
         print("confirm failed: the device did not accept it, this image rolls back", file=sys.stderr)
         return 1
 
-    rc, out = run_config_subcmd_retry(app_port, "build")
+    rc, out = run_mgmt_subcmd_retry(app_port, "build")
     print(f"    upgrade succeeded: image confirmed{('  firmware ' + out.strip()) if rc == 0 else ''}")
     return 0
 

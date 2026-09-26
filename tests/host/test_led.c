@@ -17,7 +17,7 @@ static bool is_off(zlrs_led_rgb_t c)
 	return c.r == 0U && c.g == 0U && c.b == 0U;
 }
 
-static void test_config_mode_wins(void)
+static void test_mgmt_mode_wins(void)
 {
 	zlrs_led_input_t in;
 
@@ -25,8 +25,8 @@ static void test_config_mode_wins(void)
 
 	memset(&in, 0, sizeof(in));
 	in.uptime_ms = 10000U;
-	in.config_mode = true;
-	in.failsafe = true; /* with both set, the LED only shows config mode */
+	in.mgmt_mode = true;
+	in.failsafe = true; /* with both set, the LED only shows management mode */
 	in.link_state = ZLRS_STATE_SEARCHING;
 
 	/* White, on for 500 ms out of a 1 s period */
@@ -34,8 +34,8 @@ static void test_config_mode_wins(void)
 	CHECK(is_off(zlrs_led_frame(&in, 500U)));
 	CHECK(!is_off(zlrs_led_frame(&in, 2000U)));
 
-	/* Config mode off: failsafe takes over (red, 1 Hz, 800 ms on: the longest window is the alert) */
-	in.config_mode = false;
+	/* Management mode off: failsafe takes over (red, 1 Hz, 800 ms on: the longest window is the alert) */
+	in.mgmt_mode = false;
 	CHECK(!is_off(zlrs_led_frame(&in, 0U)));
 	CHECK(!is_off(zlrs_led_frame(&in, 500U)));
 	CHECK(is_off(zlrs_led_frame(&in, 900U)));
@@ -230,7 +230,7 @@ static void test_boot_role(void)
 void test_led(void)
 {
 	test_boot_role();
-	test_config_mode_wins();
+	test_mgmt_mode_wins();
 	test_link_states();
 	test_failsafe_while_connected();
 	test_connected_lq();

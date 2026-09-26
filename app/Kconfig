@@ -26,11 +26,11 @@ config ZLRS_APP_CORE
 	select ZLRS_LINK
 	select ZLRS_REGION
 	select ZLRS_CRSF
-	select ZLRS_CONFIG
+	select ZLRS_MGMT
 	select ZLRS_LED
 	help
 	  The pure C layers every image carries: framing and hopping, superframe and pairing, the
-	  regulatory gate, the CRSF codec, the config protocol and the LED patterns. They have no
+	  regulatory gate, the CRSF codec, the management protocol and the LED patterns. They have no
 	  visible switch; whether there is a port or a LED to use them with comes from devicetree
 	  (app/src/platform/caps.h), and USB is selected by the board.
 
@@ -251,18 +251,18 @@ config ZLRS_APP_CRSF_TIMEOUT_MS
 	  With the handset unplugged or powered off, the TX swaps in the preset failsafe payload
 	  when no RC frame arrives within this window. See doc/09-protocol.md 3.4.
 
-config ZLRS_APP_CONFIG_TIMEOUT_S
-	int "Config mode idle timeout (s)"
+config ZLRS_APP_MGMT_TIMEOUT_S
+	int "Management mode idle timeout (s)"
 	default 300
 	help
-	  Config mode exits after this long without a command, see doc/08-firmware.md 2.
+	  Management mode exits after this long without a command, see doc/08-firmware.md 2.
 
 config ZLRS_APP_PAIR_HOLD_MS
 	int "Hold time needed to start pairing (ms)"
 	default 1000
 	help
 	  The button has exactly one action: holding it this long starts pairing (doc/11-ux.md).
-	  There is no press-and-hold-at-boot gesture; config mode comes from the config port.
+	  There is no press-and-hold-at-boot gesture; management mode comes from the management port.
 
 config ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM
 	int "Dynamic power floor (dBm)"
@@ -351,7 +351,7 @@ config ZLRS_APP_WATCHDOG_TIMEOUT_MS
 	range 100 10000
 	depends on ZLRS_APP_WATCHDOG
 	help
-	  Has to cover the slowest feed interval (PBKDF2 inside config mode) without being too long.
+	  Has to cover the slowest feed interval (PBKDF2 inside management mode) without being too long.
 
 
 endmenu

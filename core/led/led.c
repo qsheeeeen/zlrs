@@ -96,8 +96,8 @@ zlrs_led_rgb_t zlrs_led_frame(const zlrs_led_input_t *in, uint32_t now_ms)
 		return off;
 	}
 
-	/* 1. Config mode: white, slow blink */
-	if (in->config_mode) {
+	/* 1. Management mode: white, slow blink */
+	if (in->mgmt_mode) {
 		return blink(scale(white, 30U), now_ms, 1000U, 500U);
 	}
 

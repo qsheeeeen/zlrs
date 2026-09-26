@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # The quick check on every push and PR: unit and simulation tests for the pure C layers plus the
-# config tool's framing self-test. No Zephyr workspace needed; results in under a minute.
+# management tool's framing self-test. No Zephyr workspace needed; results in under a minute.
 #
 # Firmware builds (~5 GB workspace, ~10 minutes) live in firmware.yml; see the notes there.
 
@@ -52,8 +52,8 @@ jobs:
       # containers without ptrace cannot start it, so it stays off locally).
       - name: host tests (ASan + UBSan)
         run: make -C tests/host run LEAKS=1
-      - name: config tool self-test
-        run: python3 tools/zlrs-config.py --self-test
+      - name: management tool self-test
+        run: python3 tools/zlrs-mgmt.py --self-test
       - name: recovery trigger self-test
         run: python3 tools/zlrs-recovery.py --self-test
       - name: update script self-test

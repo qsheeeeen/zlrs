@@ -2,7 +2,7 @@
  * Copyright (c) 2026 zlrs contributors
  * SPDX-License-Identifier: Apache-2.0
  *
- * Malformed input: feed three stateful parsers (air frame, config frame, CRSF) random bytes and
+ * Malformed input: feed three stateful parsers (air frame, management frame, CRSF) random bytes and
  * near-legal variants, and assert they only reject, never overrun or run away. Seeds are fixed.
  *
  * On its own it checks the logic invariants; the host tests carry ASan + UBSan by default
@@ -14,7 +14,7 @@
 
 #include <string.h>
 
-#include "zlrs/config/config.h"
+#include "zlrs/mgmt/mgmt.h"
 #include "zlrs/crsf/crsf.h"
 #include "zlrs/link/link.h"
 #include "zlrs/proto/crypto.h"
@@ -274,32 +274,32 @@ static void fuzz_link_rx(rng_t *rng)
 	CHECK(best_effort.stats.rx_frames + arq.stats.rx_frames > 0U);
 }
 
-/* ---- config frames and CRSF: random streams fed byte by byte ---- */
+/* ---- management frames and CRSF: random streams fed byte by byte ---- */
 
 static void fuzz_byte_parsers(rng_t *rng)
 {
-	zlrs_cfg_parser_t cfg;
+	zlrs_mgmt_parser_t cfg;
 	zlrs_crsf_parser_t crsf;
 	uint32_t cfg_frames = 0U;
 	uint32_t crsf_frames = 0U;
 	uint32_t violations = 0U;
 
-	zlrs_cfg_parser_init(&cfg);
+	zlrs_mgmt_parser_init(&cfg);
 	zlrs_crsf_parser_init(&crsf);
 
 	for (uint32_t i = 0; i < FUZZ_ITERS; i++) {
 		if ((rng_next(rng) % 64U) == 0U) {
-			zlrs_cfg_parser_init(&cfg); /* resynchronise now and then */
+			zlrs_mgmt_parser_init(&cfg); /* resynchronise now and then */
 		}
 		if ((rng_next(rng) % 64U) == 0U) {
 			zlrs_crsf_parser_init(&crsf);
 		}
 
-		switch (zlrs_cfg_feed(&cfg, (uint8_t)rng_next(rng))) {
+		switch (zlrs_mgmt_feed(&cfg, (uint8_t)rng_next(rng))) {
 		case 1: {
 			cfg_frames++;
-			if (cfg.payload_len > ZLRS_CFG_PAYLOAD_MAX_LEN ||
-			    ZLRS_CFG_PAYLOAD(&cfg) + cfg.payload_len > cfg.buf + sizeof(cfg.buf)) {
+			if (cfg.payload_len > ZLRS_MGMT_PAYLOAD_MAX_LEN ||
+			    ZLRS_MGMT_PAYLOAD(&cfg) + cfg.payload_len > cfg.buf + sizeof(cfg.buf)) {
 				violations++;
 			}
 			break;
@@ -337,6 +337,6 @@ void test_fuzz(void)
 	printf("fuzz: link rx\n");
 	fuzz_link_rx(&rng);
 
-	printf("fuzz: config / crsf parsers\n");
+	printf("fuzz: mgmt / crsf parsers\n");
 	fuzz_byte_parsers(&rng);
 }

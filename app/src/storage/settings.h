@@ -16,14 +16,14 @@ int zlrs_storage_settings_init(void);
 
 /*
  * The settings that live in NVS. One entry per record: the table in settings.c is the only place
- * that knows an NVS id and a size, and everything else — the application, the config commands —
+ * that knows an NVS id and a size, and everything else — the application, the management commands —
  * works with these names and the generic calls below.
  */
 enum zlrs_setting {
 	ZLRS_SETTING_ROOT_KEY, /* ZLRS_KEY_LEN bytes */
 	ZLRS_SETTING_DEV_ID,   /* ZLRS_DEV_ID_LEN bytes */
 	ZLRS_SETTING_PAIRING,  /* struct zlrs_storage_settings_pairing_t */
-	ZLRS_SETTING_FAILSAFE, /* ZLRS_CFG_FAILSAFE_LEN bytes */
+	ZLRS_SETTING_FAILSAFE, /* ZLRS_FAILSAFE_LEN bytes */
 	ZLRS_SETTING_BAUD,     /* uint32_t */
 	ZLRS_SETTING_REGION,   /* uint8_t */
 	ZLRS_SETTING_POWER,    /* int8_t */

@@ -40,7 +40,7 @@ design documents.
 - **Single-port variant**: no USB, one UART port whose link role is configured at runtime
   ([03-platform](03-platform.md) 2.1). This needs firmware support that does not exist yet: the
   `zlrs-link-*` aliases and `zlrs,default-role` property, the `ZLRS_PORT_LINK*` capability
-  macros, a port layer that serves either link, and `set-port-role` in the config protocol.
+  macros, a port layer that serves either link, and `set-port-role` in the management protocol.
 - **RP2350 TRNG** (verified on hardware, on by default): Zephyr's `entropy_rpi_pico` is unusable
   (pico-sdk reads with interrupts off and busy waits, which stops USB dead; reproduced on the
   board). `drivers/entropy/` is zlrs's own driver: probe soft-resets, configures and
@@ -80,12 +80,12 @@ themselves.
 | Knob | Default today | What is missing | Afterwards |
 | --- | --- | --- | --- |
 | `ZLRS_APP_RATE_ADAPT` | off | per-tier packet error rate and SNR thresholds, measured with a second module | on, thresholds replaced (the placeholders in `app/src/link/rate.c` are ignored today) |
-| `ZLRS_APP_WATCHDOG` | on | a long run on hardware without false resets (PBKDF2 inside config mode is the slowest feed interval) | stays on |
+| `ZLRS_APP_WATCHDOG` | on | a long run on hardware without false resets (PBKDF2 inside management mode is the slowest feed interval) | stays on |
 | `ZLRS_APP_DATA_ARQ` | on | throughput and latency on hardware; the ack can shrink to one header bit once the RX always has a frame to ride along | stays on, window sized from measurements |
 | `ZLRS_APP_DYNAMIC_POWER` | on | thresholds and hysteresis from measured RSSI/SNR | stays on, thresholds replaced |
 | `ZLRS_APP_SUB_BAND_MIX` | on | switching cost and interference benefit, with two modules | stays on |
 | `ZLRS_APP_FHSS`, `ZLRS_APP_SESSION_HANDSHAKE`, `ZLRS_APP_TELEMETRY` | on | the first two-module session (pairing, session, telemetry round trip) | stay on |
-| rate tier and frame-rate values, telemetry period | compile time | config-protocol commands to match [08-firmware](08-firmware.md) 3 | runtime, stored in NVS (role and security profile already are) |
+| rate tier and frame-rate values, telemetry period | compile time | management-protocol commands to match [08-firmware](08-firmware.md) 3 | runtime, stored in NVS (role and security profile already are) |
 
 The switches that cut the product's *shape* (which links, which band role, which modulation) are
 not debt: they stay and any image may set them. The ones that only exist to isolate a layer on
@@ -99,7 +99,7 @@ see [12-debug](12-debug.md) 3.
 | --- | --- |
 | Hardware freeze | the module's RSSI for a known transmitter on the target band matches the datasheet's order of magnitude |
 | Pairing and sessions | two devices pair on a long press, establish a session and run both the control and data links |
-| Configuration | a blank RX can be configured with the tool (config CDC) until it is able to pair |
+| Configuration | a blank RX can be configured with the tool (management CDC) until it is able to pair |
 | Data link | short the RX's UART TX to RX as a loopback, send data from the TX side and get it back |
 | 1000 Hz | steady 1000 Hz in the all-2.4G shape, with latency and loss that can be measured |
 | Interference | link retention and recovery time measured with several devices on the band plus interferers |

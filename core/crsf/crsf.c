@@ -19,7 +19,7 @@ static bool valid_address(uint8_t byte)
 	case 0xECU: /* receiver */
 	case 0xEEU: /* module */
 	case ZLRS_CRSF_ADDR_TX_MODULE:
-	case 0xEFU: /* config port */
+	case 0xEFU: /* management port */
 		return true;
 	default:
 		return false;

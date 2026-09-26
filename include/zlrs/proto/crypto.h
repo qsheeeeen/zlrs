@@ -32,12 +32,12 @@ void zlrs_tag(const uint8_t *key, size_t key_len, const uint8_t *data, size_t le
 /*
  * Passphrase -> root key: PBKDF2-HMAC-SHA256.
  * The salt carries the KDF version (doc/10-security.md 8) and the caller passes the iteration
- * count; the derivation rule is fixed on the device and the config tool cannot change it.
+ * count; the derivation rule is fixed on the device and the management tool cannot change it.
  */
 void zlrs_pbkdf2_sha256(const char *phrase, const uint8_t *salt, size_t salt_len,
 			uint32_t iterations, uint8_t out[ZLRS_KEY_LEN]);
 
-/* Same rule with the release salt and iteration count, used by config mode */
+/* Same rule with the release salt and iteration count, used by management mode */
 #define ZLRS_KDF_V1_SALT       "zlrs/kdf/v1"
 #define ZLRS_KDF_V1_ITERATIONS 100000U
 

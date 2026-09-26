@@ -53,5 +53,5 @@
 /* Control link RC payload: CRSF's 22 bytes of channel data carried as-is */
 #define ZLRS_RC_PAYLOAD_LEN 22U
 
-/* Failsafe values in the config protocol: that same 22-byte CRSF channel payload */
-#define ZLRS_CFG_FAILSAFE_LEN ZLRS_RC_PAYLOAD_LEN
+/* Failsafe values in the management protocol: that same 22-byte CRSF channel payload */
+#define ZLRS_FAILSAFE_LEN ZLRS_RC_PAYLOAD_LEN

@@ -5,17 +5,17 @@
 #
 # Put the device into MCUboot serial recovery: no replugging, no reset button.
 #
-# How: the tool sends the recovery command (config protocol 0x41) on the config port; the
+# How: the tool sends the recovery command (management protocol 0x41) on the management port; the
 # device sets the boot-mode flag and reboots into MCUboot recovery (doc/10-security.md 10).
 #
 # Usage:
-#   python3 tools/zlrs-recovery.py --port /dev/ttyACM2   # config port (third CDC in app mode)
+#   python3 tools/zlrs-recovery.py --port /dev/ttyACM2   # management port (third CDC in app mode)
 #   python3 tools/zlrs-recovery.py --self-test           # no device: check the framing
 #
 # Then upload a signed image with an mcumgr client:
 #   smpmgr --port <recovery port> upgrade zephyr.signed.bin
 #
-# The ports change: three CDCs in application mode (config port is ttyACM2), two in bootloader
+# The ports change: three CDCs in application mode (management port is ttyACM2), two in bootloader
 # mode (recovery first, console second). Find recovery by /dev/serial/by-id/...MCUBOOT...-if00.
 
 import argparse
@@ -38,7 +38,7 @@ def crc8(data: bytes) -> int:
 
 
 def build_request() -> bytes:
-    """The config protocol's recovery frame: SOF + ver + cmd + len + crc."""
+    """The management protocol's recovery frame: SOF + ver + cmd + len + crc."""
     body = bytes([VERSION, CMD_RECOVERY, 0])
 
     return SOF + body + bytes([crc8(body)])
@@ -86,7 +86,7 @@ def send_recovery(port: str, baud: int, dry_run: bool) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="put the device into MCUboot serial recovery")
-    parser.add_argument("--port", help="config port (third CDC in application mode, e.g. /dev/ttyACM2)")
+    parser.add_argument("--port", help="management port (third CDC in application mode, e.g. /dev/ttyACM2)")
     parser.add_argument("--baud", type=int, default=DEFAULT_BAUD)
     parser.add_argument("--dry-run", action="store_true", help="print the frame instead of sending it")
     parser.add_argument("--self-test", action="store_true", help="check the framing without a device")

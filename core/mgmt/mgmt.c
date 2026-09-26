@@ -1,10 +1,10 @@
 /*
- * Config protocol, see include/zlrs/config/config.h.
+ * Management protocol, see include/zlrs/mgmt/mgmt.h.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "zlrs/config/config.h"
+#include "zlrs/mgmt/mgmt.h"
 
 #include <string.h>
 
@@ -28,15 +28,15 @@ static uint8_t hex_nibble(char c, bool *ok)
 	return 0U;
 }
 
-void zlrs_cfg_parser_init(zlrs_cfg_parser_t *p)
+void zlrs_mgmt_parser_init(zlrs_mgmt_parser_t *p)
 {
 	memset(p, 0, sizeof(*p));
 }
 
-int zlrs_cfg_feed(zlrs_cfg_parser_t *p, uint8_t byte)
+int zlrs_mgmt_feed(zlrs_mgmt_parser_t *p, uint8_t byte)
 {
 	if (p->len == 0U) {
-		if (byte != ZLRS_CFG_SOF0) {
+		if (byte != ZLRS_MGMT_SOF0) {
 			p->frames_bad++;
 			return -1;
 		}
@@ -46,7 +46,7 @@ int zlrs_cfg_feed(zlrs_cfg_parser_t *p, uint8_t byte)
 	}
 
 	if (p->len == 1U) {
-		if (byte != ZLRS_CFG_SOF1) {
+		if (byte != ZLRS_MGMT_SOF1) {
 			p->len = 0U;
 			p->frames_bad++;
 			return -1;
@@ -57,7 +57,7 @@ int zlrs_cfg_feed(zlrs_cfg_parser_t *p, uint8_t byte)
 	}
 
 	if (p->len == 2U) {
-		if (byte != ZLRS_CFG_VERSION) {
+		if (byte != ZLRS_MGMT_VERSION) {
 			p->len = 0U;
 			p->frames_bad++;
 			return -1;
@@ -74,7 +74,7 @@ int zlrs_cfg_feed(zlrs_cfg_parser_t *p, uint8_t byte)
 	}
 
 	if (p->len == 4U) {
-		if (byte > ZLRS_CFG_PAYLOAD_MAX_LEN) {
+		if (byte > ZLRS_MGMT_PAYLOAD_MAX_LEN) {
 			p->len = 0U;
 			p->frames_bad++;
 			return -1;
@@ -87,7 +87,7 @@ int zlrs_cfg_feed(zlrs_cfg_parser_t *p, uint8_t byte)
 
 	if (p->len >= p->need) {
 		p->len = 0U;
-		return zlrs_cfg_feed(p, byte);
+		return zlrs_mgmt_feed(p, byte);
 	}
 
 	p->buf[p->len] = byte;
@@ -114,18 +114,18 @@ int zlrs_cfg_feed(zlrs_cfg_parser_t *p, uint8_t byte)
 	return 1;
 }
 
-uint8_t zlrs_cfg_encode(uint8_t *out, size_t out_len, uint8_t cmd, const uint8_t *payload,
+uint8_t zlrs_mgmt_encode(uint8_t *out, size_t out_len, uint8_t cmd, const uint8_t *payload,
 			uint8_t payload_len)
 {
 	const uint8_t total = (uint8_t)(payload_len + 6U);
 
-	if (out == NULL || out_len < total || payload_len > ZLRS_CFG_PAYLOAD_MAX_LEN) {
+	if (out == NULL || out_len < total || payload_len > ZLRS_MGMT_PAYLOAD_MAX_LEN) {
 		return 0U;
 	}
 
-	out[0] = ZLRS_CFG_SOF0;
-	out[1] = ZLRS_CFG_SOF1;
-	out[2] = ZLRS_CFG_VERSION;
+	out[0] = ZLRS_MGMT_SOF0;
+	out[1] = ZLRS_MGMT_SOF1;
+	out[2] = ZLRS_MGMT_VERSION;
 	out[3] = cmd;
 	out[4] = payload_len;
 	if (payload_len > 0U) {
@@ -136,7 +136,7 @@ uint8_t zlrs_cfg_encode(uint8_t *out, size_t out_len, uint8_t cmd, const uint8_t
 	return total;
 }
 
-void zlrs_cfg_status_encode(uint8_t out[ZLRS_CFG_STATUS_LEN], const zlrs_cfg_status_t *status)
+void zlrs_mgmt_status_encode(uint8_t out[ZLRS_MGMT_STATUS_LEN], const zlrs_mgmt_status_t *status)
 {
 	out[0] = status->version;
 	out[1] = status->role;
@@ -155,9 +155,9 @@ void zlrs_cfg_status_encode(uint8_t out[ZLRS_CFG_STATUS_LEN], const zlrs_cfg_sta
 	out[20] = status->profile;
 }
 
-bool zlrs_cfg_status_decode(const uint8_t *in, uint8_t len, zlrs_cfg_status_t *status)
+bool zlrs_mgmt_status_decode(const uint8_t *in, uint8_t len, zlrs_mgmt_status_t *status)
 {
-	if (in == NULL || status == NULL || len < ZLRS_CFG_STATUS_LEN) {
+	if (in == NULL || status == NULL || len < ZLRS_MGMT_STATUS_LEN) {
 		return false;
 	}
 
@@ -182,33 +182,33 @@ static uint8_t ack_frame(uint8_t *out, size_t out_len, uint8_t cmd, uint8_t stat
 {
 	uint8_t payload[2] = {cmd, status};
 
-	return zlrs_cfg_encode(out, out_len, ZLRS_CFG_CMD_ACK, payload, sizeof(payload));
+	return zlrs_mgmt_encode(out, out_len, ZLRS_MGMT_CMD_ACK, payload, sizeof(payload));
 }
 
 /*
  * The simple settings all take the same shape: the format fixes the payload length, and what the
  * bytes mean (and whether the value is usable) is the backend's business.
  */
-static uint8_t handle_setting(const zlrs_cfg_backend_t *backend, uint8_t cmd,
+static uint8_t handle_setting(const zlrs_mgmt_backend_t *backend, uint8_t cmd,
 			      const uint8_t *payload, uint8_t payload_len, uint8_t want_len,
 			      uint8_t *out, size_t out_len)
 {
 	if (payload_len != want_len || backend->save_setting == NULL) {
-		return ack_frame(out, out_len, cmd, ZLRS_CFG_E_PARAM);
+		return ack_frame(out, out_len, cmd, ZLRS_MGMT_E_PARAM);
 	}
 
 	return ack_frame(out, out_len, cmd,
 			 (uint8_t)backend->save_setting(backend->ctx, cmd, payload, payload_len));
 }
 
-static uint8_t handle_set_key(const zlrs_cfg_backend_t *backend, const uint8_t *payload,
+static uint8_t handle_set_key(const zlrs_mgmt_backend_t *backend, const uint8_t *payload,
 			      uint8_t len, uint8_t *out, size_t out_len, uint8_t cmd)
 {
 	uint8_t key[ZLRS_KEY_LEN];
 	bool ok = true;
 
 	if (len != 2U * ZLRS_KEY_LEN || backend->save_root_key == NULL) {
-		return ack_frame(out, out_len, cmd, ZLRS_CFG_E_PARAM);
+		return ack_frame(out, out_len, cmd, ZLRS_MGMT_E_PARAM);
 	}
 
 	for (uint8_t i = 0U; i < ZLRS_KEY_LEN; i++) {
@@ -220,7 +220,7 @@ static uint8_t handle_set_key(const zlrs_cfg_backend_t *backend, const uint8_t *
 
 	if (!ok) {
 		memset(key, 0, sizeof(key));
-		return ack_frame(out, out_len, cmd, ZLRS_CFG_E_PARAM);
+		return ack_frame(out, out_len, cmd, ZLRS_MGMT_E_PARAM);
 	}
 
 	const int rc = backend->save_root_key(backend->ctx, key);
@@ -230,15 +230,15 @@ static uint8_t handle_set_key(const zlrs_cfg_backend_t *backend, const uint8_t *
 	return ack_frame(out, out_len, cmd, (uint8_t)rc);
 }
 
-static uint8_t handle_set_phrase(const zlrs_cfg_backend_t *backend, const uint8_t *payload,
+static uint8_t handle_set_phrase(const zlrs_mgmt_backend_t *backend, const uint8_t *payload,
 				 uint8_t len, uint8_t *out, size_t out_len, uint8_t cmd)
 {
 	uint8_t key[ZLRS_KEY_LEN];
-	char phrase[ZLRS_CFG_PHRASE_MAX_LEN + 1U];
+	char phrase[ZLRS_MGMT_PHRASE_MAX_LEN + 1U];
 	int rc;
 
-	if (len == 0U || len > ZLRS_CFG_PHRASE_MAX_LEN || backend->save_root_key == NULL) {
-		return ack_frame(out, out_len, cmd, ZLRS_CFG_E_PARAM);
+	if (len == 0U || len > ZLRS_MGMT_PHRASE_MAX_LEN || backend->save_root_key == NULL) {
+		return ack_frame(out, out_len, cmd, ZLRS_MGMT_E_PARAM);
 	}
 
 	memcpy(phrase, payload, len);
@@ -254,7 +254,7 @@ static uint8_t handle_set_phrase(const zlrs_cfg_backend_t *backend, const uint8_
 	return ack_frame(out, out_len, cmd, (uint8_t)rc);
 }
 
-uint8_t zlrs_cfg_dispatch(const zlrs_cfg_backend_t *backend, uint8_t cmd, const uint8_t *payload,
+uint8_t zlrs_mgmt_dispatch(const zlrs_mgmt_backend_t *backend, uint8_t cmd, const uint8_t *payload,
 			  uint8_t payload_len, uint8_t *out, size_t out_len)
 {
 	if (backend == NULL || out == NULL) {
@@ -262,38 +262,38 @@ uint8_t zlrs_cfg_dispatch(const zlrs_cfg_backend_t *backend, uint8_t cmd, const 
 	}
 
 	switch (cmd) {
-	case ZLRS_CFG_CMD_ENTER:
-		/* Entering config mode is the application's job outside a session; here we are already in one */
-		return ack_frame(out, out_len, cmd, ZLRS_CFG_OK);
-	case ZLRS_CFG_CMD_STATUS: {
-		zlrs_cfg_status_t status;
-		uint8_t body[ZLRS_CFG_STATUS_LEN];
+	case ZLRS_MGMT_CMD_ENTER:
+		/* Entering the mode is the application's job outside a session; here we are already in one */
+		return ack_frame(out, out_len, cmd, ZLRS_MGMT_OK);
+	case ZLRS_MGMT_CMD_STATUS: {
+		zlrs_mgmt_status_t status;
+		uint8_t body[ZLRS_MGMT_STATUS_LEN];
 
 		if (backend->read_status == NULL) {
-			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_STATE);
+			return ack_frame(out, out_len, cmd, ZLRS_MGMT_E_STATE);
 		}
 
 		memset(&status, 0, sizeof(status));
 		const int rc = backend->read_status(backend->ctx, &status);
 
-		if (rc != ZLRS_CFG_OK) {
+		if (rc != ZLRS_MGMT_OK) {
 			return ack_frame(out, out_len, cmd, (uint8_t)rc);
 		}
 
-		zlrs_cfg_status_encode(body, &status);
+		zlrs_mgmt_status_encode(body, &status);
 
-		return zlrs_cfg_encode(out, out_len, ZLRS_CFG_CMD_STATUS_RESP, body, sizeof(body));
+		return zlrs_mgmt_encode(out, out_len, ZLRS_MGMT_CMD_STATUS_RESP, body, sizeof(body));
 	}
-	case ZLRS_CFG_CMD_BUILD: {
-		char build[ZLRS_CFG_BUILD_MAX_LEN] = {0};
+	case ZLRS_MGMT_CMD_BUILD: {
+		char build[ZLRS_MGMT_BUILD_MAX_LEN] = {0};
 
 		if (backend->read_build == NULL) {
-			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_STATE);
+			return ack_frame(out, out_len, cmd, ZLRS_MGMT_E_STATE);
 		}
 
 		const int rc = backend->read_build(backend->ctx, build, sizeof(build));
 
-		if (rc != ZLRS_CFG_OK) {
+		if (rc != ZLRS_MGMT_OK) {
 			return ack_frame(out, out_len, cmd, (uint8_t)rc);
 		}
 
@@ -304,100 +304,100 @@ uint8_t zlrs_cfg_dispatch(const zlrs_cfg_backend_t *backend, uint8_t cmd, const 
 			n++;
 		}
 
-		return zlrs_cfg_encode(out, out_len, ZLRS_CFG_CMD_BUILD_RESP,
+		return zlrs_mgmt_encode(out, out_len, ZLRS_MGMT_CMD_BUILD_RESP,
 				       (const uint8_t *)build, n);
 	}
-	case ZLRS_CFG_CMD_CONFIRM:
+	case ZLRS_MGMT_CMD_CONFIRM:
 		if (backend->confirm_image == NULL) {
-			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_STATE);
+			return ack_frame(out, out_len, cmd, ZLRS_MGMT_E_STATE);
 		}
 		return ack_frame(out, out_len, cmd, (uint8_t)backend->confirm_image(backend->ctx));
-	case ZLRS_CFG_CMD_IMAGE_HASH: {
-		uint8_t hash[ZLRS_CFG_IMAGE_HASH_LEN];
+	case ZLRS_MGMT_CMD_IMAGE_HASH: {
+		uint8_t hash[ZLRS_MGMT_IMAGE_HASH_LEN];
 
 		if (backend->read_image_hash == NULL) {
-			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_STATE);
+			return ack_frame(out, out_len, cmd, ZLRS_MGMT_E_STATE);
 		}
 
 		memset(hash, 0, sizeof(hash));
 
 		const int rc = backend->read_image_hash(backend->ctx, hash);
 
-		if (rc != ZLRS_CFG_OK) {
+		if (rc != ZLRS_MGMT_OK) {
 			return ack_frame(out, out_len, cmd, (uint8_t)rc);
 		}
 
-		return zlrs_cfg_encode(out, out_len, ZLRS_CFG_CMD_IMAGE_HASH_RESP, hash,
+		return zlrs_mgmt_encode(out, out_len, ZLRS_MGMT_CMD_IMAGE_HASH_RESP, hash,
 				       sizeof(hash));
 	}
-	case ZLRS_CFG_CMD_PAIR:
+	case ZLRS_MGMT_CMD_PAIR:
 		if (backend->pair == NULL) {
-			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_STATE);
+			return ack_frame(out, out_len, cmd, ZLRS_MGMT_E_STATE);
 		}
 		return ack_frame(out, out_len, cmd, (uint8_t)backend->pair(backend->ctx));
-	case ZLRS_CFG_CMD_ERASE_PAIR:
+	case ZLRS_MGMT_CMD_ERASE_PAIR:
 		if (backend->erase_pair == NULL) {
-			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_STATE);
+			return ack_frame(out, out_len, cmd, ZLRS_MGMT_E_STATE);
 		}
 		return ack_frame(out, out_len, cmd, (uint8_t)backend->erase_pair(backend->ctx));
-	case ZLRS_CFG_CMD_SET_KEY_HEX:
+	case ZLRS_MGMT_CMD_SET_KEY_HEX:
 		return handle_set_key(backend, payload, payload_len, out, out_len, cmd);
-	case ZLRS_CFG_CMD_SET_PHRASE:
+	case ZLRS_MGMT_CMD_SET_PHRASE:
 		return handle_set_phrase(backend, payload, payload_len, out, out_len, cmd);
-	case ZLRS_CFG_CMD_SET_FAILSAFE:
+	case ZLRS_MGMT_CMD_SET_FAILSAFE:
 		/* 22-byte CRSF channel payload */
 		return handle_setting(backend, cmd, payload, payload_len, 22U, out, out_len);
-	case ZLRS_CFG_CMD_SET_BAUD:
+	case ZLRS_MGMT_CMD_SET_BAUD:
 		/* 4-byte little-endian baud rate; the value itself is checked by the backend */
 		return handle_setting(backend, cmd, payload, payload_len, 4U, out, out_len);
-	case ZLRS_CFG_CMD_SET_REGION:
-	case ZLRS_CFG_CMD_SET_POWER:
+	case ZLRS_MGMT_CMD_SET_REGION:
+	case ZLRS_MGMT_CMD_SET_POWER:
 		/* 1 byte: a region id, or a signed dBm value */
 		return handle_setting(backend, cmd, payload, payload_len, 1U, out, out_len);
-	case ZLRS_CFG_CMD_SET_ROLE:
+	case ZLRS_MGMT_CMD_SET_ROLE:
 		/* 0 = TX, 1 = RX; out of range is a protocol error, unusable is the backend's call */
 		if (payload_len == 1U && payload[0] > ZLRS_ROLE_RX) {
-			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_PARAM);
+			return ack_frame(out, out_len, cmd, ZLRS_MGMT_E_PARAM);
 		}
 		return handle_setting(backend, cmd, payload, payload_len, 1U, out, out_len);
-	case ZLRS_CFG_CMD_SET_PROFILE:
+	case ZLRS_MGMT_CMD_SET_PROFILE:
 		/* 0 = P0, 1 = P1, 2 = P2; whether a profile may be selected is the backend's call */
 		if (payload_len == 1U && payload[0] > ZLRS_PROFILE_P2) {
-			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_PARAM);
+			return ack_frame(out, out_len, cmd, ZLRS_MGMT_E_PARAM);
 		}
 		return handle_setting(backend, cmd, payload, payload_len, 1U, out, out_len);
-	case ZLRS_CFG_CMD_NEW_DEV_ID:
+	case ZLRS_MGMT_CMD_NEW_DEV_ID:
 		if (payload_len != 0U || backend->new_dev_id == NULL) {
-			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_PARAM);
+			return ack_frame(out, out_len, cmd, ZLRS_MGMT_E_PARAM);
 		}
 		return ack_frame(out, out_len, cmd, (uint8_t)backend->new_dev_id(backend->ctx));
-	case ZLRS_CFG_CMD_EXIT:
+	case ZLRS_MGMT_CMD_EXIT:
 		/* The application handles the exit (usually a reboot), here we only acknowledge it */
-		return ack_frame(out, out_len, cmd, ZLRS_CFG_OK);
-	case ZLRS_CFG_CMD_FACTORY_RESET:
+		return ack_frame(out, out_len, cmd, ZLRS_MGMT_OK);
+	case ZLRS_MGMT_CMD_FACTORY_RESET:
 		if (backend->factory_reset == NULL) {
-			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_STATE);
+			return ack_frame(out, out_len, cmd, ZLRS_MGMT_E_STATE);
 		}
 		return ack_frame(out, out_len, cmd, (uint8_t)backend->factory_reset(backend->ctx));
-	case ZLRS_CFG_CMD_RECOVERY:
+	case ZLRS_MGMT_CMD_RECOVERY:
 		if (backend->enter_recovery == NULL) {
-			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_STATE);
+			return ack_frame(out, out_len, cmd, ZLRS_MGMT_E_STATE);
 		}
 		return ack_frame(out, out_len, cmd, (uint8_t)backend->enter_recovery(backend->ctx));
-	case ZLRS_CFG_CMD_LOG_INFO: {
-		zlrs_cfg_log_info_t info;
-		uint8_t body[2U + (6U * ZLRS_CFG_LOG_FILES_MAX)];
+	case ZLRS_MGMT_CMD_LOG_INFO: {
+		zlrs_mgmt_log_info_t info;
+		uint8_t body[2U + (6U * ZLRS_MGMT_LOG_FILES_MAX)];
 		uint8_t n = 0U;
 
 		if (backend->log_info == NULL) {
-			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_STATE);
+			return ack_frame(out, out_len, cmd, ZLRS_MGMT_E_STATE);
 		}
 
 		memset(&info, 0, sizeof(info));
 
 		const int rc = backend->log_info(backend->ctx, &info);
 
-		if (rc != ZLRS_CFG_OK) {
+		if (rc != ZLRS_MGMT_OK) {
 			return ack_frame(out, out_len, cmd, (uint8_t)rc);
 		}
 
@@ -413,18 +413,18 @@ uint8_t zlrs_cfg_dispatch(const zlrs_cfg_backend_t *backend, uint8_t cmd, const 
 			body[n++] = (uint8_t)((info.size[i] >> 24) & 0xFFU);
 		}
 
-		return zlrs_cfg_encode(out, out_len, ZLRS_CFG_CMD_LOG_INFO_RESP, body, n);
+		return zlrs_mgmt_encode(out, out_len, ZLRS_MGMT_CMD_LOG_INFO_RESP, body, n);
 	}
-	case ZLRS_CFG_CMD_LOG_READ: {
-		const uint8_t chunk = 1U + 4U + ZLRS_CFG_LOG_CHUNK_MAX;
+	case ZLRS_MGMT_CMD_LOG_READ: {
+		const uint8_t chunk = 1U + 4U + ZLRS_MGMT_LOG_CHUNK_MAX;
 		uint8_t body[chunk];
 		uint8_t got = 0U;
 
 		if (backend->log_read == NULL) {
-			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_STATE);
+			return ack_frame(out, out_len, cmd, ZLRS_MGMT_E_STATE);
 		}
-		if (payload_len != 6U || payload[5] > ZLRS_CFG_LOG_CHUNK_MAX) {
-			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_PARAM);
+		if (payload_len != 6U || payload[5] > ZLRS_MGMT_LOG_CHUNK_MAX) {
+			return ack_frame(out, out_len, cmd, ZLRS_MGMT_E_PARAM);
 		}
 
 		const uint32_t offset = (uint32_t)payload[1] | ((uint32_t)payload[2] << 8) |
@@ -432,7 +432,7 @@ uint8_t zlrs_cfg_dispatch(const zlrs_cfg_backend_t *backend, uint8_t cmd, const 
 		const int rc = backend->log_read(backend->ctx, payload[0], offset, payload[5], &body[5],
 						 &got);
 
-		if (rc != ZLRS_CFG_OK) {
+		if (rc != ZLRS_MGMT_OK) {
 			return ack_frame(out, out_len, cmd, (uint8_t)rc);
 		}
 
@@ -442,10 +442,10 @@ uint8_t zlrs_cfg_dispatch(const zlrs_cfg_backend_t *backend, uint8_t cmd, const 
 		body[3] = (uint8_t)((offset >> 16) & 0xFFU);
 		body[4] = (uint8_t)((offset >> 24) & 0xFFU);
 
-		return zlrs_cfg_encode(out, out_len, ZLRS_CFG_CMD_LOG_DATA_RESP, body,
+		return zlrs_mgmt_encode(out, out_len, ZLRS_MGMT_CMD_LOG_DATA_RESP, body,
 				       (uint8_t)(5U + got));
 	}
 	default:
-		return ack_frame(out, out_len, cmd, ZLRS_CFG_E_UNKNOWN);
+		return ack_frame(out, out_len, cmd, ZLRS_MGMT_E_UNKNOWN);
 	}
 }

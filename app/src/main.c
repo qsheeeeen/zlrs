@@ -36,8 +36,8 @@
 #include <smtc_rac_api.h>
 #include <smtc_sw_platform_helper.h>
 
-#include "config/mode.h"
-#include "config/port.h"
+#include "mgmt/mode.h"
+#include "mgmt/port.h"
 #include "link/crsf.h"
 #include "link/data.h"
 #include "link/power.h"
@@ -51,7 +51,7 @@
 #include "storage/settings.h"
 
 #include "zlrs/crsf/crsf.h"
-#include "zlrs/config/config.h"
+#include "zlrs/mgmt/mgmt.h"
 #include "zlrs/link/link.h"
 #include "zlrs/region/region.h"
 #include "zlrs/proto/tlm.h"
@@ -81,8 +81,8 @@ static uint16_t data_mtu;
 /* The CRSF port is part of the control link, and its presence is a devicetree fact: if the
  * board has the port at all, the control link uses it. */
 #define ZLRS_CRSF_ENABLED (ZLRS_CONTROL_ENABLED && ZLRS_PORT_CTRL_FIXED)
-/* Same shape for the config port: the CDC in devicetree is the whole answer */
-#define ZLRS_CONFIG_ENABLED ZLRS_PORT_CONFIG
+/* Same shape for the management port: the CDC in devicetree is the whole answer */
+#define ZLRS_MGMT_ENABLED ZLRS_PORT_MGMT
 
 #define SERIAL_CHUNK_LEN 64U
 #define REPORT_PERIOD_MS 1000U
@@ -493,7 +493,7 @@ static void load_identity(void)
 	zlrs_link_set_dev_id(&link_control, device_id);
 	zlrs_link_set_dev_id(&link_data, device_id);
 
-	/* Root key: NVS only, written once with the config tool (set-phrase / set-key-hex) */
+	/* Root key: NVS only, written once with the management tool (set-phrase / set-key-hex) */
 	if (zlrs_storage_settings_load(ZLRS_SETTING_ROOT_KEY, root_key, sizeof(root_key)) == (int)ZLRS_KEY_LEN) {
 		have_root_key = true;
 	}
@@ -624,7 +624,7 @@ typedef struct {
 	uint32_t rx_offset_us; /* where in the frame it landed */
 	uint32_t rx_offset_min;
 	uint32_t rx_offset_max;
-	uint32_t submit_us_last; /* the port's own submit path (radio config + enqueue) */
+	uint32_t submit_us_last; /* the port's own submit path (radio configuration + enqueue) */
 	uint32_t submit_us_max;
 } bench_t;
 
@@ -864,7 +864,7 @@ static void run_slot(uint8_t slot)
 #if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
 /*
  * Reboot into MCUboot serial recovery: set the boot-mode flag (retained SRAM, survives a reset),
- * which makes MCUboot wait for a signed image. The only entries are the config protocol's
+ * which makes MCUboot wait for a signed image. The only entries are the management protocol's
  * recovery command and the debug shell, see doc/10-security.md 10.
  */
 #ifdef PICO_RP2350
@@ -954,7 +954,7 @@ static void adopt_pairing(void)
 
 /*
  * Failsafe values default to throttle low and everything else centred, which is what a
- * handset sends with its link down. The config protocol can overwrite them (08-firmware 3).
+ * handset sends with its link down. The management protocol can overwrite them (08-firmware 3).
  */
 static void failsafe_init(void)
 {
@@ -1311,13 +1311,13 @@ static void report(uint32_t now_ms)
  * System state broadcast: the facts other parts of the application render or report
  * (app/src/state/sys_bus.h). Facts only — the LED thread turns them into colours (doc/11-ux.md).
  */
-#if ZLRS_CONFIG_ENABLED
-static void enter_config_mode(void);
+#if ZLRS_MGMT_ENABLED
+static void enter_management_mode(void);
 #endif
 
 /*
  * State on a fatal error (region vs SKU mismatch, entropy self-test failure, PSA init failure):
- * alarm but stay reachable. Red LED, config port still up, so the host can enter config mode,
+ * alarm but stay reachable. Red LED, the management port still up, so the host can enter it,
  * trigger serial recovery and reflash. A regulatory or security problem is worth staying off
  * the air for, but the device must stay flashable — otherwise one bad image means BOOTSEL.
  *
@@ -1348,15 +1348,15 @@ static void fault_loop(void)
 	 * snapshot is also the truth. */
 	zlrs_sys_publish_alerts(&alerts);
 
-	LOG_ERR("fault state: not transmitting; config port stays available for flashing");
+	LOG_ERR("fault state: not transmitting; management port stays available for flashing");
 
 	for (;;) {
 		zlrs_watchdog_feed();
 
-#if ZLRS_CONFIG_ENABLED
-		/* Config port alive: config mode, the recovery command and reflashing all still work */
-		if (zlrs_config_port_poll_enter()) {
-			enter_config_mode();
+#if ZLRS_MGMT_ENABLED
+		/* Management port alive: management mode, the recovery command and reflashing all still work */
+		if (zlrs_mgmt_port_poll_enter()) {
+			enter_management_mode();
 		}
 #endif
 
@@ -1430,7 +1430,7 @@ static void confirm_image(void)
 		return;
 	}
 
-	if (zlrs_config_mode_image_confirmed()) {
+	if (zlrs_mgmt_mode_image_confirmed()) {
 		confirmed = true;
 
 		if (boot_write_img_confirmed() == 0) {
@@ -1447,19 +1447,19 @@ static void confirm_image(void)
 #endif
 }
 
-#if ZLRS_CONFIG_ENABLED
+#if ZLRS_MGMT_ENABLED
 /* The shell entry only sets this flag: the session runs in the main loop (superframe stopped,
  * data port not stolen by the passthrough), see the main loop. */
-static atomic_t config_request;
+static atomic_t mgmt_request;
 
-/* Run one config session (ends on EXIT or idle timeout), then resume normal mode. Shared. */
-static void enter_config_mode(void)
+/* Run one management session (ends on EXIT or idle timeout), then resume normal mode. Shared. */
+static void enter_management_mode(void)
 {
-	LOG_WRN("entering config mode");
+	LOG_WRN("entering management mode");
 
 	/* 0 = EXIT, 1 = timeout, -1 = no usable port: the log has to tell them apart */
 	{
-		const zlrs_config_ctx_t ctx = {
+		const zlrs_mgmt_ctx_t ctx = {
 			.control = &link_control,
 			.data = &link_data,
 			.failsafe = failsafe_payload,
@@ -1467,22 +1467,22 @@ static void enter_config_mode(void)
 			.region_id = region_id,
 			.tx_power_dbm = tx_power_dbm,
 		};
-		const int rc = zlrs_config_mode_run(&ctx);
+		const int rc = zlrs_mgmt_mode_run(&ctx);
 
 		if (rc != 0) {
-			LOG_WRN("config mode ended without EXIT (rc %d)", rc);
+			LOG_WRN("management mode ended without EXIT (rc %d)", rc);
 		}
 	}
 	memcpy(rc_payload, failsafe_payload, sizeof(rc_payload));
 	TRACE('2');
 	zlrs_link_set_rc(&link_control, rc_payload, sizeof(rc_payload));
 
-	LOG_INF("config mode done, back to normal");
+	LOG_INF("management mode done, back to normal");
 }
 
-/* ---- application-side actions the config protocol triggers ----------------- */
+/* ---- application-side actions the management protocol triggers ----------------- */
 
-#endif /* ZLRS_CONFIG_ENABLED */
+#endif /* ZLRS_MGMT_ENABLED */
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
 /*
@@ -1955,14 +1955,14 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
-#if ZLRS_CONFIG_ENABLED
-static int cmd_config(const struct shell *sh, size_t argc, char **argv)
+#if ZLRS_MGMT_ENABLED
+static int cmd_mgmt(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
 
-	atomic_set(&config_request, 1);
-	shell_print(sh, "config mode requested: the config CDC speaks the protocol, EXIT returns");
+	atomic_set(&mgmt_request, 1);
+	shell_print(sh, "management mode requested: the management CDC speaks the protocol, EXIT returns");
 
 	return 0;
 }
@@ -2138,7 +2138,7 @@ static int cmd_mcuboot(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "confirmed   : %d", (int)boot_is_img_confirmed());
 	shell_print(sh, "swap type   : %d (0=none 1=test 2=revert 3=fail 4=permanent)",
 		    (int)mcuboot_swap_type());
-	shell_print(sh, "confirmed by host: %d", (int)zlrs_config_mode_image_confirmed());
+	shell_print(sh, "confirmed by host: %d", (int)zlrs_mgmt_mode_image_confirmed());
 	mcuboot_dump_slot(sh, "slot0", PARTITION_ID(slot0_partition));
 	mcuboot_dump_slot(sh, "slot1", PARTITION_ID(slot1_partition));
 
@@ -2161,8 +2161,8 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 	SHELL_CMD(trace, NULL, "print the init breadcrumbs", cmd_trace),
 	SHELL_CMD(direct, " [on|off]", "data link radio backend (direct FLRC vs RAC planner)",
 		  cmd_direct),
-#if ZLRS_CONFIG_ENABLED
-	SHELL_CMD(config, NULL, "enter config mode (EXIT returns)", cmd_config),
+#if ZLRS_MGMT_ENABLED
+	SHELL_CMD(mgmt, NULL, "enter management mode (EXIT returns)", cmd_mgmt),
 #endif
 #if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
 	SHELL_CMD(recovery, NULL, "reboot into MCUboot serial recovery", cmd_recovery),
@@ -2250,8 +2250,8 @@ int main(void)
 	if (!ZLRS_CRSF_ENABLED) {
 		LOG_WRN("no CRSF port on this board, TX sends the configured failsafe values");
 	}
-	if (!ZLRS_CONFIG_ENABLED) {
-		LOG_WRN("no config port on this board, parameters can only come from the defaults");
+	if (!ZLRS_MGMT_ENABLED) {
+		LOG_WRN("no management port on this board, parameters can only come from the defaults");
 	}
 
 	/*
@@ -2264,12 +2264,12 @@ int main(void)
 		LOG_ERR("store unavailable: keys, pairing and failsafe will not persist");
 	}
 
-#if ZLRS_CONFIG_ENABLED
+#if ZLRS_MGMT_ENABLED
 	/*
-	 * Bring the config port up early: any later fatal step (entropy, region/SKU, PSA) lands in
-	 * fault_loop, and that path stays flashable only while the config port is alive.
+	 * Bring the management port up early: any later fatal step (entropy, region/SKU, PSA) lands in
+	 * fault_loop, and that path stays flashable only while the management port is alive.
 	 */
-	(void)zlrs_config_port_init();
+	(void)zlrs_mgmt_port_init();
 	TRACE('C');
 #endif
 
@@ -2277,7 +2277,7 @@ int main(void)
 	/*
 	 * The entropy source is retried and then reported rather than fatal. Parking the whole
 	 * application in fault_loop() over a self-test means the device cannot be reached at all —
-	 * no link, no config, nothing to debug — and the TRNG does come back on its own after a
+	 * no link, no management port, nothing to debug — and the TRNG does come back on its own after a
 	 * reset far more often than not. A device that boots and says "entropy is degraded" is
 	 * strictly more useful than one that blinks forever.
 	 */
@@ -2308,9 +2308,9 @@ int main(void)
 	}
 
 	/*
-	 * Region and power ceiling are runtime parameters (the config protocol writes them): use the
+	 * Region and power ceiling are runtime parameters (the management protocol writes them): use the
 	 * stored value when present, the board's own default otherwise (app/src/platform/caps.h).
-	 * The config commands validate whatever they are asked to store (app/src/config/mode.c).
+	 * The management commands validate whatever they are asked to store (app/src/mgmt/mode.c).
 	 */
 	region_id = ZLRS_DEFAULT_REGION;
 	tx_power_dbm = CONFIG_ZLRS_APP_TX_POWER_DBM;
@@ -2336,7 +2336,7 @@ int main(void)
 	/* What the build believes the hardware is, derived from devicetree (app/src/platform/caps.h) */
 	LOG_INF("caps: ports=%s%s%s usb=%c btn=%c led=%c wdt=%c rf=%s(%u-%u MHz)",
 		ZLRS_PORT_CTRL_FIXED ? "control" : "", ZLRS_PORT_DATA_FIXED ? ",data" : "",
-		ZLRS_PORT_CONFIG ? ",cfg" : "", ZLRS_HAS_USB ? 'y' : 'n',
+		ZLRS_PORT_MGMT ? ",cfg" : "", ZLRS_HAS_USB ? 'y' : 'n',
 		ZLRS_HAS_BUTTON ? 'y' : 'n', ZLRS_HAS_LED ? 'y' : 'n', ZLRS_HAS_WDT ? 'y' : 'n',
 		ZLRS_RF_BAND == ZLRS_BAND_SUBG_LF ? "LF" : "HF", ZLRS_RF_LOW_HZ / 1000000U,
 		ZLRS_RF_HIGH_HZ / 1000000U);
@@ -2356,7 +2356,7 @@ int main(void)
 			role_tx = (stored_role == ZLRS_ROLE_TX);
 		}
 		if (zlrs_storage_settings_load(ZLRS_SETTING_PROFILE, &stored_profile, sizeof(stored_profile)) == (int)sizeof(stored_profile)) {
-			if (zlrs_config_mode_profile_allowed(stored_profile)) {
+			if (zlrs_mgmt_mode_profile_allowed(stored_profile)) {
 				active_profile = stored_profile;
 			} else {
 				LOG_WRN("stored profile P%u is not available in this image, using P%u",
@@ -2412,7 +2412,7 @@ int main(void)
 	load_identity();
 	failsafe_init();
 
-	/* The data port must come up before config mode: the session reads that port directly */
+	/* The data port must come up before management mode: the session reads that port directly */
 	{
 		uint32_t baud = 0U;
 
@@ -2481,17 +2481,17 @@ int main(void)
 		zlrs_watchdog_feed();
 		confirm_image();
 
-#if ZLRS_CONFIG_ENABLED
-		/* All config-mode entries converge here: config port command, shell, debug magic.
+#if ZLRS_MGMT_ENABLED
+		/* All management-mode entries converge here: management port command, shell, debug magic.
 		 * During the session the superframe pauses, the radio stops, the data port drops bytes. */
-		if (zlrs_config_port_poll_enter() || atomic_cas(&config_request, 1, 0)) {
-			enter_config_mode();
+		if (zlrs_mgmt_port_poll_enter() || atomic_cas(&mgmt_request, 1, 0)) {
+			enter_management_mode();
 		}
 #endif
 
 		/*
-		 * The timestamp must be re-read after a config session. Anything stamped inside the session
-		 * (a pairing triggered from the config port) is later than the "now" taken before it, so
+		 * The timestamp must be re-read after a management session. Anything stamped inside the session
+		 * (a pairing triggered from the management port) is later than the "now" taken before it, so
 		 * unsigned subtraction underflows and the pairing window looks long expired.
 		 */
 		const uint32_t now_ms = zlrs_port_radio_now_ms();

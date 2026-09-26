@@ -50,7 +50,7 @@ static void button_thread(void *p1, void *p2, void *p3)
 	k_thread_name_set(k_current_get(), BUTTON_THREAD_NAME);
 
 	if (!ZLRS_HAS_BUTTON) {
-		LOG_WRN("no button on this board: pairing comes from the config tool");
+		LOG_WRN("no button on this board: pairing comes from the management tool");
 		return;
 	}
 

@@ -5,11 +5,11 @@
  *
  * Devicetree overlay for the mcuboot image only (sysbuild picks up app/sysbuild/<image>.overlay).
  *
- * The application has three CDCs (CRSF, data, config); the bootloader keeps two:
+ * The application has three CDCs (CRSF, data, management); the bootloader keeps two:
  *   - cdc_acm_uart1 = data port -> serial recovery (mcumgr frames; `zephyr,uart-mcumgr`
  *     points at it in the board dts)
  *   - cdc_acm_uart3 = console -> kernel log (disabled by default, enabled here)
- *   - cdc_acm_uart0 (CRSF) and cdc_acm_uart2 (config) are useless in the bootloader and get
+ *   - cdc_acm_uart0 (CRSF) and cdc_acm_uart2 (management) are useless in the bootloader and get
  *     deleted, along with the CRSF alias, or dtc complains about the dangling reference
  * In upgrade mode the host then sees two MCUBOOT ports: recovery first, log second.
  *
@@ -22,7 +22,7 @@
 / {
 	aliases {
 		/delete-property/ zlrs-control-cdc;
-		/delete-property/ zlrs-config-cdc;
+		/delete-property/ zlrs-mgmt-cdc;
 		/* zlrs-data-cdc points at the CDC used for recovery, keep it */
 	};
 

@@ -9,7 +9,7 @@ menu "zlrs core"
 rsource "proto/Kconfig"
 rsource "link/Kconfig"
 rsource "crsf/Kconfig"
-rsource "config/Kconfig"
+rsource "mgmt/Kconfig"
 rsource "region/Kconfig"
 rsource "led/Kconfig"
 

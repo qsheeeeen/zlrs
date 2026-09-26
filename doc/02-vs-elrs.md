@@ -39,9 +39,9 @@ ELRS's official documentation and source, linked at the end; the comparison is a
 | Data link | AirPort (a transparent serial over the air); MAVLink passthrough (hundreds of bps to a few kbps) | a dedicated 2.4G link around 97 kB/s; reliable transfer (ARQ) by default, best-effort optional |
 | Telemetry | LINK packets every 512 ms plus DATA packets; MSP, MAVLink, GPS, VTX | an 8 B telemetry frame plus the CRSF link statistics frame (0x14), fields filled as CRSF requires |
 | Security | the binding phrase is explicitly "not a password and not a key, only anti-collision"; no per-frame authentication | root key -> HKDF derivation; every frame carries a 4 B truncated HMAC-SHA256 tag (directional, so reflections fail); both ends contribute nonces to pairing and sessions; sequence numbers stop replays; P0 (no tag) exists for maximum performance |
-| Pairing and cross-talk | binding phrase or the classic button; Model Match; Loan Model | the config tool writes a root key, a long press runs the handshake; one device, one peer |
+| Pairing and cross-talk | binding phrase or the classic button; Model Match; Loan Model | the management tool writes a root key, a long press runs the handshake; one device, one peer |
 | Dynamic power | yes, driven by telemetry | yes, on by default: judged once a second from telemetry RSSI/LQ, 3 dB steps |
-| Configuration | Lua, WebUI, Configurator (compile-time regulatory domain) | a dedicated config CDC with the runtime config protocol (region, power ceiling, role, profile and more); no WiFi or Lua |
+| Configuration | Lua, WebUI, Configurator (compile-time regulatory domain) | a dedicated management CDC with the runtime management protocol (region, power ceiling, role, profile and more); no WiFi or Lua |
 | Updates | WiFi OTA, Betaflight passthrough, DFU, serial | the bootloader is flashed once through BOOTSEL; every application image goes through serial-recovery DFU with signatures, confirmation and rollback; SWD for debug; no wireless OTA |
 | Regulation | compile-time presets | four runtime region tables plus radio-design checks, duty accounting and rate/frame-rate clamping |
 | Peripheral integration | Serial VTX, Team Racing, Trainer, Sentinel, Backpack, BLE | none |
@@ -67,7 +67,7 @@ ELRS's official documentation and source, linked at the end; the comparison is a
   default, two to three orders of magnitude above AirPort/MAVLink.
 - **Regulation in software**: radio-design checks, duty accounting and rate clamping.
 - **Configuration, not rebuilds**: region, power ceiling, role and security profile are set
-  over the config port; rate tier and frame rate follow.
+  over the management port; rate tier and frame rate follow.
 
 ## Sources
 

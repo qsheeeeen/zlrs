@@ -25,7 +25,7 @@ typedef struct {
 } zlrs_led_rgb_t;
 
 typedef struct {
-	bool config_mode; /* show the config colour (the consumer delays it, see app/src/ui/led.c) */
+	bool mgmt_mode; /* show the management colour (the consumer delays it, see app/src/ui/led.c) */
 	bool configured; /* root key present */
 	bool paired;     /* pairing record present */
 	bool failsafe;   /* sending/outputting failsafe values (TX input timeout, RX unconnected) */

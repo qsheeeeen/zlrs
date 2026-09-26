@@ -4,7 +4,7 @@
  * A logical port arrives from devicetree as a pair of optional endpoints — a UART and a USB CDC —
  * and which one the host is on is a hardware fact this file owns (doc/08-firmware.md 1). What
  * flows through the port is the link's business (`link/data.c` for the passthrough,
- * `link/crsf.c` for the handset side); the config protocol has its own CDC (`config/port.c`).
+ * `link/crsf.c` for the handset side); the management protocol has its own CDC (`mgmt/port.c`).
  *
  * Naming: `<dir>/<file>.c` carries `zlrs_<dir>_<file>_*()`, so this is `zlrs_port_serial_*()`.
  *

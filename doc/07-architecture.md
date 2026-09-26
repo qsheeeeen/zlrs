@@ -105,7 +105,7 @@ core/proto/            protocol core: framing, hop tables, key derivation, tags,
 core/link/             link layer: state machine, pairing and sessions, superframe slots,
                        reliable transfer, rate adaptation and dynamic power
 core/crsf/             CRSF codec: RC channels and the link statistics frame
-core/config/           config protocol: framing, command dispatch, status encoding
+core/mgmt/           management protocol: framing, command dispatch, status encoding
 core/region/           region tables, power and duty limits, the control time plan
 core/led/              status LED engine: state to colour and cadence
 include/zlrs/          public headers for everything in core/
@@ -118,7 +118,7 @@ app/src/               Zephyr application, one directory per layer:
   ports/                 hardware adapters: serial endpoints, radio (USP/RAC)
   link/                  the links' I/O and tuning: data (passthrough), CRSF, rate
                          adaptation, dynamic power
-  config/                config protocol, application side: the CDC (port) and the session
+  mgmt/                  management protocol, application side: the CDC (port) and the session
                          with its device commands (mode)
   state/                 system state broadcast (the zbus channels)
   ui/                    what the user sees: the status LED (state to frame to strip) and the
@@ -126,7 +126,7 @@ app/src/               Zephyr application, one directory per layer:
   storage/               the flash-backed state: NVS settings and the log ring
 boards/                board definitions (devicetree, defconfig, README)
 dts/bindings/          bindings for zlrs-specific nodes
-tools/                 host-side helpers (config, recovery, update, bring-up, UF32 packaging)
+tools/                 host-side helpers (management, recovery, update, bring-up, UF32 packaging)
 tests/host/            host build of core/ plus the two-node radio simulation
 ```
 
@@ -138,7 +138,7 @@ see the README's "Gates" section).
 
 Inside `app/src` the path says what a file is, and so do its symbols: `ports/radio.c` carries
 `zlrs_port_radio_*()`, `link/data.c` carries `zlrs_link_data_*()`. `ports/` owns the device handles
-and the choice between them, `link/` and `config/` own what flows through a port (rings, ISRs,
+and the choice between them, `link/` and `mgmt/` own what flows through a port (rings, ISRs,
 framing), and `main.c` wires the whole thing together. `ports/` is not a portability layer: this
 firmware is Zephyr's, and its two files are there because the vendor radio stack and the
 two-endpoint serial rule are hardware concerns the rest of the application should not carry.
@@ -177,7 +177,7 @@ so the strip is written at the rate the display actually moves.
 
 What the link thread hands over is not a colour but the **system state**, one zbus channel per fact
 (`app/src/state/sys_bus.h`): the control link's state and quality, the alerts the links produce,
-and an open config session. Three rules make that cheap and safe:
+and an open management session. Three rules make that cheap and safe:
 
 - a publisher writes only when the message changed, so the bus carries events, not a heartbeat,
   and the LED thread's own 20 Hz tick drives the blink phase;
@@ -192,8 +192,8 @@ The consumer decides what the facts mean — `core/led` holds the colours and th
 (pure C, host-tested) and the LED thread is its only caller, so adding a consumer (a shell, a log
 exporter, telemetry) never touches a producer. See [11-ux](11-ux.md).
 
-Config mode does not run on the link thread either: `main()` enters it, stops submitting
-transactions for the session and runs the config protocol there (see
+Management mode does not run on the link thread either: `main()` enters it, stops submitting
+transactions for the session and runs the management protocol there (see
 [08-firmware](08-firmware.md) 2).
 
 ### 6.2 Callback contract
@@ -217,6 +217,6 @@ USP v1.1.2 `usp_zephyr` registers the log module itself, so the application does
 
 Diagnostics **add no extra channel**: link quality rides the existing CRSF link statistics frame
 (`0x14`, see [09-protocol](09-protocol.md) 2.4). The data link's overflow and dropped bytes have
-no CRSF field to travel in, so they are counted and exposed through the config protocol's
+no CRSF field to travel in, so they are counted and exposed through the management protocol's
 `STATUS` response instead. Debug images can additionally print a 1 Hz `stats:` / `air:` line
 (`CONFIG_ZLRS_APP_DEBUG_STATS_LOG`).

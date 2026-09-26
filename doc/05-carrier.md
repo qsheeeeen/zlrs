@@ -13,7 +13,7 @@ aliases are defined in the [board README](../boards/zlrs/rp2350_zero_core2021/RE
 | --- | --- | --- |
 | J1 (control) | JST-GH 1.25 mm, 6P, right-angle | Pixhawk telemetry port order: `5V_IN` + CRSF |
 | J2 (data) | JST-GH 1.25 mm, 6P, right-angle | same order: `5V_IN` + the data port |
-| USB-C | on the RP2350-Zero module | control, data, config, flashing; not routed on the PCB |
+| USB-C | on the RP2350-Zero module | control, data, management, flashing; not routed on the PCB |
 | SW1 button | SMD tactile 3x4 mm | GP12 to GND: hold to pair |
 | Status LED | WS2812 on the module (GP16) | not routed on the PCB |
 

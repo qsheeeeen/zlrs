@@ -31,7 +31,7 @@ typedef struct {
  */
 size_t zlrs_link_data_state(zlrs_link_data_state_t *out, size_t count);
 
-/* baud = 0 keeps the board default (115200); non-zero overrides it (set by the config tool) */
+/* baud = 0 keeps the board default (115200); non-zero overrides it (set by the management tool) */
 int zlrs_link_data_init(uint32_t baud);
 
 /* Pull data out of the RX ring buffer, returns the bytes actually read */
@@ -45,5 +45,5 @@ uint32_t zlrs_link_data_dropped(void);
 /* Bytes the air side handed to the link that the host side had no room for */
 uint32_t zlrs_link_data_tx_dropped(void);
 
-/* Used during config mode: drop bytes from both endpoints (counted, never delivered) */
+/* Used during management mode: drop bytes from both endpoints (counted, never delivered) */
 void zlrs_link_data_discard_rx(void);

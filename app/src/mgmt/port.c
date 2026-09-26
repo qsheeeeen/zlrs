@@ -1,10 +1,10 @@
 /*
- * Config port, see config/port.h.
+ * Management port, see mgmt/port.h.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "config/port.h"
+#include "mgmt/port.h"
 
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
@@ -18,11 +18,11 @@
 
 #include "platform/caps.h"
 #include "platform/recovery.h"
-#include "zlrs/config/config.h"
+#include "zlrs/mgmt/mgmt.h"
 
-LOG_MODULE_REGISTER(zlrs_config_port, CONFIG_APP_LOG_LEVEL);
+LOG_MODULE_REGISTER(zlrs_mgmt_port, CONFIG_APP_LOG_LEVEL);
 
-#if IS_ENABLED(CONFIG_ZLRS_CONFIG)
+#if IS_ENABLED(CONFIG_ZLRS_MGMT)
 
 #define CFG_PORT_RX_RING_LEN 512U
 #define CFG_PORT_TX_RING_LEN 512U
@@ -69,13 +69,13 @@ static void cfg_port_isr(const struct device *dev, void *user_data)
 	}
 }
 
-int zlrs_config_port_init(void)
+int zlrs_mgmt_port_init(void)
 {
-#if ZLRS_PORT_CONFIG
-	const struct device *const dev = DEVICE_DT_GET(DT_ALIAS(zlrs_config_cdc));
+#if ZLRS_PORT_MGMT
+	const struct device *const dev = DEVICE_DT_GET(DT_ALIAS(zlrs_mgmt_cdc));
 
 	if (!device_is_ready(dev)) {
-		LOG_ERR("config port %s not ready", dev->name);
+		LOG_ERR("management port %s not ready", dev->name);
 		return -1;
 	}
 
@@ -85,7 +85,7 @@ int zlrs_config_port_init(void)
 
 	/* Check it: without IRQ support it is -ENOSYS/-ENOTSUP, and ignoring that loses commands */
 	if (uart_irq_callback_user_data_set(dev, cfg_port_isr, &cfg_port) != 0) {
-		LOG_ERR("config port %s: RX setup failed", dev->name);
+		LOG_ERR("management port %s: RX setup failed", dev->name);
 		cfg_port.dev = NULL;
 		return -1;
 	}
@@ -93,22 +93,22 @@ int zlrs_config_port_init(void)
 	uart_irq_rx_enable(dev);
 	cfg_port.ready = true;
 
-	LOG_INF("config port ready (%s)", dev->name);
+	LOG_INF("management port ready (%s)", dev->name);
 
 	return 0;
 #else
-	LOG_WRN("no zlrs-config-cdc alias: config port disabled");
+	LOG_WRN("no zlrs-mgmt-cdc alias: management port disabled");
 
 	return -1;
 #endif
 }
 
-bool zlrs_config_port_ready(void)
+bool zlrs_mgmt_port_ready(void)
 {
 	return cfg_port.ready;
 }
 
-uint16_t zlrs_config_port_read(uint8_t *buf, uint16_t len)
+uint16_t zlrs_mgmt_port_read(uint8_t *buf, uint16_t len)
 {
 	if (!cfg_port.ready) {
 		return 0U;
@@ -117,7 +117,7 @@ uint16_t zlrs_config_port_read(uint8_t *buf, uint16_t len)
 	return (uint16_t)ring_buf_get(&cfg_port.rx, buf, len);
 }
 
-uint16_t zlrs_config_port_write(const uint8_t *buf, uint16_t len)
+uint16_t zlrs_mgmt_port_write(const uint8_t *buf, uint16_t len)
 {
 	uint32_t written;
 
@@ -133,12 +133,12 @@ uint16_t zlrs_config_port_write(const uint8_t *buf, uint16_t len)
 	return (uint16_t)written;
 }
 
-bool zlrs_config_port_poll_enter(void)
+bool zlrs_mgmt_port_poll_enter(void)
 {
-	static zlrs_cfg_parser_t parser;
+	static zlrs_mgmt_parser_t parser;
 	static bool parser_ready;
-	uint8_t chunk[ZLRS_CONFIG_CHUNK];
-	const uint16_t got = zlrs_config_port_read(chunk, sizeof(chunk));
+	uint8_t chunk[ZLRS_MGMT_CHUNK];
+	const uint16_t got = zlrs_mgmt_port_read(chunk, sizeof(chunk));
 	bool enter = false;
 
 	if (got == 0U) {
@@ -146,45 +146,45 @@ bool zlrs_config_port_poll_enter(void)
 	}
 
 	if (!parser_ready) {
-		zlrs_cfg_parser_init(&parser);
+		zlrs_mgmt_parser_init(&parser);
 		parser_ready = true;
 	}
 
 	for (uint16_t i = 0U; i < got; i++) {
-		if (zlrs_cfg_feed(&parser, chunk[i]) != 1) {
+		if (zlrs_mgmt_feed(&parser, chunk[i]) != 1) {
 			continue;
 		}
 
 		const uint8_t cmd = parser.cmd;
-		uint8_t reply[ZLRS_CFG_FRAME_MAX_LEN];
+		uint8_t reply[ZLRS_MGMT_FRAME_MAX_LEN];
 		uint8_t payload[2];
 		uint8_t len;
 
-		if (cmd == ZLRS_CFG_CMD_ENTER) {
+		if (cmd == ZLRS_MGMT_CMD_ENTER) {
 			enter = true;
 		}
 
-		/* Recovery needs no configuration: reboot once acknowledged, the main loop never returns */
-		if (cmd == ZLRS_CFG_CMD_RECOVERY && zlrs_platform_recovery_enter() == 0) {
+		/* Recovery needs no setting up: reboot once acknowledged, the main loop never returns */
+		if (cmd == ZLRS_MGMT_CMD_RECOVERY && zlrs_platform_recovery_enter() == 0) {
 			payload[0] = cmd;
-			payload[1] = ZLRS_CFG_OK;
-			len = zlrs_cfg_encode(reply, sizeof(reply), ZLRS_CFG_CMD_ACK, payload,
+			payload[1] = ZLRS_MGMT_OK;
+			len = zlrs_mgmt_encode(reply, sizeof(reply), ZLRS_MGMT_CMD_ACK, payload,
 					      sizeof(payload));
-			(void)zlrs_config_port_write(reply, len);
+			(void)zlrs_mgmt_port_write(reply, len);
 		}
 
 		/* Outside a session everything answers "wrong state"; EXIT is a no-op */
 		payload[0] = cmd;
-		payload[1] = (cmd == ZLRS_CFG_CMD_ENTER || cmd == ZLRS_CFG_CMD_EXIT)
-				     ? ZLRS_CFG_OK
-				     : ZLRS_CFG_E_STATE;
+		payload[1] = (cmd == ZLRS_MGMT_CMD_ENTER || cmd == ZLRS_MGMT_CMD_EXIT)
+				     ? ZLRS_MGMT_OK
+				     : ZLRS_MGMT_E_STATE;
 
-		len = zlrs_cfg_encode(reply, sizeof(reply), ZLRS_CFG_CMD_ACK, payload,
+		len = zlrs_mgmt_encode(reply, sizeof(reply), ZLRS_MGMT_CMD_ACK, payload,
 				      sizeof(payload));
-		(void)zlrs_config_port_write(reply, len);
+		(void)zlrs_mgmt_port_write(reply, len);
 	}
 
 	return enter;
 }
 
-#endif /* CONFIG_ZLRS_CONFIG */
+#endif /* CONFIG_ZLRS_MGMT */

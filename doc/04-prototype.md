@@ -1,7 +1,7 @@
 # Prototype
 
 Today's hardware is **two modules wired together**: a Waveshare RP2350-Zero and a Waveshare
-Core2021. The only interface it exposes is **USB-C** (power, data, config, flashing); CRSF and
+Core2021. The only interface it exposes is **USB-C** (power, data, management, flashing); CRSF and
 data are two UARTs on the module pads and need wires of your own. No button is fitted: a jumper
 wire from GP12 to GND stands in for it.
 
@@ -44,20 +44,20 @@ One USB-C port that shows up differently depending on the mode:
 
 | Mode | What USB shows |
 | --- | --- |
-| Application | three CDCs: control, data, config |
+| Application | three CDCs: control, data, management |
 | Debug (application + overlay) | the same plus a console CDC (logs and shell), see [12-debug](12-debug.md) |
 | Serial recovery | two CDCs: recovery and console |
 | ROM BOOTSEL | an `RPI-RP2` mass-storage volume (drag a UF2 onto it) |
 
-| Interface | Application | Config mode | Serial recovery | ROM BOOTSEL |
+| Interface | Application | Management mode | Serial recovery | ROM BOOTSEL |
 | --- | --- | --- | --- | --- |
-| USB-C | three CDCs | the config CDC speaks the config protocol, radio stopped | two CDCs | `RPI-RP2` |
+| USB-C | three CDCs | the management CDC speaks the management protocol, radio stopped | two CDCs | `RPI-RP2` |
 | UART0 GP0/1 | control port, CRSF at 420000 | not forwarded (radio stopped) | not initialised | no firmware |
 | UART1 GP8/9 | data port, passthrough | incoming bytes are dropped and counted | unused | no firmware |
-| Button (jumper) | hold 1 s or more to pair | ignored once config mode is up | unused | BOOTSEL is the chip-level button |
+| Button (jumper) | hold 1 s or more to pair | ignored once management mode is up | unused | BOOTSEL is the chip-level button |
 | Status LED | see [11-ux](11-ux.md) | white at 1 Hz after half a second | MCUboot does not drive it | not driven |
 
-Config mode is entered by a command the tool sends on the config CDC; details in
+Management mode is entered by a command the tool sends on the management CDC; details in
 [08-firmware](08-firmware.md) 2.
 
 ## 4. Flashing
@@ -65,7 +65,7 @@ Config mode is entered by a command the tool sends on the config CDC; details in
 | Variant | First time | Afterwards |
 | --- | --- | --- |
 | Without a bootloader | hold BOOTSEL and drag `zephyr.uf2` on, or use SWD | the same |
-| With MCUboot | BOOTSEL drags the **bootloader** only; the application then goes in through the bootloader's serial recovery port | one command, through the application's config port |
+| With MCUboot | BOOTSEL drags the **bootloader** only; the application then goes in through the bootloader's serial recovery port | one command, through the application's management port |
 
 ```shell
 python3 tools/zlrs-update.py --serial <serial> \

@@ -2,15 +2,15 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# zlrs config tool: talks to the device over the dedicated config CDC.
+# zlrs management tool: talks to the device over the dedicated management CDC.
 #
-#   tools/zlrs-config.py --port /dev/ttyACM2 status
-#   tools/zlrs-config.py --port /dev/ttyACM2 set-phrase "correct horse battery staple"
-#   tools/zlrs-config.py --self-test          # no device: frame byte-for-byte against the C side
+#   tools/zlrs-mgmt.py --port /dev/ttyACM2 status
+#   tools/zlrs-mgmt.py --port /dev/ttyACM2 set-phrase "correct horse battery staple"
+#   tools/zlrs-mgmt.py --self-test          # no device: frame byte-for-byte against the C side
 #
-# Except for `enter`, every command first sends enter-config-mode and waits for the ACK.
-# The three USB CDCs are CRSF, data port and config port (/dev/ttyACM0/1/2).
-# Framing and the command table: doc/10-security.md 10 and include/zlrs/config/config.h.
+# Except for `enter`, every command first sends enter-management-mode and waits for the ACK.
+# The three USB CDCs are CRSF, data port and management port (/dev/ttyACM0/1/2).
+# Framing and the command table: doc/10-security.md 10 and include/zlrs/mgmt/mgmt.h.
 #
 # Standard library only; talking to a device needs pyserial (pip install pyserial).
 
@@ -49,7 +49,7 @@ IMAGE_HASH_RESP = 0x83
 LOG_INFO_RESP = 0x90
 LOG_DATA_RESP = 0x91
 
-# One read carries at most this many bytes (a config frame's payload minus its own header)
+# One read carries at most this many bytes (a management frame's payload minus its own header)
 LOG_CHUNK_MAX = 80
 LOG_FILES_MAX = 8
 
@@ -149,7 +149,7 @@ def status_text(payload: bytes) -> str:
 
 
 def self_test() -> int:
-    """Frames must match the output of zlrs_cfg_encode() on the C side byte for byte."""
+    """Frames must match the output of zlrs_mgmt_encode() on the C side byte for byte."""
     cases = [
         ("enter", CMD_ENTER, b"", "a55a03000050"),
         ("status", CMD_STATUS, b"", "a55a0301005b"),
@@ -254,12 +254,12 @@ def talk(port: str, baud: int, frame: bytes, expect: bool, timeout: float,
             try:
                 cmd, payload = read_response(link)
             except TimeoutError as exc:
-                print(f"entering config mode failed: {exc}", file=sys.stderr)
+                print(f"entering management mode failed: {exc}", file=sys.stderr)
                 return 1
 
             code = payload[1] if cmd == ACK and len(payload) >= 2 else 0xFF
             if cmd != ACK or code != 0:
-                print(f"entering config mode failed: {STATUS_NAMES.get(code, hex(code))}", file=sys.stderr)
+                print(f"entering management mode failed: {STATUS_NAMES.get(code, hex(code))}", file=sys.stderr)
                 return 1
 
         link.write(frame)
@@ -289,7 +289,7 @@ def talk(port: str, baud: int, frame: bytes, expect: bool, timeout: float,
 
 
 def dump_logs(port: str, baud: int, timeout: float, out_dir: str) -> int:
-	"""Read the whole log store over the config port and write it out file by file.
+	"""Read the whole log store over the management port and write it out file by file.
 
 	The device serves one chunk per request; the framing already has a CRC, so a lost byte shows up
 	as a bad frame instead of as a hole in the log.
@@ -309,10 +309,10 @@ def dump_logs(port: str, baud: int, timeout: float, out_dir: str) -> int:
 		try:
 			cmd, payload = read_response(link)
 		except TimeoutError as exc:
-			print(f"entering config mode failed: {exc}", file=sys.stderr)
+			print(f"entering management mode failed: {exc}", file=sys.stderr)
 			return 1
 		if cmd != ACK or payload[1] != 0:
-			print("entering config mode failed", file=sys.stderr)
+			print("entering management mode failed", file=sys.stderr)
 			return 1
 
 		link.write(encode(CMD_LOG_INFO))
@@ -390,7 +390,7 @@ def app_ports() -> list[str]:
 
         if "ZLRS" not in name or "MCUBOOT" in name:
             continue
-        # Each module has several CDCs; the tool only talks to the config port (if04)
+        # Each module has several CDCs; the tool only talks to the management port (if04)
         if not name.endswith("-IF04"):
             continue
         out.append(path)
@@ -427,8 +427,8 @@ def pick_targets(args, parser) -> list[str]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="zlrs config tool")
-    parser.add_argument("--port", help="config port device (third CDC in application mode, e.g. /dev/ttyACM2)")
+    parser = argparse.ArgumentParser(description="zlrs management tool")
+    parser.add_argument("--port", help="management port device (third CDC in application mode, e.g. /dev/ttyACM2)")
     parser.add_argument("--serial", help="pick a module by USB serial substring (with several plugged in)")
     parser.add_argument("--all", action="store_true",
                         help="run this command on every ZLRS module (with several plugged in)")
@@ -437,13 +437,13 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=1.0)
     parser.add_argument("--dry-run", action="store_true", help="print the frame instead of talking to the device")
     parser.add_argument("--no-enter", action="store_true",
-                        help="skip the enter-config-mode step (when the device is already in it)")
+                        help="skip the enter-management-mode step (when already in it)")
     parser.add_argument("--keep", action="store_true",
-                        help="stay in config mode after the command (the default leaves it, which restores the radio)")
+                        help="stay in management mode after the command (the default leaves it, which restores the radio)")
     parser.add_argument("--self-test", action="store_true", help="check framing, then exit")
 
     sub = parser.add_subparsers(dest="command")
-    sub.add_parser("enter", help="enter config mode")
+    sub.add_parser("enter", help="enter management mode")
     sub.add_parser("status")
     sub.add_parser("pair")
     sub.add_parser("erase-pair")
@@ -584,7 +584,7 @@ def main() -> int:
             continue
         if args.command not in ("enter", "exit", "recovery") and not args.keep:
             if talk(port, args.baud, encode(CMD_EXIT), True, args.timeout, None) == 0:
-                print("left config mode")
+                print("left management mode")
 
     return rc
 

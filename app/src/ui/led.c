@@ -4,9 +4,9 @@
  * The application publishes facts (app/src/state/sys_bus.h); this file decides what they look like
  * and puts them on the device. The priority table and the colours are core/led's (pure C,
  * host-tested in tests/host/test_led.c) and this thread is their only caller, so nothing a producer
- * touches names a colour. The timings the state does not carry live here too: the config-mode delay
- * that keeps a tool round-trip from flashing white, the one-second drop overlay, and the boot
- * self-test window.
+ * touches names a colour. The timings the state does not carry live here too: the delay that keeps
+ * a tool round-trip from flashing white, the one-second drop overlay, and the boot self-test
+ * window.
  *
  * There is deliberately no per-LED-kind code here: the strip is whatever devicetree instantiates
  * behind Zephyr's led_strip API — WS2812 over PIO, SPI or UART, APA102, … — and a board without one
@@ -37,8 +37,8 @@ LOG_MODULE_REGISTER(zlrs_led, CONFIG_APP_LOG_LEVEL);
 #define LED_REFRESH_MS 50U
 
 /*
- * A config session is only worth showing once it survives a tool round-trip: the update tool and
- * `zlrs-config.py` open a session per command and leave within ~100 ms, and flashing white for
+ * A management session is only worth showing once it survives a tool round-trip: the update tool and
+ * `zlrs-mgmt.py` open a session per command and leave within ~100 ms, and flashing white for
  * that looks like a fault.
  */
 #define LED_CONFIG_DELAY_MS 500U
@@ -115,8 +115,8 @@ static void led_thread(void *p1, void *p2, void *p3)
 	struct zlrs_mode mode = {0};
 	uint32_t drop_bytes = 0U;
 	uint32_t drop_ms = 0U;
-	uint32_t config_since = 0U;
-	bool config_was = false;
+	uint32_t mgmt_since = 0U;
+	bool mgmt_was = false;
 	bool have_state = false;
 	bool write_ok = false;
 	zlrs_led_rgb_t on_strip = {0};
@@ -161,9 +161,9 @@ static void led_thread(void *p1, void *p2, void *p3)
 		}
 
 		/* White marks a session that is really being configured, not a tool round-trip */
-		if (mode.config != config_was) {
-			config_was = mode.config;
-			config_since = now_ms;
+		if (mode.session != mgmt_was) {
+			mgmt_was = mode.session;
+			mgmt_since = now_ms;
 		}
 
 		/*
@@ -173,8 +173,8 @@ static void led_thread(void *p1, void *p2, void *p3)
 		 */
 		const bool alarm = alerts.failsafe || alerts.fault;
 		const zlrs_led_input_t in = {
-			.config_mode = config_was &&
-				       (uint32_t)(now_ms - config_since) >= LED_CONFIG_DELAY_MS,
+			.mgmt_mode = mgmt_was &&
+				       (uint32_t)(now_ms - mgmt_since) >= LED_CONFIG_DELAY_MS,
 			.configured = link.configured,
 			.paired = link.paired,
 			.failsafe = alarm,

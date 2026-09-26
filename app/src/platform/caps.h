@@ -24,7 +24,7 @@
 	 DT_NODE_EXISTS(DT_ALIAS(zlrs_control_cdc)))
 #define ZLRS_PORT_DATA_FIXED                                                                      \
 	(DT_NODE_EXISTS(DT_ALIAS(zlrs_data_uart)) || DT_NODE_EXISTS(DT_ALIAS(zlrs_data_cdc)))
-#define ZLRS_PORT_CONFIG DT_NODE_EXISTS(DT_ALIAS(zlrs_config_cdc))
+#define ZLRS_PORT_MGMT DT_NODE_EXISTS(DT_ALIAS(zlrs_mgmt_cdc))
 
 /* ---- peripherals ---- */
 #define ZLRS_HAS_BUTTON DT_NODE_EXISTS(DT_ALIAS(zlrs_button))
@@ -37,7 +37,7 @@
 #define ZLRS_RF_BAND DT_PROP(DT_NODELABEL(zlrs_rf), band)
 #define ZLRS_RF_LOW_HZ DT_PROP(DT_NODELABEL(zlrs_rf), low_hz)
 #define ZLRS_RF_HIGH_HZ DT_PROP(DT_NODELABEL(zlrs_rf), high_hz)
-/* Region a fresh board boots with; the config protocol overwrites it in NVS */
+/* Region a fresh board boots with; the management protocol overwrites it in NVS */
 #define ZLRS_DEFAULT_REGION DT_PROP(DT_NODELABEL(zlrs_rf), default_region)
 #define ZLRS_RF_DESIGN                                                                             \
 	(&(const zlrs_rf_design_t){                                                                \

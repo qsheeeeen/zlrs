@@ -219,7 +219,7 @@ typedef struct {
 	zlrs_link_events_t ev;
 	zlrs_link_stats_t stats;
 
-	/* config and keys */
+	/* configuration and keys */
 	bool configured;
 	uint8_t dev_id[ZLRS_DEV_ID_LEN];
 	uint8_t root_key[ZLRS_KEY_LEN];

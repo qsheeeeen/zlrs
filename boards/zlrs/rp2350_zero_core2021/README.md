@@ -35,7 +35,7 @@ The USB device exposes four CDC nodes; three are enabled by default:
 | --- | --- | --- |
 | `cdc_acm_uart0` | `zlrs-control-cdc` | the control port's USB endpoint |
 | `cdc_acm_uart1` | `zlrs-data-cdc` | the data port's USB endpoint |
-| `cdc_acm_uart2` | `zlrs-config-cdc` | the config protocol |
+| `cdc_acm_uart2` | `zlrs-mgmt-cdc` | the management protocol |
 | `cdc_acm_uart3` | - | console (kernel log + shell); **disabled**, only `app/debug.overlay` enables it |
 
 The radio bus and the three control lines all sit at **GP15 or below**: GP16 drives the
@@ -141,7 +141,7 @@ west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33/hf app
 1. hold BOOTSEL while plugging USB in and drag `build/mcuboot/zephyr/zephyr.uf2`; the board
    reboots and parks in MCUboot serial recovery (there is no application yet);
 2. upload the application through that recovery port; on a board that already runs an
-   application, the same command is aimed at its config port instead:
+   application, the same command is aimed at its management port instead:
 
 ```shell
 python3 tools/zlrs-update.py --serial <serial> \
@@ -157,7 +157,7 @@ the bootloader image goes through BOOTSEL. (The `zephyr.uf2` in an application b
 the unsigned image based at the flash start: MCUboot rejects it.)
 
 Later upgrades go through MCUboot serial recovery and **USB only**, triggered from the
-application's config port:
+application's management port:
 
 ```shell
 python3 tools/zlrs-recovery.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04   # trigger only

@@ -19,7 +19,7 @@ west build --sysbuild -b "$ZLRS_BOARD" "$ZLRS_APP" -- \
 ```
 
 Production firmware has no console CDC and no shell; its three CDCs are control, data and
-config (see [08-firmware](08-firmware.md) 1).
+management (see [08-firmware](08-firmware.md) 1).
 
 `CONFIG_ZLRS_APP_DEBUG` is the marker for "this image is for the bench": the options named
 `ZLRS_APP_DEBUG_*` depend on it, and shipped configurations (`app/prj.conf`, everything under
@@ -32,7 +32,7 @@ quietly end up in a released image.
 | --- | --- |
 | shell `zlrs status` | role, band, region, link states, data port state |
 | shell `zlrs ports` | per-endpoint `ready / active / rx_total / rx_dropped` for the data port |
-| shell `zlrs config` | enter config mode (EXIT returns) |
+| shell `zlrs mgmt` | enter management mode (EXIT returns) |
 | shell `zlrs recovery` | reboot into MCUboot serial recovery |
 | shell `zlrs entropy` | entropy self-test (two 32-byte TRNG blocks) |
 | shell `zlrs mcuboot` | image state as MCUboot sees it (slot headers, confirm bit, copy state) |
@@ -74,8 +74,8 @@ switches to hide but debts: `doc/13-roadmap.md`, "Pending defaults".
 
 ## 4. Debugging on the board
 
-- **Bench self-check**: `python3 tools/zlrs-bringup.py` exercises USB, ports, config mode, config
-  protocol reads and writes and NVS persistence in one command.
+- **Bench self-check**: `python3 tools/zlrs-bringup.py` exercises USB, ports, management mode,
+  management-protocol reads and writes and NVS persistence in one command.
 
 - **With no Core2021 attached the board resets in a loop**: the vendored
   `lr20xx_hal_wait_on_busy()` waits `..._HAL_WAIT_ON_BUSY_TIMEOUT_MSEC` (1 s here) for BUSY and
@@ -89,7 +89,7 @@ switches to hide but debts: `doc/13-roadmap.md`, "Pending defaults".
   `/dev/serial/by-id/...`, not `ttyACM*`.
 - **To see whether the radio really transmits, watch the `air:` line** (`stats:` logging above):
   `ctl_tx` and `data_tx` count only transactions that finished, `fail` counts the failures. With
-  a single board the only thing that goes on air is pairing: after `pair` on the config port a
+  a single board the only thing that goes on air is pairing: after `pair` on the management port a
   `PAIR_REQ` leaves every 100 ms through the 30 s window, so `ctl_tx` should climb to about 300
   with `fail=0`.
 - **Do not read the console with `cat`**: it goes quiet after a moment and it turns on tty echo,
@@ -105,7 +105,7 @@ switches to hide but debts: `doc/13-roadmap.md`, "Pending defaults".
 - **Radio numbers** (callback latency, frequency-switch cost, packet error rate, throughput) can
   only be measured on the board; Semtech's `packet_error_rate_flrc` sample is a ready-made
   baseline.
-- **After every flash, verify both ends**: `zlrs-config.py --serial <s> confirm` and compare
+- **After every flash, verify both ends**: `zlrs-mgmt.py --serial <s> confirm` and compare
   `image-hash` with the image that was built. An upload that the host never confirms rolls back
   at the next boot, and two boards running different images measure like two boards on different
   bands — the numbers look like a radio fault and mean nothing.
@@ -116,7 +116,7 @@ switches to hide but debts: `doc/13-roadmap.md`, "Pending defaults".
   revert — and with nothing valid in the other slot, MCUboot ends up in serial recovery instead of
   booting the application. From the host that reads as "the board reboots every minute and then
   looks dead", which is easy to mistake for a firmware crash. For bench work either confirm within
-  the first minute (`zlrs-config.py --serial <s> confirm`) or write the primary slot directly and
+  the first minute (`zlrs-mgmt.py --serial <s> confirm`) or write the primary slot directly and
   permanently: `smpmgr upgrade --slot 0 --confirm <img>`. The second form skips the rollback safety
   net on purpose; it is for benches with serial recovery in reach, not for anything shipped.
 - **A debug bootloader shows its USB for 15 s before the application starts**
@@ -126,7 +126,7 @@ switches to hide but debts: `doc/13-roadmap.md`, "Pending defaults".
 - **Do not chatter the console**: opening and closing the console CDC over usbipd a few times in a
   row leaves the stream delivering tens of bytes per second while the device stays enumerated, and
   it does not recover by reading harder. The board is not necessarily dead — its radio work and its
-  config port are separate code paths — but the console is the wrong instrument from then on. Hold
+  management port are separate code paths — but the console is the wrong instrument from then on. Hold
   one connection open for the whole session, and reboot the board (or re-attach it) before
   measuring anything that depends on console output.
 - **`zlrs rate`** prints the last second per link: receive windows, how many of them heard a
@@ -151,7 +151,7 @@ One line each; details live in code comments.
 - `CDC_ACM_SERIAL_INITIALIZE_AT_BOOT` registers only the first CDC, so logging on the others
   NULL-dereferences; we build our own USB stack.
 - Misreading `nvs_write()`'s return value turns success into failure (check `rc == 0 || rc == len`).
-- Using `uart_poll_in/out` in config mode answers no command at all; go through the port layer's
+- Using `uart_poll_in/out` in management mode answers no command at all; go through the port layer's
   ISR buffers.
 - PBKDF2 for a passphrase takes tens of seconds, so the watchdog has to be disarmed for the
   session.
@@ -173,7 +173,7 @@ One line each; details live in code comments.
   (usbipd): the host never sees the port before the bootloader gives up and boots the
   application. A bench board therefore wants the stretched window
   (`app/sysbuild/mcuboot-debug.conf`, 15 s) — or the application has to ask for recovery.
-- Pairing triggered from the config port expires at once if the session's clock is captured
+- Pairing triggered from the management port expires at once if the session's clock is captured
   before the session runs: the pairing press is stamped later, the unsigned subtraction
   underflows, and the first tick calls the window expired. Re-read the clock after the session.
 - Stretching the bootloader's recovery window (`app/sysbuild/mcuboot-debug.conf`) lets the host

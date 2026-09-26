@@ -1,5 +1,5 @@
 /*
- * CRC8 for the serial-side tools (DVB-S2, polynomial 0xD5). CRSF and config frames use it.
+ * CRC8 for the serial-side tools (DVB-S2, polynomial 0xD5). CRSF and management frames use it.
  *
  * SPDX-License-Identifier: Apache-2.0
  */

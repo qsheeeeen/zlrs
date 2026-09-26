@@ -7,8 +7,8 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(app LANGUAGES C)
 
 target_sources(app PRIVATE
-  src/config/mode.c
-  src/config/port.c
+  src/mgmt/mode.c
+  src/mgmt/port.c
   src/link/crsf.c
   src/link/data.c
   src/link/power.c

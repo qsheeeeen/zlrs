@@ -11,7 +11,7 @@
  *
  *   zlrs_link_chan   what the control link is doing (app/src/main.c, every frame)
  *   zlrs_alert_chan  failsafe, faults and passthrough drops (app/src/main.c, then the fault loop)
- *   zlrs_mode_chan   an open config session (app/src/config/mode.c)
+ *   zlrs_mode_chan   an open management session (app/src/mgmt/mode.c)
  *   zlrs_input_chan  what the user asked for with the hardware (app/src/ui/button.c)
  *
  * SPDX-License-Identifier: Apache-2.0
@@ -42,7 +42,7 @@ struct zlrs_alerts {
 
 /* What the device is doing, as opposed to how a link is doing */
 struct zlrs_mode {
-	bool config; /* a config session is open */
+	bool session; /* a management session is open */
 };
 
 /* What the device is being asked for through its hardware; counters, so a late reader still sees it */

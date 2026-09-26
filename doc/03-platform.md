@@ -52,7 +52,7 @@ share a port: a port carries one link.
 | Control port | `zlrs-control-uart` / `zlrs-control-cdc` | control | devicetree (build time) |
 | Data port | `zlrs-data-uart` / `zlrs-data-cdc` | data | devicetree (build time) |
 | Link port *(design, no board yet)* | `zlrs-link-uart` / `zlrs-link-cdc` | control or data | configuration, default from devicetree |
-| Config channel | `zlrs-config-cdc` | configuration protocol | fixed; never carries link traffic |
+| Management channel | `zlrs-mgmt-cdc` | configuration protocol | fixed; never carries link traffic |
 
 Rules: a board has either fixed-role ports or one link port, never both; `*-uart` and `*-cdc` are
 the two endpoints of one port, and either may be missing (the port then has a single endpoint);
@@ -114,7 +114,7 @@ against a host shim. The full command and dependency list is in the [README](../
   jlink). That is a bring-up path, not a product one: no upgrade, no rollback.
 - With MCUboot: BOOTSEL carries the **bootloader** image only. The board then parks in serial
   recovery (no application yet) and the application goes in through that recovery port; every
-  later update is the same command aimed at the running application's config port:
+  later update is the same command aimed at the running application's management port:
 
 ```shell
 python3 tools/zlrs-update.py --serial <serial> \

@@ -23,7 +23,7 @@ static const struct {
 	[ZLRS_SETTING_ROOT_KEY] = {1U, ZLRS_KEY_LEN},
 	[ZLRS_SETTING_DEV_ID] = {2U, ZLRS_DEV_ID_LEN},
 	[ZLRS_SETTING_PAIRING] = {6U, sizeof(zlrs_storage_settings_pairing_t)},
-	[ZLRS_SETTING_FAILSAFE] = {4U, ZLRS_CFG_FAILSAFE_LEN},
+	[ZLRS_SETTING_FAILSAFE] = {4U, ZLRS_FAILSAFE_LEN},
 	[ZLRS_SETTING_BAUD] = {5U, sizeof(uint32_t)},
 	[ZLRS_SETTING_REGION] = {7U, sizeof(uint8_t)},
 	[ZLRS_SETTING_POWER] = {8U, sizeof(int8_t)},
@@ -54,7 +54,7 @@ int zlrs_storage_settings_init(void)
 	if (rc != 0) {
 		/*
 		 * A settings area that cannot be mounted is wiped and mounted again: the device must keep
-		 * working with defaults (pairing, role and the rest are re-set from the config port) rather
+		 * working with defaults (pairing, role and the rest are re-set from the management port) rather
 		 * than refuse to start. It also covers the area holding data from a different layout.
 		 */
 		const struct flash_area *area;
