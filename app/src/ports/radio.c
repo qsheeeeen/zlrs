@@ -1,11 +1,11 @@
 /*
  * Radio port layer (RAC backend).
- * Interface and contract: radio_port.h; callback timing: doc/07-architecture.md 6.2.
+ * Interface and contract: ports/radio.h; callback timing: doc/07-architecture.md 6.2.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "radio_port.h"
+#include "ports/radio.h"
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -17,7 +17,7 @@
 
 #include "ral.h"
 
-LOG_MODULE_REGISTER(zlrs_radio_rac, CONFIG_APP_LOG_LEVEL);
+LOG_MODULE_REGISTER(zlrs_port_radio, CONFIG_APP_LOG_LEVEL);
 
 typedef struct {
 	uint8_t access_id;
@@ -53,7 +53,7 @@ static K_SEM_DEFINE(done_sem, 0, 1);
  * link keeps the planner: its rate is low and the planner's scheduling is convenient there.
  */
 typedef struct {
-	zlrs_link_t *link;       /* set by zlrs_radio_port_init() */
+	zlrs_link_t *link;       /* set by zlrs_port_radio_init() */
 	const zlrs_radio_req_t *req; /* the transaction in flight, owned by the link */
 	volatile bool pending;   /* the port started a transaction and owes a completion */
 	volatile bool irq;       /* the DIO line went active for it (set from the IRQ path) */
@@ -83,7 +83,7 @@ static bool direct_needs_reset; /* the last transaction timed out with an empty 
  * means the transaction timed out with the status register still empty (the chip never started),
  * while tx_done/rx_pkt with a silent peer means the parameters are wrong.
  */
-void zlrs_radio_direct_counts(uint32_t *tx_done, uint32_t *rx_pkt, uint32_t *rx_timeout,
+void zlrs_port_radio_direct_counts(uint32_t *tx_done, uint32_t *rx_pkt, uint32_t *rx_timeout,
 			      uint32_t *no_status, uint32_t *last_nonzero)
 {
 	if (tx_done != NULL) *tx_done = direct_tx_done;
@@ -93,7 +93,7 @@ void zlrs_radio_direct_counts(uint32_t *tx_done, uint32_t *rx_pkt, uint32_t *rx_
 	if (last_nonzero != NULL) *last_nonzero = direct_last_nonzero;
 }
 
-void zlrs_radio_direct_irq_stats(uint32_t *poll_hits, uint32_t *last_status)
+void zlrs_port_radio_direct_irq_stats(uint32_t *poll_hits, uint32_t *last_status)
 {
 	if (poll_hits != NULL) {
 		*poll_hits = direct_poll_hits;
@@ -103,7 +103,7 @@ void zlrs_radio_direct_irq_stats(uint32_t *poll_hits, uint32_t *last_status)
 	}
 }
 
-void zlrs_radio_direct_stats(uint32_t *calls, uint32_t *deferred)
+void zlrs_port_radio_direct_stats(uint32_t *calls, uint32_t *deferred)
 {
 	if (calls != NULL) {
 		*calls = direct_apply_calls;
@@ -113,7 +113,7 @@ void zlrs_radio_direct_stats(uint32_t *calls, uint32_t *deferred)
 	}
 }
 
-uint32_t zlrs_radio_direct_resets(void)
+uint32_t zlrs_port_radio_direct_resets(void)
 {
 	return direct_resets;
 }
@@ -184,7 +184,7 @@ static void radio_irq_router(void *ctx)
 static bool direct_enabled;
 static bool direct_requested;
 
-bool zlrs_radio_direct_enabled(void)
+bool zlrs_port_radio_direct_enabled(void)
 {
 	return direct_enabled;
 }
@@ -194,14 +194,14 @@ bool zlrs_radio_direct_enabled(void)
  * flight, so switching under one — the shell runs in another thread than the superframe — leaves
  * the planner programming a radio that the direct path then talks to as well, and the SPI layer
  * spins on a busy line that nobody finishes. The switch is therefore applied at the frame
- * boundary, by zlrs_radio_direct_apply().
+ * boundary, by zlrs_port_radio_direct_apply().
  */
-void zlrs_radio_direct_set(bool enabled)
+void zlrs_port_radio_direct_set(bool enabled)
 {
 	direct_requested = enabled;
 }
 
-void zlrs_radio_direct_apply(void)
+void zlrs_port_radio_direct_apply(void)
 {
 	if (direct_requested == direct_enabled) {
 		return;
@@ -233,10 +233,10 @@ void zlrs_radio_direct_apply(void)
 	LOG_WRN("data link radio path -> %s", direct_enabled ? "direct FLRC" : "RAC planner");
 }
 
-/* Port-level bench counters, see radio_port.h */
-static zlrs_radio_diag_t diag;
+/* Port-level bench counters, see ports/radio.h */
+static zlrs_port_radio_diag_t diag;
 
-void zlrs_radio_port_diag(zlrs_radio_diag_t *out)
+void zlrs_port_radio_diag(zlrs_port_radio_diag_t *out)
 {
 	if (out != NULL) {
 		*out = diag;
@@ -486,12 +486,12 @@ static const zlrs_radio_ops_t data_ops = {
 	.ctx = &data_client,
 };
 
-const zlrs_radio_ops_t *zlrs_radio_control_ops(void)
+const zlrs_radio_ops_t *zlrs_port_radio_control_ops(void)
 {
 	return &control_ops;
 }
 
-const zlrs_radio_ops_t *zlrs_radio_data_ops(void)
+const zlrs_radio_ops_t *zlrs_port_radio_data_ops(void)
 {
 	return &data_ops;
 }
@@ -702,7 +702,7 @@ static int client_open(rac_client_t *client, uint8_t priority, void (*post)(rp_s
 	return 0;
 }
 
-int zlrs_radio_port_init(zlrs_link_t *control, zlrs_link_t *data)
+int zlrs_port_radio_init(zlrs_link_t *control, zlrs_link_t *data)
 {
 	if (client_open(&control_client, RAC_HIGH_PRIORITY, control_post, control) != 0) {
 		return -1;
@@ -807,12 +807,12 @@ static int port_submit(void *ctx, const zlrs_radio_req_t *req)
 	return 0;
 }
 
-int zlrs_radio_port_wait_us(uint32_t timeout_us)
+int zlrs_port_radio_wait_us(uint32_t timeout_us)
 {
 	return k_sem_take(&done_sem, K_USEC(timeout_us));
 }
 
-bool zlrs_radio_port_irq_pending(void)
+bool zlrs_port_radio_irq_pending(void)
 {
 	if (direct.pending) {
 		/*
@@ -842,7 +842,7 @@ bool zlrs_radio_port_irq_pending(void)
 	return smtc_rac_is_irq_flag_pending();
 }
 
-bool zlrs_radio_port_direct_busy(void)
+bool zlrs_port_radio_direct_busy(void)
 {
 	return direct.pending;
 }
@@ -860,9 +860,9 @@ static void drain_client(rac_client_t *client, uint32_t now_ms)
 			   now_ms);
 }
 
-void zlrs_radio_port_drain(void)
+void zlrs_port_radio_drain(void)
 {
-	const uint32_t now_ms = zlrs_radio_port_now_ms();
+	const uint32_t now_ms = zlrs_port_radio_now_ms();
 
 	/*
 	 * A transaction that just closed has had its IRQ consumed by the planner; anything latched
@@ -878,7 +878,7 @@ void zlrs_radio_port_drain(void)
 	direct_drain(now_ms);
 }
 
-void zlrs_radio_port_abort(void)
+void zlrs_port_radio_abort(void)
 {
 	ral_t *ral = direct_radio();
 
@@ -910,7 +910,7 @@ void zlrs_radio_port_abort(void)
 	}
 }
 
-uint32_t zlrs_radio_port_now_ms(void)
+uint32_t zlrs_port_radio_now_ms(void)
 {
 	return smtc_modem_hal_get_time_in_ms();
 }

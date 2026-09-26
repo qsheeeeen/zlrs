@@ -33,26 +33,26 @@
  * partition, and one without it keeps logging to the console only.
  */
 #if !DT_NODE_EXISTS(DT_NODELABEL(log_partition))
-LOG_MODULE_REGISTER(zlrs_log_store, CONFIG_APP_LOG_LEVEL);
+LOG_MODULE_REGISTER(zlrs_storage_log, CONFIG_APP_LOG_LEVEL);
 
-void zlrs_log_store_absent(void)
+void zlrs_storage_log_absent(void)
 {
 	LOG_WRN("no log partition on this board, logs are not kept across reboots");
 }
 
-int zlrs_log_store_probe(void)
+int zlrs_storage_log_probe(void)
 {
 	return -ENODEV;
 }
 
-int zlrs_log_store_info(zlrs_cfg_log_info_t *out)
+int zlrs_storage_log_info(zlrs_cfg_log_info_t *out)
 {
 	ARG_UNUSED(out);
 
 	return ZLRS_CFG_E_STATE;
 }
 
-int zlrs_log_store_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *out, uint8_t *out_len)
+int zlrs_storage_log_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *out, uint8_t *out_len)
 {
 	ARG_UNUSED(index);
 	ARG_UNUSED(offset);
@@ -64,7 +64,7 @@ int zlrs_log_store_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *ou
 }
 #else
 
-LOG_MODULE_REGISTER(zlrs_log_store, CONFIG_APP_LOG_LEVEL);
+LOG_MODULE_REGISTER(zlrs_storage_log, CONFIG_APP_LOG_LEVEL);
 
 #define LOG_MOUNT_POINT "/lfs"
 
@@ -172,7 +172,7 @@ static int log_store_scan(void)
 
 /* What the export needs: how many files, which is newest, and each size. No store on this board is
  * E_STATE, not an empty list — "nothing logged yet" and "no store here" are different answers. */
-int zlrs_log_store_info(zlrs_cfg_log_info_t *out)
+int zlrs_storage_log_info(zlrs_cfg_log_info_t *out)
 {
 	int rc;
 
@@ -198,7 +198,7 @@ int zlrs_log_store_info(zlrs_cfg_log_info_t *out)
 }
 
 /* One chunk of one file. The caller (config protocol) bounds len; a short tail returns short. */
-int zlrs_log_store_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *out, uint8_t *out_len)
+int zlrs_storage_log_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *out, uint8_t *out_len)
 {
 	char path[sizeof(LOG_MOUNT_POINT) + 16U];
 	struct fs_file_t file;
@@ -239,7 +239,7 @@ int zlrs_log_store_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *ou
  * Bench entry: run the mount again on demand and report what it returned, so a board with no
  * mounted log store can say why without another reboot (main.c: `zlrs logstore`).
  */
-int zlrs_log_store_probe(void)
+int zlrs_storage_log_probe(void)
 {
 	int rc;
 

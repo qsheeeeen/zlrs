@@ -97,24 +97,45 @@ static int fake_read_image_hash(void *ctx, uint8_t out[ZLRS_CFG_IMAGE_HASH_LEN])
 	return ZLRS_CFG_OK;
 }
 
-static int fake_save_failsafe(void *ctx, const uint8_t channels[22])
+/*
+ * The simple settings all arrive through one entry point, exactly as the application's table
+ * sees them: the command says what the payload means, this fake decodes and records it.
+ */
+static int fake_save_setting(void *ctx, uint8_t cmd, const uint8_t *value, uint8_t len)
 {
 	fake_dev_t *dev = ctx;
 
-	memcpy(dev->failsafe, channels, sizeof(dev->failsafe));
-	dev->failsafe_saved = true;
-
-	return ZLRS_CFG_OK;
-}
-
-static int fake_save_baud(void *ctx, uint32_t baud)
-{
-	fake_dev_t *dev = ctx;
-
-	dev->baud = baud;
-	dev->baud_saved = true;
-
-	return ZLRS_CFG_OK;
+	switch (cmd) {
+	case ZLRS_CFG_CMD_SET_FAILSAFE:
+		if (len != 22U) {
+			return ZLRS_CFG_E_PARAM;
+		}
+		memcpy(dev->failsafe, value, sizeof(dev->failsafe));
+		dev->failsafe_saved = true;
+		return ZLRS_CFG_OK;
+	case ZLRS_CFG_CMD_SET_BAUD:
+		if (len != 4U) {
+			return ZLRS_CFG_E_PARAM;
+		}
+		dev->baud = (uint32_t)value[0] | ((uint32_t)value[1] << 8) |
+			    ((uint32_t)value[2] << 16) | ((uint32_t)value[3] << 24);
+		dev->baud_saved = true;
+		return ZLRS_CFG_OK;
+	case ZLRS_CFG_CMD_SET_ROLE:
+		dev->role = value[0];
+		dev->role_saved = true;
+		return ZLRS_CFG_OK;
+	case ZLRS_CFG_CMD_SET_PROFILE:
+		/* Pretend this build is production-shaped: P0 is refused, like the application does */
+		if (value[0] == 0U) {
+			return ZLRS_CFG_E_PARAM;
+		}
+		dev->profile = value[0];
+		dev->profile_saved = true;
+		return ZLRS_CFG_OK;
+	default:
+		return ZLRS_CFG_E_STATE;
+	}
 }
 
 static int fake_pair(void *ctx)
@@ -122,31 +143,6 @@ static int fake_pair(void *ctx)
 	fake_dev_t *dev = ctx;
 
 	dev->pair_count++;
-
-	return ZLRS_CFG_OK;
-}
-
-static int fake_save_role(void *ctx, uint8_t role)
-{
-	fake_dev_t *dev = ctx;
-
-	dev->role = role;
-	dev->role_saved = true;
-
-	return ZLRS_CFG_OK;
-}
-
-static int fake_save_profile(void *ctx, uint8_t profile)
-{
-	fake_dev_t *dev = ctx;
-
-	/* Pretend this build is production-shaped: P0 is refused, like the application does */
-	if (profile == 0U) {
-		return ZLRS_CFG_E_PARAM;
-	}
-
-	dev->profile = profile;
-	dev->profile_saved = true;
 
 	return ZLRS_CFG_OK;
 }
@@ -209,10 +205,7 @@ static int fake_log_read(void *ctx, uint8_t index, uint32_t offset, uint8_t len,
 static const zlrs_cfg_backend_t backend = {
 	.save_root_key = fake_save_key,
 	.read_status = fake_read_status,
-	.save_failsafe = fake_save_failsafe,
-	.save_baud = fake_save_baud,
-	.save_role = fake_save_role,
-	.save_profile = fake_save_profile,
+	.save_setting = fake_save_setting,
 	.new_dev_id = fake_new_dev_id,
 	.pair = fake_pair,
 	.confirm_image = fake_confirm_image,

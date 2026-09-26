@@ -6,9 +6,8 @@ config ZLRS_LED
 	select ZLRS_LINK
 	help
 	  Maps link state and alerts onto one pixel's colour and cadence (table: doc/11-ux.md).
-	  Pure C, see tests/host; the strip driver and the thread that renders the application's
-	  system state through this engine live in the application (app/src/led_port.c,
-	  app/src/led_thread.c).
+	  Pure C, see tests/host; the thread that renders the application's system state through
+	  this engine, and the strip it writes, live in the application (app/src/ui/led.c).
 
 module = ZLRS_LED
 module-str = zlrs_led

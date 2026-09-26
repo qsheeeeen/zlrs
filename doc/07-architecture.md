@@ -112,9 +112,17 @@ include/zlrs/          public headers for everything in core/
 subsys/usb/            USB device stack: usbd context plus every CDC in devicetree
 subsys/bootguard/      bootloader-side watchdog handling
 drivers/entropy/       the RP2350 TRNG driver we own
-app/                   Zephyr application: capabilities, ports, radio adaptation, NVS,
-                       watchdog, button, system state bus, LED thread, superframe, reporting,
-                       debug shell
+app/src/               Zephyr application, one directory per layer:
+  main.c                 the application: superframe, link wiring, reporting, debug shell
+  platform/              what this board is (caps.h), the hardware watchdog, recovery entry
+  ports/                 hardware adapters: serial endpoints, radio (USP/RAC)
+  link/                  the links' I/O: data (passthrough) and CRSF
+  config/                config protocol, application side: the CDC (port) and the session
+                         with its device commands (mode)
+  state/                 system state broadcast (the zbus channels)
+  ui/                    what the user sees: the status LED (state to frame to strip); the
+                         button is still polled in main.c
+  storage/               the flash-backed state: NVS settings and the log ring
 boards/                board definitions (devicetree, defconfig, README)
 dts/bindings/          bindings for zlrs-specific nodes
 tools/                 host-side helpers (config, recovery, update, bring-up, UF32 packaging)
@@ -126,6 +134,13 @@ sources, crypto through a soft implementation in `tests/host/crypto_soft.c`); on
 crypto primitives go through Zephyr's PSA (`core/proto/crypto_psa.c`). `core/` includes no
 Zephyr headers, and `app/` never branches on a board name — both are CI gates (`tools/gates.sh`,
 see the README's "Gates" section).
+
+Inside `app/src` the path says what a file is, and so do its symbols: `ports/radio.c` carries
+`zlrs_port_radio_*()`, `link/data.c` carries `zlrs_link_data_*()`. `ports/` owns the device handles
+and the choice between them, `link/` and `config/` own what flows through a port (rings, ISRs,
+framing), and `main.c` wires the whole thing together. `ports/` is not a portability layer: this
+firmware is Zephyr's, and its two files are there because the vendor radio stack and the
+two-endpoint serial rule are hardware concerns the rest of the application should not carry.
 
 Everything on the radio side (SPI timing, calibration, band selection, transfer scheduling)
 lives in `usp_zephyr`.
@@ -142,7 +157,7 @@ the log. See [09-protocol](09-protocol.md) 5.2.
 | --- | --- | --- |
 | RAC thread (from USP) | `-4` | runs the radio planner and dispatches transfer callbacks |
 | Link thread (`main`) | `-2` | link state machines, building and submitting transactions, results, system state broadcast |
-| LED thread (`zlrs_led`) | `7` (preemptive) | renders the system state it subscribes to and writes the WS2812 (`app/src/led_thread.c`) |
+| LED thread (`zlrs_led`) | `7` (preemptive) | renders the system state it subscribes to and writes the WS2812 (`app/src/ui/led.c`) |
 | Serial | interrupt context | ring-buffered transfers, no radio decisions |
 
 Threads are cooperative (`CONFIG_USP_MAIN_THREAD=y`, `CONFIG_USP_THREADS_MUTEXES=n`): RAC calls
@@ -159,8 +174,8 @@ a cooperative thread is not preempted by it — and it pushes a frame only when 
 so the strip is written at the rate the display actually moves.
 
 What the link thread hands over is not a colour but the **system state**, one zbus channel per fact
-(`app/src/sys_bus.h`): the control link's state and quality, the alerts the links produce, and an
-open config session. Three rules make that cheap and safe:
+(`app/src/state/sys_bus.h`): the control link's state and quality, the alerts the links produce,
+and an open config session. Three rules make that cheap and safe:
 
 - a publisher writes only when the message changed, so the bus carries events, not a heartbeat,
   and the LED thread's own 20 Hz tick drives the blink phase;

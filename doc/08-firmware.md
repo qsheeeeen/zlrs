@@ -28,7 +28,7 @@ ever received a host byte, otherwise the UART. The second rule exists for USB/IP
 (usbipd) and virtualised setups where `SET_CONTROL_LINE_STATE` may never arrive: trusting DTR
 alone would leave the CDC unselected and host bytes would be dropped silently as "not the
 active endpoint". The ISR records "a byte arrived" **before** checking the active endpoint, so
-the first frame is never lost to that lag (`port_active()` in `app/src/ports.c`).
+the first frame is never lost to that lag (`zlrs_port_serial_active()` in `app/src/ports/serial.c`).
 
 The two links choose their endpoints independently. The config CDC carries no passthrough
 traffic, only the config protocol; a board without that CDC simply has no config mode.
@@ -80,7 +80,7 @@ Who decides what:
 | Role TX / RX, security profile | runtime, default at build time | `set-role` / `set-profile`, stored in NVS |
 | Region, power ceiling, baud rate, failsafe values, pairing | runtime | config protocol, stored in NVS |
 | Rate tier, frame rate, telemetry period | build time today | the ledger in [13-roadmap](13-roadmap.md) tracks the missing commands |
-| Hardware presence (ports, config channel, button, LED, watchdog, TRNG, radio design) | devicetree | `app/src/caps.h` |
+| Hardware presence (ports, config channel, button, LED, watchdog, TRNG, radio design) | devicetree | `app/src/platform/caps.h` |
 | Bench isolation (`RADIO=n`, hopping off, P0, …) | build time, debug images only | `ZLRS_APP_DEBUG*`, see [12-debug](12-debug.md) 3 |
 
 Two properties follow and are worth stating explicitly: **one image runs both roles** (a field
@@ -113,8 +113,8 @@ What a build decides:
 The application only knows aliases (`zlrs-control-uart`, `zlrs-control-cdc`, `zlrs-data-uart`,
 `zlrs-data-cdc`, `zlrs-config-cdc`, `zlrs-button`, `zlrs-led`); a missing alias means "this board
 has no such port or peripheral" and everything still builds. Whether there is a CRSF port, a
-config port, a button or a status LED is therefore a devicetree fact (`app/src/caps.h`), not a
-switch — a switch could only disagree with the board. `ZLRS_APP_CORE` enables the pure C
+config port, a button or a status LED is therefore a devicetree fact (`app/src/platform/caps.h`),
+not a switch — a switch could only disagree with the board. `ZLRS_APP_CORE` enables the pure C
 libraries every image carries (`ZLRS_PROTO`, `ZLRS_LINK`, `ZLRS_REGION`, `ZLRS_CRSF`,
 `ZLRS_CONFIG`, `ZLRS_LED`).
 
@@ -129,9 +129,6 @@ That header is the whole hardware interface:
 /* peripherals */
 #define ZLRS_HAS_BUTTON        DT_NODE_EXISTS(DT_ALIAS(zlrs_button))
 #define ZLRS_HAS_LED           DT_NODE_EXISTS(DT_ALIAS(zlrs_led))
-/* a strip is only usable with its driver and the pattern engine in the build */
-#define ZLRS_LED_COMPILED      (IS_ENABLED(CONFIG_LED_STRIP) && IS_ENABLED(CONFIG_ZLRS_LED))
-#define ZLRS_LED_AVAILABLE     (ZLRS_HAS_LED && ZLRS_LED_COMPILED)
 #define ZLRS_HAS_WDT           DT_NODE_EXISTS(DT_NODELABEL(watchdog0))
 #define ZLRS_HAS_NVS           IS_ENABLED(CONFIG_NVS)
 #define ZLRS_HAS_USB           IS_ENABLED(CONFIG_ZLRS_USB)
@@ -204,8 +201,8 @@ not start, USB never comes up, the host never confirms or the image is corrupt. 
 4. **Every unconfirmed path resets on its own**: the application resets when it is alive but
    unconfirmed (60 s after boot by default, `ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS`), the
    bootloader's watchdog resets it when it hangs, and the application reboots on a fatal error
-   instead of halting (app/src/watchdog.c). A radio that never comes up is one of those fatal
-   errors: the vendored HAL panics once BUSY stays inactive for
+   instead of halting (app/src/platform/watchdog.c). A radio that never comes up is one of those
+   fatal errors: the vendored HAL panics once BUSY stays inactive for
    `..._HAL_WAIT_ON_BUSY_TIMEOUT_MSEC` (1 s here). An upgrade that leaves the board without a
    working radio therefore rolls back like any other failed image. There is no switch for the
    confirmation mechanism: an image that runs under MCUboot is always confirmed by the host or
@@ -263,7 +260,8 @@ firmware therefore keeps a log store in flash, and it is always on (no switch):
   application.
 - **LittleFS owns the hard parts**: power-fail safety and wear leveling. The application only
   mounts the partition (before the log core enables its backends, see the init priorities in
-  `app/src/log_store.c`) and, on a partition nothing has written yet, erases and mounts it once.
+  `app/src/storage/log.c`) and, on a partition nothing has written yet, erases and mounts it
+  once.
 - **The partition is a build-time property**: boards without a `log_partition` node still build;
   they log to the console only and say so once at boot.
 - **Export is a host-side operation**: the store is read over the config port, so it works on a

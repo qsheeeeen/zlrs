@@ -108,13 +108,14 @@ typedef struct {
 typedef struct {
 	int (*save_root_key)(void *ctx, const uint8_t key[ZLRS_KEY_LEN]);
 	int (*read_status)(void *ctx, zlrs_cfg_status_t *out);
-	int (*save_failsafe)(void *ctx, const uint8_t channels[22]);
-	int (*save_baud)(void *ctx, uint32_t baud);
-	int (*save_region)(void *ctx, uint8_t region);
-	int (*save_power)(void *ctx, int8_t dbm);
-	/* Role and security profile are runtime settings too; both take effect on the next boot */
-	int (*save_role)(void *ctx, uint8_t role);
-	int (*save_profile)(void *ctx, uint8_t profile);
+	/*
+	 * Every simple setting arrives here: failsafe, baud, region, power, role and profile. `value`
+	 * is the payload exactly as the host sent it — this layer checks its length and, for an
+	 * enumerated value, that it is in range — and `cmd` says what it means. Decoding (the baud is
+	 * little-endian), any further validation and everything it does to the device belong to the
+	 * backend: that keeps all six in one table on the application side.
+	 */
+	int (*save_setting)(void *ctx, uint8_t cmd, const uint8_t *value, uint8_t len);
 	/* Replace the device id with a fresh one (the pairing record goes with it) */
 	int (*new_dev_id)(void *ctx);
 	int (*pair)(void *ctx);

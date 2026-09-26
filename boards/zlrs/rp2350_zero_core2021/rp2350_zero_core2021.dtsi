@@ -135,7 +135,7 @@
  *   cdc_acm_uart2 = config port (alias zlrs-config-cdc): config protocol, enter config mode
  *   cdc_acm_uart3 = console (kernel log + shell): off by default, the debug overlay enables it
  *
- * The first two are the links' USB endpoints and compete with their UARTs (app/src/ports.c);
+ * The first two are the links' USB endpoints and compete with their UARTs (app/src/ports/serial.c);
  * the config port and console exist on USB only.
  */
 zephyr_udc0: &usbd {

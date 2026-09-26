@@ -85,8 +85,8 @@ jobs:
       # Single-link cut: the data link alone (control link, CRSF port, config mode, button and LED
       # all off).
       # One switch is enough: the CRSF port belongs to the control link, and config mode, button
-      # and LED follow devicetree (app/src/caps.h), so cutting the control link takes the CRSF
-      # port with it and the rest stays available on a board that has the hardware.
+      # and LED follow devicetree (app/src/platform/caps.h), so cutting the control link takes
+      # the CRSF port with it and the rest stays available on a board that has the hardware.
       - name: build (data link only, both skus)
         run: |
           set -x

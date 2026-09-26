@@ -32,7 +32,7 @@ config ZLRS_APP_CORE
 	  The pure C layers every image carries: framing and hopping, superframe and pairing, the
 	  regulatory gate, the CRSF codec, the config protocol and the LED patterns. They have no
 	  visible switch; whether there is a port or a LED to use them with comes from devicetree
-	  (app/src/caps.h), and USB is selected by the board.
+	  (app/src/platform/caps.h), and USB is selected by the board.
 
 config ZLRS_APP_ROLE_TX
 	bool "Build as the TX role"
@@ -181,7 +181,7 @@ config ZLRS_APP_DIRECT_AT_BOOT
 	help
 	  Debug images only. Puts the data link on the direct driver from the first frame instead of
 	  the RAC planner, so the path can be exercised without a console command. The runtime
-	  equivalent is `zlrs direct on` (app/src/radio_rac.c).
+	  equivalent is `zlrs direct on` (app/src/ports/radio.c).
 
 config ZLRS_APP_BENCH_RAW_MS
 	int "Raw radio bench at boot (ms, 0 = off)"
@@ -339,9 +339,10 @@ config ZLRS_APP_WATCHDOG
 	default n
 	depends on WATCHDOG
 	help
-	  Armed in PRE_KERNEL_1 (app/src/watchdog.c); feeding happens in the blocking loops, so a
-	  stuck main loop counts as dead too. It only turns a hang into a reset; the rollback verdict
-	  is MCUboot's image confirm bit (doc/08-firmware.md 6). This saves reaching for BOOTSEL.
+	  Armed in PRE_KERNEL_1 (app/src/platform/watchdog.c); feeding happens in the blocking
+	  loops, so a stuck main loop counts as dead too. It only turns a hang into a reset; the
+	  rollback verdict is MCUboot's image confirm bit (doc/08-firmware.md 6). This saves
+	  reaching for BOOTSEL.
 
 config ZLRS_APP_WATCHDOG_TIMEOUT_MS
 	int "Watchdog timeout (ms)"

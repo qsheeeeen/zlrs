@@ -1,32 +1,37 @@
 /*
- * Status LED thread: the consumer of the system state that renders it.
+ * Status LED: the consumer of the system state that renders it on the board's pixel.
  *
- * The application publishes facts (app/src/sys_bus.h); *this* file decides what they look like and
- * turns them into the abstract frame the port writes. The priority table and the colours are
- * core/led's (pure C, host-tested in tests/host/test_led.c) and the thread is their only caller,
- * so nothing a producer touches names a colour, and the port (app/src/led_port.c) only knows how
- * to put a colour on the device. The timings the state does not carry live here too: the
- * config-mode delay that keeps a tool round-trip from flashing white, the one-second drop overlay,
- * and the boot self-test window.
+ * The application publishes facts (app/src/state/sys_bus.h); this file decides what they look like
+ * and puts them on the device. The priority table and the colours are core/led's (pure C,
+ * host-tested in tests/host/test_led.c) and this thread is their only caller, so nothing a producer
+ * touches names a colour. The timings the state does not carry live here too: the config-mode delay
+ * that keeps a tool round-trip from flashing white, the one-second drop overlay, and the boot
+ * self-test window.
  *
- * Why a thread at all (doc/11-ux.md): the strip write — a PIO push plus the WS2812 latch delay —
- * is the slowest step of the LED path, and the main loop is the superframe. The thread is
- * preemptive, so it only runs while the link thread is blocked, and the strip ends up with
- * exactly one writer.
+ * There is deliberately no per-LED-kind code here: the strip is whatever devicetree instantiates
+ * behind Zephyr's led_strip API — WS2812 over PIO, SPI or UART, APA102, … — and a board without one
+ * has no device at all. The thread then keeps draining the bus and simply has nothing to show
+ * (doc/11-ux.md).
+ *
+ * Why a thread at all: the strip write is the slowest step of the LED path and the main loop is the
+ * superframe. The thread is preemptive, so it only runs while the link thread is blocked, and the
+ * strip ends up with exactly one writer.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <zephyr/device.h>
+#include <zephyr/devicetree.h>
+#include <zephyr/drivers/led_strip.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
 #include <string.h>
 
-#include "led_port.h"
-#include "sys_bus.h"
+#include "state/sys_bus.h"
 #include "zlrs/led/led.h"
 
-LOG_MODULE_REGISTER(zlrs_led_thread, CONFIG_APP_LOG_LEVEL);
+LOG_MODULE_REGISTER(zlrs_led, CONFIG_APP_LOG_LEVEL);
 
 /* 20 Hz looks continuous to the eye and costs nothing on the strip (doc/11-ux.md) */
 #define LED_REFRESH_MS 50U
@@ -64,6 +69,44 @@ ZBUS_CHAN_ADD_OBS(zlrs_link_chan, zlrs_led_sub, 0);
 ZBUS_CHAN_ADD_OBS(zlrs_alert_chan, zlrs_led_sub, 0);
 ZBUS_CHAN_ADD_OBS(zlrs_mode_chan, zlrs_led_sub, 0);
 
+/* The board's status pixel: NULL when this board has no `zlrs-led` alias or the node is off */
+static const struct device *const led_strip = DEVICE_DT_GET_OR_NULL(DT_ALIAS(zlrs_led));
+
+/*
+ * Show one frame. The renderer produces one colour (ZLRS_LED_PIXELS); everything about turning it
+ * into a signal — colour order, pixel count, reset timing — belongs to the driver behind the strip
+ * API and comes from devicetree.
+ */
+static int led_write(zlrs_led_rgb_t color)
+{
+	static bool error_logged;
+	static struct led_rgb pixels[ZLRS_LED_PIXELS];
+
+	if (!device_is_ready(led_strip)) {
+		return -1; /* no status LED on this board */
+	}
+
+	pixels[0].r = color.r;
+	pixels[0].g = color.g;
+	pixels[0].b = color.b;
+
+	/*
+	 * A failed strip write has to be reported: the LED is the only local feedback, and when the
+	 * driver really breaks, "the LED is dark" looks like "the state never happened" while
+	 * everything keeps running. The caller retries, so report the first failure only.
+	 */
+	if (led_strip_update_rgb(led_strip, pixels, ZLRS_LED_PIXELS) != 0) {
+		if (!error_logged) {
+			error_logged = true;
+			LOG_ERR("led strip update failed (%s); status led is stale", led_strip->name);
+		}
+
+		return -1;
+	}
+
+	return 0;
+}
+
 static void led_thread(void *p1, void *p2, void *p3)
 {
 	const struct zbus_channel *chan;
@@ -84,8 +127,9 @@ static void led_thread(void *p1, void *p2, void *p3)
 
 	k_thread_name_set(k_current_get(), LED_THREAD_NAME);
 
-	/* This thread owns the strip: the device lookup happens here (app/src/led_port.c) */
-	(void)zlrs_led_port_init();
+	if (!device_is_ready(led_strip)) {
+		LOG_WRN("no status led on this board: the state is only reported, not shown");
+	}
 
 	for (;;) {
 		/* A state change wakes the thread at once; the timeout keeps the blink phase and the
@@ -148,7 +192,7 @@ static void led_thread(void *p1, void *p2, void *p3)
 		 * push; a write that failed is retried, or the strip would stay stale for good. */
 		if (!write_ok || memcmp(&color, &on_strip, sizeof(color)) != 0) {
 			on_strip = color;
-			write_ok = zlrs_led_port_update(color) == 0;
+			write_ok = led_write(color) == 0;
 		}
 	}
 }

@@ -7,18 +7,24 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(app LANGUAGES C)
 
 target_sources(app PRIVATE
+  src/config/mode.c
+  src/config/port.c
+  src/link/crsf.c
+  src/link/data.c
   src/main.c
-  src/led_port.c
-  src/led_thread.c
-  src/log_store.c
-  src/ports.c
-  src/store.c
-  src/sys_bus.c
-  src/watchdog.c
+  src/platform/recovery.c
+  src/platform/watchdog.c
+  src/ports/radio.c
+  src/ports/serial.c
+  src/state/sys_bus.c
+  src/storage/log.c
+  src/storage/settings.c
+  src/ui/led.c
 )
 
-# The radio backend: USP/RAC straight to the LR2021 (app/src/radio_rac.c).
-target_sources(app PRIVATE src/radio_rac.c)
+# App-internal headers are included the way they sit on disk: "ports/serial.h",
+# "link/data.h", "platform/caps.h", ... (the layers are described in doc/07-architecture.md 5).
+target_include_directories(app PRIVATE src)
 
 # Make the application version depend on the git index so that APP_VERSION_STRING
 # reflects the commit even when nothing else in the build changed.

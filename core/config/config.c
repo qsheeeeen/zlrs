@@ -185,6 +185,22 @@ static uint8_t ack_frame(uint8_t *out, size_t out_len, uint8_t cmd, uint8_t stat
 	return zlrs_cfg_encode(out, out_len, ZLRS_CFG_CMD_ACK, payload, sizeof(payload));
 }
 
+/*
+ * The simple settings all take the same shape: the format fixes the payload length, and what the
+ * bytes mean (and whether the value is usable) is the backend's business.
+ */
+static uint8_t handle_setting(const zlrs_cfg_backend_t *backend, uint8_t cmd,
+			      const uint8_t *payload, uint8_t payload_len, uint8_t want_len,
+			      uint8_t *out, size_t out_len)
+{
+	if (payload_len != want_len || backend->save_setting == NULL) {
+		return ack_frame(out, out_len, cmd, ZLRS_CFG_E_PARAM);
+	}
+
+	return ack_frame(out, out_len, cmd,
+			 (uint8_t)backend->save_setting(backend->ctx, cmd, payload, payload_len));
+}
+
 static uint8_t handle_set_key(const zlrs_cfg_backend_t *backend, const uint8_t *payload,
 			      uint8_t len, uint8_t *out, size_t out_len, uint8_t cmd)
 {
@@ -329,50 +345,27 @@ uint8_t zlrs_cfg_dispatch(const zlrs_cfg_backend_t *backend, uint8_t cmd, const 
 	case ZLRS_CFG_CMD_SET_PHRASE:
 		return handle_set_phrase(backend, payload, payload_len, out, out_len, cmd);
 	case ZLRS_CFG_CMD_SET_FAILSAFE:
-		if (payload_len != 22U || backend->save_failsafe == NULL) {
-			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_PARAM);
-		}
-		return ack_frame(out, out_len, cmd,
-				 (uint8_t)backend->save_failsafe(backend->ctx, payload));
-	case ZLRS_CFG_CMD_SET_BAUD: {
-		uint32_t baud;
-
-		if (payload_len != 4U || backend->save_baud == NULL) {
-			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_PARAM);
-		}
-
-		baud = (uint32_t)payload[0] | ((uint32_t)payload[1] << 8) |
-		       ((uint32_t)payload[2] << 16) | ((uint32_t)payload[3] << 24);
-
-		return ack_frame(out, out_len, cmd,
-				 (uint8_t)backend->save_baud(backend->ctx, baud));
-	}
+		/* 22-byte CRSF channel payload */
+		return handle_setting(backend, cmd, payload, payload_len, 22U, out, out_len);
+	case ZLRS_CFG_CMD_SET_BAUD:
+		/* 4-byte little-endian baud rate; the value itself is checked by the backend */
+		return handle_setting(backend, cmd, payload, payload_len, 4U, out, out_len);
 	case ZLRS_CFG_CMD_SET_REGION:
-		if (payload_len != 1U || backend->save_region == NULL) {
-			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_PARAM);
-		}
-		return ack_frame(out, out_len, cmd,
-				 (uint8_t)backend->save_region(backend->ctx, payload[0]));
 	case ZLRS_CFG_CMD_SET_POWER:
-		if (payload_len != 1U || backend->save_power == NULL) {
-			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_PARAM);
-		}
-		return ack_frame(out, out_len, cmd,
-				 (uint8_t)backend->save_power(backend->ctx, (int8_t)payload[0]));
+		/* 1 byte: a region id, or a signed dBm value */
+		return handle_setting(backend, cmd, payload, payload_len, 1U, out, out_len);
 	case ZLRS_CFG_CMD_SET_ROLE:
-		/* 0 = TX, 1 = RX; the application decides whether the value is usable */
-		if (payload_len != 1U || payload[0] > ZLRS_ROLE_RX || backend->save_role == NULL) {
+		/* 0 = TX, 1 = RX; out of range is a protocol error, unusable is the backend's call */
+		if (payload_len == 1U && payload[0] > ZLRS_ROLE_RX) {
 			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_PARAM);
 		}
-		return ack_frame(out, out_len, cmd, (uint8_t)backend->save_role(backend->ctx, payload[0]));
+		return handle_setting(backend, cmd, payload, payload_len, 1U, out, out_len);
 	case ZLRS_CFG_CMD_SET_PROFILE:
-		/* 0 = P0, 1 = P1, 2 = P2; whether a profile may be selected is the application's call */
-		if (payload_len != 1U || payload[0] > ZLRS_PROFILE_P2 ||
-		    backend->save_profile == NULL) {
+		/* 0 = P0, 1 = P1, 2 = P2; whether a profile may be selected is the backend's call */
+		if (payload_len == 1U && payload[0] > ZLRS_PROFILE_P2) {
 			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_PARAM);
 		}
-		return ack_frame(out, out_len, cmd,
-				 (uint8_t)backend->save_profile(backend->ctx, payload[0]));
+		return handle_setting(backend, cmd, payload, payload_len, 1U, out, out_len);
 	case ZLRS_CFG_CMD_NEW_DEV_ID:
 		if (payload_len != 0U || backend->new_dev_id == NULL) {
 			return ack_frame(out, out_len, cmd, ZLRS_CFG_E_PARAM);

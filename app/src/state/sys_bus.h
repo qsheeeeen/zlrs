@@ -2,7 +2,7 @@
  * System state, broadcast on zbus.
  *
  * Producers publish what the device *is* doing and nothing about how it should look: opinions
- * live with the consumers. The LED thread (app/src/led_thread.c) is the one consumer today and it
+ * live with the consumers. The LED thread (app/src/ui/led.c) is the one consumer today and it
  * owns the display rules — colours, cadence and priorities are core/led's job (doc/11-ux.md) and
  * the thread is their only caller.
  *
@@ -11,7 +11,7 @@
  *
  *   zlrs_link_chan   what the control link is doing (app/src/main.c, every frame)
  *   zlrs_alert_chan  failsafe, faults and passthrough drops (app/src/main.c, then the fault loop)
- *   zlrs_mode_chan   an open config session (app/src/ports.c)
+ *   zlrs_mode_chan   an open config session (app/src/config/mode.c)
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -48,7 +48,7 @@ ZBUS_CHAN_DECLARE(zlrs_link_chan, zlrs_alert_chan, zlrs_mode_chan);
 
 /*
  * Publishers. The callers run every frame; each helper only broadcasts when the message changed,
- * so the bus carries state changes instead of a heartbeat (app/src/sys_bus.c).
+ * so the bus carries state changes instead of a heartbeat (app/src/state/sys_bus.c).
  */
 void zlrs_sys_publish_link(const struct zlrs_link_status *status);
 void zlrs_sys_publish_alerts(const struct zlrs_alerts *alerts);

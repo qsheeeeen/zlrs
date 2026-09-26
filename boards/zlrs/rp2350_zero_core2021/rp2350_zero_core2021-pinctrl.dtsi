@@ -18,7 +18,7 @@
 			input-enable;
 			/* Unconnected RX must idle high: a floating pin produces phantom bytes,
 			 * and one phantom byte is enough to make the port layer pick this UART
-			 * over the USB CDC (app/src/ports.c, host_seen_any). */
+			 * over the USB CDC (app/src/ports/serial.c, zlrs_port_serial_rx_seen). */
 			bias-pull-up;
 		};
 	};

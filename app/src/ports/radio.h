@@ -1,6 +1,6 @@
 /*
  * Radio port layer: the concrete backends behind zlrs_radio_ops_t (contract: 07-architecture 6.2).
- * The concrete backend is radio_rac.c (USP/RAC straight to the LR2021).
+ * The concrete backend is ports/radio.c (USP/RAC straight to the LR2021).
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -12,59 +12,59 @@
 #include "zlrs/link/link.h"
 
 /* Operation tables handed to zlrs_link_init() */
-const zlrs_radio_ops_t *zlrs_radio_control_ops(void);
-const zlrs_radio_ops_t *zlrs_radio_data_ops(void);
+const zlrs_radio_ops_t *zlrs_port_radio_control_ops(void);
+const zlrs_radio_ops_t *zlrs_port_radio_data_ops(void);
 
 /* Bring the backend up and wire completion into both links (negative on failure) */
-int zlrs_radio_port_init(zlrs_link_t *control, zlrs_link_t *data);
+int zlrs_port_radio_init(zlrs_link_t *control, zlrs_link_t *data);
 
 /*
  * Wait for one transaction; negative on timeout.
  * Microseconds matter: at 500 Hz control a slot only budgets a few hundred microseconds.
  * With the radio off there is nothing to wait for, so it returns 0 at once.
  */
-int zlrs_radio_port_wait_us(uint32_t timeout_us);
+int zlrs_port_radio_wait_us(uint32_t timeout_us);
 
 /* Hand finished transactions back to the link layer (called on the link thread) */
-void zlrs_radio_port_drain(void);
+void zlrs_port_radio_drain(void);
 
 /* Abort a pending transaction after a slot overrun, so a late completion cannot leak into the next */
-void zlrs_radio_port_abort(void);
+void zlrs_port_radio_abort(void);
 
 /* Same time base as the radio backend (k_uptime_get_32) */
-uint32_t zlrs_radio_port_now_ms(void);
+uint32_t zlrs_port_radio_now_ms(void);
 
 /*
  * Does the port have an interrupt waiting to be handled? A caller that pumps the engine in its own
  * loop uses this to decide between "pump again right away" and "sleep and let the radio work":
  * the planner needs several passes per transaction and a sleep between them costs milliseconds.
  */
-bool zlrs_radio_port_irq_pending(void);
+bool zlrs_port_radio_irq_pending(void);
 
 /*
  * Bench switch for the data link's backend: on = direct FLRC driver, off = RAC planner. Kept in
  * RAM on purpose, so a fault in the new path costs a reset and the board comes back on the path
  * it booted with.
  */
-bool zlrs_radio_direct_enabled(void);
-void zlrs_radio_direct_set(bool enabled);
+bool zlrs_port_radio_direct_enabled(void);
+void zlrs_port_radio_direct_set(bool enabled);
 /* Apply a requested switch at a point where no transaction is in flight (once per frame) */
-void zlrs_radio_direct_apply(void);
+void zlrs_port_radio_direct_apply(void);
 
 /* Bench: how often the switch was tried and how often it had to wait for the data link */
-void zlrs_radio_direct_stats(uint32_t *calls, uint32_t *deferred);
+void zlrs_port_radio_direct_stats(uint32_t *calls, uint32_t *deferred);
 
 /* Bench: how often polling the status register found the completion, and what it read */
-void zlrs_radio_direct_irq_stats(uint32_t *poll_hits, uint32_t *last_status);
+void zlrs_port_radio_direct_irq_stats(uint32_t *poll_hits, uint32_t *last_status);
 
 /* Bench: how often a transaction that reported nothing had to be recovered with a standby cycle */
-uint32_t zlrs_radio_direct_resets(void);
+uint32_t zlrs_port_radio_direct_resets(void);
 
 /* True while the direct backend has a transaction in flight (it completes by polling, not by wait) */
-bool zlrs_radio_port_direct_busy(void);
+bool zlrs_port_radio_direct_busy(void);
 
 /* Per-transaction outcome of the direct backend: what the radio reported, if anything */
-void zlrs_radio_direct_counts(uint32_t *tx_done, uint32_t *rx_pkt, uint32_t *rx_timeout,
+void zlrs_port_radio_direct_counts(uint32_t *tx_done, uint32_t *rx_pkt, uint32_t *rx_timeout,
 			      uint32_t *no_status, uint32_t *last_nonzero);
 
 /*
@@ -105,6 +105,6 @@ typedef struct {
 	uint32_t submit_rac_us;
 	uint32_t submit_us_max;
 	uint32_t wait_us_max;
-} zlrs_radio_diag_t;
+} zlrs_port_radio_diag_t;
 
-void zlrs_radio_port_diag(zlrs_radio_diag_t *out);
+void zlrs_port_radio_diag(zlrs_port_radio_diag_t *out);

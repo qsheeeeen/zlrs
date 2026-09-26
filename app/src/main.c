@@ -37,13 +37,17 @@
 #include <smtc_rac_api.h>
 #include <smtc_sw_platform_helper.h>
 
-#include "ports.h"
-#include "caps.h"
-#include "log_store.h"
-#include "radio_port.h"
-#include "store.h"
-#include "sys_bus.h"
-#include "watchdog.h"
+#include "config/mode.h"
+#include "config/port.h"
+#include "link/crsf.h"
+#include "link/data.h"
+#include "platform/caps.h"
+#include "platform/recovery.h"
+#include "platform/watchdog.h"
+#include "ports/radio.h"
+#include "state/sys_bus.h"
+#include "storage/log.h"
+#include "storage/settings.h"
 
 #include "zlrs/crsf/crsf.h"
 #include "zlrs/config/config.h"
@@ -135,17 +139,6 @@ static uint8_t active_profile;
 #define ZLRS_PROFILE_DEFAULT                                                                       \
 	(IS_ENABLED(CONFIG_ZLRS_APP_SECURITY_PROFILE_P0) ? ZLRS_PROFILE_P0 : ZLRS_PROFILE_P1)
 
-static bool profile_allowed(uint8_t profile)
-{
-	if (profile == ZLRS_PROFILE_P1) {
-		return true;
-	}
-	if (profile == ZLRS_PROFILE_P0) {
-		return IS_ENABLED(CONFIG_ZLRS_APP_DEBUG);
-	}
-
-	return false;
-}
 
 static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(DT_ALIAS(zlrs_button), gpios);
 static bool button_down;
@@ -236,7 +229,7 @@ static void on_data(void *ctx, const uint8_t *data, uint16_t len)
 {
 	(void)ctx;
 
-	counters.data_rx += zlrs_data_port_write(data, len);
+	counters.data_rx += zlrs_link_data_write(data, len);
 }
 
 static void on_state(void *ctx, uint8_t state)
@@ -277,7 +270,7 @@ static void on_failsafe(void *ctx, const uint8_t *payload, uint16_t len)
 	}
 
 	memcpy(failsafe_payload, payload, sizeof(failsafe_payload));
-	(void)zlrs_store_save_failsafe(failsafe_payload);
+	(void)zlrs_storage_settings_save(ZLRS_SETTING_FAILSAFE, failsafe_payload, sizeof(failsafe_payload));
 	LOG_INF("failsafe values received from TX");
 }
 
@@ -490,8 +483,8 @@ static void build_links(void)
 	data_cfg.tlm_every_n = 1U; /* no telemetry slot on the data link */
 	data_cfg.data_every_n = data_every_n;
 
-	zlrs_link_init(&link_control, &ctl_cfg, zlrs_radio_control_ops(), &ctl_ev);
-	zlrs_link_init(&link_data, &data_cfg, zlrs_radio_data_ops(), &data_ev);
+	zlrs_link_init(&link_control, &ctl_cfg, zlrs_port_radio_control_ops(), &ctl_ev);
+	zlrs_link_init(&link_data, &data_cfg, zlrs_port_radio_data_ops(), &data_ev);
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_RATE_ADAPT)
 	{
@@ -513,67 +506,20 @@ static void build_links(void)
 #endif
 }
 
-/* An all-zero device id is not an identity: it is what a failed read or a lazy RNG leaves behind */
-static bool dev_id_is_zero(const uint8_t id[ZLRS_DEV_ID_LEN])
-{
-	for (size_t i = 0U; i < ZLRS_DEV_ID_LEN; i++) {
-		if (id[i] != 0U) {
-			return false;
-		}
-	}
-
-	return true;
-}
-
-/*
- * A fresh device id from the TRNG. The entropy device is read directly: sys_rand32_get() goes
- * through the CSPRNG, which is seeded lazily and was observed handing back zeros during boot.
- * A zero read is not an identity and is reported as a failure.
- */
-static bool make_device_id(uint8_t out[ZLRS_DEV_ID_LEN])
-{
-	const struct device *const entropy_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_entropy));
-	uint8_t block[32];
-	int rc;
-
-	if (!device_is_ready(entropy_dev)) {
-		LOG_ERR("no dev id: entropy device not ready");
-		return false;
-	}
-	/* Read a full block, the size the driver and the self-test are known to handle */
-	rc = entropy_get_entropy(entropy_dev, block, sizeof(block));
-	if (rc != 0) {
-		LOG_ERR("no dev id: entropy read failed (%d)", rc);
-		return false;
-	}
-	memcpy(out, block, ZLRS_DEV_ID_LEN);
-	memset(block, 0, sizeof(block));
-	if (dev_id_is_zero(out)) {
-		LOG_ERR("no dev id: entropy returned zeros");
-		return false;
-	}
-
-	return true;
-}
-
-/*
- * Boot identity: the stored id wins; a missing record and an all-zero one both count as absent
- * (a zero id would collide with every other device that came up the same way).
- */
 static bool ensure_device_id(void)
 {
-	if (zlrs_store_load_dev_id(device_id) == (int)ZLRS_DEV_ID_LEN &&
-	    !dev_id_is_zero(device_id)) {
+	if (zlrs_storage_settings_load(ZLRS_SETTING_DEV_ID, device_id, sizeof(device_id)) == (int)ZLRS_DEV_ID_LEN &&
+	    zlrs_storage_settings_dev_id_valid(device_id)) {
 		LOG_INF("dev id %02x%02x%02x%02x (NVS)", device_id[0], device_id[1], device_id[2],
 			device_id[3]);
 		return true;
 	}
 
-	if (!make_device_id(device_id)) {
+	if (!zlrs_storage_settings_new_dev_id(device_id)) {
 		return false;
 	}
 
-	if (zlrs_store_save_dev_id(device_id) != 0) {
+	if (zlrs_storage_settings_save(ZLRS_SETTING_DEV_ID, device_id, sizeof(device_id)) != 0) {
 		LOG_WRN("dev id not persisted, it changes on the next boot");
 	}
 	LOG_INF("dev id %02x%02x%02x%02x (new)", device_id[0], device_id[1], device_id[2],
@@ -585,15 +531,15 @@ static bool ensure_device_id(void)
 static void load_identity(void)
 {
 	uint8_t root_key[ZLRS_KEY_LEN];
-	zlrs_store_pairing_t pairing;
+	zlrs_storage_settings_pairing_t pairing;
 	bool have_root_key = false;
-	const uint32_t now_ms = zlrs_radio_port_now_ms();
+	const uint32_t now_ms = zlrs_port_radio_now_ms();
 
 	zlrs_link_set_dev_id(&link_control, device_id);
 	zlrs_link_set_dev_id(&link_data, device_id);
 
 	/* Root key: NVS only, written once with the config tool (set-phrase / set-key-hex) */
-	if (zlrs_store_load_root_key(root_key) == (int)ZLRS_KEY_LEN) {
+	if (zlrs_storage_settings_load(ZLRS_SETTING_ROOT_KEY, root_key, sizeof(root_key)) == (int)ZLRS_KEY_LEN) {
 		have_root_key = true;
 	}
 
@@ -606,7 +552,7 @@ static void load_identity(void)
 	zlrs_link_set_root_key(&link_data, root_key, now_ms);
 
 	/* Pairing record: peer dev_id plus the two pairing nonces, loaded into both links */
-	if (zlrs_store_load_pairing(&pairing) == (int)sizeof(pairing)) {
+	if (zlrs_storage_settings_load(ZLRS_SETTING_PAIRING, &pairing, sizeof(pairing)) == (int)sizeof(pairing)) {
 		zlrs_link_set_peer(&link_control, pairing.peer_id, pairing.pair_salt, now_ms);
 		zlrs_link_set_peer(&link_data, pairing.peer_id, pairing.pair_salt, now_ms);
 		LOG_INF("pairing record restored");
@@ -671,9 +617,9 @@ static void radio_wait_done(uint32_t budget_us)
 #endif
 		/* Direct transactions poll their own status: the shared semaphore would end this wait on
 		 * the other link's completion, with the data transaction still on air. */
-		if (zlrs_radio_port_direct_busy()) {
-			if (zlrs_radio_port_irq_pending()) {
-				zlrs_radio_port_drain();
+		if (zlrs_port_radio_direct_busy()) {
+			if (zlrs_port_radio_irq_pending()) {
+				zlrs_port_radio_drain();
 				return;
 			}
 			k_usleep(ZLRS_RADIO_DIRECT_POLL_US);
@@ -681,7 +627,7 @@ static void radio_wait_done(uint32_t budget_us)
 			continue;
 		}
 
-		if (zlrs_radio_port_wait_us(0U) == 0) {
+		if (zlrs_port_radio_wait_us(0U) == 0) {
 			return; /* this transaction is done */
 		}
 
@@ -689,7 +635,7 @@ static void radio_wait_done(uint32_t budget_us)
 		 * The planner still has an IRQ to handle: pump again at once. Only when it has nothing
 		 * pending does the wait mean "the radio is working and we are waiting for it".
 		 */
-		if (zlrs_radio_port_irq_pending()) {
+		if (zlrs_port_radio_irq_pending()) {
 			/* The engine consumes it; give up after a few passes (ZLRS_RADIO_IRQ_SPINS) */
 			if (++spins > ZLRS_RADIO_IRQ_SPINS) {
 				return;
@@ -699,7 +645,7 @@ static void radio_wait_done(uint32_t budget_us)
 
 		spins = 0U;
 
-		(void)zlrs_radio_port_wait_us(ZLRS_RADIO_PUMP_STEP_US);
+		(void)zlrs_port_radio_wait_us(ZLRS_RADIO_PUMP_STEP_US);
 		waited_us += ZLRS_RADIO_PUMP_STEP_US;
 	}
 }
@@ -729,7 +675,7 @@ typedef struct {
 
 static bench_t bench;
 static uint32_t prev_frame_start_us;
-static zlrs_radio_diag_t radio_diag;
+static zlrs_port_radio_diag_t radio_diag;
 #endif
 
 /*
@@ -789,7 +735,7 @@ static void run_slot(uint8_t slot)
 {
 	const bool data_slot = (slot == ZLRS_SLOT_DATA_A || slot == ZLRS_SLOT_DATA_B);
 	zlrs_link_t *link = data_slot ? &link_data : &link_control;
-	const uint32_t now_ms = zlrs_radio_port_now_ms();
+	const uint32_t now_ms = zlrs_port_radio_now_ms();
 	const uint32_t slot_start_us = now_us();
 	const uint32_t hit_before = link->stats.slot_hit[slot];
 	/* The duty-cycle gate only applies to whichever link is on sub-G */
@@ -829,7 +775,7 @@ static void run_slot(uint8_t slot)
 	}
 
 	if (link->radio.submit(link->radio.ctx, req) != 0) {
-		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_radio_port_now_ms());
+		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_port_radio_now_ms());
 		return;
 	}
 
@@ -872,7 +818,7 @@ static void run_slot(uint8_t slot)
 		radio_wait_done(budget_us);
 	}
 
-	zlrs_radio_port_drain();
+	zlrs_port_radio_drain();
 
 	/*
 	 * The port's completion semaphore is shared by both links, so "the wait returned" is not the
@@ -882,8 +828,8 @@ static void run_slot(uint8_t slot)
 	 * timeout, and the wait had "succeeded"), which is the wedge that made a link go deaf for good.
 	 */
 	if (link->req_pending) {
-		zlrs_radio_port_abort();
-		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_radio_port_now_ms());
+		zlrs_port_radio_abort();
+		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_port_radio_now_ms());
 	}
 
 	if (!phase_adj_set && link->stats.slot_hit[slot] != hit_before) {
@@ -988,22 +934,6 @@ static int cmd_bootsel(const struct shell *sh, size_t argc, char **argv)
 #endif /* CONFIG_ZLRS_APP_DEBUG_SHELL */
 #endif
 
-static void enter_serial_recovery(void)
-{
-	LOG_WRN("update trigger: rebooting into MCUboot serial recovery");
-
-	/* RP2350's watchdog may still be armed after SYSRESETREQ; leaving it for MCUboot would
-	 * cut its serial recovery short (subsys/bootguard is the bootloader-side guard). */
-	zlrs_watchdog_disarm();
-
-	if (bootmode_set(BOOT_MODE_TYPE_BOOTLOADER) != 0) {
-		LOG_ERR("boot mode write failed; MCUboot will boot the app again");
-	}
-
-	/* Let the log reach the UART before resetting */
-	k_msleep(50);
-	sys_reboot(SYS_REBOOT_COLD);
-}
 #endif
 
 static void pump_serial(void)
@@ -1029,7 +959,7 @@ static void pump_serial(void)
 		room = (uint16_t)sizeof(chunk);
 	}
 
-	got = zlrs_data_port_read(chunk, room);
+	got = zlrs_link_data_read(chunk, room);
 
 	if (got > 0U) {
 		(void)zlrs_link_write(&link_data, chunk, got);
@@ -1038,7 +968,7 @@ static void pump_serial(void)
 
 static void adopt_pairing(void)
 {
-	zlrs_store_pairing_t pairing;
+	zlrs_storage_settings_pairing_t pairing;
 
 	/* Control produces the pairing record, data adopts it; skip when either link is off */
 	if (!ZLRS_CONTROL_ENABLED || !ZLRS_DATA_ENABLED) {
@@ -1057,10 +987,10 @@ static void adopt_pairing(void)
 
 	/* After pairing succeeds on the control link, push the record to the data link and store it */
 	zlrs_link_set_peer(&link_data, link_control.peer_id, link_control.pair_salt,
-			   zlrs_radio_port_now_ms());
+			   zlrs_port_radio_now_ms());
 	memcpy(pairing.peer_id, link_control.peer_id, ZLRS_DEV_ID_LEN);
 	memcpy(pairing.pair_salt, link_control.pair_salt, ZLRS_PAIR_SALT_LEN);
-	(void)zlrs_store_save_pairing(&pairing);
+	(void)zlrs_storage_settings_save(ZLRS_SETTING_PAIRING, &pairing, sizeof(pairing));
 
 	LOG_INF("paired with %02x%02x%02x%02x", link_control.peer_id[0], link_control.peer_id[1],
 		link_control.peer_id[2], link_control.peer_id[3]);
@@ -1107,7 +1037,7 @@ static void failsafe_init(void)
 {
 	uint16_t channels[ZLRS_CRSF_CHANNEL_COUNT];
 
-	if (zlrs_store_load_failsafe(failsafe_payload) != (int)sizeof(failsafe_payload)) {
+	if (zlrs_storage_settings_load(ZLRS_SETTING_FAILSAFE, failsafe_payload, sizeof(failsafe_payload)) != (int)sizeof(failsafe_payload)) {
 		/* Never configured: use the default (throttle low, the rest centred) */
 		zlrs_crsf_channels_default(channels);
 		zlrs_crsf_channels_pack(failsafe_payload, channels);
@@ -1130,7 +1060,7 @@ static void crsf_handle_input(uint8_t type, const uint8_t *payload, uint8_t len)
 	}
 
 	zlrs_link_set_rc(&link_control, payload, len);
-	last_rc_input_ms = zlrs_radio_port_now_ms();
+	last_rc_input_ms = zlrs_port_radio_now_ms();
 	rc_input_seen = true;
 }
 
@@ -1160,7 +1090,7 @@ static void crsf_send_link_stats(const zlrs_tlm_t *tlm)
 	stats.downlink_snr_db = link_control.stats.last_snr;
 
 	zlrs_crsf_link_stats_encode(payload, &stats);
-	(void)zlrs_crsf_port_write(ZLRS_CRSF_TYPE_LINK_STATISTICS, payload, sizeof(payload));
+	(void)zlrs_link_crsf_write(ZLRS_CRSF_TYPE_LINK_STATISTICS, payload, sizeof(payload));
 }
 
 /* RX: rebuild the received RC payload into a CRSF frame for the flight controller */
@@ -1170,7 +1100,7 @@ static void crsf_send_rc(const uint8_t *payload, uint8_t len)
 		return;
 	}
 
-	(void)zlrs_crsf_port_write(ZLRS_CRSF_TYPE_RC_CHANNELS, payload, len);
+	(void)zlrs_link_crsf_write(ZLRS_CRSF_TYPE_RC_CHANNELS, payload, len);
 }
 
 /* RX: report the uplink quality measured on this side back to the TX */
@@ -1214,11 +1144,11 @@ static void pump_crsf(uint32_t now_ms)
 		return;
 	}
 
-	if (!zlrs_crsf_port_ready()) {
+	if (!zlrs_link_crsf_ready()) {
 		return;
 	}
 
-	while ((len = zlrs_crsf_port_read(&type, payload, sizeof(payload))) > 0U) {
+	while ((len = zlrs_link_crsf_read(&type, payload, sizeof(payload))) > 0U) {
 		crsf_handle_input(type, payload, len);
 	}
 
@@ -1384,11 +1314,11 @@ static void report(uint32_t now_ms)
 	 * are separate). A compile-time guard, because the counters it reads only exist when it is on.
 	 */
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
-	zlrs_radio_port_diag(&radio_diag);
+	zlrs_port_radio_diag(&radio_diag);
 
 	LOG_INF("%s ctl=%u tlm=%u data=%u serial_drop=%u host_drop=%u",
 		role_tx ? "TX" : "RX", counters.rc_rx, counters.tlm_rx,
-		counters.data_rx, zlrs_data_port_dropped(), zlrs_data_port_tx_dropped());
+		counters.data_rx, zlrs_link_data_dropped(), zlrs_link_data_tx_dropped());
 	/* Frames that really went out, per slot: only transactions that completed count (core/link) */
 	LOG_INF("air: ctl_tx=%u ctl_rx=%u data_tx=%u data_rx=%u fail=%u+%u | slot tx %u/%u/%u/%u",
 		link_control.stats.tx_frames, link_control.stats.rx_frames,
@@ -1456,7 +1386,7 @@ static void report(uint32_t now_ms)
 		link_control.stats.pair_resp_rx, link_control.stats.pair_cfm_rx,
 		link_control.stats.pair_rejects);
 	LOG_INF("crsf_bad=%u crsf_drop=%u air_drop=%u lq=%u%%", crsf_bad_input,
-		zlrs_crsf_port_rx_dropped(), link_data.stats.data_drop_bytes,
+		zlrs_link_crsf_rx_dropped(), link_data.stats.data_drop_bytes,
 		link_control.stats.lq_percent);
 	LOG_INF("region %s: max %d dBm, duty denied %u", (region != NULL) ? region->name : "?",
 		region->max_tx_power_dbm, duty.denied);
@@ -1480,7 +1410,7 @@ static void report(uint32_t now_ms)
 
 /*
  * System state broadcast: the facts other parts of the application render or report
- * (app/src/sys_bus.h). Facts only — the LED thread turns them into colours (doc/11-ux.md).
+ * (app/src/state/sys_bus.h). Facts only — the LED thread turns them into colours (doc/11-ux.md).
  */
 #if ZLRS_CONFIG_ENABLED
 static void enter_config_mode(void);
@@ -1515,7 +1445,7 @@ static void fault_loop(void)
 #endif
 
 	/* One fact, once: the fault outranks the boot self-test and shows as the red alert colour
-	 * (app/src/led_thread.c). Nothing else is published here — the links stop, so their last
+	 * (app/src/ui/led.c). Nothing else is published here — the links stop, so their last
 	 * snapshot is also the truth. */
 	zlrs_sys_publish_alerts(&alerts);
 
@@ -1601,7 +1531,7 @@ static void confirm_image(void)
 		return;
 	}
 
-	if (zlrs_config_image_confirmed()) {
+	if (zlrs_config_mode_image_confirmed()) {
 		confirmed = true;
 
 		if (boot_write_img_confirmed() == 0) {
@@ -1630,7 +1560,15 @@ static void enter_config_mode(void)
 
 	/* 0 = EXIT, 1 = timeout, -1 = no usable port: the log has to tell them apart */
 	{
-		const int rc = zlrs_config_mode_run(&link_control, failsafe_payload);
+		const zlrs_config_ctx_t ctx = {
+			.control = &link_control,
+			.data = &link_data,
+			.failsafe = failsafe_payload,
+			.device_id = device_id,
+			.region_id = region_id,
+			.tx_power_dbm = tx_power_dbm,
+		};
+		const int rc = zlrs_config_mode_run(&ctx);
 
 		if (rc != 0) {
 			LOG_WRN("config mode ended without EXIT (rc %d)", rc);
@@ -1645,153 +1583,6 @@ static void enter_config_mode(void)
 
 /* ---- application-side actions the config protocol triggers ----------------- */
 
-static int cfg_op_save_region(uint8_t id)
-{
-	const zlrs_region_t *const want = zlrs_region_get(id);
-
-	if (want == NULL) {
-		return ZLRS_CFG_E_PARAM;
-	}
-
-	/* The region's sub-G hardware must match the board (-5 = SKU mismatch); refuse otherwise */
-	if (zlrs_region_validate(want, ZLRS_RF_DESIGN, tx_power_dbm) == -5) {
-		return ZLRS_CFG_E_PARAM;
-	}
-
-	if (zlrs_store_save_region(id) != 0) {
-		return ZLRS_CFG_E_STORE;
-	}
-
-	LOG_INF("region set to %s (takes effect on next boot)", want->name);
-
-	return ZLRS_CFG_OK;
-}
-
-static int cfg_op_save_power(int8_t dbm)
-{
-	if (region == NULL || dbm > region->max_tx_power_dbm) {
-		return ZLRS_CFG_E_PARAM;
-	}
-
-	if (zlrs_store_save_power(dbm) != 0) {
-		return ZLRS_CFG_E_STORE;
-	}
-
-	LOG_INF("tx power set to %d dBm (takes effect on next boot)", dbm);
-
-	return ZLRS_CFG_OK;
-}
-
-static int cfg_op_save_role(uint8_t role)
-{
-	if (role > ZLRS_ROLE_RX) {
-		return ZLRS_CFG_E_PARAM;
-	}
-	if (zlrs_store_save_role(role) != 0) {
-		return ZLRS_CFG_E_STORE;
-	}
-
-	LOG_INF("role set to %s (takes effect on next boot)", (role == ZLRS_ROLE_TX) ? "TX" : "RX");
-
-	return ZLRS_CFG_OK;
-}
-
-static int cfg_op_save_profile(uint8_t profile)
-{
-	/* Refusing an unavailable profile here is the second gate: the boot path also falls back
-	 * when a stored value cannot be run (P0 outside debug images, P2 not implemented) */
-	if (!profile_allowed(profile)) {
-		return ZLRS_CFG_E_PARAM;
-	}
-	if (zlrs_store_save_profile(profile) != 0) {
-		return ZLRS_CFG_E_STORE;
-	}
-
-	LOG_INF("security profile set to P%u (takes effect on next boot)", (unsigned int)profile);
-
-	return ZLRS_CFG_OK;
-}
-
-static int cfg_op_erase_pair(void)
-{
-	if (zlrs_store_erase_pairing() != 0) {
-		return ZLRS_CFG_E_STORE;
-	}
-
-	LOG_INF("pairing erased (takes effect on next boot)");
-
-	return ZLRS_CFG_OK;
-}
-
-/*
- * Fresh device id on demand: the id is part of the key derivation, so the pairing record that
- * was built on the old one has to go with it (the peer would reject the new id anyway).
- */
-static int cfg_op_new_dev_id(void)
-{
-	uint8_t fresh[ZLRS_DEV_ID_LEN];
-
-	if (!make_device_id(fresh)) {
-		return ZLRS_CFG_E_STATE;
-	}
-	if (zlrs_store_save_dev_id(fresh) != 0) {
-		return ZLRS_CFG_E_STORE;
-	}
-	(void)zlrs_store_erase_pairing();
-
-	memcpy(device_id, fresh, sizeof(device_id));
-	zlrs_link_set_dev_id(&link_control, device_id);
-	zlrs_link_set_dev_id(&link_data, device_id);
-	LOG_INF("dev id %02x%02x%02x%02x (new, pairing dropped)", device_id[0], device_id[1],
-		device_id[2], device_id[3]);
-
-	return ZLRS_CFG_OK;
-}
-
-static int cfg_op_factory_reset(void)
-{
-	if (zlrs_store_erase_all() != 0) {
-		return ZLRS_CFG_E_STORE;
-	}
-
-	LOG_WRN("factory reset: NVS cleared (takes effect on next boot)");
-
-	return ZLRS_CFG_OK;
-}
-
-#if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
-static int cfg_op_recovery(void)
-{
-	enter_serial_recovery(); /* does not return */
-
-	return ZLRS_CFG_OK;
-}
-#endif
-
-static uint8_t cfg_op_region(void)
-{
-	return region_id;
-}
-
-static int8_t cfg_op_power(void)
-{
-	return tx_power_dbm;
-}
-
-static const zlrs_config_ops_t cfg_ops = {
-	.save_region = cfg_op_save_region,
-	.save_power = cfg_op_save_power,
-	.save_role = cfg_op_save_role,
-	.save_profile = cfg_op_save_profile,
-	.new_dev_id = cfg_op_new_dev_id,
-	.erase_pair = cfg_op_erase_pair,
-	.factory_reset = cfg_op_factory_reset,
-#if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
-	.enter_recovery = cfg_op_recovery,
-#endif
-	.region = cfg_op_region,
-	.power = cfg_op_power,
-};
 #endif /* ZLRS_CONFIG_ENABLED */
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
@@ -1803,16 +1594,16 @@ static const zlrs_config_ops_t cfg_ops = {
 static bool bench_wait(zlrs_link_t *link, const zlrs_radio_req_t *req, uint32_t budget_us)
 {
 	if (link->radio.submit(link->radio.ctx, req) != 0) {
-		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_radio_port_now_ms());
+		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_port_radio_now_ms());
 		return false;
 	}
 
 	radio_wait_done(budget_us);
 
-	zlrs_radio_port_drain();
+	zlrs_port_radio_drain();
 	if (link->req_pending) {
-		zlrs_radio_port_abort();
-		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_radio_port_now_ms());
+		zlrs_port_radio_abort();
+		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_port_radio_now_ms());
 		return false;
 	}
 
@@ -1825,7 +1616,7 @@ static int cmd_blast(const struct shell *sh, size_t argc, char **argv)
 	uint32_t count = (argc > 1) ? (uint32_t)strtoul(argv[1], NULL, 0) : 50U;
 	uint32_t sent = 0U;
 	uint32_t failed = 0U;
-	const uint32_t t0 = zlrs_radio_port_now_ms();
+	const uint32_t t0 = zlrs_port_radio_now_ms();
 
 	if (count > 2000U) {
 		count = 2000U;
@@ -1847,7 +1638,7 @@ static int cmd_blast(const struct shell *sh, size_t argc, char **argv)
 
 	shell_print(sh, "blast: %u of %u frames sent in %u ms (fail %u)",
 		    (unsigned int)sent, (unsigned int)count,
-		    (unsigned int)(zlrs_radio_port_now_ms() - t0), (unsigned int)failed);
+		    (unsigned int)(zlrs_port_radio_now_ms() - t0), (unsigned int)failed);
 
 	return 0;
 }
@@ -1896,7 +1687,7 @@ static int cmd_listen(const struct shell *sh, size_t argc, char **argv)
 static void bench_raw_at_boot(void)
 {
 	uint32_t left_ms = (uint32_t)CONFIG_ZLRS_APP_BENCH_RAW_MS;
-	uint32_t last_ms = zlrs_radio_port_now_ms();
+	uint32_t last_ms = zlrs_port_radio_now_ms();
 	uint32_t tx0 = link_data.stats.tx_frames;
 	uint32_t rx0 = link_data.stats.rx_frames;
 	static uint8_t payload[32];
@@ -1910,7 +1701,7 @@ static void bench_raw_at_boot(void)
 	LOG_INF("raw bench: %s for %u ms", role_tx ? "blast" : "listen",
 		(unsigned int)left_ms);
 
-	while ((uint32_t)(zlrs_radio_port_now_ms() - start_ms) < left_ms) {
+	while ((uint32_t)(zlrs_port_radio_now_ms() - start_ms) < left_ms) {
 		const zlrs_radio_req_t *req;
 
 		if (role_tx) {
@@ -1934,7 +1725,7 @@ static void bench_raw_at_boot(void)
 		zlrs_watchdog_feed();
 
 		{
-			const uint32_t now = zlrs_radio_port_now_ms();
+			const uint32_t now = zlrs_port_radio_now_ms();
 
 			if ((uint32_t)(now - last_ms) >= 1000U) {
 				const uint32_t tx = link_data.stats.tx_frames - tx0;
@@ -2153,9 +1944,9 @@ static int cmd_direct(const struct shell *sh, size_t argc, char **argv)
 {
 	if (argc > 1) {
 		if (strcmp(argv[1], "on") == 0) {
-			zlrs_radio_direct_set(true);
+			zlrs_port_radio_direct_set(true);
 		} else if (strcmp(argv[1], "off") == 0) {
-			zlrs_radio_direct_set(false);
+			zlrs_port_radio_direct_set(false);
 		} else {
 			shell_error(sh, "usage: zlrs direct [on|off]");
 			return -EINVAL;
@@ -2163,7 +1954,7 @@ static int cmd_direct(const struct shell *sh, size_t argc, char **argv)
 	}
 
 	shell_print(sh, "data link on the %s path",
-		    zlrs_radio_direct_enabled() ? "direct FLRC" : "RAC planner");
+		    zlrs_port_radio_direct_enabled() ? "direct FLRC" : "RAC planner");
 
 	return 0;
 }
@@ -2189,7 +1980,7 @@ static int cmd_trace(const struct shell *sh, size_t argc, char **argv)
 /* Bench: ask the log store to mount again and print the error it returns */
 static int cmd_logstore(const struct shell *sh, size_t argc, char **argv)
 {
-	const int rc = zlrs_log_store_probe();
+	const int rc = zlrs_storage_log_probe();
 
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
@@ -2284,8 +2075,8 @@ static int cmd_config(const struct shell *sh, size_t argc, char **argv)
  */
 static int cmd_ports(const struct shell *sh, size_t argc, char **argv)
 {
-	zlrs_port_state_t states[2];
-	const size_t count = zlrs_data_port_state(states, ARRAY_SIZE(states));
+	zlrs_link_data_state_t states[2];
+	const size_t count = zlrs_link_data_state(states, ARRAY_SIZE(states));
 
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
@@ -2311,12 +2102,12 @@ static int cmd_ports(const struct shell *sh, size_t argc, char **argv)
  */
 static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 {
-	zlrs_radio_diag_t diag;
+	zlrs_port_radio_diag_t diag;
 
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
 
-	zlrs_radio_port_diag(&diag);
+	zlrs_port_radio_diag(&diag);
 	{
 		uint32_t calls = 0U;
 		uint32_t deferred = 0U;
@@ -2324,20 +2115,20 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 		uint32_t poll_hits = 0U;
 		uint32_t last_status = 0U;
 
-		zlrs_radio_direct_stats(&calls, &deferred);
-		zlrs_radio_direct_irq_stats(&poll_hits, &last_status);
+		zlrs_port_radio_direct_stats(&calls, &deferred);
+		zlrs_port_radio_direct_irq_stats(&poll_hits, &last_status);
 		{
 			uint32_t tx_done = 0U, rx_pkt = 0U, rx_to = 0U, none = 0U, nz = 0U;
 
-			zlrs_radio_direct_counts(&tx_done, &rx_pkt, &rx_to, &none, &nz);
+			zlrs_port_radio_direct_counts(&tx_done, &rx_pkt, &rx_to, &none, &nz);
 			shell_print(sh, "direct irq: polls=%u last=%08x | tx_done=%u rx_pkt=%u "
 					"rx_timeout=%u no_status=%u last_nonzero=%08x",
 				    poll_hits, last_status, tx_done, rx_pkt, rx_to, none, nz);
 		}
 		shell_print(sh, "data path: %s (switch tried %u, deferred %u)",
-			    zlrs_radio_direct_enabled() ? "direct" : "planner", calls, deferred);
+			    zlrs_port_radio_direct_enabled() ? "direct" : "planner", calls, deferred);
 		shell_print(sh, "direct recovery: %u standby cycles after a silent transaction",
-			    zlrs_radio_direct_resets());
+			    zlrs_port_radio_direct_resets());
 	}
 	shell_print(sh, "txn=%u overruns=%u stale=%u late=%u rx_win=%u early=%u",
 		    diag.transactions, diag.overruns, diag.stale_irq, diag.late_irq, diag.rx_windows,
@@ -2364,7 +2155,7 @@ static int cmd_recovery(const struct shell *sh, size_t argc, char **argv)
 	ARG_UNUSED(argv);
 
 	shell_print(sh, "rebooting into MCUboot serial recovery");
-	enter_serial_recovery(); /* does not return */
+	(void)zlrs_platform_recovery_enter(); /* does not return */
 
 	return 0;
 }
@@ -2448,7 +2239,7 @@ static int cmd_mcuboot(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "confirmed   : %d", (int)boot_is_img_confirmed());
 	shell_print(sh, "swap type   : %d (0=none 1=test 2=revert 3=fail 4=permanent)",
 		    (int)mcuboot_swap_type());
-	shell_print(sh, "confirmed by host: %d", (int)zlrs_config_image_confirmed());
+	shell_print(sh, "confirmed by host: %d", (int)zlrs_config_mode_image_confirmed());
 	mcuboot_dump_slot(sh, "slot0", PARTITION_ID(slot0_partition));
 	mcuboot_dump_slot(sh, "slot1", PARTITION_ID(slot1_partition));
 
@@ -2549,7 +2340,7 @@ int main(void)
 	TRACE('V');
 
 	/* What the build is, and what this board has: ports and peripherals come from devicetree,
-	 * so a missing one is reported without being an error (app/src/caps.h) */
+	 * so a missing one is reported without being an error (app/src/platform/caps.h) */
 	if (!ZLRS_CONTROL_ENABLED) {
 		LOG_WRN("isolation: control link off, only the data link runs "
 			"(pairing needs the control link)");
@@ -2570,7 +2361,7 @@ int main(void)
 	 * be read or written, so the device stays unconfigured and off the air. store logs its own error.
 	 */
 	TRACE('S');
-	if (zlrs_store_init() != 0) {
+	if (zlrs_storage_settings_init() != 0) {
 		LOG_ERR("store unavailable: keys, pairing and failsafe will not persist");
 	}
 
@@ -2580,7 +2371,6 @@ int main(void)
 	 * fault_loop, and that path stays flashable only while the config port is alive.
 	 */
 	(void)zlrs_config_port_init();
-	zlrs_config_set_ops(&cfg_ops);
 	TRACE('C');
 #endif
 
@@ -2620,8 +2410,8 @@ int main(void)
 
 	/*
 	 * Region and power ceiling are runtime parameters (the config protocol writes them): use the
-	 * stored value when present, the board's own default otherwise (app/src/caps.h).
-	 * cfg_op_save_region validates whatever it is asked to store.
+	 * stored value when present, the board's own default otherwise (app/src/platform/caps.h).
+	 * The config commands validate whatever they are asked to store (app/src/config/mode.c).
 	 */
 	region_id = ZLRS_DEFAULT_REGION;
 	tx_power_dbm = CONFIG_ZLRS_APP_TX_POWER_DBM;
@@ -2629,10 +2419,10 @@ int main(void)
 		uint8_t stored_region;
 		int8_t stored_power;
 
-		if (zlrs_store_load_region(&stored_region) == (int)sizeof(stored_region)) {
+		if (zlrs_storage_settings_load(ZLRS_SETTING_REGION, &stored_region, sizeof(stored_region)) == (int)sizeof(stored_region)) {
 			region_id = stored_region;
 		}
-		if (zlrs_store_load_power(&stored_power) == (int)sizeof(stored_power)) {
+		if (zlrs_storage_settings_load(ZLRS_SETTING_POWER, &stored_power, sizeof(stored_power)) == (int)sizeof(stored_power)) {
 			tx_power_dbm = stored_power;
 		}
 	}
@@ -2644,7 +2434,7 @@ int main(void)
 	/* The first two things to look at on the bench: which SKU this board is, which region it runs */
 	LOG_INF("board: sub-G %s (band %d), region %s",
 		ZLRS_RF_BAND == ZLRS_BAND_SUBG_LF ? "LF" : "HF", ZLRS_RF_BAND, region->name);
-	/* What the build believes the hardware is, derived from devicetree (app/src/caps.h) */
+	/* What the build believes the hardware is, derived from devicetree (app/src/platform/caps.h) */
 	LOG_INF("caps: ports=%s%s%s usb=%c btn=%c led=%c wdt=%c rf=%s(%u-%u MHz)",
 		ZLRS_PORT_CTRL_FIXED ? "control" : "", ZLRS_PORT_DATA_FIXED ? ",data" : "",
 		ZLRS_PORT_CONFIG ? ",cfg" : "", ZLRS_HAS_USB ? 'y' : 'n',
@@ -2662,12 +2452,12 @@ int main(void)
 		uint8_t stored_role;
 		uint8_t stored_profile;
 
-		if (zlrs_store_load_role(&stored_role) == (int)sizeof(stored_role) &&
+		if (zlrs_storage_settings_load(ZLRS_SETTING_ROLE, &stored_role, sizeof(stored_role)) == (int)sizeof(stored_role) &&
 		    stored_role <= ZLRS_ROLE_RX) {
 			role_tx = (stored_role == ZLRS_ROLE_TX);
 		}
-		if (zlrs_store_load_profile(&stored_profile) == (int)sizeof(stored_profile)) {
-			if (profile_allowed(stored_profile)) {
+		if (zlrs_storage_settings_load(ZLRS_SETTING_PROFILE, &stored_profile, sizeof(stored_profile)) == (int)sizeof(stored_profile)) {
+			if (zlrs_config_mode_profile_allowed(stored_profile)) {
 				active_profile = stored_profile;
 			} else {
 				LOG_WRN("stored profile P%u is not available in this image, using P%u",
@@ -2708,7 +2498,7 @@ int main(void)
 	}
 	zlrs_duty_init(&duty, region, 0U);
 	/* The status LED comes up on its own thread and reads the state it renders: nothing to
-	 * init here (app/src/led_thread.c, app/src/sys_bus.h) */
+	 * init here (app/src/ui/led.c, app/src/state/sys_bus.h) */
 
 	/* Wait for the USP/RAC thread, then init RAC (see doc/07-architecture.md 6) */
 	SMTC_SW_PLATFORM_INIT();
@@ -2727,19 +2517,19 @@ int main(void)
 	{
 		uint32_t baud = 0U;
 
-		if (zlrs_store_load_baud(&baud) != (int)sizeof(baud)) {
+		if (zlrs_storage_settings_load(ZLRS_SETTING_BAUD, &baud, sizeof(baud)) != (int)sizeof(baud)) {
 			baud = 0U;
 		}
-		(void)zlrs_data_port_init(baud);
+		(void)zlrs_link_data_init(baud);
 	}
 
 	zlrs_link_set_rc(&link_control, rc_payload, sizeof(rc_payload));
 	if (ZLRS_CRSF_ENABLED) {
-		(void)zlrs_crsf_port_init();
+		(void)zlrs_link_crsf_init();
 	}
 
 	TRACE('c');
-	if (zlrs_radio_port_init(&link_control, &link_data) != 0) {
+	if (zlrs_port_radio_init(&link_control, &link_data) != 0) {
 		TRACE('X');
 		LOG_ERR("RAC init failed");
 		return 0;
@@ -2751,7 +2541,7 @@ int main(void)
 
 	TRACE('d');
 	/* Take the requested radio backend before the bench, or the bench would measure the old one */
-	zlrs_radio_direct_apply();
+	zlrs_port_radio_direct_apply();
 #if CONFIG_ZLRS_APP_BENCH_RAW_MS > 0
 	/* Bench images only: run the raw radio bench before the superframe takes over */
 	bench_raw_at_boot();
@@ -2808,11 +2598,11 @@ int main(void)
 		 * (a pairing triggered from the config port) is later than the "now" taken before it, so
 		 * unsigned subtraction underflows and the pairing window looks long expired.
 		 */
-		const uint32_t now_ms = zlrs_radio_port_now_ms();
+		const uint32_t now_ms = zlrs_port_radio_now_ms();
 
 		/* Four slots share a frame: over-budget transactions are dropped, they do not stretch it */
-		/* A radio backend switch waits for the frame boundary (see zlrs_radio_direct_apply) */
-		zlrs_radio_direct_apply();
+		/* A radio backend switch waits for the frame boundary (see zlrs_port_radio_direct_apply) */
+		zlrs_port_radio_direct_apply();
 
 		TRACE('L');
 		run_slot(ZLRS_SLOT_CTL_DOWN);

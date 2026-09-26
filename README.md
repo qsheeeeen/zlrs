@@ -111,7 +111,7 @@ What a build decides (the full table is in [doc/08-firmware.md](doc/08-firmware.
 | `CONFIG_ZLRS_APP_DEBUG*` | off | debug images only: shell, stats log, boot delay, radio off, hopping off, P0 … see [doc/12-debug.md](doc/12-debug.md) 3 |
 
 The radio and the ports are not in this table on purpose: whether the board has a radio, a
-control port, a config CDC, a button or a LED is a devicetree fact (`app/src/caps.h`).
+control port, a config CDC, a button or a LED is a devicetree fact (`app/src/platform/caps.h`).
 
 ## What this builds
 
@@ -132,9 +132,8 @@ check the toolchain and radio stack on their own.
 ## Repository layout
 
 ```
-app/                     Zephyr application: capabilities, ports, radio adaptation, storage,
-                         watchdog, button, system state bus, LED thread, superframe, reporting,
-                         debug shell
+app/src/                 Zephyr application, one directory per layer (doc/07-architecture.md 5):
+                         main.c plus platform/ ports/ link/ config/ state/ ui/ storage/
 boards/zlrs/             board definitions (RP2350-Zero plus Core2021)
 core/proto/              protocol core: framing, reassembly, hop tables, key derivation and
                          tags, telemetry payload, modulation tiers and the airtime model

@@ -1,8 +1,8 @@
 /*
  * Status LED: one WS2812 pixel expresses link state and alerts. Colour and cadence both carry
  * meaning (colour alone fails in bright light or with colour blindness). Priorities: 11-ux.
- * The application's LED thread (app/src/led_thread.c) fills this from the system state it
- * subscribes to, and app/src/led_port.c writes the result to the strip.
+ * The application's LED thread (app/src/ui/led.c) fills this from the system state it subscribes
+ * to and writes the result to the strip.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -25,7 +25,7 @@ typedef struct {
 } zlrs_led_rgb_t;
 
 typedef struct {
-	bool config_mode; /* show the config colour (the consumer delays it, see app/src/led_thread.c) */
+	bool config_mode; /* show the config colour (the consumer delays it, see app/src/ui/led.c) */
 	bool configured; /* root key present */
 	bool paired;     /* pairing record present */
 	bool failsafe;   /* sending/outputting failsafe values (TX input timeout, RX unconnected) */

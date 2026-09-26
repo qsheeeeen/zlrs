@@ -251,8 +251,8 @@ The planner path costs milliseconds per transaction: it programs the radio per s
 between transactions and pays the HAL's wake-up (5), against a slot budget that is a quarter of a
 frame. The vendor's direct-driver-access path exists for exactly that reason — program the radio
 once, keep it awake, start transactions back to back — so the data link has a second backend to
-measure against: `app/src/radio_rac.c` (`direct_submit` / `direct_drain`), switched at runtime with
-`zlrs direct on|off` and at boot with `CONFIG_ZLRS_APP_DIRECT_AT_BOOT` (bench images only).
+measure against: `app/src/ports/radio.c` (`direct_submit` / `direct_drain`), switched at runtime
+with `zlrs direct on|off` and at boot with `CONFIG_ZLRS_APP_DIRECT_AT_BOOT` (bench images only).
 
 What it does today, measured on two boards (A TX, B RX, 2.4G data channel, hopping off, both on the
 direct backend, `CONFIG_ZLRS_APP_BENCH_RAW_MS=8000`):
