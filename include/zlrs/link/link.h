@@ -154,7 +154,7 @@ typedef struct {
 	uint32_t rx_dup;
 	uint32_t rx_out_of_order; /* ARQ: drops caused by sequence-number jumps */
 	uint32_t tx_retries;      /* ARQ: retransmissions */
-	uint32_t tx_arq_drop;     /* ARQ: runs restarted after the retries ran out (bytes are kept) */
+	uint32_t tx_arq_drop;     /* ARQ: recovery probes after retry exhaustion (bytes are kept) */
 	uint32_t rx_frag_drop;
 	uint32_t rx_syncs;      /* SYNC frames received */
 	uint32_t tx_syncs;      /* SYNC frames sent */
@@ -204,12 +204,9 @@ typedef struct {
 #define ZLRS_ARQ_WINDOW      4U
 #define ZLRS_ARQ_TIMEOUT_MS  30U
 /*
- * Retries before a run is given up and counted. Giving up is expensive: the head frame is thrown
- * away *and* the stream resyncs, so everything the receiver had buffered for that run goes too.
- * The air path is far from perfect (on the bench a frame gets through in maybe a third of the
- * attempts), so the budget has to cover long bad streaks; 64 tries is about two seconds at the
- * retry cadence, which is the most a stalled frame should ever cost before the resync path takes
- * over.
+ * Retries before probing the peer for its cumulative ACK. Both ends retain their bytes and
+ * sequence positions across recovery; only a new session resets them. At the default retry
+ * cadence, 64 attempts allow about two seconds before the recovery probe takes over.
  */
 #define ZLRS_ARQ_MAX_RETRIES 64U
 
@@ -319,7 +316,7 @@ typedef struct {
 	uint16_t arq_rx_seq;
 	bool arq_rx_started;
 	bool arq_ack_pending;
-	/* ARQ resync: retries ran out, restart and wait for the peer to confirm its reset */
+	/* Retries ran out: wait for the peer's cumulative ACK, retaining the transmit window. */
 	bool arq_resync;
 
 	/* RX/TX buffers and reassembly */

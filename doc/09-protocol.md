@@ -158,10 +158,14 @@ The data link's default mode:
   asks for a resync);
 - the sender retransmits the head frame after 30 ms (`ZLRS_ARQ_TIMEOUT_MS`, raised to twice the
   airtime when a frame is slow), up to 64 times (`ZLRS_ARQ_MAX_RETRIES`);
-- exhausting the retry budget does not throw data away: the sender asks the receiver to void the
-  half message, keeps the bytes queued and starts the run again when the air is usable;
+- after exhausting retries, the sender probes for the receiver's cumulative ACK. Both ends
+  retain sequence positions and partial messages; acknowledged fragments may no longer exist
+  at the sender. Pending ACKs take priority over probes, including during simultaneous recovery;
 - the first frame of a session has to start at sequence 0: dropping a run is better than
   handing the layer above a stream at the wrong offset.
+
+Both peers must use the same recovery semantics. Older firmware treated the probe as a reset
+of the receive sequence and reassembly buffer; upgrade both peers together.
 
 Without ARQ (`CONFIG_ZLRS_APP_DATA_ARQ=n`, debug images) the data link is best-effort: bytes are
 dropped and counted when the port rings are full.

@@ -1615,6 +1615,97 @@ static void test_arq_giveup(void)
 	}
 }
 
+/* Both directions must recover even when neither has received any acknowledgement. */
+static void test_arq_bidirectional_recovery(void)
+{
+	sim_t sim;
+	uint8_t payload[32];
+
+	printf("link: arq simultaneous recovery\n");
+	sim_init(&sim);
+	sim.tx.data.cfg.arq = 1U;
+	sim.rx.data.cfg.arq = 1U;
+	pair_and_connect(&sim);
+	memset(payload, 0x5a, sizeof(payload));
+	CHECK(zlrs_link_write(&sim.tx.data, payload, sizeof(payload)) == sizeof(payload));
+	CHECK(zlrs_link_write(&sim.rx.data, payload, sizeof(payload)) == sizeof(payload));
+	sim.drop_down = 100000;
+	sim.drop_up = 100000;
+	sim_run(&sim, 500U);
+	CHECK(sim.tx.data.arq_resync && sim.rx.data.arq_resync);
+	sim.drop_down = 0;
+	sim.drop_up = 0;
+	sim_run(&sim, 2000U);
+	CHECK(sim.tx.data.queue_count == 0U && sim.rx.data.queue_count == 0U);
+	CHECK(!sim.tx.data.arq_resync && !sim.rx.data.arq_resync);
+	CHECK(sim.rx.stream_len == sizeof(payload) && sim.tx.stream_len == sizeof(payload));
+	CHECK(memcmp(sim.rx.stream, payload, sizeof(payload)) == 0);
+	CHECK(memcmp(sim.tx.stream, payload, sizeof(payload)) == 0);
+}
+
+/* Recovery cannot forget a delivered prefix or discard a partial message already ACKed. */
+static void test_arq_recovery_preserves_progress(void)
+{
+	for (unsigned int partial = 0U; partial < 2U; partial++) {
+		sim_t sim;
+		uint8_t payload[256];
+
+		printf("link: arq recovery preserves %s\n", partial ? "partial run" : "prefix");
+		sim_init(&sim);
+		sim.tx.data.cfg.arq = 1U;
+		sim.rx.data.cfg.arq = 1U;
+		pair_and_connect(&sim);
+		for (size_t i = 0U; i < sizeof(payload); i++) {
+			payload[i] = (uint8_t)i;
+		}
+		if (partial) {
+			CHECK(zlrs_link_write(&sim.tx.data, payload, sizeof(payload)) ==
+			      sizeof(payload));
+			sim_run(&sim, 1U);
+			CHECK(sim.rx.data.reasm.active);
+			CHECK(sim.rx.stream_len == 0U);
+		} else {
+			CHECK(zlrs_link_write(&sim.tx.data, payload, 128U) == 128U);
+			SIM_UNTIL(&sim, sim.tx.data.queue_count == 0U, 2000);
+			CHECK(sim.rx.stream_len == 128U);
+			CHECK(zlrs_link_write(&sim.tx.data, payload + 128U, 128U) == 128U);
+		}
+		CHECK(sim.tx.data.arq_seq == 1U);
+		sim.drop_data_down = 100000;
+		sim_run(&sim, 500U);
+		CHECK(sim.tx.data.stats.tx_arq_drop > 0U);
+		sim.drop_data_down = 0;
+		sim_run(&sim, 2000U);
+		CHECK(sim.rx.stream_len == sizeof(payload));
+		CHECK(memcmp(sim.rx.stream, payload, sizeof(payload)) == 0);
+		CHECK(sim.tx.data.queue_count == 0U);
+	}
+}
+
+/* Lost ACKs must not make recovery deliver an already accepted message twice. */
+static void test_arq_recovery_lost_ack(void)
+{
+	sim_t sim;
+	uint8_t payload[32];
+
+	printf("link: arq recovery after lost ACK\n");
+	sim_init(&sim);
+	sim.tx.data.cfg.arq = 1U;
+	sim.rx.data.cfg.arq = 1U;
+	pair_and_connect(&sim);
+	memset(payload, 0x3c, sizeof(payload));
+	sim.drop_up = 100000;
+	CHECK(zlrs_link_write(&sim.tx.data, payload, sizeof(payload)) == sizeof(payload));
+	sim_run(&sim, 500U);
+	CHECK(sim.tx.data.arq_resync);
+	CHECK(sim.rx.stream_len == sizeof(payload));
+	sim.drop_up = 0;
+	sim_run(&sim, 2000U);
+	CHECK(sim.tx.data.queue_count == 0U);
+	CHECK(sim.rx.stream_len == sizeof(payload));
+	CHECK(memcmp(sim.rx.stream, payload, sizeof(payload)) == 0);
+}
+
 /* Rate adaptation: windows, hold time and hysteresis, all three or nothing moves */
 static void test_rate_adapt(void)
 {
@@ -2328,6 +2419,9 @@ void test_link(void)
 	test_arq_slow_run();
 	test_arq_dedup();
 	test_arq_giveup();
+	test_arq_bidirectional_recovery();
+	test_arq_recovery_preserves_progress();
+	test_arq_recovery_lost_ack();
 	test_rate_adapt();
 	test_failsafe_push();
 	test_data_idle();

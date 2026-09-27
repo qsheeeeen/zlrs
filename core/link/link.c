@@ -365,6 +365,7 @@ static void session_activate(zlrs_link_t *link, uint16_t hop_index)
 	link->arq_seq = 0U;
 	link->arq_rx_started = false;
 	link->arq_ack_pending = false;
+	link->arq_resync = false;
 	zlrs_fhss_set_index(&link->fhss, hop_index);
 }
 
@@ -649,11 +650,9 @@ static const zlrs_radio_req_t *send_data_arq(zlrs_link_t *link, uint32_t now_ms)
 	if (timeout) {
 		if (link->arq_retries >= ZLRS_ARQ_MAX_RETRIES) {
 			/*
-			 * Retries exhausted on the head frame: ask the receiver to drop its half message and keep
-			 * the bytes. Throwing them away (what this used to do) is data loss on a passthrough, and
-			 * the receiver's assembly has to be reset either way or a restart would be stitched onto
-			 * the half message that is already there. The head frame stays in the window, so the run
-			 * resumes from exactly where it stopped once the air is usable again.
+			 * Ask for the receiver's cumulative ACK after a long outage. Both ends retain
+			 * their sequence numbers and bytes: an acknowledged fragment may exist only
+			 * in the receiver's partial message, so resetting it would lose data.
 			 */
 			link->arq_retries = 0U;
 			link->arq_resync = true;
@@ -760,20 +759,15 @@ static void handle_ack(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t no
 	}
 
 	if ((flags & ZLRS_ARQ_ACK_RESYNC) != 0U) {
-		/* The peer gave up and restarts: drop the half message, answer "no progress yet" */
-		reasm_restart(link);
-		link->arq_rx_started = false;
-		link->arq_rx_seq = 0U;
+		/* Recovery probe: report progress without discarding acknowledged fragments or
+		 * forgetting which complete messages were already delivered. */
 		link->arq_ack_pending = true;
 		return;
 	}
 
 	if (link->arq_resync) {
-		/* Wait until the peer confirms its reset (0xFFFF = no progress) before resyncing */
-		if (ack == 0xFFFFU) {
-			link->arq_resync = false;
-		}
-		return;
+		link->arq_resync = false;
+		link->arq_retries = 0U;
 	}
 
 	while (link->arq_used > 0U && (int16_t)(ack - link->arq_seq) >= 0) {
@@ -1770,17 +1764,17 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 	if (tx_side == a) {
 		const zlrs_radio_req_t *req;
 
-		/* ARQ resync: let the peer void the half message before the next run starts */
-		if (link->cfg.arq && link->arq_resync) {
-			req = send_arq_ack(link, 0xFFFFU, ZLRS_ARQ_ACK_RESYNC);
+		/* Answer the peer before probing it, including when both ends need recovery. */
+		if (link->cfg.arq && link->arq_ack_pending) {
+			req = send_ack(link);
 			if (req != NULL) {
 				return req;
 			}
 		}
 
-		/* ARQ: a pending cumulative ACK outranks data; the earlier it goes, the fewer retransmits */
-		if (link->cfg.arq && link->arq_ack_pending) {
-			req = send_ack(link);
+		/* Ask for the peer's retained receive position before resuming our window. */
+		if (link->cfg.arq && link->arq_resync) {
+			req = send_arq_ack(link, 0xFFFFU, ZLRS_ARQ_ACK_RESYNC);
 			if (req != NULL) {
 				return req;
 			}

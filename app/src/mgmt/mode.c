@@ -236,7 +236,8 @@ static int cfg_save_root_key(void *vctx, const uint8_t key[ZLRS_KEY_LEN])
 static int cfg_read_status(void *vctx, zlrs_mgmt_status_t *out)
 {
 	const zlrs_mgmt_ctx_t *ctx = vctx;
-	const zlrs_link_t *const link = ctx->control;
+	const zlrs_link_t *const link =
+		IS_ENABLED(CONFIG_ZLRS_APP_LINK_CONTROL) ? ctx->control : ctx->data;
 	uint8_t stored_region;
 	int8_t stored_power;
 	uint32_t baud;
@@ -308,6 +309,10 @@ static int cfg_new_dev_id(void *vctx)
 static int cfg_pair(void *vctx)
 {
 	const zlrs_mgmt_ctx_t *ctx = vctx;
+
+	if (!IS_ENABLED(CONFIG_ZLRS_APP_LINK_CONTROL)) {
+		return ZLRS_MGMT_E_STATE;
+	}
 
 	zlrs_link_press(ctx->control, k_uptime_get_32());
 	LOG_INF("pairing triggered by management tool");

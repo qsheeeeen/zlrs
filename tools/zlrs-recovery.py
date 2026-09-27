@@ -19,10 +19,12 @@
 # mode (recovery first, console second). Find recovery by /dev/serial/by-id/...MCUBOOT...-if00.
 
 import argparse
+from pathlib import Path
+import re
 import sys
 
 SOF = b"\xa5\x5a"
-VERSION = 2
+VERSION = 3
 CMD_RECOVERY = 0x41
 DEFAULT_BAUD = 115200
 
@@ -46,7 +48,13 @@ def build_request() -> bytes:
 
 def self_test() -> int:
     request = build_request()
-    want = bytes.fromhex("a55a02410067")
+    want = bytes.fromhex("a55a034100e4")
+
+    header = Path(__file__).resolve().parent.parent / "include/zlrs/mgmt/mgmt.h"
+    match = re.search(r"#define\s+ZLRS_MGMT_VERSION\s+(\d+)U", header.read_text())
+    if match is None or int(match[1]) != VERSION:
+        print("self-test: FAIL recovery protocol version differs from firmware", file=sys.stderr)
+        return 1
 
     if request != want:
         print(f"self-test: FAIL wrong framing: {request.hex()} != {want.hex()}", file=sys.stderr)

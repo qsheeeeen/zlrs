@@ -1380,18 +1380,19 @@ static void crypto_init(void)
 
 static void broadcast_state(void)
 {
+	const zlrs_link_t *const active = ZLRS_CONTROL_ENABLED ? &link_control : &link_data;
 	const uint32_t drops = link_data.stats.data_drop_bytes;
 	struct zlrs_link_status link;
 	struct zlrs_alerts alerts;
 
 	link.role_tx = role_tx;
-	link.configured = link_control.configured;
-	link.paired = link_control.paired;
-	link.state = link_control.state;
-	link.lq_percent = link_control.stats.lq_percent;
+	link.configured = active->configured;
+	link.paired = active->paired;
+	link.state = active->state;
+	link.lq_percent = active->stats.lq_percent;
 
 	/* TX without RC input sends failsafe values; an unconnected RX outputs them to the FC */
-	if (link_control.state == ZLRS_STATE_CONNECTED) {
+	if (ZLRS_CONTROL_ENABLED && link_control.state == ZLRS_STATE_CONNECTED) {
 		ever_connected = true;
 	}
 	/*
@@ -1711,6 +1712,12 @@ static void print_link(const struct shell *sh, const char *name, const zlrs_link
 		    link->stats.tx_retries, link->stats.tx_arq_drop, link->stats.rx_dup,
 		    link->stats.rx_out_of_order, link->stats.rx_frag_drop,
 		    link->stats.data_drop_bytes);
+	shell_print(sh,
+		    "        queue=%u window=%u seq=%u rx_seq=%u ack=%u recovery=%u"
+		    " reasm=%u bad_tag=%u bad_frame=%u",
+		    link->queue_count, link->arq_used, link->arq_seq, link->arq_rx_seq,
+		    link->arq_ack_pending, link->arq_resync, link->reasm.len,
+		    link->stats.rx_bad_tag, link->stats.rx_bad_frame);
 	shell_print(sh, "        cadence tlm=1/%u data=1/%u resync=1/%u", link->cfg.tlm_every_n,
 		    link->cfg.data_every_n, link->cfg.resync_every_n);
 	/* The exact KDF context the link derives from: byte compare of two ends settles the rest */
@@ -1751,8 +1758,8 @@ static int cmd_link(const struct shell *sh, size_t argc, char **argv)
 }
 
 /*
- * KDF self test: RFC 5869 case 1 (IKM 0x0b*22, zero salt, info 0xf0..0xf9). Two ends that derive
- * different keys from the same pairing inputs have either a different input or a broken KDF, and
+ * KDF self test: IKM 0x0b*22, zero salt, info 0xf0..0xf9 (independently computed vector).
+ * Two ends deriving different keys from the same pairing inputs have different inputs or a broken KDF;
  * this tells those apart without a second device.
  */
 static int cmd_kdf(const struct shell *sh, size_t argc, char **argv)
@@ -1764,9 +1771,9 @@ static int cmd_kdf(const struct shell *sh, size_t argc, char **argv)
 	static const uint8_t info[10] = {0xf0, 0xf1, 0xf2, 0xf3, 0xf4,
 					 0xf5, 0xf6, 0xf7, 0xf8, 0xf9};
 	static const uint8_t want[32] = {
-		0x3c, 0xb2, 0x5f, 0x25, 0xfa, 0xac, 0xd5, 0x7a, 0x90, 0x43, 0x4f,
-		0x64, 0xd0, 0x36, 0x2f, 0x2a, 0x2d, 0x2d, 0x0a, 0x90, 0xcf, 0x1a,
-		0x5a, 0x4c, 0x5d, 0xb0, 0x2d, 0x56, 0xec, 0xc4, 0xc5, 0xbf,
+		0xab, 0xba, 0xfb, 0x13, 0xf5, 0xc1, 0xbc, 0x48, 0x9d, 0x42, 0x03,
+		0x13, 0x58, 0x17, 0x95, 0x6d, 0xd5, 0x21, 0xb3, 0x9e, 0x3b, 0xd6,
+		0x1d, 0x1c, 0xc8, 0x5c, 0xef, 0x88, 0x4d, 0x1f, 0x8e, 0x2e,
 	};
 	uint8_t out[32];
 	uint8_t ikm_fixed[32];
@@ -2534,8 +2541,11 @@ int main(void)
 
 		const uint64_t elapsed_us = k_cyc_to_us_floor64(k_cycle_get_64() - start_cyc);
 		const uint32_t pacing_us = frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE;
-		/* The phase lock's correction lands here, once per frame */
-		int64_t remain_us = (int64_t)pacing_us - (int64_t)elapsed_us + (int64_t)phase_adj_us;
+		/* A busy frame has no padding to remove. Apply corrections after clamping the
+		 * padding, or an overrun swallows even the positive scan delay and two deaf
+		 * peers keep repeating exactly the same relative timing. */
+		int64_t remain_us =
+			MAX((int64_t)pacing_us - (int64_t)elapsed_us, 0) + (int64_t)phase_adj_us;
 
 		phase_adj_us = 0;
 

@@ -14,9 +14,17 @@ design documents.
   911 valid RC frames fed into the CRSF CDC gave `crsf_bad=0`, then 550 frames with the wrong
   payload length took `crsf_bad` up by exactly 550. SPI, the control lines, RAC transactions and
   CRSF parsing are covered; receive is not part of it.
-- **Pairing, sessions and round trips on both links**: needs a second module (LF or HF SKU, both
-  ends in the same region). Pairing, sessions, telemetry, data and ARQ only mean something with
-  two boards present.
+- **Pairing, sessions and round trips on both links**: on 2026-09-28 two LF boards completed a
+  fresh pairing and restored their records after an update; the isolated 2.4 GHz data link
+  completed its session handshake.
+  After ARQ recovery and overrun pacing fixes, fixed-channel 2441 MHz passed three consecutive
+  simultaneous transfers of 4096 bytes per direction, byte-exact, in 23.829, 21.978 and 25.487 s.
+  Both boards run the data-only profile with authentication, session handshake and ARQ enabled.
+  A further simultaneous 512-byte transfer per direction survived a six-second RX radio pause
+  in management mode and completed byte-exact in 13.746 s, without re-pairing or rebooting.
+  Throughput remains low with substantial retransmissions. Hopping is not accepted: before
+  these fixes both 64-byte transfers with hopping enabled received zero bytes; that mode still
+  needs a separate retest and timing investigation. Handshake success alone is not acceptance.
 - **Sub-band mixing on hardware**: the software side is done (two hop tables, `SYNC` carrying
   the mix and the table version, the telemetry-then-data-then-RC migration order, the regional
   duty cap and LQ-driven adaptation) and the host tests cover both ends picking the same
@@ -29,8 +37,13 @@ design documents.
   between measured airtime and the model. EU868's 1 % duty cannot feed this tier, so it is
   offered only in regions without a duty cap.
 - **Reliable transfer (ARQ) on hardware**: on by default (a four-frame window, cumulative ACKs,
-  30 ms retransmit, six retries); throughput and latency need measuring on the board. Later the
-  ack can shrink to one header bit once the RX always has a frame to ride along.
+  30 ms retransmit, 64 retries). Recovery now answers pending ACKs before probing and retains
+  receive sequence/reassembly progress. Regression tests cover simultaneous exhaustion,
+  acknowledged complete/partial prefixes and lost ACKs without duplicate delivery; the host
+  suite passes 1515 checks under ASan/UBSan. Both peers must upgrade together because older
+  firmware discards receive progress on a recovery probe. Fixed-channel duplex passes the
+  short hardware test above; long-duration throughput and latency acceptance remain open.
+  Later the ack can shrink to one header bit once the RX always has a frame to ride along.
 - **Over-the-air firmware update** (optional): images travel over the 2.4G data link, roughly
   10 s per MB.
 

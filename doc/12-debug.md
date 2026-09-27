@@ -72,6 +72,21 @@ boot, and each has a matching host test.
 **Features whose default is still open** (rate adaptation, dynamic power) are not
 switches to hide but debts: `doc/13-roadmap.md`, "Pending defaults".
 
+For a fixed-channel 2.4 GHz data-only bench on the LF module:
+
+```sh
+source tools/zephyr-env.sh
+ZLRS_BOARD=rp2350_zero_core2021/rp2350a/m33/lf zlrs-build -d build-data24 -- \
+  -DEXTRA_CONF_FILE="$ZLRS_REPO_ROOT/app/debug.conf;$ZLRS_REPO_ROOT/app/data24-debug.conf" \
+  -DDTC_OVERLAY_FILE="$ZLRS_REPO_ROOT/app/debug.overlay"
+```
+
+This profile disables control, sub-band mixing and hopping. P1 authentication, session
+handshake and ARQ remain enabled. Both devices need an existing pairing record: pairing still
+runs on the control link; pairing requests are rejected in this profile. Read the **data**
+section of `zlrs link`; management status and the LED follow data when control is disabled. The profile
+isolates faults; it is not a validated reliable-transfer configuration (see `13-roadmap.md`).
+
 ## 4. Debugging on the board
 
 - **Bench self-check**: `python3 tools/zlrs-bringup.py` exercises USB, ports, management mode,
