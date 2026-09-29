@@ -384,6 +384,14 @@ config ZLRS_APP_DEBUG_BOOT_DELAY_MS
 	  Bench only: give the host time to open the console port (a CDC only transmits once the
 	  host has opened it), so a panic during init is actually visible. Keep 0 in production.
 
+config ZLRS_APP_DEBUG_LED_BRIGHTNESS_PERCENT
+	int "Status LED brightness (percent)"
+	default 20
+	range 1 100
+	help
+	  Scales every status LED frame in a development image. Keep the debug LED dim on the bench;
+	  production images use the core LED brightness levels without this debug-only attenuation.
+
 
 endmenu
 endmenu

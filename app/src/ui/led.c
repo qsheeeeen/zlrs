@@ -36,6 +36,14 @@ LOG_MODULE_REGISTER(zlrs_led, CONFIG_APP_LOG_LEVEL);
 /* 20 Hz looks continuous to the eye and costs nothing on the strip (doc/11-ux.md) */
 #define LED_REFRESH_MS 50U
 
+/* Debug images attenuate the complete frame so the bench pixel is not glaring. The core renderer
+ * remains portable and keeps its production brightness tiers; this is an output-stage policy. */
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
+#define LED_OUTPUT_BRIGHTNESS_PERCENT CONFIG_ZLRS_APP_DEBUG_LED_BRIGHTNESS_PERCENT
+#else
+#define LED_OUTPUT_BRIGHTNESS_PERCENT 100U
+#endif
+
 /*
  * A management session is only worth showing once it survives a tool round-trip: the update tool and
  * `zlrs-mgmt.py` open a session per command and leave within ~100 ms, and flashing white for
@@ -86,9 +94,9 @@ static int led_write(zlrs_led_rgb_t color)
 		return -1; /* no status LED on this board */
 	}
 
-	pixels[0].r = color.r;
-	pixels[0].g = color.g;
-	pixels[0].b = color.b;
+	pixels[0].r = (uint8_t)(((uint16_t)color.r * LED_OUTPUT_BRIGHTNESS_PERCENT) / 100U);
+	pixels[0].g = (uint8_t)(((uint16_t)color.g * LED_OUTPUT_BRIGHTNESS_PERCENT) / 100U);
+	pixels[0].b = (uint8_t)(((uint16_t)color.b * LED_OUTPUT_BRIGHTNESS_PERCENT) / 100U);
 
 	/*
 	 * A failed strip write has to be reported: the LED is the only local feedback, and when the

@@ -66,14 +66,15 @@ static zlrs_led_rgb_t link_state_frame(const zlrs_led_input_t *in, uint32_t now_
 
 	switch (in->link_state) {
 	case ZLRS_STATE_CONNECTED:
-		/* Steady theme colour, LQ only changes brightness: >=80 30%, 50-79 18%, <50 10% */
+		/* A connected unit has a heartbeat, never a steady light. Keep brightness fixed and
+		 * let LQ change cadence: fast at >=80%, medium at 50-79%, slow below 50%. */
 		if (in->lq_percent >= 80U) {
-			return scale(theme, 30U);
+			return blink(scale(theme, 30U), now_ms, 500U, 100U);
 		}
 		if (in->lq_percent >= 50U) {
-			return scale(theme, 18U);
+			return blink(scale(theme, 30U), now_ms, 1000U, 200U);
 		}
-		return scale(theme, 10U);
+		return blink(scale(theme, 30U), now_ms, 2000U, 200U);
 	case ZLRS_STATE_PAIRING:
 		return blink(scale(theme, 60U), now_ms, 1000U, 300U);
 	case ZLRS_STATE_SEARCHING:

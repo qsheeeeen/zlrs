@@ -105,12 +105,8 @@ static void test_connected_lq(void)
 {
 	zlrs_led_input_t in;
 	zlrs_led_rgb_t strong;
-	zlrs_led_rgb_t weak;
-	zlrs_led_rgb_t bad;
 	const zlrs_led_rgb_t rx_green30 = {0U, 76U, 0U};
-	const zlrs_led_rgb_t rx_green18 = {0U, 45U, 0U};
-	const zlrs_led_rgb_t rx_green10 = {0U, 25U, 0U};
-	const zlrs_led_rgb_t tx_blue10 = {0U, 9U, 25U};
+	const zlrs_led_rgb_t tx_blue30 = {0U, 27U, 76U};
 
 	printf("led: connected and lq\n");
 
@@ -120,33 +116,49 @@ static void test_connected_lq(void)
 	in.paired = true;
 	in.link_state = ZLRS_STATE_CONNECTED;
 
-	/* RX (green theme): steady, the colour is the same at different moments */
+	/* RX (green theme): LQ changes cadence, never brightness */
 	in.lq_percent = 90U;
 	strong = zlrs_led_frame(&in, 0U);
 	CHECK(!is_off(strong));
 	CHECK(memcmp(&strong, &rx_green30, sizeof(strong)) == 0); /* green 255 x 30% */
 	{
-		const zlrs_led_rgb_t later = zlrs_led_frame(&in, 777U);
+		const zlrs_led_rgb_t later = zlrs_led_frame(&in, 200U);
 
-		CHECK(memcmp(&strong, &later, sizeof(strong)) == 0);
+		CHECK(is_off(later));
+		const zlrs_led_rgb_t next = zlrs_led_frame(&in, 500U);
+
+		CHECK(memcmp(&strong, &next, sizeof(strong)) == 0);
 	}
 
-	/* LQ drops a tier: brightness steps down, the colour does not (degradation is not an alert) */
+	/* Medium LQ: one 200 ms pulse per second, at the same brightness. */
 	in.lq_percent = 60U;
-	weak = zlrs_led_frame(&in, 0U);
-	CHECK(memcmp(&weak, &rx_green18, sizeof(weak)) == 0); /* 18% */
+	{
+		const zlrs_led_rgb_t medium_on = zlrs_led_frame(&in, 0U);
+		const zlrs_led_rgb_t medium_next = zlrs_led_frame(&in, 1000U);
 
-	/* LQ is bad: still the theme colour, only darker, never red or amber */
+		CHECK(memcmp(&medium_on, &rx_green30, sizeof(medium_on)) == 0);
+		CHECK(is_off(zlrs_led_frame(&in, 300U)));
+		CHECK(memcmp(&medium_on, &medium_next, sizeof(medium_on)) == 0);
+	}
+
+	/* Low LQ: one 200 ms pulse every two seconds, still at the same brightness. */
 	in.lq_percent = 20U;
-	bad = zlrs_led_frame(&in, 0U);
-	CHECK(memcmp(&bad, &rx_green10, sizeof(bad)) == 0);
-	CHECK(bad.r == 0U);
+	{
+		const zlrs_led_rgb_t low_on = zlrs_led_frame(&in, 0U);
+		const zlrs_led_rgb_t low_next = zlrs_led_frame(&in, 2000U);
+
+		CHECK(memcmp(&low_on, &rx_green30, sizeof(low_on)) == 0);
+		CHECK(is_off(zlrs_led_frame(&in, 300U)));
+		CHECK(memcmp(&low_on, &low_next, sizeof(low_on)) == 0);
+	}
 
 	/* The TX theme is blue: the same link state comes out in blue */
 	in.role_tx = true;
-	bad = zlrs_led_frame(&in, 0U);
-	CHECK(memcmp(&bad, &tx_blue10, sizeof(bad)) == 0);
-	CHECK(bad.r == 0U);
+	{
+		const zlrs_led_rgb_t tx_on = zlrs_led_frame(&in, 0U);
+
+		CHECK(memcmp(&tx_on, &tx_blue30, sizeof(tx_on)) == 0);
+	}
 }
 
 static void test_drop_overlay(void)
@@ -154,7 +166,6 @@ static void test_drop_overlay(void)
 	zlrs_led_input_t in;
 	zlrs_led_rgb_t base;
 	zlrs_led_rgb_t flashed;
-	const zlrs_led_rgb_t green30 = {0U, 76U, 0U};
 
 	printf("led: drop overlay\n");
 
@@ -166,19 +177,19 @@ static void test_drop_overlay(void)
 	in.lq_percent = 90U;
 	in.drop_recent = true;
 
-	base = zlrs_led_frame(&in, 500U);
-	flashed = zlrs_led_frame(&in, 50U); /* one 120 ms flash every 2 s */
+	base = zlrs_led_frame(&in, 400U);
+	flashed = zlrs_led_frame(&in, 50U); /* one 300 ms flash every 2 s */
 
 	CHECK(!is_off(flashed));
 	CHECK(flashed.r > base.r);
-	CHECK(memcmp(&base, &green30, sizeof(base)) == 0);
+	CHECK(is_off(base));
 
 	/* No drops means no flash */
 	in.drop_recent = false;
 	{
 		const zlrs_led_rgb_t quiet = zlrs_led_frame(&in, 50U);
 
-		CHECK(memcmp(&quiet, &base, sizeof(base)) == 0);
+		CHECK(quiet.r == 0U && quiet.g > 0U && quiet.b == 0U);
 	}
 
 	/* No overlay while unconnected: at t=50 it is the searching theme colour, not drop orange */
