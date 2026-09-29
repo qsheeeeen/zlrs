@@ -39,6 +39,7 @@ quietly end up in a released image.
 | `CONFIG_ZLRS_APP_DEBUG_STATS_LOG` | 1 Hz `stats:` line (counters, LQ, duty, dynamic power) and `air:` line (completed transactions per link) |
 | `CONFIG_ZLRS_APP_BENCH_RAW_MS` | the first N ms after boot skip the superframe: the TX role sends complete frames back to back, the RX role opens 100 ms receive windows back to back, and both log frames per second |
 | `CONFIG_ZLRS_APP_DEBUG_BOOT_DELAY_MS` | wait that long after USB is up before continuing init, so a panic during init is visible on an open console |
+| `CONFIG_ZLRS_APP_DEBUG_LED_BRIGHTNESS_PERCENT` | attenuate the status pixel in a debug image (the default is 20%); production images keep the normal LED levels |
 | `CONFIG_ZLRS_APP_DIRECT_AT_BOOT` | put the data link on the direct FLRC backend from the first frame (the runtime equivalent is `zlrs direct on`); see 6 |
 
 The shell is gated by `CONFIG_ZLRS_APP_DEBUG_SHELL` and runs on the console CDC; the supported
@@ -84,8 +85,22 @@ ZLRS_BOARD=rp2350_zero_core2021/rp2350a/m33/lf zlrs-build -d build-data24 -- \
 This profile disables control, sub-band mixing and hopping. P1 authentication, session
 handshake and ARQ remain enabled. Both devices need an existing pairing record: pairing still
 runs on the control link; pairing requests are rejected in this profile. Read the **data**
-section of `zlrs link`; management status and the LED follow data when control is disabled. The profile
-isolates faults; it is not a validated reliable-transfer configuration (see `13-roadmap.md`).
+section of `zlrs link`; management status and the LED follow data when control is disabled. The
+profile isolates faults; it is not a validated reliable-transfer configuration (see `13-roadmap.md`).
+
+Measure end-to-end payload throughput between two paired devices with:
+
+```sh
+python3 tools/zlrs-throughput.py --tx-port <TX-serial> --rx-port <RX-serial>
+```
+
+On Linux or WSL, serial fragments select the matching data CDC (`...-if02`). The default runs
+three simultaneous bidirectional rounds of 4096 bytes per direction, verifies every byte, and
+prints iperf-style one-second transfer and bitrate intervals plus a per-direction summary.
+It first drains and reports any old bytes waiting at the host ports, then waits for one quiet
+second before measuring. Use `--format json` for machine-readable output. `--interval-ms 50`
+paces USB input; set it to `0` to push chunks without an intentional delay. This measures the
+complete data path, including radio scheduling and ARQ, rather than raw PHY frame rate.
 
 ## 4. Debugging on the board
 
