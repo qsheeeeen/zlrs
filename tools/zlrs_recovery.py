@@ -9,8 +9,8 @@
 # device sets the boot-mode flag and reboots into MCUboot recovery (doc/10-security.md 9).
 #
 # Usage:
-#   python3 tools/zlrs-recovery.py --port /dev/ttyACM2   # management port (third CDC in app mode)
-#   python3 tools/zlrs-recovery.py --self-test           # no device: check the framing
+#   python3 tools/zlrs.py recovery --port /dev/ttyACM2   # management port (third CDC in app mode)
+#   python3 tools/zlrs.py --self-test           # no device: check the framing
 #
 # Then upload a signed image with an mcumgr client:
 #   smpmgr --port <recovery port> upgrade zephyr.signed.bin
@@ -18,7 +18,6 @@
 # The ports change: three CDCs in application mode (management port is ttyACM2), two in bootloader
 # mode (recovery first, console second). Find recovery by /dev/serial/by-id/...MCUBOOT...-if00.
 
-import argparse
 from pathlib import Path
 import re
 import sys
@@ -65,48 +64,3 @@ def self_test() -> int:
 
     print("self-test: ok (recovery frame matches the C side)")
     return 0
-
-
-def send_recovery(port: str, baud: int, dry_run: bool) -> int:
-    request = build_request()
-
-    if dry_run:
-        print(f"[dry-run] would write {request.hex()} to {port}@{baud}")
-        return 0
-
-    try:
-        import serial  # pyserial
-    except ImportError:
-        print("pyserial required: pip install pyserial", file=sys.stderr)
-        return 2
-
-    try:
-        with serial.Serial(port, baudrate=baud, timeout=1) as link:
-            link.write(request)
-            link.flush()
-    except Exception as exc:  # noqa: BLE001
-        print(f"writing to {port} failed: {exc}", file=sys.stderr)
-        return 1
-
-    print(f"recovery command sent to {port}")
-    return 0
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description="put the device into MCUboot serial recovery")
-    parser.add_argument("--port", help="management port (third CDC in application mode, e.g. /dev/ttyACM2)")
-    parser.add_argument("--baud", type=int, default=DEFAULT_BAUD)
-    parser.add_argument("--dry-run", action="store_true", help="print the frame instead of sending it")
-    parser.add_argument("--self-test", action="store_true", help="check the framing without a device")
-    args = parser.parse_args()
-
-    if args.self_test:
-        return self_test()
-    if not args.port:
-        parser.error("talking to a device needs --port")
-
-    return send_recovery(args.port, args.baud, args.dry_run)
-
-
-if __name__ == "__main__":
-    sys.exit(main())

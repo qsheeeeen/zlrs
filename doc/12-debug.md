@@ -91,7 +91,7 @@ profile isolates faults; it is not a validated reliable-transfer configuration (
 Measure end-to-end payload throughput between two paired devices with:
 
 ```sh
-python3 tools/zlrs-throughput.py --tx-port <TX-serial> --rx-port <RX-serial>
+python3 tools/zlrs.py throughput --tx-port <TX-serial> --rx-port <RX-serial>
 ```
 
 On Linux or WSL, serial fragments select the matching data CDC (`...-if02`). The default runs
@@ -103,9 +103,6 @@ paces USB input; set it to `0` to push chunks without an intentional delay. This
 complete data path, including radio scheduling and ARQ, rather than raw PHY frame rate.
 
 ## 4. Debugging on the board
-
-- **Bench self-check**: `python3 tools/zlrs-bringup.py` exercises USB, ports, management mode,
-  management-protocol reads and writes and NVS persistence in one command.
 
 - **With no Core2021 attached the board resets in a loop**: the vendored
   `lr20xx_hal_wait_on_busy()` waits `..._HAL_WAIT_ON_BUSY_TIMEOUT_MSEC` (1 s here) for BUSY and
@@ -135,7 +132,7 @@ complete data path, including radio scheduling and ARQ, rather than raw PHY fram
 - **Radio numbers** (callback latency, frequency-switch cost, packet error rate, throughput) can
   only be measured on the board; Semtech's `packet_error_rate_flrc` sample is a ready-made
   baseline.
-- **After every flash, verify both ends**: `zlrs-mgmt.py --serial <s> confirm` and compare
+- **After every flash, verify both ends**: `python3 tools/zlrs.py confirm --serial <s>` and compare
   `image-hash` with the image that was built. An upload that the host never confirms rolls back
   at the next boot, and two boards running different images measure like two boards on different
   bands — the numbers look like a radio fault and mean nothing.
@@ -146,7 +143,7 @@ complete data path, including radio scheduling and ARQ, rather than raw PHY fram
   revert — and with nothing valid in the other slot, MCUboot ends up in serial recovery instead of
   booting the application. From the host that reads as "the board reboots every minute and then
   looks dead", which is easy to mistake for a firmware crash. For bench work either confirm within
-  the first minute (`zlrs-mgmt.py --serial <s> confirm`) or write the primary slot directly and
+  the first minute (`python3 tools/zlrs.py confirm --serial <s>`) or write the primary slot directly and
   permanently: `smpmgr upgrade --slot 0 --confirm <img>`. The second form skips the rollback safety
   net on purpose; it is for benches with serial recovery in reach, not for anything shipped.
 - **A debug bootloader shows its USB for 15 s before the application starts**

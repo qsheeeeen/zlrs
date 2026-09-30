@@ -53,7 +53,7 @@ The first flash of a board:
 2. upload the application through that recovery port:
 
    ```shell
-   python3 tools/zlrs-update.py --serial <serial> \
+   python3 tools/zlrs.py update --serial <serial> \
      --recovery-port /dev/serial/by-id/usb-zlrs_ZLRS_MCUBOOT_<serial>-if00 --no-trigger \
      --image build/app/zephyr/zephyr.signed.bin
    ```
@@ -61,7 +61,7 @@ The first flash of a board:
 Later updates are one command from the running application, through its management port:
 
 ```shell
-python3 tools/zlrs-update.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04
+python3 tools/zlrs.py update --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04
 ```
 
 The tool finds the bootloader's recovery port by itself, verifies the image hash after the reboot
@@ -75,21 +75,62 @@ default, use `.../lf` for LF) and `ZLRS_SDK_DIR` (`~/zephyr-sdk-1.0.0` by defaul
 
 ## Management
 
+All device tools use one entry point: `python3 tools/zlrs.py`. Run `--help` for the complete
+command list and `<command> --help` for its options. Internal Python modules implement management,
+recovery, updates and throughput measurement.
+
+```shell
+python3 tools/zlrs.py --help
+python3 tools/zlrs.py list
+python3 tools/zlrs.py status --serial <serial>
+python3 tools/zlrs.py recovery --serial <serial>
+python3 tools/zlrs.py throughput --tx-port <TX-serial> --rx-port <RX-serial>
+```
+
 USB shows three CDCs: **control (CRSF), data and management** (debug images add a console, see
 [doc/12-debug.md](doc/12-debug.md)). The tool sends the enter-management-mode command on the
 management CDC; the radio stops entirely until it exits. Every user parameter is set at runtime
 with no firmware rebuild:
 
 ```shell
-python3 tools/zlrs-mgmt.py --self-test
-python3 tools/zlrs-mgmt.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 status
-python3 tools/zlrs-mgmt.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 set-phrase "correct horse battery staple"
-python3 tools/zlrs-mgmt.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 set-region 3
-python3 tools/zlrs-mgmt.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 set-role rx
-python3 tools/zlrs-mgmt.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 set-profile p1
-python3 tools/zlrs-mgmt.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 set-failsafe @default
-python3 tools/zlrs-mgmt.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 exit
+python3 tools/zlrs.py --self-test
+python3 tools/zlrs.py status --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04
+python3 tools/zlrs.py set-phrase --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 "correct horse battery staple"
+python3 tools/zlrs.py set-region --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 3
+python3 tools/zlrs.py set-role --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 rx
+python3 tools/zlrs.py set-profile --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 p1
+python3 tools/zlrs.py set-failsafe --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04 @default
+python3 tools/zlrs.py exit --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04
 ```
+
+For command details and examples:
+
+```shell
+python3 tools/zlrs.py --help
+python3 tools/zlrs.py set-baud --help
+```
+
+Status is grouped into device, link and configuration fields. Operation results use clear
+`[OK]`, `[WARN]` and `[ERROR]` markers. Colour is enabled for terminals and disabled for
+redirected output or when `NO_COLOR` is set. Command options go after the command. `--baud`
+controls the management connection; `set-baud 420000` changes the
+**data UART**. Binding phrases accept 1–32 UTF-8 bytes; both peers need the same phrase.
+`--dry-run` prints the operation without opening a port, including log exports.
+
+To inspect an upgrade before rebooting a device:
+
+```shell
+python3 tools/zlrs.py update --dry-run --image <build>/app/zephyr/zephyr.signed.bin
+ZLRS_BUILD_DIR=build-lf python3 tools/zlrs.py update --serial <serial>
+python3 tools/zlrs.py update --help
+```
+
+The default image uses `<ZLRS_WS>/<ZLRS_BUILD_DIR>/app/zephyr/zephyr.signed.bin` (`build` when
+unset). The updater checks the image content hash and required tools before triggering recovery,
+tracks the USB serial through reboot, and uploads to the slot reported by MCUboot. Upload progress
+is shown live. `--client none` prepares manual commands; `--no-wait` returns after upload. Neither
+mode verifies or confirms the running image. `--no-confirm-check` verifies it and leaves it
+unconfirmed for rollback testing. Hash mismatches always fail and prevent confirmation.
 
 The command set is in [doc/10-security.md](doc/10-security.md) 9 and the firmware behaviour in
 [doc/08-firmware.md](doc/08-firmware.md) 3.
@@ -121,9 +162,8 @@ control port, a management CDC, a button or a LED is a devicetree fact (`app/src
 | application only (edit loop) | `zlrs-rebuild-app -d <dir>` | re-runs the `app` domain in an existing sysbuild tree: the bootloader is already built and does not change while the application is being worked on |
 | debug image | `zlrs-build` + `app/debug.conf` + `app/debug.overlay` | console CDC, shell, stats logging |
 | host tests | `make -C tests/host run` | protocol core, link layer, CRSF, management protocol, LED; no hardware, no workspace |
-| bench self-test | `python3 tools/zlrs-bringup.py` | ports, management mode, management protocol reads and writes, NVS persistence |
-| management tool | `python3 tools/zlrs-mgmt.py` | read status, write parameters, start pairing, exit |
-| update tool | `python3 tools/zlrs-update.py` | trigger recovery, upload a signed image, wait for the application |
+| management tool | `python3 tools/zlrs.py status` | read status, write parameters, start pairing, exit |
+| update tool | `python3 tools/zlrs.py update` | trigger recovery, upload a signed image, wait for the application |
 | tree gates | `tools/gates.sh` | core purity, no board names in `app/`, no debug switch in shipped configs, the log ring fits its partition |
 
 The vendor sample (Semtech's `packet_error_rate_flrc`) runs on this board as-is, which is a way to
@@ -149,7 +189,7 @@ subsys/bootguard/        bootloader-side watchdog handling
 drivers/entropy/         the RP2350 TRNG driver we own
 dts/bindings/            bindings for zlrs-specific nodes
 tests/host/              host tests and the two-node simulation
-tools/                   workspace, management, recovery, update, bring-up, gates
+tools/                   workspace, unified device CLI, management, recovery, update, throughput, gates
 doc/                     design documents
 zephyr/module.yml        this repository as a Zephyr module
 ```
@@ -227,7 +267,7 @@ with this off". ASan and UBSan are on by default.
 | --- | --- | --- |
 | `clang-format --dry-run --Werror` over `git ls-files '*.c' '*.h'` | `build.yml` | style drift |
 | host tests with ASan + UBSan | `build.yml` | protocol and link regressions |
-| tool self-tests (`zlrs-mgmt`, `zlrs-recovery`, `zlrs-update`, `zlrs-bringup`) | `build.yml` | framing drift between tools and firmware |
+| tool self-tests (`python3 tools/zlrs.py --self-test`) and `python3 tools/tests/test_cli.py` | `build.yml` | framing drift between tools and firmware |
 | build matrix: both SKUs x plain, debug overlay, bench switches, single-link cuts, LoRa, racing, MCUboot | `firmware.yml` | Kconfig and devicetree combinations that do not compile |
 | `tools/gates.sh`: `core/` has no `#include <zephyr/`, `app/` names no board, shipped configs carry no `ZLRS_APP_DEBUG_*`, the log ring equals `log_partition` | `build.yml`, or by hand | platform code leaking into the pure C core, board branching, a debug-only switch shipping in an image, a log ring that overruns its partition |
 

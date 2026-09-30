@@ -68,10 +68,10 @@ Management mode is entered by a command the tool sends on the management CDC; de
 | Application | through the bootloader's serial recovery port | one command, through the application's management port |
 
 ```shell
-python3 tools/zlrs-update.py --serial <serial> \
+python3 tools/zlrs.py update --serial <serial> \
   --recovery-port /dev/serial/by-id/usb-zlrs_ZLRS_MCUBOOT_<serial>-if00 --no-trigger \
   --image build/app/zephyr/zephyr.signed.bin        # first flash
-python3 tools/zlrs-update.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04
+python3 tools/zlrs.py update --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04
 # later updates
 ```
 

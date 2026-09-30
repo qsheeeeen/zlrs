@@ -209,7 +209,7 @@ not start, USB never comes up, the host never confirms or the image is corrupt. 
    rolled back.
 
 One command updates a device:
-`python3 tools/zlrs-update.py --port <application management port>` — trigger recovery, wait for
+`python3 tools/zlrs.py update --port <application management port>` — trigger recovery, wait for
 the recovery port, read the active slot, write the other one and mark it test, wait for the
 application, check the image hash and send `confirm`. The tool writes pending but **never
 permanent**. A broken *application* is recovered through the bootloader too (serial recovery is
@@ -265,7 +265,7 @@ firmware therefore keeps a log store in flash, and it is always on (no switch):
 - **The partition is a build-time property**: boards without a `log_partition` node still build;
   they log to the console only and say so once at boot.
 - **Export is a host-side operation**: the store is read over the management port, so it works on a
-  board whose radio and console are both misbehaving. `zlrs-mgmt.py logs` dumps the files to a
+  board whose radio and console are both misbehaving. `zlrs.py logs` dumps the files to a
   directory; nothing in the firmware has to stop doing its job for the export.
 
 The coredump partition next to it takes the fault case that a log cannot describe (stack, PC,

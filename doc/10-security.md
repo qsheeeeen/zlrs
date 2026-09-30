@@ -169,5 +169,5 @@ and response frames, documented by `include/zlrs/mgmt/mgmt.h` and implemented in
 | confirm upgrade | the host confirms this upgrade; without it the image rolls back |
 | exit | leaves management mode |
 
-The tool that speaks it is `tools/zlrs-mgmt.py`; the update flow built on top is in
+The tool that speaks it is `tools/zlrs.py`; the update flow built on top is in
 [08-firmware](08-firmware.md) 5.

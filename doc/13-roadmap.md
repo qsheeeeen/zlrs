@@ -74,6 +74,17 @@ design documents.
   to use `swap using move` (`swap using offset` goes in but never comes back on this board) and
   the tool has to name the inactive slot, since MCUboot's recovery upload defaults to the
   primary one.
+- **Terminal management and update workflow**: one `tools/zlrs.py` entry point for management,
+  recovery, updates and throughput; grouped status output, expanded help, image preflight,
+  USB serial tracking, live upload progress and explicit confirmation results are implemented.
+  Simulated CLI regressions cover errors and confirmation ordering. On 2026-10-01 two LF devices
+  passed discovery, queries, management session entry/exit and a selected RX same-image re-upload
+  through recovery, reboot, hash verification and confirmation; IDs and pairing were retained.
+  WSL USB re-enumeration required usbipd auto-attach. Human and JSON throughput commands correctly
+  reported failed delivery: 0/512 bytes per direction before update and 0/64 afterward, both timed
+  out with hopping and both links enabled. This does not accept wireless data delivery.
+  Initial installation, cross-version
+  upgrades and unconfirmed rollback through the new entry point remain pending.
 - **mcumgr in the application** (optional): update while running, writing the image straight
   into slot1.
 

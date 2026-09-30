@@ -24,7 +24,7 @@ make -C tests/host run         # Run host tests with ASan and UBSan
 tools/gates.sh                # Check architecture and configuration rules
 ```
 
-Set `ZLRS_BOARD=rp2350_zero_core2021/rp2350a/m33/lf` for the LF target; HF is default. Run `python3 tools/<script>.py --self-test` for `zlrs-mgmt`, `zlrs-recovery`, `zlrs-update`, and `zlrs-bringup`.
+Set `ZLRS_BOARD=rp2350_zero_core2021/rp2350a/m33/lf` for the LF target; HF is default. Run `python3 tools/zlrs.py --self-test` for management, recovery, and update checks.
 
 ## Coding Style & Naming Conventions
 

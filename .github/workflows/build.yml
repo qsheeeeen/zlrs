@@ -52,11 +52,7 @@ jobs:
       # containers without ptrace cannot start it, so it stays off locally).
       - name: host tests (ASan + UBSan)
         run: make -C tests/host run LEAKS=1
-      - name: management tool self-test
-        run: python3 tools/zlrs-mgmt.py --self-test
-      - name: recovery trigger self-test
-        run: python3 tools/zlrs-recovery.py --self-test
-      - name: update script self-test
-        run: python3 tools/zlrs-update.py --self-test
-      - name: bring-up check self-test
-        run: python3 tools/zlrs-bringup.py --self-test
+      - name: device tool self-tests
+        run: python3 tools/zlrs.py --self-test
+      - name: operator CLI regressions
+        run: python3 tools/tests/test_cli.py

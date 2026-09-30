@@ -6,8 +6,8 @@
 # End-to-end data-port throughput test for two connected ZLRS devices.
 #
 # Usage:
-#   python3 tools/zlrs-throughput.py --tx-port <TX serial> --rx-port <RX serial>
-#   python3 tools/zlrs-throughput.py --tx-port /dev/ttyACM2 --rx-port /dev/ttyACM5
+#   python3 tools/zlrs.py throughput --tx-port <TX serial> --rx-port <RX serial>
+#   python3 tools/zlrs.py throughput --tx-port /dev/ttyACM2 --rx-port /dev/ttyACM5
 #
 # Serial fragments are resolved against /dev/serial/by-id/*-if02. The test sends distinct
 # deterministic payloads in both directions, checks every received byte and reports JSON
@@ -233,9 +233,7 @@ def run_round(ports, round_no: int, count: int, chunk_size: int, interval_ms: in
     }
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="measure verified bidirectional ZLRS data throughput")
+def configure_parser(parser):
     parser.add_argument("--tx-port", required=True,
                         help="TX device data port, path or USB serial-number fragment")
     parser.add_argument("--rx-port", required=True,
@@ -255,7 +253,15 @@ def main() -> int:
     parser.add_argument("--format", choices=("human", "json"), default="human",
                         help="iperf-style output or one JSON record per round (default: human)")
     parser.add_argument("--baud", type=positive_int, default=DEFAULT_BAUD)
-    args = parser.parse_args()
+    return parser
+
+
+def main(args=None, parser=None) -> int:
+    if args is None:
+        parser = argparse.ArgumentParser(
+            description="measure verified bidirectional ZLRS data throughput")
+        configure_parser(parser)
+        args = parser.parse_args()
 
     try:
         import serial
@@ -326,7 +332,3 @@ def main() -> int:
     finally:
         for port in ports:
             port.close()
-
-
-if __name__ == "__main__":
-    sys.exit(main())
