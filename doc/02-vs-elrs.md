@@ -1,6 +1,6 @@
 # Relationship with ExpressLRS
 
-This is the single source for how zlrs relates to ExpressLRS (ELRS): what it borrows and where
+This is the single source for how ZLRS relates to ExpressLRS (ELRS): what it borrows and where
 it differs. Other documents do not repeat the comparison; they link here. Figures come from
 ELRS's official documentation and source, linked at the end; the comparison is against v4.1.
 
@@ -22,14 +22,14 @@ ELRS's official documentation and source, linked at the end; the comparison is a
   parameters, no support for ELRS hardware modules.
 - **No ecosystem**: no Lua parameter protocol, Model Match, VTX control, Backpack or BLE pad.
 - **Different positioning**: ELRS is an RC-link ecosystem (hundreds of targets, WiFi config,
-  community measurements); zlrs is one link of its own carrying control and data, focused on
+  community measurements); ZLRS is one link of its own carrying control and data, focused on
   per-frame authentication, data throughput and regulatory compliance.
 - **Verification differs**: ELRS relies on mature CI and community testing; we rely on pure C
   layering, a two-node host simulation and script self-tests.
 
 ## Item by item
 
-| Dimension | ExpressLRS v4.1 | zlrs |
+| Dimension | ExpressLRS v4.1 | ZLRS |
 | --- | --- | --- |
 | Positioning and shape | an RC-link ecosystem: TX modules, receivers, SPI receivers, Backpack, hundreds of targets | one link: an RP2350-Zero plus Core2021 board in hf and lf SKU variants |
 | Bands and modulation | 900M: LoRa 25-250 Hz plus K1000; 2.4G: LoRa, FLRC `F500`/`F1000`, DVDA; dual-band modules can cross bands | control can be FLRC (2.6/1.3/0.65/0.325 Mbps) or LoRa (SF5-12), data is always 2.4G FLRC; one radio time-shared, modulation chosen per link |
@@ -51,7 +51,7 @@ ELRS's official documentation and source, linked at the end; the comparison is a
 ## Gaps, in priority order
 
 1. **Stable slots, then higher rates**: ELRS uses a hardware timer and short fixed packets.
-   zlrs now owns the radio through RAL and uses hardware alarms, but hopping throughput still
+   ZLRS now owns the radio through RAL and uses hardware alarms, but hopping throughput still
    needs hardware acceptance. Configured frame rates are not measured performance.
 2. **Handset-side ecosystem**: Lua, Model Match, VTX control, head tracking, trainer and team
    racing are out of scope; CRSF is the way in and out.
@@ -75,7 +75,7 @@ ELRS's official documentation and source, linked at the end; the comparison is a
 The local ExpressLRS checkout (`13ab3e2b`) uses hardware timer callbacks, FS fallback, preloaded
 FIFO data and a short SET_TX path. F1000 uses 650 kbps FLRC with fixed 8/13-byte packets; it is
 not a 1 Mbps transparent stream. Its RX phase filter corrects both phase and clock drift.
-zlrs currently uses variable packets, per-packet HMAC and four slots shared by two links.
+ZLRS currently uses variable packets, per-packet HMAC and four slots shared by two links.
 After stable timing is accepted, shorten packets and preparation cost, then revisit slot allocation
 and ACK overhead. These protocol changes must preserve authentication and reliable byte delivery.
 

@@ -130,7 +130,7 @@ app/src/               Zephyr application, one directory per layer:
                          button (its own thread, hold reported on the bus)
   storage/               the flash-backed state: NVS settings and the log ring
 boards/                board definitions (devicetree, defconfig, README)
-dts/bindings/          bindings for zlrs-specific nodes
+dts/bindings/          bindings for ZLRS-specific nodes
 tools/                 host-side helpers (management, recovery, update, throughput, UF32 packaging)
 tests/host/            host build of core/ plus the two-node radio simulation
 ```

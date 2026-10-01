@@ -211,7 +211,7 @@ Defaults that `Kconfig.defconfig` sets for every variant:
 - `FLASH_RPI_PICO_READ_UNTRANSLATED`: read flash around the XIP cache, or a read after a swap
   returns a line cached before the write (MCUboot then calls a valid image "signature check
   failed"). Both images read flash, so it is set here once.
-- `ENTROPY_RPI_PICO_RNG=n`: this board's TRNG is the zlrs driver (`drivers/entropy`); Zephyr's own
+- `ENTROPY_RPI_PICO_RNG=n`: this board's TRNG is the ZLRS driver (`drivers/entropy`); Zephyr's own
   goes through pico-sdk's interrupt-off busy wait and kills USB.
 
 The upgrade path adds nothing per SKU: both images are built under MCUboot from the same target and

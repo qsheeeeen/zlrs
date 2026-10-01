@@ -1,6 +1,6 @@
 # Product design
 
-zlrs is a point-to-point radio link. It carries **control** (CRSF channels down, telemetry
+ZLRS is a point-to-point radio link. It carries **control** (CRSF channels down, telemetry
 up) and **data** (a byte stream) at the same time, over one half-duplex Semtech LR2021. TX and
 RX run the same firmware; which end a device is, is configuration.
 
@@ -56,7 +56,7 @@ figures.
 Measured against ExpressLRS v4.1's published numbers; the comparison itself is in
 [02-vs-elrs](02-vs-elrs.md).
 
-| Figure | ELRS v4.1 | zlrs target |
+| Figure | ELRS v4.1 | ZLRS target |
 | --- | --- | --- |
 | Highest control rate | 1000 Hz (2.4G `F1000`, 388.8 us on air) | 1000 Hz (`r=0`) |
 | 2.4G FLRC sensitivity | -104 dBm at the 1000 Hz tier | -99 dBm at 2.6 Mbps, -108 dBm at 0.325 Mbps, per the LR2021 datasheet |

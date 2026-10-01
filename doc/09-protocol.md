@@ -1,6 +1,6 @@
 # Over-the-air protocol
 
-The zlrs protocol: the frame format, how the link state machine moves, how pairing and sessions
+The ZLRS protocol: the frame format, how the link state machine moves, how pairing and sessions
 are set up, how the superframe is laid out, how reliable transfer and fragmentation work, and
 how hopping and regulation land in code. Identity and keys: [10-security](10-security.md);
 timing budget: [07-architecture](07-architecture.md) 4; chip parameters:

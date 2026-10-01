@@ -1,6 +1,6 @@
 # Hardware platform
 
-What zlrs runs on: target shapes, board, build targets, image layout, toolchain and flashing.
+What ZLRS runs on: target shapes, board, build targets, image layout, toolchain and flashing.
 Ports and operating modes are in [08-firmware](08-firmware.md); the physical builds in
 [04-prototype](04-prototype.md) and [05-carrier](05-carrier.md).
 
@@ -25,7 +25,7 @@ exist) and, for deliberate cuts like "no data link", Kconfig.
 | Board definition | `boards/zlrs/rp2350_zero_core2021/`: pins, aliases, SKU calibration tables, flash partitions |
 | Zephyr | v4.4.0 |
 | Radio stack | `usp_zephyr` plus `usp` v1.2.1 (the RAC/RALF layers) |
-| Repository topology | T2: zlrs is the manifest repository and holds the application |
+| Repository topology | T2: ZLRS is the manifest repository and holds the application |
 
 Pins, aliases and partitions are defined in the
 [board README](../boards/zlrs/rp2350_zero_core2021/README.md).

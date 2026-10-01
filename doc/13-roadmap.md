@@ -147,7 +147,7 @@ design documents.
   macros, a port layer that serves either link, and `set-port-role` in the management protocol.
 - **RP2350 TRNG** (verified on hardware, on by default): Zephyr's `entropy_rpi_pico` is unusable
   (pico-sdk reads with interrupts off and busy waits, which stops USB dead; reproduced on the
-  board). `drivers/entropy/` is zlrs's own driver: probe soft-resets, configures and
+  board). `drivers/entropy/` is ZLRS's own driver: probe soft-resets, configures and
   pre-fetches, reads come from a two-block pool, **interrupts stay on and no spinlock is
   taken**, and a timeout or failed check is an error rather than something to paper over.
   Register timing follows datasheet 12.12 and the bootrom; the sample count is 100 because the

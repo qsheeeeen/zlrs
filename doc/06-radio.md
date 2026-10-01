@@ -1,7 +1,7 @@
 # LR2021 key parameters
 
 Source: Semtech LR2021 Final Datasheet Rev. 1.1 (DS.LR2021, 2025-10-14, 236 pages). Only what
-zlrs uses is excerpted here: rates and sensitivity, mode-switch timing, the SPI/IRQ interface
+ZLRS uses is excerpted here: rates and sensitivity, mode-switch timing, the SPI/IRQ interface
 and the pins. How those numbers are used: [07-architecture](07-architecture.md) and
 [09-protocol](09-protocol.md); board calibration: the
 [board README](../boards/zlrs/rp2350_zero_core2021/README.md).
