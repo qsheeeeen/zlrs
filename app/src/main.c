@@ -85,7 +85,8 @@ static uint8_t operating_mode = ZLRS_MODE_MIXED;
 /* Same shape for the management port: the CDC in devicetree is the whole answer */
 #define ZLRS_MGMT_ENABLED    ZLRS_PORT_MGMT
 
-#define SERIAL_CHUNK_LEN 64U
+/* Copy batch only; the pump drains until its source or the link queue is empty. */
+#define SERIAL_PUMP_CHUNK_LEN 256U
 #define REPORT_PERIOD_MS 1000U
 
 static zlrs_link_t link_control;
@@ -569,6 +570,8 @@ static void load_identity(void)
 
 /* ---- superframe ---------------------------------------------------------- */
 
+static void pump_serial(void);
+
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
 /* Result of the at-boot raw bench, kept for `zlrs radio`: the console drops the log line often */
 static uint32_t raw_bench_frames;
@@ -687,6 +690,9 @@ static void run_slot(uint8_t slot)
 		missed_slots++;
 		zlrs_link_skip_slot(link, link_slot);
 		return;
+	}
+	if (data_slot) {
+		pump_serial();
 	}
 	req = zlrs_link_slot(link, link_slot, now_ms);
 
@@ -848,7 +854,7 @@ static int cmd_bootsel(const struct shell *sh, size_t argc, char **argv)
 
 static void pump_serial(void)
 {
-	uint8_t chunk[SERIAL_CHUNK_LEN];
+	uint8_t chunk[SERIAL_PUMP_CHUNK_LEN];
 	uint16_t got;
 	uint16_t room;
 
@@ -857,22 +863,28 @@ static void pump_serial(void)
 	}
 
 	/*
-	 * Never take more from the port than the air-side queue can hold: everything the port hands
-	 * over is already out of its ring, so a partial write is data thrown away. Sizing the read to
-	 * the queue keeps it in the ring until there is room for it.
+	 * The UART ISR only fills its RX ring. The radio thread owns link_data, so feed the link queue
+	 * just before it selects a data-slot packet. Drain until either side has no room; the chunk is
+	 * only a copy buffer, not a per-slot or per-frame throughput limit.
 	 */
-	room = zlrs_link_tx_space(&link_data);
-	if (room == 0U) {
-		return;
-	}
-	if (room > sizeof(chunk)) {
-		room = (uint16_t)sizeof(chunk);
-	}
+	for (;;) {
+		room = zlrs_link_tx_space(&link_data);
+		if (room == 0U) {
+			return;
+		}
+		if (room > sizeof(chunk)) {
+			room = (uint16_t)sizeof(chunk);
+		}
 
-	got = zlrs_link_data_read(chunk, room);
+		got = zlrs_link_data_read(chunk, room);
+		if (got == 0U) {
+			return;
+		}
 
-	if (got > 0U) {
-		(void)zlrs_link_write(&link_data, chunk, got);
+		/* room was measured immediately above in this single-owner thread. */
+		if (zlrs_link_write(&link_data, chunk, got) != got) {
+			return;
+		}
 	}
 }
 
@@ -2432,7 +2444,6 @@ int main(void)
 		}
 
 		adopt_pairing();
-		pump_serial();
 		pump_crsf(now_ms);
 		/* The button thread reports holds on the bus (app/src/ui/button.c); the pairing request
 		 * itself stays on this thread, where the link state machine lives. */
