@@ -48,6 +48,31 @@ Each link has two endpoints (UART and USB CDC); the rule that picks one is in
 [doc/08-firmware.md](../../../doc/08-firmware.md) 1, and the physical interface list is in
 [doc/04-prototype.md](../../../doc/04-prototype.md) 3.
 
+### DMA allocation and peripheral support
+
+The application enables `CONFIG_DMA` and `CONFIG_SPI_PL022_DMA`. DMA channels are fixed
+in the board devicetree so SPI and the status LED cannot allocate the same channel.
+
+| Peripheral | DMA use in this application |
+| --- | --- |
+| SPI0 / LR2021 | TX channel 0, RX channel 1; upstream PL022 DMA handles every SPI transaction |
+| PIO0 / WS2812 status LED | TX channel 2; upstream PIO LED driver chooses the DREQ for its allocated state machine |
+| UART0 / CRSF, UART1 / data | Hardware has DMA request sources, but the current upstream PL011 driver has no DMA/async implementation; retain interrupt-driven FIFO I/O |
+| USB / CDC | Upstream RP2350 UDC uses USB DPRAM and interrupts; no system-DMA configuration path |
+| Flash | Upstream driver uses ROM programming/erase operations; no DMA configuration path |
+| TRNG | Application entropy driver reads registers into its pool; no DMA request path |
+| Timer, GPIO, watchdog | Register/event operations; no stream transfer to move with DMA |
+| I2C, ADC, other SPI/PIO instances | Not used by this board application; remain disabled |
+
+SPI still uses the synchronous API: DMA moves bytes while the calling thread waits for
+completion. This does not make the SPI API callable from an ISR or bound LR2021 BUSY waits.
+Short command DMA setup and completion overhead must be included in launch timing measurements.
+The DMA configuration reserves 6000 us for preparation (2800 us on the polling path); the
+existing hardware slot budget reduces cadence accordingly. DMA reserves 800 us for command
+transfer plus RF startup and uses a 500 us startup estimate for receiver clock alignment.
+Both peers must use matching timing.
+Upstream module sources remain unchanged.
+
 ## 2. Two SKUs, two build targets
 
 The Core2021's sub-G comes in **two different SKUs** with different PA networks and bands, so the

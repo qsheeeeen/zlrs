@@ -18,7 +18,13 @@ int zlrs_radio_prepare(zlrs_link_t *link, const zlrs_radio_req_t *req);
 int zlrs_radio_launch(void);
 int zlrs_radio_launch_at(uint32_t target_us);
 /* Budget for SET_TX, synthesizer and PA startup before the first air bit. */
-#define ZLRS_RADIO_STARTUP_US 500U
+#if defined(CONFIG_SPI_PL022_DMA)
+#define ZLRS_RADIO_STARTUP_US       800U
+#define ZLRS_RADIO_PHASE_STARTUP_US 500U
+#else
+#define ZLRS_RADIO_STARTUP_US       500U
+#define ZLRS_RADIO_PHASE_STARTUP_US 250U
+#endif
 
 uint32_t zlrs_radio_airtime_us(const zlrs_mod_cfg_t *mod, uint16_t len);
 bool zlrs_radio_rx_timing(uint32_t *done_us, uint32_t *airtime_us);

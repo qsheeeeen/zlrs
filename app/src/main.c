@@ -739,9 +739,9 @@ static void run_slot(uint8_t slot)
 		if (!role_tx && !phase_adj_set &&
 		    (data_slot ? link == &link_data : link == &link_control) &&
 		    zlrs_radio_rx_timing(&done_us, &airtime_us)) {
-			/* SET_TX completion includes synthesizer/PA startup, measured near 250 us. */
-			const uint32_t expected =
-				slot_nominal_us + CONFIG_ZLRS_APP_TX_GUARD_US + 250U;
+			/* Include SPI command transfer and synthesizer/PA startup in the phase origin. */
+			const uint32_t expected = slot_nominal_us + CONFIG_ZLRS_APP_TX_GUARD_US +
+						  ZLRS_RADIO_PHASE_STARTUP_US;
 			const int32_t err = (int32_t)(done_us - airtime_us - expected);
 			const int32_t limit = (int32_t)frame_period_us / 16;
 

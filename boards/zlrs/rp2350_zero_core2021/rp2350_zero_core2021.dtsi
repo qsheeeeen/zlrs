@@ -7,6 +7,7 @@
 
 #include <freq.h>
 
+#include <zephyr/dt-bindings/dma/rpi-pico-dma-rp2350.h>
 #include <zephyr/dt-bindings/gpio/gpio.h>
 #include <zephyr/dt-bindings/led/led.h>
 
@@ -97,6 +98,11 @@
 	status = "okay";
 };
 
+/* DMA channels: SPI0 TX/RX = 0/1, status LED TX = 2. */
+&dma {
+	status = "okay";
+};
+
 /*
  * The on-board WS2812B (GP16, one pixel) is the status LED, see doc/11-ux.md: driven through
  * PIO0, wired the same way as upstream waveshare/rp2350_zero.
@@ -115,6 +121,8 @@
 			status = "okay";
 			gpios = <&gpio0 16 GPIO_ACTIVE_HIGH>;
 			chain-length = <1>;
+			dmas = <&dma 2 RPI_PICO_DMA_SLOT_PIO0_TX0 0>;
+			dma-names = "tx";
 			/*
 			 * The WS2812B's physical byte order is GRB, so declare it the way the part expects, or red and
 			 * green swap (measured: red shows green, blue shows purple). Upstream waveshare rp2350_zero
@@ -173,6 +181,9 @@ zephyr_udc0: &usbd {
 
 &spi0 {
 	status = "okay";
+	dmas = <&dma 0 RPI_PICO_DMA_SLOT_SPI0_TX 0>,
+	       <&dma 1 RPI_PICO_DMA_SLOT_SPI0_RX 0>;
+	dma-names = "tx", "rx";
 	clock-frequency = <DT_FREQ_M(8)>;
 	pinctrl-0 = <&zlrs_spi0_default>;
 	pinctrl-names = "default";

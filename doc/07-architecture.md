@@ -99,7 +99,8 @@ LoRa is the tier below those: SF5-12, BW 125/250/500 kHz, CR 4/5-4/8, at tens of
 frame. The previous approximately **97 kB/s** estimate was an airtime-only target, not measured
 throughput. The current implementation has four equal slots and one packet per data direction
 per frame. Its timer period includes native packet airtime, preparation guard and RF startup;
-CN470 LF is clamped from the configured preparation window and RF budget. ARQ and ACK traffic
+LF is clamped from the configured preparation window and RF budget. The SPI DMA default
+reserves 6000 us for preparation and currently runs CN433 at 27 Hz. ARQ and ACK traffic
 reduce the payload rate further. Hardware results and remaining acceptance are tracked in
 [13-roadmap](13-roadmap.md).
 

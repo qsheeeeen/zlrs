@@ -81,6 +81,22 @@ design documents.
   configuration; the updated LF production image builds but was not installed for this check.
   Three consecutive duplex 4096-byte rounds passed byte-exact at 32 bytes per 10 ms.
   This does not replace antenna/PA characterization or long-duration timing acceptance.
+- **Peripheral DMA configuration (enabled; wireless performance regressed)**: application SPI0
+  uses upstream PL022 DMA on TX/RX channels 0/1; the PIO status LED uses channel 2. LF debug
+  and complete LF/HF production sysbuilds pass. Both attached LF debug images were hash-verified
+  and confirmed on 2026-10-01. No upstream code was changed. UART0/1 hardware has DMA request
+  sources but the current PL011 driver implements neither DMA nor async transfers; USB UDC,
+  flash and TRNG have no configuration path to enable system DMA. Unused peripherals remain off.
+  The old 2800 us preparation reservation failed with SPI DMA. The DMA default is now 6000 us,
+  with an 800 us startup budget and a 500 us receiver phase estimate, reducing CN433 to 27 Hz.
+  SET_TX command calls measured about 190-217 us in snapshots, higher than the polling path.
+  One duplex 4096-byte round at 32 bytes per 10 ms passed in 3.06 s, but the following round
+  timed out at 45 s: TX-to-RX received 4000/4096 bytes, RX-to-TX was exact. At 32 bytes per
+  50 ms, three consecutive duplex rounds were byte-exact in 22.95, 10.72 and 17.63 s.
+  A 6.036 s RX management pause test received only 1796/4096 bytes within 36.043 s total and
+  did not pass. These results establish functioning DMA transfers, not throughput or pause
+  recovery acceptance. Excess retransmissions and the performance regression need investigation;
+  IRQ/launch worst-case timing, production wireless and HF hardware acceptance remain pending.
 - **First frames in the air, one board (passed)**: with the Core2021 attached, pairing
   `PAIR_REQ` frames really go out: one every 100 ms through the 30 s window, about 1700
   transactions over five rounds with `fail=0`. The CRSF entry was checked on the same board:

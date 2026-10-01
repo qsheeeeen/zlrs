@@ -290,15 +290,17 @@ console and flash. This keeps flash erase/program operations from masking timer 
 normal traffic. Startup, explicit configuration persistence and panic handling can still delay IRQs.
 
 The slot budget uses the native FLRC airtime calculation (variable header, CRC and coding),
-plus `ZLRS_APP_PREPARE_US`, the configured TX guard, a 500 us RF startup allowance and a
+plus `ZLRS_APP_PREPARE_US`, the configured TX guard, an 800 us RF startup allowance with SPI DMA (500 us with polling) and a
 100 us end margin. Packet construction, authentication and FIFO writes belong to the preparation
-window; the guard only places the final launch command relative to the RF slot boundary. LF CN470
+window; the guard only places the final launch command relative to the RF slot boundary. LF CN433/CN470
 clamps control PHY to 325 kbps; its control packets cannot fit four equal slots at the requested
 150 Hz with current preparation costs. The application clamps the rate before sizing the data
 MTU. Hardware timer scheduling does not by itself establish throughput acceptance; see
 [13-roadmap](13-roadmap.md) for the pending radio checks.
 
-The default preparation reservation is 2800 us and the launch offset is 200 us. A dedicated
+The default preparation reservation is 6000 us with SPI DMA (2800 us with polling), and
+the launch offset is 200 us. Receiver clock alignment uses a 500 us startup estimate with
+DMA (250 us with polling). A dedicated
 meta-IRQ thread executes the prepared `SET_TX` as the hardware alarm's bottom half, while the
 link thread waits for its result. USB core/controller threads and CDC work retain upstream
 cooperative scheduling. The radio bottom half can preempt them without changing vendor code.

@@ -33,7 +33,7 @@ ELRS's official documentation and source, linked at the end; the comparison is a
 | --- | --- | --- |
 | Positioning and shape | an RC-link ecosystem: TX modules, receivers, SPI receivers, Backpack, hundreds of targets | one link: an RP2350-Zero plus Core2021 board in hf and lf SKU variants |
 | Bands and modulation | 900M: LoRa 25-250 Hz plus K1000; 2.4G: LoRa, FLRC `F500`/`F1000`, DVDA; dual-band modules can cross bands | control can be FLRC (2.6/1.3/0.65/0.325 Mbps) or LoRa (SF5-12), data is always 2.4G FLRC; one radio time-shared, modulation chosen per link |
-| Control rate | 25-1000 Hz | hardware timer with rate clamped to actual slot cost; CN470 LF currently 45 Hz; 1000 Hz remains a target (all 2.4G, `r=0`) |
+| Control rate | 25-1000 Hz | hardware timer with rate clamped to actual slot cost; CN433 LF with SPI DMA currently 27 Hz; 1000 Hz remains a target (all 2.4G, `r=0`) |
 | Control protocol | CRSF in and out, 16 channels; Lua parameters on the handset | CRSF in and out, 16 channels; no Lua |
 | Receiver output | CRSF / SBUS / SUMD / DJI RS2 / HoTT / PWM / SPI | CRSF only (UART or USB CDC) |
 | Data link | AirPort (a transparent serial over the air); MAVLink passthrough (hundreds of bps to a few kbps) | a dedicated 2.4G link; 97 kB/s was an airtime estimate, hardware acceptance remains open; reliable transfer (ARQ) by default, best-effort optional |
