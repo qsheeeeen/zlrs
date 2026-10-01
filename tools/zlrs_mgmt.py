@@ -36,6 +36,7 @@ CMD_SET_POWER = 0x23
 CMD_SET_ROLE = 0x24
 CMD_SET_PROFILE = 0x25
 CMD_NEW_DEV_ID = 0x26
+CMD_SET_MODE = 0x27
 CMD_EXIT = 0x30
 CMD_FACTORY_RESET = 0x40
 CMD_RECOVERY = 0x41
@@ -63,6 +64,7 @@ COMMAND_MESSAGES = {
     CMD_SET_POWER: "TX power ceiling saved",
     CMD_SET_ROLE: "Role saved",
     CMD_SET_PROFILE: "Security profile saved",
+    CMD_SET_MODE: "Operating mode saved; reboot to apply",
     CMD_NEW_DEV_ID: "New device ID saved; pairing record cleared",
     CMD_FACTORY_RESET: "Factory settings restored",
     CMD_CONFIRM: "Running firmware confirmed",
@@ -163,7 +165,8 @@ def status_text(payload: bytes) -> str:
         ("Device", [("Role", "TX" if payload[1] == 0 else "RX"),
                     ("Hardware", "HF (868/915 MHz)" if payload[13] else "LF (470/433 MHz)"),
                     ("Device ID", dev), ("Peer ID", peer)]),
-        ("Link", [("State", STATE_NAMES.get(payload[2], str(payload[2]))),
+        ("Link", [("Mode", "data24 (2.4 GHz data only)" if flags & 0x08 else "mixed"),
+                  ("State", STATE_NAMES.get(payload[2], str(payload[2]))),
                   ("Quality", f"{payload[12]}%"),
                   ("Paired", "yes" if flags & 0x02 else "no"),
                   ("Session", "active" if flags & 0x04 else "inactive")]),
@@ -539,6 +542,10 @@ def add_commands(sub, parents=()):
     profile.add_argument("profile", choices=["p0", "p1", "p2"],
                          help="P0 has no tag (debug images only), P1 is the production profile, "
                               "P2 is not implemented yet")
+    mode = command("set-mode", help="select mixed or exclusive 2.4 GHz data mode (reboot required)",
+                   description="Save the operating mode. Reboot both peers to apply; data24 pairs on 2.4 GHz.")
+    mode.add_argument("mode", choices=["mixed", "data24"],
+                      help="mixed=control and data; data24=data and pairing exclusively on 2.4 GHz")
     command("new-dev-id",
                    help="make a fresh device id (drops the pairing record; read status for the new one)")
     command("factory-reset", help="erase configuration and pairing", description="erase configuration and pairing")
@@ -645,6 +652,9 @@ def main(args=None, parser=None) -> int:
         expect = True
     elif args.command == "set-profile":
         frame = encode(CMD_SET_PROFILE, bytes([int(args.profile[1])]))
+        expect = True
+    elif args.command == "set-mode":
+        frame = encode(CMD_SET_MODE, bytes([1 if args.mode == "data24" else 0]))
         expect = True
     elif args.command == "new-dev-id":
         frame = encode(CMD_NEW_DEV_ID, b"")

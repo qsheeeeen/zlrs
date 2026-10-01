@@ -23,6 +23,7 @@ typedef struct {
 	uint32_t pair_count;
 	uint8_t role;
 	bool role_saved;
+	uint8_t mode;
 	uint8_t profile;
 	bool profile_saved;
 	uint32_t new_dev_id_count;
@@ -124,6 +125,9 @@ static int fake_save_setting(void *ctx, uint8_t cmd, const uint8_t *value, uint8
 	case ZLRS_MGMT_CMD_SET_ROLE:
 		dev->role = value[0];
 		dev->role_saved = true;
+		return ZLRS_MGMT_OK;
+	case ZLRS_MGMT_CMD_SET_MODE:
+		dev->mode = value[0];
 		return ZLRS_MGMT_OK;
 	case ZLRS_MGMT_CMD_SET_PROFILE:
 		/* Pretend this build is production-shaped: P0 is refused, like the application does */
@@ -260,7 +264,7 @@ static void test_frame_codec(void)
 	printf("mgmt: frame codec\n");
 
 	len = zlrs_mgmt_encode(frame, sizeof(frame), ZLRS_MGMT_CMD_SET_BAUD, payload,
-			      sizeof(payload));
+			       sizeof(payload));
 	CHECK(len == 10U);
 	CHECK(frame[0] == ZLRS_MGMT_SOF0 && frame[1] == ZLRS_MGMT_SOF1);
 	CHECK(frame[2] == ZLRS_MGMT_VERSION);
@@ -294,7 +298,7 @@ static void test_frame_codec(void)
 	CHECK(parse_response(frame, len, &parser));
 
 	CHECK(zlrs_mgmt_encode(frame, sizeof(frame), ZLRS_MGMT_CMD_STATUS, payload,
-			      ZLRS_MGMT_PAYLOAD_MAX_LEN + 1U) == 0U);
+			       ZLRS_MGMT_PAYLOAD_MAX_LEN + 1U) == 0U);
 	CHECK(zlrs_mgmt_encode(frame, 4U, ZLRS_MGMT_CMD_STATUS, NULL, 0U) == 0U);
 }
 
@@ -318,7 +322,7 @@ static void test_dispatch(void)
 		zlrs_mgmt_status_t status;
 
 		CHECK(zlrs_mgmt_status_decode(ZLRS_MGMT_PAYLOAD(&parser), parser.payload_len,
-					     &status));
+					      &status));
 		CHECK(status.role == 1U);
 		CHECK(status.state == 2U);
 		CHECK((status.flags & ZLRS_MGMT_FLAG_PAIRED) != 0U);
@@ -363,7 +367,7 @@ static void test_dispatch(void)
 		payload[i * 2U + 1U] = (uint8_t)hex[(i / 16U) % 16U];
 	}
 	len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_SET_KEY_HEX, payload, 64U, resp,
-				sizeof(resp));
+				 sizeof(resp));
 	CHECK(len > 0U);
 	CHECK(parse_response(resp, len, &parser));
 	CHECK(ZLRS_MGMT_PAYLOAD(&parser)[0] == ZLRS_MGMT_CMD_SET_KEY_HEX);
@@ -374,14 +378,14 @@ static void test_dispatch(void)
 	/* SET_KEY_HEX: wrong length, illegal characters */
 	fake.key_saved = false;
 	len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_SET_KEY_HEX, payload, 63U, resp,
-				sizeof(resp));
+				 sizeof(resp));
 	CHECK(parse_response(resp, len, &parser));
 	CHECK(ZLRS_MGMT_PAYLOAD(&parser)[1] == ZLRS_MGMT_E_PARAM);
 	CHECK(!fake.key_saved);
 
 	payload[3] = (uint8_t)'z'; /* not a hex digit */
 	len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_SET_KEY_HEX, payload, 64U, resp,
-				sizeof(resp));
+				 sizeof(resp));
 	CHECK(parse_response(resp, len, &parser));
 	CHECK(ZLRS_MGMT_PAYLOAD(&parser)[1] == ZLRS_MGMT_E_PARAM);
 	CHECK(!fake.key_saved);
@@ -390,7 +394,7 @@ static void test_dispatch(void)
 	fake.store_rc = ZLRS_MGMT_E_STORE;
 	payload[3] = (uint8_t)'1';
 	len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_SET_KEY_HEX, payload, 64U, resp,
-				sizeof(resp));
+				 sizeof(resp));
 	CHECK(parse_response(resp, len, &parser));
 	CHECK(ZLRS_MGMT_PAYLOAD(&parser)[1] == ZLRS_MGMT_E_STORE);
 	fake.store_rc = ZLRS_MGMT_OK;
@@ -399,8 +403,9 @@ static void test_dispatch(void)
 	{
 		static const char phrase[] = "hello";
 
-		len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_SET_PHRASE, (const uint8_t *)phrase,
-					sizeof(phrase) - 1U, resp, sizeof(resp));
+		len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_SET_PHRASE,
+					 (const uint8_t *)phrase, sizeof(phrase) - 1U, resp,
+					 sizeof(resp));
 		CHECK(parse_response(resp, len, &parser));
 		CHECK(ZLRS_MGMT_PAYLOAD(&parser)[1] == ZLRS_MGMT_OK);
 		CHECK(zlrs_test_hex_eq(
@@ -424,7 +429,7 @@ static void test_dispatch(void)
 		payload[i] = (uint8_t)(0x40U + i);
 	}
 	len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_SET_FAILSAFE, payload, 22U, resp,
-				sizeof(resp));
+				 sizeof(resp));
 	CHECK(parse_response(resp, len, &parser));
 	CHECK(ZLRS_MGMT_PAYLOAD(&parser)[1] == ZLRS_MGMT_OK);
 	CHECK(fake.failsafe_saved);
@@ -432,7 +437,7 @@ static void test_dispatch(void)
 
 	/* A wrong length is rejected */
 	len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_SET_FAILSAFE, payload, 21U, resp,
-				sizeof(resp));
+				 sizeof(resp));
 	CHECK(parse_response(resp, len, &parser));
 	CHECK(ZLRS_MGMT_PAYLOAD(&parser)[1] == ZLRS_MGMT_E_PARAM);
 
@@ -459,24 +464,41 @@ static void test_dispatch(void)
 	CHECK(parse_response(resp, len, &parser));
 	CHECK(ZLRS_MGMT_PAYLOAD(&parser)[1] == ZLRS_MGMT_E_PARAM);
 
+	/* Mode selection validates both length and enum before writing. */
+	for (uint8_t mode = 0U; mode < 2U; mode++) {
+		payload[0] = mode;
+		len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_SET_MODE, payload, 1U, resp,
+					 sizeof(resp));
+		CHECK(parse_response(resp, len, &parser));
+		CHECK(ZLRS_MGMT_PAYLOAD(&parser)[1] == ZLRS_MGMT_OK);
+		CHECK(fake.mode == mode);
+	}
+	payload[0] = 2U;
+	len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_SET_MODE, payload, 1U, resp, sizeof(resp));
+	CHECK(parse_response(resp, len, &parser));
+	CHECK(ZLRS_MGMT_PAYLOAD(&parser)[1] == ZLRS_MGMT_E_PARAM);
+	len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_SET_MODE, payload, 0U, resp, sizeof(resp));
+	CHECK(parse_response(resp, len, &parser));
+	CHECK(ZLRS_MGMT_PAYLOAD(&parser)[1] == ZLRS_MGMT_E_PARAM);
+
 	/* SET_PROFILE: P1 goes through, P0 is refused by the backend (production-shaped build) */
 	payload[0] = 1U;
 	len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_SET_PROFILE, payload, 1U, resp,
-				sizeof(resp));
+				 sizeof(resp));
 	CHECK(parse_response(resp, len, &parser));
 	CHECK(ZLRS_MGMT_PAYLOAD(&parser)[1] == ZLRS_MGMT_OK);
 	CHECK(fake.profile_saved && fake.profile == 1U);
 
 	payload[0] = 0U;
 	len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_SET_PROFILE, payload, 1U, resp,
-				sizeof(resp));
+				 sizeof(resp));
 	CHECK(parse_response(resp, len, &parser));
 	CHECK(ZLRS_MGMT_PAYLOAD(&parser)[1] == ZLRS_MGMT_E_PARAM);
 
 	/* Out-of-range profile ids never reach the backend */
 	payload[0] = 3U;
 	len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_SET_PROFILE, payload, 1U, resp,
-				sizeof(resp));
+				 sizeof(resp));
 	CHECK(parse_response(resp, len, &parser));
 	CHECK(ZLRS_MGMT_PAYLOAD(&parser)[1] == ZLRS_MGMT_E_PARAM);
 
@@ -488,7 +510,8 @@ static void test_dispatch(void)
 	CHECK(fake.new_dev_id_count == 1U);
 
 	/* A payload is a parameter error, and the backend is not called */
-	len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_NEW_DEV_ID, payload, 1U, resp, sizeof(resp));
+	len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_NEW_DEV_ID, payload, 1U, resp,
+				 sizeof(resp));
 	CHECK(parse_response(resp, len, &parser));
 	CHECK(ZLRS_MGMT_PAYLOAD(&parser)[1] == ZLRS_MGMT_E_PARAM);
 	CHECK(fake.new_dev_id_count == 1U);

@@ -70,6 +70,8 @@ configuration protocol hands the root key straight to NVS.
 
 Pairing decides **who** we talk to; the session decides **which key** this conversation uses.
 
+- Mixed mode pairs on the control link; `data24` pairs on the 2.4 GHz data link, with the
+  same authenticated exchange and persisted pairing record.
 - The window is opened by a 1 s button hold or by the `pair` command and lasts 30 s; `PAIR_REQ`
   repeats every 100 ms.
 - The three messages carry `dev_a`, `dev_b` and the two 4-byte nonces; the TX also ships its
@@ -149,7 +151,7 @@ and response frames, documented by `include/zlrs/mgmt/mgmt.h` and implemented in
 
 | Host command | Effect |
 | --- | --- |
-| read status | role, link state, flags, `dev_id`, `peer_id`, LQ, radio design band, region, security profile, power ceiling, data baud |
+| read status | role, link state, flags (bit 3: active data24 mode), `dev_id`, `peer_id`, LQ, radio design band, region, security profile, power ceiling, data baud |
 | enter management mode | the formal entry; the radio stops for the session |
 | start pairing | opens the pairing window at once |
 | erase pairing | effective on the next boot |
@@ -160,6 +162,7 @@ and response frames, documented by `include/zlrs/mgmt/mgmt.h` and implemented in
 | set region | validated against the board's radio design, refused on mismatch, next boot |
 | set power ceiling | never above the chosen region's limit, next boot |
 | set role | `tx` or `rx`, next boot |
+| set mode | `mixed` or `data24` (exclusive 2.4 GHz data and pairing), next boot |
 | set profile | `p0` (debug images only), `p1`, `p2` (not implemented), next boot |
 | new device id | makes a fresh device id from the TRNG and stores it; the pairing record is erased with it (the peer knows the old id) |
 | factory reset | wipes NVS, next boot |

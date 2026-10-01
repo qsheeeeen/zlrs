@@ -67,14 +67,16 @@ static uint8_t resync_every_n;
 static uint16_t data_mtu;
 
 /* Rough control frame airtime: 22 B RC + 3 B header + 4 B tag + 2 B CRC */
-#define CTL_FRAME_LEN        31U
+#define CTL_FRAME_LEN 31U
 /* Telemetry frame: 8 B payload plus header and tag */
-#define CTL_TLM_LEN          15U
+#define CTL_TLM_LEN   15U
 /*
- * Isolation: the two links can each run alone. Control carries RC and pairing, data carries the
- * passthrough; proven one at a time before combining (doc/12-debug.md 3).
+ * Both links can run alone. Mixed mode pairs on control; data24 pairs and transfers on data.
+ * Build switches remove support; the saved operating mode selects which links run.
  */
-#define ZLRS_CONTROL_ENABLED IS_ENABLED(CONFIG_ZLRS_APP_LINK_CONTROL)
+static uint8_t operating_mode = ZLRS_MODE_MIXED;
+#define ZLRS_DATA24          (operating_mode == ZLRS_MODE_DATA24)
+#define ZLRS_CONTROL_ENABLED (IS_ENABLED(CONFIG_ZLRS_APP_LINK_CONTROL) && !ZLRS_DATA24)
 #define ZLRS_DATA_ENABLED    IS_ENABLED(CONFIG_ZLRS_APP_LINK_DATA)
 /* The CRSF port is part of the control link, and its presence is a devicetree fact: if the
  * board has the port at all, the control link uses it. */
@@ -87,6 +89,13 @@ static uint16_t data_mtu;
 
 static zlrs_link_t link_control;
 static zlrs_link_t link_data;
+static zlrs_storage_settings_pairing_t saved_pairing;
+static bool pairing_saved;
+
+static zlrs_link_t *active_link(void)
+{
+	return ZLRS_CONTROL_ENABLED ? &link_control : &link_data;
+}
 
 /* Per-link modulation: fixed at boot from Kconfig and the region, see plan_init() */
 static zlrs_mod_cfg_t control_mod;
@@ -270,8 +279,8 @@ static void plan_init(void)
 {
 	zlrs_control_plan_t plan;
 	/* The regulatory gate follows the sub-G link, which is the data link in racing mode */
-	const zlrs_region_t *ctl_region = CONTROL_ON_SUBG ? region : NULL;
-	const zlrs_region_t *data_region = CONTROL_ON_SUBG ? NULL : region;
+	const zlrs_region_t *ctl_region = !ZLRS_DATA24 && CONTROL_ON_SUBG ? region : NULL;
+	const zlrs_region_t *data_region = ZLRS_DATA24 || CONTROL_ON_SUBG ? NULL : region;
 	zlrs_plan_req_t req = {
 		.region = ctl_region,
 		.frame_len = CTL_FRAME_LEN,
@@ -301,6 +310,11 @@ static void plan_init(void)
 #endif
 	data_mod =
 		zlrs_mod_flrc(zlrs_region_clamp_rate(data_region, CONFIG_ZLRS_APP_DATA_RATE_BPS));
+	if (ZLRS_DATA24) {
+		/* No sub-G modulation or regional duty cadence in exclusive 2.4 GHz mode. */
+		control_mod = data_mod;
+		req.want_hz = CONFIG_ZLRS_APP_CONTROL_RATE_HZ;
+	}
 	req.mod = &control_mod;
 
 	/* Four equal hardware slots must fit control and the larger pairing packets. */
@@ -448,12 +462,14 @@ static void build_links(void)
 	};
 
 	data_cfg.kind = ZLRS_LINK_DATA;
-	data_cfg.domain = CONTROL_ON_SUBG ? ZLRS_DOMAIN_ISM2400 : region->domain;
-	data_cfg.second_domain = CONTROL_ON_SUBG ? region->domain : ZLRS_DOMAIN_ISM2400;
+	data_cfg.domain = ZLRS_DATA24 || CONTROL_ON_SUBG ? ZLRS_DOMAIN_ISM2400 : region->domain;
+	data_cfg.second_domain =
+		ZLRS_DATA24 ? 0xFFU : (CONTROL_ON_SUBG ? region->domain : ZLRS_DOMAIN_ISM2400);
 	data_cfg.sync_slot = ZLRS_SYNC_SLOT_DATA;
 	data_cfg.mod = data_mod;
-	data_cfg.tx_power_dbm =
-		CONTROL_ON_SUBG ? tx_power_dbm : MIN(tx_power_dbm, region->max_tx_power_dbm);
+	data_cfg.tx_power_dbm = ZLRS_DATA24 || CONTROL_ON_SUBG
+					? tx_power_dbm
+					: MIN(tx_power_dbm, region->max_tx_power_dbm);
 	data_cfg.arq = IS_ENABLED(CONFIG_ZLRS_APP_DATA_ARQ) ? 1U : 0U;
 	/*
 	 * An ACK can need two scheduled frames, including cadence thinning and bench pacing.
@@ -536,6 +552,8 @@ static void load_identity(void)
 	    (int)sizeof(pairing)) {
 		zlrs_link_set_peer(&link_control, pairing.peer_id, pairing.pair_salt, now_ms);
 		zlrs_link_set_peer(&link_data, pairing.peer_id, pairing.pair_salt, now_ms);
+		saved_pairing = pairing;
+		pairing_saved = true;
 		LOG_INF("pairing record restored");
 	}
 }
@@ -645,7 +663,8 @@ static void run_slot(uint8_t slot)
 	const uint32_t hit_before = link->stats.slot_hit[slot];
 	const uint32_t good_before = link->stats.rx_frames;
 	/* The duty-cycle gate only applies to whichever link is on sub-G */
-	const bool on_subg = data_slot ? (CONTROL_ON_SUBG == 0) : (CONTROL_ON_SUBG != 0);
+	const bool on_subg =
+		!ZLRS_DATA24 && (data_slot ? (CONTROL_ON_SUBG == 0) : (CONTROL_ON_SUBG != 0));
 	const zlrs_radio_req_t *req;
 
 	if (data_slot ? !ZLRS_DATA_ENABLED : !ZLRS_CONTROL_ENABLED) {
@@ -847,32 +866,29 @@ static void pump_serial(void)
 
 static void adopt_pairing(void)
 {
+	zlrs_link_t *const source = active_link();
 	zlrs_storage_settings_pairing_t pairing;
 
-	/* Control produces the pairing record, data adopts it; skip when either link is off */
-	if (!ZLRS_CONTROL_ENABLED || !ZLRS_DATA_ENABLED) {
+	if (!source->paired) {
+		return;
+	}
+	memcpy(pairing.peer_id, source->peer_id, ZLRS_DEV_ID_LEN);
+	memcpy(pairing.pair_salt, source->pair_salt, ZLRS_PAIR_SALT_LEN);
+	if (pairing_saved && memcmp(&pairing, &saved_pairing, sizeof(pairing)) == 0) {
 		return;
 	}
 
-	if (!link_control.paired) {
-		return;
+	if (ZLRS_CONTROL_ENABLED && ZLRS_DATA_ENABLED) {
+		zlrs_link_set_peer(&link_data, source->peer_id, source->pair_salt,
+				   k_uptime_get_32());
 	}
-	/* Re-pairing changes the dev_id or the nonces, so the data link has to re-sync */
-	if (link_data.paired &&
-	    memcmp(link_data.peer_id, link_control.peer_id, ZLRS_DEV_ID_LEN) == 0 &&
-	    memcmp(link_data.pair_salt, link_control.pair_salt, ZLRS_PAIR_SALT_LEN) == 0) {
-		return;
+	if (zlrs_storage_settings_save(ZLRS_SETTING_PAIRING, &pairing, sizeof(pairing)) != 0) {
+		return; /* Retry persistence; do not report an unsaved record as saved. */
 	}
-
-	/* After pairing succeeds on the control link, push the record to the data link and store it */
-	zlrs_link_set_peer(&link_data, link_control.peer_id, link_control.pair_salt,
-			   k_uptime_get_32());
-	memcpy(pairing.peer_id, link_control.peer_id, ZLRS_DEV_ID_LEN);
-	memcpy(pairing.pair_salt, link_control.pair_salt, ZLRS_PAIR_SALT_LEN);
-	(void)zlrs_storage_settings_save(ZLRS_SETTING_PAIRING, &pairing, sizeof(pairing));
-
-	LOG_INF("paired with %02x%02x%02x%02x", link_control.peer_id[0], link_control.peer_id[1],
-		link_control.peer_id[2], link_control.peer_id[3]);
+	saved_pairing = pairing;
+	pairing_saved = true;
+	LOG_INF("paired with %02x%02x%02x%02x", source->peer_id[0], source->peer_id[1],
+		source->peer_id[2], source->peer_id[3]);
 }
 
 /*
@@ -1105,8 +1121,10 @@ static void report(uint32_t now_ms)
 		uint8_t want = mix_level;
 		const uint32_t window_ms = (uint32_t)(4U * (frame_period_us / 1000U));
 		const uint32_t airtime_us = zlrs_mod_airtime_us(&control_mod, CTL_FRAME_LEN);
-		const uint8_t cap = zlrs_region_mix_level(CONTROL_ON_SUBG ? region : NULL,
-							  window_ms, airtime_us);
+		const uint8_t cap = ZLRS_DATA24
+					    ? 0U
+					    : zlrs_region_mix_level(CONTROL_ON_SUBG ? region : NULL,
+								    window_ms, airtime_us);
 
 		if (link_control.stats.lq_percent < 70U && mix_level < cap) {
 			want = (uint8_t)(mix_level + 1U);
@@ -1386,6 +1404,8 @@ static void enter_management_mode(void)
 		const zlrs_mgmt_ctx_t ctx = {
 			.control = &link_control,
 			.data = &link_data,
+			.active = active_link(),
+			.mode = operating_mode,
 			.failsafe = failsafe_payload,
 			.device_id = device_id,
 			.region_id = region_id,
@@ -2068,14 +2088,14 @@ int main(void)
 #endif
 
 	TRACE('M');
-	LOG_INF("zlrs %s", APP_VERSION_STRING);
+	LOG_INF("ZLRS %s", APP_VERSION_STRING);
 	TRACE('V');
 
 	/* What the build is, and what this board has: ports and peripherals come from devicetree,
 	 * so a missing one is reported without being an error (app/src/platform/caps.h) */
 	if (!ZLRS_CONTROL_ENABLED) {
 		LOG_WRN("isolation: control link off, only the data link runs "
-			"(pairing needs the control link)");
+			"(pairing uses the data link)");
 	}
 	if (!ZLRS_DATA_ENABLED) {
 		LOG_WRN("isolation: data link off, no serial passthrough");
@@ -2147,6 +2167,20 @@ int main(void)
 	 * stored value when present, the board's own default otherwise (app/src/platform/caps.h).
 	 * The management commands validate whatever they are asked to store (app/src/mgmt/mode.c).
 	 */
+	operating_mode =
+		IS_ENABLED(CONFIG_ZLRS_APP_LINK_CONTROL) ? ZLRS_MODE_MIXED : ZLRS_MODE_DATA24;
+	{
+		uint8_t stored_mode;
+
+		if (zlrs_storage_settings_load(ZLRS_SETTING_MODE, &stored_mode,
+					       sizeof(stored_mode)) == (int)sizeof(stored_mode) &&
+		    ((stored_mode == ZLRS_MODE_DATA24 && ZLRS_DATA_ENABLED) ||
+		     (stored_mode == ZLRS_MODE_MIXED &&
+		      IS_ENABLED(CONFIG_ZLRS_APP_LINK_CONTROL)))) {
+			operating_mode = stored_mode;
+		}
+	}
+	LOG_INF("operating mode: %s", ZLRS_DATA24 ? "data24" : "mixed");
 	region_id = ZLRS_DEFAULT_REGION;
 	tx_power_dbm = CONFIG_ZLRS_APP_TX_POWER_DBM;
 	{
@@ -2389,9 +2423,7 @@ int main(void)
 			if (zbus_chan_read(&zlrs_input_chan, &asked, K_NO_WAIT) == 0 &&
 			    asked.button_holds != button_holds_seen) {
 				button_holds_seen = asked.button_holds;
-				if (ZLRS_CONTROL_ENABLED) {
-					zlrs_link_press(&link_control, now_ms);
-				}
+				zlrs_link_press(active_link(), now_ms);
 			}
 		}
 		broadcast_state();

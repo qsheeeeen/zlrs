@@ -29,6 +29,7 @@ enum zlrs_setting {
 	ZLRS_SETTING_POWER,    /* int8_t */
 	ZLRS_SETTING_ROLE,     /* uint8_t */
 	ZLRS_SETTING_PROFILE,  /* uint8_t */
+	ZLRS_SETTING_MODE,     /* uint8_t: ZLRS_MODE_* */
 	ZLRS_SETTING_COUNT,
 };
 

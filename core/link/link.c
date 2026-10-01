@@ -1708,6 +1708,13 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 	const bool a = (slot == ZLRS_SLOT_DATA_A);
 	const bool tx_side = (link->cfg.role == ZLRS_ROLE_TX);
 
+	/* Pairing uses the same exchange on either link, in that link's own two slots.
+	 * SEARCHING also answers repeated responses when a pairing confirm was lost. */
+	if (link->state == ZLRS_STATE_PAIRING ||
+	    (link->state == ZLRS_STATE_SEARCHING && link->pair_cfm_pending)) {
+		return control_slot(link, a ? ZLRS_SLOT_CTL_DOWN : ZLRS_SLOT_CTL_UP, now_ms);
+	}
+
 	/* The main slot (A) counts once per frame */
 	if (a) {
 		link->frame_index++;

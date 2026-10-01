@@ -282,6 +282,17 @@ static int check_profile(const zlrs_mgmt_ctx_t *ctx, const uint8_t *value, uint8
 	return zlrs_mgmt_mode_profile_allowed(value[0]) ? ZLRS_MGMT_OK : ZLRS_MGMT_E_PARAM;
 }
 
+static int check_mode(const zlrs_mgmt_ctx_t *ctx, const uint8_t *value, uint8_t len)
+{
+	ARG_UNUSED(ctx);
+	ARG_UNUSED(len);
+
+	if (value[0] == ZLRS_MODE_DATA24) {
+		return IS_ENABLED(CONFIG_ZLRS_APP_LINK_DATA) ? ZLRS_MGMT_OK : ZLRS_MGMT_E_PARAM;
+	}
+	return IS_ENABLED(CONFIG_ZLRS_APP_LINK_CONTROL) ? ZLRS_MGMT_OK : ZLRS_MGMT_E_PARAM;
+}
+
 /* The two settings the running device uses at once, not on the next boot */
 static void apply_failsafe(const zlrs_mgmt_ctx_t *ctx, const uint8_t *value, uint8_t len)
 {
@@ -293,6 +304,12 @@ static void apply_failsafe(const zlrs_mgmt_ctx_t *ctx, const uint8_t *value, uin
 }
 
 static const struct cfg_setting cfg_settings[] = {
+	{.cmd = ZLRS_MGMT_CMD_SET_MODE,
+	 .setting = ZLRS_SETTING_MODE,
+	 .name = "operating mode",
+	 .effect = "it takes effect on the next boot",
+	 .check = check_mode,
+	 .applied = NULL},
 	{.cmd = ZLRS_MGMT_CMD_SET_FAILSAFE,
 	 .setting = ZLRS_SETTING_FAILSAFE,
 	 .name = "failsafe values",
@@ -390,6 +407,7 @@ static int cfg_save_root_key(void *vctx, const uint8_t key[ZLRS_KEY_LEN])
 
 	/* Takes effect immediately, no reboot needed */
 	zlrs_link_set_root_key(ctx->control, key, k_uptime_get_32());
+	zlrs_link_set_root_key(ctx->data, key, k_uptime_get_32());
 
 	LOG_INF("root key written");
 
@@ -399,8 +417,7 @@ static int cfg_save_root_key(void *vctx, const uint8_t key[ZLRS_KEY_LEN])
 static int cfg_read_status(void *vctx, zlrs_mgmt_status_t *out)
 {
 	const zlrs_mgmt_ctx_t *ctx = vctx;
-	const zlrs_link_t *const link =
-		IS_ENABLED(CONFIG_ZLRS_APP_LINK_CONTROL) ? ctx->control : ctx->data;
+	const zlrs_link_t *const link = ctx->active;
 	uint8_t stored_region;
 	int8_t stored_power;
 	uint32_t baud;
@@ -409,7 +426,7 @@ static int cfg_read_status(void *vctx, zlrs_mgmt_status_t *out)
 	out->role = link->cfg.role;
 	out->profile = link->cfg.profile;
 	out->state = link->state;
-	out->flags = 0U;
+	out->flags = ctx->mode == ZLRS_MODE_DATA24 ? ZLRS_MGMT_FLAG_DATA24 : 0U;
 	if (link->configured) {
 		out->flags |= ZLRS_MGMT_FLAG_KEY;
 	}
@@ -474,11 +491,11 @@ static int cfg_pair(void *vctx)
 {
 	const zlrs_mgmt_ctx_t *ctx = vctx;
 
-	if (!IS_ENABLED(CONFIG_ZLRS_APP_LINK_CONTROL)) {
+	if (!ctx->active->configured) {
 		return ZLRS_MGMT_E_STATE;
 	}
 
-	zlrs_link_press(ctx->control, k_uptime_get_32());
+	zlrs_link_press(ctx->active, k_uptime_get_32());
 	LOG_INF("pairing triggered by management tool");
 
 	return ZLRS_MGMT_OK;

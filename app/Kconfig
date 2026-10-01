@@ -44,8 +44,8 @@ config ZLRS_APP_LINK_CONTROL
 	bool "Control link (RC + telemetry + pairing)"
 	default y
 	help
-	  Off: only the data link runs, which is how the passthrough gets proven on its own. Pairing
-	  happens on the control link, so only an existing NVS pairing record can be used.
+	  Off: only the 2.4 GHz data link runs, including pairing. With both links built,
+	  the management tool can select this mode at runtime (effective after reboot).
 
 config ZLRS_APP_LINK_DATA
 	bool "Data link (serial passthrough)"

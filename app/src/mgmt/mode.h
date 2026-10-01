@@ -26,6 +26,8 @@
 typedef struct {
 	zlrs_link_t *control; /* the link the commands act on (keys, pairing, failsafe) */
 	zlrs_link_t *data;    /* a fresh device id goes to both links */
+	zlrs_link_t *active;  /* pairing and status use this link */
+	uint8_t mode;         /* live ZLRS_MODE_*; writes take effect after reboot */
 	uint8_t *failsafe;    /* the application's failsafe payload (ZLRS_FAILSAFE_LEN bytes) */
 	uint8_t *device_id;   /* the identity, replaced by NEW_DEV_ID (ZLRS_DEV_ID_LEN bytes) */
 	uint8_t region_id;    /* the live region: a command persists, it does not switch */

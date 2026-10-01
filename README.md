@@ -10,6 +10,7 @@ on both ends: choose TX or RX in configuration, connect over USB or UART, and pa
 - **Control and data together** — CRSF control and telemetry alongside a separate serial byte stream.
 - **Two-way data transfer** — ARQ acknowledgements, retransmissions and reassembly for reliable delivery.
 - **Dual-band operation** — sub-GHz and 2.4 GHz, with frequency hopping and configurable band roles.
+- **Standalone data mode** — use 2.4 GHz exclusively for pairing and bidirectional serial data.
 - **One firmware, two roles** — select TX or RX without rebuilding; settings and pairing survive reboot.
 - **Simple pairing** — a shared binding phrase, with pairing available through the button or device tool.
 - **Authenticated sessions** — P1 packet authentication and replay protection.

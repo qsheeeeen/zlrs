@@ -29,6 +29,7 @@ static const struct {
 	[ZLRS_SETTING_POWER] = {8U, sizeof(int8_t)},
 	[ZLRS_SETTING_ROLE] = {9U, sizeof(uint8_t)},
 	[ZLRS_SETTING_PROFILE] = {10U, sizeof(uint8_t)},
+	[ZLRS_SETTING_MODE] = {11U, sizeof(uint8_t)},
 };
 
 #define NVS_SECTOR_SIZE 4096U

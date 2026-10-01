@@ -77,6 +77,7 @@ Who decides what:
 | Which port carries which link on a two-port board | build time | devicetree aliases |
 | Which link the single port carries *(design, not implemented)* | runtime, default from devicetree | management protocol, stored in NVS |
 | Band role and control modulation | build time | Kconfig choices |
+| Operating mode (`mixed` / `data24`) | runtime, effective after reboot | `set-mode`, stored in NVS; `data24` uses 2.4 GHz for pairing and data |
 | Role TX / RX, security profile | runtime, default at build time | `set-role` / `set-profile`, stored in NVS |
 | Region, power ceiling, baud rate, failsafe values, pairing | runtime | management protocol, stored in NVS |
 | Rate tier, frame rate, telemetry period | build time today | the ledger in [13-roadmap](13-roadmap.md) tracks the missing commands |
@@ -87,6 +88,27 @@ Two properties follow and are worth stating explicitly: **one image runs both ro
 is flashed with the same file, roles are assigned during configuration), and **defaults are
 build-time while behaviour is field-time** (changing how a deployed device behaves never needs a
 new build).
+
+### Exclusive 2.4 GHz data mode
+
+Use the same firmware for a standalone wireless serial link:
+
+```sh
+python3 tools/zlrs.py set-mode data24 --all
+```
+
+Reboot both peers after saving the mode. Assign one TX and one RX, set the same binding phrase,
+then run `python3 tools/zlrs.py pair --all` or hold each device's pairing button. No previous
+pairing record is needed: pairing, session handshake and bidirectional data all run on the
+2.4 GHz data link. CRSF/control is disabled and sub-band mixing cannot move data to sub-G.
+P1 authentication, FHSS and ARQ keep their normal settings. Status shows the **active** mode;
+a saved mode change appears there only after reboot.
+
+`set-mode mixed` restores the build's control/data band roles after reboot. A valid pairing
+record survives switching modes. Both peers must use matching modes and compatible firmware.
+A build that removes a required link rejects the corresponding mode selection.
+The current four-slot schedule still reserves the two disabled control slots; this change does
+not claim a higher data rate or improved DMA timing.
 
 ## 4. Build-time choices and trimming
 

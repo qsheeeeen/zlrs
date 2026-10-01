@@ -2502,10 +2502,87 @@ static void test_skipped_slots(void)
 	}
 }
 
+/* Fresh devices pair and transfer using DATA_A/B only; no control slots or adoption. */
+static void data_only_frame(sim_t *sim)
+{
+	sim_slot(sim, ZLRS_SLOT_DATA_A);
+	sim_slot(sim, ZLRS_SLOT_DATA_B);
+	zlrs_link_tick(&sim->tx.data, sim->now_ms);
+	zlrs_link_tick(&sim->rx.data, sim->now_ms);
+	sim->now_ms += sim->frame_ms;
+}
+
+static void test_data_only_pairing(void)
+{
+	sim_t sim;
+	uint8_t up[256];
+	uint8_t down[256];
+	uint8_t old_salt[ZLRS_PAIR_SALT_LEN];
+
+	printf("link: data-only pairing, lost confirm, ARQ and re-pairing\n");
+	sim_init(&sim);
+	sim.tx.data.cfg.second_domain = sim.rx.data.cfg.second_domain = 0xFFU;
+	sim.tx.data.cfg.arq = sim.rx.data.cfg.arq = 1U;
+	zlrs_link_press(&sim.tx.data, sim.now_ms);
+	zlrs_link_press(&sim.rx.data, sim.now_ms);
+	for (unsigned int i = 0U; i < 2000U; i++) {
+		/* Lose one confirm; the responder must continue answering until one arrives. */
+		if (sim.tx.data.pair_cfm_pending && sim.tx.data.pair_cfm_sent == 0U) {
+			sim.drop_down = 1;
+		}
+		data_only_frame(&sim);
+		if (sim.tx.data.state == ZLRS_STATE_CONNECTED &&
+		    sim.rx.data.state == ZLRS_STATE_CONNECTED) {
+			break;
+		}
+	}
+	CHECK(sim.tx.data.paired && sim.rx.data.paired);
+	CHECK(sim.tx.data.session_valid && sim.rx.data.session_valid);
+	CHECK(sim.tx.data.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.data.state == ZLRS_STATE_CONNECTED);
+	CHECK(!sim.tx.ctl.paired && !sim.rx.ctl.paired);
+	CHECK(sim.tx.data.stats.pair_req_tx > 0U);
+	CHECK(sim.rx.data.stats.pair_resp_tx > 0U);
+	CHECK(memcmp(sim.tx.data.pair_key, sim.rx.data.pair_key, ZLRS_KEY_LEN) == 0);
+	CHECK(!zlrs_fhss_sub_ready(&sim.tx.data.fhss));
+	for (unsigned int i = 0U; i < sizeof(up); i++) {
+		up[i] = (uint8_t)i;
+		down[i] = (uint8_t)(255U - i);
+	}
+	CHECK(zlrs_link_write(&sim.tx.data, up, sizeof(up)) == sizeof(up));
+	CHECK(zlrs_link_write(&sim.rx.data, down, sizeof(down)) == sizeof(down));
+	sim.drop_down = 2;
+	for (unsigned int i = 0U; i < 2000U; i++) {
+		data_only_frame(&sim);
+		if (sim.rx.stream_len == sizeof(up) && sim.tx.stream_len == sizeof(down)) {
+			break;
+		}
+	}
+	CHECK(sim.rx.stream_len == sizeof(up));
+	CHECK(sim.tx.stream_len == sizeof(down));
+	CHECK(memcmp(sim.rx.stream, up, sizeof(up)) == 0);
+	CHECK(memcmp(sim.tx.stream, down, sizeof(down)) == 0);
+	memcpy(old_salt, sim.tx.data.pair_salt, sizeof(old_salt));
+	zlrs_link_press(&sim.tx.data, sim.now_ms);
+	zlrs_link_press(&sim.rx.data, sim.now_ms);
+	for (unsigned int i = 0U; i < 2000U; i++) {
+		data_only_frame(&sim);
+		if (sim.tx.data.state == ZLRS_STATE_CONNECTED &&
+		    sim.rx.data.state == ZLRS_STATE_CONNECTED) {
+			break;
+		}
+	}
+	CHECK(sim.tx.data.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.data.state == ZLRS_STATE_CONNECTED);
+	CHECK(memcmp(old_salt, sim.tx.data.pair_salt, sizeof(old_salt)) != 0);
+	CHECK(memcmp(sim.tx.data.pair_salt, sim.rx.data.pair_salt, sizeof(old_salt)) == 0);
+}
+
 void test_link(void)
 {
 	test_skipped_slots();
 	test_handshake_cadence();
+	test_data_only_pairing();
 	test_pairing();
 	test_pairing_repeat_req();
 	test_pairing_lost_confirm();

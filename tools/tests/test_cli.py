@@ -75,6 +75,17 @@ class EntryTests(unittest.TestCase):
         self.assertEqual(entry.mgmt.decode(talk.call_args_list[0].args[2]),
                          (entry.mgmt.CMD_SET_BAUD, (420000).to_bytes(4, "little")))
 
+    def test_data24_mode_command(self):
+        with patch.object(entry.mgmt, "talk", return_value=0) as talk:
+            rc, _ = invoke(entry, "set-mode", "data24", "--port", "fake")
+        self.assertEqual(rc, 0)
+        self.assertEqual(entry.mgmt.decode(talk.call_args_list[0].args[2]),
+                         (entry.mgmt.CMD_SET_MODE, b"\x01"))
+        self.assertEqual(invoke(entry, "set-mode", "invalid")[0], 2)
+        status = bytearray(21)
+        status[3] = 0x08
+        self.assertIn("data24 (2.4 GHz data only)", entry.mgmt.status_text(status))
+
     def test_subcommand_help_uses_public_name(self):
         for command in ("status", "update", "recovery", "throughput"):
             with self.subTest(command=command):

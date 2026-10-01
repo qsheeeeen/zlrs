@@ -82,10 +82,9 @@ ZLRS_BOARD=rp2350_zero_core2021/rp2350a/m33/lf zlrs-build -d build-data24 -- \
   -DDTC_OVERLAY_FILE="$ZLRS_REPO_ROOT/app/debug.overlay"
 ```
 
-This profile disables control, sub-band mixing and hopping. P1 authentication, session
-handshake and ARQ remain enabled. Both devices need an existing pairing record: pairing still
-runs on the control link; pairing requests are rejected in this profile. Read the **data**
-section of `zlrs link`; management status and the LED follow data when control is disabled. The
+This profile disables control, sub-band mixing and hopping. P1 authentication, session handshake and ARQ remain enabled. Fresh devices can pair on the data
+link in this profile; no previous pairing record is needed. Read the **data** section of
+`zlrs link`; management status and the LED follow data when control is disabled. The
 profile isolates faults; it is not a validated reliable-transfer configuration (see `13-roadmap.md`).
 
 Measure end-to-end payload throughput between two paired devices with:
