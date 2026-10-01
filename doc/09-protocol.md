@@ -6,7 +6,7 @@ how hopping and regulation land in code. Identity and keys: [10-security](10-sec
 timing budget: [07-architecture](07-architecture.md) 4; chip parameters:
 [06-radio](06-radio.md).
 
-Protocol version: `ZLRS_PROTO_VERSION` (1 today), carried in `SYNC` and checked by the RX.
+Protocol version: `ZLRS_PROTO_VERSION` (2 today), carried in `SYNC` and checked by the RX.
 
 ## 1. Frame format
 
@@ -15,16 +15,36 @@ frame. What the protocol adds is:
 
 | Field | Size | Purpose |
 | --- | --- | --- |
-| header | 1 B | 6-bit packet type, 2-bit flags |
-| `seq` | 2 B | increases within a session; replay protection, reassembly and ARQ use it |
-| payload | 0-248 B | type-specific |
-| tag | 0 or 4 B | truncated HMAC-SHA256, depending on the security profile |
+| `header` | 1 B | 6-bit packet type tells the receiver how to parse the frame; 2-bit flags carry `MORE` and the optional ACK-extension indicator. |
+| `seq` | 2 B | Per-transmission frame number. The receiver uses it to reject replayed frames. |
+| ACK extension | 0 or 2 B | When indicated on DATA, carries the highest in-order ARQ sequence received from the peer. It confirms data without using payload bytes. |
+| `payload` | 0-248 B | Packet-specific content. For ARQ DATA, starts with a 2-byte data sequence, followed by user bytes; a header-only ACK DATA has no payload. |
+| `tag` | 0 or 4 B | Truncated HMAC-SHA256. Authenticates the ZLRS frame so modified or forged fields are rejected; omitted only in the debug P0 profile. |
 
-Multi-byte fields are little-endian. The tag covers the header, `seq` and the payload. The
-largest payload is `255 - 3 - 4 = 248` bytes; the data link's usable payload (`data_mtu`) is
-derived at boot from the frame format and the rate tier, not from a Kconfig knob.
+Multi-byte fields are little-endian. The tag covers the header, `seq`, optional ACK extension and
+payload. The LR2021 adds its own physical-layer framing around these bytes; those fields are listed
+below.
 
-Flags: `MORE` (more fragments follow) and `ACK_REQ` (acknowledgement requested).
+### 1.1 LR2021 FLRC fields
+
+The current data link uses FLRC variable-length packets, a 24-bit AGC preamble, a 21-bit timing
+recovery preamble, a 16-bit Sync Word, a 16-bit variable-length header and a 16-bit hardware CRC.
+With CR 3/4, FLRC also applies convolutional coding and transmits its 6-bit tail. The modem creates
+these fields; they are not bytes in the ZLRS radio buffer.
+
+| Field | Size | Purpose |
+| --- | --- | --- |
+| AGC preamble | 24 bits | Gives the receiver time to settle automatic gain control before decoding. |
+| Timing recovery preamble | 21 bits | Lets the demodulator recover the bit clock and align sampling to the incoming bit stream. |
+| Sync Word | 16 bits | Marks the packet for the configured link/slot so the receiver can reject unrelated signals before reading the frame. |
+| Variable-length header | 16 bits | Carries packet length (9 bits); the other 7 bits are reserved by LR2021. |
+| ZLRS frame | variable | The application protocol fields in the table above. |
+| Hardware CRC | 16 bits | Detects radio packet corruption before ZLRS processes the frame. |
+| FEC tail | 6 bits | Terminates the CR 3/4 convolutional encoder state; it is not application data. |
+
+The current 16-bit Sync Word is configured in `app/src/platform/radio.c`. LR2021 permits 16- or
+32-bit Sync Words; the shorter one saves 16 uncoded bits per packet while increasing the chance
+of an unrelated signal matching.
 
 ## 2. Packet types
 
@@ -34,7 +54,7 @@ Flags: `MORE` (more fragments follow) and `ACK_REQ` (acknowledgement requested).
 | 1 | `TLM` | RX to TX | uplink telemetry (8 B, see [tlm.h] layout below) |
 | 2 | `DATA_UP` | TX to RX | passthrough data |
 | 3 | `DATA_DOWN` | RX to TX | passthrough data |
-| 4 | `ACK` | both | cumulative ARQ acknowledgement |
+| 4 | `ACK` | both | ARQ resynchronization probe |
 | 5 | `SYNC` | TX to RX | session setup, hop alignment, profile and mix declaration |
 | 6 | `PAIR_REQ` | TX to RX | pairing |
 | 7 | `PAIR_RESP` | RX to TX | pairing |
@@ -164,8 +184,10 @@ The data link's default mode:
 
 - a sliding window of **4 frames**, each carrying a 2-byte data sequence number before the
   payload;
-- the receiver answers with a **cumulative ACK** (2-byte sequence plus a flags byte whose bit 0
-  asks for a resync);
+- the receiver piggybacks its cumulative ACK (2-byte sequence) in the DATA header extension when
+  it has reverse data to send; otherwise it sends an empty DATA frame containing only the common
+  header and ACK extension. Neither case puts ACK data in the application payload. Resync probes
+  remain standalone control packets;
 - the sender retransmits the head frame after at least 30 ms (`ZLRS_ARQ_TIMEOUT_MS`), raised to
   two actual scheduled data frame periods, including cadence thinning and pacing, up to 64 times
   (`ZLRS_ARQ_MAX_RETRIES`);

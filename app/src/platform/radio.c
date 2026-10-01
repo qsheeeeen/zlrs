@@ -156,7 +156,8 @@ static void make_flrc(const zlrs_mod_cfg_t *mod, uint16_t len, ralf_params_flrc_
 	cfg->mod_params.cr = RAL_FLRC_CR_3_4;
 	cfg->mod_params.pulse_shape = RAL_FLRC_PULSE_SHAPE_BT_05;
 	cfg->pkt_params.preamble_len = preamble_len(CONFIG_ZLRS_APP_FLRC_PREAMBLE_BITS);
-	cfg->pkt_params.sync_word_len = RAL_FLRC_SYNCWORD_LENGTH_4_BYTES;
+	/* 16-bit sync word saves 16 uncoded bits; keep the per-slot syncword match enabled. */
+	cfg->pkt_params.sync_word_len = RAL_FLRC_SYNCWORD_LENGTH_2_BYTES;
 	cfg->pkt_params.pld_is_fix = false;
 	cfg->pkt_params.pld_len_in_bytes = len;
 	cfg->pkt_params.crc_type = RAL_FLRC_CRC_2_BYTES;
@@ -239,7 +240,7 @@ static int setup_flrc(const zlrs_radio_req_t *req)
 	if ((full || !sync_valid[id] ||
 	     memcmp(sync_words[id], req->sync_word, ZLRS_SYNC_WORD_LEN) != 0) &&
 	    ral_set_flrc_sync_word(&radio.ral, id + 1U, req->sync_word,
-				   RAL_FLRC_SYNCWORD_LENGTH_4_BYTES) != RAL_STATUS_OK) {
+				   RAL_FLRC_SYNCWORD_LENGTH_2_BYTES) != RAL_STATUS_OK) {
 		return -EIO;
 	}
 	if (full) {

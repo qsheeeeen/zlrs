@@ -11,11 +11,12 @@
 /*
  * Over-the-air protocol version: bump on incompatible changes, carried in SYNC, RX checks it.
  * 1: tags and session keys derive from both dev_ids (order encodes direction), pair_key mixes
- *    in the pairing nonce and session keys mix in the handshake nonces (10-security 3).
+ *    in the pairing nonce and session keys mix in the handshake nonces (10-security 3);
+ * 2: DATA frames may carry a cumulative ACK header extension (09-protocol 4.3).
  */
-#define ZLRS_PROTO_VERSION 1U
+#define ZLRS_PROTO_VERSION 2U
 
-/* Frame: header(1) + seq(2) + payload + tag(0/4); the radio hardware produces the CRC */
+/* Frame: common header(1) + seq(2) + optional ACK extension(2) + payload + tag(0/4). */
 #define ZLRS_FRAME_HDR_LEN   3U
 #define ZLRS_TAG_LEN         4U
 #define ZLRS_FRAME_MAX_LEN   255U

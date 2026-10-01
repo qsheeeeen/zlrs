@@ -374,8 +374,9 @@ static void session_activate(zlrs_link_t *link, uint16_t hop_index)
 	zlrs_fhss_set_index(&link->fhss, hop_index);
 }
 
-static uint16_t build_frame(zlrs_link_t *link, uint8_t type, uint8_t flags, const uint8_t *payload,
-			    uint16_t len, const uint8_t *tag_key)
+static uint16_t build_frame_ex(zlrs_link_t *link, uint8_t type, uint8_t flags,
+			       const uint8_t *payload, uint16_t len, const uint8_t *tag_key,
+			       bool ack_present, uint16_t ack_seq)
 {
 	const uint8_t tag_len = zlrs_profile_tag_len(link->cfg.profile);
 	zlrs_frame_t frame;
@@ -388,7 +389,7 @@ static uint16_t build_frame(zlrs_link_t *link, uint8_t type, uint8_t flags, cons
 		return 0U;
 	}
 
-	total = zlrs_frame_len(len, tag_len);
+	total = (uint16_t)(zlrs_frame_len(len, tag_len) + (ack_present ? 2U : 0U));
 	if (total > sizeof(link->tx_buf)) {
 		return 0U;
 	}
@@ -396,18 +397,21 @@ static uint16_t build_frame(zlrs_link_t *link, uint8_t type, uint8_t flags, cons
 	frame.type = type;
 	frame.flags = flags;
 	frame.seq = link->tx_seq;
+	frame.ack_present = ack_present;
+	frame.ack_seq = ack_seq;
 	frame.payload = payload;
 	frame.payload_len = len;
 	frame.tag = NULL;
 
 	/* encode writes header + payload only; the tag is appended here */
 	if (zlrs_frame_encode(&frame, link->tx_buf, sizeof(link->tx_buf)) !=
-	    (uint16_t)(ZLRS_FRAME_HDR_LEN + len)) {
+	    (uint16_t)(ZLRS_FRAME_HDR_LEN + len + (ack_present ? 2U : 0U))) {
 		return 0U;
 	}
 
 	if (tag_len > 0U) {
-		const uint16_t mac_len = (uint16_t)(ZLRS_FRAME_HDR_LEN + len);
+		const uint16_t mac_len = (uint16_t)(ZLRS_FRAME_HDR_LEN + len +
+						    (ack_present ? 2U : 0U));
 
 		zlrs_tag(tag_key, ZLRS_KEY_LEN, link->tx_buf, mac_len, &link->tx_buf[mac_len]);
 	}
@@ -415,6 +419,12 @@ static uint16_t build_frame(zlrs_link_t *link, uint8_t type, uint8_t flags, cons
 	link->tx_seq++;
 
 	return total;
+}
+
+static uint16_t build_frame(zlrs_link_t *link, uint8_t type, uint8_t flags,
+			    const uint8_t *payload, uint16_t len, const uint8_t *tag_key)
+{
+	return build_frame_ex(link, type, flags, payload, len, tag_key, false, 0U);
 }
 
 /* Tag key for a frame: outbound uses out, otherwise in. The pairing handshake is the
@@ -617,7 +627,7 @@ static void arq_release_oldest(zlrs_link_t *link, bool delivered)
 
 /* Send frame `index` of the window: payload is a 2-byte data sequence number plus data */
 static const zlrs_radio_req_t *arq_send_slot(zlrs_link_t *link, uint8_t index, uint16_t seq,
-					     uint16_t len, bool more)
+					     uint16_t len, bool more, bool piggyback_ack)
 {
 	uint8_t payload[ZLRS_PAYLOAD_MAX_LEN];
 	const uint8_t type =
@@ -636,14 +646,20 @@ static const zlrs_radio_req_t *arq_send_slot(zlrs_link_t *link, uint8_t index, u
 			link->tx_queue[(link->queue_head + offset + i) % ZLRS_LINK_TX_QUEUE_LEN];
 	}
 
-	frame_len = build_frame(link, type, more ? ZLRS_FLAG_MORE : 0U, payload,
-				(uint16_t)(len + 2U), tag_key_for(link, type, true));
+	frame_len = build_frame_ex(link, type,
+				   (more ? ZLRS_FLAG_MORE : 0U) |
+				   (piggyback_ack ? ZLRS_FLAG_ACK : 0U), payload,
+				   (uint16_t)(len + 2U), tag_key_for(link, type, true), piggyback_ack,
+				   link->arq_rx_started ? link->arq_rx_seq : 0xFFFFU);
 	if (frame_len == 0U) {
 		return NULL;
 	}
 
 	/* ARQ bytes are committed on ACK, so keep the completion callback out of the queue */
 	link->pending_data_len = 0U;
+	if (piggyback_ack) {
+		link->arq_ack_pending = false;
+	}
 
 	return submit_tx(link, frame_len, slot_freq_hz(link, SLOT_DATA), link->cfg.sync_slot,
 			 link->sync_word);
@@ -676,7 +692,10 @@ static const zlrs_radio_req_t *send_data_arq(zlrs_link_t *link, uint32_t now_ms)
 
 		/* Retransmit the head frame: same sequence number, length and MORE as the original */
 		return arq_send_slot(link, 0U, link->arq_seq, link->arq_len[0],
-				     link->arq_more[0] != 0U);
+				     link->arq_more[0] != 0U,
+				     link->arq_ack_pending &&
+				     link->cfg.data_mtu > 2U &&
+				     link->arq_len[0] <= link->cfg.data_mtu - 2U);
 	}
 
 	if (link->arq_used >= ZLRS_ARQ_WINDOW) {
@@ -687,13 +706,15 @@ static const zlrs_radio_req_t *send_data_arq(zlrs_link_t *link, uint32_t now_ms)
 	}
 
 	{
+		const bool piggyback_ack = link->arq_ack_pending && link->cfg.data_mtu > 2U;
+		const uint16_t mtu = (uint16_t)(link->cfg.data_mtu - (piggyback_ack ? 2U : 0U));
 		uint16_t take = (uint16_t)(link->queue_count - inflight);
 		const uint8_t index = link->arq_used;
 		const uint16_t seq = (uint16_t)(link->arq_seq + index);
-		bool more = take > link->cfg.data_mtu;
+		bool more = take > mtu;
 
 		if (more) {
-			take = link->cfg.data_mtu;
+			take = mtu;
 		}
 		/*
 		 * The receiver assembles a run until it sees the frame without MORE, and it can only hold
@@ -701,7 +722,7 @@ static const zlrs_radio_req_t *send_data_arq(zlrs_link_t *link, uint32_t now_ms)
 		 * buffer: a write larger than the buffer then arrives as several messages instead of being
 		 * dropped whole (which is what happened when the run grew past the receiver's limit).
 		 */
-		if (more && ((uint32_t)link->arq_run_bytes + take + link->cfg.data_mtu >
+		if (more && ((uint32_t)link->arq_run_bytes + take + mtu >
 			     ZLRS_REASM_BUF_LEN)) {
 			more = false;
 		}
@@ -716,7 +737,7 @@ static const zlrs_radio_req_t *send_data_arq(zlrs_link_t *link, uint32_t now_ms)
 			link->arq_sent_ms = now_ms;
 		}
 
-		return arq_send_slot(link, index, seq, take, more);
+		return arq_send_slot(link, index, seq, take, more, piggyback_ack);
 	}
 }
 
@@ -747,27 +768,26 @@ static const zlrs_radio_req_t *send_arq_ack(zlrs_link_t *link, uint16_t value, u
 
 static const zlrs_radio_req_t *send_ack(zlrs_link_t *link)
 {
-	/* Before any in-order frame, answer 0xFFFF: the sender then releases nothing */
+	const uint8_t type = (link->cfg.role == ZLRS_ROLE_TX) ? ZLRS_PKT_DATA_UP
+								      : ZLRS_PKT_DATA_DOWN;
 	const uint16_t value = link->arq_rx_started ? link->arq_rx_seq : 0xFFFFU;
+	uint16_t frame_len;
 
-	return send_arq_ack(link, value, 0U);
+	/* ACK-only reply: an empty DATA frame carrying only the authenticated header extension. */
+	frame_len = build_frame_ex(link, type, ZLRS_FLAG_ACK, NULL, 0U,
+				   tag_key_for(link, type, true), true, value);
+	if (frame_len == 0U) {
+		return NULL;
+	}
+	link->arq_ack_pending = false;
+	link->pending_data_len = 0U;
+	return submit_tx(link, frame_len, slot_freq_hz(link, SLOT_DATA), link->cfg.sync_slot,
+			 link->sync_word);
 }
 
 /* Cumulative ACK: one confirmation can release several consecutive frames */
-static void handle_ack(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
+static void handle_ack_value(zlrs_link_t *link, uint16_t ack, uint8_t flags, uint32_t now_ms)
 {
-	uint16_t ack;
-	uint8_t flags = 0U;
-
-	if (!link->cfg.arq || frame->payload_len < 2U) {
-		return;
-	}
-
-	ack = (uint16_t)((uint16_t)frame->payload[0] | ((uint16_t)frame->payload[1] << 8));
-	if (frame->payload_len >= 3U) {
-		flags = frame->payload[2];
-	}
-
 	if ((flags & ZLRS_ARQ_ACK_RESYNC) != 0U) {
 		/* Recovery probe: report progress without discarding acknowledged fragments or
 		 * forgetting which complete messages were already delivered. */
@@ -786,6 +806,22 @@ static void handle_ack(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t no
 
 	/* Window moves forward; retransmit timing restarts from this confirmation */
 	link->arq_sent_ms = now_ms;
+}
+
+static void handle_ack(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
+{
+	uint16_t ack;
+	uint8_t flags = 0U;
+
+	if (!link->cfg.arq || frame->payload_len < 2U) {
+		return;
+	}
+
+	ack = (uint16_t)((uint16_t)frame->payload[0] | ((uint16_t)frame->payload[1] << 8));
+	if (frame->payload_len >= 3U) {
+		flags = frame->payload[2];
+	}
+	handle_ack_value(link, ack, flags, now_ms);
 }
 
 static const zlrs_radio_req_t *send_data(zlrs_link_t *link, uint32_t now_ms)
@@ -897,6 +933,8 @@ static uint16_t acq_timeout_ms(const zlrs_link_t *link)
 
 /* ---- receive: dispatch --------------------------------------------------- */
 
+static void handle_ack_value(zlrs_link_t *link, uint16_t ack, uint8_t flags, uint32_t now_ms);
+
 static void handle_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
 {
 	if (link->cfg.arq) {
@@ -904,6 +942,12 @@ static void handle_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 		uint16_t seq;
 		zlrs_frame_t inner;
 
+		if (frame->ack_present) {
+			handle_ack_value(link, frame->ack_seq, 0U, now_ms);
+		}
+		if (frame->payload_len == 0U && frame->ack_present) {
+			return; /* ACK-only DATA frame: control header, no data segment */
+		}
 		if (frame->payload_len < 3U) {
 			link->stats.rx_bad_frame++;
 			return;
@@ -1803,8 +1847,8 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 	if (tx_side == a) {
 		const zlrs_radio_req_t *req;
 
-		/* Answer the peer before probing it, including when both ends need recovery. */
-		if (link->cfg.arq && link->arq_ack_pending) {
+		/* Recovery probes need a plain ACK reply before either side probes again. */
+		if (link->cfg.arq && link->arq_ack_pending && link->arq_resync) {
 			req = send_ack(link);
 			if (req != NULL) {
 				return req;
@@ -1823,6 +1867,10 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 
 		if (req != NULL) {
 			return req;
+		}
+		/* Piggyback when sending data; otherwise send a header-only DATA acknowledgment. */
+		if (link->cfg.arq && link->arq_ack_pending) {
+			return send_ack(link);
 		}
 
 		/* An idle transmit slot stays idle; receiving the opposite slot loses hop/phase alignment. */

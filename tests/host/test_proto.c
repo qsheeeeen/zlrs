@@ -94,6 +94,25 @@ static void test_frame(void)
 	CHECK(!zlrs_frame_decode(&out, buf, 2U, 0U));
 	CHECK(!zlrs_frame_decode(&out, buf, len, (uint8_t)(ZLRS_TAG_LEN + 1U)));
 	CHECK(zlrs_frame_encode(&in, buf, 4U) == 0U);
+
+	/* ACK metadata is a signed header extension; the decoded payload stays user data. */
+	in.type = ZLRS_PKT_DATA_DOWN;
+	in.flags = ZLRS_FLAG_MORE | ZLRS_FLAG_ACK;
+	in.ack_present = true;
+	in.ack_seq = 0x1234U;
+	len = zlrs_frame_encode(&in, buf, sizeof(buf));
+	CHECK(len == ZLRS_FRAME_HDR_LEN + 2U + sizeof(payload) + ZLRS_TAG_LEN);
+	CHECK(buf[3] == 0x34U && buf[4] == 0x12U);
+	CHECK(zlrs_frame_decode(&out, buf, len, ZLRS_TAG_LEN));
+	CHECK(out.ack_present && out.ack_seq == 0x1234U);
+	CHECK(out.payload_len == sizeof(payload) && memcmp(out.payload, payload, sizeof(payload)) == 0);
+	CHECK(zlrs_frame_mac_len(&out) == ZLRS_FRAME_HDR_LEN + 2U + sizeof(payload));
+	in.payload = NULL;
+	in.payload_len = 0U;
+	len = zlrs_frame_encode(&in, buf, sizeof(buf));
+	CHECK(len == ZLRS_FRAME_HDR_LEN + 2U + ZLRS_TAG_LEN);
+	CHECK(zlrs_frame_decode(&out, buf, len, ZLRS_TAG_LEN));
+	CHECK(out.ack_present && out.payload_len == 0U && out.payload == NULL);
 }
 
 /* ---- reassembly ---------------------------------------------------------- */

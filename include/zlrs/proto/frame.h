@@ -33,7 +33,8 @@ typedef enum {
 
 /* low 2 bits of the header */
 #define ZLRS_FLAG_MORE    0x01U /* more fragments follow */
-#define ZLRS_FLAG_ACK_REQ 0x02U /* acknowledgement requested */
+#define ZLRS_FLAG_ACK_REQ 0x02U /* legacy: acknowledgement requested */
+#define ZLRS_FLAG_ACK     ZLRS_FLAG_ACK_REQ /* DATA frame carries a cumulative ACK extension */
 
 /* Security profiles, see doc/10-security.md 8 */
 typedef enum {
@@ -50,6 +51,8 @@ typedef struct {
 	uint8_t type;
 	uint8_t flags;
 	uint16_t seq;
+	bool ack_present;
+	uint16_t ack_seq;
 	const uint8_t *payload;
 	uint16_t payload_len;
 	const uint8_t *tag;

@@ -478,14 +478,16 @@ static void build_links(void)
 					: MIN(tx_power_dbm, region->max_tx_power_dbm);
 	data_cfg.arq = IS_ENABLED(CONFIG_ZLRS_APP_DATA_ARQ) ? 1U : 0U;
 	/*
-	 * An ACK can need two scheduled frames, including cadence thinning and bench pacing.
-	 * Base the timeout on the actual timer period rather than the packet airtime alone.
+	 * In mixed mode, an ACK may take two timer frames. data24 has two A/B rounds in each timer
+	 * frame, so one timer-frame half is enough. Keep at least 10 ms for radio turnaround.
 	 */
-	data_cfg.arq_timeout_ms =
-		(uint16_t)MIN(UINT16_MAX, MAX(ZLRS_ARQ_TIMEOUT_MS,
-					      DIV_ROUND_UP(2ULL * frame_period_us * data_every_n *
-								   CONFIG_ZLRS_APP_PACING_SCALE,
-							   1000U)));
+	const uint64_t arq_ack_period_us =
+		(ZLRS_DATA24 ? (uint64_t)frame_period_us / 2U : 2ULL * frame_period_us) *
+		data_every_n * CONFIG_ZLRS_APP_PACING_SCALE;
+	const uint32_t arq_min_timeout_ms = ZLRS_DATA24 ? 10U : ZLRS_ARQ_TIMEOUT_MS;
+	data_cfg.arq_timeout_ms = (uint16_t)MIN(
+		UINT16_MAX,
+		MAX(arq_min_timeout_ms, DIV_ROUND_UP(arq_ack_period_us, 1000U)));
 	/*
 	 * The data link is best-effort: it sends nothing when idle, so it has no peer-loss check,
 	 * which would otherwise rebuild the session over and over while idle (doc/09-protocol.md 3.7).
@@ -1618,8 +1620,9 @@ static void print_link(const struct shell *sh, const char *name, const zlrs_link
 		    link->queue_count, link->arq_used, link->arq_seq, link->arq_rx_seq,
 		    link->arq_ack_pending, link->arq_resync, link->reasm.len,
 		    link->stats.rx_bad_tag, link->stats.rx_bad_frame);
-	shell_print(sh, "        cadence tlm=1/%u data=1/%u resync=1/%u", link->cfg.tlm_every_n,
-		    link->cfg.data_every_n, link->cfg.resync_every_n);
+	shell_print(sh, "        cadence tlm=1/%u data=1/%u resync=1/%u arq_timeout=%u ms",
+		    link->cfg.tlm_every_n, link->cfg.data_every_n, link->cfg.resync_every_n,
+		    link->cfg.arq_timeout_ms);
 	/* The exact KDF context the link derives from: byte compare of two ends settles the rest */
 	{
 		uint8_t ctx[ZLRS_PAIR_CTX_LEN];
