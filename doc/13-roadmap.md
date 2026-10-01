@@ -74,6 +74,13 @@ design documents.
   completing byte-exact in 8.799 s. Recovery after sequential peer upgrades needs investigation;
   its cause is not established by this check. Production wireless and HF hardware checks remain
   pending. Upstream Zephyr/USP source is unchanged.
+- **433 MHz prototype configuration (implemented; short LF check passed)**: LF devicetree
+  now defaults to CN433 instead of CN470. On 2026-10-01 both attached boards had their saved
+  region set to CN433 and were cold-rebooted; status and live console frequencies confirmed
+  433 MHz control operation with active sessions. The existing debug firmware uses the saved
+  configuration; the updated LF production image builds but was not installed for this check.
+  Three consecutive duplex 4096-byte rounds passed byte-exact at 32 bytes per 10 ms.
+  This does not replace antenna/PA characterization or long-duration timing acceptance.
 - **First frames in the air, one board (passed)**: with the Core2021 attached, pairing
   `PAIR_REQ` frames really go out: one every 100 ms through the 30 s window, about 1700
   transactions over five rounds with `fail=0`. The CRSF entry was checked on the same board:

@@ -29,7 +29,7 @@ The Core2021's sub-G comes in two SKUs, so there are two board targets:
 | Target | sub-G | Regions this design accepts | Boots with |
 | --- | --- | --- | --- |
 | `rp2350_zero_core2021/rp2350a/m33/hf` | HF: 850-930 MHz | FCC915 / EU868 | FCC915 |
-| `rp2350_zero_core2021/rp2350a/m33/lf` | LF: 410-510 MHz | CN470 / CN433 | CN470 |
+| `rp2350_zero_core2021/rp2350a/m33/lf` | LF: 410-510 MHz | CN470 / CN433 | CN433 |
 
 Both SKUs are bootloader targets: the image and the bootloader are built together (`--sysbuild`)
 from the same flash layout, and the application is only ever installed and updated through the

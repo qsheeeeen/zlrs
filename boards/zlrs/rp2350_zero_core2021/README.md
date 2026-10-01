@@ -56,7 +56,7 @@ board has two variants (one code base, differing in dtsi and the region a fresh 
 | Target | sub-G hardware | Regions this design accepts | Default region |
 | --- | --- | --- | --- |
 | `.../rp2350a/m33/hf` | HF: 850-930 MHz | FCC915 (0), EU868 (1) | FCC915 |
-| `.../rp2350a/m33/lf` | LF: 410-510 MHz | CN470 (2), CN433 (3) | CN470 |
+| `.../rp2350a/m33/lf` | LF: 410-510 MHz | CN470 (2), CN433 (3) | CN433 |
 
 Both targets build the application and the bootloader together (`--sysbuild`) from the same flash
 layout (see 4): an image that cannot be updated through the bootloader has no reason to exist, so
@@ -82,7 +82,7 @@ zlrs_rf: zlrs-rf {
 	band = <0>;              /* 0 = LF, 1 = HF */
 	low-hz = <410000000>;
 	high-hz = <510000000>;
-	default-region = <2>;    /* CN470 */
+	default-region = <3>;    /* CN433 */
 };
 ```
 

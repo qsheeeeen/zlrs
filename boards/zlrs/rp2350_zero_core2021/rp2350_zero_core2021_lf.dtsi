@@ -23,7 +23,7 @@
 		band = <0>;
 		low-hz = <410000000>;
 		high-hz = <510000000>;
-		default-region = <2>; /* CN470 */
+		default-region = <3>; /* CN433: prototype uses a 433 MHz module/antenna */
 	};
 };
 
