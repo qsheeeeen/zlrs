@@ -98,7 +98,7 @@
 	status = "okay";
 };
 
-/* DMA channels: SPI0 TX/RX = 0/1, status LED TX = 2. */
+/* DMA channels: SPI0 TX/RX = 0/1. The status LED writes one pixel through PIO without DMA. */
 &dma {
 	status = "okay";
 };
@@ -121,8 +121,6 @@
 			status = "okay";
 			gpios = <&gpio0 16 GPIO_ACTIVE_HIGH>;
 			chain-length = <1>;
-			dmas = <&dma 2 RPI_PICO_DMA_SLOT_PIO0_TX0 0>;
-			dma-names = "tx";
 			/*
 			 * The WS2812B's physical byte order is GRB, so declare it the way the part expects, or red and
 			 * green swap (measured: red shows green, blue shows purple). Upstream waveshare rp2350_zero

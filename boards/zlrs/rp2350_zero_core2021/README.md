@@ -50,13 +50,13 @@ Each link has two endpoints (UART and USB CDC); the rule that picks one is in
 
 ### DMA allocation and peripheral support
 
-The application enables `CONFIG_DMA` and `CONFIG_SPI_PL022_DMA`. DMA channels are fixed
-in the board devicetree so SPI and the status LED cannot allocate the same channel.
+The application enables `CONFIG_DMA` and `CONFIG_SPI_PL022_DMA`. SPI DMA channels are fixed
+in the board devicetree. The one-pixel PIO status LED writes directly to the PIO FIFO without DMA.
 
 | Peripheral | DMA use in this application |
 | --- | --- |
 | SPI0 / LR2021 | TX channel 0, RX channel 1; upstream PL022 DMA handles every SPI transaction |
-| PIO0 / WS2812 status LED | TX channel 2; upstream PIO LED driver chooses the DREQ for its allocated state machine |
+| PIO0 / WS2812 status LED | No DMA; one pixel is written synchronously to the PIO FIFO |
 | UART0 / CRSF, UART1 / data | Hardware has DMA request sources, but the current upstream PL011 driver has no DMA/async implementation; retain interrupt-driven FIFO I/O |
 | USB / CDC | Upstream RP2350 UDC uses USB DPRAM and interrupts; no system-DMA configuration path |
 | Flash | Upstream driver uses ROM programming/erase operations; no DMA configuration path |
