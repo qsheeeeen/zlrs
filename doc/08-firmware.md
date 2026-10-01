@@ -108,9 +108,13 @@ a saved mode change appears there only after reboot.
 record survives switching modes. Both peers must use matching modes and compatible firmware.
 A build that removes a required link rejects the corresponding mode selection.
 In data24 all four timer windows carry 2.4 GHz data traffic, reusing the two logical data slots
-A/B twice per frame. A paced 4 KiB bidirectional transfer completed byte-exact in 14.62 s on LF
-hardware (32 bytes / 50 ms input pacing); repeatability and sustained goodput still need
-acceptance.
+A/B twice per frame. Its slot preparation reserve is 5 ms (6 ms in mixed mode), yielding a
+246-byte data MTU at the 34 Hz frame plan. On LF hardware, a paced 4 KiB bidirectional transfer
+completed byte-exact in 9.23 s (32 bytes / 50 ms), versus 30.95 s before reusing the four timer
+windows. A 32 KiB transfer per direction completed byte-exact in 55.52 s at 64 bytes / 100 ms
+(about 590 B/s); 16 KiB completed in 25.12 s at 56 bytes / 80 ms (about 652 B/s). At a higher
+750 B/s input pace the queues overflowed and delivery stalled, so sustained goodput remains
+limited by serial-to-radio backpressure and ARQ recovery.
 
 ## 4. Build-time choices and trimming
 

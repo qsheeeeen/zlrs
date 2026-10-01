@@ -60,6 +60,7 @@ LOG_MODULE_REGISTER(app, CONFIG_APP_LOG_LEVEL);
 static uint32_t control_rate_hz;
 static uint32_t frame_period_us;
 static uint32_t slot_budget_us;
+static uint32_t slot_prepare_us = CONFIG_ZLRS_APP_PREPARE_US;
 static uint8_t tlm_every_n;
 static uint8_t data_every_n;
 static uint8_t resync_every_n;
@@ -314,6 +315,8 @@ static void plan_init(void)
 		/* No sub-G modulation or regional duty cadence in exclusive 2.4 GHz mode. */
 		control_mod = data_mod;
 		req.want_hz = CONFIG_ZLRS_APP_CONTROL_RATE_HZ;
+		/* Keep 1 ms more of each 7.35 ms slot available for data airtime. */
+		slot_prepare_us = 5000U;
 	}
 	req.mod = &control_mod;
 
@@ -344,7 +347,7 @@ static void plan_init(void)
 		uint16_t len = (uint16_t)(ZLRS_PAYLOAD_MAX_LEN - 2U);
 
 		while (len > 16U && zlrs_radio_airtime_us(&data_mod, (uint16_t)(len + 9U)) +
-						    CONFIG_ZLRS_APP_PREPARE_US +
+						    slot_prepare_us +
 						    CONFIG_ZLRS_APP_TX_GUARD_US +
 						    ZLRS_RADIO_STARTUP_US + 100U >
 					    budget_us) {
@@ -367,6 +370,8 @@ static void plan_init(void)
 	slot_budget_us = frame_period_us / 4U;
 	tlm_every_n = plan.tlm_every_n;
 	data_every_n = plan.data_every_n;
+	LOG_INF("data plan: mtu=%u frame=%u us slot_prepare=%u us", data_mtu,
+		frame_period_us, slot_prepare_us);
 
 	if (plan.clamped_by_duty) {
 		LOG_WRN("region %s duty %u%%: control rate %u Hz -> %u Hz", region->name,
@@ -1881,6 +1886,8 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 	ARG_UNUSED(argv);
 	zlrs_radio_diag(&diag);
 	zlrs_slot_timer_stats(&timer);
+	shell_print(sh, "plan frame=%u us slots=%u us data_mtu=%u prepare=%u us",
+		    frame_period_us, slot_budget_us, data_mtu, slot_prepare_us);
 	shell_print(sh,
 		    "TIMER1 boundaries=%u irq_late_max=%u us missed=%u skipped_frames=%u slots=%u",
 		    timer.boundaries, timer.irq_late_us_max, timer.missed_boundaries,
@@ -1898,7 +1905,7 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 		    diag.launch_late_us_max);
 	shell_print(sh, "launch command last/max=%u/%u us FIFO ready lead=%u us prepare=%u us",
 		    diag.launch_cmd_us_last, diag.launch_cmd_us_max, diag.preload_lead_us_last,
-		    CONFIG_ZLRS_APP_PREPARE_US);
+		    slot_prepare_us);
 	shell_print(sh, "launch jitter last/max=%u/%u us TX startup=%u us",
 		    diag.launch_jitter_us_last, diag.launch_jitter_us_max, diag.tx_startup_us_last);
 	shell_print(sh, "chip errors=%04x packet build last/max=%u/%u us", diag.chip_errors,
@@ -2335,7 +2342,7 @@ int main(void)
 
 	log_flush();
 	zlrs_slot_timer_start(frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE,
-			      CONFIG_ZLRS_APP_PREPARE_US, zlrs_radio_wake);
+			      slot_prepare_us, zlrs_radio_wake);
 	uint32_t consumed_frame = 0U;
 
 	for (;;) {
@@ -2410,7 +2417,7 @@ int main(void)
 				slot == 3U ? zlrs_slot_timer_next_frame_us()
 					   : start_us + ((uint64_t)period * (slot + 1U)) / 4U;
 
-			slot_deadline_us = next_us - CONFIG_ZLRS_APP_PREPARE_US - 100U;
+			slot_deadline_us = next_us - slot_prepare_us - 100U;
 			run_slot(slot);
 		}
 
