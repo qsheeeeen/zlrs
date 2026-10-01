@@ -58,6 +58,7 @@ typedef struct {
 	node_t rx;
 	node_t nth; /* third node: bystander or attacker, only the three-node cases use it */
 	bool nth_enabled;
+	bool data24_slots;
 	uint32_t now_ms;
 	/* Superframe length in ms: 6 by default (~167 Hz), the 1000 Hz case sets 1 */
 	uint32_t frame_ms;
@@ -335,15 +336,18 @@ static void sim_slot(sim_t *sim, uint8_t slot)
 	bool served[SIM_MAX_NODES] = {false};
 	uint8_t nodes = 0U;
 
-	links[nodes] = link_of(&sim->tx, slot);
-	reqs[nodes] = zlrs_link_slot(links[nodes], slot, sim->now_ms);
+	const uint8_t link_slot =
+		sim->data24_slots ? ((slot & 1U) == 0U ? ZLRS_SLOT_DATA_A : ZLRS_SLOT_DATA_B)
+				  : slot;
+	links[nodes] = sim->data24_slots ? &sim->tx.data : link_of(&sim->tx, slot);
+	reqs[nodes] = zlrs_link_slot(links[nodes], link_slot, sim->now_ms);
 	nodes++;
-	links[nodes] = link_of(&sim->rx, slot);
-	reqs[nodes] = zlrs_link_slot(links[nodes], slot, sim->now_ms);
+	links[nodes] = sim->data24_slots ? &sim->rx.data : link_of(&sim->rx, slot);
+	reqs[nodes] = zlrs_link_slot(links[nodes], link_slot, sim->now_ms);
 	nodes++;
 	if (sim->nth_enabled) {
-		links[nodes] = link_of(&sim->nth, slot);
-		reqs[nodes] = zlrs_link_slot(links[nodes], slot, sim->now_ms);
+		links[nodes] = sim->data24_slots ? &sim->nth.data : link_of(&sim->nth, slot);
+		reqs[nodes] = zlrs_link_slot(links[nodes], link_slot, sim->now_ms);
 		nodes++;
 	}
 
@@ -373,7 +377,8 @@ static void sim_slot(sim_t *sim, uint8_t slot)
 
 			if (primary) {
 				if (i == 0U && j == 1U) {
-					drop = (slot == ZLRS_SLOT_DATA_A && sim->drop_data_down > 0)
+					drop = (link_slot == ZLRS_SLOT_DATA_A &&
+						sim->drop_data_down > 0)
 						       ? &sim->drop_data_down
 						       : &sim->drop_down;
 				} else if (i == 1U && j == 0U) {
@@ -2505,6 +2510,9 @@ static void test_skipped_slots(void)
 /* Fresh devices pair and transfer using DATA_A/B only; no control slots or adoption. */
 static void data_only_frame(sim_t *sim)
 {
+	sim->data24_slots = true;
+	sim_slot(sim, ZLRS_SLOT_CTL_DOWN);
+	sim_slot(sim, ZLRS_SLOT_CTL_UP);
 	sim_slot(sim, ZLRS_SLOT_DATA_A);
 	sim_slot(sim, ZLRS_SLOT_DATA_B);
 	zlrs_link_tick(&sim->tx.data, sim->now_ms);
@@ -2545,6 +2553,11 @@ static void test_data_only_pairing(void)
 	CHECK(sim.rx.data.stats.pair_resp_tx > 0U);
 	CHECK(memcmp(sim.tx.data.pair_key, sim.rx.data.pair_key, ZLRS_KEY_LEN) == 0);
 	CHECK(!zlrs_fhss_sub_ready(&sim.tx.data.fhss));
+	const uint32_t index_before = sim.tx.data.frame_index;
+	for (unsigned int i = 0U; i < 5U; i++) {
+		data_only_frame(&sim);
+	}
+	CHECK(sim.tx.data.frame_index - index_before == 10U);
 	for (unsigned int i = 0U; i < sizeof(up); i++) {
 		up[i] = (uint8_t)i;
 		down[i] = (uint8_t)(255U - i);

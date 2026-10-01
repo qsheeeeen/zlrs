@@ -10,10 +10,11 @@ design documents.
   2.4 GHz data link for pairing, session setup and bidirectional serial transfer. Switching back
   to mixed mode preserves the pairing record. Both LF prototype boards were cleared, configured,
   and paired from scratch in data24; one paced 4096-byte transfer in each direction completed
-  byte-exact in 30.95 s (32 bytes / 50 ms input pacing). The long zero-throughput intervals mean
-  this is a feature check, not a goodput or sustained reliability acceptance. The two control
-  slots remain unused; higher throughput needs a separate schedule change and hardware check.
-  HF has build coverage, with hardware validation pending.
+  byte-exact in 30.95 s (32 bytes / 50 ms input pacing). Reusing all four timer windows for data24
+  traffic reduced a follow-up 4 KiB transfer to 14.62 s; a repeat after reboot completed in
+  15.08 s. The long zero-throughput intervals mean this is a feature/performance comparison, not
+  sustained goodput or reliability acceptance. HF has build coverage, with hardware validation
+  pending.
 
 ## To-do
 

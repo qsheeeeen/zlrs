@@ -107,8 +107,10 @@ a saved mode change appears there only after reboot.
 `set-mode mixed` restores the build's control/data band roles after reboot. A valid pairing
 record survives switching modes. Both peers must use matching modes and compatible firmware.
 A build that removes a required link rejects the corresponding mode selection.
-The current four-slot schedule still reserves the two disabled control slots; this change does
-not claim a higher data rate or improved DMA timing.
+In data24 all four timer windows carry 2.4 GHz data traffic, reusing the two logical data slots
+A/B twice per frame. A paced 4 KiB bidirectional transfer completed byte-exact in 14.62 s on LF
+hardware (32 bytes / 50 ms input pacing); repeatability and sustained goodput still need
+acceptance.
 
 ## 4. Build-time choices and trimming
 

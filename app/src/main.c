@@ -320,8 +320,8 @@ static void plan_init(void)
 	/* Four equal hardware slots must fit control and the larger pairing packets. */
 	const uint32_t control_window_us =
 		zlrs_radio_airtime_us(&control_mod, MAX(CTL_FRAME_LEN, ZLRS_PAIR_PAYLOAD_LEN +
-									       ZLRS_FRAME_HDR_LEN +
-									       ZLRS_TAG_LEN)) +
+							       ZLRS_FRAME_HDR_LEN +
+							       ZLRS_TAG_LEN)) +
 		CONFIG_ZLRS_APP_PREPARE_US + CONFIG_ZLRS_APP_TX_GUARD_US + ZLRS_RADIO_STARTUP_US +
 		100U;
 	const uint32_t hardware_max_hz = MAX(1U, 1000000U / (4U * control_window_us));
@@ -489,6 +489,10 @@ static void build_links(void)
 	data_cfg.sync_period_ms = sync_period_for_mod(&data_mod);
 	data_cfg.tlm_every_n = 1U; /* no telemetry slot on the data link */
 	data_cfg.data_every_n = data_every_n;
+	/* DATA_A occurs twice per timer frame in data24; preserve the wall-clock resync interval. */
+	data_cfg.resync_every_n = ZLRS_DATA24
+					  ? (uint8_t)MIN((uint16_t)resync_every_n * 2U, UINT8_MAX)
+					  : resync_every_n;
 
 	zlrs_link_init(&link_control, &ctl_cfg, random_u32, NULL, &ctl_ev);
 	zlrs_link_init(&link_data, &data_cfg, random_u32, NULL, &data_ev);
@@ -653,14 +657,17 @@ static void trace_add(char c)
 
 static void run_slot(uint8_t slot)
 {
-	const bool data_slot = (slot == ZLRS_SLOT_DATA_A || slot == ZLRS_SLOT_DATA_B);
+	const bool data_slot =
+		ZLRS_DATA24 || (slot == ZLRS_SLOT_DATA_A || slot == ZLRS_SLOT_DATA_B);
+	const uint8_t link_slot =
+		ZLRS_DATA24 ? ((slot & 1U) == 0U ? ZLRS_SLOT_DATA_A : ZLRS_SLOT_DATA_B) : slot;
 	zlrs_link_t *link = data_slot ? &link_data : &link_control;
 	const uint32_t slot_start_us = now_us();
 	/* Slot decisions use the planned time even though construction happens before it. */
 	const int32_t until_slot_us = (int32_t)(slot_nominal_us - slot_start_us);
 	const uint32_t now_ms =
 		k_uptime_get_32() + (until_slot_us > 0 ? (uint32_t)until_slot_us / 1000U : 0U);
-	const uint32_t hit_before = link->stats.slot_hit[slot];
+	const uint32_t hit_before = link->stats.slot_hit[link_slot];
 	const uint32_t good_before = link->stats.rx_frames;
 	/* The duty-cycle gate only applies to whichever link is on sub-G */
 	const bool on_subg =
@@ -673,10 +680,10 @@ static void run_slot(uint8_t slot)
 	/* Disabled slots stay idle; acquisition outside assigned slots corrupts phase/hop alignment. */
 	if ((int32_t)(slot_deadline_us - now_us()) <= 100) {
 		missed_slots++;
-		zlrs_link_skip_slot(link, slot);
+		zlrs_link_skip_slot(link, link_slot);
 		return;
 	}
-	req = zlrs_link_slot(link, slot, now_ms);
+	req = zlrs_link_slot(link, link_slot, now_ms);
 
 	if (req == NULL) {
 		return;
@@ -749,7 +756,7 @@ static void run_slot(uint8_t slot)
 				   k_uptime_get_32());
 	}
 
-	if (link->stats.slot_hit[slot] != hit_before && link->stats.rx_frames != good_before) {
+	if (link->stats.slot_hit[link_slot] != hit_before && link->stats.rx_frames != good_before) {
 		uint32_t done_us;
 		uint32_t airtime_us;
 
@@ -788,7 +795,7 @@ static void run_slot(uint8_t slot)
 		if (took_us > bench.slot_us_max[slot]) {
 			bench.slot_us_max[slot] = took_us;
 		}
-		if (link->stats.slot_hit[slot] != hit_before) {
+		if (link->stats.slot_hit[link_slot] != hit_before) {
 			const uint32_t offset_us = now_us() - frame_start_us;
 
 			bench.rx_slot = slot;
@@ -2343,12 +2350,17 @@ int main(void)
 		while (++consumed_frame < timer_frame) {
 			skipped_frames++;
 			for (uint8_t slot = 0U; slot < 4U; slot++) {
-				zlrs_link_t *link = slot < 2U ? &link_control : &link_data;
+				const bool data_slot = ZLRS_DATA24 || slot >= ZLRS_SLOT_DATA_A;
+				zlrs_link_t *link = data_slot ? &link_data : &link_control;
+				const uint8_t link_slot =
+					ZLRS_DATA24 ? ((slot & 1U) == 0U ? ZLRS_SLOT_DATA_A
+									 : ZLRS_SLOT_DATA_B)
+						    : slot;
 
-				if (slot < 2U ? !ZLRS_CONTROL_ENABLED : !ZLRS_DATA_ENABLED) {
+				if (data_slot ? !ZLRS_DATA_ENABLED : !ZLRS_CONTROL_ENABLED) {
 					continue;
 				}
-				zlrs_link_skip_slot(link, slot);
+				zlrs_link_skip_slot(link, link_slot);
 			}
 		}
 
