@@ -65,3 +65,9 @@ tests/host/build-san/
 # Python
 *.pyc
 __pycache__/
+
+# MacOS Finder files.
+.DS_Store
+
+# Common build directories
+/build*/
