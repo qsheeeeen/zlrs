@@ -103,20 +103,6 @@ else
 	echo "    all projects present, skipping (run (cd ${WS} && west update) to sync)"
 fi
 
-echo "==> Applying carried module patches"
-for patch_file in "${ZLRS_REPO_ROOT}"/patches/*/*.patch; do
-    [ -f "${patch_file}" ] || continue
-    module_dir="${WS}/$(basename "$(dirname "${patch_file}")")"
-    if git -C "${module_dir}" apply --reverse --check "${patch_file}" 2>/dev/null; then
-        echo "    $(basename "${patch_file}"): already applied"
-    elif git -C "${module_dir}" apply --check "${patch_file}"; then
-        git -C "${module_dir}" apply "${patch_file}"
-        echo "    $(basename "${patch_file}"): applied"
-    else
-        die "patch conflicts with ${module_dir}: ${patch_file}"
-    fi
-done
-
 echo "==> [5/5] Zephyr's Python build dependencies"
 "${VENV_DIR}/bin/python" -m pip install --quiet --no-warn-script-location \
 	-r "${WS}/zephyr/scripts/requirements-base.txt"

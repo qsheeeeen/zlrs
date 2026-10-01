@@ -37,8 +37,10 @@ design documents.
   A dedicated timer meta-IRQ bottom half issues only the prepared TX command; the link thread
   waits for its result and keeps exclusive ownership of preparation and completion. The default
   reservation is 2800 us with a 200 us launch offset, retaining CN470 LF at 45 Hz. USB core and
-  controller work is preemptible; carried Zephyr patches fix the final CDC ZLP completion race
-  exposed by this scheduling. Data/CRSF callbacks also recheck an empty TX ring before disabling
+  controller work was made preemptible during the initial checks; carried Zephyr patches fixed
+  the final CDC ZLP completion race exposed by that scheduling. These vendor changes are now
+  removed: USB/CDC use upstream scheduling, and the application timer bottom half provides TX
+  priority. Data/CRSF callbacks also recheck an empty TX ring before disabling
   its notification, preventing a preempting producer's wakeup from being lost.
   On 2026-10-01 two LF boards running the final debug image passed 20 consecutive simultaneous
   4096-byte transfers per direction, byte-exact, in 1.71-5.17 s each, with input paced at
@@ -51,6 +53,14 @@ design documents.
   reacquisition before the final timer bottom-half change; it is not the default and needs a new
   stability check. Long-duration timing, production wireless acceptance and HF hardware checks
   remain pending.
+  After removing all Zephyr and USP HAL patches on 2026-10-01, both LF devices passed another
+  20 consecutive duplex 4096-byte rounds at 32 bytes per 10 ms, byte-exact. A 6.022 s RX pause
+  retained a separate 4096-byte TX-to-RX transfer, completing byte-exact in 9.027 s. LF/HF
+  production configurations build against clean upstream modules. Both LF debug images were
+  hash-verified and confirmed. The upstream HAL's existing 1 s BUSY timeout configuration remains;
+  a timeout raises `k_oops` and resets the board instead of returning a recoverable radio error.
+  The application timer bottom half remains; USB/CDC keep upstream scheduling and no patches
+  are applied during setup. These checks retain the same pending timing and board acceptance.
 - **First frames in the air, one board (passed)**: with the Core2021 attached, pairing
   `PAIR_REQ` frames really go out: one every 100 ms through the 30 s window, about 1700
   transactions over five rounds with `fail=0`. The CRSF entry was checked on the same board:

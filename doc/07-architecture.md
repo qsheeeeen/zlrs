@@ -164,10 +164,10 @@ the log. See [09-protocol](09-protocol.md) 5.2.
 | --- | --- | --- |
 | Link thread (`main`) | `-2` | link state machines, building and submitting transactions, results, system state broadcast |
 | TX launch (`zlrs_radio_launch`) | highest cooperative priority, meta-IRQ | timer bottom half; only the prepared TX command, with the link thread waiting |
-| USB core / controller | `2` / `3` (preemptive) | USB events; carried Zephyr patch makes scheduling configurable |
+| USB core / controller | upstream cooperative priorities | USB events; vendor source and scheduling are unchanged |
 | LED thread (`zlrs_led`) | `7` (preemptive) | renders the system state it subscribes to and writes the WS2812 (`app/src/ui/led.c`) |
 | Button thread (`zlrs_button`) | `8` (preemptive) | samples the button, reports a hold on the bus (`app/src/ui/button.c`) |
-| Serial | hardware ISR or preemptible CDC workqueue | ring-buffered transfers, no radio decisions |
+| Serial | hardware ISR or upstream CDC workqueue | ring-buffered transfers, no radio decisions |
 
 The link thread is cooperative and owns radio preparation and completion. Only the prepared
 TX launch command is handed to its timer bottom half, with radio access serialized by the

@@ -9,7 +9,7 @@ zlrs is a Zephyr firmware project carrying CRSF control and byte-stream data ove
 - `boards/`, `dts/`, `drivers/`, `subsys/`: board definitions, bindings, entropy driver, USB, and boot support.
 - `tests/host/`: hardware-independent tests and two-node simulation.
 - `tools/`: workspace setup, management, upgrade, and validation scripts.
-- `doc/`: numbered design documents; track unimplemented behavior and hardware acceptance in `doc/13-roadmap.md`. Record vendor changes under `patches/`.
+- `doc/`: numbered design documents; track unimplemented behavior and hardware acceptance in `doc/13-roadmap.md`. Keep upstream module source unchanged; implement integration changes inside zlrs using public APIs and existing Kconfig options.
 
 ## Build, Test, and Development Commands
 

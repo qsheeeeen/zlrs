@@ -300,7 +300,8 @@ MTU. Hardware timer scheduling does not by itself establish throughput acceptanc
 
 The default preparation reservation is 2800 us and the launch offset is 200 us. A dedicated
 meta-IRQ thread executes the prepared `SET_TX` as the hardware alarm's bottom half, while the
-link thread waits for its result. USB core/controller threads and CDC work are preemptible;
-carried Zephyr patches also ensure a final full-size CDC packet gets its terminating ZLP.
+link thread waits for its result. USB core/controller threads and CDC work retain upstream
+cooperative scheduling. The radio bottom half can preempt them without changing vendor code.
+Keeping the USB core above CDC work also preserves the upstream completion ordering for ZLPs.
 
 Previous RAC cost measurements in section 5 are historical measurements of the former backend.
