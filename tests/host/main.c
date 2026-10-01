@@ -44,6 +44,7 @@ int main(void)
 {
 	printf("zlrs host tests\n");
 	test_proto();
+	test_slot_clock();
 	test_link();
 	test_crsf();
 	test_mgmt();

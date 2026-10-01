@@ -26,7 +26,7 @@ static const uint8_t pairing_sync_word[ZLRS_SYNC_WORD_LEN] = {'Z', 'L', 'R', 'S'
  * Only the initiator (TX) fills in the failsafe values: it sets FLAG_FAILSAFE when it has
  * any and the responder stores them; without the flag the responder keeps its own instead
  */
-#define PAIR_PAYLOAD_LEN     (17U + ZLRS_RC_PAYLOAD_LEN)
+#define PAIR_PAYLOAD_LEN     ZLRS_PAIR_PAYLOAD_LEN
 #define PAIR_FLAGS_OFFSET    16U
 #define PAIR_FAILSAFE_OFFSET 17U
 #define PAIR_FLAG_FAILSAFE   0x01U
@@ -131,6 +131,11 @@ static bool slot_in_subg(const zlrs_link_t *link, uint8_t kind)
 static uint32_t slot_freq_hz(const zlrs_link_t *link, uint8_t kind)
 {
 	if (sync_frame(link) || link->sess_cfm_due) {
+		return sync_freq_hz(link);
+	}
+	/* Both ends keep the fresh-session uplink on the confirmation channel. */
+	if ((kind == SLOT_TLM || (kind == SLOT_DATA && link->slot == ZLRS_SLOT_DATA_B)) &&
+	    (uint32_t)(link->slot_ms - link->state_ms) < ZLRS_SESS_CONFIRM_MS) {
 		return sync_freq_hz(link);
 	}
 	if (slot_in_subg(link, kind)) {
@@ -483,7 +488,7 @@ static const zlrs_radio_req_t *submit_rx(zlrs_link_t *link, uint32_t freq_hz, ui
 
 static const zlrs_radio_req_t *send_sync(zlrs_link_t *link, uint32_t now_ms)
 {
-	uint8_t payload[8];
+	uint8_t payload[12];
 	uint16_t len;
 
 	payload[0] = ZLRS_PROTO_VERSION;
@@ -492,6 +497,7 @@ static const zlrs_radio_req_t *send_sync(zlrs_link_t *link, uint32_t now_ms)
 	payload[2] = (uint8_t)(link->fhss.index & 0xFFU);
 	payload[3] = (uint8_t)(link->fhss.index >> 8);
 	wr32(&payload[4], link->sess_nonce_t);
+	wr32(&payload[8], link->frame_index);
 
 	len = build_frame(link, ZLRS_PKT_SYNC, 0U, payload, sizeof(payload),
 			  tag_key_for(link, ZLRS_PKT_SYNC, true));
@@ -508,11 +514,14 @@ static const zlrs_radio_req_t *send_sync(zlrs_link_t *link, uint32_t now_ms)
  */
 static const zlrs_radio_req_t *send_sess_resp(zlrs_link_t *link)
 {
-	uint8_t payload[2U * sizeof(uint32_t)];
+	uint8_t payload[3U * sizeof(uint32_t) + sizeof(uint16_t)];
 	uint16_t len;
 
 	wr32(&payload[0], link->sess_nonce_t);
 	wr32(&payload[4], link->sess_nonce_r);
+	payload[8] = (uint8_t)link->fhss.index;
+	payload[9] = (uint8_t)(link->fhss.index >> 8);
+	wr32(&payload[10], link->frame_index);
 	len = build_frame(link, ZLRS_PKT_SESS_RESP, 0U, payload, sizeof(payload),
 			  tag_key_for(link, ZLRS_PKT_SESS_RESP, true));
 	link->sess_resp_due = false;
@@ -529,7 +538,7 @@ static const zlrs_radio_req_t *send_sess_resp(zlrs_link_t *link)
  */
 static const zlrs_radio_req_t *send_sess_cfm(zlrs_link_t *link)
 {
-	uint8_t payload[sizeof(uint32_t) + sizeof(uint16_t)];
+	uint8_t payload[2U * sizeof(uint32_t) + sizeof(uint16_t)];
 	uint16_t len;
 
 	wr32(&payload[0], link->sess_nonce_r);
@@ -539,6 +548,7 @@ static const zlrs_radio_req_t *send_sess_cfm(zlrs_link_t *link)
 	 */
 	payload[4] = (uint8_t)(link->fhss.index & 0xFFU);
 	payload[5] = (uint8_t)(link->fhss.index >> 8);
+	wr32(&payload[6], link->frame_index);
 	len = build_frame(link, ZLRS_PKT_SESS_CFM, 0U, payload, sizeof(payload),
 			  tag_key_for(link, ZLRS_PKT_SESS_CFM, true));
 	link->sess_cfm_due = false;
@@ -881,7 +891,8 @@ static const zlrs_radio_req_t *pair_rx(zlrs_link_t *link, uint16_t timeout_ms)
 /* Acquisition uses its own window length, see zlrs_link_cfg_t */
 static uint16_t acq_timeout_ms(const zlrs_link_t *link)
 {
-	return (link->cfg.acq_timeout_ms != 0U) ? link->cfg.acq_timeout_ms : link->cfg.rx_timeout_ms;
+	return (link->cfg.acq_timeout_ms != 0U) ? link->cfg.acq_timeout_ms
+						: link->cfg.rx_timeout_ms;
 }
 
 /* ---- receive: dispatch --------------------------------------------------- */
@@ -1039,6 +1050,9 @@ static void handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 				link->stats.hop_resync++;
 			}
 			zlrs_fhss_set_index(&link->fhss, hop_index);
+			if (frame->payload_len >= 12U) {
+				link->frame_index = rd32(&frame->payload[8]);
+			}
 			return;
 		}
 
@@ -1062,6 +1076,9 @@ static void handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 	}
 
 	if (link->cfg.handshake == 0U) {
+		if (frame->payload_len >= 12U) {
+			link->frame_index = rd32(&frame->payload[8]);
+		}
 		/*
 		 * Simplified handshake: this SYNC already verified with the pairing key, so adopting its hop
 		 * index is enough to count the session as up (the key is static, no nonces to exchange).
@@ -1271,6 +1288,9 @@ static int handle_sess_cfm(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_
 		link, (frame->payload_len >= 6U)
 			      ? (uint16_t)(frame->payload[4] | ((uint16_t)frame->payload[5] << 8))
 			      : link->sess_hop);
+	if (frame->payload_len >= 10U) {
+		link->frame_index = rd32(&frame->payload[6]);
+	}
 	link->last_rx_seq = frame->seq; /* the confirm frame itself takes the first slot from 0 */
 	link->last_rx_ms = now_ms;
 	set_state(link, ZLRS_STATE_CONNECTED, now_ms);
@@ -1307,6 +1327,12 @@ static bool handle_sess_resp(zlrs_link_t *link, const zlrs_frame_t *frame, uint3
 	if (link->cfg.handshake == 0U) {
 		link->last_rx_ms = now_ms;
 		if (link->state == ZLRS_STATE_SEARCHING) {
+			if (frame->payload_len >= 14U) {
+				zlrs_fhss_set_index(&link->fhss,
+						    (uint16_t)(frame->payload[8] |
+							       ((uint16_t)frame->payload[9] << 8)));
+				link->frame_index = rd32(&frame->payload[10]);
+			}
 			set_state(link, ZLRS_STATE_CONNECTED, now_ms);
 		}
 		return true;
@@ -1527,10 +1553,9 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot, uin
 					}
 					if ((uint32_t)(now_ms - link->last_pair_tx_ms) >=
 					    link->cfg.pair_period_ms) {
-						const zlrs_radio_req_t *req =
-							send_pair(link, ZLRS_PKT_PAIR_CFM,
-								  link->pair_nonce,
-								  link->pair_nonce_b, now_ms);
+						const zlrs_radio_req_t *req = send_pair(
+							link, ZLRS_PKT_PAIR_CFM, link->pair_nonce,
+							link->pair_nonce_b, now_ms);
 
 						if (req != NULL) {
 							link->pair_cfm_sent++;
@@ -1746,6 +1771,13 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 
 	advance_hop(link);
 
+	/* Idle data has no liveness timeout. Reacquire periodic SYNC after losing its hop epoch. */
+	if (!tx_side && a && link->cfg.resync_every_n > 0U && link->cfg.sync_period_ms > 0U &&
+	    (uint32_t)(now_ms - link->last_rx_ms) >= link->cfg.sync_period_ms) {
+		return submit_rx(link, sync_freq_hz(link), link->cfg.sync_slot, link->sync_word,
+				 link->cfg.rx_timeout_ms);
+	}
+
 	/* Simplified handshake report: the data link sends it in its own half window, sync channel */
 	if (link->announce && (tx_side == a)) {
 		return send_sess_resp(link);
@@ -1785,6 +1817,9 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 		if (req != NULL) {
 			return req;
 		}
+
+		/* An idle transmit slot stays idle; receiving the opposite slot loses hop/phase alignment. */
+		return NULL;
 	}
 
 	/*
@@ -1881,8 +1916,8 @@ const zlrs_radio_req_t *zlrs_link_listen(zlrs_link_t *link)
 				 link->sync_word, link->cfg.rx_timeout_ms);
 	}
 
-	return submit_rx(link, slot_freq_hz(link, SLOT_DATA), link->cfg.sync_slot,
-			 link->sync_word, link->cfg.rx_timeout_ms);
+	return submit_rx(link, slot_freq_hz(link, SLOT_DATA), link->cfg.sync_slot, link->sync_word,
+			 link->cfg.rx_timeout_ms);
 }
 
 const zlrs_radio_req_t *zlrs_link_blast(zlrs_link_t *link, const uint8_t *data, uint16_t len)
@@ -1972,12 +2007,33 @@ void zlrs_link_press(zlrs_link_t *link, uint32_t now_ms)
 const zlrs_radio_req_t *zlrs_link_slot(zlrs_link_t *link, uint8_t slot, uint32_t now_ms)
 {
 	link->slot = slot;
+	link->slot_ms = now_ms;
 
 	if (link->cfg.kind == ZLRS_LINK_CONTROL) {
 		return control_slot(link, slot, now_ms);
 	}
 
 	return data_slot(link, slot, now_ms);
+}
+
+void zlrs_link_skip_slot(zlrs_link_t *link, uint8_t slot)
+{
+	link->slot = slot;
+	if (link->cfg.kind == ZLRS_LINK_CONTROL) {
+		if (slot == ZLRS_SLOT_CTL_DOWN) {
+			link->frame_index++;
+			advance_hop(link);
+		}
+		return;
+	}
+	if (slot == ZLRS_SLOT_DATA_A) {
+		link->frame_index++;
+	}
+	if (!sync_frame(link) && !link->sess_cfm_due &&
+	    (link->frame_index % link->cfg.data_every_n) != 0U) {
+		return;
+	}
+	advance_hop(link);
 }
 
 void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t rssi, int8_t snr,

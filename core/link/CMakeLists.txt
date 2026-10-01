@@ -3,6 +3,7 @@
 
 zephyr_library()
 zephyr_library_sources(
+  slot_clock.c
   link.c
   power.c
   rate.c

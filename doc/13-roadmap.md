@@ -8,6 +8,30 @@ design documents.
 
 ### Radio and protocol
 
+- **Hardware timer and driver ownership (implemented; short LF checks passed)**: RP2350 TIMER1
+  schedules absolute slots; one application thread owns the independent USP RAL/LR20xx driver,
+  without RAC/planner initialization or a USP worker. Delayed slots are skipped with hop/frame
+  accounting, and RX follows authenticated IRQ timestamps. Calibration tables now have the
+  three entries the BSP consumes, aborted TX packets cannot leak FIFO bytes into the next TX,
+  and authenticated SYNC/CFM carry a 32-bit frame counter. Both peers must upgrade together.
+  The default preparation guard is 3000 us; CN470 LF is clamped to 45 Hz (22222 us frames),
+  rather than advertising an unsustainable 150 Hz schedule. Logs queue in RAM during RF and
+  flush at boot or management pauses, keeping flash writes out of normal radio slots.
+  On 2026-10-01 two LF boards, with both links, hopping, P1, handshake, telemetry and ARQ enabled,
+  passed three consecutive simultaneous 4096-byte transfers per direction in 6.72, 6.97 and
+  6.87 s, byte-exact. Wireless checks used the debug image. LF and HF production images build;
+  both LF devices were subsequently updated to the production image with running hash verified
+  and confirmed. Production wireless transfer and HF hardware acceptance remain pending. The host
+  suite passes 2025 checks under ASan/UBSan, including frequency-aware two-node simulation,
+  skipped slots, timer wrap, different boot epochs and silent data resynchronization.
+  Ten additional consecutive duplex rounds also passed, in 6.56-6.94 s each. Input was paced
+  at 32 bytes per 50 ms, so these times do not measure maximum RF goodput. Over a 148 s steady
+  observation, neither board added a missed timer boundary or a control handshake; RX added no
+  late launch and TX discarded one late launch. A separate RX radio pause of 6.036 s retained
+  a 4096-byte TX-to-RX transfer, byte-exact, completing in 9.043 s total without reboot or
+  re-pairing. Management intentionally discards new bytes arriving on the paused device's local
+  data input; this check validates the transmitting peer's retained data instead.
+  Long-duration timing and higher-rate acceptance remain open; these are short LF checks.
 - **First frames in the air, one board (passed)**: with the Core2021 attached, pairing
   `PAIR_REQ` frames really go out: one every 100 ms through the 30 s window, about 1700
   transactions over five rounds with `fail=0`. The CRSF entry was checked on the same board:
@@ -22,25 +46,27 @@ design documents.
   Both boards run the data-only profile with authentication, session handshake and ARQ enabled.
   A further simultaneous 512-byte transfer per direction survived a six-second RX radio pause
   in management mode and completed byte-exact in 13.746 s, without re-pairing or rebooting.
-  Throughput remains low with substantial retransmissions. Hopping is not accepted: before
-  these fixes both 64-byte transfers with hopping enabled received zero bytes; that mode still
-  needs a separate retest and timing investigation. Handshake success alone is not acceptance.
+  These are historical RAC-backend results. Throughput remained low with substantial retransmissions. Before
+  those fixes both 64-byte transfers with hopping enabled received zero bytes; the timer-backend
+  short hopping checks above now pass. Handshake success alone is not acceptance.
 - **Sub-band mixing on hardware**: the software side is done (two hop tables, `SYNC` carrying
   the mix and the table version, the telemetry-then-data-then-RC migration order, the regional
   duty cap and LQ-driven adaptation) and the host tests cover both ends picking the same
   frequency and falling back; the real switching cost and interference benefit wait for a second
   module.
-- **1000 Hz control rate** (`r=0`, all 2.4G): the control link has to own the radio, bypassing
-  RAC's millisecond planner and driving the LR20xx driver plus IRQs frame by frame. The protocol
-  side (1 ms frames, slot budgets, thinning factors) is ready.
+- **Higher control rates, including 1000 Hz** (`r=0`, all 2.4G): hardware timing and exclusive
+  driver ownership are in place. Reduce measured preparation and band-switch cost, then optimize
+  packet format and slot allocation. The current four equal slots and preparation guard cannot
+  sustain 1000 Hz. Each new rate needs measured latency, loss and jitter acceptance.
 - **LoRa long-range tier on hardware**: sensitivity, packet error rate curves and the gap
   between measured airtime and the model. EU868's 1 % duty cannot feed this tier, so it is
   offered only in regions without a duty cap.
 - **Reliable transfer (ARQ) on hardware**: on by default (a four-frame window, cumulative ACKs,
-  30 ms retransmit, 64 retries). Recovery now answers pending ACKs before probing and retains
+  a retransmit timeout of at least 30 ms and two actual data frame periods, 64 retries).
+  Recovery now answers pending ACKs before probing and retains
   receive sequence/reassembly progress. Regression tests cover simultaneous exhaustion,
   acknowledged complete/partial prefixes and lost ACKs without duplicate delivery; the host
-  suite passes 1515 checks under ASan/UBSan. Both peers must upgrade together because older
+  suite includes these regressions under ASan/UBSan. Both peers must upgrade together because older
   firmware discards receive progress on a recovery probe. Fixed-channel duplex passes the
   short hardware test above; long-duration throughput and latency acceptance remain open.
   Later the ack can shrink to one header bit once the RX always has a frame to ride along.

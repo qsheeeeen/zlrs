@@ -83,6 +83,14 @@ else
 	fi
 fi
 
+# LR20xx BSP consumes three calibration frequencies, including zero padding.
+for board in boards/zlrs/rp2350_zero_core2021/*_hf.dtsi boards/zlrs/rp2350_zero_core2021/*_lf.dtsi; do
+    count=$(awk '/calibration-freqs = </ { gsub(/.*</, ""); gsub(/>.*/, ""); print NF }' "$board")
+    if [ "$count" != 3 ]; then
+        bad "$board: LR20xx calibration-freqs must contain exactly three entries"
+    fi
+done
+
 if [ "$fail" -eq 0 ]; then
 	echo "gates: ok (core is pure C, app knows no boards, no debug option in shipped configs, log ring matches its partition)"
 fi

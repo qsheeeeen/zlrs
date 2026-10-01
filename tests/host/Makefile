@@ -36,7 +36,7 @@ endif
 
 VPATH := .:../../core/proto:../../core/link:../../core/crsf:../../core/mgmt:../../core/region:../../core/led
 
-SRCS := main.c test_proto.c test_link.c \
+SRCS := slot_clock.c test_slot_clock.c main.c test_proto.c test_link.c \
         test_crsf.c test_mgmt.c test_region.c test_mod.c test_led.c test_power.c \
         test_fuzz.c \
         crsf.c mgmt.c region.c led.c \

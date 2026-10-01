@@ -296,7 +296,7 @@ static zlrs_link_t *link_of(node_t *node, uint8_t slot)
 static bool sim_phy_match(const zlrs_radio_req_t *src, const zlrs_radio_req_t *dst,
 			  const zlrs_link_t *src_link, const zlrs_link_t *dst_link)
 {
-	return src_link->cfg.domain == dst_link->cfg.domain &&
+	return src_link->cfg.domain == dst_link->cfg.domain && src->freq_hz == dst->freq_hz &&
 	       memcmp(src->sync_word, dst->sync_word, ZLRS_SYNC_WORD_LEN) == 0;
 }
 
@@ -887,8 +887,7 @@ static void test_pairing_id_order(void)
 {
 	static const uint8_t dev_a[ZLRS_DEV_ID_LEN] = {0xf8, 0x89, 0x3f, 0x95};
 	static const uint8_t dev_b[ZLRS_DEV_ID_LEN] = {0x58, 0xaa, 0x34, 0x89};
-	const uint8_t salt[ZLRS_PAIR_SALT_LEN] = {0x70, 0xb3, 0xcf, 0x1c,
-						  0x25, 0x4e, 0x51, 0x99};
+	const uint8_t salt[ZLRS_PAIR_SALT_LEN] = {0x70, 0xb3, 0xcf, 0x1c, 0x25, 0x4e, 0x51, 0x99};
 	sim_t sim;
 
 	printf("link: pairing derives one key for both ends\n");
@@ -943,6 +942,64 @@ static void test_session_lost_confirm(void)
 	CHECK(sim.tx.ctl.stats.sess_cfm_tx > 1U);
 	CHECK(sim.rx.ctl.stats.sess_resp_tx > 1U);
 	CHECK(sim.tx.ctl.fhss.index == sim.rx.ctl.fhss.index);
+}
+
+static void test_fresh_session_uplink(void)
+{
+	sim_t sim;
+	const zlrs_radio_req_t *listen;
+	const zlrs_radio_req_t *send;
+	uint8_t chunk[16] = {0};
+
+	printf("link: fresh-session uplink frequency matches on both links\n");
+	sim_init(&sim);
+	pair_and_connect(&sim);
+	sim.tx.ctl.state_ms = sim.rx.ctl.state_ms = sim.now_ms;
+	sim.tx.data.state_ms = sim.rx.data.state_ms = sim.now_ms;
+	sim.rx.data.cfg.arq = 0U;
+
+	listen = zlrs_link_slot(&sim.tx.ctl, ZLRS_SLOT_CTL_UP, sim.now_ms);
+	send = zlrs_link_slot(&sim.rx.ctl, ZLRS_SLOT_CTL_UP, sim.now_ms);
+	CHECK(listen != NULL && send != NULL);
+	if (listen != NULL && send != NULL) {
+		CHECK(!listen->is_tx && send->is_tx);
+		CHECK(listen->freq_hz == send->freq_hz);
+	}
+	CHECK(zlrs_link_write(&sim.rx.data, chunk, sizeof(chunk)) == sizeof(chunk));
+	listen = zlrs_link_slot(&sim.tx.data, ZLRS_SLOT_DATA_B, sim.now_ms);
+	send = zlrs_link_slot(&sim.rx.data, ZLRS_SLOT_DATA_B, sim.now_ms);
+	CHECK(listen != NULL && send != NULL);
+	if (listen != NULL && send != NULL) {
+		CHECK(!listen->is_tx && send->is_tx);
+		CHECK(listen->freq_hz == send->freq_hz);
+	}
+}
+
+static void test_data_reacquire_epoch(void)
+{
+	sim_t sim;
+	uint8_t chunk[64] = {0};
+	uint32_t syncs_before;
+
+	printf("link: silent data reacquires a mismatched frame and hop epoch\n");
+	sim_init(&sim);
+	sim.tx.data.cfg.resync_every_n = sim.rx.data.cfg.resync_every_n = 5U;
+	pair_and_connect(&sim);
+	sim_run(&sim, 100U);
+	sim.rx.data.frame_index += 2U;
+	zlrs_fhss_set_index(&sim.rx.data.fhss, sim.rx.data.fhss.index + 13U);
+	sim.rx.data.last_rx_ms = sim.now_ms - sim.rx.data.cfg.sync_period_ms;
+	syncs_before = sim.rx.data.stats.rx_syncs;
+	sim_run(&sim, 20U);
+	CHECK(sim.rx.data.stats.rx_syncs > syncs_before);
+	CHECK(sim.rx.data.frame_index == sim.tx.data.frame_index);
+	CHECK(sim.rx.data.fhss.index == sim.tx.data.fhss.index);
+	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
+	CHECK(zlrs_link_write(&sim.rx.data, chunk, sizeof(chunk)) == sizeof(chunk));
+	SIM_UNTIL(&sim, sim.rx.stream_len == sizeof(chunk) && sim.tx.stream_len == sizeof(chunk),
+		  200);
+	CHECK(sim.rx.stream_len == sizeof(chunk));
+	CHECK(sim.tx.stream_len == sizeof(chunk));
 }
 
 static void test_session(void)
@@ -1828,6 +1885,12 @@ static void test_data_idle(void)
 	CHECK(sim.rx.data.state == ZLRS_STATE_CONNECTED);
 
 	nonce_before = sim.tx.data.sess_nonce_t;
+	CHECK(zlrs_link_slot(&sim.tx.data, ZLRS_SLOT_DATA_A, sim.now_ms) == NULL);
+	CHECK(zlrs_link_slot(&sim.rx.data, ZLRS_SLOT_DATA_A, sim.now_ms) != NULL);
+	zlrs_link_complete(&sim.rx.data, ZLRS_RADIO_OK, 0U, 0, 0, sim.now_ms);
+	CHECK(zlrs_link_slot(&sim.rx.data, ZLRS_SLOT_DATA_B, sim.now_ms) == NULL);
+	CHECK(zlrs_link_slot(&sim.tx.data, ZLRS_SLOT_DATA_B, sim.now_ms) != NULL);
+	zlrs_link_complete(&sim.tx.data, ZLRS_RADIO_OK, 0U, 0, 0, sim.now_ms);
 	sim_run(&sim, 3000U); /* about 18 s of idling */
 	CHECK(sim.tx.data.sess_nonce_t == nonce_before);
 	CHECK(sim.tx.data.state == ZLRS_STATE_CONNECTED);
@@ -2168,6 +2231,9 @@ static void test_sub_mix(void)
 	CHECK(sim.rx.ctl.sub_mix == 2U);
 	CHECK(sim.rx.ctl.sub_mix_default == 0U);
 
+	/* Isolate mix fallback from the shorter peer-loss/re-handshake timers. */
+	sim.tx.ctl.cfg.peer_timeout_ms = 0U;
+	sim.rx.ctl.cfg.peer_timeout_ms = 0U;
 	/* Cut the TX's SYNC (only one side changed): the RX falls back after 3 sync periods */
 	sim.tx.ctl.cfg.resync_every_n = 0U;
 	sim.tx.ctl.sub_mix = 3U;
@@ -2283,9 +2349,11 @@ static void test_sync_replay_guard(void)
 	CHECK(sync_nonce != nonce_before);
 
 	/* The session is healthy: the old SYNC can only be dropped */
+	const uint32_t frame_before = sim.rx.ctl.frame_index;
 	sim_inject(&sim, &sim.rx.ctl, sync, sync_len);
 	CHECK(sim.rx.ctl.state == ZLRS_STATE_CONNECTED);
 	CHECK(sim.rx.ctl.sess_nonce_t == nonce_before);
+	CHECK(sim.rx.ctl.frame_index == frame_before);
 	CHECK(memcmp(sim.rx.ctl.session_key_in, key_before, ZLRS_KEY_LEN) == 0);
 }
 
@@ -2388,14 +2456,77 @@ static void test_high_frame_rate(void)
 	CHECK(sim.rx.stream_len == sizeof(chunk));
 }
 
+static void test_handshake_cadence(void)
+{
+	sim_t sim;
+	sim_init(&sim);
+	sim.tx.ctl.frame_index = 70000U;
+	sim.tx.data.frame_index = 80000U;
+	sim.rx.ctl.frame_index = 17U;
+	sim.rx.data.frame_index = 29U;
+	sim.tx.ctl.cfg.resync_every_n = sim.rx.ctl.cfg.resync_every_n = 5U;
+	sim.tx.data.cfg.resync_every_n = sim.rx.data.cfg.resync_every_n = 5U;
+	sim.tx.data.cfg.data_every_n = sim.rx.data.cfg.data_every_n = 3U;
+	pair_and_connect(&sim);
+	CHECK(sim.tx.ctl.frame_index == sim.rx.ctl.frame_index);
+	CHECK(sim.tx.data.frame_index == sim.rx.data.frame_index);
+	CHECK(sim.tx.data.fhss.index == sim.rx.data.fhss.index);
+	uint8_t payload[64];
+	memset(payload, 0x5a, sizeof(payload));
+	CHECK(zlrs_link_write(&sim.tx.data, payload, sizeof(payload)) == sizeof(payload));
+	SIM_UNTIL(&sim, sim.rx.stream_len == sizeof(payload), 100);
+	CHECK(sim.rx.stream_len == sizeof(payload));
+	CHECK(memcmp(sim.rx.stream, payload, sizeof(payload)) == 0);
+}
+
+static void test_skipped_slots(void)
+{
+	sim_t sim;
+	sim_init(&sim);
+	pair_and_connect(&sim);
+	zlrs_link_t *links[] = {&sim.tx.ctl, &sim.rx.ctl, &sim.tx.data, &sim.rx.data};
+
+	for (unsigned int i = 0; i < 4U; i++) {
+		zlrs_link_t *link = links[i];
+		link->state = ZLRS_STATE_CONNECTED;
+		link->cfg.data_every_n = 3U;
+		link->cfg.resync_every_n = 5U;
+		link->announce = false;
+		link->sess_cfm_due = false;
+		zlrs_link_t skipped = *link;
+		const uint16_t seq_before = skipped.tx_seq;
+		const uint8_t first = i < 2U ? ZLRS_SLOT_CTL_DOWN : ZLRS_SLOT_DATA_A;
+
+		for (uint32_t frame = 0; frame < 37U; frame++) {
+			for (uint8_t slot = first; slot < first + 2U; slot++) {
+				if (zlrs_link_slot(link, slot, frame * SIM_FRAME_MS) != NULL) {
+					zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0,
+							   frame * SIM_FRAME_MS);
+				}
+				zlrs_link_skip_slot(&skipped, slot);
+			}
+			CHECK(skipped.frame_index == link->frame_index);
+			CHECK(skipped.fhss.index == link->fhss.index);
+			CHECK(skipped.stats.hop_advances == link->stats.hop_advances);
+		}
+		CHECK(skipped.tx_seq == seq_before);
+		CHECK(!skipped.req_pending);
+		CHECK(skipped.state == ZLRS_STATE_CONNECTED);
+	}
+}
+
 void test_link(void)
 {
+	test_skipped_slots();
+	test_handshake_cadence();
 	test_pairing();
 	test_pairing_repeat_req();
 	test_pairing_lost_confirm();
 	test_pairing_id_order();
 	test_session();
 	test_session_lost_confirm();
+	test_fresh_session_uplink();
+	test_data_reacquire_epoch();
 	test_reflection();
 	test_pairing_rotation();
 	test_session_replay();

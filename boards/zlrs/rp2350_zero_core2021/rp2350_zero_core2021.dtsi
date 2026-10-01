@@ -37,6 +37,7 @@
 		zlrs-led = &zlrs_led;
 		led-strip = &zlrs_led;
 		watchdog0 = &wdt0;
+		zlrs-slot-timer = &timer1;
 		/* The vendor USP samples (packet_error_rate_flrc and friends) expect this alias */
 		smtc-user-button = &zlrs_button;
 	};
@@ -409,4 +410,16 @@ zephyr_udc0: &usbd {
 			};
 		};
 	};
+};
+
+/* TIMER1 is dedicated to radio slot boundaries; SysTick remains the kernel clock. */
+&timer1 {
+	interrupts = <4 0>, <5 0>, <6 0>, <7 0>;
+	compatible = "zlrs,rp2350-slot-timer";
+	status = "okay";
+};
+
+/* Timestamp radio GPIO events ahead of USB traffic. */
+&gpio0_map {
+	interrupts = <21 1>;
 };

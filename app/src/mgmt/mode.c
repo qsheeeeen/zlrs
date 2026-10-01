@@ -12,6 +12,7 @@
 #include <zephyr/app_version.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/logging/log_ctrl.h>
 #include <zephyr/storage/flash_map.h>
 
 #include <stdbool.h>
@@ -262,17 +263,18 @@ static int cfg_read_status(void *vctx, zlrs_mgmt_status_t *out)
 	out->band = ZLRS_RF_BAND;
 
 	/* Report the stored value first (just written, not yet live), the live one otherwise */
-	out->region = (zlrs_storage_settings_load(ZLRS_SETTING_REGION, &stored_region,
-						  sizeof(stored_region)) ==
-		       (int)sizeof(stored_region))
-			      ? stored_region
-			      : ctx->region_id;
-	out->tx_power_dbm = (zlrs_storage_settings_load(ZLRS_SETTING_POWER, &stored_power,
-							sizeof(stored_power)) ==
-			     (int)sizeof(stored_power))
-				    ? stored_power
-				    : ctx->tx_power_dbm;
-	if (zlrs_storage_settings_load(ZLRS_SETTING_BAUD, &baud, sizeof(baud)) != (int)sizeof(baud)) {
+	out->region =
+		(zlrs_storage_settings_load(ZLRS_SETTING_REGION, &stored_region,
+					    sizeof(stored_region)) == (int)sizeof(stored_region))
+			? stored_region
+			: ctx->region_id;
+	out->tx_power_dbm =
+		(zlrs_storage_settings_load(ZLRS_SETTING_POWER, &stored_power,
+					    sizeof(stored_power)) == (int)sizeof(stored_power))
+			? stored_power
+			: ctx->tx_power_dbm;
+	if (zlrs_storage_settings_load(ZLRS_SETTING_BAUD, &baud, sizeof(baud)) !=
+	    (int)sizeof(baud)) {
 		baud = 0U;
 	}
 	out->data_baud = baud;
@@ -535,6 +537,7 @@ int zlrs_mgmt_mode_run(const zlrs_mgmt_ctx_t *ctx)
 		bool any = false;
 
 		zlrs_watchdog_feed();
+		(void)log_process();
 
 		/* Radio stopped in management mode: data port bytes are dropped and counted */
 		zlrs_link_data_discard_rx();

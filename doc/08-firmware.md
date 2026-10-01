@@ -254,10 +254,16 @@ A device that reboots on its own is the one case a console cannot help with: the
 are the ones before the reset, and a bench board that loses its USB leaves nothing behind. The
 firmware therefore keeps a log store in flash, and it is always on (no switch):
 
-- **Zephyr's own pieces, not a home-grown ring**: `LOG_BACKEND_FS` writes every log record to
+- **Zephyr's own pieces**: `LOG_BACKEND_FS` writes processed log records to
   LittleFS, alongside the console. Eight 128 KB files, the oldest overwritten
   (`CONFIG_LOG_BACKEND_FS_OVERWRITE`), so the store is a ring that needs no maintenance in the
   application.
+- **Flush outside radio slots**: logging is deferred into an 8 KiB RAM queue, with the newest
+  messages retained on overflow. The application drains it before starting TIMER1 and while
+  management mode pauses radio work. RP2350 flash writes mask IRQs, so a background flash logger
+  cannot run during normal slots. Debug console logs are deferred too; direct shell diagnostics
+  remain available. An unexpected power loss or watchdog reset can lose the unflushed queue;
+  fatal handling attempts a panic flush and coredump.
 - **LittleFS owns the hard parts**: power-fail safety and wear leveling. The application only
   mounts the partition (before the log core enables its backends, see the init priorities in
   `app/src/storage/log.c`) and, on a partition nothing has written yet, erases and mounts it
@@ -266,7 +272,7 @@ firmware therefore keeps a log store in flash, and it is always on (no switch):
   they log to the console only and say so once at boot.
 - **Export is a host-side operation**: the store is read over the management port, so it works on a
   board whose radio and console are both misbehaving. `zlrs.py logs` dumps the files to a
-  directory; nothing in the firmware has to stop doing its job for the export.
+  directory; management mode pauses radio work and flushes pending logs before export.
 
 The coredump partition next to it takes the fault case that a log cannot describe (stack, PC,
 registers), and `zlrs mcuboot` reports the image state MCUboot will act on.

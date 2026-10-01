@@ -11,6 +11,7 @@
 #include <zephyr/drivers/entropy.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/logging/log_ctrl.h>
 #include <zephyr/random/random.h>
 #include <zephyr/sys/reboot.h>
 
@@ -33,9 +34,6 @@
 #include <pico/bootrom.h>
 #endif
 
-#include <smtc_rac_api.h>
-#include <smtc_sw_platform_helper.h>
-
 #include "mgmt/mode.h"
 #include "mgmt/port.h"
 #include "link/crsf.h"
@@ -44,6 +42,7 @@
 #include "link/rate.h"
 #include "platform/caps.h"
 #include "platform/recovery.h"
+#include "platform/slot_timer.h"
 #include "platform/watchdog.h"
 #include "ports/radio.h"
 #include "state/sys_bus.h"
@@ -80,9 +79,9 @@ static uint16_t data_mtu;
 #define ZLRS_DATA_ENABLED    IS_ENABLED(CONFIG_ZLRS_APP_LINK_DATA)
 /* The CRSF port is part of the control link, and its presence is a devicetree fact: if the
  * board has the port at all, the control link uses it. */
-#define ZLRS_CRSF_ENABLED (ZLRS_CONTROL_ENABLED && ZLRS_PORT_CTRL_FIXED)
+#define ZLRS_CRSF_ENABLED    (ZLRS_CONTROL_ENABLED && ZLRS_PORT_CTRL_FIXED)
 /* Same shape for the management port: the CDC in devicetree is the whole answer */
-#define ZLRS_MGMT_ENABLED ZLRS_PORT_MGMT
+#define ZLRS_MGMT_ENABLED    ZLRS_PORT_MGMT
 
 #define SERIAL_CHUNK_LEN 64U
 #define REPORT_PERIOD_MS 1000U
@@ -137,7 +136,6 @@ static uint8_t active_profile;
  * carries no tag at all so only a debug image may select it, P2 is not implemented yet. */
 #define ZLRS_PROFILE_DEFAULT                                                                       \
 	(IS_ENABLED(CONFIG_ZLRS_APP_SECURITY_PROFILE_P0) ? ZLRS_PROFILE_P0 : ZLRS_PROFILE_P1)
-
 
 /* CRSF port I/O (defined below, called from the link callbacks) */
 static void crsf_send_rc(const uint8_t *payload, uint8_t len);
@@ -238,7 +236,8 @@ static void on_failsafe(void *ctx, const uint8_t *payload, uint16_t len)
 	}
 
 	memcpy(failsafe_payload, payload, sizeof(failsafe_payload));
-	(void)zlrs_storage_settings_save(ZLRS_SETTING_FAILSAFE, failsafe_payload, sizeof(failsafe_payload));
+	(void)zlrs_storage_settings_save(ZLRS_SETTING_FAILSAFE, failsafe_payload,
+					 sizeof(failsafe_payload));
 	LOG_INF("failsafe values received from TX");
 }
 
@@ -305,6 +304,20 @@ static void plan_init(void)
 		zlrs_mod_flrc(zlrs_region_clamp_rate(data_region, CONFIG_ZLRS_APP_DATA_RATE_BPS));
 	req.mod = &control_mod;
 
+	/* Four equal hardware slots must fit control and the larger pairing packets. */
+	const uint32_t control_window_us =
+		zlrs_port_radio_airtime_us(
+			&control_mod,
+			MAX(CTL_FRAME_LEN,
+			    ZLRS_PAIR_PAYLOAD_LEN + ZLRS_FRAME_HDR_LEN + ZLRS_TAG_LEN)) +
+		CONFIG_ZLRS_APP_TX_GUARD_US + ZLRS_RADIO_STARTUP_US + 100U;
+	const uint32_t hardware_max_hz = MAX(1U, 1000000U / (4U * control_window_us));
+	if (req.want_hz > hardware_max_hz) {
+		LOG_WRN("hardware slot budget: control rate %u Hz -> %u Hz", req.want_hz,
+			hardware_max_hz);
+		req.want_hz = hardware_max_hz;
+	}
+
 	/*
 	 * MTU follows the frame format and rate tier (doc/09-protocol.md 4.3): the largest payload
 	 * that fits the one-way data window budget (a quarter frame), capped by the format.
@@ -317,8 +330,10 @@ static void plan_init(void)
 		const uint32_t budget_us = (1000000U / req.want_hz) / 4U;
 		uint16_t len = (uint16_t)(ZLRS_PAYLOAD_MAX_LEN - 2U);
 
-		while (len > 16U &&
-		       zlrs_mod_airtime_us(&data_mod, (uint16_t)(len + 7U)) > budget_us) {
+		while (len > 16U && zlrs_port_radio_airtime_us(&data_mod, (uint16_t)(len + 9U)) +
+						    CONFIG_ZLRS_APP_TX_GUARD_US +
+						    ZLRS_RADIO_STARTUP_US + 100U >
+					    budget_us) {
 			len = (uint16_t)(len - 8U);
 		}
 
@@ -330,12 +345,12 @@ static void plan_init(void)
 	 * data_every_n frames, amortised over each frame; core/region iterates the plan to agreement.
 	 */
 	req.other_mod = ZLRS_DATA_ENABLED ? &data_mod : NULL;
-	req.other_frame_len = (uint16_t)(data_mtu + 7U);
+	req.other_frame_len = (uint16_t)(data_mtu + 9U);
 	zlrs_region_control_plan(&req, &plan);
 
 	control_rate_hz = plan.rate_hz;
-	frame_period_us = plan.frame_period_us;
-	slot_budget_us = plan.slot_budget_us;
+	frame_period_us = MAX(plan.frame_period_us, 4U * control_window_us);
+	slot_budget_us = frame_period_us / 4U;
 	tlm_every_n = plan.tlm_every_n;
 	data_every_n = plan.data_every_n;
 
@@ -400,8 +415,7 @@ static void build_links(void)
 		 * Telemetry is the TX-side liveness proof: with it off there is nothing to hear, so the
 		 * peer-loss check has to go too, or every frame drags the TX back into SEARCHING.
 		 */
-		.peer_timeout_ms = (role_tx &&
-				    IS_ENABLED(CONFIG_ZLRS_APP_TELEMETRY))
+		.peer_timeout_ms = (role_tx && IS_ENABLED(CONFIG_ZLRS_APP_TELEMETRY))
 					   ? 250U
 					   : (role_tx ? 0U : 100U),
 		.pair_period_ms = 100U,
@@ -436,11 +450,14 @@ static void build_links(void)
 		CONTROL_ON_SUBG ? tx_power_dbm : MIN(tx_power_dbm, region->max_tx_power_dbm);
 	data_cfg.arq = IS_ENABLED(CONFIG_ZLRS_APP_DATA_ARQ) ? 1U : 0U;
 	/*
-	 * ARQ retransmit timeout derives from the tier: one airtime plus a round trip, floor 30 ms
-	 * (which is what the sub-millisecond FLRC frames end up using).
+	 * An ACK can need two scheduled frames, including cadence thinning and bench pacing.
+	 * Base the timeout on the actual timer period rather than the packet airtime alone.
 	 */
-	data_cfg.arq_timeout_ms = (uint16_t)MAX(ZLRS_ARQ_TIMEOUT_MS,
-						2U * zlrs_mod_airtime_ms(&data_mod, data_mtu + 7U));
+	data_cfg.arq_timeout_ms =
+		(uint16_t)MIN(UINT16_MAX, MAX(ZLRS_ARQ_TIMEOUT_MS,
+					      DIV_ROUND_UP(2ULL * frame_period_us * data_every_n *
+								   CONFIG_ZLRS_APP_PACING_SCALE,
+							   1000U)));
 	/*
 	 * The data link is best-effort: it sends nothing when idle, so it has no peer-loss check,
 	 * which would otherwise rebuild the session over and over while idle (doc/09-protocol.md 3.7).
@@ -463,7 +480,8 @@ static void build_links(void)
 
 static bool ensure_device_id(void)
 {
-	if (zlrs_storage_settings_load(ZLRS_SETTING_DEV_ID, device_id, sizeof(device_id)) == (int)ZLRS_DEV_ID_LEN &&
+	if (zlrs_storage_settings_load(ZLRS_SETTING_DEV_ID, device_id, sizeof(device_id)) ==
+		    (int)ZLRS_DEV_ID_LEN &&
 	    zlrs_storage_settings_dev_id_valid(device_id)) {
 		LOG_INF("dev id %02x%02x%02x%02x (NVS)", device_id[0], device_id[1], device_id[2],
 			device_id[3]);
@@ -494,7 +512,8 @@ static void load_identity(void)
 	zlrs_link_set_dev_id(&link_data, device_id);
 
 	/* Root key: NVS only, written once with the management tool (set-phrase / set-key-hex) */
-	if (zlrs_storage_settings_load(ZLRS_SETTING_ROOT_KEY, root_key, sizeof(root_key)) == (int)ZLRS_KEY_LEN) {
+	if (zlrs_storage_settings_load(ZLRS_SETTING_ROOT_KEY, root_key, sizeof(root_key)) ==
+	    (int)ZLRS_KEY_LEN) {
 		have_root_key = true;
 	}
 
@@ -507,7 +526,8 @@ static void load_identity(void)
 	zlrs_link_set_root_key(&link_data, root_key, now_ms);
 
 	/* Pairing record: peer dev_id plus the two pairing nonces, loaded into both links */
-	if (zlrs_storage_settings_load(ZLRS_SETTING_PAIRING, &pairing, sizeof(pairing)) == (int)sizeof(pairing)) {
+	if (zlrs_storage_settings_load(ZLRS_SETTING_PAIRING, &pairing, sizeof(pairing)) ==
+	    (int)sizeof(pairing)) {
 		zlrs_link_set_peer(&link_control, pairing.peer_id, pairing.pair_salt, now_ms);
 		zlrs_link_set_peer(&link_data, pairing.peer_id, pairing.pair_salt, now_ms);
 		LOG_INF("pairing record restored");
@@ -516,102 +536,32 @@ static void load_identity(void)
 
 /* ---- superframe ---------------------------------------------------------- */
 
-/* Tick while pumping the RAC engine: fine enough not to stretch a slot, coarse enough not to spin */
-#define ZLRS_RADIO_PUMP_STEP_US 200U
-
-/* Poll period of a direct transaction: one status read is tens of microseconds, so this is the
- * trade between reaction time and how much of the slot the polling itself eats */
-#define ZLRS_RADIO_DIRECT_POLL_US 200U
-
-/* Engine passes to run back to back on a pending IRQ; bounded, the flag can belong to nobody */
-#define ZLRS_RADIO_IRQ_SPINS 16U
-
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
-/*
- * Engine cost: one pass does the radio programming and the IRQ handling for a transaction, so how
- * long a pass takes and how many of them a transaction needs is the difference between a slot
- * budget in microseconds and one in milliseconds.
- */
-static uint32_t pump_us_max;
-static uint32_t pump_us_sum;
-static uint32_t pump_us_last;
-static uint32_t pump_calls;
 /* Result of the at-boot raw bench, kept for `zlrs radio`: the console drops the log line often */
 static uint32_t raw_bench_frames;
 static uint32_t raw_bench_ms;
 #endif
 
-/*
- * Wait for the current transaction, pumping the RAC engine while it runs (the vendor's
- * immediate_radio_access loop). Sleep only when the planner has nothing going on: sleeping between
- * every pass added milliseconds per slot that had nothing to do with the air. `budget_us` bounds
- * the wait; the caller decides what a timeout means.
- */
+/* Wait against real elapsed time. Hardware alarms wake the thread at slot deadlines. */
 static void radio_wait_done(uint32_t budget_us)
 {
-	uint32_t waited_us = 0U;
-	uint32_t spins = 0U;
+	const uint32_t deadline = zlrs_slot_timer_now_us() + budget_us;
 
-	while (waited_us < budget_us) {
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
-		const uint32_t t0 = (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64());
-#endif
-
-		SMTC_SW_PLATFORM_VOID(smtc_rac_run_engine());
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
-		{
-			const uint32_t took = (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64()) - t0;
-
-			pump_us_last = took;
-			pump_us_sum += took;
-			pump_calls++;
-			if (took > pump_us_max) {
-				pump_us_max = took;
-			}
-		}
-#endif
-		/* Direct transactions poll their own status: the shared semaphore would end this wait on
-		 * the other link's completion, with the data transaction still on air. */
-		if (zlrs_port_radio_direct_busy()) {
-			if (zlrs_port_radio_irq_pending()) {
-				zlrs_port_radio_drain();
-				return;
-			}
-			k_usleep(ZLRS_RADIO_DIRECT_POLL_US);
-			waited_us += ZLRS_RADIO_DIRECT_POLL_US;
-			continue;
-		}
-
-		if (zlrs_port_radio_wait_us(0U) == 0) {
-			return; /* this transaction is done */
-		}
-
-		/*
-		 * The planner still has an IRQ to handle: pump again at once. Only when it has nothing
-		 * pending does the wait mean "the radio is working and we are waiting for it".
-		 */
+	while ((int32_t)(deadline - zlrs_slot_timer_now_us()) > 0) {
 		if (zlrs_port_radio_irq_pending()) {
-			/* The engine consumes it; give up after a few passes (ZLRS_RADIO_IRQ_SPINS) */
-			if (++spins > ZLRS_RADIO_IRQ_SPINS) {
-				return;
-			}
-			continue;
+			zlrs_port_radio_drain();
+			return;
 		}
+		/* Radio IRQ and hardware slot boundary both wake this wait. */
+		const int32_t remain = (int32_t)(deadline - zlrs_slot_timer_now_us());
 
-		spins = 0U;
-
-		(void)zlrs_port_radio_wait_us(ZLRS_RADIO_PUMP_STEP_US);
-		waited_us += ZLRS_RADIO_PUMP_STEP_US;
+		if (remain > 0) {
+			(void)zlrs_port_radio_wait_us((uint32_t)remain);
+		}
 	}
 }
 
-/*
- * Bench timing. The superframe is paced, but every slot inside it lasts as long as its own
- * transaction, so where a slot sits in the frame depends on the radio work of that frame; and
- * nothing aligns the two ends' frame phases. These counters are how that shows up in numbers:
- * the frame period measured with the cycle counter, the slots, and where in our frame the peer's
- * frames actually land.
- */
+/* Debug measurements of the absolute frame clock, slot work and authenticated RX offsets. */
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
 typedef struct {
 	uint32_t frames;
@@ -633,39 +583,30 @@ static uint32_t prev_frame_start_us;
 static zlrs_port_radio_diag_t radio_diag;
 #endif
 
-/*
- * Superframe phase lock. The two ends run their own frames, and a receive window only catches the
- * peer when the two are aligned: before this, the measured hit rate was a few percent of frames,
- * which is what kept the passthrough crawling. When a frame does arrive, its offset inside our own
- * frame says how far the peer's frame boundary is from ours (the sender transmits at the start of
- * its slot), so the end-of-frame sleep is corrected by that error, clamped to a quarter frame.
- * Both ends do this, so they meet in the middle. Hits are rare before the lock takes (that is the
- * problem it solves), so the correction takes the whole error at once and only ignores the last
- * millisecond: a proportional controller would need minutes of hits to walk a half-frame offset.
- */
-#define ZLRS_PHASE_DEADBAND_US 1000
-
-/*
- * A lock with no hits cannot correct anything, so a link that has heard nothing for a while sweeps
- * its phase instead: stretching the pacing a little every frame walks the two ends' windows across
- * each other until something is heard. Without this, a pair that drifted into a bad alignment (or
- * paired up in one) stays deaf, and no amount of retrying on either side can recover.
- */
+/* TX owns the absolute clock; RX follows verified IRQ timestamps and scans when deaf. */
+#define ZLRS_PHASE_DEADBAND_US   100
 #define ZLRS_PHASE_SCAN_AFTER_MS 300U
-#define ZLRS_PHASE_SCAN_STEP_US  900U
+#define ZLRS_PHASE_SCAN_STEP_US  25U
 
 static uint32_t frame_start_us;
+static uint32_t slot_deadline_us;
+static uint32_t slot_nominal_us;
+static uint32_t skipped_frames;
+static uint32_t missed_slots;
+static uint32_t packet_build_us_last;
+static uint32_t packet_build_us_max;
 static uint32_t slot_off_us[4]; /* where the slot's transaction really started in our frame */
 static int32_t phase_adj_us;
-static bool phase_adj_set;   /* one correction per frame: several receptions would fight */
+static bool phase_adj_set;    /* one correction per frame: several receptions would fight */
 static int32_t phase_last_us; /* what the last correction was, for the bench log */
 static int32_t phase_err_us;  /* residual the last correction was computed from */
-static uint32_t phase_hits;   /* corrections since the last report */
+static uint8_t phase_samples;
+static uint32_t phase_hits;     /* corrections since the last report */
 static uint32_t last_rx_any_ms; /* any successful reception, either link: the scan trigger */
 
 static uint32_t now_us(void)
 {
-	return (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64());
+	return zlrs_slot_timer_now_us();
 }
 
 /*
@@ -693,38 +634,45 @@ static void run_slot(uint8_t slot)
 	const uint32_t now_ms = zlrs_port_radio_now_ms();
 	const uint32_t slot_start_us = now_us();
 	const uint32_t hit_before = link->stats.slot_hit[slot];
+	const uint32_t good_before = link->stats.rx_frames;
 	/* The duty-cycle gate only applies to whichever link is on sub-G */
 	const bool on_subg = data_slot ? (CONTROL_ON_SUBG == 0) : (CONTROL_ON_SUBG != 0);
 	const zlrs_radio_req_t *req;
 
 	if (data_slot ? !ZLRS_DATA_ENABLED : !ZLRS_CONTROL_ENABLED) {
-		/*
-		 * Single-link build: the slots the disabled link would have used are free air time, so
-		 * spend them listening on the data channel. It roughly doubles the receive duty (or more,
-		 * with two free slots) and gives a weak peer the extra chances it needs.
-		 */
-		if (data_slot || !ZLRS_DATA_ENABLED) {
-			return;
-		}
-		link = &link_data;
-		req = zlrs_link_listen(link);
-		if (req == NULL) {
-			return;
-		}
-		/* Attribute the completion to this slot, not to the link's own last one */
-		link->slot = slot;
-	} else {
-		req = zlrs_link_slot(link, slot, now_ms);
+		return;
 	}
+	/* Disabled slots stay idle; acquisition outside assigned slots corrupts phase/hop alignment. */
+	if ((int32_t)(slot_deadline_us - now_us()) <= 100) {
+		missed_slots++;
+		zlrs_link_skip_slot(link, slot);
+		return;
+	}
+	req = zlrs_link_slot(link, slot, now_ms);
 
 	if (req == NULL) {
 		return;
 	}
 
+	/* Advance the protocol even if the scheduled slot was missed; never send it late. */
+	if ((int32_t)(slot_deadline_us - now_us()) <= 100) {
+		missed_slots++;
+		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, now_ms);
+		return;
+	}
+	zlrs_port_radio_slot(slot_nominal_us + CONFIG_ZLRS_APP_TX_GUARD_US, slot_deadline_us);
+
+	if (req->is_tx) {
+		packet_build_us_last = now_us() - slot_start_us;
+		packet_build_us_max = MAX(packet_build_us_max, packet_build_us_last);
+	}
+
 	/* Out of duty budget: give the slot up (finish as a radio failure, the link retries next
 	 * round). Only constrains the sub-G link. */
 	if (req->is_tx && on_subg &&
-	    !zlrs_duty_reserve(&duty, zlrs_airtime_mod_ms(&req->mod, req->size), now_ms)) {
+	    !zlrs_duty_reserve(&duty,
+			       (zlrs_port_radio_airtime_us(&req->mod, req->size) + 999U) / 1000U,
+			       now_ms)) {
 		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, now_ms);
 		return;
 	}
@@ -742,35 +690,11 @@ static void run_slot(uint8_t slot)
 	}
 #endif
 
-	/*
-	 * The transaction starts when the port's submit returns, so that is the phase reference: the
-	 * window (or the transmission) is where the peer's frame boundary shows up.
-	 */
-	slot_off_us[slot] = now_us() - frame_start_us;
+	slot_off_us[slot] = slot_nominal_us - frame_start_us;
+	const int32_t remaining_us = (int32_t)(slot_deadline_us - now_us());
 
-	/*
-	 * Pump the RAC engine while waiting for the transaction to finish. The vendor's
-	 * immediate_radio_access sample is exactly "run_engine + wait for event": without it the
-	 * planner never keys the radio and the transaction sits in RP_STATUS_TASK_INIT forever.
-	 * The done_sem timeout doubles as the tick; the whole wait counts against the slot budget.
-	 */
-	{
-		/*
-		 * A listening slot is allowed to run as long as its window: the acquisition windows are
-		 * deliberately longer than a steady-state one, and cutting them off at the slot budget is
-		 * what turned "no shared phase yet" into "never hear the peer at all".
-		 */
-		uint32_t budget_us = slot_budget_us;
-
-		if (!req->is_tx) {
-			const uint32_t window_us = (uint32_t)req->timeout_ms * 1000U + 500U;
-
-			if (window_us > budget_us) {
-				budget_us = window_us;
-			}
-		}
-
-		radio_wait_done(budget_us);
+	if (remaining_us > 0) {
+		radio_wait_done((uint32_t)remaining_us);
 	}
 
 	zlrs_port_radio_drain();
@@ -784,41 +708,39 @@ static void run_slot(uint8_t slot)
 	 */
 	if (link->req_pending) {
 		zlrs_port_radio_abort();
-		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_port_radio_now_ms());
+		zlrs_link_complete(link, req->is_tx ? ZLRS_RADIO_FAIL : ZLRS_RADIO_OK, 0U, 0, 0,
+				   zlrs_port_radio_now_ms());
 	}
 
-	if (!phase_adj_set && link->stats.slot_hit[slot] != hit_before) {
-		/*
-		 * A frame arrived: err is how much later than our own slot start it showed up, so the
-		 * peer's frame is that far behind ours and our next frame has to start that much later
-		 * (positive adj lengthens the sleep). Getting this sign wrong drives the two ends apart
-		 * instead of together, and no amount of retries recovers from that.
-		 */
-		const uint32_t offset_us = now_us() - frame_start_us;
-		int32_t err = (int32_t)offset_us - (int32_t)slot_off_us[slot];
-		const int32_t frame_us = (int32_t)(frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE);
-		int32_t adj = 0;
+	if (link->stats.slot_hit[slot] != hit_before && link->stats.rx_frames != good_before) {
+		uint32_t done_us;
+		uint32_t airtime_us;
 
-		/*
-		 * Deadband: a hit inside the window is close enough. Outside it, take the whole error at
-		 * once, clamped to a quarter frame so one bad measurement cannot throw the phase.
-		 */
-		if (err > ZLRS_PHASE_DEADBAND_US || err < -ZLRS_PHASE_DEADBAND_US) {
-			const int32_t limit = frame_us / 4;
+		last_rx_any_ms = zlrs_port_radio_now_ms();
+		/* TX is the clock master. Only RX follows verified packets, timestamped in the GPIO ISR. */
+		if (!role_tx && !phase_adj_set &&
+		    (data_slot ? link == &link_data : link == &link_control) &&
+		    zlrs_port_radio_rx_timing(&done_us, &airtime_us)) {
+			/* SET_TX completion includes synthesizer/PA startup, measured near 250 us. */
+			const uint32_t expected =
+				slot_nominal_us + CONFIG_ZLRS_APP_TX_GUARD_US + 250U;
+			const int32_t err = (int32_t)(done_us - airtime_us - expected);
+			const int32_t limit = (int32_t)frame_period_us / 16;
 
-			adj = err;
-			if (adj > limit) {
-				adj = limit;
-			} else if (adj < -limit) {
-				adj = -limit;
+			/* Once acquired, discard delayed IRQ outliers rather than move the clock. */
+			if (phase_samples >= 8U && (err > limit || err < -limit)) {
+				return;
 			}
+			phase_err_us = err;
+			phase_adj_us =
+				(err > ZLRS_PHASE_DEADBAND_US || err < -ZLRS_PHASE_DEADBAND_US)
+					? CLAMP(phase_samples < 8U ? err : err / 4, -limit, limit)
+					: 0;
+			phase_last_us = phase_adj_us;
+			phase_hits++;
+			phase_samples = MIN(phase_samples + 1U, 8U);
+			phase_adj_set = true;
 		}
-		phase_adj_us = adj;
-		phase_last_us = adj;
-		phase_err_us = err;
-		phase_hits++;
-		phase_adj_set = true;
-		last_rx_any_ms = now_ms;
 	}
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
@@ -843,22 +765,6 @@ static void run_slot(uint8_t slot)
 		}
 	}
 #endif
-
-	/*
-	 * Pad the slot out to its budget. A slot lasts as long as its own transaction otherwise, and
-	 * the two ends never run the same mix: one transmits while the other listens, each taking a
-	 * different number of microseconds. Over four slots those differences add up to milliseconds,
-	 * so the peer's window and our transmission land in different parts of the frame even when the
-	 * frames themselves are aligned — the windows only catch a frame now and then. A fixed slot
-	 * length makes both ends' slot boundaries identical, which is what any alignment needs.
-	 */
-	{
-		const uint32_t took_us = now_us() - slot_start_us;
-
-		if (took_us < slot_budget_us) {
-			k_usleep((int32_t)(slot_budget_us - took_us));
-		}
-	}
 }
 
 #if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
@@ -951,7 +857,6 @@ static void adopt_pairing(void)
 		link_control.peer_id[2], link_control.peer_id[3]);
 }
 
-
 /*
  * Failsafe values default to throttle low and everything else centred, which is what a
  * handset sends with its link down. The management protocol can overwrite them (08-firmware 3).
@@ -960,7 +865,8 @@ static void failsafe_init(void)
 {
 	uint16_t channels[ZLRS_CRSF_CHANNEL_COUNT];
 
-	if (zlrs_storage_settings_load(ZLRS_SETTING_FAILSAFE, failsafe_payload, sizeof(failsafe_payload)) != (int)sizeof(failsafe_payload)) {
+	if (zlrs_storage_settings_load(ZLRS_SETTING_FAILSAFE, failsafe_payload,
+				       sizeof(failsafe_payload)) != (int)sizeof(failsafe_payload)) {
 		/* Never configured: use the default (throttle low, the rest centred) */
 		zlrs_crsf_channels_default(channels);
 		zlrs_crsf_channels_pack(failsafe_payload, channels);
@@ -1210,9 +1116,9 @@ static void report(uint32_t now_ms)
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
 	zlrs_port_radio_diag(&radio_diag);
 
-	LOG_INF("%s ctl=%u tlm=%u data=%u serial_drop=%u host_drop=%u",
-		role_tx ? "TX" : "RX", counters.rc_rx, counters.tlm_rx,
-		counters.data_rx, zlrs_link_data_dropped(), zlrs_link_data_tx_dropped());
+	LOG_INF("%s ctl=%u tlm=%u data=%u serial_drop=%u host_drop=%u", role_tx ? "TX" : "RX",
+		counters.rc_rx, counters.tlm_rx, counters.data_rx, zlrs_link_data_dropped(),
+		zlrs_link_data_tx_dropped());
 	/* Frames that really went out, per slot: only transactions that completed count (core/link) */
 	LOG_INF("air: ctl_tx=%u ctl_rx=%u data_tx=%u data_rx=%u fail=%u+%u | slot tx %u/%u/%u/%u",
 		link_control.stats.tx_frames, link_control.stats.rx_frames,
@@ -1244,23 +1150,24 @@ static void report(uint32_t now_ms)
 	 * across the window range is the signature of two free-running frames.
 	 */
 	LOG_INF("tm : frame=%u us (%u..%u) slot=%u/%u/%u/%u max=%u/%u/%u/%u rx=slot%u+%u (%u..%u)"
-		" txn=%u early=%u lock=%u err=%d adj=%d submit=%u/%u us",
-		bench.frame_us_last, bench.frame_us_min, bench.frame_us_max,
-		bench.slot_us_last[0], bench.slot_us_last[1], bench.slot_us_last[2],
-		bench.slot_us_last[3], bench.slot_us_max[0], bench.slot_us_max[1],
-		    bench.slot_us_max[2], bench.slot_us_max[3], bench.rx_slot, bench.rx_offset_us,
-		    bench.rx_offset_min, bench.rx_offset_max, radio_diag.transactions,
-		    radio_diag.rx_early, phase_hits, (int)phase_err_us, (int)phase_last_us,
-		    bench.submit_us_last, bench.submit_us_max);
+		" txn=%u late_starts=%u lock=%u err=%d adj=%d submit=%u/%u us",
+		bench.frame_us_last, bench.frame_us_min, bench.frame_us_max, bench.slot_us_last[0],
+		bench.slot_us_last[1], bench.slot_us_last[2], bench.slot_us_last[3],
+		bench.slot_us_max[0], bench.slot_us_max[1], bench.slot_us_max[2],
+		bench.slot_us_max[3], bench.rx_slot, bench.rx_offset_us, bench.rx_offset_min,
+		bench.rx_offset_max, radio_diag.transactions, radio_diag.late_starts, phase_hits,
+		(int)phase_err_us, (int)phase_last_us, bench.submit_us_last, bench.submit_us_max);
 	phase_hits = 0U;
 	{
-		LOG_INF("rd : stale_irq=%u(%08x) late_irq=%u overruns=%u rx_win=%u tx=%u us rx=%u us",
-			radio_diag.stale_irq, radio_diag.stale_irq_bits, radio_diag.late_irq,
+		LOG_INF("rd : stale_irq=%u(%08x) empty_irq=%u overruns=%u rx_win=%u tx=%u us rx=%u "
+			"us",
+			radio_diag.stale_irq, radio_diag.stale_irq_bits, radio_diag.empty_irq,
 			radio_diag.overruns, radio_diag.rx_windows, radio_diag.tx_us_last,
 			radio_diag.rx_us_last);
 		/* Where a transaction's milliseconds go: the drain + RAC submit, and the wait after */
-		LOG_INF("rd2: drain=%u rac=%u submit max=%u wait max=%u us", radio_diag.submit_drain_us,
-			radio_diag.submit_rac_us, radio_diag.submit_us_max, radio_diag.wait_us_max);
+		LOG_INF("rd2: setup=%u us tx_done=%u setup max=%u us rx_packets=%u",
+			radio_diag.submit_us_last, radio_diag.tx_done, radio_diag.submit_us_max,
+			radio_diag.rx_packets);
 	}
 	/* Fingerprints (not the keys): comparing two ends needs to be possible from the log alone */
 	LOG_INF("key: ctl pair=%08x word=%08x root=%08x a=%08x b=%08x hop=%u state=%u"
@@ -1268,17 +1175,15 @@ static void report(uint32_t now_ms)
 		fingerprint(link_control.pair_key, sizeof(link_control.pair_key)),
 		fingerprint(link_control.sync_word, sizeof(link_control.sync_word)),
 		fingerprint(link_control.root_key, sizeof(link_control.root_key)),
-		link_control.pair_nonce, link_control.pair_nonce_b,
-		link_control.fhss.index,
+		link_control.pair_nonce, link_control.pair_nonce_b, link_control.fhss.index,
 		link_control.state, link_control.pair_wait_cfm ? 1U : 0U,
-		(unsigned int)link_control.pair_cfm_sent,
-		link_control.pair_cfm_pending ? 1U : 0U, link_control.stats.last_rssi);
+		(unsigned int)link_control.pair_cfm_sent, link_control.pair_cfm_pending ? 1U : 0U,
+		link_control.stats.last_rssi);
 	/* Pairing handshake traffic: which of the three messages is the one going missing */
-	LOG_INF("pair: ctl tx %u/%u/%u rx %u/%u/%u rej=%u",
-		link_control.stats.pair_req_tx, link_control.stats.pair_resp_tx,
-		link_control.stats.pair_cfm_tx, link_control.stats.pair_req_rx,
-		link_control.stats.pair_resp_rx, link_control.stats.pair_cfm_rx,
-		link_control.stats.pair_rejects);
+	LOG_INF("pair: ctl tx %u/%u/%u rx %u/%u/%u rej=%u", link_control.stats.pair_req_tx,
+		link_control.stats.pair_resp_tx, link_control.stats.pair_cfm_tx,
+		link_control.stats.pair_req_rx, link_control.stats.pair_resp_rx,
+		link_control.stats.pair_cfm_rx, link_control.stats.pair_rejects);
 	LOG_INF("crsf_bad=%u crsf_drop=%u air_drop=%u lq=%u%%", crsf_bad_input,
 		zlrs_link_crsf_rx_dropped(), link_data.stats.data_drop_bytes,
 		link_control.stats.lq_percent);
@@ -1400,9 +1305,8 @@ static void broadcast_state(void)
 	 * the handset (sending failsafe), or the RX was connected and dropped (outputting failsafe).
 	 * A device that never connected shows its normal state (purple/yellow/cyan), never red.
 	 */
-	alerts.failsafe = ever_connected && (role_tx
-						 ? !rc_input_seen
-						 : (link_control.state != ZLRS_STATE_CONNECTED));
+	alerts.failsafe = ever_connected &&
+			  (role_tx ? !rc_input_seen : (link_control.state != ZLRS_STATE_CONNECTED));
 	alerts.fault = false;
 	alerts.data_drop_bytes = drops;
 
@@ -1457,6 +1361,7 @@ static atomic_t mgmt_request;
 static void enter_management_mode(void)
 {
 	LOG_WRN("entering management mode");
+	log_flush();
 
 	/* 0 = EXIT, 1 = timeout, -1 = no usable port: the log has to tell them apart */
 	{
@@ -1479,13 +1384,16 @@ static void enter_management_mode(void)
 	zlrs_link_set_rc(&link_control, rc_payload, sizeof(rc_payload));
 
 	LOG_INF("management mode done, back to normal");
+	/* Confirmation and log persistence both write flash; finish them before resuming RF. */
+	confirm_image();
+	log_flush();
 }
 
 /* ---- application-side actions the management protocol triggers ----------------- */
 
 #endif /* ZLRS_MGMT_ENABLED */
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
+#if CONFIG_ZLRS_APP_BENCH_RAW_MS > 0
 /*
  * Bench helpers: run one radio transaction and report whether it finished. Debug images only — the
  * raw radio test is what says whether the two radios can hear each other at all, with no slots,
@@ -1510,74 +1418,6 @@ static bool bench_wait(zlrs_link_t *link, const zlrs_radio_req_t *req, uint32_t 
 	return true;
 }
 
-static int cmd_blast(const struct shell *sh, size_t argc, char **argv)
-{
-	uint8_t payload[32];
-	uint32_t count = (argc > 1) ? (uint32_t)strtoul(argv[1], NULL, 0) : 50U;
-	uint32_t sent = 0U;
-	uint32_t failed = 0U;
-	const uint32_t t0 = zlrs_port_radio_now_ms();
-
-	if (count > 2000U) {
-		count = 2000U;
-	}
-
-	for (uint32_t i = 0U; i < count; i++) {
-		const zlrs_radio_req_t *req;
-
-		for (uint8_t j = 0U; j < sizeof(payload); j++) {
-			payload[j] = (uint8_t)(i + j);
-		}
-		req = zlrs_link_blast(&link_data, payload, sizeof(payload));
-		if (req == NULL || !bench_wait(&link_data, req, 20000U)) {
-			failed++;
-		} else {
-			sent++;
-		}
-	}
-
-	shell_print(sh, "blast: %u of %u frames sent in %u ms (fail %u)",
-		    (unsigned int)sent, (unsigned int)count,
-		    (unsigned int)(zlrs_port_radio_now_ms() - t0), (unsigned int)failed);
-
-	return 0;
-}
-
-static int cmd_listen(const struct shell *sh, size_t argc, char **argv)
-{
-	const uint32_t ms = (argc > 1) ? (uint32_t)strtoul(argv[1], NULL, 0) : 100U;
-	uint32_t count = (argc > 2) ? (uint32_t)strtoul(argv[2], NULL, 0) : 20U;
-	const uint32_t frames0 = link_data.stats.rx_frames;
-	uint32_t windows = 0U;
-	uint32_t worst_rssi = 0;
-
-	if (ms < 5U || ms > 500U) {
-		shell_print(sh, "window must be 5..500 ms");
-		return -EINVAL;
-	}
-	if (count > 200U) {
-		count = 200U;
-	}
-
-	for (uint32_t i = 0U; i < count; i++) {
-		const zlrs_radio_req_t *req = zlrs_link_listen_raw(&link_data, (uint16_t)ms);
-
-		if (req == NULL) {
-			break;
-		}
-		windows++;
-		(void)bench_wait(&link_data, req, ms * 1000U + 20000U);
-		worst_rssi = link_data.stats.last_rssi;
-	}
-
-	shell_print(sh, "listen: %u windows of %u ms, %u frames heard, last rssi %d",
-		    (unsigned int)windows, (unsigned int)ms,
-		    (unsigned int)(link_data.stats.rx_frames - frames0), worst_rssi);
-
-	return 0;
-}
-
-#if CONFIG_ZLRS_APP_BENCH_RAW_MS > 0
 /*
  * Raw radio bench at boot, see CONFIG_ZLRS_APP_BENCH_RAW_MS. The role decides the direction: the TX
  * role sends complete frames back to back, the RX role opens 100 ms windows back to back. Both log
@@ -1598,8 +1438,7 @@ static void bench_raw_at_boot(void)
 		return;
 	}
 
-	LOG_INF("raw bench: %s for %u ms", role_tx ? "blast" : "listen",
-		(unsigned int)left_ms);
+	LOG_INF("raw bench: %s for %u ms", role_tx ? "blast" : "listen", (unsigned int)left_ms);
 
 	while ((uint32_t)(zlrs_port_radio_now_ms() - start_ms) < left_ms) {
 		const zlrs_radio_req_t *req;
@@ -1652,8 +1491,6 @@ static void bench_raw_at_boot(void)
 
 #endif /* CONFIG_ZLRS_APP_BENCH_RAW_MS */
 
-#endif /* CONFIG_ZLRS_APP_DEBUG */
-
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_SHELL)
 /* Little-endian u32 out of an id or key, for bench output that has to be comparable */
 static uint32_t le32(const uint8_t *p)
@@ -1673,17 +1510,19 @@ static void print_link(const struct shell *sh, const char *name, const zlrs_link
 	 * hop is the index both ends have to agree on; frame is this end's own frame counter and
 	 * adv how often it has moved the table, which is what shows where a desync comes from.
 	 */
-	shell_print(sh, "%-7s state=%u paired=%u sess=%u freq=%u hop=%u frame=%u adv=%u resync=%u"
-			" pair_key=%08x word=%08x",
+	shell_print(sh,
+		    "%-7s state=%u paired=%u sess=%u freq=%u hop=%u frame=%u adv=%u resync=%u"
+		    " pair_key=%08x word=%08x",
 		    name, link->state, link->paired ? 1U : 0U, link->session_valid ? 1U : 0U,
 		    zlrs_fhss_current_hz(&link->fhss), link->fhss.index, link->frame_index,
 		    link->stats.hop_advances, link->stats.hop_resync,
 		    fingerprint(link->pair_key, sizeof(link->pair_key)),
 		    fingerprint(link->sync_word, sizeof(link->sync_word)));
-	shell_print(sh, "        tx=%u rx=%u fail=%u rssi=%d..%d lq=%u%%",
-		    link->stats.tx_frames, link->stats.rx_frames, link->stats.radio_fail,
-		    link->stats.rssi_min, link->stats.rssi_max, link->stats.lq_percent);
-	shell_print(sh, "        slot tx %u/%u/%u/%u rx %u/%u/%u/%u got %u/%u/%u/%u fail %u/%u/%u/%u",
+	shell_print(sh, "        tx=%u rx=%u fail=%u rssi=%d..%d lq=%u%%", link->stats.tx_frames,
+		    link->stats.rx_frames, link->stats.radio_fail, link->stats.rssi_min,
+		    link->stats.rssi_max, link->stats.lq_percent);
+	shell_print(sh,
+		    "        slot tx %u/%u/%u/%u rx %u/%u/%u/%u got %u/%u/%u/%u fail %u/%u/%u/%u",
 		    link->stats.slot_tx[0], link->stats.slot_tx[1], link->stats.slot_tx[2],
 		    link->stats.slot_tx[3], link->stats.slot_rx[0], link->stats.slot_rx[1],
 		    link->stats.slot_rx[2], link->stats.slot_rx[3], link->stats.slot_hit[0],
@@ -1693,20 +1532,19 @@ static void print_link(const struct shell *sh, const char *name, const zlrs_link
 	shell_print(sh, "        pair tx %u/%u/%u rx %u/%u/%u rej=%u sent=%u pending=%u wait=%u",
 		    link->stats.pair_req_tx, link->stats.pair_resp_tx, link->stats.pair_cfm_tx,
 		    link->stats.pair_req_rx, link->stats.pair_resp_rx, link->stats.pair_cfm_rx,
-		    link->stats.pair_rejects, link->pair_cfm_sent,
-		    link->pair_cfm_pending ? 1U : 0U, link->pair_wait_cfm ? 1U : 0U);
-	shell_print(sh, "        sync tx=%u rx=%u resp %u+%u cfm %u+%u",
-		    link->stats.tx_syncs, link->stats.rx_syncs, link->stats.sess_resp_tx,
-		    link->stats.sess_resp_rx, link->stats.sess_cfm_tx, link->stats.sess_cfm_rx);
+		    link->stats.pair_rejects, link->pair_cfm_sent, link->pair_cfm_pending ? 1U : 0U,
+		    link->pair_wait_cfm ? 1U : 0U);
+	shell_print(sh, "        sync tx=%u rx=%u resp %u+%u cfm %u+%u", link->stats.tx_syncs,
+		    link->stats.rx_syncs, link->stats.sess_resp_tx, link->stats.sess_resp_rx,
+		    link->stats.sess_cfm_tx, link->stats.sess_cfm_rx);
 	/* Paired ends must agree on the id pair and the salt: a mismatch here is why keys differ */
 	shell_print(sh, "        dev=%08x peer=%08x salt=%08x/%08x root=%08x auth=%08x",
 		    le32(link->dev_id), le32(link->peer_id), salt_a, salt_b,
 		    fingerprint(link->root_key, sizeof(link->root_key)),
 		    fingerprint(link->auth_key, sizeof(link->auth_key)));
 	/* Raw key words: two ends must agree byte for byte, fingerprints hide which half differs */
-	shell_print(sh, "        key=%08x%08x%08x%08x",
-		    le32(link->pair_key), le32(&link->pair_key[4]), le32(&link->pair_key[8]),
-		    le32(&link->pair_key[12]));
+	shell_print(sh, "        key=%08x%08x%08x%08x", le32(link->pair_key),
+		    le32(&link->pair_key[4]), le32(&link->pair_key[8]), le32(&link->pair_key[12]));
 	/* Data path health: what the ARQ gave up on, and what the reassembler threw away */
 	shell_print(sh, "        arq retx=%u restarts=%u | rx dup=%u ooo=%u frag_drop=%u lost=%u B",
 		    link->stats.tx_retries, link->stats.tx_arq_drop, link->stats.rx_dup,
@@ -1728,10 +1566,11 @@ static void print_link(const struct shell *sh, const char *name, const zlrs_link
 		shell_print(sh, "        raw dev=%02x%02x%02x%02x peer=%02x%02x%02x%02x",
 			    link->dev_id[0], link->dev_id[1], link->dev_id[2], link->dev_id[3],
 			    link->peer_id[0], link->peer_id[1], link->peer_id[2], link->peer_id[3]);
-		shell_print(sh, "        ctx=%02x%02x%02x%02x%02x%02x%02x%02x"
-				"%02x%02x%02x%02x%02x%02x%02x%02x",
-			    ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6], ctx[7],
-			    ctx[8], ctx[9], ctx[10], ctx[11], ctx[12], ctx[13], ctx[14], ctx[15]);
+		shell_print(sh,
+			    "        ctx=%02x%02x%02x%02x%02x%02x%02x%02x"
+			    "%02x%02x%02x%02x%02x%02x%02x%02x",
+			    ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6], ctx[7], ctx[8],
+			    ctx[9], ctx[10], ctx[11], ctx[12], ctx[13], ctx[14], ctx[15]);
 	}
 }
 
@@ -1748,10 +1587,12 @@ static int cmd_link(const struct shell *sh, size_t argc, char **argv)
 		    bench.slot_us_last[0], bench.slot_us_last[1], bench.slot_us_last[2],
 		    bench.slot_us_last[3], bench.rx_slot, bench.rx_offset_us, bench.rx_offset_min,
 		    bench.rx_offset_max);
-	shell_print(sh, "radio  txn=%u stale_irq=%u(%08x) late_irq=%u overruns=%u rx_win=%u early=%u",
+	shell_print(sh,
+		    "radio  txn=%u stale_irq=%u(%08x) empty_irq=%u overruns=%u rx_win=%u "
+		    "late_starts=%u",
 		    radio_diag.transactions, radio_diag.stale_irq, radio_diag.stale_irq_bits,
-		    radio_diag.late_irq, radio_diag.overruns, radio_diag.rx_windows,
-		    radio_diag.rx_early);
+		    radio_diag.empty_irq, radio_diag.overruns, radio_diag.rx_windows,
+		    radio_diag.late_starts);
 #endif
 
 	return 0;
@@ -1801,8 +1642,8 @@ static int cmd_kdf(const struct shell *sh, size_t argc, char **argv)
 	for (uint8_t i = 0U; i < sizeof(ctx_fixed); i++) {
 		ctx_fixed[i] = (uint8_t)(0x40U + i);
 	}
-	zlrs_kdf(ikm_fixed, sizeof(ikm_fixed), "zlrs/pair", ctx_fixed, sizeof(ctx_fixed),
-		 pair_out, sizeof(pair_out));
+	zlrs_kdf(ikm_fixed, sizeof(ikm_fixed), "zlrs/pair", ctx_fixed, sizeof(ctx_fixed), pair_out,
+		 sizeof(pair_out));
 	shell_print(sh, "kdf fixed %08x%08x%08x%08x", le32(pair_out), le32(&pair_out[4]),
 		    le32(&pair_out[8]), le32(&pair_out[12]));
 
@@ -1837,30 +1678,6 @@ static int cmd_rxwin(const struct shell *sh, size_t argc, char **argv)
 
 	shell_print(sh, "data link window = %lu ms (default %u); `zlrs link` shows wins and hits",
 		    ms, rxwin_default);
-
-	return 0;
-}
-
-/*
- * Bench: pick the data link's radio backend. `on` runs it on the direct FLRC driver (radio stays
- * awake and programmed across slots), `off` puts it back on the RAC planner. The choice is not
- * stored: after a reset the link is on whichever path the image boots with.
- */
-static int cmd_direct(const struct shell *sh, size_t argc, char **argv)
-{
-	if (argc > 1) {
-		if (strcmp(argv[1], "on") == 0) {
-			zlrs_port_radio_direct_set(true);
-		} else if (strcmp(argv[1], "off") == 0) {
-			zlrs_port_radio_direct_set(false);
-		} else {
-			shell_error(sh, "usage: zlrs direct [on|off]");
-			return -EINVAL;
-		}
-	}
-
-	shell_print(sh, "data link on the %s path",
-		    zlrs_port_radio_direct_enabled() ? "direct FLRC" : "RAC planner");
 
 	return 0;
 }
@@ -1957,7 +1774,7 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 		    link_control.stats.lq_percent, link_control.paired);
 	shell_print(sh, "data   : state %d, drop %u B", link_data.state,
 		    link_data.stats.data_drop_bytes);
-	shell_print(sh, "radio  : USP/RAC + LR2021");
+	shell_print(sh, "radio  : exclusive RAL + LR2021, TIMER1 slots");
 
 	return 0;
 }
@@ -1969,7 +1786,9 @@ static int cmd_mgmt(const struct shell *sh, size_t argc, char **argv)
 	ARG_UNUSED(argv);
 
 	atomic_set(&mgmt_request, 1);
-	shell_print(sh, "management mode requested: the management CDC speaks the protocol, EXIT returns");
+	shell_print(
+		sh,
+		"management mode requested: the management CDC speaks the protocol, EXIT returns");
 
 	return 0;
 }
@@ -2009,47 +1828,32 @@ static int cmd_ports(const struct shell *sh, size_t argc, char **argv)
 static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 {
 	zlrs_port_radio_diag_t diag;
+	struct zlrs_slot_timer_stats timer;
 
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
-
 	zlrs_port_radio_diag(&diag);
-	{
-		uint32_t calls = 0U;
-		uint32_t deferred = 0U;
-
-		uint32_t poll_hits = 0U;
-		uint32_t last_status = 0U;
-
-		zlrs_port_radio_direct_stats(&calls, &deferred);
-		zlrs_port_radio_direct_irq_stats(&poll_hits, &last_status);
-		{
-			uint32_t tx_done = 0U, rx_pkt = 0U, rx_to = 0U, none = 0U, nz = 0U;
-
-			zlrs_port_radio_direct_counts(&tx_done, &rx_pkt, &rx_to, &none, &nz);
-			shell_print(sh, "direct irq: polls=%u last=%08x | tx_done=%u rx_pkt=%u "
-					"rx_timeout=%u no_status=%u last_nonzero=%08x",
-				    poll_hits, last_status, tx_done, rx_pkt, rx_to, none, nz);
-		}
-		shell_print(sh, "data path: %s (switch tried %u, deferred %u)",
-			    zlrs_port_radio_direct_enabled() ? "direct" : "planner", calls, deferred);
-		shell_print(sh, "direct recovery: %u standby cycles after a silent transaction",
-			    zlrs_port_radio_direct_resets());
-	}
-	shell_print(sh, "txn=%u overruns=%u stale=%u late=%u rx_win=%u early=%u",
-		    diag.transactions, diag.overruns, diag.stale_irq, diag.late_irq, diag.rx_windows,
-		    diag.rx_early);
-	shell_print(sh, "submit drain=%u/%u us rac=%u us (max %u) | wait max=%u us",
-		    diag.submit_drain_us, diag.submit_drain2_us, diag.submit_rac_us,
-		    diag.submit_us_max, diag.wait_us_max);
-	shell_print(sh, "last tx=%u us rx=%u us", diag.tx_us_last, diag.rx_us_last);
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
-	shell_print(sh, "engine pass last=%u max=%u avg=%u us, %u passes",
-		    pump_us_last, pump_us_max, (pump_calls > 0U) ? (pump_us_sum / pump_calls) : 0U,
-		    pump_calls);
-	shell_print(sh, "raw bench: %u frames in %u ms (%u per second)", raw_bench_frames,
-		    raw_bench_ms, (raw_bench_ms > 0U) ? ((raw_bench_frames * 1000U) / raw_bench_ms) : 0U);
-#endif
+	zlrs_slot_timer_stats(&timer);
+	shell_print(sh,
+		    "TIMER1 boundaries=%u irq_late_max=%u us missed=%u skipped_frames=%u slots=%u",
+		    timer.boundaries, timer.irq_late_us_max, timer.missed_boundaries,
+		    skipped_frames, missed_slots);
+	shell_print(sh,
+		    "RAL txn=%u tx_done=%u rx_packets=%u overruns=%u late_starts=%u empty_irq=%u",
+		    diag.transactions, diag.tx_done, diag.rx_packets, diag.overruns,
+		    diag.late_starts, diag.empty_irq);
+	shell_print(sh, "setup last/max=%u/%u us tx=%u us rx=%u us irq=%08x stale=%u",
+		    diag.submit_us_last, diag.submit_us_max, diag.tx_us_last, diag.rx_us_last,
+		    diag.irq_last, diag.stale_irq);
+	shell_print(sh, "stale bits=%08x airtime 255B=%u us guard=%u us", diag.stale_irq_bits,
+		    zlrs_port_radio_airtime_us(&data_mod, 255U), CONFIG_ZLRS_APP_TX_GUARD_US);
+	shell_print(sh, "late launch last/max=%u/%u us", diag.launch_late_us_last,
+		    diag.launch_late_us_max);
+	shell_print(sh, "chip errors=%04x packet build last/max=%u/%u us", diag.chip_errors,
+		    packet_build_us_last, packet_build_us_max);
+	shell_print(sh, "phase error/correction=%d/%d us hits=%u frame=%u us", phase_err_us,
+		    phase_last_us, phase_hits, frame_period_us);
+	shell_print(sh, "last chip error frequency=%u Hz", diag.chip_error_freq_hz);
 
 	return 0;
 }
@@ -2155,19 +1959,16 @@ static int cmd_mcuboot(const struct shell *sh, size_t argc, char **argv)
 
 SHELL_STATIC_SUBCMD_SET_CREATE(
 	zlrs_cmds, SHELL_CMD(status, NULL, "role / SKU / region / link state", cmd_status),
-	SHELL_CMD(link, NULL, "per-link state, frequency, hop index and key fingerprints", cmd_link),
+	SHELL_CMD(link, NULL, "per-link state, frequency, hop index and key fingerprints",
+		  cmd_link),
 	SHELL_CMD(kdf, NULL, "run the HKDF-SHA256 test vector", cmd_kdf),
 	SHELL_CMD(rekey, NULL, "re-derive the control link keys from its record", cmd_rekey),
 	SHELL_CMD(rxwin, " [ms]", "stretch the data link receive window (bench)", cmd_rxwin),
 	SHELL_CMD(rate, " [s]", "measure windows/hits/frames per second per link", cmd_rate),
-	SHELL_CMD(blast, " [n]", "raw mode: send frames back to back on the data channel", cmd_blast),
-	SHELL_CMD(listen, " [ms] [n]", "raw mode: n receive windows of that length", cmd_listen),
 	SHELL_CMD(ports, NULL, "state of both data port endpoints", cmd_ports),
 	SHELL_CMD(radio, NULL, "radio port timing: submit breakdown and wait", cmd_radio),
 	SHELL_CMD(logstore, NULL, "mount the log filesystem and report the result", cmd_logstore),
 	SHELL_CMD(trace, NULL, "print the init breadcrumbs", cmd_trace),
-	SHELL_CMD(direct, " [on|off]", "data link radio backend (direct FLRC vs RAC planner)",
-		  cmd_direct),
 #if ZLRS_MGMT_ENABLED
 	SHELL_CMD(mgmt, NULL, "enter management mode (EXIT returns)", cmd_mgmt),
 #endif
@@ -2258,7 +2059,8 @@ int main(void)
 		LOG_WRN("no CRSF port on this board, TX sends the configured failsafe values");
 	}
 	if (!ZLRS_MGMT_ENABLED) {
-		LOG_WRN("no management port on this board, parameters can only come from the defaults");
+		LOG_WRN("no management port on this board, parameters can only come from the "
+			"defaults");
 	}
 
 	/*
@@ -2301,7 +2103,8 @@ int main(void)
 		TRACE('E');
 		if (rc != 0) {
 			entropy_degraded = true;
-			LOG_ERR("entropy self-test failed (%d) after 3 tries: running degraded", rc);
+			LOG_ERR("entropy self-test failed (%d) after 3 tries: running degraded",
+				rc);
 		}
 	}
 #endif
@@ -2325,10 +2128,13 @@ int main(void)
 		uint8_t stored_region;
 		int8_t stored_power;
 
-		if (zlrs_storage_settings_load(ZLRS_SETTING_REGION, &stored_region, sizeof(stored_region)) == (int)sizeof(stored_region)) {
+		if (zlrs_storage_settings_load(ZLRS_SETTING_REGION, &stored_region,
+					       sizeof(stored_region)) ==
+		    (int)sizeof(stored_region)) {
 			region_id = stored_region;
 		}
-		if (zlrs_storage_settings_load(ZLRS_SETTING_POWER, &stored_power, sizeof(stored_power)) == (int)sizeof(stored_power)) {
+		if (zlrs_storage_settings_load(ZLRS_SETTING_POWER, &stored_power,
+					       sizeof(stored_power)) == (int)sizeof(stored_power)) {
 			tx_power_dbm = stored_power;
 		}
 	}
@@ -2343,8 +2149,8 @@ int main(void)
 	/* What the build believes the hardware is, derived from devicetree (app/src/platform/caps.h) */
 	LOG_INF("caps: ports=%s%s%s usb=%c btn=%c led=%c wdt=%c rf=%s(%u-%u MHz)",
 		ZLRS_PORT_CTRL_FIXED ? "control" : "", ZLRS_PORT_DATA_FIXED ? ",data" : "",
-		ZLRS_PORT_MGMT ? ",cfg" : "", ZLRS_HAS_USB ? 'y' : 'n',
-		ZLRS_HAS_BUTTON ? 'y' : 'n', ZLRS_HAS_LED ? 'y' : 'n', ZLRS_HAS_WDT ? 'y' : 'n',
+		ZLRS_PORT_MGMT ? ",cfg" : "", ZLRS_HAS_USB ? 'y' : 'n', ZLRS_HAS_BUTTON ? 'y' : 'n',
+		ZLRS_HAS_LED ? 'y' : 'n', ZLRS_HAS_WDT ? 'y' : 'n',
 		ZLRS_RF_BAND == ZLRS_BAND_SUBG_LF ? "LF" : "HF", ZLRS_RF_LOW_HZ / 1000000U,
 		ZLRS_RF_HIGH_HZ / 1000000U);
 
@@ -2358,16 +2164,21 @@ int main(void)
 		uint8_t stored_role;
 		uint8_t stored_profile;
 
-		if (zlrs_storage_settings_load(ZLRS_SETTING_ROLE, &stored_role, sizeof(stored_role)) == (int)sizeof(stored_role) &&
+		if (zlrs_storage_settings_load(ZLRS_SETTING_ROLE, &stored_role,
+					       sizeof(stored_role)) == (int)sizeof(stored_role) &&
 		    stored_role <= ZLRS_ROLE_RX) {
 			role_tx = (stored_role == ZLRS_ROLE_TX);
 		}
-		if (zlrs_storage_settings_load(ZLRS_SETTING_PROFILE, &stored_profile, sizeof(stored_profile)) == (int)sizeof(stored_profile)) {
+		if (zlrs_storage_settings_load(ZLRS_SETTING_PROFILE, &stored_profile,
+					       sizeof(stored_profile)) ==
+		    (int)sizeof(stored_profile)) {
 			if (zlrs_mgmt_mode_profile_allowed(stored_profile)) {
 				active_profile = stored_profile;
 			} else {
-				LOG_WRN("stored profile P%u is not available in this image, using P%u",
-					(unsigned int)stored_profile, (unsigned int)ZLRS_PROFILE_DEFAULT);
+				LOG_WRN("stored profile P%u is not available in this image, using "
+					"P%u",
+					(unsigned int)stored_profile,
+					(unsigned int)ZLRS_PROFILE_DEFAULT);
 			}
 		}
 	}
@@ -2406,11 +2217,10 @@ int main(void)
 	/* The status LED comes up on its own thread and reads the state it renders: nothing to
 	 * init here (app/src/ui/led.c, app/src/state/sys_bus.h) */
 
-	/* Wait for the USP/RAC thread, then init RAC (see doc/07-architecture.md 6) */
-	SMTC_SW_PLATFORM_INIT();
-	TRACE('a');
-	SMTC_SW_PLATFORM_VOID(smtc_rac_init());
-	TRACE('b');
+	if (zlrs_slot_timer_init() != 0) {
+		LOG_ERR("hardware slot timer init failed");
+		return 0;
+	}
 
 	TRACE('1');
 	plan_init();
@@ -2423,7 +2233,8 @@ int main(void)
 	{
 		uint32_t baud = 0U;
 
-		if (zlrs_storage_settings_load(ZLRS_SETTING_BAUD, &baud, sizeof(baud)) != (int)sizeof(baud)) {
+		if (zlrs_storage_settings_load(ZLRS_SETTING_BAUD, &baud, sizeof(baud)) !=
+		    (int)sizeof(baud)) {
 			baud = 0U;
 		}
 		(void)zlrs_link_data_init(baud);
@@ -2437,14 +2248,11 @@ int main(void)
 	TRACE('c');
 	if (zlrs_port_radio_init(&link_control, &link_data) != 0) {
 		TRACE('X');
-		LOG_ERR("RAC init failed");
+		LOG_ERR("radio driver init failed");
 		return 0;
 	}
 
-
 	TRACE('d');
-	/* Take the requested radio backend before the bench, or the bench would measure the old one */
-	zlrs_port_radio_direct_apply();
 #if CONFIG_ZLRS_APP_BENCH_RAW_MS > 0
 	/* Bench images only: run the raw radio bench before the superframe takes over */
 	bench_raw_at_boot();
@@ -2452,22 +2260,37 @@ int main(void)
 
 	LOG_INF("entering superframe loop: %u Hz, %s / %s (%s)", (unsigned int)control_rate_hz,
 		ZLRS_CONTROL_ENABLED ? "control on" : "control off",
-		ZLRS_DATA_ENABLED ? "data on" : "data off",
-		role_tx ? "TX" : "RX");
+		ZLRS_DATA_ENABLED ? "data on" : "data off", role_tx ? "TX" : "RX");
 
 	/*
 	 * Init is done at this point (ports, NVS, links, USB). Image confirmation does not happen
 	 * here: after an upgrade it waits for the host's explicit confirm (see confirm_image).
 	 */
 
+	log_flush();
+	zlrs_slot_timer_start(frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE, zlrs_port_radio_wake);
+	uint32_t consumed_frame = 0U;
+
 	for (;;) {
-		/*
-		 * Pacing uses the cycle counter, not the millisecond tick: at a 6.7 ms frame a 1 ms tick
-		 * granularity would jitter the frame by ±15%, and the frame period is the one thing both
-		 * ends must agree on exactly.
-		 */
-		const uint64_t start_cyc = k_cycle_get_64();
-		const uint32_t start_us = now_us();
+		uint32_t start_us;
+		uint32_t timer_frame;
+
+		zlrs_slot_timer_wait_frame(&start_us, &timer_frame);
+		if ((int32_t)(timer_frame - consumed_frame) <= 0) {
+			continue;
+		}
+		/* Dropped frames still advance frame/hop state on the original cadence. */
+		while (++consumed_frame < timer_frame) {
+			skipped_frames++;
+			for (uint8_t slot = 0U; slot < 4U; slot++) {
+				zlrs_link_t *link = slot < 2U ? &link_control : &link_data;
+
+				if (slot < 2U ? !ZLRS_CONTROL_ENABLED : !ZLRS_DATA_ENABLED) {
+					continue;
+				}
+				zlrs_link_skip_slot(link, slot);
+			}
+		}
 
 		frame_start_us = start_us;
 		phase_adj_set = false;
@@ -2490,9 +2313,13 @@ int main(void)
 
 #if ZLRS_MGMT_ENABLED
 		/* All management-mode entries converge here: management port command, shell, debug magic.
-		 * During the session the superframe pauses, the radio stops, the data port drops bytes. */
+		 * During the session radio work pauses and the data port drops bytes; the clock continues. */
 		if (zlrs_mgmt_port_poll_enter() || atomic_cas(&mgmt_request, 1, 0)) {
+			/* This frame has not run any slots; include it in the catch-up after the pause. */
+			consumed_frame--;
+			/* Keep the absolute clock running: catch up hop state after this pause. */
 			enter_management_mode();
+			continue;
 		}
 #endif
 
@@ -2501,17 +2328,19 @@ int main(void)
 		 * (a pairing triggered from the management port) is later than the "now" taken before it, so
 		 * unsigned subtraction underflows and the pairing window looks long expired.
 		 */
-		const uint32_t now_ms = zlrs_port_radio_now_ms();
-
-		/* Four slots share a frame: over-budget transactions are dropped, they do not stretch it */
-		/* A radio backend switch waits for the frame boundary (see zlrs_port_radio_direct_apply) */
-		zlrs_port_radio_direct_apply();
-
 		TRACE('L');
-		run_slot(ZLRS_SLOT_CTL_DOWN);
-		run_slot(ZLRS_SLOT_CTL_UP);
-		run_slot(ZLRS_SLOT_DATA_A);
-		run_slot(ZLRS_SLOT_DATA_B);
+		const uint32_t period = frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE;
+
+		for (uint8_t slot = 0U; slot < 4U; slot++) {
+			zlrs_watchdog_feed();
+			slot_nominal_us = start_us + ((uint64_t)period * slot) / 4U;
+			slot_deadline_us = start_us + ((uint64_t)period * (slot + 1U)) / 4U - 100U;
+			zlrs_slot_timer_wait_until(slot_nominal_us);
+			run_slot(slot);
+		}
+
+		/* Completions timestamp receptions during the slots; timeout checks need a newer time. */
+		const uint32_t now_ms = zlrs_port_radio_now_ms();
 
 		if (ZLRS_CONTROL_ENABLED) {
 			zlrs_link_tick(&link_control, now_ms);
@@ -2539,31 +2368,14 @@ int main(void)
 		broadcast_state();
 		report(now_ms);
 
-		const uint64_t elapsed_us = k_cyc_to_us_floor64(k_cycle_get_64() - start_cyc);
-		const uint32_t pacing_us = frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE;
-		/* A busy frame has no padding to remove. Apply corrections after clamping the
-		 * padding, or an overrun swallows even the positive scan delay and two deaf
-		 * peers keep repeating exactly the same relative timing. */
-		int64_t remain_us =
-			MAX((int64_t)pacing_us - (int64_t)elapsed_us, 0) + (int64_t)phase_adj_us;
-
+		if (!role_tx) {
+			if ((uint32_t)(now_ms - last_rx_any_ms) > ZLRS_PHASE_SCAN_AFTER_MS) {
+				phase_samples = 0U;
+				phase_adj_us = ZLRS_PHASE_SCAN_STEP_US;
+			}
+			zlrs_slot_timer_shift(phase_adj_us);
+		}
 		phase_adj_us = 0;
-
-		/*
-		 * Deaf link: sweep instead of waiting for a hit that only the aligned case can produce.
-		 * The two ends sweep in *opposite* directions (the roles are fixed): if both stretched their
-		 * frames the same way the relative phase would never move and the pair would stay deaf.
-		 * Sweeping apart walks the windows across each other within a few frames, and the first
-		 * frame that lands hands over to the lock above.
-		 */
-		if ((uint32_t)(now_ms - last_rx_any_ms) > ZLRS_PHASE_SCAN_AFTER_MS) {
-			remain_us += role_tx ? (int64_t)ZLRS_PHASE_SCAN_STEP_US
-					     : -(int64_t)ZLRS_PHASE_SCAN_STEP_US;
-		}
-
-		if (remain_us > 0) {
-			k_usleep((int32_t)remain_us);
-		}
 	}
 
 	return 0;

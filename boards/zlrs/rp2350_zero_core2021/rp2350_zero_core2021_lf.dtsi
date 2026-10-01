@@ -100,5 +100,6 @@
 	115400  /*  21 dBm */
 	115400  /*  22 dBm  : not yet available */
 	>;
-calibration-freqs = <433300000 470300000 498800000 2441000000>;
+/* RAL consumes exactly three entries. Both LF regions and the HF data path must fit. */
+calibration-freqs = <433300000 470300000 2441000000>;
 };

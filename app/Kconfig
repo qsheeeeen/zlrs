@@ -156,7 +156,7 @@ config ZLRS_APP_CONTROL_RATE_HZ
 	  150 = general tier (long range, default), 500 = close-in racing.
 	  At 500 Hz each slot has only a few hundred microseconds and only unlimited-duty regions
 	  can sustain it; the effective rate is clamped by the duty cap (core/region, 09-protocol 4.1).
-	  The 500 Hz ceiling is architectural: RAC schedules in whole milliseconds, higher needs burst.
+	  The hardware slot budget also clamps this request to fit packet preparation and airtime.
 
 config ZLRS_APP_DATA_RATE_BPS
 	int "Data link rate (bps)"
@@ -167,21 +167,16 @@ config ZLRS_APP_PACING_SCALE
 	default 1
 	range 1 8
 	help
-	  Multiplies the sleep that pads a superframe, without changing the plan the links work
-	  from. The radio port costs a couple of milliseconds per transaction (band and PLL
-	  reconfiguration), so at a dense plan the loop is work bound: the frame ends up longer
-	  than the plan and jitters with whatever each frame had to do, which leaves the two ends
-	  free running and keeps the phase lock from ever being able to act. Scaling the pacing
-	  leaves the loop idle at the end of the frame, which is exactly the room the lock needs
-	  to line the two ends up (doc/12-debug.md 3).
+	  Multiplies the hardware timer superframe period. All four slot boundaries and
+	  radio deadlines follow the scaled period; radio work never stretches the schedule.
 
-config ZLRS_APP_DIRECT_AT_BOOT
-	bool "Data link on the direct FLRC backend from the first frame (bench)"
-	default n
+config ZLRS_APP_TX_GUARD_US
+	int "Time from slot boundary to TX launch (us)"
+	default 3000
+	range 100 10000
 	help
-	  Debug images only. Puts the data link on the direct driver from the first frame instead of
-	  the RAC planner, so the path can be exercised without a console command. The runtime
-	  equivalent is `zlrs direct on` (app/src/ports/radio.c).
+	  Both peers prepare the radio at the hardware timer slot boundary. TX waits for
+	  this fixed offset, leaving the receiver time to configure before the packet starts.
 
 config ZLRS_APP_BENCH_RAW_MS
 	int "Raw radio bench at boot (ms, 0 = off)"

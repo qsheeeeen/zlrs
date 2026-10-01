@@ -44,18 +44,20 @@ The superframe period follows the slower link: data windows amortise into every 
 
 ## 3. Time sharing and scheduling
 
-Rather than writing a scheduler, the two links register as two RAC clients and priorities let
-the radio planner arbitrate:
+Both links share one radio owner on the link thread. USP supplies RAL, the LR20xx driver and
+Zephyr SPI/GPIO support; RAC and the radio planner are not initialized or run.
 
-| Link | RAC priority | How it is scheduled |
-| --- | --- | --- |
-| Control | `RAC_HIGH_PRIORITY` | the application orders the superframe, RAC runs `ASAP` |
-| Data | `RAC_MEDIUM_PRIORITY` | the slots control leaves idle, `ASAP` |
+RP2350 TIMER1 runs at 1 MHz. Alarm 0 advances the four absolute slot boundaries and publishes
+the latest frame; alarm 1 wakes the owner at a slot boundary or fixed TX launch offset; alarm 2
+ends the radio window before the next slot. The ISR performs no SPI. A delayed thread skips
+expired slots and advances hop/frame state without building or transmitting old packets.
+Frame snapshots consume any pending wake token under the same interrupt lock, and the owner
+rejects an already consumed frame number. Management pauses radio work while the absolute clock keeps running, so missed frames can be
+accounted for when it resumes. The superframe shape is in [09-protocol](09-protocol.md) 4.
 
-The application guarantees the slot order: RAC schedules in milliseconds while superframe slots
-are sub-millisecond, so the application walks the superframe and submits transactions one by one
-while RAC only has to run them promptly. The superframe shape is in
-[09-protocol](09-protocol.md) 4.
+The TX is the clock master. The RX follows authenticated packet timestamps captured by the
+GPIO ISR, subtracting packet airtime and the TX launch offset. Corrections are bounded and
+applied to a future frame boundary; only RX scans its phase when it has heard nothing.
 
 Both links default to FLRC. Changing modulation (FLRC to LoRa) costs far more on the radio side
 than changing frequency, so the data link always stays on 2.4G FLRC while the control link may
@@ -94,8 +96,11 @@ path at `freq >= 1.6 GHz` and the LF path otherwise, so all we do is fill in a f
 | Floor | 0.325 Mbps | 0.244 Mbps | narrow-band regions |
 
 LoRa is the tier below those: SF5-12, BW 125/250/500 kHz, CR 4/5-4/8, at tens of milliseconds per
-frame. Rough numbers for FLRC: 40 % of a 6.67 ms frame for the 2.4G data link is about 650 bytes
-per frame, so roughly **97 kB/s**.
+frame. The previous approximately **97 kB/s** estimate was an airtime-only target, not measured
+throughput. The current implementation has four equal slots and one packet per data direction
+per frame. Its timer period includes native packet airtime, preparation guard and RF startup;
+CN470 LF currently runs at 45 Hz with the default 3000 us guard. ARQ and ACK traffic reduce the
+payload rate further. Hardware results and remaining acceptance are tracked in [13-roadmap](13-roadmap.md).
 
 ## 5. Software layering
 
@@ -115,7 +120,7 @@ drivers/entropy/       the RP2350 TRNG driver we own
 app/src/               Zephyr application, one directory per layer:
   main.c                 the application: superframe, link wiring, reporting, debug shell
   platform/              what this board is (caps.h), the hardware watchdog, recovery entry
-  ports/                 hardware adapters: serial endpoints, radio (USP/RAC)
+  ports/                 hardware adapters: serial endpoints, radio (USP RAL / LR20xx)
   link/                  the links' I/O and tuning: data (passthrough), CRSF, rate
                          adaptation, dynamic power
   mgmt/                  management protocol, application side: the CDC (port) and the session
@@ -156,17 +161,16 @@ the log. See [09-protocol](09-protocol.md) 5.2.
 
 | Thread | Priority | Responsibility |
 | --- | --- | --- |
-| RAC thread (from USP) | `-4` | runs the radio planner and dispatches transfer callbacks |
 | Link thread (`main`) | `-2` | link state machines, building and submitting transactions, results, system state broadcast |
 | LED thread (`zlrs_led`) | `7` (preemptive) | renders the system state it subscribes to and writes the WS2812 (`app/src/ui/led.c`) |
 | Button thread (`zlrs_button`) | `8` (preemptive) | samples the button, reports a hold on the bus (`app/src/ui/button.c`) |
 | Serial | interrupt context | ring-buffered transfers, no radio decisions |
 
-Threads are cooperative (`CONFIG_USP_MAIN_THREAD=y`, `CONFIG_USP_THREADS_MUTEXES=n`): RAC calls
-go in directly with no mutex cost, and the link logic is I/O driven and yields often. The price
-is that a long serial burst delays radio events, so serial transfers are cut into small pieces
-that yield promptly. USP's other threading modes are described in usp_zephyr's
-`doc/THREAD_MANAGEMENT.md`.
+The link thread is cooperative and owns all radio calls. `CONFIG_USP_MAIN_THREAD=n` and
+`CONFIG_LORA_BASICS_MODEM_DRIVERS_EVENT_TRIGGER_NO_THREAD=y`: the GPIO callback only timestamps the IRQ and
+wakes the owner, which reads status and completes the link transaction. Serial work is bounded
+between frames. Flash operations can still delay IRQ handling; delayed boundaries are counted
+and the absolute schedule is preserved.
 
 The LED thread is the one preemptive thread the application adds, and it is a deliberate exception
 to "the link thread does everything": the strip write (PIO push plus the WS2812 latch delay) is the
@@ -198,20 +202,20 @@ transactions for the session and runs the management protocol there (see
 
 ### 6.2 Callback contract
 
-`callback_post_radio_transaction` runs in the RAC thread context and may only:
-
-1. record the `rp_status_t` and the received length;
-2. hand the result to the link thread (`k_sem` / `k_msgq`);
-3. return.
-
-It does not validate, does not walk the protocol stack, does not touch the serial ports and
-**does not submit the next transaction**: doing so is a path the vendor samples never cover.
+The radio GPIO callback records the TIMER1 timestamp, sets a pending flag and gives a semaphore.
+It never reads SPI, validates a packet or submits another transaction. The link thread drains
+the IRQ, reads the FIFO and invokes `zlrs_link_complete()`.
 
 ### 6.3 Integration constraints with USP
 
-The application initialises RAC itself: `SMTC_SW_PLATFORM_INIT()` only waits for the USP thread
-and never calls `smtc_rac_init()`; the vendor samples call it from the application too. Since
-USP v1.1.2 `usp_zephyr` registers the log module itself, so the application does not.
+The application instantiates its own `ralf_t` from the chosen transceiver device, then calls
+`ral_reset()` and `ral_init()`. It attaches the GPIO callback through the transceiver board API.
+USP initialization of RAC, task submission and runtime backend switching are absent. Both links
+share cached modem parameters and stay in standby/FS between transactions. Every TX clears its
+FIFO before writing: an aborted packet must not contaminate the next packet.
+
+The board calibration table contains exactly three entries because the vendor BSP consumes
+three; HF pads its unused entry with zero, and LF includes both sub-G coverage and 2.4 GHz.
 
 ## 7. Diagnostics
 

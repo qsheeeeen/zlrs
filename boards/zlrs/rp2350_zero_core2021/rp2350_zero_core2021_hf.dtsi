@@ -99,5 +99,6 @@
 	89400   /*  21 dBm */
 	108200  /*  22 dBm */
 	>;
-calibration-freqs = <897500000 2441000000>;
+/* RAL consumes exactly three entries; zero leaves the unused calibration slot empty. */
+calibration-freqs = <897500000 2441000000 0>;
 };

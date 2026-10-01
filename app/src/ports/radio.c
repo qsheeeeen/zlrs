@@ -1,500 +1,51 @@
-/*
- * Radio port layer (RAC backend).
- * Interface and contract: ports/radio.h; callback timing: doc/07-architecture.md 6.2.
- *
+/* Copyright (c) 2026 zlrs contributors
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * One owner for both links. RAL and the LR20xx HAL are reused; RAC and the
+ * radio planner do not participate in initialization, IRQs or transactions.
  */
-
 #include "ports/radio.h"
+#include "platform/slot_timer.h"
 
+#include <string.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/random/random.h>
+#include <zephyr/usp/lora_lbm_transceiver.h>
 
-#include <smtc_modem_hal.h>
-#include <smtc_rac_api.h>
-#include <smtc_sw_platform_helper.h>
-
-#include "ral.h"
+#include "ralf_lr20xx.h"
+#include "ral_lr20xx_bsp.h"
+#include "lr20xx_system.h"
+#include "lr20xx_radio_fifo.h"
+#include "lr20xx_radio_common.h"
 
 LOG_MODULE_REGISTER(zlrs_port_radio, CONFIG_APP_LOG_LEVEL);
 
-typedef struct {
-	uint8_t access_id;
-	smtc_rac_context_t *ctx;
-	zlrs_link_t *link;
-	volatile bool done;
-	int status;
-	uint16_t rx_len;
-	int16_t rssi;
-	int8_t snr;
-	uint32_t submit_us; /* when the transaction went in, for the window duration counters */
-	uint16_t timeout_ms;
-	bool is_tx;
-} rac_client_t;
-
-static rac_client_t control_client;
-static rac_client_t data_client;
+static const struct device *const transceiver =
+	DEVICE_DT_GET(DT_CHOSEN(zephyr_lorawan_transceiver));
+static ralf_t radio = RALF_LR20XX_INSTANTIATE(DEVICE_DT_GET(DT_CHOSEN(zephyr_lorawan_transceiver)));
 static K_SEM_DEFINE(done_sem, 0, 1);
-
-/* ===== 3. direct FLRC client (data link) ================================== */
-
-/*
- * The data link's hot path does not go through the RAC planner.
- *
- * The planner is written for a LoRaWAN-style modem: it puts the radio to sleep after every
- * transaction, programs it from scratch each time through several engine passes, and schedules in
- * whole milliseconds. Measured on this board that is 7.0 ms per transaction, of which 1.1 ms is
- * the wake-up alone and 0.7 ms the re-programming — right for a modem that sends every few
- * seconds, wrong for a frame-based link that wants hundreds of transactions per second.
- *
- * Here the radio is programmed once per configuration change and stays awake between slots, so a
- * transaction is a payload write plus a start command, and the DIO interrupt ends it. The control
- * link keeps the planner: its rate is low and the planner's scheduling is convenient there.
- */
-typedef struct {
-	zlrs_link_t *link;       /* set by zlrs_port_radio_init() */
-	const zlrs_radio_req_t *req; /* the transaction in flight, owned by the link */
-	volatile bool pending;   /* the port started a transaction and owes a completion */
-	volatile bool irq;       /* the DIO line went active for it (set from the IRQ path) */
-	volatile uint32_t irq_status; /* last status read, so polling and the ISR can both feed it */
-	uint32_t submit_us;      /* when the transaction went in, for the duration counters */
-	/* What the radio is programmed with right now, so an unchanged slot can skip the setup */
-	ralf_params_flrc_t cfg;
-	bool cfg_valid;
-} flrc_client_t;
-
-static flrc_client_t direct;
-
-/* Switch bookkeeping for `zlrs radio`: whether the direct path ever engaged and why not */
-static uint32_t direct_apply_calls;
-static uint32_t direct_apply_deferred;
-static uint32_t direct_poll_hits;
-static uint32_t direct_resets;
-static uint32_t direct_tx_done;
-static uint32_t direct_rx_pkt;
-static uint32_t direct_rx_timeout;
-static uint32_t direct_no_status;
-static uint32_t direct_last_nonzero;
-static bool direct_needs_reset; /* the last transaction timed out with an empty status */
-
-/*
- * Per-transaction outcome, the number that says whether the radio does anything at all: no_status
- * means the transaction timed out with the status register still empty (the chip never started),
- * while tx_done/rx_pkt with a silent peer means the parameters are wrong.
- */
-void zlrs_port_radio_direct_counts(uint32_t *tx_done, uint32_t *rx_pkt, uint32_t *rx_timeout,
-			      uint32_t *no_status, uint32_t *last_nonzero)
-{
-	if (tx_done != NULL) *tx_done = direct_tx_done;
-	if (rx_pkt != NULL) *rx_pkt = direct_rx_pkt;
-	if (rx_timeout != NULL) *rx_timeout = direct_rx_timeout;
-	if (no_status != NULL) *no_status = direct_no_status;
-	if (last_nonzero != NULL) *last_nonzero = direct_last_nonzero;
-}
-
-void zlrs_port_radio_direct_irq_stats(uint32_t *poll_hits, uint32_t *last_status)
-{
-	if (poll_hits != NULL) {
-		*poll_hits = direct_poll_hits;
-	}
-	if (last_status != NULL) {
-		*last_status = direct.irq_status;
-	}
-}
-
-void zlrs_port_radio_direct_stats(uint32_t *calls, uint32_t *deferred)
-{
-	if (calls != NULL) {
-		*calls = direct_apply_calls;
-	}
-	if (deferred != NULL) {
-		*deferred = direct_apply_deferred;
-	}
-}
-
-uint32_t zlrs_port_radio_direct_resets(void)
-{
-	return direct_resets;
-}
-
-/* Built below, next to the RAC path they are shared with */
-static ral_flrc_raw_bit_rate_t raw_bit_rate(uint32_t rate_bps);
-static ral_flrc_preamble_length_t preamble_len(uint16_t bits);
-static ral_flrc_tx_syncword_t tx_syncword(uint8_t slot);
-static ral_flrc_rx_match_sync_word_t rx_match_syncword(uint8_t slot);
-
-static ral_t *direct_radio(void)
-{
-	ralf_t *radio = smtc_rac_get_radio();
-
-	return (radio != NULL) ? &radio->ral : NULL;
-}
-
-/* Do two configurations ask the radio for the same thing? */
-static bool cfg_same(const ralf_params_flrc_t *a, const ralf_params_flrc_t *b)
-{
-	if (a->rf_freq_in_hz != b->rf_freq_in_hz || a->is_tx != b->is_tx ||
-	    a->output_pwr_in_dbm != b->output_pwr_in_dbm ||
-	    a->mod_params.raw_bit_rate != b->mod_params.raw_bit_rate ||
-	    a->pkt_params.preamble_len != b->pkt_params.preamble_len ||
-	    a->pkt_params.tx_syncword != b->pkt_params.tx_syncword ||
-	    a->pkt_params.pld_len_in_bytes != b->pkt_params.pld_len_in_bytes ||
-	    memcmp(a->sync_word, b->sync_word, sizeof(a->sync_word)) != 0) {
-		return false;
-	}
-
-	/* The sync word is a pointer into the request: compare the bytes, not the pointer */
-	for (uint8_t i = 0U; i < 3U; i++) {
-		if (a->sync_word[i] == NULL || b->sync_word[i] == NULL) {
-			continue;
-		}
-		if (memcmp(a->sync_word[i], b->sync_word[i], ZLRS_SYNC_WORD_LEN) != 0) {
-			return false;
-		}
-	}
-
-	return true;
-}
-
-/*
- * One IRQ line for both backends: the data link's direct transaction owns the radio while it is
- * pending, otherwise the control link's planner does. Slots run one at a time in the main loop, so
- * "which one is pending" is never ambiguous.
- */
-static void radio_irq_router(void *ctx)
-{
-	ARG_UNUSED(ctx);
-
-	if (direct.pending) {
-		direct.irq = true;
-		k_sem_give(&done_sem);
-		return;
-	}
-
-	rp_radio_irq_callback(smtc_rac_get_rp());
-}
-
-/*
- * Bench switch, not stored anywhere: the data link runs on the direct path while this is set and
- * on the planner otherwise. Keeping it in RAM means a crash inside the direct path costs a reset
- * and nothing else — the board comes back on the path it was flashed with — which is what makes it
- * safe to develop against without a hand on the board.
- */
-static bool direct_enabled;
-static bool direct_requested;
-
-bool zlrs_port_radio_direct_enabled(void)
-{
-	return direct_enabled;
-}
-
-/*
- * Ask for a path, do not take it here. Both backends own the radio while a transaction is in
- * flight, so switching under one — the shell runs in another thread than the superframe — leaves
- * the planner programming a radio that the direct path then talks to as well, and the SPI layer
- * spins on a busy line that nobody finishes. The switch is therefore applied at the frame
- * boundary, by zlrs_port_radio_direct_apply().
- */
-void zlrs_port_radio_direct_set(bool enabled)
-{
-	direct_requested = enabled;
-}
-
-void zlrs_port_radio_direct_apply(void)
-{
-	if (direct_requested == direct_enabled) {
-		return;
-	}
-	/*
-	 * Only the data link's own request matters: the control link keeps a transaction in flight
-	 * almost continuously while it searches, and waiting for that starves the switch (it never
-	 * engages at all, which is what happened once the control link was active). Slots run one at a
-	 * time, and the switch takes effect at a frame boundary, so the radio is idle here.
-	 */
-	direct_apply_calls++;
-	if (direct.pending || data_client.link == NULL || data_client.link->req_pending) {
-		direct_apply_deferred++;
-		return; /* the data link is busy, take the switch next frame */
-	}
-
-	LOG_WRN("direct: applying switch");
-	direct_enabled = direct_requested;
-	/* The other backend programmed the radio: this one starts from its own configuration */
-	direct.cfg_valid = false;
-	/*
-	 * No RAL call here on purpose. Touching the radio while switching (standby, clearing IRQs) is
-	 * what turned `zlrs direct on` into a reset: those go through the driver's SPI path, and a radio
-	 * left in a state the driver does not expect makes the transfer wait for a completion that never
-	 * comes. The first transaction programs the radio anyway, so the switch is just a flag.
-	 */
-	/* LOG_*, not printk: the console is a USB CDC and a write to it blocks when the host is not
-	 * reading, which is how this switch reset the board instead of switching it. */
-	LOG_WRN("data link radio path -> %s", direct_enabled ? "direct FLRC" : "RAC planner");
-}
-
-/* Port-level bench counters, see ports/radio.h */
+static zlrs_link_t *owner;
+static const zlrs_radio_req_t *request;
+static volatile bool pending;
+static volatile bool irq_pending;
+static volatile uint32_t irq_us;
+static uint32_t begin_us;
+static uint32_t slot_end_us;
+static uint32_t tx_at_us;
+static bool timed_slot;
+static ral_pkt_type_t configured_type;
+static bool cfg_valid;
+static ralf_params_flrc_t flrc_cfg;
+static bool sync_valid[3];
+static uint8_t sync_words[3][ZLRS_SYNC_WORD_LEN];
+static bool tx_cfg_valid;
+static uint32_t tx_cfg_freq;
+static int8_t tx_cfg_power;
+static bool rx_timing_valid;
+static uint32_t rx_done_us;
+static uint32_t rx_airtime_us;
 static zlrs_port_radio_diag_t diag;
-
-void zlrs_port_radio_diag(zlrs_port_radio_diag_t *out)
-{
-	if (out != NULL) {
-		*out = diag;
-	}
-}
-
-/*
- * Leave no IRQ behind for the next transaction. The radio holds its IRQ latch until the status is
- * read: a bit left over from an earlier slot would complete the next transaction early (or wake
- * the planner with no task, which is what its "no more task activated" trace is), so read and
- * count them here. The vendor sample never hits this because its engine runs in its own thread and
- * drains every event as it comes.
- */
-static void drain_radio_irq(void)
-{
-	ralf_t *radio = smtc_rac_get_radio();
-	ral_irq_t irq = 0;
-
-	if (radio == NULL) {
-		return;
-	}
-	if (ral_get_and_clear_irq_status(&radio->ral, &irq) == RAL_STATUS_OK &&
-	    (uint32_t)irq != 0U) {
-		diag.stale_irq++;
-		diag.stale_irq_bits = (uint32_t)irq;
-	}
-}
-
-static uint32_t port_random(void *ctx)
-{
-	(void)ctx;
-
-	return sys_rand32_get();
-}
-
-static int port_submit(void *ctx, const zlrs_radio_req_t *req);
-
-static int direct_submit(const zlrs_radio_req_t *req)
-{
-	ral_t *ral = direct_radio();
-	ralf_params_flrc_t cfg = { 0 };
-	const ral_irq_t irq = req->is_tx ? RAL_IRQ_TX_DONE
-					 : (RAL_IRQ_RX_DONE | RAL_IRQ_RX_TIMEOUT |
-					    RAL_IRQ_RX_HDR_ERROR | RAL_IRQ_RX_CRC_ERROR);
-
-	if (ral == NULL) {
-		return -1;
-	}
-
-	/*
-	 * Take the radio out of whatever the planner left it in. The planner puts the radio to sleep
-	 * after every transaction it runs (that is where the 1.1 ms wake-up cost comes from), and a
-	 * sleeping chip accepts a start command and reports OK without putting anything on air — which
-	 * is exactly what the direct path did: its transactions completed, its counter climbed, and the
-	 * peer heard nothing. Standby here is the same state the planner's arbiter moves it to.
-	 */
-	(void)SMTC_SW_PLATFORM(ral_set_standby(ral, RAL_STANDBY_CFG_XOSC));
-	if (direct_needs_reset) {
-		/*
-		 * The last transaction ended with the status register still empty: the radio was left
-		 * busy or wedged, and simply starting the next one repeats the outcome (two thirds of the
-		 * direct transactions were timing out). Put it back to a known state first.
-		 */
-		direct_needs_reset = false;
-		direct_resets++;
-		(void)SMTC_SW_PLATFORM(ral_clear_irq_status(ral, RAL_IRQ_ALL));
-		(void)SMTC_SW_PLATFORM(ral_set_standby(ral, RAL_STANDBY_CFG_RC));
-		(void)SMTC_SW_PLATFORM(ral_set_standby(ral, RAL_STANDBY_CFG_XOSC));
-	}
-
-	cfg.rf_freq_in_hz = req->freq_hz;
-	cfg.output_pwr_in_dbm = req->tx_power_dbm;
-	cfg.is_tx = req->is_tx;
-	cfg.mod_params.raw_bit_rate = raw_bit_rate(req->mod.rate_bps);
-	cfg.mod_params.cr = RAL_FLRC_CR_3_4;
-	cfg.mod_params.pulse_shape = RAL_FLRC_PULSE_SHAPE_BT_05;
-	cfg.pkt_params.preamble_len = preamble_len(CONFIG_ZLRS_APP_FLRC_PREAMBLE_BITS);
-	cfg.pkt_params.sync_word_len = RAL_FLRC_SYNCWORD_LENGTH_4_BYTES;
-	cfg.pkt_params.tx_syncword = tx_syncword(req->sync_slot);
-	cfg.pkt_params.match_sync_word = rx_match_syncword(req->sync_slot);
-	cfg.pkt_params.pld_is_fix = false;
-	cfg.pkt_params.pld_len_in_bytes = req->is_tx ? req->size : req->max_rx_size;
-	cfg.pkt_params.crc_type = RAL_FLRC_CRC_2_BYTES;
-	cfg.crc_seed = 0U;
-	cfg.crc_polynomial = 0U;
-	/*
-	 * All three slots carry the same bytes: the slot index is what keeps the links apart, and the
-	 * radio programs every slot it can match on for a receive window, so a NULL entry here is a
-	 * NULL dereference inside the driver.
-	 */
-	for (uint8_t i = 0U; i < 3U; i++) {
-		cfg.sync_word[i] = req->sync_word;
-	}
-
-	/*
-	 * Programming is the expensive part (frequency, modulation, sync words over SPI), so it only
-	 * happens when the slot asks for something different than the last one did. In a data-only
-	 * build that is once, at the first slot of the session.
-	 */
-	if (!direct.cfg_valid || !cfg_same(&cfg, &direct.cfg)) {
-		if (SMTC_SW_PLATFORM(ralf_setup_flrc(smtc_rac_get_radio(), &cfg)) != RAL_STATUS_OK) {
-			return -1;
-		}
-		direct.cfg = cfg;
-		direct.cfg_valid = true;
-	}
-
-	if (SMTC_SW_PLATFORM(ral_set_dio_irq_params(ral, irq)) != RAL_STATUS_OK) {
-		return -1;
-	}
-
-
-
-	LOG_INF("direct: submit %s len %u freq %u", req->is_tx ? "tx" : "rx", req->size, req->freq_hz);
-	direct.submit_us = (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64());
-	direct.req = req;
-	diag.transactions++;
-	/* Set before starting: the completion belongs to this port from the moment it runs */
-	direct.irq = false;
-	direct.irq_status = 0U;
-	direct.pending = true;
-
-	LOG_INF("direct: programmed, starting");
-	if (req->is_tx) {
-		if (SMTC_SW_PLATFORM(ral_set_pkt_payload(ral, req->buf, req->size)) != RAL_STATUS_OK) {
-			direct.pending = false;
-			return -1;
-		}
-		smtc_modem_hal_set_ant_switch(true);
-		if (SMTC_SW_PLATFORM(ral_set_tx(ral)) != RAL_STATUS_OK) {
-			direct.pending = false;
-			return -1;
-		}
-	} else {
-		smtc_modem_hal_set_ant_switch(false);
-		if (SMTC_SW_PLATFORM(ral_set_rx(ral, req->timeout_ms)) != RAL_STATUS_OK) {
-			direct.pending = false;
-			return -1;
-		}
-	}
-
-	return 0;
-}
-
-/*
- * Finish a direct transaction: read the interrupt status over SPI (not in the interrupt itself,
- * where the blocking SPI calls are not safe), turn it into the port's status, and hand the result
- * to the link. An empty receive window is not an error, exactly as on the planner path.
- */
-static void direct_drain(uint32_t now_ms)
-{
-	ral_t *ral = direct_radio();
-	ral_irq_t irq = 0;
-	int status = ZLRS_RADIO_FAIL;
-	uint16_t rx_len = 0U;
-	int16_t rssi = 0;
-
-	if (!direct.pending || direct.link == NULL) {
-		return;
-	}
-
-	LOG_INF("direct: drain");
-	direct.pending = false;
-	if (ral == NULL) {
-		zlrs_link_complete(direct.link, ZLRS_RADIO_FAIL, 0U, 0, 0, now_ms);
-		return;
-	}
-
-	if (direct.irq_status != 0U) {
-		irq = (ral_irq_t)direct.irq_status; /* the poll already read and cleared it */
-		direct.irq_status = 0U;
-	} else if (SMTC_SW_PLATFORM(ral_get_and_clear_irq_status(ral, &irq)) != RAL_STATUS_OK) {
-		zlrs_link_complete(direct.link, ZLRS_RADIO_FAIL, 0U, 0, 0, now_ms);
-		return;
-	}
-
-	if ((uint32_t)irq != 0U) {
-		direct_last_nonzero = (uint32_t)irq;
-	}
-
-	if ((irq & RAL_IRQ_TX_DONE) != 0U) {
-		direct_tx_done++;
-		status = ZLRS_RADIO_OK;
-		diag.tx_us_last = (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64()) - direct.submit_us;
-	} else if ((irq & RAL_IRQ_RX_DONE) != 0U) {
-		ral_flrc_rx_pkt_status_t pkt = { 0 };
-
-		direct_rx_pkt++;
-
-		status = ZLRS_RADIO_OK;
-		if (direct.req == NULL ||
-		    SMTC_SW_PLATFORM(ral_get_pkt_payload(ral, direct.req->max_rx_size,
-							 direct.req->buf, &rx_len)) !=
-		    RAL_STATUS_OK) {
-			status = ZLRS_RADIO_FAIL;
-		}
-		if (SMTC_SW_PLATFORM(ral_get_flrc_rx_pkt_status(ral, &pkt)) == RAL_STATUS_OK) {
-			rssi = pkt.rssi_sync_in_dbm;
-		}
-		diag.rx_windows++;
-		diag.rx_us_last = (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64()) - direct.submit_us;
-	} else if ((irq & RAL_IRQ_RX_TIMEOUT) != 0U) {
-		/* An empty window: the transaction did its job, there was just nothing on the air */
-		direct_rx_timeout++;
-		status = ZLRS_RADIO_OK;
-		diag.rx_windows++;
-		diag.rx_us_last = (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64()) - direct.submit_us;
-	} else {
-		direct_no_status++;
-		direct_needs_reset = true;
-		diag.rx_windows++;
-	}
-
-	zlrs_link_complete(direct.link, status, rx_len, rssi, 0, now_ms);
-}
-
-static int direct_port_submit(void *ctx, const zlrs_radio_req_t *req)
-{
-	ARG_UNUSED(ctx);
-
-	return direct_submit(req);
-}
-
-/*
- * The data link's entry point: run the transaction on the direct path when the bench has switched
- * it on, otherwise on the planner. Both are complete backends, so the switch is a plain A/B.
- */
-static int data_port_submit(void *ctx, const zlrs_radio_req_t *req)
-{
-	if (direct_enabled) {
-		return direct_port_submit(ctx, req);
-	}
-
-	return port_submit(ctx, req);
-}
-
-static const zlrs_radio_ops_t control_ops = {
-	.submit = port_submit,
-	.random = port_random,
-	.ctx = &control_client,
-};
-
-/* Which of the two paths the data link takes is a runtime choice, see direct_enabled */
-static const zlrs_radio_ops_t data_ops = {
-	.submit = data_port_submit,
-	.random = port_random,
-	.ctx = &data_client,
-};
-
-const zlrs_radio_ops_t *zlrs_port_radio_control_ops(void)
-{
-	return &control_ops;
-}
-
-const zlrs_radio_ops_t *zlrs_port_radio_data_ops(void)
-{
-	return &data_ops;
-}
 
 /* Rate tiers: since v1.1 the raw rate and bandwidth share one enum, see doc/06-radio.md */
 static ral_flrc_raw_bit_rate_t raw_bit_rate(uint32_t rate_bps)
@@ -561,41 +112,6 @@ static ral_lora_bw_t lora_bw(uint32_t bw_hz)
 	}
 }
 
-/*
- * Parameters of a LoRa transaction. The sync word is one byte (derived by the link layer from
- * the pairing key, top bit as the private bit, see derive_pair in core/link/link.c). RAC declares
- * it as an enum but passes the byte through; the driver only requires the top 4 bits to be non-zero.
- */
-static void fill_lora_params(smtc_rac_context_t *rac, const zlrs_radio_req_t *req)
-{
-	static const uint8_t lora_default_sync = LORA_PRIVATE_NETWORK_SYNCWORD;
-
-	rac->radio_params.lora.is_tx = req->is_tx;
-	rac->radio_params.lora.is_ranging_exchange = false;
-	rac->radio_params.lora.frequency_in_hz = req->freq_hz;
-	rac->radio_params.lora.sf = (ral_lora_sf_t)req->mod.sf;
-	rac->radio_params.lora.bw = lora_bw(req->mod.bw_hz);
-	rac->radio_params.lora.cr =
-		(ral_lora_cr_t)((req->mod.cr >= 1U && req->mod.cr <= 4U) ? req->mod.cr : 1U);
-	rac->radio_params.lora.preamble_len_in_symb = req->mod.preamble;
-	rac->radio_params.lora.header_type = RAL_LORA_PKT_EXPLICIT;
-	rac->radio_params.lora.invert_iq_is_on = 0U;
-	rac->radio_params.lora.crc_is_on = 1U;
-	/*
-	 * While pairing there is no pairing key yet, so no sync word can be derived and a fixed value
-	 * has to do: pairing frames use it, and no leftover derivation from the previous pair leaks in.
-	 */
-	rac->radio_params.lora.sync_word =
-		(req->mod.sync_byte != 0U && req->sync_slot != ZLRS_SYNC_SLOT_PAIRING)
-			? (smtc_rac_lora_syncword_t)req->mod.sync_byte
-			: (smtc_rac_lora_syncword_t)lora_default_sync;
-	rac->radio_params.lora.tx_power_in_dbm = (uint8_t)req->tx_power_dbm;
-	rac->radio_params.lora.tx_size = req->size;
-	rac->radio_params.lora.rx_timeout_ms = req->timeout_ms;
-	rac->radio_params.lora.symb_nb_timeout = 0U;
-	rac->radio_params.lora.max_rx_size = req->max_rx_size;
-}
-
 static ral_flrc_rx_match_sync_word_t rx_match_syncword(uint8_t slot)
 {
 	switch (slot) {
@@ -608,202 +124,284 @@ static ral_flrc_rx_match_sync_word_t rx_match_syncword(uint8_t slot)
 	}
 }
 
-/* Report a failing transaction once: it fails every frame, more log lines help nobody */
-static bool radio_fail_logged;
-
-static void client_complete(rac_client_t *client, rp_status_t status)
+static uint32_t port_random(void *ctx)
 {
-	const uint32_t now_us = (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64());
-	const uint32_t took_us = now_us - client->submit_us;
+	ARG_UNUSED(ctx);
+	return sys_rand32_get();
+}
 
-	if (took_us > diag.wait_us_max) {
-		diag.wait_us_max = took_us;
+static void radio_irq(const struct device *dev)
+{
+	ARG_UNUSED(dev);
+	if (pending && !irq_pending) {
+		irq_us = zlrs_slot_timer_now_us();
+		irq_pending = true;
 	}
-
-	client->status = ZLRS_RADIO_OK;
-	client->rx_len = 0U;
-	client->rssi = 0;
-	client->snr = 0;
-
-	switch (status) {
-	case RP_STATUS_TX_DONE:
-	case RP_STATUS_RX_TIMEOUT:
-		/* An empty receive window is not an error */
-		break;
-	case RP_STATUS_RX_PACKET:
-		client->rx_len = client->ctx->smtc_rac_data_result.rx_size;
-		client->rssi = client->ctx->smtc_rac_data_result.rssi_result;
-		/* USP leaves SNR unset under FLRC (only LoRa provides it), pass it on as-is */
-		client->snr = client->ctx->smtc_rac_data_result.snr_result;
-		break;
-	default:
-		client->status = ZLRS_RADIO_FAIL;
-		/* First time only: a failing transaction repeats every frame and would flood the log */
-		if (!radio_fail_logged) {
-			radio_fail_logged = true;
-			LOG_ERR("radio transaction failed (rp_status %d)", (int)status);
-		}
-		break;
-	}
-
-	if (client->is_tx) {
-		diag.tx_us_last = took_us;
-	} else {
-		diag.rx_us_last = took_us;
-		diag.rx_windows++;
-		/* A packet ends the window early; anything else this far in is an early close */
-		if (client->rx_len == 0U &&
-		    took_us + 500U < (uint32_t)client->timeout_ms * 1000U) {
-			diag.rx_early++;
-		}
-	}
-
-	client->done = true;
 	k_sem_give(&done_sem);
 }
 
-static void control_post(rp_status_t status)
+void zlrs_port_radio_wake(void)
 {
-	client_complete(&control_client, status);
+	k_sem_give(&done_sem);
 }
 
-static void data_post(rp_status_t status)
+void zlrs_port_radio_slot(uint32_t tx_us, uint32_t end_us)
 {
-	client_complete(&data_client, status);
-}
-
-static int client_open(rac_client_t *client, uint8_t priority, void (*post)(rp_status_t),
-		       zlrs_link_t *link)
-{
-	client->access_id = SMTC_SW_PLATFORM(smtc_rac_open_radio(priority));
-	client->ctx = smtc_rac_get_context(client->access_id);
-	client->link = link;
-
-	if (client->ctx == NULL) {
-		LOG_ERR("RAC client open failed (priority %u)", priority);
-		return -1;
+	tx_at_us = tx_us;
+	slot_end_us = end_us;
+	timed_slot = end_us != 0U;
+	if (timed_slot) {
+		zlrs_slot_timer_deadline(end_us);
 	}
+}
 
-	client->ctx->modulation_type = SMTC_RAC_MODULATION_FLRC;
-	client->ctx->scheduler_config.scheduling = SMTC_RAC_ASAP_TRANSACTION;
-	client->ctx->scheduler_config.callback_pre_radio_transaction = NULL;
-	client->ctx->scheduler_config.callback_post_radio_transaction = post;
+static void make_flrc(const zlrs_mod_cfg_t *mod, uint16_t len, ralf_params_flrc_t *cfg)
+{
+	memset(cfg, 0, sizeof(*cfg));
+	cfg->mod_params.raw_bit_rate = raw_bit_rate(mod->rate_bps);
+	cfg->mod_params.cr = RAL_FLRC_CR_3_4;
+	cfg->mod_params.pulse_shape = RAL_FLRC_PULSE_SHAPE_BT_05;
+	cfg->pkt_params.preamble_len = preamble_len(CONFIG_ZLRS_APP_FLRC_PREAMBLE_BITS);
+	cfg->pkt_params.sync_word_len = RAL_FLRC_SYNCWORD_LENGTH_4_BYTES;
+	cfg->pkt_params.pld_is_fix = false;
+	cfg->pkt_params.pld_len_in_bytes = len;
+	cfg->pkt_params.crc_type = RAL_FLRC_CRC_2_BYTES;
+}
 
-	/* FLRC parameters shared by every transaction */
-	client->ctx->radio_params.flrc.pld_is_fix = false;
-	client->ctx->radio_params.flrc.crc_type = RAL_FLRC_CRC_2_BYTES;
-	client->ctx->radio_params.flrc.crc_seed = 0U;
-	client->ctx->radio_params.flrc.crc_polynomial = 0U;
-	client->ctx->radio_params.flrc.pulse_shape = RAL_FLRC_PULSE_SHAPE_BT_05;
-	client->ctx->radio_params.flrc.preamble_len =
-		preamble_len(CONFIG_ZLRS_APP_FLRC_PREAMBLE_BITS);
-	client->ctx->radio_params.flrc.sync_word_len = RAL_FLRC_SYNCWORD_LENGTH_4_BYTES;
+uint32_t zlrs_port_radio_airtime_us(const zlrs_mod_cfg_t *mod, uint16_t len)
+{
+	if (mod->modulation == ZLRS_MOD_FLRC) {
+		ralf_params_flrc_t cfg;
 
+		make_flrc(mod, len, &cfg);
+		return ral_get_flrc_time_on_air_in_us(&radio.ral, &cfg.pkt_params, &cfg.mod_params);
+	}
+	return zlrs_mod_airtime_us(mod, len);
+}
+
+static int setup_tx_power(const zlrs_radio_req_t *req)
+{
+	if (!tx_cfg_valid || tx_cfg_power != req->tx_power_dbm ||
+	    (tx_cfg_freq >= 1500000000U) != (req->freq_hz >= 1500000000U)) {
+		if (ral_set_tx_cfg(&radio.ral, req->tx_power_dbm, req->freq_hz) != RAL_STATUS_OK) {
+			return -EIO;
+		}
+		tx_cfg_valid = true;
+		tx_cfg_freq = req->freq_hz;
+		tx_cfg_power = req->tx_power_dbm;
+	}
 	return 0;
+}
+
+static int setup_frequency(uint32_t freq_hz)
+{
+	lr20xx_radio_common_rx_path_t path;
+	lr20xx_radio_common_rx_path_boost_mode_t boost;
+
+	ral_lr20xx_bsp_get_rx_cfg(radio.ral.context, freq_hz, &path, &boost);
+	/* Select the band before changing frequency, avoiding calibration on the old RX path. */
+	if (lr20xx_radio_common_set_rx_path(radio.ral.context, path, boost) != LR20XX_STATUS_OK ||
+	    lr20xx_radio_common_set_rf_freq(radio.ral.context, freq_hz) != LR20XX_STATUS_OK) {
+		return -EIO;
+	}
+	return 0;
+}
+
+static int setup_flrc(const zlrs_radio_req_t *req)
+{
+	ralf_params_flrc_t cfg;
+	const bool full = !cfg_valid || configured_type != RAL_PKT_TYPE_FLRC;
+
+	make_flrc(&req->mod, req->is_tx ? req->size : req->max_rx_size, &cfg);
+	cfg.rf_freq_in_hz = req->freq_hz;
+	cfg.pkt_params.tx_syncword = tx_syncword(req->sync_slot);
+	cfg.pkt_params.match_sync_word = rx_match_syncword(req->sync_slot);
+
+	/* Packet type, modem, frequency, packet format and sync words have separate lifetimes. */
+	cfg_valid = false;
+	if (full && ral_set_pkt_type(&radio.ral, RAL_PKT_TYPE_FLRC) != RAL_STATUS_OK) {
+		return -EIO;
+	}
+	if ((full || cfg.rf_freq_in_hz != flrc_cfg.rf_freq_in_hz) &&
+	    setup_frequency(cfg.rf_freq_in_hz) != 0) {
+		return -EIO;
+	}
+	if ((full || memcmp(&cfg.mod_params, &flrc_cfg.mod_params, sizeof(cfg.mod_params)) != 0) &&
+	    ral_set_flrc_mod_params(&radio.ral, &cfg.mod_params) != RAL_STATUS_OK) {
+		return -EIO;
+	}
+	if ((full || memcmp(&cfg.pkt_params, &flrc_cfg.pkt_params, sizeof(cfg.pkt_params)) != 0) &&
+	    ral_set_flrc_pkt_params(&radio.ral, &cfg.pkt_params) != RAL_STATUS_OK) {
+		return -EIO;
+	}
+	if (full && ral_set_flrc_crc_params(&radio.ral, 0U, 0U) != RAL_STATUS_OK) {
+		return -EIO;
+	}
+	const uint8_t id = (uint8_t)req->sync_slot - 1U;
+
+	if (id >= 3U) {
+		return -EINVAL;
+	}
+	if ((full || !sync_valid[id] ||
+	     memcmp(sync_words[id], req->sync_word, ZLRS_SYNC_WORD_LEN) != 0) &&
+	    ral_set_flrc_sync_word(&radio.ral, id + 1U, req->sync_word,
+				   RAL_FLRC_SYNCWORD_LENGTH_4_BYTES) != RAL_STATUS_OK) {
+		return -EIO;
+	}
+	if (full) {
+		/* Other slots must be rewritten when they next become active. */
+		memset(sync_valid, 0, sizeof(sync_valid));
+	}
+	memcpy(sync_words[id], req->sync_word, ZLRS_SYNC_WORD_LEN);
+	sync_valid[id] = true;
+	flrc_cfg = cfg;
+	configured_type = RAL_PKT_TYPE_FLRC;
+	cfg_valid = true;
+	return setup_tx_power(req);
+}
+
+static int setup_lora(const zlrs_radio_req_t *req)
+{
+	ralf_params_lora_t cfg = {0};
+
+	cfg.mod_params.sf = (ral_lora_sf_t)req->mod.sf;
+	cfg.mod_params.bw = lora_bw(req->mod.bw_hz);
+	cfg.mod_params.cr = (ral_lora_cr_t)req->mod.cr;
+	cfg.pkt_params.preamble_len_in_symb = req->mod.preamble;
+	cfg.pkt_params.header_type = RAL_LORA_PKT_EXPLICIT;
+	cfg.pkt_params.pld_len_in_bytes = req->is_tx ? req->size : req->max_rx_size;
+	cfg.pkt_params.crc_is_on = true;
+	cfg.rf_freq_in_hz = req->freq_hz;
+	cfg.output_pwr_in_dbm = req->tx_power_dbm;
+	cfg.sync_word = req->mod.sync_byte != 0U && req->sync_slot != ZLRS_SYNC_SLOT_PAIRING
+				? req->mod.sync_byte
+				: 0x12U;
+	cfg_valid = false;
+	tx_cfg_valid = false;
+	return ralf_setup_lora(&radio, &cfg) == RAL_STATUS_OK ? 0 : -EIO;
+}
+
+struct radio_client {
+	zlrs_link_t *link;
+};
+static struct radio_client control_client;
+static struct radio_client data_client;
+
+static int port_submit(void *ctx, const zlrs_radio_req_t *req)
+{
+	const uint32_t start = zlrs_slot_timer_now_us();
+	ral_irq_t stale = 0;
+	int rc;
+
+	if (pending || req == NULL) {
+		return -EBUSY;
+	}
+	rx_timing_valid = false;
+	owner = ((struct radio_client *)ctx)->link;
+	request = req;
+	k_sem_reset(&done_sem);
+	if (ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC) != RAL_STATUS_OK ||
+	    ral_get_and_clear_irq_status(&radio.ral, &stale) != RAL_STATUS_OK) {
+		return -EIO;
+	}
+	if ((stale & (RAL_IRQ_CMD_ERROR | RAL_IRQ_ERROR)) != 0U) {
+		(void)lr20xx_system_get_errors(radio.ral.context, &diag.chip_errors);
+		diag.chip_error_freq_hz = flrc_cfg.rf_freq_in_hz;
+		(void)lr20xx_system_clear_errors(radio.ral.context);
+	}
+	if (stale != 0U) {
+		diag.stale_irq++;
+		diag.stale_irq_bits = stale;
+	}
+	rc = req->mod.modulation == ZLRS_MOD_FLRC ? setup_flrc(req) : setup_lora(req);
+	if (rc != 0) {
+		return rc;
+	}
+	if (ral_set_dio_irq_params(&radio.ral, RAL_IRQ_TX_DONE | RAL_IRQ_RX_DONE |
+						       RAL_IRQ_RX_TIMEOUT | RAL_IRQ_RX_HDR_ERROR |
+						       RAL_IRQ_RX_CRC_ERROR) != RAL_STATUS_OK) {
+		return -EIO;
+	}
+	/* Aborted TX leaves bytes in the FIFO. Each request starts with its own packet. */
+	if (req->is_tx && (lr20xx_radio_fifo_clear_tx(radio.ral.context) != LR20XX_STATUS_OK ||
+			   ral_set_pkt_payload(&radio.ral, req->buf, req->size) != RAL_STATUS_OK)) {
+		return -EIO;
+	}
+	diag.submit_us_last = zlrs_slot_timer_now_us() - start;
+	diag.submit_us_max = MAX(diag.submit_us_max, diag.submit_us_last);
+	if (timed_slot) {
+		if (req->is_tx) {
+			/* TX has a fixed launch point; receivers configure before it. */
+			if ((int32_t)(zlrs_slot_timer_now_us() - tx_at_us) > 100) {
+				diag.late_starts++;
+				diag.launch_late_us_last = zlrs_slot_timer_now_us() - tx_at_us;
+				diag.launch_late_us_max =
+					MAX(diag.launch_late_us_max, diag.launch_late_us_last);
+				return -ETIME;
+			}
+			if ((int32_t)(tx_at_us + ZLRS_RADIO_STARTUP_US +
+				      zlrs_port_radio_airtime_us(&req->mod, req->size) -
+				      slot_end_us) >= 0) {
+				return -EMSGSIZE;
+			}
+			zlrs_slot_timer_wait_until(tx_at_us);
+		}
+		if ((int32_t)(zlrs_slot_timer_now_us() - slot_end_us) >= 0) {
+			return -ETIME;
+		}
+	}
+	begin_us = zlrs_slot_timer_now_us();
+	irq_pending = false;
+	pending = true;
+	diag.transactions++;
+	rc = req->is_tx ? ral_set_tx(&radio.ral) : ral_set_rx(&radio.ral, 0U);
+	if (rc != RAL_STATUS_OK) {
+		pending = false;
+		return -EIO;
+	}
+	return 0;
+}
+
+static const zlrs_radio_ops_t control_port = {
+	.submit = port_submit,
+	.random = port_random,
+	.ctx = &control_client,
+};
+static const zlrs_radio_ops_t data_port = {
+	.submit = port_submit,
+	.random = port_random,
+	.ctx = &data_client,
+};
+
+const zlrs_radio_ops_t *zlrs_port_radio_control_ops(void)
+{
+	return &control_port;
+}
+
+const zlrs_radio_ops_t *zlrs_port_radio_data_ops(void)
+{
+	return &data_port;
 }
 
 int zlrs_port_radio_init(zlrs_link_t *control, zlrs_link_t *data)
 {
-	if (client_open(&control_client, RAC_HIGH_PRIORITY, control_post, control) != 0) {
-		return -1;
+	if (!device_is_ready(transceiver)) {
+		return -ENODEV;
 	}
-	if (client_open(&data_client, RAC_MEDIUM_PRIORITY, data_post, data) != 0) {
-		return -1;
+	control_client.link = control;
+	data_client.link = data;
+	if (ral_reset(&radio.ral) != RAL_STATUS_OK || ral_init(&radio.ral) != RAL_STATUS_OK ||
+	    ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC) != RAL_STATUS_OK ||
+	    ral_set_rx_tx_fallback_mode(&radio.ral, RAL_FALLBACK_FS) != RAL_STATUS_OK ||
+	    ral_clear_irq_status(&radio.ral, RAL_IRQ_ALL) != RAL_STATUS_OK ||
+	    ral_set_dio_irq_params(&radio.ral, RAL_IRQ_TX_DONE | RAL_IRQ_RX_DONE |
+						       RAL_IRQ_RX_TIMEOUT | RAL_IRQ_RX_HDR_ERROR |
+						       RAL_IRQ_RX_CRC_ERROR) != RAL_STATUS_OK) {
+		return -EIO;
 	}
-	direct.link = data;
-#if IS_ENABLED(CONFIG_ZLRS_APP_DIRECT_AT_BOOT)
-	/* Bench: take the direct path from the first frame, no console command involved */
-	direct_requested = true;
-#endif
-
-	/*
-	 * One IRQ line, two owners: the router hands it to whichever backend has a transaction in
-	 * flight. It replaces the callback smtc_rac_init() installed for the planner, which the
-	 * router calls itself when the control link is the one waiting.
-	 */
-	smtc_modem_hal_irq_config_radio_irq(radio_irq_router, NULL);
-
-	LOG_INF("radio port ready: control id=%u, data id=%u (planner; `zlrs direct on` switches "
-		"the data link to the direct path)", control_client.access_id, data_client.access_id);
-
-	return 0;
-}
-
-static int port_submit(void *ctx, const zlrs_radio_req_t *req)
-{
-	rac_client_t *client = ctx;
-	smtc_rac_context_t *rac = client->ctx;
-	const uint32_t t0 = (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64());
-
-	drain_radio_irq();
-	const uint32_t t1 = (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64());
-
-	diag.transactions++;
-	client->submit_us = t1;
-	client->timeout_ms = req->timeout_ms;
-	client->is_tx = req->is_tx;
-	diag.submit_drain_us = t1 - t0;
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
-	/*
-	 * Bench probe: the same read again, with the radio already awake. The gap between the two is
-	 * the wake-up, and it is what makes one SPI access cost a millisecond.
-	 */
-	drain_radio_irq();
-	diag.submit_drain2_us = (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64()) - t1;
-#endif
-
-	rac->smtc_rac_data_buffer_setup.tx_payload_buffer = req->buf;
-	rac->smtc_rac_data_buffer_setup.size_of_tx_payload_buffer = req->size;
-	rac->smtc_rac_data_buffer_setup.rx_payload_buffer = req->buf;
-	rac->smtc_rac_data_buffer_setup.size_of_rx_payload_buffer = req->max_rx_size;
-
-	/*
-	 * Modulation is per link: control may run the LoRa long-range tier, data is always FLRC.
-	 * See doc/07-architecture.md 3.
-	 */
-	if (req->mod.modulation == (uint8_t)ZLRS_MOD_LORA) {
-		rac->modulation_type = SMTC_RAC_MODULATION_LORA;
-		fill_lora_params(rac, req);
-	} else {
-		rac->modulation_type = SMTC_RAC_MODULATION_FLRC;
-		rac->radio_params.flrc.is_tx = req->is_tx;
-		rac->radio_params.flrc.tx_size = req->size;
-		rac->radio_params.flrc.max_rx_size = req->max_rx_size;
-		rac->radio_params.flrc.frequency_in_hz = req->freq_hz;
-		rac->radio_params.flrc.tx_power_in_dbm = req->tx_power_dbm;
-		rac->radio_params.flrc.raw_bit_rate = raw_bit_rate(req->mod.rate_bps);
-		rac->radio_params.flrc.cr = RAL_FLRC_CR_3_4;
-		rac->radio_params.flrc.tx_syncword_index = tx_syncword(req->sync_slot);
-		rac->radio_params.flrc.match_sync_word = rx_match_syncword(req->sync_slot);
-		/* One pointer per sync word slot; only the one this transaction uses is filled in */
-		for (uint8_t i = 0U; i < 3U; i++) {
-			rac->radio_params.flrc.sync_word[i] = NULL;
-		}
-		if (req->sync_slot >= ZLRS_SYNC_SLOT_CONTROL &&
-		    req->sync_slot <= ZLRS_SYNC_SLOT_PAIRING) {
-			rac->radio_params.flrc.sync_word[req->sync_slot - 1U] = req->sync_word;
-		}
-		rac->radio_params.flrc.rx_timeout_ms = req->timeout_ms;
-	}
-
-	rac->scheduler_config.start_time_ms = smtc_modem_hal_get_time_in_ms();
-
-	client->done = false;
-
-	if (SMTC_SW_PLATFORM(smtc_rac_submit_radio_transaction(client->access_id)) !=
-	    SMTC_RAC_SUCCESS) {
-		return -1;
-	}
-
-	{
-		const uint32_t t2 = (uint32_t)k_cyc_to_us_floor64(k_cycle_get_64());
-
-		diag.submit_rac_us = t2 - t1;
-		if ((t2 - t0) > diag.submit_us_max) {
-			diag.submit_us_max = t2 - t0;
-		}
-	}
-
+	lora_transceiver_board_attach_interrupt(transceiver, radio_irq);
+	lora_transceiver_board_enable_interrupt(transceiver);
+	LOG_INF("LR2021 ready: exclusive RAL driver, hardware slot timer");
 	return 0;
 }
 
@@ -814,103 +412,92 @@ int zlrs_port_radio_wait_us(uint32_t timeout_us)
 
 bool zlrs_port_radio_irq_pending(void)
 {
-	if (direct.pending) {
-		/*
-		 * Ask the radio itself whether the transaction finished. Relying on the DIO interrupt
-		 * alone left every direct transaction timing out with nothing on air (the counter was
-		 * exactly the wait budget), so the status register is polled here as well: one SPI read
-		 * per pass, tens of microseconds, and the completion no longer depends on the DIO path.
-		 */
-		ral_t *ral = direct_radio();
-		ral_irq_t irq = 0;
-
-		if (direct.irq) {
-			return true;
-		}
-		if (ral != NULL &&
-		    RAL_STATUS_OK == SMTC_SW_PLATFORM(ral_get_and_clear_irq_status(ral, &irq)) &&
-		    (uint32_t)irq != 0U) {
-			direct.irq_status = (uint32_t)irq;
-			direct.irq = true;
-			direct_poll_hits++;
-			return true;
-		}
-
-		return false;
-	}
-
-	return smtc_rac_is_irq_flag_pending();
+	return pending && irq_pending;
 }
 
-bool zlrs_port_radio_direct_busy(void)
+bool zlrs_port_radio_rx_timing(uint32_t *done_us, uint32_t *airtime_us)
 {
-	return direct.pending;
-}
-
-static void drain_client(rac_client_t *client, uint32_t now_ms)
-{
-	if (!client->done || client->link == NULL) {
-		return;
-	}
-
-	client->done = false;
-
-	/* The next transaction can overwrite the result, so hand it over as soon as it is read */
-	zlrs_link_complete(client->link, client->status, client->rx_len, client->rssi, client->snr,
-			   now_ms);
+	*done_us = rx_done_us;
+	*airtime_us = rx_airtime_us;
+	return rx_timing_valid;
 }
 
 void zlrs_port_radio_drain(void)
 {
-	const uint32_t now_ms = zlrs_port_radio_now_ms();
+	ral_irq_t irq = 0;
+	uint16_t len = 0U;
+	int16_t rssi = 0;
+	int8_t snr = 0;
+	int status = ZLRS_RADIO_FAIL;
 
-	/*
-	 * A transaction that just closed has had its IRQ consumed by the planner; anything latched
-	 * here arrived outside a transaction, which is exactly the condition the engine reports with
-	 * "no more task activated". Counting it shows whether that trace has a real source.
-	 */
-	if (smtc_rac_is_irq_flag_pending()) {
-		diag.late_irq++;
+	if (!pending || !irq_pending) {
+		return;
 	}
+	const uint32_t event_us = irq_us;
 
-	drain_client(&control_client, now_ms);
-	drain_client(&data_client, now_ms);
-	direct_drain(now_ms);
+	irq_pending = false;
+	if (ral_get_and_clear_irq_status(&radio.ral, &irq) != RAL_STATUS_OK) {
+		return;
+	}
+	if (irq == 0U) {
+		diag.empty_irq++;
+		return;
+	}
+	diag.irq_last = irq;
+	if (request->is_tx && (irq & RAL_IRQ_TX_DONE) != 0U) {
+		status = ZLRS_RADIO_OK;
+		diag.tx_done++;
+		diag.tx_us_last = event_us - begin_us;
+	} else if (!request->is_tx && (irq & (RAL_IRQ_RX_HDR_ERROR | RAL_IRQ_RX_CRC_ERROR)) == 0U &&
+		   (irq & RAL_IRQ_RX_DONE) != 0U) {
+		if (ral_get_pkt_payload(&radio.ral, request->max_rx_size, request->buf, &len) ==
+		    RAL_STATUS_OK) {
+			status = ZLRS_RADIO_OK;
+			diag.rx_packets++;
+			rx_done_us = event_us;
+			rx_airtime_us = zlrs_port_radio_airtime_us(&request->mod, len);
+			rx_timing_valid = true;
+		}
+		if (request->mod.modulation == ZLRS_MOD_FLRC) {
+			ral_flrc_rx_pkt_status_t pkt;
+
+			if (ral_get_flrc_rx_pkt_status(&radio.ral, &pkt) == RAL_STATUS_OK) {
+				rssi = pkt.rssi_sync_in_dbm;
+			}
+		} else {
+			ral_lora_rx_pkt_status_t pkt;
+
+			if (ral_get_lora_rx_pkt_status(&radio.ral, &pkt) == RAL_STATUS_OK) {
+				rssi = pkt.rssi_pkt_in_dbm;
+				snr = pkt.snr_pkt_in_db;
+			}
+		}
+		diag.rx_us_last = event_us - begin_us;
+		diag.rx_windows++;
+	}
+	(void)ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC);
+	pending = false;
+	zlrs_link_complete(owner, status, len, rssi, snr, zlrs_port_radio_now_ms());
 }
 
 void zlrs_port_radio_abort(void)
 {
-	ral_t *ral = direct_radio();
-
+	(void)ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC);
+	pending = false;
+	irq_pending = false;
+	ral_irq_t discarded;
+	(void)ral_get_and_clear_irq_status(&radio.ral, &discarded);
+	k_sem_reset(&done_sem);
+	timed_slot = false;
 	diag.overruns++;
+}
 
-	/*
-	 * Direct transaction: take the radio out of whatever it is doing and forget the interrupt it
-	 * may still raise, so the next slot does not start on top of a stale status.
-	 */
-	if (direct.pending) {
-		direct.pending = false;
-		if (ral != NULL) {
-			(void)SMTC_SW_PLATFORM(ral_set_standby(ral, RAL_STANDBY_CFG_RC));
-			(void)SMTC_SW_PLATFORM(ral_clear_irq_status(ral, RAL_IRQ_ALL));
-		}
-	}
-
-	(void)SMTC_SW_PLATFORM(smtc_rac_abort_radio_submit(control_client.access_id));
-	(void)SMTC_SW_PLATFORM(smtc_rac_abort_radio_submit(data_client.access_id));
-
-	/*
-	 * Drop any completion the aborted transaction still owes: it would otherwise wake the next
-	 * wait, which would take "the semaphore was given" for "my transaction finished" and skip the
-	 * finish path on a request that never completed.
-	 */
-	control_client.done = false;
-	data_client.done = false;
-	while (k_sem_take(&done_sem, K_NO_WAIT) == 0) {
-	}
+void zlrs_port_radio_diag(zlrs_port_radio_diag_t *out)
+{
+	*out = diag;
 }
 
 uint32_t zlrs_port_radio_now_ms(void)
 {
-	return smtc_modem_hal_get_time_in_ms();
+	return k_uptime_get_32();
 }

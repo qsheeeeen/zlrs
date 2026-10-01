@@ -9,7 +9,7 @@ A debug image is a normal build plus two files:
 
 | File | Contents |
 | --- | --- |
-| `app/debug.conf` | sets `CONFIG_ZLRS_APP_DEBUG=y`, then enables the console CDC, the shell, immediate logging, asserts and the watchdog |
+| `app/debug.conf` | sets `CONFIG_ZLRS_APP_DEBUG=y`, then enables the console CDC, the shell, deferred logging, asserts and the watchdog |
 | `app/debug.overlay` | adds a console CDC (`cdc_acm_uart3`) to the devicetree and points `zephyr,console` / `zephyr,shell-uart` at it |
 
 ```shell
@@ -40,7 +40,7 @@ quietly end up in a released image.
 | `CONFIG_ZLRS_APP_BENCH_RAW_MS` | the first N ms after boot skip the superframe: the TX role sends complete frames back to back, the RX role opens 100 ms receive windows back to back, and both log frames per second |
 | `CONFIG_ZLRS_APP_DEBUG_BOOT_DELAY_MS` | wait that long after USB is up before continuing init, so a panic during init is visible on an open console |
 | `CONFIG_ZLRS_APP_DEBUG_LED_BRIGHTNESS_PERCENT` | attenuate the status pixel in a debug image (the default is 20%); production images keep the normal LED levels |
-| `CONFIG_ZLRS_APP_DIRECT_AT_BOOT` | put the data link on the direct FLRC backend from the first frame (the runtime equivalent is `zlrs direct on`); see 6 |
+| `CONFIG_ZLRS_APP_TX_GUARD_US` | fixed delay from hardware slot boundary to SET_TX; both peers must use the same timing settings |
 
 The shell is gated by `CONFIG_ZLRS_APP_DEBUG_SHELL` and runs on the console CDC; the supported
 configuration paths are in [10-security](10-security.md) 9 and [08-firmware](08-firmware.md) 3.
@@ -272,32 +272,25 @@ One line each; details live in code comments.
   (uptime restarts). Detach and attach only when the port is really missing, and expect the first
   few seconds of console output to be boot noise.
 
-## 6. The direct FLRC experiment
+## 6. Hardware timer and independent RAL driver
 
-The planner path costs milliseconds per transaction: it programs the radio per slot, sleeps it
-between transactions and pays the HAL's wake-up (5), against a slot budget that is a quarter of a
-frame. The vendor's direct-driver-access path exists for exactly that reason — program the radio
-once, keep it awake, start transactions back to back — so the data link has a second backend to
-measure against: `app/src/ports/radio.c` (`direct_submit` / `direct_drain`), switched at runtime
-with `zlrs direct on|off` and at boot with `CONFIG_ZLRS_APP_DIRECT_AT_BOOT` (bench images only).
+Both links use the exclusive RAL driver described in [07-architecture](07-architecture.md) 3.
+`zlrs direct` and runtime `blast` / `listen` commands have been removed; boot-time raw testing
+remains available through `CONFIG_ZLRS_APP_BENCH_RAW_MS`, before the slot owner starts.
 
-What it does today, measured on two boards (A TX, B RX, 2.4G data channel, hopping off, both on the
-direct backend, `CONFIG_ZLRS_APP_BENCH_RAW_MS=8000`):
+`zlrs radio` reports TIMER1 boundaries, maximum IRQ lateness, missed boundaries and skipped
+frames/slots; RAL TX completions, RX packets, setup cost, late launches and chip errors; packet
+build cost and RX phase error/correction. Empty RX windows are expected when the peer is idle.
+The aggregate abort counter includes those windows and is not a TX failure count.
+Normal logs wait in the RAM queue while RF runs; enter management mode to flush them to the
+console and flash. This keeps flash erase/program operations from masking timer IRQs during
+normal traffic. Startup, explicit configuration persistence and panic handling can still delay IRQs.
 
-- the TX side transmits and collects `RAL_IRQ_TX_DONE` for almost every transaction
-  (`tx_done` 371, `no_status` 7 in 8 s, ~46 frames/s before the wait loop was fixed to complete on
-  its own poll),
-- the RX side hears **nothing** (`raw bench: 0 frames`), so the two ends do not agree on air
-  parameters, or the peer's receive window never lands on the frames,
-- and the TX side stops emitting after a few seconds inside a radio call; the watchdog then resets
-  the board. The last line in the log is a `direct: submit`, so the hang is in the SPI/radio access,
-  not in the link layer.
+The slot budget uses the native FLRC airtime calculation (variable header, CRC and coding),
+plus the configured TX guard, a 500 us RF startup allowance and a 100 us end margin. LF CN470
+clamps control PHY to 325 kbps; its control packets cannot fit four equal slots at the requested
+150 Hz with current preparation costs. The application clamps the rate before sizing the data
+MTU. Hardware timer scheduling does not by itself establish throughput acceptance; see
+[13-roadmap](13-roadmap.md) for the pending radio checks.
 
-`zlrs radio` reports what the experiment depends on: `direct irq:` (polls, `tx_done`, `rx_pkt`,
-`rx_timeout`, `no_status`, last non-zero status), `data path:` (which backend the data link uses,
-and how often the switch was deferred) and `direct recovery:` (how often a transaction that
-reported nothing had to be recovered with a standby cycle).
-
-The default is the planner. The backend stays in the tree as an experiment because the measurement
-it produces is the one that decides whether a high-rate link is possible on this radio at all — but
-it is not a product path until the two failures above are understood.
+Previous RAC cost measurements in section 5 are historical measurements of the former backend.

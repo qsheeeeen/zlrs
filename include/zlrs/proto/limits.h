@@ -56,3 +56,6 @@
 
 /* Failsafe values in the management protocol: that same 22-byte CRSF channel payload */
 #define ZLRS_FAILSAFE_LEN ZLRS_RC_PAYLOAD_LEN
+
+/* Pairing payload: endpoint IDs, nonces, profile and failsafe RC channels. */
+#define ZLRS_PAIR_PAYLOAD_LEN (17U + ZLRS_RC_PAYLOAD_LEN)

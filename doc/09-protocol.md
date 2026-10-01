@@ -89,15 +89,25 @@ sync word and derived keys.
 
 ### 3.4 Sessions
 
-1. TX to RX: `SYNC{version, profile, mix, hop, nonce_t}`, authenticated with the pairing-level
+1. TX to RX: `SYNC{version, profile, mix, hop, nonce_t, frame}`, authenticated with the pairing-level
    `link_auth`.
-2. RX to TX: `SESS_RESP{nonce_t, nonce_r}`, also authenticated with `link_auth`; the RX draws
+2. RX to TX: `SESS_RESP{nonce_t, nonce_r, hop, frame}`, also authenticated with `link_auth`; the RX draws
    `nonce_r` now.
-3. TX to RX: `SESS_CFM{nonce_r, hop}` tagged with the **new session key**; the RX adopts the
+3. TX to RX: `SESS_CFM{nonce_r, hop, frame}` tagged with the **new session key**; the RX adopts the
    session only after it verifies.
 
 Session key: `KDF(pair_key, "zlrs/session", nonce_t || nonce_r || sender id || receiver id)`,
 one per direction. Sequence numbers restart at 0 for the session.
+
+SYNC appends a little-endian 32-bit frame counter after `nonce_t` (12-byte payload), and
+SESS_CFM appends it after `hop` (10-byte payload). RX adopts the counter only after authenticated
+session confirmation or an accepted, newer same-session SYNC. This aligns telemetry/data thinning
+and periodic sync windows across independent boot times. The parser accepts older short forms,
+but both peers must upgrade for cadence alignment; replay rejection precedes counter changes.
+SESS_RESP appends hop (16 bits) and frame (32 bits), making a 14-byte payload. Only the debug
+handshake-disabled initiator adopts those fields, so lost responses do not leave its hop count
+behind the responder. For the first 500 ms after connection, both ends keep the uplink on the
+sync channel while normal hop accounting continues; this also leaves room to repeat a lost confirm.
 
 **Why the second nonce is mandatory**: with `nonce_t` alone the key would come entirely from a
 value the TX puts on air, which anyone can replay; mixing in the RX's fresh `nonce_r` means a
@@ -156,8 +166,9 @@ The data link's default mode:
   payload;
 - the receiver answers with a **cumulative ACK** (2-byte sequence plus a flags byte whose bit 0
   asks for a resync);
-- the sender retransmits the head frame after 30 ms (`ZLRS_ARQ_TIMEOUT_MS`, raised to twice the
-  airtime when a frame is slow), up to 64 times (`ZLRS_ARQ_MAX_RETRIES`);
+- the sender retransmits the head frame after at least 30 ms (`ZLRS_ARQ_TIMEOUT_MS`), raised to
+  two actual scheduled data frame periods, including cadence thinning and pacing, up to 64 times
+  (`ZLRS_ARQ_MAX_RETRIES`);
 - after exhausting retries, the sender probes for the receiver's cumulative ACK. Both ends
   retain sequence positions and partial messages; acknowledged fragments may no longer exist
   at the sender. Pending ACKs take priority over probes, including during simultaneous recovery;
@@ -166,6 +177,11 @@ The data link's default mode:
 
 Both peers must use the same recovery semantics. Older firmware treated the probe as a reset
 of the receive sequence and reassembly buffer; upgrade both peers together.
+An idle transmit slot remains idle rather than listening to the opposite direction. After the
+RX data link receives no valid packet for its acquisition sync interval, its A window listens
+on the sync channel until an authenticated periodic SYNC restores frame/hop alignment. The
+session and ARQ receive position are retained; recovery does not require matching the stale
+receiver's resync-frame counter.
 
 Without ARQ (`CONFIG_ZLRS_APP_DATA_ARQ=n`, debug images) the data link is best-effort: bytes are
 dropped and counted when the port rings are full.

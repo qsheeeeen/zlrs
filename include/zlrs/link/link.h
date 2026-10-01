@@ -41,7 +41,7 @@ extern "C" {
  * channel, where a responder that missed the confirm is still repeating its answer, and answers
  * each repeat with another confirm.
  */
-#define ZLRS_SESS_CONFIRM_MS 500U
+#define ZLRS_SESS_CONFIRM_MS  500U
 
 /* Superframe slots, see doc/09-protocol.md 4.1 */
 #define ZLRS_SLOT_CTL_DOWN 0U /* TX -> RX: RC frame (the RX side is a receive window) */
@@ -80,7 +80,7 @@ typedef struct {
 	 */
 	zlrs_mod_cfg_t mod;
 	int8_t tx_power_dbm;
-	uint16_t rx_timeout_ms;   /* one receive window */
+	uint16_t rx_timeout_ms; /* one receive window */
 	/*
 	 * Receive window while pairing or searching (0 = rx_timeout_ms). Acquisition happens before the
 	 * two ends share a slot phase, so it needs a longer window than steady state: a short window
@@ -265,10 +265,11 @@ typedef struct {
 	uint32_t last_rx_ms;
 	uint32_t last_sync_ms;
 	uint32_t last_pair_tx_ms;
-	uint32_t last_pair_rx_ms; /* last PAIR_RESP: tells a repeated answer from a silent responder */
-	bool pair_cfm_pending;    /* TX got PAIR_RESP: PAIR_CFM due in the downlink slots */
-	uint8_t pair_cfm_sent;    /* PAIR_CFM of this handshake already sent */
-	bool pair_wait_cfm;       /* RX answered PAIR_RESP, waiting for PAIR_CFM */
+	uint32_t
+		last_pair_rx_ms; /* last PAIR_RESP: tells a repeated answer from a silent responder */
+	bool pair_cfm_pending;   /* TX got PAIR_RESP: PAIR_CFM due in the downlink slots */
+	uint8_t pair_cfm_sent;   /* PAIR_CFM of this handshake already sent */
+	bool pair_wait_cfm;      /* RX answered PAIR_RESP, waiting for PAIR_CFM */
 	/*
 	 * Simplified handshake (cfg.handshake = 0): the RX enters CONNECTED on a SYNC but keeps
 	 * answering SESS_RESP until the peer's first frame arrives: it may still be SEARCHING.
@@ -279,7 +280,7 @@ typedef struct {
 	uint16_t tx_seq;
 	uint16_t last_rx_seq;
 	uint16_t lq_last_seq;
-	uint16_t frame_index; /* main slots run (CTL_DOWN on control, DATA_A on data) */
+	uint32_t frame_index; /* main slots run (CTL_DOWN on control, DATA_A on data) */
 	zlrs_fhss_t fhss;
 	/* Sub-band mix: current level, table version, default level, last-version timestamp */
 	uint8_t sub_mix;
@@ -330,6 +331,7 @@ typedef struct {
 	bool req_is_tx;
 	bool req_pending;
 	uint8_t slot; /* ZLRS_SLOT_*: the slot the pending transaction serves (stats and logs) */
+	uint32_t slot_ms; /* Current slot time, used for the session-confirm uplink window. */
 } zlrs_link_t;
 
 void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg, const zlrs_radio_ops_t *radio,
@@ -400,6 +402,9 @@ void zlrs_link_set_failsafe(zlrs_link_t *link, const uint8_t *payload, uint16_t 
 
 /* Superframe slot: return the transaction to submit, or NULL when there is none */
 const zlrs_radio_req_t *zlrs_link_slot(zlrs_link_t *link, uint8_t slot, uint32_t now_ms);
+
+/* Advance a missed slot without building a packet, consuming data or changing session state. */
+void zlrs_link_skip_slot(zlrs_link_t *link, uint8_t slot);
 
 /* radio transaction finished */
 void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t rssi, int8_t snr,

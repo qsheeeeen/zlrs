@@ -14,6 +14,7 @@ target_sources(app PRIVATE
   src/link/power.c
   src/link/rate.c
   src/main.c
+  src/platform/slot_timer.c
   src/platform/recovery.c
   src/platform/watchdog.c
   src/ports/radio.c
