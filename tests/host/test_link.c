@@ -119,14 +119,6 @@ static uint32_t fake_random(void *ctx)
 	return next_random(&node->rng);
 }
 
-static int fake_submit(void *ctx, const zlrs_radio_req_t *req)
-{
-	(void)ctx;
-	(void)req;
-
-	return 0;
-}
-
 static void on_rc(void *ctx, const uint8_t *payload, uint16_t len)
 {
 	link_ctx_t *lc = ctx;
@@ -195,11 +187,6 @@ static void on_state(void *ctx, uint8_t state)
 static void node_init(node_t *node, uint8_t role, const uint8_t *root_key,
 		      const uint8_t dev_id[ZLRS_DEV_ID_LEN], uint32_t rng_seed)
 {
-	zlrs_radio_ops_t ops = {
-		.submit = fake_submit,
-		.random = fake_random,
-		.ctx = node,
-	};
 	zlrs_link_cfg_t cfg = {
 		.kind = ZLRS_LINK_CONTROL,
 		.role = role,
@@ -249,8 +236,8 @@ static void node_init(node_t *node, uint8_t role, const uint8_t *root_key,
 	data_cfg.peer_timeout_ms = 0U; /* no peer-loss check on the data link (09-protocol 3.7) */
 	data_cfg.data_mtu = SIM_DATA_MTU;
 
-	zlrs_link_init(&node->ctl, &cfg, &ops, &ctl_ev);
-	zlrs_link_init(&node->data, &data_cfg, &ops, &data_ev);
+	zlrs_link_init(&node->ctl, &cfg, fake_random, node, &ctl_ev);
+	zlrs_link_init(&node->data, &data_cfg, fake_random, node, &data_ev);
 	zlrs_link_set_dev_id(&node->ctl, dev_id);
 	zlrs_link_set_dev_id(&node->data, dev_id);
 

@@ -1,7 +1,7 @@
 /*
  * Management mode: the session the management protocol runs in, and the device commands it carries.
  *
- * The host enters it through the management port (mgmt/port.h); the protocol — framing, command
+ * The host enters it through the dedicated management CDC; the protocol — framing, command
  * dispatch — is core/mgmt and pure C, so every command lands here as a callback. This file is
  * where a command becomes a device action: an NVS write, a pairing, a reboot into recovery
  * (doc/08-firmware.md 2, doc/10-security.md 9).
@@ -29,7 +29,7 @@ typedef struct {
 	uint8_t *failsafe;    /* the application's failsafe payload (ZLRS_FAILSAFE_LEN bytes) */
 	uint8_t *device_id;   /* the identity, replaced by NEW_DEV_ID (ZLRS_DEV_ID_LEN bytes) */
 	uint8_t region_id;    /* the live region: a command persists, it does not switch */
-	int8_t tx_power_dbm;  /* the live TX power: what a region or power command is checked against */
+	int8_t tx_power_dbm; /* the live TX power: what a region or power command is checked against */
 } zlrs_mgmt_ctx_t;
 
 /*
@@ -47,3 +47,7 @@ bool zlrs_mgmt_mode_image_confirmed(void);
 
 /* May this image run that profile? P0 is a debug-image move, P2 is not implemented (08-firmware 4) */
 bool zlrs_mgmt_mode_profile_allowed(uint8_t profile);
+
+/* Dedicated management CDC, initialized and polled directly by the application. */
+int zlrs_mgmt_init(void);
+bool zlrs_mgmt_poll_enter(void);

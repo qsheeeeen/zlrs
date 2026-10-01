@@ -7,6 +7,7 @@
 #include "link/data.h"
 
 #include <zephyr/device.h>
+#include <zephyr/devicetree.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -14,8 +15,6 @@
 
 #include <stdbool.h>
 #include <stddef.h>
-
-#include "ports/serial.h"
 
 LOG_MODULE_REGISTER(zlrs_link_data, CONFIG_APP_LOG_LEVEL);
 
@@ -40,18 +39,35 @@ struct data_ep {
 	bool ready;
 };
 
-static struct data_ep data_eps[ZLRS_PORT_SERIAL_MAX];
-static uint32_t data_ready_ports;
+enum {
+	DATA_UART,
+	DATA_USB
+};
+static struct data_ep data_eps[2] = {
+#if DT_NODE_EXISTS(DT_ALIAS(zlrs_data_uart))
+	[DATA_UART].dev = DEVICE_DT_GET(DT_ALIAS(zlrs_data_uart)),
+#endif
+#if DT_NODE_EXISTS(DT_ALIAS(zlrs_data_cdc))
+	[DATA_USB].dev = DEVICE_DT_GET(DT_ALIAS(zlrs_data_cdc)),
+#endif
+};
 
-static struct data_ep *data_ep_of(const struct device *dev)
+/* USB wins after DTR or four received bytes; otherwise a used UART wins.
+ * Default to USB so a receive-only host does not have to send first. */
+static struct data_ep *data_active(void)
 {
-	for (size_t i = 0U; i < ZLRS_PORT_SERIAL_MAX; i++) {
-		if (data_eps[i].ready && data_eps[i].dev == dev) {
-			return &data_eps[i];
-		}
-	}
+	struct data_ep *const uart = &data_eps[DATA_UART];
+	struct data_ep *const usb = &data_eps[DATA_USB];
+	uint32_t dtr = 0U;
 
-	return NULL;
+	if (!usb->ready) {
+		return uart->ready ? uart : NULL;
+	}
+	if (!uart->ready) {
+		return usb;
+	}
+	(void)uart_line_ctrl_get(usb->dev, UART_LINE_CTRL_DTR, &dtr);
+	return (dtr != 0U || usb->rx_total >= 4U || uart->rx_total < 4U) ? usb : uart;
 }
 
 static void data_isr(const struct device *dev, void *user_data)
@@ -64,8 +80,6 @@ static void data_isr(const struct device *dev, void *user_data)
 			const int n = uart_fifo_read(dev, chunk, sizeof(chunk));
 
 			if (n > 0) {
-				/* Record the evidence first: endpoint choice depends on it, see zlrs_port_serial_active() */
-				zlrs_port_serial_rx_seen(dev, (uint32_t)n);
 				ep->rx_total += (uint32_t)n;
 			}
 
@@ -110,7 +124,7 @@ static void data_ep_drop_rx(struct data_ep *const ep)
 
 void zlrs_link_data_discard_rx(void)
 {
-	for (size_t i = 0U; i < ZLRS_PORT_SERIAL_MAX; i++) {
+	for (size_t i = 0U; i < ARRAY_SIZE(data_eps); i++) {
 		if (data_eps[i].ready) {
 			data_ep_drop_rx(&data_eps[i]);
 		}
@@ -119,17 +133,17 @@ void zlrs_link_data_discard_rx(void)
 
 size_t zlrs_link_data_state(zlrs_link_data_state_t *out, size_t count)
 {
-	const struct device *const active = zlrs_port_serial_active(zlrs_port_serial_data());
+	const struct data_ep *const active = data_active();
 	size_t written = 0U;
 
-	for (size_t i = 0U; (i < ZLRS_PORT_SERIAL_MAX) && (written < count); i++) {
+	for (size_t i = 0U; (i < ARRAY_SIZE(data_eps)) && (written < count); i++) {
 		if (data_eps[i].dev == NULL) {
 			continue;
 		}
 
 		out[written].name = data_eps[i].dev->name;
 		out[written].ready = data_eps[i].ready;
-		out[written].active = (data_eps[i].dev == active);
+		out[written].active = (&data_eps[i] == active);
 		out[written].rx_total = data_eps[i].rx_total;
 		out[written].rx_dropped = data_eps[i].rx_dropped;
 		written++;
@@ -140,9 +154,8 @@ size_t zlrs_link_data_state(zlrs_link_data_state_t *out, size_t count)
 
 int zlrs_link_data_init(uint32_t baud)
 {
-	for (size_t i = 0U; i < ZLRS_PORT_SERIAL_MAX; i++) {
-		const struct device *const dev =
-			zlrs_port_serial_endpoint(zlrs_port_serial_data(), i);
+	for (size_t i = 0U; i < ARRAY_SIZE(data_eps); i++) {
+		const struct device *const dev = data_eps[i].dev;
 
 		if (dev == NULL) {
 			continue; /* alias not wired on this board */
@@ -164,9 +177,6 @@ int zlrs_link_data_init(uint32_t baud)
 
 		ring_buf_init(&data_eps[i].rx, sizeof(data_eps[i].rx_mem), data_eps[i].rx_mem);
 		ring_buf_init(&data_eps[i].tx, sizeof(data_eps[i].tx_mem), data_eps[i].tx_mem);
-		data_eps[i].dev = dev;
-		data_eps[i].ready = true;
-		data_ready_ports++;
 
 		/*
 		 * Must be checked: a driver without IRQ transfers returns -ENOSYS/-ENOTSUP, and ignoring
@@ -176,15 +186,15 @@ int zlrs_link_data_init(uint32_t baud)
 		if (uart_irq_callback_user_data_set(dev, data_isr, &data_eps[i]) != 0) {
 			LOG_ERR("data port %s: RX setup failed; endpoint disabled", dev->name);
 			data_eps[i].ready = false;
-			data_ready_ports--;
 			continue;
 		}
+		data_eps[i].ready = true;
 		uart_irq_rx_enable(dev);
 
 		LOG_INF("data port ready (%s)", dev->name);
 	}
 
-	if (data_ready_ports == 0U) {
+	if (data_active() == NULL) {
 		LOG_WRN("no data port on this board: passthrough disabled");
 		return -1;
 	}
@@ -194,15 +204,15 @@ int zlrs_link_data_init(uint32_t baud)
 
 uint16_t zlrs_link_data_read(uint8_t *buf, uint16_t len)
 {
-	const struct device *const active = zlrs_port_serial_active(zlrs_port_serial_data());
+	const struct data_ep *const active = data_active();
 	uint16_t got = 0U;
 
-	for (size_t i = 0U; i < ZLRS_PORT_SERIAL_MAX; i++) {
+	for (size_t i = 0U; i < ARRAY_SIZE(data_eps); i++) {
 		if (!data_eps[i].ready) {
 			continue;
 		}
 
-		if (data_eps[i].dev == active) {
+		if (&data_eps[i] == active) {
 			got += (uint16_t)ring_buf_get(&data_eps[i].rx, buf + got,
 						      (uint32_t)(len - got));
 			continue;
@@ -217,7 +227,7 @@ uint16_t zlrs_link_data_read(uint8_t *buf, uint16_t len)
 
 uint16_t zlrs_link_data_write(const uint8_t *buf, uint16_t len)
 {
-	struct data_ep *const ep = data_ep_of(zlrs_port_serial_active(zlrs_port_serial_data()));
+	struct data_ep *const ep = data_active();
 
 	if (ep == NULL) {
 		return 0U;
@@ -241,7 +251,7 @@ uint32_t zlrs_link_data_tx_dropped(void)
 {
 	uint32_t dropped = 0U;
 
-	for (size_t i = 0U; i < ZLRS_PORT_SERIAL_MAX; i++) {
+	for (size_t i = 0U; i < ARRAY_SIZE(data_eps); i++) {
 		dropped += data_eps[i].tx_dropped;
 	}
 
@@ -252,7 +262,7 @@ uint32_t zlrs_link_data_dropped(void)
 {
 	uint32_t dropped = 0U;
 
-	for (size_t i = 0U; i < ZLRS_PORT_SERIAL_MAX; i++) {
+	for (size_t i = 0U; i < ARRAY_SIZE(data_eps); i++) {
 		dropped += data_eps[i].rx_dropped;
 	}
 

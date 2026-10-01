@@ -5,7 +5,7 @@
 zlrs is a Zephyr firmware project carrying CRSF control and byte-stream data over an LR2021 radio.
 
 - `core/` and `include/zlrs/`: portable C protocol, link, CRSF, management, region, and LED modules. Keep these independent of Zephyr.
-- `app/src/`: application entry point and platform, ports, link, management, state, UI, and storage layers.
+- `app/src/`: application entry point and platform, link, management, state, UI, and storage layers. Application code binds directly to Zephyr/RP2350; do not introduce a ports abstraction.
 - `boards/`, `dts/`, `drivers/`, `subsys/`: board definitions, bindings, entropy driver, USB, and boot support.
 - `tests/host/`: hardware-independent tests and two-node simulation.
 - `tools/`: workspace setup, management, upgrade, and validation scripts.

@@ -4,13 +4,12 @@
  * One owner for both links. RAL and the LR20xx HAL are reused; RAC and the
  * radio planner do not participate in initialization, IRQs or transactions.
  */
-#include "ports/radio.h"
+#include "platform/radio.h"
 #include "platform/slot_timer.h"
 
 #include <string.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
-#include <zephyr/random/random.h>
 #include <zephyr/usp/lora_lbm_transceiver.h>
 
 #include "ralf_lr20xx.h"
@@ -19,7 +18,7 @@
 #include "lr20xx_radio_fifo.h"
 #include "lr20xx_radio_common.h"
 
-LOG_MODULE_REGISTER(zlrs_port_radio, CONFIG_APP_LOG_LEVEL);
+LOG_MODULE_REGISTER(zlrs_radio, CONFIG_APP_LOG_LEVEL);
 
 static const struct device *const transceiver =
 	DEVICE_DT_GET(DT_CHOSEN(zephyr_lorawan_transceiver));
@@ -46,7 +45,7 @@ static int8_t tx_cfg_power;
 static bool rx_timing_valid;
 static uint32_t rx_done_us;
 static uint32_t rx_airtime_us;
-static zlrs_port_radio_diag_t diag;
+static zlrs_radio_diag_t diag;
 
 /* Rate tiers: since v1.1 the raw rate and bandwidth share one enum, see doc/06-radio.md */
 static ral_flrc_raw_bit_rate_t raw_bit_rate(uint32_t rate_bps)
@@ -125,12 +124,6 @@ static ral_flrc_rx_match_sync_word_t rx_match_syncword(uint8_t slot)
 	}
 }
 
-static uint32_t port_random(void *ctx)
-{
-	ARG_UNUSED(ctx);
-	return sys_rand32_get();
-}
-
 static void radio_irq(const struct device *dev)
 {
 	ARG_UNUSED(dev);
@@ -141,12 +134,12 @@ static void radio_irq(const struct device *dev)
 	k_sem_give(&done_sem);
 }
 
-void zlrs_port_radio_wake(void)
+void zlrs_radio_wake(void)
 {
 	k_sem_give(&done_sem);
 }
 
-void zlrs_port_radio_slot(uint32_t tx_us, uint32_t end_us)
+void zlrs_radio_slot(uint32_t tx_us, uint32_t end_us)
 {
 	tx_at_us = tx_us;
 	slot_end_us = end_us;
@@ -169,7 +162,7 @@ static void make_flrc(const zlrs_mod_cfg_t *mod, uint16_t len, ralf_params_flrc_
 	cfg->pkt_params.crc_type = RAL_FLRC_CRC_2_BYTES;
 }
 
-uint32_t zlrs_port_radio_airtime_us(const zlrs_mod_cfg_t *mod, uint16_t len)
+uint32_t zlrs_radio_airtime_us(const zlrs_mod_cfg_t *mod, uint16_t len)
 {
 	if (mod->modulation == ZLRS_MOD_FLRC) {
 		ralf_params_flrc_t cfg;
@@ -282,12 +275,6 @@ static int setup_lora(const zlrs_radio_req_t *req)
 	return ralf_setup_lora(&radio, &cfg) == RAL_STATUS_OK ? 0 : -EIO;
 }
 
-struct radio_client {
-	zlrs_link_t *link;
-};
-static struct radio_client control_client;
-static struct radio_client data_client;
-
 static int prepare_request(zlrs_link_t *link, const zlrs_radio_req_t *req)
 {
 	const uint32_t start = zlrs_slot_timer_now_us();
@@ -346,8 +333,8 @@ static int prepare_request(zlrs_link_t *link, const zlrs_radio_req_t *req)
 				return -ETIME;
 			}
 			if ((int32_t)(tx_at_us + ZLRS_RADIO_STARTUP_US +
-				      zlrs_port_radio_airtime_us(&req->mod, req->size) -
-				      slot_end_us) >= 0) {
+				      zlrs_radio_airtime_us(&req->mod, req->size) - slot_end_us) >=
+			    0) {
 				return -EMSGSIZE;
 			}
 		}
@@ -365,12 +352,12 @@ static int prepare_request(zlrs_link_t *link, const zlrs_radio_req_t *req)
 	return 0;
 }
 
-int zlrs_port_radio_prepare(zlrs_link_t *link, const zlrs_radio_req_t *req)
+int zlrs_radio_prepare(zlrs_link_t *link, const zlrs_radio_req_t *req)
 {
 	return prepare_request(link, req);
 }
 
-int zlrs_port_radio_launch(void)
+int zlrs_radio_launch(void)
 {
 	int rc;
 
@@ -426,7 +413,7 @@ static void launch_thread(void *p1, void *p2, void *p3)
 	for (;;) {
 		(void)k_sem_take(&launch_request_sem, K_FOREVER);
 		zlrs_slot_timer_wait_until(launch_target_us);
-		launch_result = zlrs_port_radio_launch();
+		launch_result = zlrs_radio_launch();
 		k_sem_give(&launch_result_sem);
 	}
 }
@@ -436,7 +423,7 @@ static void launch_thread(void *p1, void *p2, void *p3)
  * This thread never touches USB, link state, packet buffers or configuration. */
 K_THREAD_DEFINE(zlrs_radio_launch_tid, 1536, launch_thread, NULL, NULL, NULL, K_PRIO_COOP(0), 0, 0);
 
-int zlrs_port_radio_launch_at(uint32_t target_us)
+int zlrs_radio_launch_at(uint32_t target_us)
 {
 	if (!prepared || request == NULL || !request->is_tx) {
 		return -EINVAL;
@@ -447,47 +434,11 @@ int zlrs_port_radio_launch_at(uint32_t target_us)
 	return launch_result;
 }
 
-static int port_submit(void *ctx, const zlrs_radio_req_t *req)
-{
-	int rc = prepare_request(((struct radio_client *)ctx)->link, req);
-
-	if (rc != 0) {
-		return rc;
-	}
-	if (timed_slot && req->is_tx) {
-		zlrs_slot_timer_wait_until(tx_at_us);
-	}
-	return zlrs_port_radio_launch();
-}
-
-static const zlrs_radio_ops_t control_port = {
-	.submit = port_submit,
-	.random = port_random,
-	.ctx = &control_client,
-};
-static const zlrs_radio_ops_t data_port = {
-	.submit = port_submit,
-	.random = port_random,
-	.ctx = &data_client,
-};
-
-const zlrs_radio_ops_t *zlrs_port_radio_control_ops(void)
-{
-	return &control_port;
-}
-
-const zlrs_radio_ops_t *zlrs_port_radio_data_ops(void)
-{
-	return &data_port;
-}
-
-int zlrs_port_radio_init(zlrs_link_t *control, zlrs_link_t *data)
+int zlrs_radio_init(void)
 {
 	if (!device_is_ready(transceiver)) {
 		return -ENODEV;
 	}
-	control_client.link = control;
-	data_client.link = data;
 	if (ral_reset(&radio.ral) != RAL_STATUS_OK || ral_init(&radio.ral) != RAL_STATUS_OK ||
 	    ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC) != RAL_STATUS_OK ||
 	    ral_set_rx_tx_fallback_mode(&radio.ral, RAL_FALLBACK_FS) != RAL_STATUS_OK ||
@@ -503,24 +454,24 @@ int zlrs_port_radio_init(zlrs_link_t *control, zlrs_link_t *data)
 	return 0;
 }
 
-int zlrs_port_radio_wait_us(uint32_t timeout_us)
+int zlrs_radio_wait_us(uint32_t timeout_us)
 {
 	return k_sem_take(&done_sem, K_USEC(timeout_us));
 }
 
-bool zlrs_port_radio_irq_pending(void)
+bool zlrs_radio_irq_pending(void)
 {
 	return pending && irq_pending;
 }
 
-bool zlrs_port_radio_rx_timing(uint32_t *done_us, uint32_t *airtime_us)
+bool zlrs_radio_rx_timing(uint32_t *done_us, uint32_t *airtime_us)
 {
 	*done_us = rx_done_us;
 	*airtime_us = rx_airtime_us;
 	return rx_timing_valid;
 }
 
-void zlrs_port_radio_drain(void)
+void zlrs_radio_drain(void)
 {
 	ral_irq_t irq = 0;
 	uint16_t len = 0U;
@@ -546,7 +497,7 @@ void zlrs_port_radio_drain(void)
 		status = ZLRS_RADIO_OK;
 		diag.tx_done++;
 		diag.tx_us_last = event_us - begin_us;
-		const uint32_t toa_us = zlrs_port_radio_airtime_us(&request->mod, request->size);
+		const uint32_t toa_us = zlrs_radio_airtime_us(&request->mod, request->size);
 
 		diag.tx_startup_us_last = diag.tx_us_last > toa_us ? diag.tx_us_last - toa_us : 0U;
 	} else if (!request->is_tx && (irq & (RAL_IRQ_RX_HDR_ERROR | RAL_IRQ_RX_CRC_ERROR)) == 0U &&
@@ -556,7 +507,7 @@ void zlrs_port_radio_drain(void)
 			status = ZLRS_RADIO_OK;
 			diag.rx_packets++;
 			rx_done_us = event_us;
-			rx_airtime_us = zlrs_port_radio_airtime_us(&request->mod, len);
+			rx_airtime_us = zlrs_radio_airtime_us(&request->mod, len);
 			rx_timing_valid = true;
 		}
 		if (request->mod.modulation == ZLRS_MOD_FLRC) {
@@ -578,10 +529,10 @@ void zlrs_port_radio_drain(void)
 	}
 	(void)ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC);
 	pending = false;
-	zlrs_link_complete(owner, status, len, rssi, snr, zlrs_port_radio_now_ms());
+	zlrs_link_complete(owner, status, len, rssi, snr, k_uptime_get_32());
 }
 
-void zlrs_port_radio_abort(void)
+void zlrs_radio_abort(void)
 {
 	(void)ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC);
 	pending = false;
@@ -594,12 +545,7 @@ void zlrs_port_radio_abort(void)
 	diag.overruns++;
 }
 
-void zlrs_port_radio_diag(zlrs_port_radio_diag_t *out)
+void zlrs_radio_diag(zlrs_radio_diag_t *out)
 {
 	*out = diag;
-}
-
-uint32_t zlrs_port_radio_now_ms(void)
-{
-	return k_uptime_get_32();
 }

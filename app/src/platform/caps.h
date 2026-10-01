@@ -1,9 +1,8 @@
 /*
  * What this hardware is, derived from devicetree (doc/08-firmware.md 4).
  *
- * This header is the only place in the application that reads aliases and the
- * radio-design node, and the only place that may name them. Everything else
- * asks these macros, so a new board is a devicetree change, never a C change.
+ * Application code binds directly to Zephyr devices and the RP2350 platform.
+ * These macros describe hardware capabilities and validate feature selections.
  *
  * A feature the hardware cannot carry fails the build here instead of
  * misbehaving in the field.
@@ -19,24 +18,23 @@
 #include "zlrs/region/region.h"
 
 /* ---- ports: one UART plus one CDC per logical port, both optional ---- */
-#define ZLRS_PORT_CTRL_FIXED                                                                      \
-	(DT_NODE_EXISTS(DT_ALIAS(zlrs_control_uart)) ||                                           \
-	 DT_NODE_EXISTS(DT_ALIAS(zlrs_control_cdc)))
-#define ZLRS_PORT_DATA_FIXED                                                                      \
+#define ZLRS_PORT_CTRL_FIXED                                                                       \
+	(DT_NODE_EXISTS(DT_ALIAS(zlrs_control_uart)) || DT_NODE_EXISTS(DT_ALIAS(zlrs_control_cdc)))
+#define ZLRS_PORT_DATA_FIXED                                                                       \
 	(DT_NODE_EXISTS(DT_ALIAS(zlrs_data_uart)) || DT_NODE_EXISTS(DT_ALIAS(zlrs_data_cdc)))
 #define ZLRS_PORT_MGMT DT_NODE_EXISTS(DT_ALIAS(zlrs_mgmt_cdc))
 
 /* ---- peripherals ---- */
 #define ZLRS_HAS_BUTTON DT_NODE_EXISTS(DT_ALIAS(zlrs_button))
-#define ZLRS_HAS_LED DT_NODE_EXISTS(DT_ALIAS(zlrs_led))
-#define ZLRS_HAS_WDT DT_NODE_EXISTS(DT_ALIAS(watchdog0))
-#define ZLRS_HAS_NVS IS_ENABLED(CONFIG_NVS)
-#define ZLRS_HAS_USB IS_ENABLED(CONFIG_ZLRS_USB)
+#define ZLRS_HAS_LED    DT_NODE_EXISTS(DT_ALIAS(zlrs_led))
+#define ZLRS_HAS_WDT    DT_NODE_EXISTS(DT_ALIAS(watchdog0))
+#define ZLRS_HAS_NVS    IS_ENABLED(CONFIG_NVS)
+#define ZLRS_HAS_USB    IS_ENABLED(CONFIG_ZLRS_USB)
 
 /* ---- radio design: band and the frequency coverage the PA network is built for ---- */
-#define ZLRS_RF_BAND DT_PROP(DT_NODELABEL(zlrs_rf), band)
-#define ZLRS_RF_LOW_HZ DT_PROP(DT_NODELABEL(zlrs_rf), low_hz)
-#define ZLRS_RF_HIGH_HZ DT_PROP(DT_NODELABEL(zlrs_rf), high_hz)
+#define ZLRS_RF_BAND        DT_PROP(DT_NODELABEL(zlrs_rf), band)
+#define ZLRS_RF_LOW_HZ      DT_PROP(DT_NODELABEL(zlrs_rf), low_hz)
+#define ZLRS_RF_HIGH_HZ     DT_PROP(DT_NODELABEL(zlrs_rf), high_hz)
 /* Region a fresh board boots with; the management protocol overwrites it in NVS */
 #define ZLRS_DEFAULT_REGION DT_PROP(DT_NODELABEL(zlrs_rf), default_region)
 #define ZLRS_RF_DESIGN                                                                             \

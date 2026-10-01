@@ -3,7 +3,7 @@
  *
  * The link itself lives in core/link and the CRSF codec in core/crsf; this is the host/peer side
  * of the control link — endpoint, RX frames, TX ring (doc/07-architecture.md 5). Which device that
- * endpoint is comes from ports/serial.h.
+ * the implementation binds directly to devicetree UART/CDC devices.
  *
  * Naming: `<dir>/<file>.c` carries `zlrs_<dir>_<file>_*()`, so this is `zlrs_link_crsf_*()`.
  *

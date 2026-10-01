@@ -173,7 +173,7 @@ check the toolchain and radio stack on their own.
 
 ```
 app/src/                 Zephyr application, one directory per layer (doc/07-architecture.md 5):
-                         main.c plus platform/ ports/ link/ mgmt/ state/ ui/ storage/
+                         main.c plus platform/ link/ mgmt/ state/ ui/ storage/
 boards/zlrs/             board definitions (RP2350-Zero plus Core2021)
 core/proto/              protocol core: framing, reassembly, hop tables, key derivation and
                          tags, telemetry payload, modulation tiers and the airtime model

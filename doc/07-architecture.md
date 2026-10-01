@@ -120,12 +120,10 @@ subsys/bootguard/      bootloader-side watchdog handling
 drivers/entropy/       the RP2350 TRNG driver we own
 app/src/               Zephyr application, one directory per layer:
   main.c                 the application: superframe, link wiring, reporting, debug shell
-  platform/              what this board is (caps.h), the hardware watchdog, recovery entry
-  ports/                 hardware adapters: serial endpoints, radio (USP RAL / LR20xx)
+  platform/              hardware capabilities, RP2350 slot timer, LR2021 driver, watchdog and recovery
   link/                  the links' I/O and tuning: data (passthrough), CRSF, rate
                          adaptation, dynamic power
-  mgmt/                  management protocol, application side: the CDC (port) and the session
-                         with its device commands (mode)
+  mgmt/                  management CDC, session and device commands in mode.c
   state/                 system state broadcast (the zbus channels)
   ui/                    what the user sees: the status LED (state to frame to strip) and the
                          button (its own thread, hold reported on the bus)
@@ -142,14 +140,14 @@ crypto primitives go through Zephyr's PSA (`core/proto/crypto_psa.c`). `core/` i
 Zephyr headers, and `app/` never branches on a board name — both are CI gates (`tools/gates.sh`,
 see the README's "Gates" section).
 
-Inside `app/src` the path says what a file is, and so do its symbols: `ports/radio.c` carries
-`zlrs_port_radio_*()`, `link/data.c` carries `zlrs_link_data_*()`. `ports/` owns the device handles
-and the choice between them, `link/` and `mgmt/` own what flows through a port (rings, ISRs,
-framing), and `main.c` wires the whole thing together. `ports/` is not a portability layer: this
-firmware is Zephyr's, and its two files are there because the vendor radio stack and the
-two-endpoint serial rule are hardware concerns the rest of the application should not carry.
+The application binds directly to Zephyr and RP2350 for rapid prototyping. There is no
+`ports/` layer: `link/data.c` and `link/crsf.c` own their devicetree UART/CDC devices, endpoint
+selection, rings and interrupts; `mgmt/mode.c` owns the dedicated management CDC and session.
+`platform/radio.c` directly uses the USP RAL / LR20xx driver, while `platform/slot_timer.c`
+uses RP2350 TIMER1. The main loop executes requests returned by the portable protocol core;
+there is no radio ops table or submit adapter. Only nonce generation is injected into the core.
 
-USP supplies the transceiver RAL and Zephyr HAL. The application radio port owns preparation,
+USP supplies the transceiver RAL and Zephyr HAL. The application owns preparation,
 calibration selection and launch scheduling.
 
 Every transmission also passes a **regulatory gate**: `core/region` provides the region's

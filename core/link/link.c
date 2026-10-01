@@ -62,8 +62,8 @@ static void wr32(uint8_t *p, uint32_t v)
 
 static uint32_t link_random(const zlrs_link_t *link, uint32_t salt)
 {
-	if (link->radio.random != NULL) {
-		return link->radio.random(link->radio.ctx);
+	if (link->random != NULL) {
+		return link->random(link->random_ctx);
 	}
 
 	/* Without a random source, mix time and a counter into a non-zero value: enough to exercise the flow */
@@ -1837,8 +1837,8 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 
 /* ---- public API ---------------------------------------------------------- */
 
-void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg, const zlrs_radio_ops_t *radio,
-		    const zlrs_link_events_t *events)
+void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg, uint32_t (*random)(void *ctx),
+		    void *random_ctx, const zlrs_link_events_t *events)
 {
 	memset(link, 0, sizeof(*link));
 	link->cfg = *cfg;
@@ -1854,9 +1854,8 @@ void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg, const zlrs_ra
 	link->sub_mix_default = link->sub_mix;
 	link->sub_mix_version = 0U;
 	link->sub_mix_seen_ms = 0U;
-	if (radio != NULL) {
-		link->radio = *radio;
-	}
+	link->random = random;
+	link->random_ctx = random_ctx;
 	if (events != NULL) {
 		link->ev = *events;
 	}

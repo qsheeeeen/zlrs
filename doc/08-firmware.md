@@ -28,7 +28,7 @@ ever received a host byte, otherwise the UART. The second rule exists for USB/IP
 (usbipd) and virtualised setups where `SET_CONTROL_LINE_STATE` may never arrive: trusting DTR
 alone would leave the CDC unselected and host bytes would be dropped silently as "not the
 active endpoint". The ISR records "a byte arrived" **before** checking the active endpoint, so
-the first frame is never lost to that lag (`zlrs_port_serial_active()` in `app/src/ports/serial.c`).
+the first frame is never lost to that lag (selection is local to `app/src/link/crsf.c` and `app/src/link/data.c`).
 
 The two links choose their endpoints independently. The management CDC carries no passthrough
 traffic, only the management protocol; a board without that CDC simply has no management mode.

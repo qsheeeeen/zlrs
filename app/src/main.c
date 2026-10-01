@@ -35,7 +35,6 @@
 #endif
 
 #include "mgmt/mode.h"
-#include "mgmt/port.h"
 #include "link/crsf.h"
 #include "link/data.h"
 #include "link/power.h"
@@ -44,7 +43,7 @@
 #include "platform/recovery.h"
 #include "platform/slot_timer.h"
 #include "platform/watchdog.h"
-#include "ports/radio.h"
+#include "platform/radio.h"
 #include "state/sys_bus.h"
 #include "storage/log.h"
 #include "storage/settings.h"
@@ -306,10 +305,9 @@ static void plan_init(void)
 
 	/* Four equal hardware slots must fit control and the larger pairing packets. */
 	const uint32_t control_window_us =
-		zlrs_port_radio_airtime_us(
-			&control_mod,
-			MAX(CTL_FRAME_LEN,
-			    ZLRS_PAIR_PAYLOAD_LEN + ZLRS_FRAME_HDR_LEN + ZLRS_TAG_LEN)) +
+		zlrs_radio_airtime_us(&control_mod, MAX(CTL_FRAME_LEN, ZLRS_PAIR_PAYLOAD_LEN +
+									       ZLRS_FRAME_HDR_LEN +
+									       ZLRS_TAG_LEN)) +
 		CONFIG_ZLRS_APP_PREPARE_US + CONFIG_ZLRS_APP_TX_GUARD_US + ZLRS_RADIO_STARTUP_US +
 		100U;
 	const uint32_t hardware_max_hz = MAX(1U, 1000000U / (4U * control_window_us));
@@ -331,7 +329,7 @@ static void plan_init(void)
 		const uint32_t budget_us = (1000000U / req.want_hz) / 4U;
 		uint16_t len = (uint16_t)(ZLRS_PAYLOAD_MAX_LEN - 2U);
 
-		while (len > 16U && zlrs_port_radio_airtime_us(&data_mod, (uint16_t)(len + 9U)) +
+		while (len > 16U && zlrs_radio_airtime_us(&data_mod, (uint16_t)(len + 9U)) +
 						    CONFIG_ZLRS_APP_PREPARE_US +
 						    CONFIG_ZLRS_APP_TX_GUARD_US +
 						    ZLRS_RADIO_STARTUP_US + 100U >
@@ -390,6 +388,12 @@ static void plan_init(void)
 }
 
 /* ---- link setup ---------------------------------------------------------- */
+
+static uint32_t random_u32(void *ctx)
+{
+	ARG_UNUSED(ctx);
+	return sys_rand32_get();
+}
 
 static void build_links(void)
 {
@@ -470,8 +474,8 @@ static void build_links(void)
 	data_cfg.tlm_every_n = 1U; /* no telemetry slot on the data link */
 	data_cfg.data_every_n = data_every_n;
 
-	zlrs_link_init(&link_control, &ctl_cfg, zlrs_port_radio_control_ops(), &ctl_ev);
-	zlrs_link_init(&link_data, &data_cfg, zlrs_port_radio_data_ops(), &data_ev);
+	zlrs_link_init(&link_control, &ctl_cfg, random_u32, NULL, &ctl_ev);
+	zlrs_link_init(&link_data, &data_cfg, random_u32, NULL, &data_ev);
 
 	zlrs_link_rate_init(&ctl_cfg.mod);
 
@@ -508,7 +512,7 @@ static void load_identity(void)
 	uint8_t root_key[ZLRS_KEY_LEN];
 	zlrs_storage_settings_pairing_t pairing;
 	bool have_root_key = false;
-	const uint32_t now_ms = zlrs_port_radio_now_ms();
+	const uint32_t now_ms = k_uptime_get_32();
 
 	zlrs_link_set_dev_id(&link_control, device_id);
 	zlrs_link_set_dev_id(&link_data, device_id);
@@ -550,15 +554,15 @@ static void radio_wait_done(uint32_t budget_us)
 	const uint32_t deadline = zlrs_slot_timer_now_us() + budget_us;
 
 	while ((int32_t)(deadline - zlrs_slot_timer_now_us()) > 0) {
-		if (zlrs_port_radio_irq_pending()) {
-			zlrs_port_radio_drain();
+		if (zlrs_radio_irq_pending()) {
+			zlrs_radio_drain();
 			return;
 		}
 		/* Radio IRQ and hardware slot boundary both wake this wait. */
 		const int32_t remain = (int32_t)(deadline - zlrs_slot_timer_now_us());
 
 		if (remain > 0) {
-			(void)zlrs_port_radio_wait_us((uint32_t)remain);
+			(void)zlrs_radio_wait_us((uint32_t)remain);
 		}
 	}
 }
@@ -582,7 +586,7 @@ typedef struct {
 
 static bench_t bench;
 static uint32_t prev_frame_start_us;
-static zlrs_port_radio_diag_t radio_diag;
+static zlrs_radio_diag_t radio_diag;
 #endif
 
 /* TX owns the absolute clock; RX follows verified IRQ timestamps and scans when deaf. */
@@ -636,8 +640,8 @@ static void run_slot(uint8_t slot)
 	const uint32_t slot_start_us = now_us();
 	/* Slot decisions use the planned time even though construction happens before it. */
 	const int32_t until_slot_us = (int32_t)(slot_nominal_us - slot_start_us);
-	const uint32_t now_ms = zlrs_port_radio_now_ms() +
-				(until_slot_us > 0 ? (uint32_t)until_slot_us / 1000U : 0U);
+	const uint32_t now_ms =
+		k_uptime_get_32() + (until_slot_us > 0 ? (uint32_t)until_slot_us / 1000U : 0U);
 	const uint32_t hit_before = link->stats.slot_hit[slot];
 	const uint32_t good_before = link->stats.rx_frames;
 	/* The duty-cycle gate only applies to whichever link is on sub-G */
@@ -665,7 +669,7 @@ static void run_slot(uint8_t slot)
 		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, now_ms);
 		return;
 	}
-	zlrs_port_radio_slot(slot_nominal_us + CONFIG_ZLRS_APP_TX_GUARD_US, slot_deadline_us);
+	zlrs_radio_slot(slot_nominal_us + CONFIG_ZLRS_APP_TX_GUARD_US, slot_deadline_us);
 
 	if (req->is_tx) {
 		packet_build_us_last = now_us() - slot_start_us;
@@ -675,15 +679,14 @@ static void run_slot(uint8_t slot)
 	/* Out of duty budget: give the slot up (finish as a radio failure, the link retries next
 	 * round). Only constrains the sub-G link. */
 	if (req->is_tx && on_subg &&
-	    !zlrs_duty_reserve(&duty,
-			       (zlrs_port_radio_airtime_us(&req->mod, req->size) + 999U) / 1000U,
+	    !zlrs_duty_reserve(&duty, (zlrs_radio_airtime_us(&req->mod, req->size) + 999U) / 1000U,
 			       now_ms)) {
 		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, now_ms);
 		return;
 	}
 
-	if (zlrs_port_radio_prepare(link, req) != 0) {
-		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_port_radio_now_ms());
+	if (zlrs_radio_prepare(link, req) != 0) {
+		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, k_uptime_get_32());
 		return;
 	}
 
@@ -697,12 +700,11 @@ static void run_slot(uint8_t slot)
 
 	/* Modem, authentication and FIFO are ready: the timer wake leads only to SET_TX. */
 	const int launch_rc =
-		req->is_tx
-			? zlrs_port_radio_launch_at(slot_nominal_us + CONFIG_ZLRS_APP_TX_GUARD_US)
-			: zlrs_port_radio_launch();
+		req->is_tx ? zlrs_radio_launch_at(slot_nominal_us + CONFIG_ZLRS_APP_TX_GUARD_US)
+			   : zlrs_radio_launch();
 
 	if (launch_rc != 0) {
-		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_port_radio_now_ms());
+		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, k_uptime_get_32());
 		return;
 	}
 
@@ -713,7 +715,7 @@ static void run_slot(uint8_t slot)
 		radio_wait_done((uint32_t)remaining_us);
 	}
 
-	zlrs_port_radio_drain();
+	zlrs_radio_drain();
 
 	/*
 	 * The port's completion semaphore is shared by both links, so "the wait returned" is not the
@@ -723,20 +725,20 @@ static void run_slot(uint8_t slot)
 	 * timeout, and the wait had "succeeded"), which is the wedge that made a link go deaf for good.
 	 */
 	if (link->req_pending) {
-		zlrs_port_radio_abort();
+		zlrs_radio_abort();
 		zlrs_link_complete(link, req->is_tx ? ZLRS_RADIO_FAIL : ZLRS_RADIO_OK, 0U, 0, 0,
-				   zlrs_port_radio_now_ms());
+				   k_uptime_get_32());
 	}
 
 	if (link->stats.slot_hit[slot] != hit_before && link->stats.rx_frames != good_before) {
 		uint32_t done_us;
 		uint32_t airtime_us;
 
-		last_rx_any_ms = zlrs_port_radio_now_ms();
+		last_rx_any_ms = k_uptime_get_32();
 		/* TX is the clock master. Only RX follows verified packets, timestamped in the GPIO ISR. */
 		if (!role_tx && !phase_adj_set &&
 		    (data_slot ? link == &link_data : link == &link_control) &&
-		    zlrs_port_radio_rx_timing(&done_us, &airtime_us)) {
+		    zlrs_radio_rx_timing(&done_us, &airtime_us)) {
 			/* SET_TX completion includes synthesizer/PA startup, measured near 250 us. */
 			const uint32_t expected =
 				slot_nominal_us + CONFIG_ZLRS_APP_TX_GUARD_US + 250U;
@@ -864,7 +866,7 @@ static void adopt_pairing(void)
 
 	/* After pairing succeeds on the control link, push the record to the data link and store it */
 	zlrs_link_set_peer(&link_data, link_control.peer_id, link_control.pair_salt,
-			   zlrs_port_radio_now_ms());
+			   k_uptime_get_32());
 	memcpy(pairing.peer_id, link_control.peer_id, ZLRS_DEV_ID_LEN);
 	memcpy(pairing.pair_salt, link_control.pair_salt, ZLRS_PAIR_SALT_LEN);
 	(void)zlrs_storage_settings_save(ZLRS_SETTING_PAIRING, &pairing, sizeof(pairing));
@@ -905,7 +907,7 @@ static void crsf_handle_input(uint8_t type, const uint8_t *payload, uint8_t len)
 	}
 
 	zlrs_link_set_rc(&link_control, payload, len);
-	last_rc_input_ms = zlrs_port_radio_now_ms();
+	last_rc_input_ms = k_uptime_get_32();
 	rc_input_seen = true;
 }
 
@@ -1130,7 +1132,7 @@ static void report(uint32_t now_ms)
 	 * are separate). A compile-time guard, because the counters it reads only exist when it is on.
 	 */
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
-	zlrs_port_radio_diag(&radio_diag);
+	zlrs_radio_diag(&radio_diag);
 
 	LOG_INF("%s ctl=%u tlm=%u data=%u serial_drop=%u host_drop=%u", role_tx ? "TX" : "RX",
 		counters.rc_rx, counters.tlm_rx, counters.data_rx, zlrs_link_data_dropped(),
@@ -1276,7 +1278,7 @@ static void fault_loop(void)
 
 #if ZLRS_MGMT_ENABLED
 		/* Management port alive: management mode, the recovery command and reflashing all still work */
-		if (zlrs_mgmt_port_poll_enter()) {
+		if (zlrs_mgmt_poll_enter()) {
 			enter_management_mode();
 		}
 #endif
@@ -1417,17 +1419,17 @@ static void enter_management_mode(void)
  */
 static bool bench_wait(zlrs_link_t *link, const zlrs_radio_req_t *req, uint32_t budget_us)
 {
-	if (link->radio.submit(link->radio.ctx, req) != 0) {
-		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_port_radio_now_ms());
+	if (zlrs_radio_prepare(link, req) != 0 || zlrs_radio_launch() != 0) {
+		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, k_uptime_get_32());
 		return false;
 	}
 
 	radio_wait_done(budget_us);
 
-	zlrs_port_radio_drain();
+	zlrs_radio_drain();
 	if (link->req_pending) {
-		zlrs_port_radio_abort();
-		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_port_radio_now_ms());
+		zlrs_radio_abort();
+		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, k_uptime_get_32());
 		return false;
 	}
 
@@ -1443,7 +1445,7 @@ static bool bench_wait(zlrs_link_t *link, const zlrs_radio_req_t *req, uint32_t 
 static void bench_raw_at_boot(void)
 {
 	uint32_t left_ms = (uint32_t)CONFIG_ZLRS_APP_BENCH_RAW_MS;
-	uint32_t last_ms = zlrs_port_radio_now_ms();
+	uint32_t last_ms = k_uptime_get_32();
 	uint32_t tx0 = link_data.stats.tx_frames;
 	uint32_t rx0 = link_data.stats.rx_frames;
 	static uint8_t payload[32];
@@ -1456,7 +1458,7 @@ static void bench_raw_at_boot(void)
 
 	LOG_INF("raw bench: %s for %u ms", role_tx ? "blast" : "listen", (unsigned int)left_ms);
 
-	while ((uint32_t)(zlrs_port_radio_now_ms() - start_ms) < left_ms) {
+	while ((uint32_t)(k_uptime_get_32() - start_ms) < left_ms) {
 		const zlrs_radio_req_t *req;
 
 		if (role_tx) {
@@ -1480,7 +1482,7 @@ static void bench_raw_at_boot(void)
 		zlrs_watchdog_feed();
 
 		{
-			const uint32_t now = zlrs_port_radio_now_ms();
+			const uint32_t now = k_uptime_get_32();
 
 			if ((uint32_t)(now - last_ms) >= 1000U) {
 				const uint32_t tx = link_data.stats.tx_frames - tx0;
@@ -1845,12 +1847,12 @@ static int cmd_ports(const struct shell *sh, size_t argc, char **argv)
  */
 static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 {
-	zlrs_port_radio_diag_t diag;
+	zlrs_radio_diag_t diag;
 	struct zlrs_slot_timer_stats timer;
 
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
-	zlrs_port_radio_diag(&diag);
+	zlrs_radio_diag(&diag);
 	zlrs_slot_timer_stats(&timer);
 	shell_print(sh,
 		    "TIMER1 boundaries=%u irq_late_max=%u us missed=%u skipped_frames=%u slots=%u",
@@ -1864,7 +1866,7 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 		    diag.submit_us_last, diag.submit_us_max, diag.tx_us_last, diag.rx_us_last,
 		    diag.irq_last, diag.stale_irq);
 	shell_print(sh, "stale bits=%08x airtime 255B=%u us guard=%u us", diag.stale_irq_bits,
-		    zlrs_port_radio_airtime_us(&data_mod, 255U), CONFIG_ZLRS_APP_TX_GUARD_US);
+		    zlrs_radio_airtime_us(&data_mod, 255U), CONFIG_ZLRS_APP_TX_GUARD_US);
 	shell_print(sh, "late launch last/max=%u/%u us", diag.launch_late_us_last,
 		    diag.launch_late_us_max);
 	shell_print(sh, "launch command last/max=%u/%u us FIFO ready lead=%u us prepare=%u us",
@@ -1989,7 +1991,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 	SHELL_CMD(rxwin, " [ms]", "stretch the data link receive window (bench)", cmd_rxwin),
 	SHELL_CMD(rate, " [s]", "measure windows/hits/frames per second per link", cmd_rate),
 	SHELL_CMD(ports, NULL, "state of both data port endpoints", cmd_ports),
-	SHELL_CMD(radio, NULL, "radio port timing: submit breakdown and wait", cmd_radio),
+	SHELL_CMD(radio, NULL, "LR2021 timing: preparation, launch and wait", cmd_radio),
 	SHELL_CMD(logstore, NULL, "mount the log filesystem and report the result", cmd_logstore),
 	SHELL_CMD(trace, NULL, "print the init breadcrumbs", cmd_trace),
 #if ZLRS_MGMT_ENABLED
@@ -2101,7 +2103,7 @@ int main(void)
 	 * Bring the management port up early: any later fatal step (entropy, region/SKU, PSA) lands in
 	 * fault_loop, and that path stays flashable only while the management port is alive.
 	 */
-	(void)zlrs_mgmt_port_init();
+	(void)zlrs_mgmt_init();
 	TRACE('C');
 #endif
 
@@ -2269,7 +2271,7 @@ int main(void)
 	}
 
 	TRACE('c');
-	if (zlrs_port_radio_init(&link_control, &link_data) != 0) {
+	if (zlrs_radio_init() != 0) {
 		TRACE('X');
 		LOG_ERR("radio driver init failed");
 		return 0;
@@ -2292,7 +2294,7 @@ int main(void)
 
 	log_flush();
 	zlrs_slot_timer_start(frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE,
-			      CONFIG_ZLRS_APP_PREPARE_US, zlrs_port_radio_wake);
+			      CONFIG_ZLRS_APP_PREPARE_US, zlrs_radio_wake);
 	uint32_t consumed_frame = 0U;
 
 	for (;;) {
@@ -2338,7 +2340,7 @@ int main(void)
 #if ZLRS_MGMT_ENABLED
 		/* All management-mode entries converge here: management port command, shell, debug magic.
 		 * During the session radio work pauses and the data port drops bytes; the clock continues. */
-		if (zlrs_mgmt_port_poll_enter() || atomic_cas(&mgmt_request, 1, 0)) {
+		if (zlrs_mgmt_poll_enter() || atomic_cas(&mgmt_request, 1, 0)) {
 			/* This frame has not run any slots; include it in the catch-up after the pause. */
 			consumed_frame--;
 			/* Keep the absolute clock running: catch up hop state after this pause. */
@@ -2367,7 +2369,7 @@ int main(void)
 		}
 
 		/* Completions timestamp receptions during the slots; timeout checks need a newer time. */
-		const uint32_t now_ms = zlrs_port_radio_now_ms();
+		const uint32_t now_ms = k_uptime_get_32();
 
 		if (ZLRS_CONTROL_ENABLED) {
 			zlrs_link_tick(&link_control, now_ms);

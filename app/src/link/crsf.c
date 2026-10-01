@@ -7,6 +7,7 @@
 #include "link/crsf.h"
 
 #include <zephyr/device.h>
+#include <zephyr/devicetree.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -16,7 +17,6 @@
 #include <stddef.h>
 #include <string.h>
 
-#include "ports/serial.h"
 #include "zlrs/crsf/crsf.h"
 
 LOG_MODULE_REGISTER(zlrs_link_crsf, CONFIG_APP_LOG_LEVEL);
@@ -31,26 +31,44 @@ struct crsf_ep {
 	const struct device *dev;
 	struct ring_buf tx;
 	uint8_t tx_mem[CRSF_TX_RING_LEN];
+	uint32_t rx_total;
 	bool ready;
 };
 
 static uint8_t crsf_frame_ring_mem[CRSF_FRAME_RING_LEN];
 static struct ring_buf crsf_frame_ring;
-static struct crsf_ep crsf_eps[ZLRS_PORT_SERIAL_MAX];
+enum {
+	CRSF_UART,
+	CRSF_USB
+};
+static struct crsf_ep crsf_eps[2] = {
+#if DT_NODE_EXISTS(DT_ALIAS(zlrs_control_uart))
+	[CRSF_UART].dev = DEVICE_DT_GET(DT_ALIAS(zlrs_control_uart)),
+#endif
+#if DT_NODE_EXISTS(DT_ALIAS(zlrs_control_cdc))
+	[CRSF_USB].dev = DEVICE_DT_GET(DT_ALIAS(zlrs_control_cdc)),
+#endif
+};
 static zlrs_crsf_parser_t crsf_parser;
 static const struct device *crsf_rx_source; /* endpoint that last fed the parser */
 static uint32_t crsf_rx_dropped;
-static bool crsf_ready;
 
-static struct crsf_ep *crsf_ep_of(const struct device *dev)
+/* USB wins after DTR or four received bytes; otherwise a used UART wins.
+ * Default to USB so a receive-only host does not have to send first. */
+static struct crsf_ep *crsf_active(void)
 {
-	for (size_t i = 0U; i < ZLRS_PORT_SERIAL_MAX; i++) {
-		if (crsf_eps[i].ready && crsf_eps[i].dev == dev) {
-			return &crsf_eps[i];
-		}
-	}
+	struct crsf_ep *const uart = &crsf_eps[CRSF_UART];
+	struct crsf_ep *const usb = &crsf_eps[CRSF_USB];
+	uint32_t dtr = 0U;
 
-	return NULL;
+	if (!usb->ready) {
+		return uart->ready ? uart : NULL;
+	}
+	if (!uart->ready) {
+		return usb;
+	}
+	(void)uart_line_ctrl_get(usb->dev, UART_LINE_CTRL_DTR, &dtr);
+	return (dtr != 0U || usb->rx_total >= 4U || uart->rx_total < 4U) ? usb : uart;
 }
 
 static void crsf_isr(const struct device *dev, void *user_data)
@@ -63,12 +81,11 @@ static void crsf_isr(const struct device *dev, void *user_data)
 			const int n = uart_fifo_read(dev, chunk, sizeof(chunk));
 
 			if (n > 0) {
-				/* Record the evidence first: endpoint choice depends on it, see zlrs_port_serial_active() */
-				zlrs_port_serial_rx_seen(dev, (uint32_t)n);
+				ep->rx_total += (uint32_t)n;
 			}
 
 			/* Check the active endpoint after recording: the first frame must not be lost to lag */
-			if (dev != zlrs_port_serial_active(zlrs_port_serial_control())) {
+			if (ep != crsf_active()) {
 				continue; /* not the active endpoint: incoming bytes do not count */
 			}
 
@@ -114,7 +131,7 @@ static void crsf_isr(const struct device *dev, void *user_data)
 				continue;
 			}
 
-			if (dev != zlrs_port_serial_active(zlrs_port_serial_control())) {
+			if (ep != crsf_active()) {
 				uart_irq_tx_disable(
 					dev); /* queued bytes wait for the endpoint to come back */
 				continue;
@@ -132,9 +149,8 @@ int zlrs_link_crsf_init(void)
 	ring_buf_init(&crsf_frame_ring, sizeof(crsf_frame_ring_mem), crsf_frame_ring_mem);
 	zlrs_crsf_parser_init(&crsf_parser);
 
-	for (size_t i = 0U; i < ZLRS_PORT_SERIAL_MAX; i++) {
-		const struct device *const dev =
-			zlrs_port_serial_endpoint(zlrs_port_serial_control(), i);
+	for (size_t i = 0U; i < ARRAY_SIZE(crsf_eps); i++) {
+		const struct device *const dev = crsf_eps[i].dev;
 
 		if (dev == NULL) {
 			continue; /* alias not wired on this board */
@@ -146,21 +162,19 @@ int zlrs_link_crsf_init(void)
 		}
 
 		ring_buf_init(&crsf_eps[i].tx, sizeof(crsf_eps[i].tx_mem), crsf_eps[i].tx_mem);
-		crsf_eps[i].dev = dev;
-		crsf_eps[i].ready = true;
-		crsf_ready = true;
 
 		if (uart_irq_callback_user_data_set(dev, crsf_isr, &crsf_eps[i]) != 0) {
 			LOG_ERR("CRSF endpoint %s: RX setup failed; endpoint disabled", dev->name);
 			crsf_eps[i].ready = false;
 			continue;
 		}
+		crsf_eps[i].ready = true;
 		uart_irq_rx_enable(dev);
 
 		LOG_INF("CRSF endpoint ready (%s)", dev->name);
 	}
 
-	if (!crsf_ready) {
+	if (crsf_active() == NULL) {
 		LOG_WRN("no zlrs-control-uart / zlrs-control-cdc alias: CRSF port disabled");
 		return -1;
 	}
@@ -170,7 +184,7 @@ int zlrs_link_crsf_init(void)
 
 bool zlrs_link_crsf_ready(void)
 {
-	return crsf_ready;
+	return crsf_active() != NULL;
 }
 
 uint8_t zlrs_link_crsf_write(uint8_t type, const uint8_t *payload, uint8_t payload_len)
@@ -179,9 +193,9 @@ uint8_t zlrs_link_crsf_write(uint8_t type, const uint8_t *payload, uint8_t paylo
 	const uint8_t addr =
 		(type == ZLRS_CRSF_TYPE_RC_CHANNELS) ? ZLRS_CRSF_ADDR_FC : ZLRS_CRSF_ADDR_TX_MODULE;
 	const uint8_t len = zlrs_crsf_encode(frame, addr, type, payload, payload_len);
-	struct crsf_ep *const ep = crsf_ep_of(zlrs_port_serial_active(zlrs_port_serial_control()));
+	struct crsf_ep *const ep = crsf_active();
 
-	if (!crsf_ready || ep == NULL || len == 0U) {
+	if (ep == NULL || len == 0U) {
 		return 0U;
 	}
 

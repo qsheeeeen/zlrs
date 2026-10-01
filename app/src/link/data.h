@@ -3,7 +3,7 @@
  *
  * The link itself lives in core/link; this is its host side — the endpoint the host talks to, the
  * RX/TX rings and the drop counters the data link reports (doc/07-architecture.md 5). Which device
- * that endpoint is comes from ports/serial.h.
+ * the implementation binds directly to devicetree UART/CDC devices.
  *
  * Naming: `<dir>/<file>.c` carries `zlrs_<dir>_<file>_*()`, so this is `zlrs_link_data_*()`.
  *
@@ -19,15 +19,15 @@
 /* For bench debugging: state of one data endpoint (`zlrs ports` prints it) */
 typedef struct {
 	const char *name;
-	bool ready;          /* the endpoint exists on the board and the device is ready */
-	bool active;         /* this is the selected endpoint (see zlrs_port_serial_active) */
+	bool ready; /* the endpoint exists on the board and the device is ready */
+	bool active; /* this is the selected endpoint (selected locally from DTR and received bytes) */
 	uint32_t rx_total;   /* bytes received (evidence that the host is using it) */
 	uint32_t rx_dropped; /* bytes dropped because this was not the active endpoint */
 } zlrs_link_data_state_t;
 
 /*
  * Read the state of both data endpoints, returns how many were filled in.
- * The choice itself (DTR, host bytes seen) lives in ports/serial.c; this only reports it.
+ * The choice itself (DTR, host bytes seen) is implemented locally in data.c.
  */
 size_t zlrs_link_data_state(zlrs_link_data_state_t *out, size_t count);
 

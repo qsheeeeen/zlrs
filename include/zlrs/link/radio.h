@@ -1,6 +1,6 @@
 /*
- * Radio abstraction: the link layer only says what to send and how long to listen, the port
- * layer turns that into hardware (USP/RAC on target, a simulated radio in host tests).
+ * Radio request produced by the protocol state machine. The caller executes it directly
+ * through the LR2021 driver on target or the simulated radio in host tests.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -21,8 +21,7 @@ typedef struct {
 	uint32_t freq_hz; /* carrier frequency */
 	/*
 	 * Modulation: an FLRC rate or LoRa SF/bandwidth/coding rate/preamble, see
-	 * doc/07-architecture.md 3. The port layer dispatches on modulation into RAC's flrc and lora
-	 * parameter groups.
+	 * doc/07-architecture.md 3. The application configures the corresponding RAL parameters.
 	 */
 	zlrs_mod_cfg_t mod;
 	uint8_t sync_slot; /* sync word slot: 1 control, 2 data, 3 pairing */
@@ -34,14 +33,6 @@ typedef struct {
 	uint16_t timeout_ms;  /* receive window */
 	uint8_t *buf;         /* shared TX/RX buffer, received data lands here */
 } zlrs_radio_req_t;
-
-typedef struct {
-	/* Submit one transaction, 0 on success; the result comes back via zlrs_link_complete() */
-	int (*submit)(void *ctx, const zlrs_radio_req_t *req);
-	/* 32-bit random number for session and pairing nonces; the port layer uses the TRNG */
-	uint32_t (*random)(void *ctx);
-	void *ctx;
-} zlrs_radio_ops_t;
 
 #ifdef __cplusplus
 }

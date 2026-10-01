@@ -1,7 +1,7 @@
 /*
  * Link layer: one instance per link, running the state machine and superframe slots (09-protocol 3, 4).
  *
- * Each superframe: zlrs_link_slot() hands out a transaction, radio.submit() runs it and
+ * Each superframe: zlrs_link_slot() hands out a transaction, the caller runs it and
  * zlrs_link_complete() closes it; zlrs_link_tick() handles timeouts and state changes. No Zephyr.
  *
  * SPDX-License-Identifier: Apache-2.0
@@ -212,7 +212,8 @@ typedef struct {
 
 typedef struct {
 	zlrs_link_cfg_t cfg;
-	zlrs_radio_ops_t radio;
+	uint32_t (*random)(void *ctx);
+	void *random_ctx;
 	zlrs_link_events_t ev;
 	zlrs_link_stats_t stats;
 
@@ -334,8 +335,9 @@ typedef struct {
 	uint32_t slot_ms; /* Current slot time, used for the session-confirm uplink window. */
 } zlrs_link_t;
 
-void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg, const zlrs_radio_ops_t *radio,
-		    const zlrs_link_events_t *events);
+/* Only nonce generation is injected; the caller executes each returned radio request. */
+void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg, uint32_t (*random)(void *ctx),
+		    void *random_ctx, const zlrs_link_events_t *events);
 
 /* The link only joins the air once a root key has been written */
 void zlrs_link_set_root_key(zlrs_link_t *link, const uint8_t root_key[ZLRS_KEY_LEN],

@@ -132,14 +132,6 @@ static void fx_on_failsafe(void *ctx, const uint8_t *payload, uint16_t len)
 	(void)len;
 }
 
-static int fx_submit(void *ctx, const zlrs_radio_req_t *req)
-{
-	(void)ctx;
-	(void)req;
-
-	return 0;
-}
-
 static uint32_t fx_random(void *ctx)
 {
 	(void)ctx;
@@ -178,11 +170,6 @@ static void fx_link_init(zlrs_link_t *link, uint8_t arq)
 		.tlm_every_n = 1U,
 		.data_every_n = 1U,
 	};
-	const zlrs_radio_ops_t ops = {
-		.submit = fx_submit,
-		.random = fx_random,
-		.ctx = NULL,
-	};
 	const zlrs_link_events_t ev = {
 		.on_rc = fx_on_rc,
 		.on_tlm = fx_on_tlm,
@@ -192,7 +179,7 @@ static void fx_link_init(zlrs_link_t *link, uint8_t arq)
 		.ctx = NULL,
 	};
 
-	zlrs_link_init(link, &cfg, &ops, &ev);
+	zlrs_link_init(link, &cfg, fx_random, NULL, &ev);
 	zlrs_link_set_dev_id(link, dev_id);
 	zlrs_link_set_root_key(link, root_key, 0U);
 	zlrs_link_set_peer(link, peer_id, salt, 0U);

@@ -61,6 +61,19 @@ design documents.
   a timeout raises `k_oops` and resets the board instead of returning a recoverable radio error.
   The application timer bottom half remains; USB/CDC keep upstream scheduling and no patches
   are applied during setup. These checks retain the same pending timing and board acceptance.
+- **Direct platform integration (implemented; short LF checks passed)**: removed `app/src/ports/`,
+  the radio ops/submit adapter and the separate management transport files. CRSF/data bind
+  directly to Zephyr UART/CDC devices, management owns its CDC in `mgmt/mode.c`, and the LR2021
+  driver lives in `platform/radio.c`. Hardware timer and FIFO preloading remain in use.
+  On 2026-10-01 LF debug and LF/HF production builds passed; host tests passed 2033 checks
+  under ASan/UBSan. Both LF debug images were hash-verified and confirmed. The first duplex
+  check after sequential upgrades timed out: control was connected and USB input was queued,
+  but TX data stayed SEARCHING with authentication rejects. After rebooting both boards,
+  three consecutive duplex 4096-byte rounds passed byte-exact in 2.86-4.22 s with input at
+  32 bytes per 10 ms. A 6.043 s RX management pause retained a separate 4096-byte transfer,
+  completing byte-exact in 8.799 s. Recovery after sequential peer upgrades needs investigation;
+  its cause is not established by this check. Production wireless and HF hardware checks remain
+  pending. Upstream Zephyr/USP source is unchanged.
 - **First frames in the air, one board (passed)**: with the Core2021 attached, pairing
   `PAIR_REQ` frames really go out: one every 100 ms through the 30 s window, about 1700
   transactions over five rounds with `fail=0`. The CRSF entry was checked on the same board:

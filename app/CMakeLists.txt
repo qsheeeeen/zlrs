@@ -8,7 +8,6 @@ project(app LANGUAGES C)
 
 target_sources(app PRIVATE
   src/mgmt/mode.c
-  src/mgmt/port.c
   src/link/crsf.c
   src/link/data.c
   src/link/power.c
@@ -17,8 +16,7 @@ target_sources(app PRIVATE
   src/platform/slot_timer.c
   src/platform/recovery.c
   src/platform/watchdog.c
-  src/ports/radio.c
-  src/ports/serial.c
+  src/platform/radio.c
   src/state/sys_bus.c
   src/storage/log.c
   src/storage/settings.c
@@ -26,7 +24,7 @@ target_sources(app PRIVATE
   src/ui/led.c
 )
 
-# App-internal headers are included the way they sit on disk: "ports/serial.h",
+# App-internal headers are included the way they sit on disk: "platform/radio.h",
 # "link/data.h", "platform/caps.h", ... (the layers are described in doc/07-architecture.md 5).
 target_include_directories(app PRIVATE src)
 
