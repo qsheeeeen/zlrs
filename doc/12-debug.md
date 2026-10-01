@@ -281,16 +281,26 @@ remains available through `CONFIG_ZLRS_APP_BENCH_RAW_MS`, before the slot owner 
 `zlrs radio` reports TIMER1 boundaries, maximum IRQ lateness, missed boundaries and skipped
 frames/slots; RAL TX completions, RX packets, setup cost, late launches and chip errors; packet
 build cost and RX phase error/correction. Empty RX windows are expected when the peer is idle.
+It also separates preparation time from launch command time, reports FIFO readiness lead,
+launch jitter and RF startup time. A ready FIFO does not imply the hardware alarm woke the
+owner on time; late launches remain discarded.
 The aggregate abort counter includes those windows and is not a TX failure count.
 Normal logs wait in the RAM queue while RF runs; enter management mode to flush them to the
 console and flash. This keeps flash erase/program operations from masking timer IRQs during
 normal traffic. Startup, explicit configuration persistence and panic handling can still delay IRQs.
 
 The slot budget uses the native FLRC airtime calculation (variable header, CRC and coding),
-plus the configured TX guard, a 500 us RF startup allowance and a 100 us end margin. LF CN470
+plus `ZLRS_APP_PREPARE_US`, the configured TX guard, a 500 us RF startup allowance and a
+100 us end margin. Packet construction, authentication and FIFO writes belong to the preparation
+window; the guard only places the final launch command relative to the RF slot boundary. LF CN470
 clamps control PHY to 325 kbps; its control packets cannot fit four equal slots at the requested
 150 Hz with current preparation costs. The application clamps the rate before sizing the data
 MTU. Hardware timer scheduling does not by itself establish throughput acceptance; see
 [13-roadmap](13-roadmap.md) for the pending radio checks.
+
+The default preparation reservation is 2800 us and the launch offset is 200 us. A dedicated
+meta-IRQ thread executes the prepared `SET_TX` as the hardware alarm's bottom half, while the
+link thread waits for its result. USB core/controller threads and CDC work are preemptible;
+carried Zephyr patches also ensure a final full-size CDC packet gets its terminating ZLP.
 
 Previous RAC cost measurements in section 5 are historical measurements of the former backend.

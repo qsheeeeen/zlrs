@@ -16,6 +16,10 @@ uint32_t zlrs_port_radio_now_ms(void);
 /* Called by the timer ISR to end waits at a slot boundary. No SPI from the ISR. */
 void zlrs_port_radio_wake(void);
 void zlrs_port_radio_slot(uint32_t tx_us, uint32_t end_us);
+/* Prepare modem and FIFO before the timer-controlled launch; no TX in prepare(). */
+int zlrs_port_radio_prepare(zlrs_link_t *link, const zlrs_radio_req_t *req);
+int zlrs_port_radio_launch(void);
+int zlrs_port_radio_launch_at(uint32_t target_us);
 /* Budget for SET_TX, synthesizer and PA startup before the first air bit. */
 #define ZLRS_RADIO_STARTUP_US 500U
 
@@ -32,6 +36,12 @@ struct zlrs_port_radio_diag {
 	uint32_t tx_us_last;
 	uint32_t submit_us_last;
 	uint32_t submit_us_max;
+	uint32_t launch_cmd_us_last;
+	uint32_t launch_cmd_us_max;
+	uint32_t preload_lead_us_last;
+	uint32_t launch_jitter_us_last;
+	uint32_t launch_jitter_us_max;
+	uint32_t tx_startup_us_last;
 	uint32_t late_starts;
 	uint32_t launch_late_us_last;
 	uint32_t launch_late_us_max;

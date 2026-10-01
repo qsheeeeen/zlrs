@@ -49,3 +49,10 @@ void zlrs_slot_clock_shift(zlrs_slot_clock_t *clock, int32_t shift_us)
 
 	clock->shift_us = shift_us > limit ? limit : (shift_us < -limit ? -limit : shift_us);
 }
+
+uint32_t zlrs_slot_clock_next_origin(const zlrs_slot_clock_t *clock)
+{
+	/* Slot 3 already installs the next origin, including the queued phase correction. */
+	return clock->slot == 0U ? clock->origin_us
+				 : clock->origin_us + clock->period_us + (uint32_t)clock->shift_us;
+}

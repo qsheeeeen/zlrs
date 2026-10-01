@@ -14,7 +14,7 @@ design documents.
   accounting, and RX follows authenticated IRQ timestamps. Calibration tables now have the
   three entries the BSP consumes, aborted TX packets cannot leak FIFO bytes into the next TX,
   and authenticated SYNC/CFM carry a 32-bit frame counter. Both peers must upgrade together.
-  The default preparation guard is 3000 us; CN470 LF is clamped to 45 Hz (22222 us frames),
+  That baseline used a 3000 us preparation guard; CN470 LF was clamped to 45 Hz (22222 us frames),
   rather than advertising an unsustainable 150 Hz schedule. Logs queue in RAM during RF and
   flush at boot or management pauses, keeping flash writes out of normal radio slots.
   On 2026-10-01 two LF boards, with both links, hopping, P1, handshake, telemetry and ARQ enabled,
@@ -32,6 +32,25 @@ design documents.
   re-pairing. Management intentionally discards new bytes arriving on the paused device's local
   data input; this check validates the transmitting peer's retained data instead.
   Long-duration timing and higher-rate acceptance remain open; these are short LF checks.
+- **Packet preparation and FIFO preloading (implemented; short LF checks passed)**: construction,
+  P1 authentication, modem/frequency setup, TX FIFO loading and FS entry happen before the RF slot.
+  A dedicated timer meta-IRQ bottom half issues only the prepared TX command; the link thread
+  waits for its result and keeps exclusive ownership of preparation and completion. The default
+  reservation is 2800 us with a 200 us launch offset, retaining CN470 LF at 45 Hz. USB core and
+  controller work is preemptible; carried Zephyr patches fix the final CDC ZLP completion race
+  exposed by this scheduling. Data/CRSF callbacks also recheck an empty TX ring before disabling
+  its notification, preventing a preempting producer's wakeup from being lost.
+  On 2026-10-01 two LF boards running the final debug image passed 20 consecutive simultaneous
+  4096-byte transfers per direction, byte-exact, in 1.71-5.17 s each, with input paced at
+  32 bytes per 10 ms. A 6.031 s RX radio pause retained a separate 4096-byte TX-to-RX transfer,
+  byte-exact, completing in 7.835 s total. Host tests pass 2033 checks under ASan/UBSan, and LF/HF
+  production builds pass. Both debug images were verified by running hash and confirmed.
+  FIFO readiness snapshots leave about 0.6-1.2 ms before launch. Occasional late launches are
+  still discarded; these checks do not accept worst-case launch jitter or maximum RF goodput.
+  A 2000 us reservation at 52 Hz passed short transfers but showed late launches and control
+  reacquisition before the final timer bottom-half change; it is not the default and needs a new
+  stability check. Long-duration timing, production wireless acceptance and HF hardware checks
+  remain pending.
 - **First frames in the air, one board (passed)**: with the Core2021 attached, pairing
   `PAIR_REQ` frames really go out: one every 100 ms through the 30 s window, about 1700
   transactions over five rounds with `fail=0`. The CRSF entry was checked on the same board:

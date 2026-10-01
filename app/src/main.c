@@ -310,7 +310,8 @@ static void plan_init(void)
 			&control_mod,
 			MAX(CTL_FRAME_LEN,
 			    ZLRS_PAIR_PAYLOAD_LEN + ZLRS_FRAME_HDR_LEN + ZLRS_TAG_LEN)) +
-		CONFIG_ZLRS_APP_TX_GUARD_US + ZLRS_RADIO_STARTUP_US + 100U;
+		CONFIG_ZLRS_APP_PREPARE_US + CONFIG_ZLRS_APP_TX_GUARD_US + ZLRS_RADIO_STARTUP_US +
+		100U;
 	const uint32_t hardware_max_hz = MAX(1U, 1000000U / (4U * control_window_us));
 	if (req.want_hz > hardware_max_hz) {
 		LOG_WRN("hardware slot budget: control rate %u Hz -> %u Hz", req.want_hz,
@@ -331,6 +332,7 @@ static void plan_init(void)
 		uint16_t len = (uint16_t)(ZLRS_PAYLOAD_MAX_LEN - 2U);
 
 		while (len > 16U && zlrs_port_radio_airtime_us(&data_mod, (uint16_t)(len + 9U)) +
+						    CONFIG_ZLRS_APP_PREPARE_US +
 						    CONFIG_ZLRS_APP_TX_GUARD_US +
 						    ZLRS_RADIO_STARTUP_US + 100U >
 					    budget_us) {
@@ -631,8 +633,11 @@ static void run_slot(uint8_t slot)
 {
 	const bool data_slot = (slot == ZLRS_SLOT_DATA_A || slot == ZLRS_SLOT_DATA_B);
 	zlrs_link_t *link = data_slot ? &link_data : &link_control;
-	const uint32_t now_ms = zlrs_port_radio_now_ms();
 	const uint32_t slot_start_us = now_us();
+	/* Slot decisions use the planned time even though construction happens before it. */
+	const int32_t until_slot_us = (int32_t)(slot_nominal_us - slot_start_us);
+	const uint32_t now_ms = zlrs_port_radio_now_ms() +
+				(until_slot_us > 0 ? (uint32_t)until_slot_us / 1000U : 0U);
 	const uint32_t hit_before = link->stats.slot_hit[slot];
 	const uint32_t good_before = link->stats.rx_frames;
 	/* The duty-cycle gate only applies to whichever link is on sub-G */
@@ -677,7 +682,7 @@ static void run_slot(uint8_t slot)
 		return;
 	}
 
-	if (link->radio.submit(link->radio.ctx, req) != 0) {
+	if (zlrs_port_radio_prepare(link, req) != 0) {
 		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_port_radio_now_ms());
 		return;
 	}
@@ -689,6 +694,17 @@ static void run_slot(uint8_t slot)
 		bench.submit_us_max = bench.submit_us_last;
 	}
 #endif
+
+	/* Modem, authentication and FIFO are ready: the timer wake leads only to SET_TX. */
+	const int launch_rc =
+		req->is_tx
+			? zlrs_port_radio_launch_at(slot_nominal_us + CONFIG_ZLRS_APP_TX_GUARD_US)
+			: zlrs_port_radio_launch();
+
+	if (launch_rc != 0) {
+		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_port_radio_now_ms());
+		return;
+	}
 
 	slot_off_us[slot] = slot_nominal_us - frame_start_us;
 	const int32_t remaining_us = (int32_t)(slot_deadline_us - now_us());
@@ -1816,6 +1832,8 @@ static int cmd_ports(const struct shell *sh, size_t argc, char **argv)
 			    states[i].name, states[i].ready, states[i].active, states[i].rx_total,
 			    states[i].rx_dropped);
 	}
+	shell_print(sh, "air-to-port=%u B host_drop=%u B", counters.data_rx,
+		    zlrs_link_data_tx_dropped());
 
 	return 0;
 }
@@ -1849,6 +1867,11 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 		    zlrs_port_radio_airtime_us(&data_mod, 255U), CONFIG_ZLRS_APP_TX_GUARD_US);
 	shell_print(sh, "late launch last/max=%u/%u us", diag.launch_late_us_last,
 		    diag.launch_late_us_max);
+	shell_print(sh, "launch command last/max=%u/%u us FIFO ready lead=%u us prepare=%u us",
+		    diag.launch_cmd_us_last, diag.launch_cmd_us_max, diag.preload_lead_us_last,
+		    CONFIG_ZLRS_APP_PREPARE_US);
+	shell_print(sh, "launch jitter last/max=%u/%u us TX startup=%u us",
+		    diag.launch_jitter_us_last, diag.launch_jitter_us_max, diag.tx_startup_us_last);
 	shell_print(sh, "chip errors=%04x packet build last/max=%u/%u us", diag.chip_errors,
 		    packet_build_us_last, packet_build_us_max);
 	shell_print(sh, "phase error/correction=%d/%d us hits=%u frame=%u us", phase_err_us,
@@ -2268,7 +2291,8 @@ int main(void)
 	 */
 
 	log_flush();
-	zlrs_slot_timer_start(frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE, zlrs_port_radio_wake);
+	zlrs_slot_timer_start(frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE,
+			      CONFIG_ZLRS_APP_PREPARE_US, zlrs_port_radio_wake);
 	uint32_t consumed_frame = 0U;
 
 	for (;;) {
@@ -2334,8 +2358,11 @@ int main(void)
 		for (uint8_t slot = 0U; slot < 4U; slot++) {
 			zlrs_watchdog_feed();
 			slot_nominal_us = start_us + ((uint64_t)period * slot) / 4U;
-			slot_deadline_us = start_us + ((uint64_t)period * (slot + 1U)) / 4U - 100U;
-			zlrs_slot_timer_wait_until(slot_nominal_us);
+			const uint32_t next_us =
+				slot == 3U ? zlrs_slot_timer_next_frame_us()
+					   : start_us + ((uint64_t)period * (slot + 1U)) / 4U;
+
+			slot_deadline_us = next_us - CONFIG_ZLRS_APP_PREPARE_US - 100U;
 			run_slot(slot);
 		}
 

@@ -1,0 +1,23 @@
+diff --git a/subsys/usb/device_next/class/usbd_cdc_acm.c b/subsys/usb/device_next/class/usbd_cdc_acm.c
+index ee150223..2d79f496 100644
+--- a/subsys/usb/device_next/class/usbd_cdc_acm.c
++++ b/subsys/usb/device_next/class/usbd_cdc_acm.c
+@@ -320,14 +320,14 @@ static int usbd_cdc_acm_request(struct usbd_class_data *const c_data,
+ 
+ 	if (bi->ep == cdc_acm_get_bulk_in(c_data)) {
+ 		/* TX transfer completion */
++		atomic_clear_bit(&data->state, CDC_ACM_TX_FIFO_BUSY);
++
+ 		if (data->cb) {
+ 			cdc_acm_work_submit(&data->irq_cb_work);
+ 		}
+ 
+-		atomic_clear_bit(&data->state, CDC_ACM_TX_FIFO_BUSY);
+-
+-		if (!ring_buf_is_empty(data->tx_fifo.rb)) {
+-			/* Queue pending TX data on IN endpoint */
++		if (!ring_buf_is_empty(data->tx_fifo.rb) || data->zlp_needed) {
++			/* Finish a full-size final packet even if the UART FIFO is empty. */
+ 			cdc_acm_work_schedule(&data->tx_fifo_work, K_NO_WAIT);
+ 		}
+ 

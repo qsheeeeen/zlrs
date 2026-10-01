@@ -35,7 +35,7 @@ struct data_ep {
 	uint8_t rx_mem[DATA_RX_RING_LEN];
 	uint8_t tx_mem[DATA_TX_RING_LEN];
 	uint32_t rx_dropped;
-	uint32_t rx_total; /* bytes received (one of the endpoint-choice inputs) */
+	uint32_t rx_total;   /* bytes received (one of the endpoint-choice inputs) */
 	uint32_t tx_dropped; /* bytes the air side handed over that the host side had no room for */
 	bool ready;
 };
@@ -79,7 +79,14 @@ static void data_isr(const struct device *dev, void *user_data)
 			const uint32_t claimed = ring_buf_get_claim(&ep->tx, &claim, 64U);
 
 			if (claimed == 0U) {
-				uart_irq_tx_disable(dev);
+				/* A timer can preempt a CDC callback and enqueue output. Recheck under
+				 * the IRQ lock so this callback cannot disable that new TX wakeup. */
+				const unsigned int key = irq_lock();
+
+				if (ring_buf_is_empty(&ep->tx)) {
+					uart_irq_tx_disable(dev);
+				}
+				irq_unlock(key);
 				continue;
 			}
 
@@ -134,7 +141,8 @@ size_t zlrs_link_data_state(zlrs_link_data_state_t *out, size_t count)
 int zlrs_link_data_init(uint32_t baud)
 {
 	for (size_t i = 0U; i < ZLRS_PORT_SERIAL_MAX; i++) {
-		const struct device *const dev = zlrs_port_serial_endpoint(zlrs_port_serial_data(), i);
+		const struct device *const dev =
+			zlrs_port_serial_endpoint(zlrs_port_serial_data(), i);
 
 		if (dev == NULL) {
 			continue; /* alias not wired on this board */

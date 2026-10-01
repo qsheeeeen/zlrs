@@ -105,7 +105,12 @@ static void crsf_isr(const struct device *dev, void *user_data)
 			const uint32_t claimed = ring_buf_get_claim(&ep->tx, &claim, 64U);
 
 			if (claimed == 0U) {
-				uart_irq_tx_disable(dev);
+				const unsigned int key = irq_lock();
+
+				if (ring_buf_is_empty(&ep->tx)) {
+					uart_irq_tx_disable(dev);
+				}
+				irq_unlock(key);
 				continue;
 			}
 
@@ -128,7 +133,8 @@ int zlrs_link_crsf_init(void)
 	zlrs_crsf_parser_init(&crsf_parser);
 
 	for (size_t i = 0U; i < ZLRS_PORT_SERIAL_MAX; i++) {
-		const struct device *const dev = zlrs_port_serial_endpoint(zlrs_port_serial_control(), i);
+		const struct device *const dev =
+			zlrs_port_serial_endpoint(zlrs_port_serial_control(), i);
 
 		if (dev == NULL) {
 			continue; /* alias not wired on this board */

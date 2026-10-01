@@ -28,6 +28,7 @@ static K_SEM_DEFINE(done_sem, 0, 1);
 static zlrs_link_t *owner;
 static const zlrs_radio_req_t *request;
 static volatile bool pending;
+static bool prepared;
 static volatile bool irq_pending;
 static volatile uint32_t irq_us;
 static uint32_t begin_us;
@@ -287,17 +288,17 @@ struct radio_client {
 static struct radio_client control_client;
 static struct radio_client data_client;
 
-static int port_submit(void *ctx, const zlrs_radio_req_t *req)
+static int prepare_request(zlrs_link_t *link, const zlrs_radio_req_t *req)
 {
 	const uint32_t start = zlrs_slot_timer_now_us();
 	ral_irq_t stale = 0;
 	int rc;
 
-	if (pending || req == NULL) {
+	if (pending || prepared || req == NULL || link == NULL) {
 		return -EBUSY;
 	}
 	rx_timing_valid = false;
-	owner = ((struct radio_client *)ctx)->link;
+	owner = link;
 	request = req;
 	k_sem_reset(&done_sem);
 	if (ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC) != RAL_STATUS_OK ||
@@ -327,6 +328,11 @@ static int port_submit(void *ctx, const zlrs_radio_req_t *req)
 			   ral_set_pkt_payload(&radio.ral, req->buf, req->size) != RAL_STATUS_OK)) {
 		return -EIO;
 	}
+	/* Finish synthesizer startup here. The following read waits for BUSY before launch. */
+	if (ral_set_fs(&radio.ral) != RAL_STATUS_OK ||
+	    ral_get_and_clear_irq_status(&radio.ral, &stale) != RAL_STATUS_OK) {
+		return -EIO;
+	}
 	diag.submit_us_last = zlrs_slot_timer_now_us() - start;
 	diag.submit_us_max = MAX(diag.submit_us_max, diag.submit_us_last);
 	if (timed_slot) {
@@ -344,22 +350,114 @@ static int port_submit(void *ctx, const zlrs_radio_req_t *req)
 				      slot_end_us) >= 0) {
 				return -EMSGSIZE;
 			}
-			zlrs_slot_timer_wait_until(tx_at_us);
 		}
 		if ((int32_t)(zlrs_slot_timer_now_us() - slot_end_us) >= 0) {
 			return -ETIME;
 		}
 	}
+	prepared = true;
+	if (req->is_tx) {
+		const uint32_t ready_us = zlrs_slot_timer_now_us();
+
+		diag.preload_lead_us_last =
+			timed_slot && (int32_t)(tx_at_us - ready_us) > 0 ? tx_at_us - ready_us : 0U;
+	}
+	return 0;
+}
+
+int zlrs_port_radio_prepare(zlrs_link_t *link, const zlrs_radio_req_t *req)
+{
+	return prepare_request(link, req);
+}
+
+int zlrs_port_radio_launch(void)
+{
+	int rc;
+
+	if (!prepared || pending) {
+		return -EINVAL;
+	}
+	prepared = false;
+	if (timed_slot) {
+		if (request->is_tx && (int32_t)(zlrs_slot_timer_now_us() - tx_at_us) < 0) {
+			return -EAGAIN;
+		}
+		if ((int32_t)(zlrs_slot_timer_now_us() - slot_end_us) >= 0) {
+			return -ETIME;
+		}
+		if (request->is_tx && (int32_t)(zlrs_slot_timer_now_us() - tx_at_us) > 100) {
+			diag.late_starts++;
+			diag.launch_late_us_last = zlrs_slot_timer_now_us() - tx_at_us;
+			diag.launch_late_us_max =
+				MAX(diag.launch_late_us_max, diag.launch_late_us_last);
+			return -ETIME;
+		}
+	}
 	begin_us = zlrs_slot_timer_now_us();
+	if (timed_slot && request->is_tx) {
+		diag.launch_jitter_us_last = begin_us - tx_at_us;
+		diag.launch_jitter_us_max =
+			MAX(diag.launch_jitter_us_max, diag.launch_jitter_us_last);
+	}
 	irq_pending = false;
 	pending = true;
 	diag.transactions++;
-	rc = req->is_tx ? ral_set_tx(&radio.ral) : ral_set_rx(&radio.ral, 0U);
+	rc = request->is_tx ? ral_set_tx(&radio.ral) : ral_set_rx(&radio.ral, 0U);
+	diag.launch_cmd_us_last = zlrs_slot_timer_now_us() - begin_us;
+	diag.launch_cmd_us_max = MAX(diag.launch_cmd_us_max, diag.launch_cmd_us_last);
 	if (rc != RAL_STATUS_OK) {
 		pending = false;
 		return -EIO;
 	}
 	return 0;
+}
+
+static K_SEM_DEFINE(launch_request_sem, 0, 1);
+static K_SEM_DEFINE(launch_result_sem, 0, 1);
+static uint32_t launch_target_us;
+static int launch_result;
+
+static void launch_thread(void *p1, void *p2, void *p3)
+{
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
+
+	for (;;) {
+		(void)k_sem_take(&launch_request_sem, K_FOREVER);
+		zlrs_slot_timer_wait_until(launch_target_us);
+		launch_result = zlrs_port_radio_launch();
+		k_sem_give(&launch_result_sem);
+	}
+}
+
+/* Timer bottom half: only the prepared launch command may preempt a scheduler lock.
+ * The main thread waits for its result and cannot access the RAL until it completes.
+ * This thread never touches USB, link state, packet buffers or configuration. */
+K_THREAD_DEFINE(zlrs_radio_launch_tid, 1536, launch_thread, NULL, NULL, NULL, K_PRIO_COOP(0), 0, 0);
+
+int zlrs_port_radio_launch_at(uint32_t target_us)
+{
+	if (!prepared || request == NULL || !request->is_tx) {
+		return -EINVAL;
+	}
+	launch_target_us = target_us;
+	k_sem_give(&launch_request_sem);
+	(void)k_sem_take(&launch_result_sem, K_FOREVER);
+	return launch_result;
+}
+
+static int port_submit(void *ctx, const zlrs_radio_req_t *req)
+{
+	int rc = prepare_request(((struct radio_client *)ctx)->link, req);
+
+	if (rc != 0) {
+		return rc;
+	}
+	if (timed_slot && req->is_tx) {
+		zlrs_slot_timer_wait_until(tx_at_us);
+	}
+	return zlrs_port_radio_launch();
 }
 
 static const zlrs_radio_ops_t control_port = {
@@ -448,6 +546,9 @@ void zlrs_port_radio_drain(void)
 		status = ZLRS_RADIO_OK;
 		diag.tx_done++;
 		diag.tx_us_last = event_us - begin_us;
+		const uint32_t toa_us = zlrs_port_radio_airtime_us(&request->mod, request->size);
+
+		diag.tx_startup_us_last = diag.tx_us_last > toa_us ? diag.tx_us_last - toa_us : 0U;
 	} else if (!request->is_tx && (irq & (RAL_IRQ_RX_HDR_ERROR | RAL_IRQ_RX_CRC_ERROR)) == 0U &&
 		   (irq & RAL_IRQ_RX_DONE) != 0U) {
 		if (ral_get_pkt_payload(&radio.ral, request->max_rx_size, request->buf, &len) ==
@@ -485,6 +586,7 @@ void zlrs_port_radio_abort(void)
 	(void)ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC);
 	pending = false;
 	irq_pending = false;
+	prepared = false;
 	ral_irq_t discarded;
 	(void)ral_get_and_clear_irq_status(&radio.ral, &discarded);
 	k_sem_reset(&done_sem);

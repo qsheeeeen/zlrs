@@ -24,6 +24,7 @@ static K_SEM_DEFINE(frame_sem, 0, 1);
 static K_SEM_DEFINE(delay_sem, 0, 1);
 static zlrs_slot_clock_t clock;
 static bool running;
+static uint32_t prepare_lead_us;
 static void (*wake_thread)(void);
 static struct zlrs_slot_timer_stats stats;
 
@@ -157,12 +158,13 @@ void zlrs_slot_timer_stop(void)
 	k_sem_reset(&delay_sem);
 }
 
-void zlrs_slot_timer_start(uint32_t period_us, void (*wake)(void))
+void zlrs_slot_timer_start(uint32_t period_us, uint32_t prepare_us, void (*wake)(void))
 {
 	zlrs_slot_timer_stop();
 	const unsigned int key = irq_lock();
 
 	zlrs_slot_clock_init(&clock, zlrs_slot_timer_now_us() + 1000U, period_us);
+	prepare_lead_us = prepare_us;
 	wake_thread = wake;
 	running = true;
 	timer->alarm[0] = clock.next_us;
@@ -175,11 +177,21 @@ void zlrs_slot_timer_wait_frame(uint32_t *start_us, uint32_t *frame)
 	(void)k_sem_take(&frame_sem, K_FOREVER);
 	const unsigned int key = irq_lock();
 
-	*start_us = clock.published_origin_us;
+	/* Publish early enough to preload the radio before the actual RF frame origin. */
+	*start_us = clock.published_origin_us + prepare_lead_us;
 	*frame = clock.frame;
 	/* An ISR between taking the token and this snapshot may publish a newer frame. */
 	k_sem_reset(&frame_sem);
 	irq_unlock(key);
+}
+
+uint32_t zlrs_slot_timer_next_frame_us(void)
+{
+	const unsigned int key = irq_lock();
+	const uint32_t origin = zlrs_slot_clock_next_origin(&clock) + prepare_lead_us;
+
+	irq_unlock(key);
+	return origin;
 }
 
 void zlrs_slot_timer_wait_until(uint32_t deadline_us)
@@ -193,13 +205,16 @@ void zlrs_slot_timer_wait_until(uint32_t deadline_us)
 	k_sem_reset(&delay_sem);
 	timer->armed = 2U;
 	timer->intr = 2U;
+	timer->intf &= ~2U;
 	timer->alarm[1] = deadline_us;
 	timer->inte |= 2U;
 	if ((int32_t)(zlrs_slot_timer_now_us() - deadline_us) >= 0) {
 		timer->intf |= 2U;
 	}
 	irq_unlock(key);
-	(void)k_sem_take(&delay_sem, K_FOREVER);
+	while ((int32_t)(deadline_us - zlrs_slot_timer_now_us()) > 0) {
+		(void)k_sem_take(&delay_sem, K_FOREVER);
+	}
 }
 
 void zlrs_slot_timer_stats(struct zlrs_slot_timer_stats *out)

@@ -99,8 +99,9 @@ LoRa is the tier below those: SF5-12, BW 125/250/500 kHz, CR 4/5-4/8, at tens of
 frame. The previous approximately **97 kB/s** estimate was an airtime-only target, not measured
 throughput. The current implementation has four equal slots and one packet per data direction
 per frame. Its timer period includes native packet airtime, preparation guard and RF startup;
-CN470 LF currently runs at 45 Hz with the default 3000 us guard. ARQ and ACK traffic reduce the
-payload rate further. Hardware results and remaining acceptance are tracked in [13-roadmap](13-roadmap.md).
+CN470 LF is clamped from the configured preparation window and RF budget. ARQ and ACK traffic
+reduce the payload rate further. Hardware results and remaining acceptance are tracked in
+[13-roadmap](13-roadmap.md).
 
 ## 5. Software layering
 
@@ -148,8 +149,8 @@ framing), and `main.c` wires the whole thing together. `ports/` is not a portabi
 firmware is Zephyr's, and its two files are there because the vendor radio stack and the
 two-endpoint serial rule are hardware concerns the rest of the application should not carry.
 
-Everything on the radio side (SPI timing, calibration, band selection, transfer scheduling)
-lives in `usp_zephyr`.
+USP supplies the transceiver RAL and Zephyr HAL. The application radio port owns preparation,
+calibration selection and launch scheduling.
 
 Every transmission also passes a **regulatory gate**: `core/region` provides the region's
 channel plan, power ceiling and duty cap; a slot with no budget left is given up and counted in
@@ -162,22 +163,22 @@ the log. See [09-protocol](09-protocol.md) 5.2.
 | Thread | Priority | Responsibility |
 | --- | --- | --- |
 | Link thread (`main`) | `-2` | link state machines, building and submitting transactions, results, system state broadcast |
+| TX launch (`zlrs_radio_launch`) | highest cooperative priority, meta-IRQ | timer bottom half; only the prepared TX command, with the link thread waiting |
+| USB core / controller | `2` / `3` (preemptive) | USB events; carried Zephyr patch makes scheduling configurable |
 | LED thread (`zlrs_led`) | `7` (preemptive) | renders the system state it subscribes to and writes the WS2812 (`app/src/ui/led.c`) |
 | Button thread (`zlrs_button`) | `8` (preemptive) | samples the button, reports a hold on the bus (`app/src/ui/button.c`) |
-| Serial | interrupt context | ring-buffered transfers, no radio decisions |
+| Serial | hardware ISR or preemptible CDC workqueue | ring-buffered transfers, no radio decisions |
 
-The link thread is cooperative and owns all radio calls. `CONFIG_USP_MAIN_THREAD=n` and
+The link thread is cooperative and owns radio preparation and completion. Only the prepared
+TX launch command is handed to its timer bottom half, with radio access serialized by the
+request/result semaphores. `CONFIG_USP_MAIN_THREAD=n` and
 `CONFIG_LORA_BASICS_MODEM_DRIVERS_EVENT_TRIGGER_NO_THREAD=y`: the GPIO callback only timestamps the IRQ and
 wakes the owner, which reads status and completes the link transaction. Serial work is bounded
 between frames. Flash operations can still delay IRQ handling; delayed boundaries are counted
 and the absolute schedule is preserved.
 
-The LED thread is the one preemptive thread the application adds, and it is a deliberate exception
-to "the link thread does everything": the strip write (PIO push plus the WS2812 latch delay) is the
-slowest step of the LED path, and the rest of the LED path is pure C that has no business
-stretching a superframe slot. Being preemptive it can only run while the link thread is blocked —
-a cooperative thread is not preempted by it — and it pushes a frame only when the colour changed,
-so the strip is written at the rate the display actually moves.
+The LED thread keeps the PIO push and WS2812 latch delay out of radio work. It runs while the
+link thread is blocked and pushes a frame only when the colour changes.
 
 What the link thread hands over is not a colour but the **system state**, one zbus channel per fact
 (`app/src/state/sys_bus.h`): the control link's state and quality, the alerts the links produce,
@@ -213,6 +214,20 @@ The application instantiates its own `ralf_t` from the chosen transceiver device
 USP initialization of RAC, task submission and runtime backend switching are absent. Both links
 share cached modem parameters and stay in standby/FS between transactions. Every TX clears its
 FIFO before writing: an aborted packet must not contaminate the next packet.
+
+Slot execution has two stages. Before the nominal boundary, the link thread constructs and
+authenticates the packet, configures the modem and frequency, loads the TX FIFO and enters FS.
+It then waits for the hardware launch alarm. Only `SET_TX` runs at the configured offset;
+receivers start listening as soon as their preparation finishes. The previous RX window ends
+before this preparation reservation, so early FIFO loading never overlaps an active reception.
+The frame alarm publishes the next frame early; protocol decisions still use the planned slot
+time and phase correction is included when calculating the final slot deadline.
+
+The final prepared TX command runs in a dedicated meta-IRQ thread, as the timer interrupt's
+bottom half. Unlike the normal link thread, it can preempt a USB scheduler lock. The link thread
+waits for its result and performs no radio access during this handoff. This thread only waits
+for the launch alarm and issues the prepared command; authentication, configuration, FIFO
+access, IRQ draining and protocol callbacks stay on the link thread.
 
 The board calibration table contains exactly three entries because the vendor BSP consumes
 three; HF pads its unused entry with zero, and LF includes both sub-G coverage and 2.4 GHz.
