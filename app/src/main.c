@@ -500,16 +500,15 @@ static void build_links(void)
 					: MIN(tx_power_dbm, region->max_tx_power_dbm);
 	data_cfg.arq = IS_ENABLED(CONFIG_ZLRS_APP_DATA_ARQ) ? 1U : 0U;
 	/*
-	 * In mixed mode, an ACK may take two timer frames. data24 has two A/B rounds in each timer
-	 * frame, so one timer-frame half is enough. Keep at least 10 ms for radio turnaround.
+	 * An ACK may take two rounds, including the one-round delay from preparing during RX.
+	 * Data24 has two A/B rounds per timer frame. Keep at least 10 ms for radio turnaround.
 	 */
 	const uint64_t arq_ack_period_us =
-		(ZLRS_DATA24 ? (uint64_t)frame_period_us / 2U : 2ULL * frame_period_us) *
-		data_every_n * CONFIG_ZLRS_APP_PACING_SCALE;
+		(ZLRS_DATA24 ? (uint64_t)frame_period_us : 2ULL * frame_period_us) * data_every_n *
+		CONFIG_ZLRS_APP_PACING_SCALE;
 	const uint32_t arq_min_timeout_ms = ZLRS_DATA24 ? 10U : ZLRS_ARQ_TIMEOUT_MS;
 	data_cfg.arq_timeout_ms = (uint16_t)MIN(
-		UINT16_MAX,
-		MAX(arq_min_timeout_ms, DIV_ROUND_UP(arq_ack_period_us, 1000U)));
+		UINT16_MAX, MAX(arq_min_timeout_ms, DIV_ROUND_UP(arq_ack_period_us, 1000U)));
 	/*
 	 * The data link is best-effort: it sends nothing when idle, so it has no peer-loss check,
 	 * which would otherwise rebuild the session over and over while idle (doc/09-protocol.md 3.7).
@@ -819,6 +818,21 @@ static void run_slot(uint8_t slot)
 	}
 
 	slot_off_us[slot] = slot_nominal_us - frame_start_us;
+	if (ZLRS_DATA24 && !req->is_tx && link->state == ZLRS_STATE_CONNECTED) {
+		uint16_t size;
+		const uint32_t next_us = slot_nominal_us + slot_budget_us;
+		const int32_t until_next_us = (int32_t)(next_us - now_us());
+		const uint32_t next_ms = k_uptime_get_32() +
+					 (until_next_us > 0 ? (uint32_t)until_next_us / 1000U : 0U);
+
+		pump_serial();
+		const uint8_t *buf = zlrs_link_prepare_data(
+			link, role_tx ? ZLRS_SLOT_DATA_A : ZLRS_SLOT_DATA_B, next_ms, &size);
+
+		if (buf != NULL) {
+			(void)zlrs_radio_preload_tx(buf, size);
+		}
+	}
 	const int32_t remaining_us = (int32_t)(slot_deadline_us - now_us());
 
 	if (remaining_us > 0) {
@@ -2019,6 +2033,8 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 		    diag.tx_prepare_us_last[2], diag.tx_prepare_us_last[3]);
 	shell_print(sh, "TX build serial=%u protocol=%u us", serial_pump_us_last,
 		    protocol_build_us_last);
+	shell_print(sh, "TX preload packets=%u used=%u last/max=%u/%u us", diag.tx_preloaded,
+		    diag.tx_preload_used, diag.tx_preload_us_last, diag.tx_preload_us_max);
 	shell_print(sh, "RX errors header=%u crc=%u length=%u payload=%u expired=%u incomplete=%u",
 		    diag.rx_header_errors, diag.rx_crc_errors, diag.rx_length_errors,
 		    diag.rx_payload_errors, diag.rx_expired, diag.rx_incomplete);

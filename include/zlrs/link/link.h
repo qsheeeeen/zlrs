@@ -217,6 +217,24 @@ typedef struct {
 	uint8_t payload[ZLRS_PAYLOAD_MAX_LEN - 2U];
 } zlrs_arq_rx_frame_t;
 
+/* A DATA packet encoded during RX. Sender state commits only when its TX slot runs. */
+typedef struct {
+	uint8_t buf[ZLRS_FRAME_MAX_LEN];
+	uint8_t key[ZLRS_KEY_LEN];
+	uint32_t frame_index;
+	uint16_t size;
+	uint16_t frame_seq;
+	uint16_t data_seq;
+	uint16_t data_len;
+	uint16_t data_mtu;
+	uint16_t run_bytes;
+	uint16_t ack_seq;
+	zlrs_profile_t profile;
+	bool more;
+	bool ack_present;
+	bool valid;
+} zlrs_prepared_data_t;
+
 typedef struct {
 	zlrs_link_cfg_t cfg;
 	uint32_t (*random)(void *ctx);
@@ -333,6 +351,7 @@ typedef struct {
 	/* RX/TX buffers and reassembly */
 	uint8_t tx_buf[ZLRS_FRAME_MAX_LEN];
 	uint8_t rx_buf[ZLRS_FRAME_MAX_LEN];
+	zlrs_prepared_data_t prepared_data;
 	zlrs_reasm_t reasm;
 	uint8_t reasm_buf[ZLRS_REASM_BUF_LEN];
 
@@ -413,6 +432,12 @@ void zlrs_link_set_failsafe(zlrs_link_t *link, const uint8_t *payload, uint16_t 
 
 /* Superframe slot: return the transaction to submit, or NULL when there is none */
 const zlrs_radio_req_t *zlrs_link_slot(zlrs_link_t *link, uint8_t slot, uint32_t now_ms);
+
+/* Encode new ARQ DATA for the next assigned TX slot without advancing sender/hop state.
+ * Safe while RX is pending. Returned bytes stay immutable through the resulting TX request;
+ * NULL means that handshake, recovery, cadence or backpressure requires the normal path. */
+const uint8_t *zlrs_link_prepare_data(zlrs_link_t *link, uint8_t slot, uint32_t now_ms,
+				      uint16_t *size);
 
 /* Advance a missed slot without building a packet, consuming data or changing session state. */
 void zlrs_link_skip_slot(zlrs_link_t *link, uint8_t slot);

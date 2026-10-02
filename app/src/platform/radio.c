@@ -32,6 +32,8 @@ static zlrs_link_t *owner;
 static const zlrs_radio_req_t *request;
 static volatile bool pending;
 static bool prepared;
+static const uint8_t *preloaded_buf;
+static uint16_t preloaded_size;
 static volatile bool irq_pending;
 static volatile uint32_t irq_us;
 static uint32_t begin_us;
@@ -314,10 +316,18 @@ static int prepare_request(zlrs_link_t *link, const zlrs_radio_req_t *req)
 	}
 	/* The IRQ mask is constant and configured once by radio_init(). */
 	stages[2] = zlrs_slot_timer_now_us();
-	/* Aborted TX leaves bytes in the FIFO. Each request starts with its own packet. */
-	if (req->is_tx && (lr20xx_radio_fifo_clear_tx(radio.ral.context) != LR20XX_STATUS_OK ||
-			   ral_set_pkt_payload(&radio.ral, req->buf, req->size) != RAL_STATUS_OK)) {
-		return -EIO;
+	/* An RX-time preload already contains this immutable packet. Other TX requests
+	 * start with a fresh FIFO, including retries and packets left by an abort. */
+	if (req->is_tx) {
+		const bool preloaded = req->buf == preloaded_buf && req->size == preloaded_size;
+
+		preloaded_buf = NULL;
+		if (preloaded) {
+			diag.tx_preload_used++;
+		} else if (lr20xx_radio_fifo_clear_tx(radio.ral.context) != LR20XX_STATUS_OK ||
+			   ral_set_pkt_payload(&radio.ral, req->buf, req->size) != RAL_STATUS_OK) {
+			return -EIO;
+		}
 	}
 	stages[3] = zlrs_slot_timer_now_us();
 	/* Finish synthesizer startup before arming launch. No status read is needed. */
@@ -367,6 +377,29 @@ static int prepare_request(zlrs_link_t *link, const zlrs_radio_req_t *req)
 int zlrs_radio_prepare(zlrs_link_t *link, const zlrs_radio_req_t *req)
 {
 	return prepare_request(link, req);
+}
+
+int zlrs_radio_preload_tx(const uint8_t *buf, uint16_t size)
+{
+	const uint32_t start = zlrs_slot_timer_now_us();
+
+	preloaded_buf = NULL;
+	if (!pending || request->is_tx || prepared || buf == NULL || size == 0U ||
+	    size > ZLRS_FRAME_MAX_LEN) {
+		return -EINVAL;
+	}
+	/* FIFO access is legal during RX (LR2021 5.3); preserve modem, frequency,
+	 * IRQ state, semaphore and RX FIFO while the peer's packet is on air. */
+	if (lr20xx_radio_fifo_clear_tx(radio.ral.context) != LR20XX_STATUS_OK ||
+	    ral_set_pkt_payload(&radio.ral, buf, size) != RAL_STATUS_OK) {
+		return -EIO;
+	}
+	preloaded_buf = buf;
+	preloaded_size = size;
+	diag.tx_preloaded++;
+	diag.tx_preload_us_last = zlrs_slot_timer_now_us() - start;
+	diag.tx_preload_us_max = MAX(diag.tx_preload_us_max, diag.tx_preload_us_last);
+	return 0;
 }
 
 int zlrs_radio_launch(void)
@@ -670,6 +703,7 @@ bool zlrs_radio_drain(void)
 
 void zlrs_radio_abort(void)
 {
+	preloaded_buf = NULL;
 	const bool active = pending && request != NULL;
 	const bool tx = active && request->is_tx;
 

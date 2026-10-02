@@ -329,4 +329,10 @@ the lifetime maxima.
 RF application and protocol hot path in SRAM; compare the same schedule when evaluating the
 effect of Flash instruction fetches. Relocation does not alter the installation/update path.
 
+`TX preload` reports packets staged during RX, packets used by the following TX, and FIFO
+write duration. During a sustained stream, compare counter deltas to verify that preparation
+overlaps RX. A changed session, timeout or periodic SYNC may discard a staged packet; the
+normal path then reloads its own bytes. The current RX IRQ and completion semaphore are kept
+intact throughout staging.
+
 Previous RAC cost measurements in section 5 are historical measurements of the former backend.

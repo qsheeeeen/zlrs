@@ -16,6 +16,8 @@ void zlrs_radio_wake(void);
 void zlrs_radio_slot(uint32_t tx_us, uint32_t end_us);
 /* Prepare modem and FIFO before the timer-controlled launch; no TX in prepare(). */
 int zlrs_radio_prepare(zlrs_link_t *link, const zlrs_radio_req_t *req);
+/* Fill the separate TX FIFO while RX continues. Bytes must stay immutable until prepare(). */
+int zlrs_radio_preload_tx(const uint8_t *buf, uint16_t size);
 int zlrs_radio_launch(void);
 int zlrs_radio_launch_at(uint32_t target_us);
 /* SET_TX is polled even when FIFO transfers use DMA. */
@@ -36,6 +38,10 @@ struct zlrs_radio_diag {
 	uint32_t submit_us_last;
 	uint32_t submit_us_max;
 	uint32_t tx_prepare_us_last[4]; /* standby/IRQ, modem, FIFO, FS/BUSY */
+	uint32_t tx_preloaded;
+	uint32_t tx_preload_used;
+	uint32_t tx_preload_us_last;
+	uint32_t tx_preload_us_max;
 	uint32_t launch_cmd_us_last;
 	uint32_t launch_cmd_us_max;
 	uint32_t tx_launch_cmd_us_last;

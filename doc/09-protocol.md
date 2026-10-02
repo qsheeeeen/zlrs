@@ -200,14 +200,22 @@ The data link's default mode:
   remain standalone control packets;
 - the sender retransmits the head frame after the configured timeout, up to 64 times
   (`ZLRS_ARQ_MAX_RETRIES`). The core fallback is 30 ms (`ZLRS_ARQ_TIMEOUT_MS`); the application
-  budgets two scheduled data frame periods for mixed mode. Data24 budgets one alternating
-  transmit/receive pair, with a 10 ms minimum (currently 15 ms). Duplicate ACKs do not restart
+  budgets two scheduled data frame periods for mixed mode. Data24 budgets two alternating
+  transmit/receive pairs, with a 10 ms minimum (currently 19 ms). Duplicate ACKs do not restart
   this timer;
 - after exhausting retries, the sender probes for the receiver's cumulative ACK. Both ends
   retain sequence positions and partial messages; acknowledged fragments may no longer exist
   at the sender. Pending ACKs take priority over probes, including during simultaneous recovery;
 - the first frame of a session has to start at sequence 0: dropping a run is better than
   handing the layer above a stream at the wrong offset.
+
+Connected data24 can encode and authenticate its next DATA packet while RX is active, then
+preload the separate TX FIFO. Encoding does not advance the frame counter, hop, transmission
+sequence or ARQ window. The assigned TX slot validates the cached frame, key, MTU, run boundary
+and window tail before committing it. An ACK received during RX may release the queue head
+without changing that tail. The prepared packet's cumulative ACK can lag one exchange; newer
+receive progress stays pending for the following packet. Recovery, retransmissions, session
+messages and invalidated packets use the ordinary construction path.
 
 Both peers must use the same recovery semantics. Older firmware treated the probe as a reset
 of the receive sequence and reassembly buffer; upgrade both peers together.

@@ -173,6 +173,20 @@ design documents.
   a throughput cost. Slots are 4540 us, alternating pairs 9080 us. Both peers must upgrade
   together. Overlapping preparation with RX and reducing turnaround still need acceptance.
 
+- **DATA preparation during RX (implemented; both LF boards checked 2026-10-02)**:
+  immutable next-slot DATA is encoded and authenticated without advancing sender or hopping
+  state, then written to the separate TX FIFO while RX remains active. The assigned slot
+  validates the packet before committing its ARQ window entry. Cumulative ACKs may lag one
+  exchange; newer receive progress remains pending. The timeout now allows two alternating
+  pairs. Host regressions cover head advancement during RX, stale ACKs, sequence wrap, packet
+  immutability during TX, loss, MTU/key changes, timeout and SYNC fallback. LF/HF builds pass.
+  Five unpaced 64 KiB duplex rounds pass byte-exact in 1.558, 1.557, 1.613, 1.612 and 1.558 s
+  (40.6-43.5 kB/s per direction) at the unchanged 1.5 ms reservation. Neither board adds late
+  attempts, missed boundaries, recovery probes, serial drops or bad tags. Trigger jitter is
+  at most 3 us. The FIFO is preloaded 674/766 times and reused 664/711 times; maximum preload
+  duration is 613/578 us. Retransmissions add 66/25. This validates overlap; tighter reservations
+  and lower turnaround costs still need hardware acceptance.
+
 ## To-do
 
 ### Radio and protocol
