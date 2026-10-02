@@ -45,6 +45,16 @@ struct zlrs_radio_diag {
 	uint32_t launch_jitter_us_last;
 	uint32_t launch_jitter_us_max;
 	uint32_t tx_startup_us_last;
+	uint32_t tx_startup_us_max;
+	uint32_t rx_header_errors;
+	uint32_t rx_crc_errors;
+	uint32_t rx_length_errors;
+	uint32_t rx_payload_errors;
+	uint32_t rx_expired;
+	uint32_t rx_incomplete;
+	uint32_t tx_expired;
+	uint32_t irq_service_us_last;
+	uint32_t irq_service_us_max;
 	uint32_t late_starts;
 	uint32_t launch_late_us_last;
 	uint32_t launch_late_us_max;

@@ -494,6 +494,13 @@ void zlrs_radio_drain(void)
 		return;
 	}
 	diag.irq_last = irq;
+	diag.irq_service_us_last = zlrs_slot_timer_now_us() - event_us;
+	diag.irq_service_us_max = MAX(diag.irq_service_us_max, diag.irq_service_us_last);
+	if (!request->is_tx) {
+		diag.rx_header_errors += (irq & RAL_IRQ_RX_HDR_ERROR) != 0U;
+		diag.rx_crc_errors += (irq & RAL_IRQ_RX_CRC_ERROR) != 0U;
+		diag.rx_length_errors += (irq & RAL_IRQ_RX_LEN_ERROR) != 0U;
+	}
 	if (request->is_tx && (irq & RAL_IRQ_TX_DONE) != 0U) {
 		status = ZLRS_RADIO_OK;
 		diag.tx_done++;
@@ -501,6 +508,7 @@ void zlrs_radio_drain(void)
 		const uint32_t toa_us = zlrs_radio_airtime_us(&request->mod, request->size);
 
 		diag.tx_startup_us_last = diag.tx_us_last > toa_us ? diag.tx_us_last - toa_us : 0U;
+		diag.tx_startup_us_max = MAX(diag.tx_startup_us_max, diag.tx_startup_us_last);
 	} else if (!request->is_tx && (irq & (RAL_IRQ_RX_HDR_ERROR | RAL_IRQ_RX_CRC_ERROR)) == 0U &&
 		   (irq & RAL_IRQ_RX_DONE) != 0U) {
 		if (ral_get_pkt_payload(&radio.ral, request->max_rx_size, request->buf, &len) ==
@@ -510,6 +518,8 @@ void zlrs_radio_drain(void)
 			rx_done_us = event_us;
 			rx_airtime_us = zlrs_radio_airtime_us(&request->mod, len);
 			rx_timing_valid = true;
+		} else {
+			diag.rx_payload_errors++;
 		}
 		if (request->mod.modulation == ZLRS_MOD_FLRC) {
 			ral_flrc_rx_pkt_status_t pkt;
@@ -535,12 +545,25 @@ void zlrs_radio_drain(void)
 
 void zlrs_radio_abort(void)
 {
+	const bool active = pending && request != NULL;
+	const bool tx = active && request->is_tx;
+
 	(void)ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC);
 	pending = false;
 	irq_pending = false;
 	prepared = false;
-	ral_irq_t discarded;
+	ral_irq_t discarded = 0;
 	(void)ral_get_and_clear_irq_status(&radio.ral, &discarded);
+	if (active) {
+		if (tx) {
+			diag.tx_expired++;
+		} else {
+			diag.rx_expired++;
+			diag.rx_incomplete +=
+				(discarded & (RAL_IRQ_RX_PREAMBLE_DETECTED | RAL_IRQ_RX_HDR_OK)) !=
+				0U;
+		}
+	}
 	k_sem_reset(&done_sem);
 	timed_slot = false;
 	diag.overruns++;

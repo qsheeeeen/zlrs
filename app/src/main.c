@@ -1924,6 +1924,12 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 		    slot_prepare_us);
 	shell_print(sh, "launch jitter last/max=%u/%u us TX startup=%u us",
 		    diag.launch_jitter_us_last, diag.launch_jitter_us_max, diag.tx_startup_us_last);
+	shell_print(sh, "RX errors header=%u crc=%u length=%u payload=%u expired=%u incomplete=%u",
+		    diag.rx_header_errors, diag.rx_crc_errors, diag.rx_length_errors,
+		    diag.rx_payload_errors, diag.rx_expired, diag.rx_incomplete);
+	shell_print(sh, "TX expired=%u startup max=%u us IRQ service last/max=%u/%u us",
+		    diag.tx_expired, diag.tx_startup_us_max, diag.irq_service_us_last,
+		    diag.irq_service_us_max);
 	shell_print(sh, "chip errors=%04x packet build last/max=%u/%u us", diag.chip_errors,
 		    packet_build_us_last, packet_build_us_max);
 	shell_print(sh, "phase error/correction=%d/%d us hits=%u frame=%u us", phase_err_us,
