@@ -152,7 +152,7 @@ and response frames, documented by `include/zlrs/mgmt/mgmt.h` and implemented in
 | Host command | Effect |
 | --- | --- |
 | read status | role, link state, flags (bit 3: active data24 mode), `dev_id`, `peer_id`, LQ, radio design band, region, security profile, power ceiling, data baud |
-| enter management mode | the formal entry; the radio stops for the session |
+| enter management mode | pauses radio work; ACK follows session setup and synchronous log flushing |
 | start pairing | opens the pairing window at once |
 | erase pairing | effective on the next boot |
 | write passphrase | the device derives the root key with PBKDF2 |
@@ -171,6 +171,11 @@ and response frames, documented by `include/zlrs/mgmt/mgmt.h` and implemented in
 | read image hash | the update tool's verdict: the image just sent, or an older one after rollback |
 | confirm upgrade | the host confirms this upgrade; without it the image rolls back |
 | exit | leaves management mode |
+
+`ENTER` is synchronous: after its successful ACK, the management session is ready and queued
+logs have been processed by the logging backends and the file backend has synchronized them.
+The idle timeout starts after this flush.
+Sending `ENTER` again in an active session flushes pending logs before acknowledging it.
 
 The tool that speaks it is `tools/zlrs.py`; the update flow built on top is in
 [08-firmware](08-firmware.md) 5.

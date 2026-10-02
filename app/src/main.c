@@ -1423,7 +1423,6 @@ static atomic_t mgmt_request;
 static void enter_management_mode(void)
 {
 	LOG_WRN("entering management mode");
-	log_flush();
 
 	/* 0 = EXIT, 1 = timeout, -1 = no usable port: the log has to tell them apart */
 	{

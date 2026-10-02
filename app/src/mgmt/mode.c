@@ -15,6 +15,7 @@
 #include <zephyr/drivers/uart.h>
 #include <zephyr/sys/ring_buffer.h>
 #include <zephyr/kernel.h>
+#include <zephyr/logging/log_backend.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/logging/log_ctrl.h>
 #include <zephyr/storage/flash_map.h>
@@ -55,6 +56,8 @@ struct cfg_port {
 };
 
 static struct cfg_port cfg_port;
+/* Only a host ENTER needs an ACK; shell entry must not send an unsolicited response. */
+static bool cfg_enter_pending;
 
 static void cfg_port_isr(const struct device *dev, void *user_data)
 {
@@ -145,25 +148,36 @@ static uint16_t mgmt_write(const uint8_t *buf, uint16_t len)
 	return (uint16_t)written;
 }
 
+static void mgmt_log_flush(void)
+{
+	log_flush();
+
+	/* With no log thread, log_flush() drains messages but does not emit its completion
+	 * event. Notify the backends here so the file backend synchronizes before ENTER ACK. */
+	if (!IS_ENABLED(CONFIG_LOG_PROCESS_THREAD)) {
+		STRUCT_SECTION_FOREACH(log_backend, backend) {
+			if (log_backend_is_active(backend)) {
+				log_backend_notify(backend, LOG_BACKEND_EVT_PROCESS_THREAD_DONE,
+						   NULL);
+			}
+		}
+	}
+}
+
 bool zlrs_mgmt_poll_enter(void)
 {
 	static zlrs_mgmt_parser_t parser;
 	static bool parser_ready;
-	uint8_t chunk[ZLRS_MGMT_CHUNK];
-	const uint16_t got = mgmt_read(chunk, sizeof(chunk));
-	bool enter = false;
-
-	if (got == 0U) {
-		return false;
-	}
+	uint8_t byte;
 
 	if (!parser_ready) {
 		zlrs_mgmt_parser_init(&parser);
 		parser_ready = true;
 	}
 
-	for (uint16_t i = 0U; i < got; i++) {
-		if (zlrs_mgmt_feed(&parser, chunk[i]) != 1) {
+	/* Stop at ENTER so any following command stays queued for the ready session. */
+	for (uint16_t i = 0U; i < ZLRS_MGMT_CHUNK && mgmt_read(&byte, 1U) == 1U; i++) {
+		if (zlrs_mgmt_feed(&parser, byte) != 1) {
 			continue;
 		}
 
@@ -173,7 +187,8 @@ bool zlrs_mgmt_poll_enter(void)
 		uint8_t len;
 
 		if (cmd == ZLRS_MGMT_CMD_ENTER) {
-			enter = true;
+			cfg_enter_pending = true;
+			return true;
 		}
 
 		/* Recovery needs no setting up: reboot once acknowledged, the main loop never returns */
@@ -187,16 +202,14 @@ bool zlrs_mgmt_poll_enter(void)
 
 		/* Outside a session everything answers "wrong state"; EXIT is a no-op */
 		payload[0] = cmd;
-		payload[1] = (cmd == ZLRS_MGMT_CMD_ENTER || cmd == ZLRS_MGMT_CMD_EXIT)
-				     ? ZLRS_MGMT_OK
-				     : ZLRS_MGMT_E_STATE;
+		payload[1] = (cmd == ZLRS_MGMT_CMD_EXIT) ? ZLRS_MGMT_OK : ZLRS_MGMT_E_STATE;
 
 		len = zlrs_mgmt_encode(reply, sizeof(reply), ZLRS_MGMT_CMD_ACK, payload,
 				       sizeof(payload));
 		(void)mgmt_write(reply, len);
 	}
 
-	return enter;
+	return false;
 }
 
 /* The host sent its confirm command (touched from the link thread only) */
@@ -672,7 +685,7 @@ static int cfg_log_read(void *ctx, uint8_t index, uint32_t offset, uint8_t len, 
 int zlrs_mgmt_mode_run(const zlrs_mgmt_ctx_t *ctx)
 {
 	const uint32_t timeout_ms = (uint32_t)CONFIG_ZLRS_APP_MGMT_TIMEOUT_S * 1000U;
-	uint32_t last_activity_ms = k_uptime_get_32();
+	uint32_t last_activity_ms;
 	bool exit_requested = false;
 	/* The commands work on the caller's live state; the table carries it through to each one */
 	const zlrs_mgmt_backend_t backend = {
@@ -711,6 +724,18 @@ int zlrs_mgmt_mode_run(const zlrs_mgmt_ctx_t *ctx)
 	/* A mode, not an LED state: the LED thread decides how it looks (app/src/ui/led.c) */
 	zlrs_sys_publish_mode(&(struct zlrs_mode){.session = true});
 
+	/* ENTER acknowledges readiness, including the queued logs. The watchdog is already
+	 * disarmed, and the idle timeout starts only after this synchronous flush. */
+	mgmt_log_flush();
+	if (cfg_enter_pending) {
+		const uint8_t len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_ENTER, NULL, 0U,
+						       cfg_tx_line, sizeof(cfg_tx_line));
+
+		(void)mgmt_write(cfg_tx_line, len);
+		cfg_enter_pending = false;
+	}
+	last_activity_ms = k_uptime_get_32();
+
 	while (!exit_requested && (uint32_t)(k_uptime_get_32() - last_activity_ms) < timeout_ms) {
 		uint8_t chunk[ZLRS_MGMT_CHUNK];
 		bool any = false;
@@ -735,6 +760,12 @@ int zlrs_mgmt_mode_run(const zlrs_mgmt_ctx_t *ctx)
 
 			if (cfg_parser.cmd == ZLRS_MGMT_CMD_EXIT) {
 				exit_requested = true;
+			}
+
+			/* Repeated ENTER has the same log-flush guarantee in an existing session. */
+			if (cfg_parser.cmd == ZLRS_MGMT_CMD_ENTER) {
+				mgmt_log_flush();
+				last_activity_ms = k_uptime_get_32();
 			}
 
 			const uint8_t len = zlrs_mgmt_dispatch(
