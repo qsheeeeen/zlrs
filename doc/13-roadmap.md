@@ -73,6 +73,20 @@ design documents.
   their lifetime maxima include startup/session work. Trigger latency, completion SPI and
   authentication still need optimization before shrinking the slots further.
 
+- **RP2350 hardware protocol crypto (implemented; both LF boards checked 2026-10-02)**:
+  the public Pico SDK SHA-256 accelerator replaces the PSA protocol backend, preserving
+  HMAC/HKDF/PBKDF2 bytes. Both boards pass 30 independent known-answer checks, including
+  complete SHA/HMAC digests, unaligned and split input, padding boundaries, long keys,
+  42-byte HKDF output and multiple PBKDF2 iterations. Full-frame tags take about 79 us
+  without RF-thread interference; shell measurements during RF average 101-108 us and include
+  preemption. LF/HF production applications build; all 2170 host checks pass (software crypto,
+  not the hardware backend). At the unchanged 5 ms reservation, five unpaced 64 KiB duplex
+  rounds pass byte-exact in 5.010, 4.916, 4.566, 4.669 and 5.015 s, with zero serial drops,
+  recovery probes or new missed timer boundaries. Preparation delays during those rounds fall
+  from 15/15 to 0/0; trigger delays remain 51/31. This accepts the backend, not higher maximum
+  throughput. A one-sided update against the preceding PSA image timed out with session/phase
+  recovery trouble; the second update restored delivery. Single-reboot recovery needs diagnosis.
+
 ## To-do
 
 ### Radio and protocol

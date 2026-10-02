@@ -28,6 +28,8 @@ target_sources(app PRIVATE
 # "link/data.h", "platform/caps.h", ... (the layers are described in doc/07-architecture.md 5).
 target_include_directories(app PRIVATE src)
 
+target_sources_ifdef(CONFIG_ZLRS_APP_RP2350_CRYPTO app PRIVATE src/platform/crypto_rp2350.c)
+
 # Make the application version depend on the git index so that APP_VERSION_STRING
 # reflects the commit even when nothing else in the build changed.
 find_package(Git QUIET)

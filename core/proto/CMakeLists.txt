@@ -4,10 +4,12 @@
 zephyr_library()
 zephyr_library_sources(
   crc.c
-  crypto_psa.c
   fhss.c
   frag.c
   frame.c
   mod.c
   tlm.c
 )
+if(NOT CONFIG_ZLRS_APP_RP2350_CRYPTO)
+  zephyr_library_sources(crypto_psa.c)
+endif()

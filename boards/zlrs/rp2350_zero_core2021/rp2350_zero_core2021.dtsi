@@ -63,6 +63,11 @@
 	status = "okay";
 };
 
+/* Link authentication and key derivation use the independent SHA-256 accelerator. */
+&sha256 {
+	status = "okay";
+};
+
 &gpio0 {
 	status = "okay";
 };

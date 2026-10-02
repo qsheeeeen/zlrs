@@ -40,6 +40,7 @@
 #include "link/power.h"
 #include "link/rate.h"
 #include "platform/caps.h"
+#include "platform/crypto.h"
 #include "platform/recovery.h"
 #include "platform/slot_timer.h"
 #include "platform/watchdog.h"
@@ -2067,11 +2068,23 @@ static int cmd_mcuboot(const struct shell *sh, size_t argc, char **argv)
 }
 #endif
 
+#if IS_ENABLED(CONFIG_ZLRS_APP_RP2350_CRYPTO)
+static int cmd_crypto(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	return zlrs_crypto_self_test(sh);
+}
+#endif
+
 SHELL_STATIC_SUBCMD_SET_CREATE(
 	zlrs_cmds, SHELL_CMD(status, NULL, "role / SKU / region / link state", cmd_status),
 	SHELL_CMD(link, NULL, "per-link state, frequency, hop index and key fingerprints",
 		  cmd_link),
 	SHELL_CMD(kdf, NULL, "run the HKDF-SHA256 test vector", cmd_kdf),
+#if IS_ENABLED(CONFIG_ZLRS_APP_RP2350_CRYPTO)
+	SHELL_CMD(crypto, NULL, "check crypto vectors and measure full-frame tags", cmd_crypto),
+#endif
 	SHELL_CMD(rekey, NULL, "re-derive the control link keys from its record", cmd_rekey),
 	SHELL_CMD(rxwin, " [ms]", "stretch the data link receive window (bench)", cmd_rxwin),
 	SHELL_CMD(rate, " [s]", "measure windows/hits/frames per second per link", cmd_rate),

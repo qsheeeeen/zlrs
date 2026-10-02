@@ -139,9 +139,14 @@ one.
 | per-frame tag | HMAC-SHA256 truncated to 4 B |
 | P2 encryption (planned) | AES-CTR with the MAC over the ciphertext |
 
-On target the primitives go through Zephyr's PSA Crypto (`core/proto/crypto_psa.c`); the host
-tests use a pure C implementation behind the same interface (`tests/host/crypto_soft.c`), and
-the two are checked against each other with fixed vectors.
+RP2350 uses its SHA-256 accelerator through the public Pico SDK interfaces
+(`app/src/platform/crypto_rp2350.c`, `CONFIG_ZLRS_APP_RP2350_CRYPTO`). Hashing leaves interrupts
+enabled and does not allocate DMA channels. A mutex protects complete hash operations and
+the ROM SHA lock coordinates other hardware users; hardware faults are fatal rather than
+producing an authentication tag. HMAC, HKDF and PBKDF2 retain the same derivation rules.
+Other targets use Zephyr PSA Crypto (`core/proto/crypto_psa.c`). Host tests use the pure C
+backend (`tests/host/crypto_soft.c`); `zlrs crypto` checks independent known-answer vectors
+on hardware, including complete digests and multi-block derivation.
 
 ## 9. Management protocol
 

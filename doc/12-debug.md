@@ -35,6 +35,7 @@ quietly end up in a released image.
 | shell `zlrs mgmt` | enter management mode (EXIT returns) |
 | shell `zlrs recovery` | reboot into MCUboot serial recovery |
 | shell `zlrs entropy` | entropy self-test (two 32-byte TRNG blocks) |
+| shell `zlrs crypto` | RP2350 SHA-256/HMAC/HKDF/PBKDF2 known-answer tests and full-frame tag timing; debug shell and hardware backend required |
 | shell `zlrs mcuboot` | image state as MCUboot sees it (slot headers, confirm bit, copy state) |
 | `CONFIG_ZLRS_APP_DEBUG_STATS_LOG` | 1 Hz `stats:` line (counters, LQ, duty, dynamic power) and `air:` line (completed transactions per link) |
 | `CONFIG_ZLRS_APP_BENCH_RAW_MS` | the first N ms after boot skip the superframe: the TX role sends complete frames back to back, the RX role opens 100 ms receive windows back to back, and both log frames per second |
