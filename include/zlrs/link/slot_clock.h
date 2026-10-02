@@ -23,3 +23,6 @@ bool zlrs_slot_clock_due(const zlrs_slot_clock_t *clock, uint32_t now_us);
 uint32_t zlrs_slot_clock_advance(zlrs_slot_clock_t *clock, uint32_t now_us);
 void zlrs_slot_clock_shift(zlrs_slot_clock_t *clock, int32_t shift_us);
 uint32_t zlrs_slot_clock_next_origin(const zlrs_slot_clock_t *clock);
+/* Acquisition scans promptly; an acquired clock tolerates two idle SYNC periods.
+ * cadence_us is the interval between link A slots, not the four-window timer frame. */
+uint32_t zlrs_slot_clock_scan_delay_ms(uint32_t cadence_us, uint8_t sync_every_n, bool acquired);

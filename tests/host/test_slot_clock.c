@@ -51,4 +51,13 @@ void test_slot_clock(void)
 	CHECK(clock.frame == 2U && clock.published_origin_us == 3000U);
 	zlrs_slot_clock_init(&clock, 0U, 0U);
 	CHECK(clock.period_us == 4U);
+	/* A legal idle SYNC gap must not start phase scanning or forget acquisition.
+	 * At data24's 5 ms reserve, SYNC arrives every 3.718 s, far beyond 300 ms. */
+	CHECK(zlrs_slot_clock_scan_delay_ms(14580U, 255U, false) == 300U);
+	CHECK(zlrs_slot_clock_scan_delay_ms(14580U, 255U, true) == 7451U);
+	CHECK(zlrs_slot_clock_scan_delay_ms(100000U, 5U, true) == 1100U);
+	CHECK(zlrs_slot_clock_scan_delay_ms(1000U, 5U, true) == 300U);
+	CHECK(zlrs_slot_clock_scan_delay_ms(100000U, 0U, true) == 300U);
+	CHECK(zlrs_slot_clock_scan_delay_ms(0U, 255U, true) == 300U);
+	CHECK(zlrs_slot_clock_scan_delay_ms(1000000U, 255U, true) == 511000U);
 }

@@ -52,6 +52,7 @@
 #include "zlrs/crsf/crsf.h"
 #include "zlrs/mgmt/mgmt.h"
 #include "zlrs/link/link.h"
+#include "zlrs/link/slot_clock.h"
 #include "zlrs/region/region.h"
 #include "zlrs/proto/tlm.h"
 
@@ -643,7 +644,6 @@ static zlrs_radio_diag_t radio_diag;
 
 /* TX owns the absolute clock; RX follows verified IRQ timestamps and scans when deaf. */
 #define ZLRS_PHASE_DEADBAND_US   100
-#define ZLRS_PHASE_SCAN_AFTER_MS 300U
 #define ZLRS_PHASE_SCAN_STEP_US  25U
 
 static uint32_t frame_start_us;
@@ -2545,7 +2545,12 @@ int main(void)
 		report(now_ms);
 
 		if (!role_tx) {
-			if ((uint32_t)(now_ms - last_rx_any_ms) > ZLRS_PHASE_SCAN_AFTER_MS) {
+			const zlrs_link_t *const clock_link = active_link();
+			const uint32_t cadence_us = ZLRS_DATA24 ? period / 2U : period;
+			const uint32_t scan_after_ms = zlrs_slot_clock_scan_delay_ms(
+				cadence_us, clock_link->cfg.resync_every_n, phase_samples > 0U);
+
+			if ((uint32_t)(now_ms - last_rx_any_ms) > scan_after_ms) {
 				phase_samples = 0U;
 				phase_adj_us = ZLRS_PHASE_SCAN_STEP_US;
 			}

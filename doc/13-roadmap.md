@@ -96,6 +96,16 @@ design documents.
   resumption. Accounting now runs after the launch command to reduce measurement overhead.
   The default stays 5 ms; preparation scheduling, launch notification and SPI remain open.
 
+- **Idle clock retention (implemented; both LF boards checked 2026-10-02)**: acquired RX
+  retains its phase for at least two configured SYNC intervals before scanning. The old
+  unconditional 300 ms threshold scanned during a legal idle gap: at the 5 ms data24
+  reservation, SYNC arrives every 3.718 s. A first direct-timer experiment consequently
+  timed out on the first stream with zero delivery and a receiver phase error over 4 ms.
+  The cadence-derived guard is 7.451 s at that reservation; initial acquisition keeps the
+  300 ms guard. Seven new host checks cover acquisition, rounding, cadence and overflow;
+  all 2177 checks pass with ASan/UBSan. With the direct launch and RF scheduling changes
+  below, five unpaced 64 KiB duplex rounds pass byte-exact after an idle interval.
+
 ## To-do
 
 ### Radio and protocol

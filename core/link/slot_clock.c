@@ -56,3 +56,16 @@ uint32_t zlrs_slot_clock_next_origin(const zlrs_slot_clock_t *clock)
 	return clock->slot == 0U ? clock->origin_us
 				 : clock->origin_us + clock->period_us + (uint32_t)clock->shift_us;
 }
+
+uint32_t zlrs_slot_clock_scan_delay_ms(uint32_t cadence_us, uint8_t sync_every_n, bool acquired)
+{
+	const uint32_t minimum_ms = 300U;
+
+	if (!acquired || sync_every_n == 0U) {
+		return minimum_ms;
+	}
+	const uint64_t gap_us = (uint64_t)cadence_us * (2U * sync_every_n + 1U);
+	const uint32_t gap_ms = (uint32_t)((gap_us + 999U) / 1000U);
+
+	return gap_ms > minimum_ms ? gap_ms : minimum_ms;
+}
