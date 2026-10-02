@@ -265,13 +265,27 @@ design documents.
   P1, -10 dBm, hopping off and 1.5 ms preparation. After sequential updates, all five 64 KiB
   duplex rounds pass in 1.561, 1.504, 1.558, 1.555 and 1.556 s, with no added preparation/trigger
   delays, missed boundaries, ARQ recovery, serial loss or bad tags; trigger jitter is at most 3 us.
-  Software cold reboots of RX, TX and both peers each pass three 64 KiB duplex rounds without
-  management entry: respectively 1.554/1.557/1.513, 1.660/1.508/1.556 and 1.656/1.509/1.559 s.
-  TX shell snapshots are missing in those reboot checks, so complete two-peer timing deltas
-  are not established there; RX adds one late preparation in the both-peer reboot run. Physical
+  After issuing software cold reboot commands for RX, TX and both peers, three 64 KiB duplex
+  rounds each pass without management entry: respectively 1.554/1.557/1.513,
+  1.660/1.508/1.556 and 1.656/1.509/1.559 s. Those scripts did not verify reset execution and
+  TX shell snapshots are missing, so they do not establish TX reboot or complete two-peer timing
+  deltas; RX adds one late preparation in the both-peer reboot run. Physical
   power cycling, repeated long runs and hopping hardware acceptance remain open.
 
 ### Radio and protocol
+
+- **Debug console and verified software reboots (LF checked 2026-10-03)**: flash-only logging,
+  polling console TX and an 8 KiB CDC FIFO pass twelve open/query/close cycles on each board.
+  Image `0be39554be787a725dfc9bd02a5551f823f8b55a355ecd32d197f0e8cf12cb1e` is confirmed
+  on both peers. Five 64 KiB board-source/sink duplex rounds pass at 46.5-54.3 kB/s per
+  direction; five USB rounds pass byte-exact in 1.910/1.909/1.855/1.860/1.857 s. These do
+  not establish a USB speed gain. Uptime resets verify actual RX, TX and both-peer software
+  reboots; their three 64 KiB USB rounds pass in 1.905/1.853/1.862, 1.906/1.861/1.862 and
+  1.861/2.012/1.862 s, with complete statistics from both peers. During these transfer checks,
+  neither peer adds late preparation/trigger, missed boundaries or slots, ARQ recovery or
+  stream loss; launch jitter stays within 3 us. Acquisition itself can add a late preparation
+  or missed slot before measurements. USB/IP preserves device paths across these resets, so
+  disappearance is not a reliable reset check. Physical power cycles and extended runs remain open.
 
 - **Bulk stream queue copies (implemented; LF hardware checked 2026-10-03)**:
   queue insertion and packet extraction use at most two contiguous copies across a ring wrap,

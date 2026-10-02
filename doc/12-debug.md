@@ -21,6 +21,13 @@ west build --sysbuild -b "$ZLRS_BOARD" "$ZLRS_APP" -- \
 Production firmware has no console CDC and no shell; its three CDCs are control, data and
 management (see [08-firmware](08-firmware.md) 1).
 
+The debug console prints command replies. Deferred logs stay in RAM during RF and are flushed
+to flash at boot or management entry; export them with `tools/zlrs.py logs <directory>`. UART
+and shell log backends are disabled so an unopened terminal cannot block log processing.
+Console TX uses polling with an 8 KiB CDC FIFO, enough for complete `zlrs link`, `zlrs ports`
+and `zlrs radio` replies. It does not wait for an unopened host; output exceeding that FIFO
+can be dropped, so export files through management rather than printing them to the shell.
+
 `CONFIG_ZLRS_APP_DEBUG` is the marker for "this image is for the bench": the options named
 `ZLRS_APP_DEBUG_*` depend on it, and shipped configurations (`app/prj.conf`, everything under
 `boards/`) may not mention it. `tools/gates.sh` enforces that, so a bench-only switch cannot
@@ -150,12 +157,11 @@ complete data path, including radio scheduling and ARQ, rather than raw PHY fram
   (`app/sysbuild/mcuboot-debug.conf`: `CONFIG_BOOT_SERIAL_WAIT_FOR_DFU_TIMEOUT=15000`). Every
   reset therefore has a window in which only the `ZLRS MCUBOOT` ports exist and the application
   has not started; tools that look for the application port have to wait through it.
-- **Do not chatter the console**: opening and closing the console CDC over usbipd a few times in a
-  row leaves the stream delivering tens of bytes per second while the device stays enumerated, and
-  it does not recover by reading harder. The board is not necessarily dead — its radio work and its
-  management port are separate code paths — but the console is the wrong instrument from then on.
-  Hold one connection open for the whole session, and reboot the board (or re-attach it) before
-  measuring anything that depends on console output.
+- **Validate console replies and reboots**: old debug configurations could strand or truncate
+  replies after repeated opens over usbipd. Polling TX, an 8 KiB FIFO and flash-only logs pass
+  twelve consecutive open/query/close cycles on both LF boards. Hold one connection for a
+  measurement and reject missing statistics. A reboot command alone proves nothing: compare
+  kernel uptime before and after. USB/IP can preserve device paths through a real reboot.
 - **`zlrs rate`** prints the last second per link: receive windows, how many of them heard a
   frame, frames sent and the state. That is the number to compare when a link misbehaves; a
   receiver problem shows up as a hit rate near zero with the window count unchanged.

@@ -12,4 +12,6 @@
 
 &cdc_acm_uart3 {
 	status = "okay";
+	/* Hold complete link/ports/radio replies without blocking an unopened console. */
+	tx-fifo-size = <8192>;
 };
