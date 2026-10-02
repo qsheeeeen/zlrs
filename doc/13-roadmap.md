@@ -197,6 +197,15 @@ design documents.
   preparation delays add 47/47 and trigger delays 27/30, so 500 us is not accepted as the
   default. The stable 1500 us reservation remains; SPI/DMA and RX completion costs remain open.
 
+- **Radio/DMA helper text in SRAM (implemented; both LF boards checked 2026-10-02)**:
+  ZLRS uses Zephyr's relocation build API for the compiled public radio and DMA helpers;
+  upstream files are unchanged. The linked DMA ISR/config/start, FIFO reader and RAL payload
+  reader reside at SRAM addresses. This adds about 9.9 KiB of RAM. LF/HF builds pass. At the
+  same experimental 500 us reservation, five 64 KiB duplex rounds pass byte-exact in 1.658,
+  1.657, 1.662, 1.657 and 1.656 s (39.4-39.6 kB/s per direction). Late preparations still
+  add 14/19 and triggers 2/0; the reservation remains unaccepted. No serial drops, recovery
+  probes or bad tags occur. Further completion/turnaround work is required.
+
 ## To-do
 
 ### Radio and protocol
