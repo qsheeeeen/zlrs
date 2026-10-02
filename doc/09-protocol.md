@@ -6,7 +6,7 @@ how hopping and regulation land in code. Identity and keys: [10-security](10-sec
 timing budget: [07-architecture](07-architecture.md) 4; chip parameters:
 [06-radio](06-radio.md).
 
-Protocol version: `ZLRS_PROTO_VERSION` (2 today), carried in `SYNC` and checked by the RX.
+Protocol version: `ZLRS_PROTO_VERSION` (3 today), carried in `SYNC` and checked by the RX.
 
 ## 1. Frame format
 
@@ -18,12 +18,18 @@ frame. What the protocol adds is:
 | `header` | 1 B | 6-bit packet type tells the receiver how to parse the frame; 2-bit flags carry `MORE` and the optional ACK-extension indicator. |
 | `seq` | 2 B | Per-transmission frame number. The receiver uses it to reject replayed frames. |
 | ACK extension | 0 or 2 B | When indicated on DATA, carries the highest in-order ARQ sequence received from the peer. It confirms data without using payload bytes. |
-| `payload` | 0-248 B | Packet-specific content. For ARQ DATA, starts with a 2-byte data sequence, followed by user bytes; a header-only ACK DATA has no payload. |
+| `payload` | 0-504 B | Packet-specific content, limited to 502 B when the ACK extension is present. ARQ DATA starts with a 2-byte data sequence, followed by user bytes; a header-only ACK DATA has no payload. |
 | `tag` | 0 or 4 B | Truncated HMAC-SHA256. Authenticates the ZLRS frame so modified or forged fields are rejected; omitted only in the debug P0 profile. |
 
 Multi-byte fields are little-endian. The tag covers the header, `seq`, optional ACK extension and
 payload. The LR2021 adds its own physical-layer framing around these bytes; those fields are listed
 below.
+
+FLRC accepts up to 511 bytes for the entire ZLRS frame. With P1 authentication, ARQ carries
+502 user bytes without an ACK extension or 500 with it. LoRa retains its 255-byte limit and
+the link clamps its MTU separately. Both peers must run protocol version 3. The public LR20xx
+RAL already configures separate TX/RX FIFOs large enough to hold a full FLRC frame; no FIFO
+streaming or upstream changes are required. See the [LR2021 datasheet, sections 5.3 and 18.2](https://www.mouser.com/pdfDocs/61979758LR2021_V1_1_datasheet.pdf).
 
 ### 1.1 LR2021 FLRC fields
 

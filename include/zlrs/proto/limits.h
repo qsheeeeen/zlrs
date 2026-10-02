@@ -13,14 +13,16 @@
  * 1: tags and session keys derive from both dev_ids (order encodes direction), pair_key mixes
  *    in the pairing nonce and session keys mix in the handshake nonces (10-security 3);
  * 2: DATA frames may carry a cumulative ACK header extension (09-protocol 4.3).
+ * 3: FLRC frames can use the LR2021's full 511-byte payload capacity.
  */
-#define ZLRS_PROTO_VERSION 2U
+#define ZLRS_PROTO_VERSION 3U
 
 /* Frame: common header(1) + seq(2) + optional ACK extension(2) + payload + tag(0/4). */
-#define ZLRS_FRAME_HDR_LEN   3U
-#define ZLRS_TAG_LEN         4U
-#define ZLRS_FRAME_MAX_LEN   255U
-#define ZLRS_PAYLOAD_MAX_LEN (ZLRS_FRAME_MAX_LEN - ZLRS_FRAME_HDR_LEN - ZLRS_TAG_LEN)
+#define ZLRS_FRAME_HDR_LEN      3U
+#define ZLRS_TAG_LEN            4U
+#define ZLRS_LORA_FRAME_MAX_LEN 255U
+#define ZLRS_FRAME_MAX_LEN      511U
+#define ZLRS_PAYLOAD_MAX_LEN    (ZLRS_FRAME_MAX_LEN - ZLRS_FRAME_HDR_LEN - ZLRS_TAG_LEN)
 
 /*
  * Reassembly timeout. ARQ retransmits every 30 ms, so leave enough headroom or a retransmit

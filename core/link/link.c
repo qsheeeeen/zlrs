@@ -391,7 +391,8 @@ static uint16_t build_frame_ex(zlrs_link_t *link, uint8_t type, uint8_t flags,
 	}
 
 	total = (uint16_t)(zlrs_frame_len(len, tag_len) + (ack_present ? 2U : 0U));
-	if (total > sizeof(link->tx_buf)) {
+	if (total > sizeof(link->tx_buf) ||
+	    (link->cfg.mod.modulation == ZLRS_MOD_LORA && total > ZLRS_LORA_FRAME_MAX_LEN)) {
 		return 0U;
 	}
 
@@ -468,7 +469,10 @@ static const zlrs_radio_req_t *make_req(zlrs_link_t *link, bool is_tx, uint16_t 
 	link->req.is_tx = is_tx;
 	link->req.tx_power_dbm = link->cfg.tx_power_dbm;
 	link->req.size = size;
-	link->req.max_rx_size = is_tx ? 0U : (uint16_t)sizeof(link->rx_buf);
+	const uint16_t rx_cap = link->cfg.mod.modulation == ZLRS_MOD_LORA ? ZLRS_LORA_FRAME_MAX_LEN
+									  : ZLRS_FRAME_MAX_LEN;
+
+	link->req.max_rx_size = is_tx ? 0U : rx_cap;
 	link->req.timeout_ms = timeout_ms;
 	link->req.buf = is_tx ? link->tx_buf : link->rx_buf;
 	link->req_is_tx = is_tx;
@@ -1913,11 +1917,24 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 
 /* ---- public API ---------------------------------------------------------- */
 
+static void limit_data_mtu(zlrs_link_t *link)
+{
+	const uint16_t cap = link->cfg.mod.modulation == ZLRS_MOD_LORA ? ZLRS_LORA_FRAME_MAX_LEN
+								       : ZLRS_FRAME_MAX_LEN;
+	const uint16_t mtu =
+		cap - ZLRS_FRAME_HDR_LEN - zlrs_profile_tag_len(link->cfg.profile) - 2U;
+
+	if (link->cfg.data_mtu > mtu) {
+		link->cfg.data_mtu = mtu;
+	}
+}
+
 void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg, uint32_t (*random)(void *ctx),
 		    void *random_ctx, const zlrs_link_events_t *events)
 {
 	memset(link, 0, sizeof(*link));
 	link->cfg = *cfg;
+	limit_data_mtu(link);
 	/* Cadence fields default to 1 (every frame); 0 is not a legal value */
 	if (link->cfg.tlm_every_n == 0U) {
 		link->cfg.tlm_every_n = 1U;
@@ -2041,6 +2058,7 @@ void zlrs_link_set_mod(zlrs_link_t *link, const zlrs_mod_cfg_t *mod)
 	}
 
 	link->cfg.mod = *mod;
+	limit_data_mtu(link);
 	/* LoRa sync words are derived; a caller passing 0 must not clobber the current one */
 	if (link->cfg.mod.modulation == (uint8_t)ZLRS_MOD_LORA && link->cfg.mod.sync_byte == 0U) {
 		link->cfg.mod.sync_byte = link->lora_sync;

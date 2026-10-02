@@ -160,6 +160,19 @@ design documents.
   become 2990 us, with 5980 us alternating pairs. The same reservation before SRAM relocation
   failed or slowed severely; that result remains diagnostic history, not the current default.
 
+- **511-byte FLRC frames (implemented; both LF boards checked 2026-10-02)**:
+  protocol version 3 expands the radio frame capacity to 511 bytes, giving 502 user bytes
+  without an ACK extension or 500 with one in P1. LoRa remains capped at 255 bytes. The
+  public RAL already allocates separate extended FIFOs; no upstream changes or FIFO streaming
+  are needed. Frame encoding checks its wide length sum before narrowing it. All 2198 host
+  checks pass with ASan/UBSan; LF/HF firmware builds pass. At a 1 ms reservation, five 64 KiB
+  duplex rounds pass but add 7/67 late preparations and 13/41 late triggers, so that timing
+  is rejected for large frames. At 1.5 ms, all five rounds pass byte-exact in 1.653, 1.612,
+  1.660, 1.659 and 1.610 s (39.5-40.8 kB/s per direction), with zero added late attempts,
+  missed boundaries, recovery probes or serial drops. Retransmissions add 58/21; these remain
+  a throughput cost. Slots are 4540 us, alternating pairs 9080 us. Both peers must upgrade
+  together. Overlapping preparation with RX and reducing turnaround still need acceptance.
+
 ## To-do
 
 ### Radio and protocol

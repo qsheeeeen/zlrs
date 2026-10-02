@@ -105,7 +105,8 @@ static void test_frame(void)
 	CHECK(buf[3] == 0x34U && buf[4] == 0x12U);
 	CHECK(zlrs_frame_decode(&out, buf, len, ZLRS_TAG_LEN));
 	CHECK(out.ack_present && out.ack_seq == 0x1234U);
-	CHECK(out.payload_len == sizeof(payload) && memcmp(out.payload, payload, sizeof(payload)) == 0);
+	CHECK(out.payload_len == sizeof(payload) &&
+	      memcmp(out.payload, payload, sizeof(payload)) == 0);
 	CHECK(zlrs_frame_mac_len(&out) == ZLRS_FRAME_HDR_LEN + 2U + sizeof(payload));
 	in.payload = NULL;
 	in.payload_len = 0U;
@@ -113,6 +114,24 @@ static void test_frame(void)
 	CHECK(len == ZLRS_FRAME_HDR_LEN + 2U + ZLRS_TAG_LEN);
 	CHECK(zlrs_frame_decode(&out, buf, len, ZLRS_TAG_LEN));
 	CHECK(out.ack_present && out.payload_len == 0U && out.payload == NULL);
+
+	/* Full FLRC capacity with a tag and ACK; invalid lengths cannot wrap the sum. */
+	uint8_t large_payload[ZLRS_PAYLOAD_MAX_LEN - 2U];
+
+	memset(large_payload, 0xa5, sizeof(large_payload));
+	in.payload = large_payload;
+	in.payload_len = sizeof(large_payload);
+	in.tag = tag;
+	len = zlrs_frame_encode(&in, buf, sizeof(buf));
+	CHECK(len == 511U);
+	CHECK(zlrs_frame_decode(&out, buf, len, ZLRS_TAG_LEN));
+	CHECK(out.payload_len == sizeof(large_payload));
+	CHECK(memcmp(out.payload, large_payload, sizeof(large_payload)) == 0);
+	CHECK(out.ack_present && out.ack_seq == in.ack_seq);
+	CHECK(zlrs_frame_encode(&in, buf, sizeof(buf) - 1U) == 0U);
+	in.payload_len = UINT16_MAX;
+	CHECK(zlrs_frame_encode(&in, buf, sizeof(buf)) == 0U);
+	CHECK(!zlrs_frame_decode(&out, buf, sizeof(buf) + 1U, ZLRS_TAG_LEN));
 }
 
 /* ---- reassembly ---------------------------------------------------------- */

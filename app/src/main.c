@@ -340,11 +340,13 @@ static void plan_mixed_init(void)
 		 * rate knob differs per mode (racing, LoRa, plain FLRC), and only req.want_hz knows.
 		 */
 		const uint32_t budget_us = (1000000U / req.want_hz) / 4U;
-		uint16_t len = (uint16_t)(ZLRS_PAYLOAD_MAX_LEN - 2U);
+		const uint16_t frame_cap = data_mod.modulation == ZLRS_MOD_LORA
+						   ? ZLRS_LORA_FRAME_MAX_LEN
+						   : ZLRS_FRAME_MAX_LEN;
+		uint16_t len = frame_cap - ZLRS_FRAME_HDR_LEN - ZLRS_TAG_LEN - 2U;
 
 		while (len > 16U && zlrs_radio_airtime_us(&data_mod, (uint16_t)(len + 9U)) +
-						    slot_prepare_us +
-						    CONFIG_ZLRS_APP_TX_GUARD_US +
+						    slot_prepare_us + CONFIG_ZLRS_APP_TX_GUARD_US +
 						    ZLRS_RADIO_STARTUP_US + 100U >
 					    budget_us) {
 			len = (uint16_t)(len - 8U);
@@ -1989,8 +1991,9 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "setup last/max=%u/%u us tx=%u us rx=%u us irq=%08x stale=%u",
 		    diag.submit_us_last, diag.submit_us_max, diag.tx_us_last, diag.rx_us_last,
 		    diag.irq_last, diag.stale_irq);
-	shell_print(sh, "stale bits=%08x airtime 255B=%u us guard=%u us", diag.stale_irq_bits,
-		    zlrs_radio_airtime_us(&data_mod, 255U), CONFIG_ZLRS_APP_TX_GUARD_US);
+	shell_print(sh, "stale bits=%08x airtime %uB=%u us guard=%u us", diag.stale_irq_bits,
+		    ZLRS_FRAME_MAX_LEN, zlrs_radio_airtime_us(&data_mod, ZLRS_FRAME_MAX_LEN),
+		    CONFIG_ZLRS_APP_TX_GUARD_US);
 	shell_print(sh, "late launch last/max=%u/%u us", diag.launch_late_us_last,
 		    diag.launch_late_us_max);
 	shell_print(sh, "late launch prepare=%u trigger=%u", diag.prepare_late_starts,

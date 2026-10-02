@@ -1562,6 +1562,49 @@ static void test_arq_retransmit(void)
 	CHECK(sim.rx.data.stats.rx_out_of_order > 0U);
 }
 
+static void test_flrc_max_frame_duplex(void)
+{
+	sim_t sim;
+	uint8_t down[1600];
+	uint8_t up[1600];
+
+	printf("link: full 511-byte FLRC frames with duplex ACK and loss\n");
+	sim_init(&sim);
+	sim.tx.data.cfg.arq = sim.rx.data.cfg.arq = 1U;
+	sim.tx.data.cfg.data_mtu = sim.rx.data.cfg.data_mtu = ZLRS_PAYLOAD_MAX_LEN - 2U;
+	pair_and_connect(&sim);
+	for (size_t i = 0U; i < sizeof(down); i++) {
+		down[i] = (uint8_t)(i * 7U);
+		up[i] = (uint8_t)(i * 11U + 1U);
+	}
+	CHECK(zlrs_link_write(&sim.tx.data, down, sizeof(down)) == sizeof(down));
+	CHECK(zlrs_link_write(&sim.rx.data, up, sizeof(up)) == sizeof(up));
+	sim_slot(&sim, ZLRS_SLOT_DATA_A);
+	CHECK(sim.down_len == 511U);
+	sim_slot(&sim, ZLRS_SLOT_DATA_B);
+	CHECK(sim.up_len == 511U);
+	sim.drop_data_down = 1;
+	SIM_UNTIL(&sim, sim.rx.stream_len == sizeof(down) && sim.tx.stream_len == sizeof(up), 1000);
+	CHECK(sim.rx.stream_len == sizeof(down));
+	CHECK(sim.tx.stream_len == sizeof(up));
+	CHECK(memcmp(sim.rx.stream, down, sizeof(down)) == 0);
+	CHECK(memcmp(sim.tx.stream, up, sizeof(up)) == 0);
+	CHECK(sim.tx.data.stats.tx_retries > 0U);
+	CHECK(sim.rx.data.stats.rx_frag_drop == 0U && sim.tx.data.stats.rx_frag_drop == 0U);
+
+	/* A LoRa configuration still respects that modem's 255-byte frame limit. */
+	const zlrs_mod_cfg_t lora = zlrs_mod_lora(7U, 125000U, 1U, 12U);
+
+	zlrs_link_set_mod(&sim.tx.data, &lora);
+	CHECK(sim.tx.data.cfg.data_mtu == 246U);
+	const zlrs_radio_req_t *listen = zlrs_link_listen(&sim.tx.data);
+
+	CHECK(listen != NULL);
+	if (listen != NULL) {
+		CHECK(listen->max_rx_size == 255U);
+	}
+}
+
 /* Frames inside the receive window survive a gap and need no second transmission. */
 static void test_arq_receive_window(void)
 {
@@ -2779,6 +2822,7 @@ void test_link(void)
 	test_link_quality();
 	test_backpressure();
 	test_arq_retransmit();
+	test_flrc_max_frame_duplex();
 	test_arq_receive_window();
 	test_arq_receive_window_bounds();
 	test_arq_duplicate_ack_timeout();
