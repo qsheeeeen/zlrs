@@ -228,6 +228,23 @@ design documents.
   stable tighter default; preparation remains 1500 us. The cold-start recovery and its relation
   to phase alignment, packet preparation and ACK timing need isolated measurements.
 
+- **Final 1.5 ms build and resumed-link check (LF hardware 2026-10-02)**:
+  both devices run the verified, confirmed image
+  `8ce2d5c85b8d78ffbf3013145cd02d0bc0c745201d766dee19a2458bff8ed652`.
+  Immediately after sequential updates, the first 64 KiB duplex attempt fails at the host's
+  3 s write timeout with no data delivered. RX records authentication failures while TX
+  exhausts its ARQ retries. Thus cold-start/session recovery also needs acceptance at 1.5 ms;
+  the shorter reservation is not established as its cause. Entering and exiting management
+  on both peers restores delivery without a physical recovery. After draining residual bytes
+  from the failed attempt, five fresh 64 KiB duplex rounds pass byte-exact in 1.557, 1.555,
+  1.554, 1.510 and 1.555 s (42.1-43.6 kB/s per direction). Neither peer adds preparation or
+  trigger delays, missed boundaries, serial drops, authentication failures, fragment loss or
+  ARQ recovery. Trigger jitter is at most 2 us. Retransmissions add 91/16. Mean application
+  payloads are about 461/409 bytes. This accepts the short resumed-link throughput check,
+  not unattended cold-start recovery, long runs, hopping or the theoretical throughput goal.
+  The bench uses fixed 2441 MHz, hopping off, P1 and -10 dBm. LF/HF production builds, all
+  2267 ASan/UBSan host checks and architecture gates pass.
+
 ## To-do
 
 ### Radio and protocol
