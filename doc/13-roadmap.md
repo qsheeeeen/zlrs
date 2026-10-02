@@ -18,6 +18,21 @@ design documents.
   Raising the pace to 60 bytes / 80 ms overflowed the input rings and stalled delivery. This
   exposes a serial-to-radio backpressure/ARQ limit; it is not maximum radio goodput. HF has build
   coverage, with hardware validation pending.
+- **USB input backpressure (implemented; LF data24 hardware checked 2026-10-02)**: a full
+  application RX ring now pauses the CDC callback until the radio owner frees space. The
+  upstream CDC FIFO then throttles USB OUT; no upstream source changes are required. Drop
+  counters count bytes, and `zlrs ports` reports queued bytes and RX pause state. Previously an
+  unpaced 16 KiB duplex write delivered only 8684/8192 bytes before timing out, with application
+  input overflow. Both LF boards now pass three consecutive unpaced 16 KiB duplex rounds,
+  byte-exact, in 4.863, 3.166 and 3.166 s, using 246-byte USB writes and P1 at -10 dBm.
+  All 49152 input/output bytes per device were accounted for, with zero USB input or host output
+  drops. This supersedes the paced-input overflow finding above; it does not accept radio
+  throughput. The schedule still reserves 5000 us per 7352 us slot (246-byte MTU), and the
+  three rounds added 309/326 retransmissions for about 204 new DATA frames per sender.
+- **Synchronous management entry (implemented; both LF boards checked)**: `ENTER` ACK follows
+  session setup, queued log processing and file-backend synchronization. Repeated ENTER also
+  synchronizes logs. Pipelined and split commands, immediate STATUS/log reads and MCUboot
+  upload/verification/confirmation passed on both boards. No logging thread runs during RF.
 
 ## To-do
 

@@ -22,7 +22,10 @@ typedef struct {
 	bool ready; /* the endpoint exists on the board and the device is ready */
 	bool active; /* this is the selected endpoint (selected locally from DTR and received bytes) */
 	uint32_t rx_total;   /* bytes received (evidence that the host is using it) */
-	uint32_t rx_dropped; /* bytes dropped because this was not the active endpoint */
+	uint32_t rx_dropped; /* UART overflow and discarded inactive-endpoint bytes */
+	uint32_t rx_queued;
+	uint32_t tx_queued;
+	bool rx_paused; /* USB input is waiting for application ring space */
 } zlrs_link_data_state_t;
 
 /*
@@ -40,7 +43,7 @@ uint16_t zlrs_link_data_read(uint8_t *buf, uint16_t len);
 /* Queue into the TX ring buffer and start the IRQ transmit, returns the bytes accepted */
 uint16_t zlrs_link_data_write(const uint8_t *buf, uint16_t len);
 
-/* Bytes never delivered: dropped when full plus those received on the inactive endpoint */
+/* Bytes never delivered: UART overflow plus those received on the inactive endpoint */
 uint32_t zlrs_link_data_dropped(void);
 /* Bytes the air side handed to the link that the host side had no room for */
 uint32_t zlrs_link_data_tx_dropped(void);

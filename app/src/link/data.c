@@ -37,6 +37,7 @@ struct data_ep {
 	uint32_t rx_total;   /* bytes received (one of the endpoint-choice inputs) */
 	uint32_t tx_dropped; /* bytes the air side handed over that the host side had no room for */
 	bool ready;
+	bool rx_paused;
 };
 
 enum {
@@ -77,14 +78,29 @@ static void data_isr(const struct device *dev, void *user_data)
 	while (uart_irq_update(dev) && uart_irq_is_pending(dev)) {
 		if (uart_irq_rx_ready(dev)) {
 			uint8_t chunk[64];
-			const int n = uart_fifo_read(dev, chunk, sizeof(chunk));
+			const uint32_t room = ring_buf_space_get(&ep->rx);
+
+			/* Leave USB bytes in the CDC FIFO when the application ring is full.
+			 * Its OUT endpoint then NAKs naturally instead of accepting and dropping
+			 * the rest of the host stream. UART without flow control still drains. */
+			if (room == 0U && ep == &data_eps[DATA_USB]) {
+				const unsigned int key = irq_lock();
+
+				if (ring_buf_space_get(&ep->rx) == 0U) {
+					ep->rx_paused = true;
+					uart_irq_rx_disable(dev);
+				}
+				irq_unlock(key);
+				continue;
+			}
+			const uint32_t want = room > 0U ? MIN(room, sizeof(chunk)) : sizeof(chunk);
+			const int n = uart_fifo_read(dev, chunk, want);
 
 			if (n > 0) {
-				ep->rx_total += (uint32_t)n;
-			}
+				const uint32_t written = ring_buf_put(&ep->rx, chunk, (uint32_t)n);
 
-			if (n > 0 && ring_buf_put(&ep->rx, chunk, (uint32_t)n) != (uint32_t)n) {
-				ep->rx_dropped++; /* passthrough is best-effort: drop when full */
+				ep->rx_total += (uint32_t)n;
+				ep->rx_dropped += (uint32_t)n - written;
 			}
 		}
 
@@ -111,6 +127,19 @@ static void data_isr(const struct device *dev, void *user_data)
 	}
 }
 
+static void data_ep_resume_rx(struct data_ep *ep)
+{
+	const unsigned int key = irq_lock();
+
+	/* Serialize this wakeup with the callback's full-ring check. A consumer must
+	 * not free space just before the producer disables its notification. */
+	if (ep->rx_paused && ring_buf_space_get(&ep->rx) >= 64U) {
+		ep->rx_paused = false;
+		uart_irq_rx_enable(ep->dev);
+	}
+	irq_unlock(key);
+}
+
 /* Drop bytes from the inactive endpoint: keeping them would send stale data after a switch */
 static void data_ep_drop_rx(struct data_ep *const ep)
 {
@@ -120,6 +149,7 @@ static void data_ep_drop_rx(struct data_ep *const ep)
 	while ((n = ring_buf_get(&ep->rx, scratch, sizeof(scratch))) > 0U) {
 		ep->rx_dropped += n;
 	}
+	data_ep_resume_rx(ep);
 }
 
 void zlrs_link_data_discard_rx(void)
@@ -146,6 +176,9 @@ size_t zlrs_link_data_state(zlrs_link_data_state_t *out, size_t count)
 		out[written].active = (&data_eps[i] == active);
 		out[written].rx_total = data_eps[i].rx_total;
 		out[written].rx_dropped = data_eps[i].rx_dropped;
+		out[written].rx_queued = ring_buf_size_get(&data_eps[i].rx);
+		out[written].tx_queued = ring_buf_size_get(&data_eps[i].tx);
+		out[written].rx_paused = data_eps[i].rx_paused;
 		written++;
 	}
 
@@ -215,6 +248,7 @@ uint16_t zlrs_link_data_read(uint8_t *buf, uint16_t len)
 		if (&data_eps[i] == active) {
 			got += (uint16_t)ring_buf_get(&data_eps[i].rx, buf + got,
 						      (uint32_t)(len - got));
+			data_ep_resume_rx(&data_eps[i]);
 			continue;
 		}
 

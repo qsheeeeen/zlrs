@@ -1879,6 +1879,8 @@ static int cmd_ports(const struct shell *sh, size_t argc, char **argv)
 		shell_print(sh, "%-16s ready=%d active=%d rx_total=%u rx_dropped=%u",
 			    states[i].name, states[i].ready, states[i].active, states[i].rx_total,
 			    states[i].rx_dropped);
+		shell_print(sh, "                 rx_queue=%u tx_queue=%u rx_paused=%d",
+			    states[i].rx_queued, states[i].tx_queued, states[i].rx_paused);
 	}
 	shell_print(sh, "air-to-port=%u B host_drop=%u B", counters.data_rx,
 		    zlrs_link_data_tx_dropped());
