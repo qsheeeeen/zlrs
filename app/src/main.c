@@ -668,6 +668,10 @@ static void trace_add(char c)
 
 static void run_slot(uint8_t slot)
 {
+	/* An idle or early-completed predecessor must not open RX in an earlier slot.
+	 * Both packet preparation and RX entry start at this slot's reserved window. */
+	zlrs_slot_timer_wait_until(slot_nominal_us - slot_prepare_us);
+
 	const bool data_slot =
 		ZLRS_DATA24 || (slot == ZLRS_SLOT_DATA_A || slot == ZLRS_SLOT_DATA_B);
 	const uint8_t link_slot =
