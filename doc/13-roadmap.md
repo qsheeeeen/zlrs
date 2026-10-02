@@ -219,6 +219,15 @@ design documents.
   LF/HF production builds pass. USB input availability, queue aggregation and ARQ stalls still
   need separate measurements before choosing a policy.
 
+- **1 ms preparation with 511-byte preloading (diagnostic; LF checks 2026-10-02)**:
+  after restoring the original short-packet policy and updating both peers, five 64 KiB duplex
+  rounds pass byte-exact in 4.365, 1.613, 1.560, 1.562 and 1.807 s. Neither board adds late
+  preparations, late triggers, missed boundaries, serial drops or fragment loss. However, the
+  cold first round pauses for roughly 2.8 s before delivering most data, and each peer adds
+  one ARQ recovery. Subsequent directions deliver 36.3-42.0 kB/s. This does not establish a
+  stable tighter default; preparation remains 1500 us. The cold-start recovery and its relation
+  to phase alignment, packet preparation and ACK timing need isolated measurements.
+
 ## To-do
 
 ### Radio and protocol
