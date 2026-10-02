@@ -153,6 +153,13 @@ design documents.
   of SRAM. The default becomes 1500 us, giving 3490 us slots and 6980 us pairs. LF/HF production
   builds pass. Tighter slots and larger FLRC packets still need hardware acceptance.
 
+- **1 ms data24 reservation (accepted with SRAM; both LF boards checked 2026-10-02)**:
+  five unpaced 64 KiB duplex rounds pass byte-exact in 1.759, 1.761, 1.758, 1.762 and 1.758 s,
+  delivering 37.2-39.5 kB/s per direction. Neither board adds late preparation/trigger attempts,
+  missed boundaries, recovery probes or serial drops. Trigger jitter is at most 3 us. Slots
+  become 2990 us, with 5980 us alternating pairs. The same reservation before SRAM relocation
+  failed or slowed severely; that result remains diagnostic history, not the current default.
+
 ## To-do
 
 ### Radio and protocol

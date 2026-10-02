@@ -209,7 +209,7 @@ config ZLRS_APP_PREPARE_US
 
 config ZLRS_APP_DATA24_PREPARE_US
 	int "Preparation time for exclusive 2.4 GHz data slots (us)"
-	default 1500
+	default 1000
 	range 100 10000
 	help
 	  Data24 uses one modem and band. Reserve this time for packet construction,
