@@ -472,7 +472,7 @@ bool zlrs_radio_rx_timing(uint32_t *done_us, uint32_t *airtime_us)
 	return rx_timing_valid;
 }
 
-void zlrs_radio_drain(void)
+bool zlrs_radio_drain(void)
 {
 	ral_irq_t irq = 0;
 	uint16_t len = 0U;
@@ -481,17 +481,17 @@ void zlrs_radio_drain(void)
 	int status = ZLRS_RADIO_FAIL;
 
 	if (!pending || !irq_pending) {
-		return;
+		return !pending;
 	}
 	const uint32_t event_us = irq_us;
 
 	irq_pending = false;
 	if (ral_get_and_clear_irq_status(&radio.ral, &irq) != RAL_STATUS_OK) {
-		return;
+		return false;
 	}
 	if (irq == 0U) {
 		diag.empty_irq++;
-		return;
+		return false;
 	}
 	diag.irq_last = irq;
 	diag.irq_service_us_last = zlrs_slot_timer_now_us() - event_us;
@@ -501,6 +501,24 @@ void zlrs_radio_drain(void)
 		diag.rx_crc_errors += (irq & RAL_IRQ_RX_CRC_ERROR) != 0U;
 		diag.rx_length_errors += (irq & RAL_IRQ_RX_LEN_ERROR) != 0U;
 	}
+	const ral_irq_t frame_errors =
+		RAL_IRQ_RX_HDR_ERROR | RAL_IRQ_RX_CRC_ERROR | RAL_IRQ_RX_LEN_ERROR;
+	const ral_irq_t chip_errors = RAL_IRQ_CMD_ERROR | RAL_IRQ_ERROR;
+
+	/* RX single falls back after a damaged packet too. Keep the scheduled window
+	 * open for a later valid packet; the RAL clears the RX FIFO before restarting.
+	 * No timer boundary or protocol completion is moved by this retry. */
+	if (!request->is_tx && (irq & frame_errors) != 0U && (irq & chip_errors) == 0U &&
+	    (!timed_slot || (int32_t)(slot_end_us - zlrs_slot_timer_now_us()) > 0)) {
+		if (ral_set_rx(&radio.ral, 0U) == RAL_STATUS_OK) {
+			diag.rx_restarted++;
+			return false;
+		}
+	}
+	if ((irq & (RAL_IRQ_TX_DONE | RAL_IRQ_RX_DONE | RAL_IRQ_RX_TIMEOUT | frame_errors |
+		    chip_errors)) == 0U) {
+		return false; /* FIFO/timestamp activity is not a completed transaction. */
+	}
 	if (request->is_tx && (irq & RAL_IRQ_TX_DONE) != 0U) {
 		status = ZLRS_RADIO_OK;
 		diag.tx_done++;
@@ -509,8 +527,7 @@ void zlrs_radio_drain(void)
 
 		diag.tx_startup_us_last = diag.tx_us_last > toa_us ? diag.tx_us_last - toa_us : 0U;
 		diag.tx_startup_us_max = MAX(diag.tx_startup_us_max, diag.tx_startup_us_last);
-	} else if (!request->is_tx && (irq & (RAL_IRQ_RX_HDR_ERROR | RAL_IRQ_RX_CRC_ERROR)) == 0U &&
-		   (irq & RAL_IRQ_RX_DONE) != 0U) {
+	} else if (!request->is_tx && (irq & frame_errors) == 0U && (irq & RAL_IRQ_RX_DONE) != 0U) {
 		if (ral_get_pkt_payload(&radio.ral, request->max_rx_size, request->buf, &len) ==
 		    RAL_STATUS_OK) {
 			status = ZLRS_RADIO_OK;
@@ -541,6 +558,7 @@ void zlrs_radio_drain(void)
 	(void)ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC);
 	pending = false;
 	zlrs_link_complete(owner, status, len, rssi, snr, k_uptime_get_32());
+	return true;
 }
 
 void zlrs_radio_abort(void)

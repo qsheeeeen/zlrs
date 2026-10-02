@@ -587,8 +587,9 @@ static void radio_wait_done(uint32_t budget_us)
 
 	while ((int32_t)(deadline - zlrs_slot_timer_now_us()) > 0) {
 		if (zlrs_radio_irq_pending()) {
-			zlrs_radio_drain();
-			return;
+			if (zlrs_radio_drain()) {
+				return;
+			}
 		}
 		/* Radio IRQ and hardware slot boundary both wake this wait. */
 		const int32_t remain = (int32_t)(deadline - zlrs_slot_timer_now_us());
@@ -1927,6 +1928,7 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "RX errors header=%u crc=%u length=%u payload=%u expired=%u incomplete=%u",
 		    diag.rx_header_errors, diag.rx_crc_errors, diag.rx_length_errors,
 		    diag.rx_payload_errors, diag.rx_expired, diag.rx_incomplete);
+	shell_print(sh, "RX window restarts=%u", diag.rx_restarted);
 	shell_print(sh, "TX expired=%u startup max=%u us IRQ service last/max=%u/%u us",
 		    diag.tx_expired, diag.tx_startup_us_max, diag.irq_service_us_last,
 		    diag.irq_service_us_max);

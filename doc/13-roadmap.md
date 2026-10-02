@@ -33,6 +33,14 @@ design documents.
   session setup, queued log processing and file-backend synchronization. Repeated ENTER also
   synchronizes logs. Pipelined and split commands, immediate STATUS/log reads and MCUboot
   upload/verification/confirmation passed on both boards. No logging thread runs during RF.
+- **Receive-window recovery (implemented; LF data24 hardware checked 2026-10-02)**: header,
+  CRC and length errors restart single-packet RX within the original slot deadline. FIFO and
+  timestamp activity no longer completes a pending radio request. Both LF boards passed three
+  unpaced 16 KiB duplex rounds, byte-exact, in 3.861, 3.360 and 3.559 s, with zero serial drops
+  and no additional missed timer boundaries. Error-triggered restarts occurred on both boards;
+  this check shows no clear throughput gain over the preceding 3.812, 3.513 and 2.560 s rounds.
+  Retransmissions and the 5 ms slot preparation reserve remain throughput limits. IRQ service
+  diagnostics include reading and clearing status over SPI, not just thread wakeup latency.
 
 ## To-do
 

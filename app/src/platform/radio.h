@@ -8,7 +8,8 @@
 int zlrs_radio_init(void);
 int zlrs_radio_wait_us(uint32_t timeout_us);
 bool zlrs_radio_irq_pending(void);
-void zlrs_radio_drain(void);
+/* Process an IRQ; true only when the transaction is finished (or already idle). */
+bool zlrs_radio_drain(void);
 void zlrs_radio_abort(void);
 /* Called by the timer ISR to end waits at a slot boundary. No SPI from the ISR. */
 void zlrs_radio_wake(void);
@@ -50,6 +51,7 @@ struct zlrs_radio_diag {
 	uint32_t rx_crc_errors;
 	uint32_t rx_length_errors;
 	uint32_t rx_payload_errors;
+	uint32_t rx_restarted;
 	uint32_t rx_expired;
 	uint32_t rx_incomplete;
 	uint32_t tx_expired;
