@@ -58,6 +58,12 @@ struct zlrs_radio_diag {
 	uint32_t irq_service_us_last;
 	uint32_t irq_service_us_max;
 	uint32_t late_starts;
+	uint32_t prepare_late_starts;
+	uint32_t trigger_late_starts;
+	uint32_t rx_finish_us_last;
+	uint32_t rx_finish_us_max;
+	uint32_t rx_protocol_us_last;
+	uint32_t rx_protocol_us_max;
 	uint32_t launch_late_us_last;
 	uint32_t launch_late_us_max;
 	uint32_t tx_done;

@@ -305,4 +305,19 @@ link thread waits for its result. USB core/controller threads and CDC work retai
 cooperative scheduling. The radio bottom half can preempt them without changing vendor code.
 Keeping the USB core above CDC work also preserves the upstream completion ordering for ZLPs.
 
+Exclusive data24 uses a separate maximum-frame budget and
+`ZLRS_APP_DATA24_PREPARE_US` (default 5000 us). At 2.6 Mbps with DMA, a 255-byte frame needs
+1090 us on air; adding preparation, the 200 us launch offset, 800 us startup allowance and
+200 us of margins gives a 7290 us slot and 14580 us alternating TX/RX pair. The margins cover
+the deadline 100 us before preparation and another 100 us for completion; an exactly full
+deadline is rejected by the radio size check. Control cadence and regional limits do not size
+data24 slots.
+
+`zlrs radio` splits late attempts into `prepare` (the packet/FIFO missed the launch point) and
+`trigger` (the prepared launch call ran late). `RX finish` measures GPIO IRQ to completed link
+processing, including SPI, authentication and serial output callbacks; `protocol` measures just
+the link-completion call. `IRQ service` includes reading and clearing IRQ status over SPI.
+Compare counter deltas during a transfer; boot, management and configuration work can affect
+the lifetime maxima.
+
 Previous RAC cost measurements in section 5 are historical measurements of the former backend.

@@ -1942,6 +1942,8 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 		    zlrs_radio_airtime_us(&data_mod, 255U), CONFIG_ZLRS_APP_TX_GUARD_US);
 	shell_print(sh, "late launch last/max=%u/%u us", diag.launch_late_us_last,
 		    diag.launch_late_us_max);
+	shell_print(sh, "late launch prepare=%u trigger=%u", diag.prepare_late_starts,
+		    diag.trigger_late_starts);
 	shell_print(sh, "launch command last/max=%u/%u us FIFO ready lead=%u us prepare=%u us",
 		    diag.launch_cmd_us_last, diag.launch_cmd_us_max, diag.preload_lead_us_last,
 		    slot_prepare_us);
@@ -1951,6 +1953,9 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 		    diag.rx_header_errors, diag.rx_crc_errors, diag.rx_length_errors,
 		    diag.rx_payload_errors, diag.rx_expired, diag.rx_incomplete);
 	shell_print(sh, "RX window restarts=%u", diag.rx_restarted);
+	shell_print(sh, "RX finish last/max=%u/%u us protocol last/max=%u/%u us",
+		    diag.rx_finish_us_last, diag.rx_finish_us_max, diag.rx_protocol_us_last,
+		    diag.rx_protocol_us_max);
 	shell_print(sh, "TX expired=%u startup max=%u us IRQ service last/max=%u/%u us",
 		    diag.tx_expired, diag.tx_startup_us_max, diag.irq_service_us_last,
 		    diag.irq_service_us_max);

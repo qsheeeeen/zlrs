@@ -328,6 +328,7 @@ static int prepare_request(zlrs_link_t *link, const zlrs_radio_req_t *req)
 			/* TX has a fixed launch point; receivers configure before it. */
 			if ((int32_t)(zlrs_slot_timer_now_us() - tx_at_us) > 100) {
 				diag.late_starts++;
+				diag.prepare_late_starts++;
 				diag.launch_late_us_last = zlrs_slot_timer_now_us() - tx_at_us;
 				diag.launch_late_us_max =
 					MAX(diag.launch_late_us_max, diag.launch_late_us_last);
@@ -375,6 +376,7 @@ int zlrs_radio_launch(void)
 		}
 		if (request->is_tx && (int32_t)(zlrs_slot_timer_now_us() - tx_at_us) > 100) {
 			diag.late_starts++;
+			diag.trigger_late_starts++;
 			diag.launch_late_us_last = zlrs_slot_timer_now_us() - tx_at_us;
 			diag.launch_late_us_max =
 				MAX(diag.launch_late_us_max, diag.launch_late_us_last);
@@ -557,7 +559,18 @@ bool zlrs_radio_drain(void)
 	}
 	(void)ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC);
 	pending = false;
+	const uint32_t protocol_start_us = zlrs_slot_timer_now_us();
+	const bool received = !request->is_tx && status == ZLRS_RADIO_OK && len > 0U;
+
 	zlrs_link_complete(owner, status, len, rssi, snr, k_uptime_get_32());
+	if (received) {
+		const uint32_t finish_us = zlrs_slot_timer_now_us();
+
+		diag.rx_protocol_us_last = finish_us - protocol_start_us;
+		diag.rx_protocol_us_max = MAX(diag.rx_protocol_us_max, diag.rx_protocol_us_last);
+		diag.rx_finish_us_last = finish_us - event_us;
+		diag.rx_finish_us_max = MAX(diag.rx_finish_us_max, diag.rx_finish_us_last);
+	}
 	return true;
 }
 
