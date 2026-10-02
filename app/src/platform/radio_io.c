@@ -12,6 +12,7 @@
 #include <hardware/structs/spi.h>
 #include <string.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/dma.h>
 #include <zephyr/drivers/spi.h>
 #include <zephyr/kernel.h>
 
@@ -34,6 +35,120 @@ static bool spi_configured;
 static bool asleep;
 static uint8_t tx_bytes[IO_MAX];
 static uint8_t rx_bytes[IO_MAX];
+static const struct device *const dma = DEVICE_DT_GET(DT_DMAS_CTLR_BY_NAME(DT_BUS(RADIO_NODE), tx));
+static int tx_channel = -1;
+static int rx_channel = -1;
+static K_SEM_DEFINE(dma_done, 0, 1);
+static volatile int dma_result;
+static struct dma_block_config dma_blocks[2];
+static struct dma_config dma_configs[2];
+
+static void dma_complete(const struct device *dev, void *user, uint32_t channel, int result)
+{
+	ARG_UNUSED(dev);
+	ARG_UNUSED(user);
+	ARG_UNUSED(channel);
+	dma_result = result;
+	k_sem_give(&dma_done);
+}
+
+static int dma_init(void)
+{
+	if (rx_channel >= 0) {
+		return 0;
+	}
+	/* Leave the generic SPI driver's devicetree channels available to it. */
+	uint32_t mask = ~(BIT(DT_DMAS_CELL_BY_NAME(DT_BUS(RADIO_NODE), tx, channel)) |
+			  BIT(DT_DMAS_CELL_BY_NAME(DT_BUS(RADIO_NODE), rx, channel)));
+
+	tx_channel = dma_request_channel(dma, &mask);
+	if (tx_channel < 0) {
+		return tx_channel;
+	}
+	rx_channel = dma_request_channel(dma, &mask);
+	if (rx_channel < 0) {
+		dma_release_channel(dma, tx_channel);
+		tx_channel = -1;
+		return rx_channel;
+	}
+	dma_blocks[0] = (struct dma_block_config){
+		.source_address = (uint32_t)(uintptr_t)tx_bytes,
+		.dest_address = (uint32_t)(uintptr_t)&spi->dr,
+		.source_addr_adj = DMA_ADDR_ADJ_INCREMENT,
+		.dest_addr_adj = DMA_ADDR_ADJ_NO_CHANGE,
+	};
+	dma_blocks[1] = (struct dma_block_config){
+		.source_address = (uint32_t)(uintptr_t)&spi->dr,
+		.dest_address = (uint32_t)(uintptr_t)rx_bytes,
+		.source_addr_adj = DMA_ADDR_ADJ_NO_CHANGE,
+		.dest_addr_adj = DMA_ADDR_ADJ_INCREMENT,
+	};
+	for (size_t i = 0U; i < ARRAY_SIZE(dma_configs); i++) {
+		dma_configs[i] = (struct dma_config){
+			.channel_direction = i == 0U ? MEMORY_TO_PERIPHERAL : PERIPHERAL_TO_MEMORY,
+			.dma_slot = i == 0U ? DT_DMAS_CELL_BY_NAME(DT_BUS(RADIO_NODE), tx, slot)
+					    : DT_DMAS_CELL_BY_NAME(DT_BUS(RADIO_NODE), rx, slot),
+			.source_data_size = 1U,
+			.dest_data_size = 1U,
+			.source_burst_length = 1U,
+			.dest_burst_length = 1U,
+			.block_count = 1U,
+			.head_block = &dma_blocks[i],
+			.dma_callback = i == 1U ? dma_complete : NULL,
+		};
+	}
+	return 0;
+}
+
+static int dma_transfer(const uint8_t *tx, uint8_t *rx, size_t len)
+{
+	if (len > IO_MAX || dma_init() != 0) {
+		return -EIO;
+	}
+	if (tx == NULL) {
+		memset(tx_bytes, 0, len);
+	} else if (tx != tx_bytes) {
+		memcpy(tx_bytes, tx, len);
+	}
+	dma_blocks[0].block_size = len;
+	dma_blocks[1].block_size = len;
+	if (dma_config(dma, tx_channel, &dma_configs[0]) != 0 ||
+	    dma_config(dma, rx_channel, &dma_configs[1]) != 0) {
+		return -EIO;
+	}
+	k_sem_reset(&dma_done);
+	dma_result = 0;
+	spi->dmacr = SPI_SSPDMACR_TXDMAE_BITS | SPI_SSPDMACR_RXDMAE_BITS;
+	gpio_put(CS_PIN, false);
+	int result = dma_start(dma, rx_channel);
+
+	if (result == 0) {
+		result = dma_start(dma, tx_channel);
+	}
+	if (result == 0) {
+		result = k_sem_take(&dma_done, K_MSEC(2));
+		if (result == 0) {
+			result = dma_result;
+		}
+	}
+	if (result != 0) {
+		(void)dma_stop(dma, tx_channel);
+		(void)dma_stop(dma, rx_channel);
+	}
+	const uint32_t finish = zlrs_slot_timer_now_us();
+
+	while ((spi->sr & SPI_SSPSR_BSY_BITS) != 0U) {
+		if (zlrs_slot_timer_now_us() - finish > 1000U) {
+			result = -ETIMEDOUT;
+			break;
+		}
+	}
+	gpio_put(CS_PIN, true);
+	if (result == 0 && rx != NULL && rx != rx_bytes) {
+		memcpy(rx, rx_bytes, len);
+	}
+	return result;
+}
 
 static bool ready(const void *context)
 {
@@ -97,8 +212,8 @@ static int __ramfunc poll_transfer(const uint8_t *tx, uint8_t *rx, size_t len)
 
 static int transfer(const uint8_t *tx, uint8_t *rx, size_t len)
 {
-	if (spi_configured && len <= POLL_MAX) {
-		return poll_transfer(tx, rx, len);
+	if (spi_configured) {
+		return len <= POLL_MAX ? poll_transfer(tx, rx, len) : dma_transfer(tx, rx, len);
 	}
 	const struct spi_buf tx_buf = {.buf = (void *)tx, .len = len};
 	const struct spi_buf rx_buf = {.buf = rx, .len = len};

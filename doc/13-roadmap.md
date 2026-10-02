@@ -131,6 +131,15 @@ design documents.
   falls from about 1 ms to 0.3 ms. Retransmissions add 86/18. The data24 default becomes 3 ms;
   tighter reservations and the physical throughput limit remain pending.
 
+- **FIFO DMA ownership (implemented; both LF boards checked 2026-10-02)**: the RP2350 HAL
+  allocates its own two channels through the public DMA controller API, leaving the generic
+  SPI driver's channels alone. Descriptors and buffers are static; only RX completion wakes
+  the RF owner. This removes generic SPI scatter/context bookkeeping. The RP2350 controller's
+  `dma_reload()` currently starts the channel, so the HAL uses explicit `dma_config()` and
+  `dma_start()` rather than relying on a stopped reload. At 1 ms without SRAM relocation,
+  five 64 KiB duplex rounds remain byte-exact but take 11.2-13.8 s with frequent late attempts;
+  that reservation is not accepted. The combined SRAM validation below has no late attempts.
+
 ## To-do
 
 ### Radio and protocol
