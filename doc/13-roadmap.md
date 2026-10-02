@@ -273,6 +273,17 @@ design documents.
 
 ### Radio and protocol
 
+- **Bulk stream queue copies (implemented; LF hardware checked 2026-10-03)**:
+  queue insertion and packet extraction use at most two contiguous copies across a ring wrap,
+  updating occupancy once. All 4487 ASan/UBSan checks pass, including eight cases covering ring
+  starts, split insertion, ARQ/best-effort delivery and prepared packets; saturation accounting
+  remains covered. LF/HF builds pass. The debug source/sink supplies full queues while checking
+  every received byte. Five 64 KiB duplex rounds pass, with receive goodput 47.8-54.7 kB/s per
+  direction, compared with 45.6-54.3 kB/s before bulk copies. Five USB duplex rounds also pass
+  byte-exact in 1.503, 1.554, 1.510, 1.605 and 1.552 s. This does not establish timing acceptance
+  for tighter slots. The current 9080 us pair permits about 55.1 kB/s per direction with a
+  500-byte payload before losses: reserved time still limits the radio even with full queues.
+
 - **Hardware timer and driver ownership (implemented; short LF checks passed)**: RP2350 TIMER1
   schedules absolute slots; one application thread owns the independent USP RAL/LR20xx driver,
   without RAC/planner initialization or a USP worker. Delayed slots are skipped with hop/frame

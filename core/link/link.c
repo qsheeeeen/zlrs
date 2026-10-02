@@ -657,6 +657,16 @@ static void arq_release_oldest(zlrs_link_t *link, bool delivered)
 	link->arq_retries = 0U;
 }
 
+static void queue_copy(const zlrs_link_t *link, uint16_t offset, uint8_t *out, uint16_t len)
+{
+	const uint16_t start = (link->queue_head + offset) % ZLRS_LINK_TX_QUEUE_LEN;
+	const uint16_t contiguous = ZLRS_LINK_TX_QUEUE_LEN - start;
+	const uint16_t first = len < contiguous ? len : contiguous;
+
+	memcpy(out, &link->tx_queue[start], first);
+	memcpy(out + first, link->tx_queue, len - first);
+}
+
 /* Send frame `index` of the window: payload is a 2-byte data sequence number plus data */
 static const zlrs_radio_req_t *arq_send_slot(zlrs_link_t *link, uint8_t index, uint16_t seq,
 					     uint16_t len, bool more, bool piggyback_ack)
@@ -673,16 +683,12 @@ static const zlrs_radio_req_t *arq_send_slot(zlrs_link_t *link, uint8_t index, u
 
 	payload[0] = (uint8_t)(seq & 0xFFU);
 	payload[1] = (uint8_t)(seq >> 8);
-	for (uint16_t i = 0U; i < len; i++) {
-		payload[2U + i] =
-			link->tx_queue[(link->queue_head + offset + i) % ZLRS_LINK_TX_QUEUE_LEN];
-	}
+	queue_copy(link, offset, payload + 2U, len);
 
-	frame_len = build_frame_ex(link, type,
-				   (more ? ZLRS_FLAG_MORE : 0U) |
-				   (piggyback_ack ? ZLRS_FLAG_ACK : 0U), payload,
-				   (uint16_t)(len + 2U), tag_key_for(link, type, true), piggyback_ack,
-				   link->arq_rx_started ? link->arq_rx_seq : 0xFFFFU);
+	frame_len = build_frame_ex(
+		link, type, (more ? ZLRS_FLAG_MORE : 0U) | (piggyback_ack ? ZLRS_FLAG_ACK : 0U),
+		payload, (uint16_t)(len + 2U), tag_key_for(link, type, true), piggyback_ack,
+		link->arq_rx_started ? link->arq_rx_seq : 0xFFFFU);
 	if (frame_len == 0U) {
 		return NULL;
 	}
@@ -783,10 +789,7 @@ const uint8_t *zlrs_link_prepare_data(zlrs_link_t *link, uint8_t slot, uint32_t 
 	payload[1] = (uint8_t)(packet->data_seq >> 8);
 	const uint16_t offset = packet->retry ? 0U : arq_inflight_bytes(link);
 
-	for (uint16_t i = 0U; i < packet->data_len; i++) {
-		payload[2U + i] =
-			link->tx_queue[(link->queue_head + offset + i) % ZLRS_LINK_TX_QUEUE_LEN];
-	}
+	queue_copy(link, offset, payload + 2U, packet->data_len);
 	memcpy(packet->key, tag_key_for(link, type, true), ZLRS_KEY_LEN);
 	packet->size = encode_frame(
 		link, packet->buf, packet->frame_seq, type,
@@ -1014,9 +1017,7 @@ static const zlrs_radio_req_t *send_data(zlrs_link_t *link, uint32_t now_ms)
 	link->arq_run_bytes =
 		((flags & ZLRS_FLAG_MORE) != 0U) ? (uint16_t)(link->arq_run_bytes + take) : 0U;
 
-	for (uint16_t i = 0; i < take; i++) {
-		payload[i] = link->tx_queue[(link->queue_head + i) % ZLRS_LINK_TX_QUEUE_LEN];
-	}
+	queue_copy(link, 0U, payload, take);
 
 	type = (link->cfg.role == ZLRS_ROLE_TX) ? ZLRS_PKT_DATA_UP : ZLRS_PKT_DATA_DOWN;
 	len = build_frame(link, type, flags, payload, take, tag_key_for(link, type, true));
@@ -2453,20 +2454,18 @@ void zlrs_link_tick(zlrs_link_t *link, uint32_t now_ms)
 
 uint16_t zlrs_link_write(zlrs_link_t *link, const uint8_t *data, uint16_t len)
 {
-	uint16_t written = 0U;
-
 	if (data == NULL) {
 		return 0U;
 	}
+	const uint16_t room = zlrs_link_tx_space(link);
+	const uint16_t written = len < room ? len : room;
+	const uint16_t tail = (link->queue_head + link->queue_count) % ZLRS_LINK_TX_QUEUE_LEN;
+	const uint16_t contiguous = ZLRS_LINK_TX_QUEUE_LEN - tail;
+	const uint16_t first = written < contiguous ? written : contiguous;
 
-	while (written < len && link->queue_count < ZLRS_LINK_TX_QUEUE_LEN) {
-		const uint16_t tail =
-			(uint16_t)((link->queue_head + link->queue_count) % ZLRS_LINK_TX_QUEUE_LEN);
-
-		link->tx_queue[tail] = data[written];
-		link->queue_count++;
-		written++;
-	}
+	memcpy(&link->tx_queue[tail], data, first);
+	memcpy(link->tx_queue, data + first, written - first);
+	link->queue_count += written;
 
 	if (written < len) {
 		link->stats.data_drop_bytes =

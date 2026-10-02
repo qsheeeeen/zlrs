@@ -1649,6 +1649,45 @@ static void test_backpressure(void)
 	CHECK(sim.tx.data.stats.data_drop_bytes == 2U * sizeof(chunk));
 }
 
+static void test_queue_copy_wrap(void)
+{
+	static const uint16_t heads[] = {0U, 2048U, ZLRS_LINK_TX_QUEUE_LEN - 129U,
+					 ZLRS_LINK_TX_QUEUE_LEN - 1U};
+	uint8_t payload[257];
+	sim_t sim;
+
+	printf("link: bulk queue copies preserve wraps and prepared packet offsets\n");
+	for (uint16_t i = 0U; i < sizeof(payload); i++) {
+		payload[i] = (uint8_t)(i ^ (i >> 8));
+	}
+	for (uint8_t arq = 0U; arq < 2U; arq++) {
+		for (size_t h = 0U; h < sizeof(heads) / sizeof(heads[0]); h++) {
+			sim_init(&sim);
+			sim.tx.data.cfg.arq = sim.rx.data.cfg.arq = arq;
+			pair_and_connect(&sim);
+			sim.prepare_data = arq != 0U;
+			sim.tx.data.queue_head = heads[h];
+			CHECK(zlrs_link_write(&sim.tx.data, payload, 31U) == 31U);
+			CHECK(zlrs_link_write(&sim.tx.data, payload + 31U, sizeof(payload) - 31U) ==
+			      sizeof(payload) - 31U);
+			CHECK(zlrs_link_tx_space(&sim.tx.data) ==
+			      ZLRS_LINK_TX_QUEUE_LEN - sizeof(payload));
+			for (uint16_t i = 0U; i < sizeof(payload); i++) {
+				CHECK(sim.tx.data
+					      .tx_queue[(heads[h] + i) % ZLRS_LINK_TX_QUEUE_LEN] ==
+				      payload[i]);
+			}
+			SIM_UNTIL(&sim, sim.rx.stream_len == sizeof(payload), 400);
+			CHECK(sim.rx.stream_len == sizeof(payload));
+			CHECK(memcmp(sim.rx.stream, payload, sizeof(payload)) == 0);
+			SIM_UNTIL(&sim, sim.tx.data.queue_count == 0U, 100);
+			CHECK(sim.tx.data.queue_count == 0U);
+			CHECK(zlrs_link_write(&sim.tx.data, NULL, 10U) == 0U);
+			CHECK(zlrs_link_write(&sim.tx.data, payload, 0U) == 0U);
+		}
+	}
+}
+
 /* ARQ: drops are filled in by retransmits and the receiver dedups on the data sequence */
 static void test_arq_retransmit(void)
 {
@@ -3134,6 +3173,7 @@ void test_link(void)
 	test_sync_rate();
 	test_link_quality();
 	test_backpressure();
+	test_queue_copy_wrap();
 	test_arq_retransmit();
 	test_flrc_max_frame_duplex();
 	test_prepared_data();
