@@ -184,13 +184,19 @@ The data link's default mode:
 
 - a sliding window of **4 frames**, each carrying a 2-byte data sequence number before the
   payload;
+- the receiver retains authenticated frames inside that window beyond a gap. When the missing
+  frame arrives, it delivers the contiguous run in order and advances the cumulative ACK across
+  the retained frames. Duplicates and frames beyond the window are not delivered; retained frames
+  survive recovery probes and are cleared for a new session;
 - the receiver piggybacks its cumulative ACK (2-byte sequence) in the DATA header extension when
   it has reverse data to send; otherwise it sends an empty DATA frame containing only the common
   header and ACK extension. Neither case puts ACK data in the application payload. Resync probes
   remain standalone control packets;
-- the sender retransmits the head frame after at least 30 ms (`ZLRS_ARQ_TIMEOUT_MS`), raised to
-  two actual scheduled data frame periods, including cadence thinning and pacing, up to 64 times
-  (`ZLRS_ARQ_MAX_RETRIES`);
+- the sender retransmits the head frame after the configured timeout, up to 64 times
+  (`ZLRS_ARQ_MAX_RETRIES`). The core fallback is 30 ms (`ZLRS_ARQ_TIMEOUT_MS`); the application
+  budgets two scheduled data frame periods for mixed mode. Data24 budgets one alternating
+  transmit/receive pair, with a 10 ms minimum (currently 15 ms). Duplicate ACKs do not restart
+  this timer;
 - after exhausting retries, the sender probes for the receiver's cumulative ACK. Both ends
   retain sequence positions and partial messages; acknowledged fragments may no longer exist
   at the sender. Pending ACKs take priority over probes, including during simultaneous recovery;

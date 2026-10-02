@@ -1562,6 +1562,107 @@ static void test_arq_retransmit(void)
 	CHECK(sim.rx.data.stats.rx_out_of_order > 0U);
 }
 
+/* Frames inside the receive window survive a gap and need no second transmission. */
+static void test_arq_receive_window(void)
+{
+	const uint16_t first_seq[] = {0U, 0xFFFEU};
+
+	for (size_t run = 0U; run < sizeof(first_seq) / sizeof(first_seq[0]); run++) {
+		for (uint8_t lost = 1U; lost <= 2U; lost++) {
+			sim_t sim;
+			uint8_t payload[512];
+
+			printf("link: arq receive window (sequence %u, lost %u)\n", first_seq[run],
+			       lost);
+			sim_init(&sim);
+			sim.tx.data.cfg.arq = 1U;
+			sim.rx.data.cfg.arq = 1U;
+			pair_and_connect(&sim);
+			if (first_seq[run] != 0U) {
+				sim.tx.data.arq_seq = first_seq[run];
+				sim.rx.data.arq_rx_started = true;
+				sim.rx.data.arq_rx_seq = (uint16_t)(first_seq[run] - 1U);
+			}
+			for (size_t i = 0U; i < sizeof(payload); i++) {
+				payload[i] = (uint8_t)(i * 7U + 3U);
+			}
+			CHECK(zlrs_link_write(&sim.tx.data, payload, sizeof(payload)) ==
+			      sizeof(payload));
+			sim.drop_data_down = lost;
+			sim_run(&sim, ZLRS_ARQ_WINDOW);
+			CHECK(sim.rx.stream_len == 0U);
+			CHECK(sim.rx.data.stats.rx_out_of_order > 0U);
+			SIM_UNTIL(&sim, sim.tx.data.queue_count == 0U, 100);
+			CHECK(sim.tx.data.queue_count == 0U);
+			CHECK(sim.tx.data.stats.tx_retries == lost);
+			CHECK(sim.rx.stream_len == sizeof(payload));
+			CHECK(memcmp(sim.rx.stream, payload, sizeof(payload)) == 0);
+			CHECK(sim.rx.data.stats.rx_frag_drop == 0U);
+			CHECK(sim.tx.data.stats.data_drop_bytes == 0U);
+		}
+	}
+}
+
+/* Reject frames beyond the window, dedup buffered frames and clear them for a new session. */
+static void test_arq_receive_window_bounds(void)
+{
+	for (unsigned int restart = 0U; restart < 2U; restart++) {
+		sim_t sim;
+		const uint16_t seq[] = {ZLRS_ARQ_WINDOW, 1U, 1U};
+		const uint8_t data[] = {0x44U, 0x11U, 0x22U};
+		uint8_t frame[ZLRS_FRAME_MAX_LEN];
+		uint8_t payload[3];
+		uint16_t len;
+
+		printf("link: arq receive window bounds (restart %u)\n", restart);
+		sim_init(&sim);
+		sim.tx.data.cfg.arq = 1U;
+		sim.rx.data.cfg.arq = 1U;
+		pair_and_connect(&sim);
+		for (size_t i = 0U; i < sizeof(seq) / sizeof(seq[0]); i++) {
+			payload[0] = (uint8_t)seq[i];
+			payload[1] = (uint8_t)(seq[i] >> 8);
+			payload[2] = data[i];
+			len = build_data_frame(frame, ZLRS_PKT_DATA_UP, sim.tx.data.tx_seq++, 0U,
+					       payload, sizeof(payload),
+					       sim.tx.data.session_key_out);
+			CHECK(len > 0U);
+			sim_inject(&sim, &sim.rx.data, frame, len);
+		}
+		CHECK(sim.rx.stream_len == 0U);
+		CHECK(!sim.rx.data.arq_rx_started);
+		CHECK(sim.rx.data.arq_rx[1].len == 1U);
+		CHECK(sim.rx.data.arq_rx[1].payload[0] == 0x11U);
+		CHECK(sim.rx.data.stats.rx_dup > 0U);
+		if (restart) {
+			zlrs_link_set_peer(&sim.tx.data, sim.rx.dev_id, sim.tx.ctl.pair_salt,
+					   sim.now_ms);
+			zlrs_link_set_peer(&sim.rx.data, sim.tx.dev_id, sim.rx.ctl.pair_salt,
+					   sim.now_ms);
+			SIM_UNTIL(&sim,
+				  sim.tx.data.state == ZLRS_STATE_CONNECTED &&
+					  sim.rx.data.state == ZLRS_STATE_CONNECTED,
+				  2000);
+			CHECK(sim.tx.data.state == ZLRS_STATE_CONNECTED);
+			CHECK(sim.rx.data.state == ZLRS_STATE_CONNECTED);
+			CHECK(sim.rx.data.arq_rx[1].len == 0U);
+		}
+		memset(payload, 0, sizeof(payload));
+		len = build_data_frame(frame, ZLRS_PKT_DATA_UP, sim.tx.data.tx_seq++, 0U, payload,
+				       sizeof(payload), sim.tx.data.session_key_out);
+		CHECK(len > 0U);
+		sim_inject(&sim, &sim.rx.data, frame, len);
+		CHECK(sim.rx.stream_len == (restart ? 1U : 2U));
+		CHECK(sim.rx.stream[0] == 0U);
+		if (!restart) {
+			CHECK(sim.rx.stream[1] == 0x11U);
+		}
+		for (size_t i = 0U; i < ZLRS_ARQ_WINDOW; i++) {
+			CHECK(sim.rx.data.arq_rx[i].len == 0U);
+		}
+	}
+}
+
 /* Reverse traffic must not keep postponing a lost forward frame's retransmission. */
 static void test_arq_duplicate_ack_timeout(void)
 {
@@ -2678,6 +2779,8 @@ void test_link(void)
 	test_link_quality();
 	test_backpressure();
 	test_arq_retransmit();
+	test_arq_receive_window();
+	test_arq_receive_window_bounds();
 	test_arq_duplicate_ack_timeout();
 	test_arq_slow_run();
 	test_arq_dedup();

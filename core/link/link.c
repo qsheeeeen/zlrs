@@ -370,6 +370,7 @@ static void session_activate(zlrs_link_t *link, uint16_t hop_index)
 	link->arq_seq = 0U;
 	link->arq_rx_started = false;
 	link->arq_ack_pending = false;
+	memset(link->arq_rx, 0, sizeof(link->arq_rx));
 	link->arq_resync = false;
 	zlrs_fhss_set_index(&link->fhss, hop_index);
 }
@@ -941,6 +942,22 @@ static uint16_t acq_timeout_ms(const zlrs_link_t *link)
 
 static void handle_ack_value(zlrs_link_t *link, uint16_t ack, uint8_t flags, uint32_t now_ms);
 
+static void deliver_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
+{
+	switch (zlrs_reasm_push(&link->reasm, frame, now_ms)) {
+	case ZLRS_REASM_DONE:
+		if (link->ev.on_data != NULL && link->reasm.len > 0U) {
+			link->ev.on_data(link->ev.ctx, link->reasm.buf, link->reasm.len);
+		}
+		break;
+	case ZLRS_REASM_DROPPED:
+		link->stats.rx_frag_drop++;
+		break;
+	default:
+		break;
+	}
+}
+
 static void handle_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
 {
 	if (link->cfg.arq) {
@@ -964,26 +981,30 @@ static void handle_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 		/* ACK every frame, old or new, or the sender never converges */
 		link->arq_ack_pending = true;
 
-		if (!link->arq_rx_started) {
-			/*
-			 * The first frame of a session must start at sequence 0: delivering a half stream at the
-			 * wrong offset is worse than dropping it (the layer above sees shifted data). If it does
-			 * not, answer with an ACK only and let the sender retransmit.
-			 */
-			if (seq != 0U) {
-				link->stats.rx_out_of_order++;
-				return;
-			}
-			link->arq_rx_started = true;
-		} else if ((int16_t)(seq - link->arq_rx_seq) <= 0) {
+		const uint16_t next_seq =
+			link->arq_rx_started ? (uint16_t)(link->arq_rx_seq + 1U) : 0U;
+		const int16_t distance = (int16_t)(seq - next_seq);
+
+		if (distance < 0) {
 			link->stats.rx_dup++;
 			return; /* duplicate from a retransmit: the ACK is set, do not deliver twice */
-		} else if (seq != (uint16_t)(link->arq_rx_seq + 1U)) {
-			link->stats.rx_out_of_order++;
-			return; /* gap: wait for the sender's retransmit, it guarantees the order */
 		}
+		if (distance > 0) {
+			link->stats.rx_out_of_order++;
+			if ((uint16_t)distance < ZLRS_ARQ_WINDOW) {
+				zlrs_arq_rx_frame_t *saved = &link->arq_rx[seq % ZLRS_ARQ_WINDOW];
 
-		link->arq_rx_seq = seq;
+				if (saved->len == 0U) {
+					saved->seq = seq;
+					saved->len = (uint16_t)(frame->payload_len - 2U);
+					saved->flags = frame->flags & ZLRS_FLAG_MORE;
+					memcpy(saved->payload, &frame->payload[2], saved->len);
+				} else {
+					link->stats.rx_dup++;
+				}
+			}
+			return; /* Keep the cumulative ACK before the gap, including missing sequence 0. */
+		}
 
 		inner = *frame;
 		inner.seq = seq;
@@ -991,34 +1012,28 @@ static void handle_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 		inner.payload_len = (uint16_t)(frame->payload_len - 2U);
 		inner.tag = NULL;
 
-		switch (zlrs_reasm_push(&link->reasm, &inner, now_ms)) {
-		case ZLRS_REASM_DONE:
-			if (link->ev.on_data != NULL && link->reasm.len > 0U) {
-				link->ev.on_data(link->ev.ctx, link->reasm.buf, link->reasm.len);
+		for (;;) {
+			link->arq_rx_started = true;
+			link->arq_rx_seq = inner.seq;
+			deliver_data(link, &inner, now_ms);
+
+			const uint16_t next = (uint16_t)(inner.seq + 1U);
+			zlrs_arq_rx_frame_t *saved = &link->arq_rx[next % ZLRS_ARQ_WINDOW];
+
+			if (saved->len == 0U || saved->seq != next) {
+				break;
 			}
-			break;
-		case ZLRS_REASM_DROPPED:
-			link->stats.rx_frag_drop++;
-			break;
-		default:
-			break;
+			inner.seq = saved->seq;
+			inner.payload = saved->payload;
+			inner.payload_len = saved->len;
+			inner.flags = saved->flags;
+			saved->len = 0U;
 		}
 
 		return;
 	}
 
-	switch (zlrs_reasm_push(&link->reasm, frame, now_ms)) {
-	case ZLRS_REASM_DONE:
-		if (link->ev.on_data != NULL && link->reasm.len > 0U) {
-			link->ev.on_data(link->ev.ctx, link->reasm.buf, link->reasm.len);
-		}
-		break;
-	case ZLRS_REASM_DROPPED:
-		link->stats.rx_frag_drop++;
-		break;
-	default:
-		break;
-	}
+	deliver_data(link, frame, now_ms);
 }
 
 static void pairing_complete(zlrs_link_t *link, uint32_t now_ms)

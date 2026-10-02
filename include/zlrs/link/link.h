@@ -211,6 +211,13 @@ typedef struct {
 #define ZLRS_ARQ_MAX_RETRIES 64U
 
 typedef struct {
+	uint16_t seq;
+	uint16_t len; /* Zero marks an empty slot; DATA always carries at least one byte. */
+	uint8_t flags;
+	uint8_t payload[ZLRS_PAYLOAD_MAX_LEN - 2U];
+} zlrs_arq_rx_frame_t;
+
+typedef struct {
 	zlrs_link_cfg_t cfg;
 	uint32_t (*random)(void *ctx);
 	void *random_ctx;
@@ -318,6 +325,8 @@ typedef struct {
 	uint16_t arq_rx_seq;
 	bool arq_rx_started;
 	bool arq_ack_pending;
+	/* Retain authenticated frames beyond a gap until they can be delivered in order. */
+	zlrs_arq_rx_frame_t arq_rx[ZLRS_ARQ_WINDOW];
 	/* Retries ran out: wait for the peer's cumulative ACK, retaining the transmit window. */
 	bool arq_resync;
 

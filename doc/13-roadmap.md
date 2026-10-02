@@ -49,6 +49,16 @@ design documents.
   change. Neither device dropped serial bytes or added missed timer boundaries; retransmissions
   fell from 326/312 to 238/242 across the three rounds. The receiver still discards frames beyond
   a gap, and timer/schedule throughput acceptance remains pending.
+- **ARQ receive window (implemented; LF data24 hardware checked 2026-10-02)**: authenticated
+  frames beyond a gap are retained inside the four-frame window and delivered in order when
+  the missing head arrives. The frame format and cumulative ACK stay unchanged. All 2170 host
+  checks pass under ASan/UBSan, including multiple losses, sequence wrap, duplicates, window
+  bounds, recovery and session reset. Both LF boards passed three unpaced 16 KiB duplex rounds
+  in 1.512, 1.360 and 1.762 s, and three 64 KiB duplex rounds in 4.711, 5.015 and 5.019 s,
+  byte-exact. No serial drops or new missed timer boundaries occurred; the longer rounds delivered
+  13.1-14.4 kB/s per direction. Retransmissions in the 16 KiB rounds fell from 238/242 to 89/78.
+  This approaches the current schedule's roughly 16.7 kB/s per-direction ceiling, not the FLRC
+  physical limit. Slot preparation still reserves 5 ms; late launches and radio errors remain.
 
 ## To-do
 
