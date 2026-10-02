@@ -1274,6 +1274,7 @@ static void handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 			if (frame->payload_len >= 12U) {
 				link->frame_index = rd32(&frame->payload[8]);
 			}
+			link->last_rx_frame = link->frame_index;
 			return;
 		}
 
@@ -1310,6 +1311,7 @@ static void handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 		session_activate(link, hop_index);
 		link->last_rx_seq = frame->seq;
 		link->last_rx_ms = now_ms;
+		link->last_rx_frame = link->frame_index;
 		link->announce = true;
 		set_state(link, ZLRS_STATE_CONNECTED, now_ms);
 		return;
@@ -1527,6 +1529,7 @@ static int handle_sess_cfm(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_
 	}
 	link->last_rx_seq = frame->seq; /* the confirm frame itself takes the first slot from 0 */
 	link->last_rx_ms = now_ms;
+	link->last_rx_frame = link->frame_index;
 	link->sess_ack_due = link->cfg.kind == ZLRS_LINK_DATA;
 	link->sess_sync_frame = link->frame_index;
 	set_state(link, ZLRS_STATE_CONNECTED, now_ms);
@@ -1667,6 +1670,7 @@ static int handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 	}
 	link->last_rx_seq = frame.seq;
 	link->last_rx_ms = now_ms;
+	link->last_rx_frame = link->frame_index;
 	if (link->cfg.kind == ZLRS_LINK_DATA && link->cfg.role == ZLRS_ROLE_TX) {
 		link->sess_cfm_due = false;
 	}
@@ -2034,9 +2038,11 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 		return req;
 	}
 
-	/* Idle data has no liveness timeout. Reacquire periodic SYNC after losing its hop epoch. */
-	if (!tx_side && a && link->cfg.resync_every_n > 0U && link->cfg.sync_period_ms > 0U &&
-	    (uint32_t)(now_ms - link->last_rx_ms) >= link->cfg.sync_period_ms) {
+	/* Legal idle DATA can stay silent until the next periodic SYNC. Only reacquire
+	 * after two missed SYNC periods; the SEARCHING repeat interval is unrelated. */
+	if (!tx_side && a && link->cfg.resync_every_n > 0U &&
+	    (uint32_t)(link->frame_index - link->last_rx_frame) >
+		    2U * link->cfg.resync_every_n) {
 		return submit_rx(link, sync_freq_hz(link), link->cfg.sync_slot, link->sync_word,
 				 link->cfg.rx_timeout_ms);
 	}

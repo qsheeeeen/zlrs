@@ -274,6 +274,15 @@ design documents.
 
 ### Radio and protocol
 
+- **Idle DATA hopping (implemented; host checked)**: the DATA receiver keeps its hop epoch
+  through legal silence and returns to the SYNC channel after two missed periodic SYNCs.
+  The 100 ms SEARCHING repeat timer no longer makes a connected receiver abandon hops before
+  its next scheduled SYNC. A simulation with 600 ms periodic SYNC and 180 ms idle gaps shows
+  sixteen failures against the old implementation; eight prompt transfers pass with the fix.
+  Replay/corrupted frames do not refresh the trusted epoch, and 205 receive-window checks
+  cover reacquisition across frame-counter wrap. LF/HF builds pass; hopping hardware acceptance
+  remains pending.
+
 - **Consistent planned-slot time (implemented; LF checked 2026-10-03)**: TIMER1 deadlines map
   to protocol milliseconds through one uptime epoch and the timer's full 64-bit counter.
   Preparation and activation of a slot now use the same millisecond, including timer/kernel

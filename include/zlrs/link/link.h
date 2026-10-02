@@ -297,6 +297,7 @@ typedef struct {
 	uint8_t state;
 	uint32_t state_ms;
 	uint32_t last_rx_ms;
+	uint32_t last_rx_frame; /* Authenticated DATA hop epoch, for sparse-SYNC reacquisition. */
 	uint32_t last_sync_ms;
 	uint32_t last_pair_tx_ms;
 	uint32_t

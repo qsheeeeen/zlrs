@@ -2444,6 +2444,66 @@ static void test_data_idle(void)
 	CHECK(sim.rx.stream_len == sizeof(chunk));
 }
 
+static void test_data_idle_hopping(void)
+{
+	sim_t sim;
+	uint8_t chunk[8];
+
+	printf("link: sparse SYNC keeps the idle DATA hop epoch\n");
+	sim_init(&sim);
+	sim.tx.data.cfg.sync_period_ms = 100U;
+	sim.rx.data.cfg.sync_period_ms = 100U;
+	sim.tx.data.cfg.resync_every_n = 100U;
+	sim.rx.data.cfg.resync_every_n = 100U;
+	pair_and_connect(&sim);
+	sim_run(&sim, 200U);
+	const uint32_t nonce = sim.tx.data.sess_nonce_t;
+
+	for (uint32_t i = 0U; i < 8U; i++) {
+		SIM_UNTIL(&sim, sim.tx.data.frame_index % 100U == 5U, 120);
+		sim_run(&sim, 30U); /* 180 ms silent: acquisition SYNC period is only 100 ms. */
+		const uint32_t syncs = sim.tx.data.stats.tx_syncs;
+
+		memset(chunk, (int)(0x60U + i), sizeof(chunk));
+		CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
+		sim_run(&sim, 10U);
+		CHECK(sim.tx.data.stats.tx_syncs == syncs);
+		CHECK(sim.rx.stream_len == (i + 1U) * sizeof(chunk));
+		CHECK(memcmp(sim.rx.stream + i * sizeof(chunk), chunk, sizeof(chunk)) == 0);
+		CHECK(sim.tx.data.sess_nonce_t == nonce);
+	}
+	/* Replays and invalid tags must not refresh the trusted hop epoch. */
+	zlrs_link_t *link = &sim.rx.data;
+	uint8_t frame[ZLRS_FRAME_MAX_LEN];
+	const uint16_t len = build_data_frame(frame, ZLRS_PKT_DATA_UP, link->last_rx_seq, 0U, chunk,
+					      sizeof(chunk), sim.tx.data.session_key_out);
+	const uint32_t received_frame = link->last_rx_frame;
+
+	link->frame_index++;
+	sim_inject(&sim, link, frame, len);
+	CHECK(link->last_rx_frame == received_frame);
+	frame[len - 1U] ^= 1U;
+	sim_inject(&sim, link, frame, len);
+	CHECK(link->last_rx_frame == received_frame);
+
+	/* Two missing SYNC periods still trigger reacquisition, including counter wrap. */
+	const zlrs_fhss_domain_t *domain = &zlrs_fhss_domains[link->cfg.domain];
+	const uint32_t sync_hz = domain->start_hz + (domain->channel_count / 2U) * domain->step_hz;
+
+	link->frame_index = UINT32_MAX - 7U;
+	link->last_rx_frame = link->frame_index;
+	link->sess_sync_frame = UINT32_MAX - 200U;
+	for (uint16_t i = 0U; i < 205U; i++) {
+		const zlrs_radio_req_t *req = zlrs_link_slot(link, ZLRS_SLOT_DATA_A, sim.now_ms);
+		const uint32_t expected = i >= 200U || link->frame_index % 100U == 0U
+						  ? sync_hz
+						  : zlrs_fhss_current_hz(&link->fhss);
+
+		CHECK(req != NULL && req->freq_hz == expected);
+		zlrs_link_complete(link, ZLRS_RADIO_OK, 0U, 0, 0, sim.now_ms);
+	}
+}
+
 /* Cadence thinning at a high control rate: telemetry every 4 frames, data every 5, still in step */
 static void test_cadence(void)
 {
@@ -3191,6 +3251,7 @@ void test_link(void)
 	test_rate_adapt();
 	test_failsafe_push();
 	test_data_idle();
+	test_data_idle_hopping();
 	test_cadence();
 	test_isolation_no_tag();
 	test_isolation_fixed_channel();
