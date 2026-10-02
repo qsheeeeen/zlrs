@@ -4,11 +4,18 @@
 #pragma once
 
 #include <stdint.h>
+#include <stdbool.h>
 
 struct zlrs_slot_timer_stats {
 	uint32_t boundaries;
 	uint32_t irq_late_us_max;
 	uint32_t missed_boundaries;
+};
+
+struct zlrs_slot_timer_wait {
+	uint32_t irq_us;
+	uint32_t wake_us;
+	bool armed;
 };
 
 int zlrs_slot_timer_init(void);
@@ -19,5 +26,5 @@ void zlrs_slot_timer_shift(int32_t shift_us);
 void zlrs_slot_timer_deadline(uint32_t deadline_us);
 void zlrs_slot_timer_wait_frame(uint32_t *start_us, uint32_t *frame);
 uint32_t zlrs_slot_timer_next_frame_us(void);
-void zlrs_slot_timer_wait_until(uint32_t deadline_us);
+void zlrs_slot_timer_wait_until(uint32_t deadline_us, struct zlrs_slot_timer_wait *timing);
 void zlrs_slot_timer_stats(struct zlrs_slot_timer_stats *out);

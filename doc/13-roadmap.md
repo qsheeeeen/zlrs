@@ -86,6 +86,15 @@ design documents.
   from 15/15 to 0/0; trigger delays remain 51/31. This accepts the backend, not higher maximum
   throughput. A one-sided update against the preceding PSA image timed out with session/phase
   recovery trouble; the second update restored delivery. Single-reboot recovery needs diagnosis.
+- **Split timer diagnostics (implemented; LF 3 ms experiment 2026-10-02)**: alarm entry and
+  thread resumption are measured separately for preparation and launch; the last rejected
+  preparation records entry delay, build time and SPI time. With hardware crypto, five 3 ms
+  64 KiB duplex rounds pass in 7.825, 6.066, 6.016, 6.018 and 5.767 s, slower than 5 ms.
+  Three additional diagnostic rounds pass in 6.163, 6.213 and 5.963 s. Typical last rejected
+  preparations entered 1506/1738 us late, built in 380/382 us and used 1529/1364 us in SPI.
+  Launch alarm-entry maxima are 61/114 us, versus 123/209 us from alarm entry to thread
+  resumption. Accounting now runs after the launch command to reduce measurement overhead.
+  The default stays 5 ms; preparation scheduling, launch notification and SPI remain open.
 
 ## To-do
 

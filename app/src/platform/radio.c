@@ -414,9 +414,29 @@ static void launch_thread(void *p1, void *p2, void *p3)
 	ARG_UNUSED(p3);
 
 	for (;;) {
+		struct zlrs_slot_timer_wait timing;
+
 		(void)k_sem_take(&launch_request_sem, K_FOREVER);
-		zlrs_slot_timer_wait_until(launch_target_us);
+		zlrs_slot_timer_wait_until(launch_target_us, &timing);
+		const uint32_t late_before = diag.trigger_late_starts;
+
+		/* Keep diagnostic accounting after the time-critical command. */
 		launch_result = zlrs_radio_launch();
+		if (timing.armed) {
+			diag.launch_irq_late_us_last = timing.irq_us - launch_target_us;
+			diag.launch_irq_late_us_max =
+				MAX(diag.launch_irq_late_us_max, diag.launch_irq_late_us_last);
+			diag.launch_wake_us_last = timing.wake_us - timing.irq_us;
+			diag.launch_wake_us_max =
+				MAX(diag.launch_wake_us_max, diag.launch_wake_us_last);
+		}
+		if (diag.trigger_late_starts != late_before) {
+			if (timing.armed && diag.launch_irq_late_us_last > 100U) {
+				diag.late_trigger_irq++;
+			} else {
+				diag.late_trigger_wake++;
+			}
+		}
 		k_sem_give(&launch_result_sem);
 	}
 }

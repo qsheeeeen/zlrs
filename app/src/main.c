@@ -653,6 +653,13 @@ static uint32_t skipped_frames;
 static uint32_t missed_slots;
 static uint32_t packet_build_us_last;
 static uint32_t packet_build_us_max;
+static uint32_t prepare_wait_skipped;
+static uint32_t prepare_wait_late_us_max;
+static uint32_t prepare_irq_late_us_max;
+static uint32_t prepare_wake_us_max;
+static uint32_t late_prepare_entry_us;
+static uint32_t late_prepare_build_us;
+static uint32_t late_prepare_spi_us;
 static uint32_t slot_off_us[4]; /* where the slot's transaction really started in our frame */
 static int32_t phase_adj_us;
 static bool phase_adj_set;    /* one correction per frame: several receptions would fight */
@@ -689,7 +696,17 @@ static void run_slot(uint8_t slot)
 {
 	/* An idle or early-completed predecessor must not open RX in an earlier slot.
 	 * Both packet preparation and RX entry start at this slot's reserved window. */
-	zlrs_slot_timer_wait_until(slot_nominal_us - slot_prepare_us);
+	struct zlrs_slot_timer_wait timing;
+	const uint32_t prepare_at_us = slot_nominal_us - slot_prepare_us;
+
+	zlrs_slot_timer_wait_until(prepare_at_us, &timing);
+	if (timing.armed) {
+		prepare_irq_late_us_max = MAX(prepare_irq_late_us_max, timing.irq_us - prepare_at_us);
+		prepare_wake_us_max = MAX(prepare_wake_us_max, timing.wake_us - timing.irq_us);
+	} else {
+		prepare_wait_skipped++;
+		prepare_wait_late_us_max = MAX(prepare_wait_late_us_max, timing.wake_us - prepare_at_us);
+	}
 
 	const bool data_slot =
 		ZLRS_DATA24 || (slot == ZLRS_SLOT_DATA_A || slot == ZLRS_SLOT_DATA_B);
@@ -748,7 +765,14 @@ static void run_slot(uint8_t slot)
 		return;
 	}
 
+	const uint32_t prepare_started_us = now_us();
+
 	if (zlrs_radio_prepare(link, req) != 0) {
+		if (req->is_tx) {
+			late_prepare_entry_us = slot_start_us - prepare_at_us;
+			late_prepare_build_us = prepare_started_us - slot_start_us;
+			late_prepare_spi_us = now_us() - prepare_started_us;
+		}
 		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, k_uptime_get_32());
 		return;
 	}
@@ -1945,6 +1969,15 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 		    diag.launch_late_us_max);
 	shell_print(sh, "late launch prepare=%u trigger=%u", diag.prepare_late_starts,
 		    diag.trigger_late_starts);
+	shell_print(sh, "launch wait IRQ last/max=%u/%u us wake=%u/%u us late IRQ=%u wake=%u",
+		    diag.launch_irq_late_us_last, diag.launch_irq_late_us_max,
+		    diag.launch_wake_us_last, diag.launch_wake_us_max,
+		    diag.late_trigger_irq, diag.late_trigger_wake);
+	shell_print(sh, "prepare wait skipped=%u late max=%u us IRQ max=%u us wake max=%u us",
+		    prepare_wait_skipped, prepare_wait_late_us_max, prepare_irq_late_us_max,
+		    prepare_wake_us_max);
+	shell_print(sh, "late prepare entry=%u us build=%u us SPI=%u us", late_prepare_entry_us,
+		    late_prepare_build_us, late_prepare_spi_us);
 	shell_print(sh, "launch command last/max=%u/%u us FIFO ready lead=%u us prepare=%u us",
 		    diag.launch_cmd_us_last, diag.launch_cmd_us_max, diag.preload_lead_us_last,
 		    slot_prepare_us);

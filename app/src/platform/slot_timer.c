@@ -27,6 +27,7 @@ static bool running;
 static uint32_t prepare_lead_us;
 static void (*wake_thread)(void);
 static struct zlrs_slot_timer_stats stats;
+static volatile uint32_t delay_irq_us;
 
 uint32_t zlrs_slot_timer_now_us(void)
 {
@@ -70,6 +71,7 @@ static void slot_timer_isr(const void *arg)
 static void delay_isr(const void *arg)
 {
 	ARG_UNUSED(arg);
+	delay_irq_us = zlrs_slot_timer_now_us();
 	timer->intr = 2U;
 	timer->intf &= ~2U;
 	k_sem_give(&delay_sem);
@@ -194,11 +196,15 @@ uint32_t zlrs_slot_timer_next_frame_us(void)
 	return origin;
 }
 
-void zlrs_slot_timer_wait_until(uint32_t deadline_us)
+void zlrs_slot_timer_wait_until(uint32_t deadline_us, struct zlrs_slot_timer_wait *timing)
 {
 	const unsigned int key = irq_lock();
+	const uint32_t now = zlrs_slot_timer_now_us();
 
-	if ((int32_t)(deadline_us - zlrs_slot_timer_now_us()) <= 0) {
+	if ((int32_t)(deadline_us - now) <= 0) {
+		if (timing != NULL) {
+			*timing = (struct zlrs_slot_timer_wait){.wake_us = now};
+		}
 		irq_unlock(key);
 		return;
 	}
@@ -212,8 +218,15 @@ void zlrs_slot_timer_wait_until(uint32_t deadline_us)
 		timer->intf |= 2U;
 	}
 	irq_unlock(key);
-	while ((int32_t)(deadline_us - zlrs_slot_timer_now_us()) > 0) {
+	do {
 		(void)k_sem_take(&delay_sem, K_FOREVER);
+	} while ((int32_t)(deadline_us - zlrs_slot_timer_now_us()) > 0);
+	if (timing != NULL) {
+		*timing = (struct zlrs_slot_timer_wait){
+			.irq_us = delay_irq_us,
+			.wake_us = zlrs_slot_timer_now_us(),
+			.armed = true,
+		};
 	}
 }
 
