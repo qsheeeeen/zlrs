@@ -18,14 +18,9 @@ void zlrs_radio_slot(uint32_t tx_us, uint32_t end_us);
 int zlrs_radio_prepare(zlrs_link_t *link, const zlrs_radio_req_t *req);
 int zlrs_radio_launch(void);
 int zlrs_radio_launch_at(uint32_t target_us);
-/* Budget for SET_TX, synthesizer and PA startup before the first air bit. */
-#if defined(CONFIG_SPI_PL022_DMA)
-#define ZLRS_RADIO_STARTUP_US       800U
-#define ZLRS_RADIO_PHASE_STARTUP_US 250U
-#else
+/* SET_TX is polled even when FIFO transfers use DMA. */
 #define ZLRS_RADIO_STARTUP_US       500U
 #define ZLRS_RADIO_PHASE_STARTUP_US 250U
-#endif
 
 uint32_t zlrs_radio_airtime_us(const zlrs_mod_cfg_t *mod, uint16_t len);
 bool zlrs_radio_rx_timing(uint32_t *done_us, uint32_t *airtime_us);
@@ -40,6 +35,7 @@ struct zlrs_radio_diag {
 	uint32_t tx_us_last;
 	uint32_t submit_us_last;
 	uint32_t submit_us_max;
+	uint32_t tx_prepare_us_last[4]; /* standby/IRQ, modem, FIFO, FS/BUSY */
 	uint32_t launch_cmd_us_last;
 	uint32_t launch_cmd_us_max;
 	uint32_t tx_launch_cmd_us_last;

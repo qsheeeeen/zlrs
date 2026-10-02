@@ -219,13 +219,21 @@ USP initialization of RAC, task submission and runtime backend switching are abs
 share cached modem parameters and stay in standby/FS between transactions. Every TX clears its
 FIFO before writing: an aborted packet must not contaminate the next packet.
 
+The RP2350 build relocates the RF application's main, radio I/O, hardware crypto and portable
+link/frame/fragment/hopping text to SRAM through Zephyr's code-relocation API. Core sources
+remain platform independent; MCUboot still installs the signed Flash image, and startup copies
+the selected text to SRAM. FIFO DMA uses two channels allocated through the public controller
+API and a single RX-completion semaphore.
+
 Slot execution has two stages. Before the nominal boundary, the link thread constructs and
 authenticates the packet, configures the modem and frequency, loads the TX FIFO and enters FS.
 It then waits for the hardware launch alarm. Only `SET_TX` runs at the configured offset;
 receivers start listening as soon as their preparation finishes. The previous RX window ends
 before this preparation reservation, so early FIFO loading never overlaps an active reception.
 The frame alarm publishes the next frame early; protocol decisions still use the planned slot
-time and phase correction is included when calculating the final slot deadline.
+time and phase correction is included when calculating the final slot deadline. In connected
+data24, a TX can build and preload immediately after the preceding reception completes; RX
+entry still waits for its own preparation boundary. Searching and pairing keep that boundary.
 
 The final prepared TX command runs in the RAM-resident alarm 3 ISR. It uses only TIMER1,
 GPIO and PL022 registers plus its SRAM mailbox, with a 50 us bounded polling transfer. It

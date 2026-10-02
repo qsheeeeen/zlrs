@@ -653,6 +653,8 @@ static uint32_t skipped_frames;
 static uint32_t missed_slots;
 static uint32_t packet_build_us_last;
 static uint32_t packet_build_us_max;
+static uint32_t serial_pump_us_last;
+static uint32_t protocol_build_us_last;
 static uint32_t prepare_wait_skipped;
 static uint32_t prepare_wait_late_us_max;
 static uint32_t prepare_irq_late_us_max;
@@ -699,13 +701,26 @@ static void run_slot(uint8_t slot)
 	struct zlrs_slot_timer_wait timing;
 	const uint32_t prepare_at_us = slot_nominal_us - slot_prepare_us;
 
-	zlrs_slot_timer_wait_until(prepare_at_us, &timing);
+	/* A completed RX leaves a safe opportunity to build our next TX immediately.
+	 * RX entry still waits for its own window; searching/pairing retain that rule. */
+	const bool early_tx = ZLRS_DATA24 && link_data.state == ZLRS_STATE_CONNECTED &&
+			      (role_tx == ((slot & 1U) == 0U));
+
+	if (early_tx) {
+		timing = (struct zlrs_slot_timer_wait){.wake_us = now_us()};
+	} else {
+		zlrs_slot_timer_wait_until(prepare_at_us, &timing);
+	}
 	if (timing.armed) {
-		prepare_irq_late_us_max = MAX(prepare_irq_late_us_max, timing.irq_us - prepare_at_us);
+		prepare_irq_late_us_max =
+			MAX(prepare_irq_late_us_max, timing.irq_us - prepare_at_us);
 		prepare_wake_us_max = MAX(prepare_wake_us_max, timing.wake_us - timing.irq_us);
 	} else {
 		prepare_wait_skipped++;
-		prepare_wait_late_us_max = MAX(prepare_wait_late_us_max, timing.wake_us - prepare_at_us);
+		if ((int32_t)(timing.wake_us - prepare_at_us) > 0) {
+			prepare_wait_late_us_max =
+				MAX(prepare_wait_late_us_max, timing.wake_us - prepare_at_us);
+		}
 	}
 
 	const bool data_slot =
@@ -734,9 +749,13 @@ static void run_slot(uint8_t slot)
 		zlrs_link_skip_slot(link, link_slot);
 		return;
 	}
+	const uint32_t pump_at_us = now_us();
+
 	if (data_slot) {
 		pump_serial();
 	}
+	const uint32_t protocol_at_us = now_us();
+
 	req = zlrs_link_slot(link, link_slot, now_ms);
 
 	if (req == NULL) {
@@ -752,6 +771,8 @@ static void run_slot(uint8_t slot)
 	zlrs_radio_slot(slot_nominal_us + CONFIG_ZLRS_APP_TX_GUARD_US, slot_deadline_us);
 
 	if (req->is_tx) {
+		serial_pump_us_last = protocol_at_us - pump_at_us;
+		protocol_build_us_last = now_us() - protocol_at_us;
 		packet_build_us_last = now_us() - slot_start_us;
 		packet_build_us_max = MAX(packet_build_us_max, packet_build_us_last);
 	}
@@ -1990,6 +2011,11 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 		    diag.launch_jitter_us_last, diag.launch_jitter_us_max, diag.tx_startup_us_last);
 	shell_print(sh, "TX command last/max=%u/%u us", diag.tx_launch_cmd_us_last,
 		    diag.tx_launch_cmd_us_max);
+	shell_print(sh, "TX setup standby/IRQ=%u modem=%u FIFO=%u FS/BUSY=%u us",
+		    diag.tx_prepare_us_last[0], diag.tx_prepare_us_last[1],
+		    diag.tx_prepare_us_last[2], diag.tx_prepare_us_last[3]);
+	shell_print(sh, "TX build serial=%u protocol=%u us", serial_pump_us_last,
+		    protocol_build_us_last);
 	shell_print(sh, "RX errors header=%u crc=%u length=%u payload=%u expired=%u incomplete=%u",
 		    diag.rx_header_errors, diag.rx_crc_errors, diag.rx_length_errors,
 		    diag.rx_payload_errors, diag.rx_expired, diag.rx_incomplete);

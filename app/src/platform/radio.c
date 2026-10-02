@@ -20,6 +20,7 @@
 #include "lr20xx_system.h"
 #include "lr20xx_radio_fifo.h"
 #include "lr20xx_radio_common.h"
+#include "lr20xx_hal.h"
 
 LOG_MODULE_REGISTER(zlrs_radio, CONFIG_APP_LOG_LEVEL);
 
@@ -282,6 +283,7 @@ static int setup_lora(const zlrs_radio_req_t *req)
 static int prepare_request(zlrs_link_t *link, const zlrs_radio_req_t *req)
 {
 	const uint32_t start = zlrs_slot_timer_now_us();
+	uint32_t stages[5] = {start};
 	ral_irq_t stale = 0;
 	int rc;
 
@@ -305,26 +307,31 @@ static int prepare_request(zlrs_link_t *link, const zlrs_radio_req_t *req)
 		diag.stale_irq++;
 		diag.stale_irq_bits = stale;
 	}
+	stages[1] = zlrs_slot_timer_now_us();
 	rc = req->mod.modulation == ZLRS_MOD_FLRC ? setup_flrc(req) : setup_lora(req);
 	if (rc != 0) {
 		return rc;
 	}
-	if (ral_set_dio_irq_params(&radio.ral, RAL_IRQ_TX_DONE | RAL_IRQ_RX_DONE |
-						       RAL_IRQ_RX_TIMEOUT | RAL_IRQ_RX_HDR_ERROR |
-						       RAL_IRQ_RX_CRC_ERROR) != RAL_STATUS_OK) {
-		return -EIO;
-	}
+	/* The IRQ mask is constant and configured once by radio_init(). */
+	stages[2] = zlrs_slot_timer_now_us();
 	/* Aborted TX leaves bytes in the FIFO. Each request starts with its own packet. */
 	if (req->is_tx && (lr20xx_radio_fifo_clear_tx(radio.ral.context) != LR20XX_STATUS_OK ||
 			   ral_set_pkt_payload(&radio.ral, req->buf, req->size) != RAL_STATUS_OK)) {
 		return -EIO;
 	}
-	/* Finish synthesizer startup here. The following read waits for BUSY before launch. */
+	stages[3] = zlrs_slot_timer_now_us();
+	/* Finish synthesizer startup before arming launch. No status read is needed. */
 	if (ral_set_fs(&radio.ral) != RAL_STATUS_OK ||
-	    ral_get_and_clear_irq_status(&radio.ral, &stale) != RAL_STATUS_OK) {
+	    lr20xx_hal_wakeup(radio.ral.context) != LR20XX_HAL_STATUS_OK) {
 		return -EIO;
 	}
-	diag.submit_us_last = zlrs_slot_timer_now_us() - start;
+	stages[4] = zlrs_slot_timer_now_us();
+	if (req->is_tx) {
+		for (size_t i = 0U; i < ARRAY_SIZE(diag.tx_prepare_us_last); i++) {
+			diag.tx_prepare_us_last[i] = stages[i + 1U] - stages[i];
+		}
+	}
+	diag.submit_us_last = stages[4] - start;
 	diag.submit_us_max = MAX(diag.submit_us_max, diag.submit_us_last);
 	if (timed_slot) {
 		if (req->is_tx) {
@@ -644,7 +651,7 @@ bool zlrs_radio_drain(void)
 		diag.rx_us_last = event_us - begin_us;
 		diag.rx_windows++;
 	}
-	(void)ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC);
+	/* The configured hardware fallback already returns a completed packet to FS. */
 	pending = false;
 	const uint32_t protocol_start_us = zlrs_slot_timer_now_us();
 	const bool received = !request->is_tx && status == ZLRS_RADIO_OK && len > 0U;

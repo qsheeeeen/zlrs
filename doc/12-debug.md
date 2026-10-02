@@ -292,7 +292,7 @@ console and flash. This keeps flash erase/program operations from masking timer 
 normal traffic. Startup, explicit configuration persistence and panic handling can still delay IRQs.
 
 The slot budget uses the native FLRC airtime calculation (variable header, CRC and coding),
-plus `ZLRS_APP_PREPARE_US`, the configured TX guard, an 800 us RF startup allowance with SPI DMA (500 us with polling) and a
+plus `ZLRS_APP_PREPARE_US`, the configured TX guard, a 500 us RF startup allowance and a
 100 us end margin. Packet construction, authentication and FIFO writes belong to the preparation
 window; the guard only places the final launch command relative to the RF slot boundary. LF CN433/CN470
 clamps control PHY to 325 kbps; its control packets cannot fit four equal slots at the requested
@@ -310,9 +310,9 @@ workqueue. No vendor source or scheduling changes are needed.
 Keeping the USB core above CDC work also preserves the upstream completion ordering for ZLPs.
 
 Exclusive data24 uses a separate maximum-frame budget and
-`ZLRS_APP_DATA24_PREPARE_US` (default 3000 us). At 2.6 Mbps, a 255-byte frame needs
-1090 us on air; adding preparation, the 200 us launch offset, 800 us startup allowance and
-200 us of margins gives a 5290 us slot and 10580 us alternating TX/RX pair. The margins cover
+`ZLRS_APP_DATA24_PREPARE_US` (default 1500 us). At 2.6 Mbps, a 255-byte frame needs
+1090 us on air; adding preparation, the 200 us launch offset, 500 us startup allowance and
+200 us of margins gives a 3490 us slot and 6980 us alternating TX/RX pair. The margins cover
 the deadline 100 us before preparation and another 100 us for completion; an exactly full
 deadline is rejected by the radio size check. Control cadence and regional limits do not size
 data24 slots.
@@ -323,5 +323,10 @@ processing, including SPI, authentication and serial output callbacks; `protocol
 the link-completion call. `IRQ service` includes reading and clearing IRQ status over SPI.
 Compare counter deltas during a transfer; boot, management and configuration work can affect
 the lifetime maxima.
+
+`TX setup` splits standby/IRQ handling, modem configuration, FIFO loading and FS/BUSY waiting.
+`TX build` separates serial pumping from protocol construction. The RP2350 build places the
+RF application and protocol hot path in SRAM; compare the same schedule when evaluating the
+effect of Flash instruction fetches. Relocation does not alter the installation/update path.
 
 Previous RAC cost measurements in section 5 are historical measurements of the former backend.

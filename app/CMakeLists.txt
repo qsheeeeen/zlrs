@@ -28,6 +28,25 @@ target_sources(app PRIVATE
 # "link/data.h", "platform/caps.h", ... (the layers are described in doc/07-architecture.md 5).
 target_include_directories(app PRIVATE src)
 
+if(CONFIG_ZLRS_APP_RAM_RADIO)
+  set(zlrs_ram_sources
+    src/main.c
+    src/platform/radio.c
+    src/link/data.c
+    ../core/link/link.c
+    ../core/proto/frame.c
+    ../core/proto/frag.c
+    ../core/proto/fhss.c
+  )
+  if(CONFIG_ZLRS_APP_RP2350_RADIO_IO)
+    list(APPEND zlrs_ram_sources src/platform/radio_io.c)
+  endif()
+  if(CONFIG_ZLRS_APP_RP2350_CRYPTO)
+    list(APPEND zlrs_ram_sources src/platform/crypto_rp2350.c)
+  endif()
+  zephyr_code_relocate(FILES ${zlrs_ram_sources} LOCATION RAM_TEXT)
+endif()
+
 target_sources_ifdef(CONFIG_ZLRS_APP_RP2350_CRYPTO app PRIVATE src/platform/crypto_rp2350.c)
 
 if(CONFIG_ZLRS_APP_RP2350_RADIO_IO)

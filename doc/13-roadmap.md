@@ -140,6 +140,19 @@ design documents.
   five 64 KiB duplex rounds remain byte-exact but take 11.2-13.8 s with frequent late attempts;
   that reservation is not accepted. The combined SRAM validation below has no late attempts.
 
+- **SRAM RF hot path and early preparation (implemented; both LF boards checked 2026-10-02)**:
+  Zephyr relocates the RF application and portable protocol text to SRAM without changing core
+  sources or the MCUboot update path. Connected data24 builds its next TX immediately after
+  RX completion; RX entry and acquisition retain their boundaries. The constant IRQ mask is
+  configured once, completed packets use hardware FS fallback, and BUSY is checked without a
+  redundant status read. At 1.5 ms preparation and 500 us startup budget, five unpaced 64 KiB
+  duplex rounds pass byte-exact in 2.061, 2.053, 2.057, 2.004 and 2.058 s (31.8-33.5 kB/s per
+  direction). The same 1.5 ms schedule without SRAM took 3.062-3.265 s and added late attempts.
+  With SRAM, neither board adds preparation/trigger delays, missed boundaries, recovery probes
+  or serial drops; trigger jitter is at most 3/2 us. Debug text relocation adds about 27 KiB
+  of SRAM. The default becomes 1500 us, giving 3490 us slots and 6980 us pairs. LF/HF production
+  builds pass. Tighter slots and larger FLRC packets still need hardware acceptance.
+
 ## To-do
 
 ### Radio and protocol
