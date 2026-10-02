@@ -2048,6 +2048,7 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "TX setup standby/IRQ=%u modem=%u FIFO=%u FS/BUSY=%u us",
 		    diag.tx_prepare_us_last[0], diag.tx_prepare_us_last[1],
 		    diag.tx_prepare_us_last[2], diag.tx_prepare_us_last[3]);
+	shell_print(sh, "FS reuse=%u", diag.fs_reused);
 	shell_print(sh, "TX build serial=%u protocol=%u us", serial_pump_us_last,
 		    protocol_build_us_last);
 	shell_print(sh, "TX preload packets=%u used=%u last/max=%u/%u us", diag.tx_preloaded,

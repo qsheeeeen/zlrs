@@ -32,6 +32,7 @@ static zlrs_link_t *owner;
 static const zlrs_radio_req_t *request;
 static volatile bool pending;
 static bool prepared;
+static bool idle_in_fs;
 static const uint8_t *preloaded_buf;
 static uint16_t preloaded_size;
 static volatile bool irq_pending;
@@ -282,6 +283,25 @@ static int setup_lora(const zlrs_radio_req_t *req)
 	return ralf_setup_lora(&radio, &cfg) == RAL_STATUS_OK ? 0 : -EIO;
 }
 
+static bool flrc_unchanged(const zlrs_radio_req_t *req)
+{
+	ralf_params_flrc_t cfg;
+	const uint8_t id = (uint8_t)req->sync_slot - 1U;
+
+	if (req->mod.modulation != ZLRS_MOD_FLRC || !cfg_valid ||
+	    configured_type != RAL_PKT_TYPE_FLRC || !tx_cfg_valid ||
+	    tx_cfg_power != req->tx_power_dbm || id >= ARRAY_SIZE(sync_valid) || !sync_valid[id] ||
+	    req->freq_hz != flrc_cfg.rf_freq_in_hz ||
+	    memcmp(sync_words[id], req->sync_word, ZLRS_SYNC_WORD_LEN) != 0) {
+		return false;
+	}
+	make_flrc(&req->mod, req->is_tx ? req->size : req->max_rx_size, &cfg);
+	cfg.pkt_params.tx_syncword = tx_syncword(req->sync_slot);
+	cfg.pkt_params.match_sync_word = rx_match_syncword(req->sync_slot);
+	return memcmp(&cfg.mod_params, &flrc_cfg.mod_params, sizeof(cfg.mod_params)) == 0 &&
+	       memcmp(&cfg.pkt_params, &flrc_cfg.pkt_params, sizeof(cfg.pkt_params)) == 0;
+}
+
 static int prepare_request(zlrs_link_t *link, const zlrs_radio_req_t *req)
 {
 	const uint32_t start = zlrs_slot_timer_now_us();
@@ -292,11 +312,14 @@ static int prepare_request(zlrs_link_t *link, const zlrs_radio_req_t *req)
 	if (pending || prepared || req == NULL || link == NULL) {
 		return -EBUSY;
 	}
+	bool reuse_fs = idle_in_fs && flrc_unchanged(req);
+
+	idle_in_fs = false;
 	rx_timing_valid = false;
 	owner = link;
 	request = req;
 	k_sem_reset(&done_sem);
-	if (ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC) != RAL_STATUS_OK ||
+	if ((!reuse_fs && ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC) != RAL_STATUS_OK) ||
 	    ral_get_and_clear_irq_status(&radio.ral, &stale) != RAL_STATUS_OK) {
 		return -EIO;
 	}
@@ -304,6 +327,11 @@ static int prepare_request(zlrs_link_t *link, const zlrs_radio_req_t *req)
 		(void)lr20xx_system_get_errors(radio.ral.context, &diag.chip_errors);
 		diag.chip_error_freq_hz = flrc_cfg.rf_freq_in_hz;
 		(void)lr20xx_system_clear_errors(radio.ral.context);
+		if (reuse_fs &&
+		    ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC) != RAL_STATUS_OK) {
+			return -EIO;
+		}
+		reuse_fs = false;
 	}
 	if (stale != 0U) {
 		diag.stale_irq++;
@@ -330,8 +358,9 @@ static int prepare_request(zlrs_link_t *link, const zlrs_radio_req_t *req)
 		}
 	}
 	stages[3] = zlrs_slot_timer_now_us();
-	/* Finish synthesizer startup before arming launch. No status read is needed. */
-	if (ral_set_fs(&radio.ral) != RAL_STATUS_OK ||
+	/* A completed single RX/TX returns to FS. When all settings match, FIFO access
+	 * can keep that locked synthesizer; configuration changes still use standby. */
+	if ((!reuse_fs && ral_set_fs(&radio.ral) != RAL_STATUS_OK) ||
 	    lr20xx_hal_wakeup(radio.ral.context) != LR20XX_HAL_STATUS_OK) {
 		return -EIO;
 	}
@@ -365,6 +394,8 @@ static int prepare_request(zlrs_link_t *link, const zlrs_radio_req_t *req)
 		}
 	}
 	prepared = true;
+	idle_in_fs = true;
+	diag.fs_reused += reuse_fs;
 	if (req->is_tx) {
 		const uint32_t ready_us = zlrs_slot_timer_now_us();
 
@@ -433,6 +464,7 @@ int zlrs_radio_launch(void)
 			MAX(diag.launch_jitter_us_max, diag.launch_jitter_us_last);
 	}
 	irq_pending = false;
+	idle_in_fs = false;
 	pending = true;
 	diag.transactions++;
 	rc = request->is_tx ? ral_set_tx(&radio.ral) : ral_set_rx(&radio.ral, 0U);
@@ -528,6 +560,7 @@ int zlrs_radio_launch_at(uint32_t target_us)
 	launch_mailbox.target_us = target_us;
 	launch_mailbox.fired = false;
 	irq_pending = false;
+	idle_in_fs = false;
 	pending = true;
 	diag.transactions++;
 	zlrs_slot_timer_launch_at(target_us, launch_command_isr);
@@ -566,6 +599,7 @@ int zlrs_radio_launch_at(uint32_t target_us)
 
 int zlrs_radio_init(void)
 {
+	idle_in_fs = false;
 	if (!device_is_ready(transceiver)) {
 		return -ENODEV;
 	}
@@ -686,6 +720,7 @@ bool zlrs_radio_drain(void)
 	}
 	/* The configured hardware fallback already returns a completed packet to FS. */
 	pending = false;
+	idle_in_fs = status == ZLRS_RADIO_OK && (irq & chip_errors) == 0U;
 	const uint32_t protocol_start_us = zlrs_slot_timer_now_us();
 	const bool received = !request->is_tx && status == ZLRS_RADIO_OK && len > 0U;
 
@@ -703,6 +738,7 @@ bool zlrs_radio_drain(void)
 
 void zlrs_radio_abort(void)
 {
+	idle_in_fs = false;
 	preloaded_buf = NULL;
 	const bool active = pending && request != NULL;
 	const bool tx = active && request->is_tx;

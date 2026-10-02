@@ -38,6 +38,7 @@ struct zlrs_radio_diag {
 	uint32_t submit_us_last;
 	uint32_t submit_us_max;
 	uint32_t tx_prepare_us_last[4]; /* standby/IRQ, modem, FIFO, FS/BUSY */
+	uint32_t fs_reused;
 	uint32_t tx_preloaded;
 	uint32_t tx_preload_used;
 	uint32_t tx_preload_us_last;

@@ -274,6 +274,19 @@ design documents.
 
 ### Radio and protocol
 
+- **Reuse the FLRC synthesizer (LF checked 2026-10-03)**: after a successful single RX/TX,
+  the configured hardware fallback leaves the radio in FS. An identical FLRC request keeps
+  that synthesizer locked while clearing IRQs and accessing the FIFO. Frequency, modem, packet
+  length/format, sync word or power changes, chip errors and aborts use the standby setup path.
+  Five 64 KiB board-source/sink duplex rounds and one 256 KiB round pass with every pattern byte
+  checked, P1 and ARQ enabled. Receive goodput remains 44.5-54.7 kB/s per direction at the
+  unchanged 9080 us pair; five 64 KiB USB rounds also pass in 1.958/2.008/1.956/1.958/1.958 s.
+  Full preloaded TX snapshots show preparation stages of about 30/5/0-1/4 us
+  (IRQ/configuration/FIFO/BUSY) and thousands of FS reuses, without new timing failures in these
+  runs. Image `2c36d9b334ee7fb62a40f0d98a7f0a194b4e9c08fe65cb28b6cf9b808e398c33`
+  is confirmed on both LF peers. All 4487 host checks and LF/HF production builds pass.
+  This removes repeated standby/PLL work; tighter-slot and hopping acceptance remain open.
+
 - **Debug console and verified software reboots (LF checked 2026-10-03)**: flash-only logging,
   polling console TX and an 8 KiB CDC FIFO pass twelve open/query/close cycles on each board.
   Image `0be39554be787a725dfc9bd02a5551f823f8b55a355ecd32d197f0e8cf12cb1e` is confirmed
