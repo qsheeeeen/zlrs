@@ -60,4 +60,16 @@ void test_slot_clock(void)
 	CHECK(zlrs_slot_clock_scan_delay_ms(100000U, 0U, true) == 300U);
 	CHECK(zlrs_slot_clock_scan_delay_ms(0U, 255U, true) == 300U);
 	CHECK(zlrs_slot_clock_scan_delay_ms(1000000U, 255U, true) == 511000U);
+	/* A fixed epoch gives one planned millisecond across preparation times. The
+	 * old uptime_ms + remaining_us / 1000 expression differed by 1 ms here. */
+	CHECK(zlrs_slot_clock_timestamp_ms(125400U, 500U, 1999U) == 127U);
+	CHECK(zlrs_slot_clock_timestamp_ms(125400U, 1000U, 1999U) == 127U);
+	CHECK(zlrs_slot_clock_timestamp_ms(125400U, 1999U, 1999U) == 127U);
+	CHECK(zlrs_slot_clock_timestamp_ms(125400U, 2100U, 1999U) == 127U);
+	CHECK(zlrs_slot_clock_timestamp_ms(0U, UINT32_MAX - 15U, 32U) ==
+	      (uint32_t)(((uint64_t)UINT32_MAX + 33U) / 1000U));
+	CHECK(zlrs_slot_clock_timestamp_ms(0U, (uint64_t)UINT32_MAX + 20U, UINT32_MAX - 5U) ==
+	      (UINT32_MAX - 5U) / 1000U);
+	/* Kernel millisecond wrap preserves normal uint32_t uptime arithmetic. */
+	CHECK(zlrs_slot_clock_timestamp_ms((uint64_t)UINT32_MAX * 1000U, 1999U, 1999U) == 0U);
 }

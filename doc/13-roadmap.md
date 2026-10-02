@@ -274,6 +274,17 @@ design documents.
 
 ### Radio and protocol
 
+- **Consistent planned-slot time (implemented; LF checked 2026-10-03)**: TIMER1 deadlines map
+  to protocol milliseconds through one uptime epoch and the timer's full 64-bit counter.
+  Preparation and activation of a slot now use the same millisecond, including timer/kernel
+  wrap. Previously two rounded `uptime_ms + remaining_us / 1000` calculations could differ
+  by 1 ms and change a preloaded retransmit decision. Seven host cases cover this rounding,
+  past deadlines and both wraps; LF/HF builds pass. At experimental 1 ms preparation, five
+  256 KiB board-source/sink rounds and five 64 KiB USB rounds pass every byte. RF goodput is
+  50.0-60.7 kB/s per direction, but the RF run still adds seven late preparations and one
+  late trigger. This fixes the time mapping, not tight-slot acceptance; the shipped default
+  remains 1.5 ms.
+
 - **Reuse the FLRC synthesizer (LF checked 2026-10-03)**: after a successful single RX/TX,
   the configured hardware fallback leaves the radio in FS. An identical FLRC request keeps
   that synthesizer locked while clearing IRQs and accessing the FIFO. Frequency, modem, packet

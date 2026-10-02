@@ -69,3 +69,11 @@ uint32_t zlrs_slot_clock_scan_delay_ms(uint32_t cadence_us, uint8_t sync_every_n
 
 	return gap_ms > minimum_ms ? gap_ms : minimum_ms;
 }
+
+uint32_t zlrs_slot_clock_timestamp_ms(uint64_t uptime_offset_us, uint64_t timer_us,
+				      uint32_t deadline_us)
+{
+	const int32_t delta_us = (int32_t)(deadline_us - (uint32_t)timer_us);
+
+	return (uint32_t)((uptime_offset_us + timer_us + delta_us) / 1000U);
+}

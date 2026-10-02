@@ -739,9 +739,7 @@ static void run_slot(uint8_t slot)
 	zlrs_link_t *link = data_slot ? &link_data : &link_control;
 	const uint32_t slot_start_us = now_us();
 	/* Slot decisions use the planned time even though construction happens before it. */
-	const int32_t until_slot_us = (int32_t)(slot_nominal_us - slot_start_us);
-	const uint32_t now_ms =
-		k_uptime_get_32() + (until_slot_us > 0 ? (uint32_t)until_slot_us / 1000U : 0U);
+	const uint32_t now_ms = zlrs_slot_timer_uptime_ms(slot_nominal_us);
 	const uint32_t hit_before = link->stats.slot_hit[link_slot];
 	const uint32_t good_before = link->stats.rx_frames;
 	/* The duty-cycle gate only applies to whichever link is on sub-G */
@@ -829,9 +827,7 @@ static void run_slot(uint8_t slot)
 	if (ZLRS_DATA24 && !req->is_tx && link->state == ZLRS_STATE_CONNECTED) {
 		uint16_t size;
 		const uint32_t next_us = slot_nominal_us + slot_budget_us;
-		const int32_t until_next_us = (int32_t)(next_us - now_us());
-		const uint32_t next_ms = k_uptime_get_32() +
-					 (until_next_us > 0 ? (uint32_t)until_next_us / 1000U : 0U);
+		const uint32_t next_ms = zlrs_slot_timer_uptime_ms(next_us);
 
 		pump_serial();
 		const uint8_t *buf = zlrs_link_prepare_data(

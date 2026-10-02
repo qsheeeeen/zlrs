@@ -27,10 +27,23 @@ static K_SEM_DEFINE(delay_sem, 0, 1);
 static zlrs_slot_clock_t clock;
 static bool running;
 static uint32_t prepare_lead_us;
+static uint64_t uptime_offset_us;
 static void (*wake_thread)(void);
 static struct zlrs_slot_timer_stats stats;
 static volatile uint32_t delay_irq_us;
 static void (*launch_callback)(uint32_t irq_us);
+
+static uint64_t timer_us_64(void)
+{
+	uint32_t high;
+	uint32_t low;
+
+	do {
+		high = timer->timerawh;
+		low = timer->timerawl;
+	} while (high != timer->timerawh);
+	return ((uint64_t)high << 32) | low;
+}
 
 uint32_t __ramfunc zlrs_slot_timer_now_us(void)
 {
@@ -174,6 +187,9 @@ int zlrs_slot_timer_init(void)
 	tick_start(TICK_TIMER1, rate / 1000000U);
 	timer->source = 0U;
 	timer->pause = 0U;
+	/* Capture once. Repeatedly adding rounded remaining time to k_uptime_get_32()
+	 * can move a planned slot by 1 ms and change an already preloaded ARQ decision. */
+	uptime_offset_us = (uint64_t)k_uptime_get() * 1000U - timer_us_64();
 	IRQ_CONNECT(SLOT_TIMER_IRQ, DT_IRQ_BY_IDX(SLOT_TIMER_NODE, 0, priority), slot_timer_isr,
 		    NULL, 0);
 	IRQ_CONNECT(DT_IRQ_BY_IDX(SLOT_TIMER_NODE, 1, irq),
@@ -200,6 +216,11 @@ void zlrs_slot_timer_stop(void)
 	irq_unlock(key);
 	k_sem_reset(&frame_sem);
 	k_sem_reset(&delay_sem);
+}
+
+uint32_t zlrs_slot_timer_uptime_ms(uint32_t deadline_us)
+{
+	return zlrs_slot_clock_timestamp_ms(uptime_offset_us, timer_us_64(), deadline_us);
 }
 
 void zlrs_slot_timer_start(uint32_t period_us, uint32_t prepare_us, void (*wake)(void))

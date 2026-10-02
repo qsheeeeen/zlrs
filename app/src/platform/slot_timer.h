@@ -20,6 +20,7 @@ struct zlrs_slot_timer_wait {
 
 int zlrs_slot_timer_init(void);
 uint32_t zlrs_slot_timer_now_us(void);
+uint32_t zlrs_slot_timer_uptime_ms(uint32_t deadline_us);
 void zlrs_slot_timer_start(uint32_t period_us, uint32_t prepare_us, void (*wake)(void));
 void zlrs_slot_timer_stop(void);
 void zlrs_slot_timer_shift(int32_t shift_us);
