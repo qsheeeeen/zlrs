@@ -2288,6 +2288,24 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 		link->stats.slot_tx[slot]++;
 		link->stats.tx_frames++;
 		link->stats.tx_bytes = (uint32_t)(link->stats.tx_bytes + link->req.size);
+		zlrs_frame_t frame;
+
+		if (zlrs_frame_decode(&frame, link->req.buf, link->req.size,
+				      zlrs_profile_tag_len(link->cfg.profile)) &&
+		    (frame.type == ZLRS_PKT_DATA_UP || frame.type == ZLRS_PKT_DATA_DOWN)) {
+			if (frame.payload_len == 0U && frame.ack_present) {
+				link->stats.tx_ack_only_frames++;
+			} else if (frame.payload_len > (link->cfg.arq ? 2U : 0U)) {
+				link->stats.tx_data_frames++;
+				link->stats.tx_data_bytes +=
+					frame.payload_len - (link->cfg.arq ? 2U : 0U);
+				const uint16_t cap = link->cfg.mod.modulation == ZLRS_MOD_LORA
+							     ? ZLRS_LORA_FRAME_MAX_LEN
+							     : ZLRS_FRAME_MAX_LEN;
+
+				link->stats.tx_full_data_frames += link->req.size == cap ? 1U : 0U;
+			}
+		}
 		link->queue_head = (uint16_t)((link->queue_head + link->pending_data_len) %
 					      ZLRS_LINK_TX_QUEUE_LEN);
 		link->queue_count = (uint16_t)(link->queue_count - link->pending_data_len);

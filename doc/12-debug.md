@@ -335,4 +335,10 @@ overlaps RX. A changed session, timeout or periodic SYNC may discard a staged pa
 normal path then reloads its own bytes. The current RX IRQ and completion semaphore are kept
 intact throughout staging.
 
+`zlrs link` also reports successful DATA packets, their user bytes (including retransmissions),
+frames at the modem's maximum length, and empty DATA replies carrying only an ACK. Use transfer
+counter deltas: `user / DATA packets` gives the mean application bytes per packet. `full` counts
+511-byte FLRC or 255-byte LoRa frames; a smaller configured MTU or a frame without an ACK extension
+can make that count low even when the application fills its configured packet budget.
+
 Previous RAC cost measurements in section 5 are historical measurements of the former backend.

@@ -206,6 +206,19 @@ design documents.
   add 14/19 and triggers 2/0; the reservation remains unaccepted. No serial drops, recovery
   probes or bad tags occur. Further completion/turnaround work is required.
 
+- **DATA occupancy diagnostics (implemented; both LF boards checked 2026-10-02)**:
+  successful TX completion counts DATA packets, their application bytes including retransmissions,
+  frames at the modem's maximum length, and ACK-only DATA replies. Five 64 KiB duplex rounds at
+  1 ms preparation pass byte-exact in 1.660, 1.553, 1.555, 1.605 and 1.554 s. The two senders
+  carry 363170/330814 user bytes in 914/938 DATA packets: about 397/353 bytes per packet,
+  compared with the 500/502-byte P1 limit. Maximum-length frames account for 266/58 packets;
+  retransmissions add 93/10. This establishes incomplete packet occupancy, but does not isolate
+  its source. Deferring short RX-prefetched packets and early TX until the preparation window
+  does not improve it: five rounds pass in 2.219, 1.707, 1.661, 1.660 and 1.662 s, with mean
+  payloads about 337/308 bytes. That policy is reverted. All 2267 host checks pass with ASan/UBSan;
+  LF/HF production builds pass. USB input availability, queue aggregation and ARQ stalls still
+  need separate measurements before choosing a policy.
+
 ## To-do
 
 ### Radio and protocol

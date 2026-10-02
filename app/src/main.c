@@ -1674,6 +1674,10 @@ static void print_link(const struct shell *sh, const char *name, const zlrs_link
 	shell_print(sh, "        tx=%u rx=%u fail=%u rssi=%d..%d lq=%u%%", link->stats.tx_frames,
 		    link->stats.rx_frames, link->stats.radio_fail, link->stats.rssi_min,
 		    link->stats.rssi_max, link->stats.lq_percent);
+	shell_print(sh, "        bytes tx=%u rx=%u DATA packets=%u user=%u full=%u ACK-only=%u",
+		    link->stats.tx_bytes, link->stats.rx_bytes, link->stats.tx_data_frames,
+		    link->stats.tx_data_bytes, link->stats.tx_full_data_frames,
+		    link->stats.tx_ack_only_frames);
 	shell_print(sh,
 		    "        slot tx %u/%u/%u/%u rx %u/%u/%u/%u got %u/%u/%u/%u fail %u/%u/%u/%u",
 		    link->stats.slot_tx[0], link->stats.slot_tx[1], link->stats.slot_tx[2],

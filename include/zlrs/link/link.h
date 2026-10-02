@@ -142,6 +142,10 @@ typedef struct {
 typedef struct {
 	uint32_t tx_frames;
 	uint32_t tx_bytes;
+	uint32_t tx_data_frames;
+	uint32_t tx_data_bytes; /* User bytes on air, including retransmissions. */
+	uint32_t tx_full_data_frames;
+	uint32_t tx_ack_only_frames;
 	uint32_t rx_frames;
 	uint32_t rx_bytes;
 	/* Transactions per superframe slot (ZLRS_SLOT_*): sent, listened, heard a frame, failed */

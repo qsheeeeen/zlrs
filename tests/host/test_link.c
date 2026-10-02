@@ -1787,6 +1787,8 @@ static void test_flrc_max_frame_duplex(void)
 	CHECK(zlrs_link_write(&sim.rx.data, up, sizeof(up)) == sizeof(up));
 	sim_slot(&sim, ZLRS_SLOT_DATA_A);
 	CHECK(sim.down_len == 511U);
+	CHECK(sim.tx.data.stats.tx_full_data_frames == 1U);
+	CHECK(sim.tx.data.stats.tx_data_frames == 1U && sim.tx.data.stats.tx_data_bytes == 502U);
 	sim_slot(&sim, ZLRS_SLOT_DATA_B);
 	CHECK(sim.up_len == 511U);
 	sim.drop_data_down = 1;
@@ -1797,6 +1799,9 @@ static void test_flrc_max_frame_duplex(void)
 	CHECK(memcmp(sim.tx.stream, up, sizeof(up)) == 0);
 	CHECK(sim.tx.data.stats.tx_retries > 0U);
 	CHECK(sim.rx.data.stats.rx_frag_drop == 0U && sim.tx.data.stats.rx_frag_drop == 0U);
+	CHECK(sim.tx.data.stats.tx_data_bytes >= sizeof(down));
+	sim_run(&sim, 20U);
+	CHECK(sim.tx.data.stats.tx_ack_only_frames > 0U);
 
 	/* A LoRa configuration still respects that modem's 255-byte frame limit. */
 	const zlrs_mod_cfg_t lora = zlrs_mod_lora(7U, 125000U, 1U, 12U);
