@@ -310,9 +310,9 @@ workqueue. No vendor source or scheduling changes are needed.
 Keeping the USB core above CDC work also preserves the upstream completion ordering for ZLPs.
 
 Exclusive data24 uses a separate maximum-frame budget and
-`ZLRS_APP_DATA24_PREPARE_US` (default 5000 us). At 2.6 Mbps with DMA, a 255-byte frame needs
+`ZLRS_APP_DATA24_PREPARE_US` (default 3000 us). At 2.6 Mbps, a 255-byte frame needs
 1090 us on air; adding preparation, the 200 us launch offset, 800 us startup allowance and
-200 us of margins gives a 7290 us slot and 14580 us alternating TX/RX pair. The margins cover
+200 us of margins gives a 5290 us slot and 10580 us alternating TX/RX pair. The margins cover
 the deadline 100 us before preparation and another 100 us for completion; an exactly full
 deadline is rejected by the radio size check. Control cadence and regional limits do not size
 data24 slots.

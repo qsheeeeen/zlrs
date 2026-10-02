@@ -45,7 +45,9 @@ The superframe period follows the slower link: data windows amortise into every 
 ## 3. Time sharing and scheduling
 
 Both links share one radio owner on the link thread. USP supplies RAL, the LR20xx driver and
-Zephyr SPI/GPIO support; RAC and the radio planner are not initialized or run.
+board support; RAC and the radio planner are not initialized or run. ZLRS implements the
+public Semtech HAL on RP2350: short commands use bounded polling, FIFO transfers use one
+contiguous SPI DMA transaction, and read responses send only NOPs on MOSI.
 
 RP2350 TIMER1 runs at 1 MHz. Alarm 0 advances the four absolute slot boundaries and publishes
 the latest frame; alarm 1 wakes the owner for preparation; alarm 2 ends the radio window and
@@ -228,7 +230,7 @@ time and phase correction is included when calculating the final slot deadline.
 The final prepared TX command runs in the RAM-resident alarm 3 ISR. It uses only TIMER1,
 GPIO and PL022 registers plus its SRAM mailbox, with a 50 us bounded polling transfer. It
 calls no kernel, RAL, DMA or logging API and can preempt USB interrupts and kernel IRQ locks.
-SPI DMA still performs configuration, FIFO transfers and status reads. Alarm 3 is armed only
+The HAL uses polling for short configuration/status commands and DMA for FIFO data. Alarm 3 is armed only
 after those transfers finish; the owner performs no SPI access until launch completes. The
 ISR checks BUSY and controller state before asserting CS and rejects a trigger over 100 us
 late. Alarm 2 performs the subsequent kernel notification. Authentication, configuration,

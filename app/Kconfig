@@ -20,6 +20,14 @@ config ZLRS_APP_DEBUG
 
 menu "Hardware and product shape"
 
+config ZLRS_APP_RP2350_RADIO_IO
+	bool "RP2350 LR2021 SPI integration"
+	default y
+	depends on SOC_RP2350A_M33 && SEMTECH_LR20XX
+	help
+	  Implement the public Semtech HAL in ZLRS. Poll short commands; use one
+	  contiguous DMA transfer for FIFO data. Vendor drivers and board code stay intact.
+
 config ZLRS_APP_CORE
 	def_bool y
 	select ZLRS_PROTO
@@ -192,7 +200,7 @@ config ZLRS_APP_PREPARE_US
 
 config ZLRS_APP_DATA24_PREPARE_US
 	int "Preparation time for exclusive 2.4 GHz data slots (us)"
-	default 5000
+	default 3000
 	range 100 10000
 	help
 	  Data24 uses one modem and band. Reserve this time for packet construction,

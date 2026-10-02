@@ -30,6 +30,27 @@ target_include_directories(app PRIVATE src)
 
 target_sources_ifdef(CONFIG_ZLRS_APP_RP2350_CRYPTO app PRIVATE src/platform/crypto_rp2350.c)
 
+if(CONFIG_ZLRS_APP_RP2350_RADIO_IO)
+  # Select our implementation of the public Semtech HAL without editing the module.
+  # Keep its board/BSP and radio driver sources. Fail if the module layout changes.
+  get_property(zlrs_libraries GLOBAL PROPERTY ZEPHYR_LIBS)
+  set(zlrs_hal_replaced FALSE)
+  foreach(zlrs_library IN LISTS zlrs_libraries)
+    get_target_property(zlrs_sources ${zlrs_library} SOURCES)
+    foreach(zlrs_source IN LISTS zlrs_sources)
+      if(zlrs_source MATCHES "(^|/)lr20xx/lr20xx_hal\\.c$")
+        list(REMOVE_ITEM zlrs_sources ${zlrs_source})
+        set_property(TARGET ${zlrs_library} PROPERTY SOURCES "${zlrs_sources}")
+        set(zlrs_hal_replaced TRUE)
+      endif()
+    endforeach()
+  endforeach()
+  if(NOT zlrs_hal_replaced)
+    message(FATAL_ERROR "Cannot select the ZLRS LR2021 HAL: module source not found")
+  endif()
+  target_sources(app PRIVATE src/platform/radio_io.c)
+endif()
+
 # Make the application version depend on the git index so that APP_VERSION_STRING
 # reflects the commit even when nothing else in the build changed.
 find_package(Git QUIET)

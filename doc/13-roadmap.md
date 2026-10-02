@@ -119,6 +119,18 @@ design documents.
   Retransmissions add 97/88. This verifies trigger stability at the unchanged 5 ms reservation;
   it does not establish the physical throughput limit or tighter-slot acceptance.
 
+- **RP2350 Semtech HAL (implemented; both LF boards checked 2026-10-02)**: ZLRS supplies
+  the documented public HAL, retaining the upstream board/BSP and radio driver. CMake selects
+  the implementation without editing upstream files. Commands of at most 32 bytes use bounded
+  polling; larger transfers use contiguous SPI DMA buffers, avoiding scatter-buffer DMA restarts.
+  Reads explicitly send NOPs, fixing the upstream FIFO-read echo of stale buffer contents onto
+  MOSI. LF/HF production builds pass. At 3 ms preparation, five unpaced 64 KiB duplex rounds
+  pass byte-exact in 3.057, 3.162, 3.108, 3.111 and 3.063 s; observed useful rates are
+  20.7-22.6 kB/s per direction. Neither board adds late preparation/trigger attempts, missed
+  boundaries, recovery probes or serial drops. Trigger jitter is at most 4/5 us; typical setup
+  falls from about 1 ms to 0.3 ms. Retransmissions add 86/18. The data24 default becomes 3 ms;
+  tighter reservations and the physical throughput limit remain pending.
+
 ## To-do
 
 ### Radio and protocol
