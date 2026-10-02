@@ -788,6 +788,9 @@ static const zlrs_radio_req_t *send_ack(zlrs_link_t *link)
 /* Cumulative ACK: one confirmation can release several consecutive frames */
 static void handle_ack_value(zlrs_link_t *link, uint16_t ack, uint8_t flags, uint32_t now_ms)
 {
+	const uint16_t first_seq = link->arq_seq;
+	const bool recovering = link->arq_resync;
+
 	if ((flags & ZLRS_ARQ_ACK_RESYNC) != 0U) {
 		/* Recovery probe: report progress without discarding acknowledged fragments or
 		 * forgetting which complete messages were already delivered. */
@@ -804,8 +807,11 @@ static void handle_ack_value(zlrs_link_t *link, uint16_t ack, uint8_t flags, uin
 		arq_release_oldest(link, true);
 	}
 
-	/* Window moves forward; retransmit timing restarts from this confirmation */
-	link->arq_sent_ms = now_ms;
+	/* Duplicate ACKs must not postpone the lost head's timeout while reverse data keeps
+	 * arriving. A recovery reply starts a fresh retry interval even without progress. */
+	if (link->arq_seq != first_seq || recovering) {
+		link->arq_sent_ms = now_ms;
+	}
 }
 
 static void handle_ack(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)

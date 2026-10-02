@@ -1562,6 +1562,60 @@ static void test_arq_retransmit(void)
 	CHECK(sim.rx.data.stats.rx_out_of_order > 0U);
 }
 
+/* Reverse traffic must not keep postponing a lost forward frame's retransmission. */
+static void test_arq_duplicate_ack_timeout(void)
+{
+	const uint16_t first_seq[] = {0U, 0xFFFEU};
+
+	for (size_t run = 0U; run < sizeof(first_seq) / sizeof(first_seq[0]); run++) {
+		sim_t sim;
+		uint8_t down[512];
+		uint8_t up[2048];
+		uint32_t sent_ms;
+
+		printf("link: arq duplicate ACK timeout (sequence %u)\n", first_seq[run]);
+		sim_init(&sim);
+		sim.tx.data.cfg.arq = 1U;
+		sim.rx.data.cfg.arq = 1U;
+		pair_and_connect(&sim);
+		if (first_seq[run] != 0U) {
+			sim.tx.data.arq_seq = first_seq[run];
+			sim.rx.data.arq_rx_started = true;
+			sim.rx.data.arq_rx_seq = (uint16_t)(first_seq[run] - 1U);
+		}
+		for (size_t i = 0U; i < sizeof(down); i++) {
+			down[i] = (uint8_t)(i * 7U + 3U);
+		}
+		for (size_t i = 0U; i < sizeof(up); i++) {
+			up[i] = (uint8_t)(i * 11U + 5U);
+		}
+		CHECK(zlrs_link_write(&sim.tx.data, down, sizeof(down)) == sizeof(down));
+		CHECK(zlrs_link_write(&sim.rx.data, up, sizeof(up)) == sizeof(up));
+
+		/* The reverse stream repeatedly ACKs the position before the missing head. */
+		sim.drop_data_down = 1;
+		sim_run(&sim, 1U);
+		CHECK(sim.tx.data.arq_used == 1U);
+		sent_ms = sim.tx.data.arq_sent_ms;
+		sim_run(&sim, 2U);
+		CHECK(sim.tx.data.arq_seq == first_seq[run]);
+		CHECK(sim.tx.data.arq_sent_ms == sent_ms);
+		sim_run(&sim, 3U);
+		CHECK(sim.tx.data.stats.tx_retries > 0U);
+		CHECK(sim.rx.data.queue_count > 0U);
+
+		SIM_UNTIL(&sim, sim.tx.data.queue_count == 0U && sim.rx.data.queue_count == 0U,
+			  500);
+		CHECK(sim.tx.data.queue_count == 0U && sim.rx.data.queue_count == 0U);
+		CHECK(sim.rx.stream_len == sizeof(down));
+		CHECK(sim.tx.stream_len == sizeof(up));
+		CHECK(memcmp(sim.rx.stream, down, sizeof(down)) == 0);
+		CHECK(memcmp(sim.tx.stream, up, sizeof(up)) == 0);
+		CHECK(sim.tx.data.stats.data_drop_bytes == 0U);
+		CHECK(sim.rx.data.stats.data_drop_bytes == 0U);
+	}
+}
+
 /*
  * ARQ: a run survives a retransmit that lands past the reassembly timeout. On a lossy slot the
  * head frame of a run is repeated for tens of milliseconds, and a receiver that expires the half
@@ -2624,6 +2678,7 @@ void test_link(void)
 	test_link_quality();
 	test_backpressure();
 	test_arq_retransmit();
+	test_arq_duplicate_ack_timeout();
 	test_arq_slow_run();
 	test_arq_dedup();
 	test_arq_giveup();

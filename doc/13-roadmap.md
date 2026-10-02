@@ -41,6 +41,14 @@ design documents.
   this check shows no clear throughput gain over the preceding 3.812, 3.513 and 2.560 s rounds.
   Retransmissions and the 5 ms slot preparation reserve remain throughput limits. IRQ service
   diagnostics include reading and clearing status over SPI, not just thread wakeup latency.
+- **Duplicate ACK timeout (implemented; LF data24 hardware checked 2026-10-02)**: ACKs that
+  do not advance the send window no longer reset the lost head's retransmission timer. The
+  regression reproduces the delay with continuous reverse data, including sequence wrap;
+  all 2100 host checks pass under ASan/UBSan. Both LF boards passed three unpaced 16 KiB duplex
+  rounds, byte-exact, in 2.308, 2.306 and 2.457 s, versus 3.861, 3.360 and 3.559 s before this
+  change. Neither device dropped serial bytes or added missed timer boundaries; retransmissions
+  fell from 326/312 to 238/242 across the three rounds. The receiver still discards frames beyond
+  a gap, and timer/schedule throughput acceptance remains pending.
 
 ## To-do
 
