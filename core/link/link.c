@@ -130,7 +130,13 @@ static bool slot_in_subg(const zlrs_link_t *link, uint8_t kind)
 
 static uint32_t slot_freq_hz(const zlrs_link_t *link, uint8_t kind)
 {
-	if (sync_frame(link) || link->sess_cfm_due) {
+	if (sync_frame(link) || link->sess_cfm_due || link->sess_ack_due) {
+		return sync_freq_hz(link);
+	}
+	/* Both ends count from the confirmed frame, including repeated confirms after lost ACKs.
+	 * Keep initial DATA on the same channel where the peer is waiting for confirmation. */
+	if (link->cfg.kind == ZLRS_LINK_DATA && link->cfg.handshake && link->session_valid &&
+	    (uint32_t)(link->frame_index - link->sess_sync_frame) < ZLRS_DATA_CONFIRM_FRAMES) {
 		return sync_freq_hz(link);
 	}
 	/* Both ends keep the fresh-session uplink on the confirmation channel. */
@@ -180,6 +186,7 @@ static void roll_session(zlrs_link_t *link, uint32_t now_ms)
 	link->session_pending = false;
 	link->sess_cfm_due = false;
 	link->sess_resp_due = false;
+	link->sess_ack_due = false;
 	link->announce = false;
 }
 
@@ -319,6 +326,7 @@ static void derive_pair(zlrs_link_t *link)
 	link->session_pending = false;
 	link->sess_resp_due = false;
 	link->sess_cfm_due = false;
+	link->sess_ack_due = false;
 	/*
 	 * Simplified handshake (only disabled for bench work): no session key is derived, the
 	 * pairing-level link_auth is the session key and one SESS_RESP answers a SYNC (10-security 3).
@@ -354,7 +362,9 @@ static void session_activate(zlrs_link_t *link, uint16_t hop_index)
 	link->session_pending = false;
 	link->sess_resp_due = false;
 	link->last_rx_seq = 0xFFFFU;
+	link->sess_ack_due = false;
 	link->tx_seq = 0U;
+	link->sess_sync_frame = link->frame_index;
 	/*
 	 * A half message from the old session must not be stitched onto the new one: the peer's
 	 * sequence numbers restart, so what arrives next belongs to a different stream.
@@ -576,9 +586,14 @@ static const zlrs_radio_req_t *send_sess_cfm(zlrs_link_t *link)
 	payload[4] = (uint8_t)(link->fhss.index & 0xFFU);
 	payload[5] = (uint8_t)(link->fhss.index >> 8);
 	wr32(&payload[6], link->frame_index);
+	link->sess_sync_frame = link->frame_index;
 	len = build_frame(link, ZLRS_PKT_SESS_CFM, 0U, payload, sizeof(payload),
 			  tag_key_for(link, ZLRS_PKT_SESS_CFM, true));
-	link->sess_cfm_due = false;
+	/* DATA confirmation remains due until the peer proves that it has this session key.
+	 * Building or even transmitting the confirm does not establish that it arrived. */
+	if (link->cfg.kind != ZLRS_LINK_DATA) {
+		link->sess_cfm_due = false;
+	}
 	link->stats.sess_cfm_tx++;
 
 	return submit_tx(link, len, sync_freq_hz(link), link->cfg.sync_slot, link->sync_word);
@@ -1097,6 +1112,12 @@ static void deliver_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t 
 
 static void handle_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
 {
+	if (frame->payload_len == 0U && frame->ack_present) {
+		if (link->cfg.arq) {
+			handle_ack_value(link, frame->ack_seq, 0U, now_ms);
+		}
+		return; /* Empty ACK can also prove the session when ARQ is disabled. */
+	}
 	if (link->cfg.arq) {
 		/* ARQ: the first 2 payload bytes are the sequence number the reassembler aligns on */
 		uint16_t seq;
@@ -1104,9 +1125,6 @@ static void handle_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 
 		if (frame->ack_present) {
 			handle_ack_value(link, frame->ack_seq, 0U, now_ms);
-		}
-		if (frame->payload_len == 0U && frame->ack_present) {
-			return; /* ACK-only DATA frame: control header, no data segment */
 		}
 		if (frame->payload_len < 3U) {
 			link->stats.rx_bad_frame++;
@@ -1456,8 +1474,10 @@ static int handle_sess_cfm(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_
 {
 	uint8_t expect[ZLRS_TAG_LEN];
 	const uint8_t tag_len = zlrs_profile_tag_len(link->cfg.profile);
+	const bool repeated = link->cfg.kind == ZLRS_LINK_DATA && link->cfg.role == ZLRS_ROLE_RX &&
+			      link->state == ZLRS_STATE_CONNECTED && link->session_valid;
 
-	if (!link->session_pending || link->state != ZLRS_STATE_SEARCHING) {
+	if (!repeated && (!link->session_pending || link->state != ZLRS_STATE_SEARCHING)) {
 		return -1;
 	}
 	if (frame->payload_len < sizeof(uint32_t)) {
@@ -1479,6 +1499,10 @@ static int handle_sess_cfm(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_
 	if (rd32(frame->payload) != link->sess_nonce_r) {
 		return -1;
 	}
+	if (repeated && (int16_t)(frame->seq - link->last_rx_seq) <= 0) {
+		link->stats.rx_dup++;
+		return -1;
+	}
 
 	link->stats.rx_frames++;
 	/*
@@ -1486,15 +1510,24 @@ static int handle_sess_cfm(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_
 	 * re-handshake that is the peer's current index), otherwise fall back to the SYNC's.
 	 */
 	link->stats.sess_cfm_rx++;
-	session_activate(
-		link, (frame->payload_len >= 6U)
-			      ? (uint16_t)(frame->payload[4] | ((uint16_t)frame->payload[5] << 8))
-			      : link->sess_hop);
+	const uint16_t hop =
+		frame->payload_len >= 6U
+			? (uint16_t)(frame->payload[4] | ((uint16_t)frame->payload[5] << 8))
+			: link->sess_hop;
+
+	if (repeated) {
+		/* Lost session ACK: answer the newer confirm without discarding stream progress. */
+		zlrs_fhss_set_index(&link->fhss, hop);
+	} else {
+		session_activate(link, hop);
+	}
 	if (frame->payload_len >= 10U) {
 		link->frame_index = rd32(&frame->payload[6]);
 	}
 	link->last_rx_seq = frame->seq; /* the confirm frame itself takes the first slot from 0 */
 	link->last_rx_ms = now_ms;
+	link->sess_ack_due = link->cfg.kind == ZLRS_LINK_DATA;
+	link->sess_sync_frame = link->frame_index;
 	set_state(link, ZLRS_STATE_CONNECTED, now_ms);
 
 	return 0;
@@ -1552,6 +1585,9 @@ static bool handle_sess_resp(zlrs_link_t *link, const zlrs_frame_t *frame, uint3
 		link->sess_nonce_r = nonce_r;
 		derive_session_keys(link, nonce_t, nonce_r);
 		session_activate(link, link->fhss.index);
+	} else if (link->cfg.kind == ZLRS_LINK_DATA && !link->sess_cfm_due) {
+		/* A delayed pairing-level response cannot reopen a confirmed DATA session. */
+		return true;
 	}
 	link->sess_cfm_due = true;
 	/* Session just came up: keep the peer-loss check from kicking us out on a stale timestamp */
@@ -1630,6 +1666,9 @@ static int handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 	}
 	link->last_rx_seq = frame.seq;
 	link->last_rx_ms = now_ms;
+	if (link->cfg.kind == ZLRS_LINK_DATA && link->cfg.role == ZLRS_ROLE_TX) {
+		link->sess_cfm_due = false;
+	}
 	/* The peer is alive: stop sending the simplified handshake's "I am here" */
 	link->announce = false;
 	lq_account(link, frame.seq);
@@ -1926,6 +1965,11 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 		if (tx_side) {
 			if (a) {
 				if (link->sess_cfm_due) {
+					/* The responder may have rebooted while this confirm was pending. */
+					if ((uint32_t)(now_ms - link->last_sync_ms) >=
+					    link->cfg.sync_period_ms) {
+						return send_sync(link, now_ms);
+					}
 					/*
 					 * Repeat the confirm (the peer leaves SEARCHING on one of them) and only then count the
 					 * session as established.
@@ -1973,12 +2017,21 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 	 * Resync frames and session confirms stay out of that: their cadence has to divide the
 	 * remaining frames, or (333 frames against 5, say) they would almost never line up.
 	 */
-	if (!sync_frame(link) && !link->sess_cfm_due &&
+	if (!sync_frame(link) && !link->sess_cfm_due && !link->sess_ack_due &&
 	    (link->frame_index % link->cfg.data_every_n) != 0U) {
 		return NULL;
 	}
 
 	advance_hop(link);
+
+	if (link->sess_ack_due && tx_side == a) {
+		const zlrs_radio_req_t *req = send_ack(link);
+
+		if (req != NULL) {
+			link->sess_ack_due = false;
+		}
+		return req;
+	}
 
 	/* Idle data has no liveness timeout. Reacquire periodic SYNC after losing its hop epoch. */
 	if (!tx_side && a && link->cfg.resync_every_n > 0U && link->cfg.sync_period_ms > 0U &&
@@ -1995,6 +2048,9 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 	if (tx_side == a) {
 		/* Session confirm first, resync SYNC second (both use the sync channel) */
 		if (link->sess_cfm_due) {
+			if ((uint32_t)(now_ms - link->last_sync_ms) >= link->cfg.sync_period_ms) {
+				return send_sync(link, now_ms);
+			}
 			return send_sess_cfm(link);
 		}
 		if (sync_frame(link)) {

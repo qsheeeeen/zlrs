@@ -247,6 +247,30 @@ design documents.
 
 ## To-do
 
+### DATA session confirmation, 2026-10-03
+
+- DATA confirmation now remains pending until the peer returns a newer frame authenticated
+  with the session key. RX answers with an empty DATA ACK, including when ARQ or reverse data
+  is absent. Repeated newer confirms request another reply without resetting stream progress;
+  both peers use the sync channel for 16 frames from the last shared confirm index. Pending
+  confirmation also retains acquisition-period SYNC, so rebooting RX during confirmation does
+  not strand it behind an obsolete candidate key. The initial sticky-confirm experiment omitted
+  that SYNC and failed on sequential hardware updates; it is not the retained implementation.
+- All 2367 ASan/UBSan host checks pass. The new loss/failure regression fails 37 checks against
+  the former implementation. Cases include failed confirm TX, lost confirms and empty replies
+  beyond 500 ms, ARQ on/off, hopping on/off, replay/corruption, preserved receive progress and
+  RX reboot during pending confirmation. LF/HF production builds and architecture gates pass.
+- Both LF boards run verified, confirmed image
+  `d0a1227718ba0ae31c634ee3f250764f6d4725eaf0e38d118d014983687de78b` at fixed 2441 MHz,
+  P1, -10 dBm, hopping off and 1.5 ms preparation. After sequential updates, all five 64 KiB
+  duplex rounds pass in 1.561, 1.504, 1.558, 1.555 and 1.556 s, with no added preparation/trigger
+  delays, missed boundaries, ARQ recovery, serial loss or bad tags; trigger jitter is at most 3 us.
+  Software cold reboots of RX, TX and both peers each pass three 64 KiB duplex rounds without
+  management entry: respectively 1.554/1.557/1.513, 1.660/1.508/1.556 and 1.656/1.509/1.559 s.
+  TX shell snapshots are missing in those reboot checks, so complete two-peer timing deltas
+  are not established there; RX adds one late preparation in the both-peer reboot run. Physical
+  power cycling, repeated long runs and hopping hardware acceptance remain open.
+
 ### Radio and protocol
 
 - **Hardware timer and driver ownership (implemented; short LF checks passed)**: RP2350 TIMER1

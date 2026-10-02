@@ -956,6 +956,107 @@ static void test_session_lost_confirm(void)
 	CHECK(sim.tx.ctl.fhss.index == sim.rx.ctl.fhss.index);
 }
 
+static void test_data_session_confirmation(void)
+{
+	static const uint8_t salt[ZLRS_PAIR_SALT_LEN] = {1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U};
+	uint8_t confirm[ZLRS_FRAME_MAX_LEN];
+	uint8_t response[ZLRS_FRAME_MAX_LEN];
+	uint8_t payload[64] = {0x5aU};
+	sim_t sim;
+
+	printf("link: DATA session confirmation survives failed TX and lost empty replies\n");
+	for (uint8_t arq = 0U; arq < 2U; arq++) {
+		for (uint8_t hopping = 0U; hopping < 2U; hopping++) {
+			sim_init(&sim);
+			sim.frame_ms = 10U;
+			sim.tx.data.cfg.arq = sim.rx.data.cfg.arq = arq;
+			sim.tx.data.cfg.hopping = sim.rx.data.cfg.hopping = hopping;
+			sim.tx.data.cfg.resync_every_n = sim.rx.data.cfg.resync_every_n = 255U;
+			zlrs_link_set_peer(&sim.tx.data, sim.rx.dev_id, salt, sim.now_ms);
+			zlrs_link_set_peer(&sim.rx.data, sim.tx.dev_id, salt, sim.now_ms);
+			sim_slot(&sim, ZLRS_SLOT_DATA_A);
+			sim_slot(&sim, ZLRS_SLOT_DATA_B);
+			CHECK(sim.tx.data.sess_cfm_due && sim.rx.data.session_pending);
+			const uint16_t response_len = sim.up_len;
+
+			memcpy(response, sim.up, response_len);
+			const zlrs_radio_req_t *req =
+				zlrs_link_slot(&sim.tx.data, ZLRS_SLOT_DATA_A, sim.now_ms);
+
+			CHECK(req != NULL && req->is_tx);
+			CHECK((req->buf[0] >> 2) == ZLRS_PKT_SESS_CFM);
+			zlrs_link_complete(&sim.tx.data, ZLRS_RADIO_FAIL, 0U, 0, 0, sim.now_ms);
+			CHECK(sim.tx.data.sess_cfm_due);
+			sim.drop_down = 4;
+			sim.drop_up = 100;
+			for (unsigned int i = 0U; i < 120U && sim.tx.data.sess_cfm_due; i++) {
+				sim_slot(&sim, ZLRS_SLOT_DATA_A);
+				sim_slot(&sim, ZLRS_SLOT_DATA_B);
+				sim.now_ms += sim.frame_ms;
+			}
+			CHECK(sim.now_ms > ZLRS_SESS_CONFIRM_MS);
+			CHECK(!sim.tx.data.sess_cfm_due && !sim.rx.data.session_pending);
+			CHECK(sim.tx.data.session_valid && sim.rx.data.session_valid);
+			CHECK(sim.tx.data.stats.sess_cfm_tx > 90U);
+			CHECK(sim.rx.data.stats.sess_cfm_rx > 90U);
+			CHECK(sim.tx.stream_len == 0U && sim.rx.stream_len == 0U);
+			CHECK(memcmp(sim.tx.data.session_key_out, sim.rx.data.session_key_in,
+				     ZLRS_KEY_LEN) == 0);
+			const uint16_t confirm_len = sim.down_len;
+
+			memcpy(confirm, sim.down, confirm_len);
+			sim_inject(&sim, &sim.rx.data, confirm, confirm_len);
+			CHECK(!sim.rx.data.sess_ack_due);
+			confirm[confirm_len - 1U] ^= 1U;
+			sim_inject(&sim, &sim.rx.data, confirm, confirm_len);
+			CHECK(!sim.rx.data.sess_ack_due && sim.rx.data.stats.rx_bad_tag == 1U);
+			sim_inject(&sim, &sim.tx.data, response, response_len);
+			CHECK(!sim.tx.data.sess_cfm_due);
+			CHECK(zlrs_link_write(&sim.tx.data, payload, sizeof(payload)) ==
+			      sizeof(payload));
+			SIM_UNTIL(&sim, sim.rx.stream_len == sizeof(payload), 400);
+			CHECK(sim.rx.stream_len == sizeof(payload));
+			CHECK(memcmp(sim.rx.stream, payload, sizeof(payload)) == 0);
+			const uint16_t received = sim.rx.data.arq_rx_seq;
+			const bool started = sim.rx.data.arq_rx_started;
+
+			/* A lost confirmation reply after stream progress must not restart ARQ. */
+			sim.tx.data.sess_cfm_due = true;
+			sim.drop_up = 5;
+			SIM_UNTIL(&sim, !sim.tx.data.sess_cfm_due, 100);
+			CHECK(!sim.tx.data.sess_cfm_due);
+			CHECK(sim.rx.data.arq_rx_seq == received);
+			CHECK(sim.rx.data.arq_rx_started == started);
+			CHECK(sim.rx.stream_len == sizeof(payload));
+
+			/* RX can reboot while TX awaits confirmation of the preceding candidate. */
+			uint8_t rx_id[ZLRS_DEV_ID_LEN];
+			const uint32_t syncs = sim.tx.data.stats.tx_syncs;
+
+			memcpy(rx_id, sim.rx.dev_id, sizeof(rx_id));
+			sim.tx.data.sess_cfm_due = true;
+			node_init(&sim.rx, ZLRS_ROLE_RX, sim.root_key, rx_id, 0x55667788U);
+			sim.rx.data.cfg.arq = arq;
+			sim.rx.data.cfg.hopping = hopping;
+			sim.rx.data.cfg.resync_every_n = 255U;
+			zlrs_link_set_peer(&sim.rx.data, sim.tx.dev_id, salt, sim.now_ms);
+			for (unsigned int i = 0U;
+			     i < 300U && (sim.tx.data.sess_cfm_due ||
+					  sim.rx.data.state != ZLRS_STATE_CONNECTED);
+			     i++) {
+				sim_slot(&sim, ZLRS_SLOT_DATA_A);
+				sim_slot(&sim, ZLRS_SLOT_DATA_B);
+				sim.now_ms += sim.frame_ms;
+			}
+			CHECK(sim.tx.data.stats.tx_syncs > syncs);
+			CHECK(!sim.tx.data.sess_cfm_due);
+			CHECK(sim.rx.data.state == ZLRS_STATE_CONNECTED);
+			CHECK(memcmp(sim.tx.data.session_key_out, sim.rx.data.session_key_in,
+				     ZLRS_KEY_LEN) == 0);
+		}
+	}
+}
+
 static void test_fresh_session_uplink(void)
 {
 	sim_t sim;
@@ -3011,6 +3112,7 @@ void test_link(void)
 	test_pairing_id_order();
 	test_session();
 	test_session_lost_confirm();
+	test_data_session_confirmation();
 	test_fresh_session_uplink();
 	test_data_reacquire_epoch();
 	test_reflection();

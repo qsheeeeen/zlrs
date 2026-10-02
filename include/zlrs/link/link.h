@@ -32,16 +32,17 @@ extern "C" {
  * a message is heard or missed by luck: every step repeats until the next one shows up. The
  * initiator sends this many PAIR_CFM before it calls the handshake done.
  */
-#define ZLRS_PAIR_CFM_REPEATS 16U
+#define ZLRS_PAIR_CFM_REPEATS    16U
 /* Frames between two listen windows on the pairing channel while SEARCHING (see control_slot) */
-#define ZLRS_PAIR_SCAN_FRAMES 4U
+#define ZLRS_PAIR_SCAN_FRAMES    4U
 /*
  * Session confirm window. Same story as pairing: the two ends only share a slot phase once the
  * session is up. For this long after entering CONNECTED the initiator keeps listening on the sync
  * channel, where a responder that missed the confirm is still repeating its answer, and answers
  * each repeat with another confirm.
  */
-#define ZLRS_SESS_CONFIRM_MS  500U
+#define ZLRS_SESS_CONFIRM_MS     500U
+#define ZLRS_DATA_CONFIRM_FRAMES 16U
 
 /* Superframe slots, see doc/09-protocol.md 4.1 */
 #define ZLRS_SLOT_CTL_DOWN 0U /* TX -> RX: RC frame (the RX side is a receive window) */
@@ -281,14 +282,16 @@ typedef struct {
 	 * to prove the peer derived the same key. The RX only adopts the session after that proof,
 	 * so replaying an old SYNC yields no old session key.
 	 */
-	bool session_pending;  /* RX: answered a SYNC, waiting for the peer's confirm */
-	bool sess_resp_due;    /* RX: SESS_RESP due in the uplink slot */
-	bool sess_cfm_due;     /* TX: SESS_CFM due in the downlink slot */
-	uint32_t sess_nonce_t; /* initiator (TX) nonce */
-	uint32_t sess_nonce_r; /* responder (RX) nonce */
-	uint16_t sess_hop;     /* hop index of this session */
-	uint32_t pair_nonce;   /* pairing: initiator nonce_a */
-	uint32_t pair_nonce_b; /* pairing: responder nonce_b */
+	bool session_pending;     /* RX: answered a SYNC, waiting for the peer's confirm */
+	bool sess_resp_due;       /* RX: SESS_RESP due in the uplink slot */
+	bool sess_cfm_due;        /* TX: SESS_CFM due in the downlink slot */
+	bool sess_ack_due;        /* DATA RX: session-key authenticated empty ACK due */
+	uint32_t sess_sync_frame; /* Last DATA confirm's shared frame index. */
+	uint32_t sess_nonce_t;    /* initiator (TX) nonce */
+	uint32_t sess_nonce_r;    /* responder (RX) nonce */
+	uint16_t sess_hop;        /* hop index of this session */
+	uint32_t pair_nonce;      /* pairing: initiator nonce_a */
+	uint32_t pair_nonce_b;    /* pairing: responder nonce_b */
 
 	/* state and timing */
 	uint8_t state;

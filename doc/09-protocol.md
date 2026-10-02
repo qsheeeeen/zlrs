@@ -122,6 +122,15 @@ sync word and derived keys.
 3. TX to RX: `SESS_CFM{nonce_r, hop, frame}` tagged with the **new session key**; the RX adopts the
    session only after it verifies.
 
+The DATA initiator repeats its confirm until it receives a newer frame authenticated with the
+session key. The responder answers a valid confirm with an empty DATA ACK, even without reverse
+application data or ARQ. A newer repeated confirm requests another reply and updates the shared
+epoch without resetting stream or ARQ progress; old confirms are rejected. Both peers keep DATA
+on the sync channel for 16 frames counted from the most recent confirm. A delayed pairing-level
+response for the already confirmed nonce pair cannot reopen this exchange. While confirmation
+is pending, TX also sends SYNC at the acquisition interval, so an RX that rebooted and lost its
+candidate can generate a new response. No new packet type or application payload is added.
+
 Session key: `KDF(pair_key, "zlrs/session", nonce_t || nonce_r || sender id || receiver id)`,
 one per direction. Sequence numbers restart at 0 for the session.
 
