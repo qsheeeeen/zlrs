@@ -27,6 +27,7 @@ target_sources(app PRIVATE
 # App-internal headers are included the way they sit on disk: "platform/radio.h",
 # "link/data.h", "platform/caps.h", ... (the layers are described in doc/07-architecture.md 5).
 target_include_directories(app PRIVATE src)
+target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG_SHELL app PRIVATE src/link/bench.c)
 
 if(CONFIG_ZLRS_APP_RAM_RADIO)
   set(zlrs_ram_sources
@@ -43,6 +44,9 @@ if(CONFIG_ZLRS_APP_RAM_RADIO)
   endif()
   if(CONFIG_ZLRS_APP_RP2350_CRYPTO)
     list(APPEND zlrs_ram_sources src/platform/crypto_rp2350.c)
+  endif()
+  if(CONFIG_ZLRS_APP_DEBUG_SHELL)
+    list(APPEND zlrs_ram_sources src/link/bench.c)
   endif()
   # The RF owner also calls the public radio and DMA helpers. Relocate their compiled
   # text through Zephyr's build API; upstream files and behavior remain unchanged.

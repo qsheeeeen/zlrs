@@ -37,6 +37,9 @@
 #include "mgmt/mode.h"
 #include "link/crsf.h"
 #include "link/data.h"
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_SHELL)
+#include "link/bench.h"
+#endif
 #include "link/power.h"
 #include "link/rate.h"
 #include "platform/caps.h"
@@ -207,6 +210,11 @@ static void on_data(void *ctx, const uint8_t *data, uint16_t len)
 {
 	(void)ctx;
 
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_SHELL)
+	if (zlrs_bench_receive(data, len)) {
+		return;
+	}
+#endif
 	counters.data_rx += zlrs_link_data_write(data, len);
 }
 
@@ -948,6 +956,11 @@ static void pump_serial(void)
 	if (!ZLRS_DATA_ENABLED) {
 		return; /* no data link: nothing to forward from the UART */
 	}
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_SHELL)
+	if (zlrs_bench_pump(&link_data)) {
+		return;
+	}
+#endif
 
 	/*
 	 * The UART ISR only fills its RX ring. The radio thread owns link_data, so feed the link queue
@@ -2166,6 +2179,11 @@ static int cmd_crypto(const struct shell *sh, size_t argc, char **argv)
 }
 #endif
 
+static int cmd_stream(const struct shell *sh, size_t argc, char **argv)
+{
+	return ZLRS_DATA24 ? zlrs_bench_command(sh, argc, argv) : -ENOTSUP;
+}
+
 SHELL_STATIC_SUBCMD_SET_CREATE(
 	zlrs_cmds, SHELL_CMD(status, NULL, "role / SKU / region / link state", cmd_status),
 	SHELL_CMD(link, NULL, "per-link state, frequency, hop index and key fingerprints",
@@ -2178,6 +2196,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 	SHELL_CMD(rxwin, " [ms]", "stretch the data link receive window (bench)", cmd_rxwin),
 	SHELL_CMD(rate, " [s]", "measure windows/hits/frames per second per link", cmd_rate),
 	SHELL_CMD(ports, NULL, "state of both data port endpoints", cmd_ports),
+	SHELL_CMD(stream, NULL, "RF-only DATA bench: arm <bytes>, start, status, stop", cmd_stream),
 	SHELL_CMD(radio, NULL, "LR2021 timing: preparation, launch and wait", cmd_radio),
 	SHELL_CMD(logstore, NULL, "mount the log filesystem and report the result", cmd_logstore),
 	SHELL_CMD(trace, NULL, "print the init breadcrumbs", cmd_trace),

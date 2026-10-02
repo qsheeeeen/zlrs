@@ -342,3 +342,18 @@ counter deltas: `user / DATA packets` gives the mean application bytes per packe
 can make that count low even when the application fills its configured packet budget.
 
 Previous RAC cost measurements in section 5 are historical measurements of the former backend.
+
+### DATA source and sink inside the boards
+
+In exclusive data24, `zlrs stream arm <bytes>` enables the debug-only source/sink (1 byte to
+16 MiB), `zlrs stream start` starts this board's source, and `zlrs stream status` reports queued,
+received and incorrect bytes plus receive goodput. Arm both boards before starting either.
+Each direction uses a different deterministic byte pattern; the receiver checks every byte,
+including its position. This retains the actual frame, authentication, ARQ, FIFO and RF paths
+while replacing the USB/UART input and output. It does not measure end-to-end serial throughput.
+
+`goodput_Bps` uses bytes after the first delivered packet divided by the time between the first
+and last deliveries. Completion requires `rx == target`, `queued == target` and `bad == 0` on
+both boards. `zlrs stream stop` restores serial forwarding once the source queue is empty;
+arm/stop returns busy when queued bytes still need delivery. Only the RF owner mutates link
+queues and benchmark state; shell commands wait for that owner to apply them.
