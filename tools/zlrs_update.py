@@ -197,7 +197,7 @@ def mgmt_probe_command(port: str) -> list[str]:
 
 def mgmt_subcmd_command(port: str, subcmd: str) -> list[str]:
     return [sys.executable, str(repo_root() / "tools" / "zlrs.py"),
-            subcmd, "--port", port, "--timeout", "3"]
+            subcmd, "--port", port, "--timeout", "10"]
 
 
 def run_mgmt_subcmd(port: str, subcmd: str) -> tuple[int, str]:

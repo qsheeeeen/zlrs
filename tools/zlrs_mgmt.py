@@ -502,7 +502,8 @@ def add_options(parser, include_list=True):
     else:
         parser.set_defaults(list=False)
     parser.add_argument("--baud", type=bounded_int(1, 4000000), default=115200, help="management connection baud rate")
-    parser.add_argument("--timeout", type=positive_seconds, default=1.0, help="response timeout in seconds")
+    parser.add_argument("--timeout", type=positive_seconds, default=10.0,
+                        help="response timeout per frame in seconds (management entry may take several seconds)")
     parser.add_argument("--dry-run", action="store_true", help="print the frame instead of talking to the device")
     parser.add_argument("--no-enter", action="store_true",
                         help="skip the enter-management-mode step (when already in it)")
