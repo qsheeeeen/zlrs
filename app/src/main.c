@@ -277,12 +277,12 @@ static uint16_t sync_period_for_mod(const zlrs_mod_cfg_t *mod)
 	return 600U;
 }
 
-static void plan_init(void)
+static void plan_mixed_init(void)
 {
 	zlrs_control_plan_t plan;
 	/* The regulatory gate follows the sub-G link, which is the data link in racing mode */
-	const zlrs_region_t *ctl_region = !ZLRS_DATA24 && CONTROL_ON_SUBG ? region : NULL;
-	const zlrs_region_t *data_region = ZLRS_DATA24 || CONTROL_ON_SUBG ? NULL : region;
+	const zlrs_region_t *ctl_region = CONTROL_ON_SUBG ? region : NULL;
+	const zlrs_region_t *data_region = CONTROL_ON_SUBG ? NULL : region;
 	zlrs_plan_req_t req = {
 		.region = ctl_region,
 		.frame_len = CTL_FRAME_LEN,
@@ -312,13 +312,6 @@ static void plan_init(void)
 #endif
 	data_mod =
 		zlrs_mod_flrc(zlrs_region_clamp_rate(data_region, CONFIG_ZLRS_APP_DATA_RATE_BPS));
-	if (ZLRS_DATA24) {
-		/* No sub-G modulation or regional duty cadence in exclusive 2.4 GHz mode. */
-		control_mod = data_mod;
-		req.want_hz = CONFIG_ZLRS_APP_CONTROL_RATE_HZ;
-		/* Keep 1 ms more of each 7.35 ms slot available for data airtime. */
-		slot_prepare_us = 5000U;
-	}
 	req.mod = &control_mod;
 
 	/* Four equal hardware slots must fit control and the larger pairing packets. */
@@ -383,6 +376,31 @@ static void plan_init(void)
 		LOG_WRN("airtime (mod %u): control rate %u Hz -> %u Hz",
 			(unsigned int)control_mod.modulation, (unsigned int)req.want_hz,
 			(unsigned int)plan.rate_hz);
+	}
+}
+
+static void plan_init(void)
+{
+	if (ZLRS_DATA24) {
+		/* The data frame, not the unused control plan, determines the slot. All four
+		 * hardware windows form alternating TX/RX pairs; pairing also uses this modem. */
+		data_mod = zlrs_mod_flrc(CONFIG_ZLRS_APP_DATA_RATE_BPS);
+		control_mod = data_mod;
+		slot_prepare_us = CONFIG_ZLRS_APP_DATA24_PREPARE_US;
+		data_mtu = ZLRS_PAYLOAD_MAX_LEN - 2U;
+		slot_budget_us = slot_prepare_us + CONFIG_ZLRS_APP_TX_GUARD_US +
+				 ZLRS_RADIO_STARTUP_US +
+				 zlrs_radio_airtime_us(&data_mod, ZLRS_FRAME_MAX_LEN) + 200U;
+		/* The deadline is 100 us before preparation; leave another 100 us so the
+		 * maximum frame finishes strictly before it, matching radio_prepare(). */
+		frame_period_us = 4U * slot_budget_us;
+		control_rate_hz = 1000000U / frame_period_us;
+		tlm_every_n = 1U;
+		data_every_n = 1U;
+		LOG_INF("data24 plan: mtu=%u pair=%u us slot_prepare=%u us", data_mtu,
+			slot_budget_us * 2U, slot_prepare_us);
+	} else {
+		plan_mixed_init();
 	}
 
 	/* CONNECTED sync period converted to frames (doc/09-protocol.md 5.1): 1000 ms fits an

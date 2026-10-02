@@ -59,6 +59,19 @@ design documents.
   13.1-14.4 kB/s per direction. Retransmissions in the 16 KiB rounds fell from 238/242 to 89/78.
   This approaches the current schedule's roughly 16.7 kB/s per-direction ceiling, not the FLRC
   physical limit. Slot preparation still reserves 5 ms; late launches and radio errors remain.
+- **Data24 slot budgeting and preparation boundaries (implemented; LF checks 2026-10-02)**:
+  data24 sizes each slot from the maximum 255-byte frame, its own preparation reservation,
+  launch/startup allowances and separate deadline/completion margins. Preparation now waits
+  for its hardware-timer boundary, preventing an idle predecessor from opening RX in an
+  earlier slot. The default remains 5 ms: 7290 us per slot and 14580 us per TX/RX pair. Both
+  LF boards passed five consecutive unpaced 64 KiB duplex rounds, byte-exact, in 5.061, 4.961,
+  5.013, 5.212 and 4.610 s, with no serial drops, recovery probes or new missed timer boundaries.
+  LF/HF production applications build. Before the preparation-boundary fix, 3/4 ms reservations
+  increased late attempts and gave no throughput gain; those reservations are not accepted.
+  The final five-round check added 15 preparation delays per board, versus 69/49 delayed trigger
+  attempts. IRQ-to-link-completion and protocol-call timings are available in `zlrs radio`;
+  their lifetime maxima include startup/session work. Trigger latency, completion SPI and
+  authentication still need optimization before shrinking the slots further.
 
 ## To-do
 

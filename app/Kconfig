@@ -180,6 +180,15 @@ config ZLRS_APP_PREPARE_US
 	  Packet construction, authentication, modem setup and FIFO loading run in this window.
 	  DMA needs a larger reservation for per-command setup/completion and thread wakeups.
 
+config ZLRS_APP_DATA24_PREPARE_US
+	int "Preparation time for exclusive 2.4 GHz data slots (us)"
+	default 5000
+	range 100 10000
+	help
+	  Data24 uses one modem and band. Reserve this time for packet construction,
+	  authentication and FIFO loading; size the slot around the maximum data frame.
+	  Mixed mode keeps its separate preparation time and regional control plan.
+
 config ZLRS_APP_TX_GUARD_US
 	int "Time from slot boundary to TX launch (us)"
 	default 200
