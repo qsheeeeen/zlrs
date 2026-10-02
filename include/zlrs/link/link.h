@@ -232,6 +232,7 @@ typedef struct {
 	zlrs_profile_t profile;
 	bool more;
 	bool ack_present;
+	bool retry;
 	bool valid;
 } zlrs_prepared_data_t;
 

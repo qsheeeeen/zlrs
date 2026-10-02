@@ -212,9 +212,11 @@ The data link's default mode:
 Connected data24 can encode and authenticate its next DATA packet while RX is active, then
 preload the separate TX FIFO. Encoding does not advance the frame counter, hop, transmission
 sequence or ARQ window. The assigned TX slot validates the cached frame, key, MTU, run boundary
-and window tail before committing it. An ACK received during RX may release the queue head
-without changing that tail. The prepared packet's cumulative ACK can lag one exchange; newer
-receive progress stays pending for the following packet. Recovery, retransmissions, session
+and window tail before committing it. A full window can stage its next packet while waiting
+for RX to release an entry. Timed-out heads can stage a retransmission without adding a new
+window entry; activation checks that the head is still the same. An ACK received during RX
+may release the queue head without changing its tail. The prepared packet's cumulative ACK can lag one exchange; newer
+receive progress stays pending for the following packet. Recovery, session
 messages and invalidated packets use the ordinary construction path.
 
 Both peers must use the same recovery semantics. Older firmware treated the probe as a reset

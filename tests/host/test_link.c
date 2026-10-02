@@ -1582,6 +1582,60 @@ static void test_arq_retransmit(void)
 	CHECK(sim.rx.data.stats.rx_out_of_order > 0U);
 }
 
+static void test_prepared_data_retry_and_window(void)
+{
+	sim_t sim;
+	uint8_t payload[700] = {0};
+	uint16_t size;
+	const zlrs_radio_req_t *req;
+
+	printf("link: prepared retransmission keeps its window entry\n");
+	sim_init(&sim);
+	sim.tx.data.cfg.arq = sim.rx.data.cfg.arq = 1U;
+	sim.tx.data.cfg.hopping = sim.rx.data.cfg.hopping = 0U;
+	pair_and_connect(&sim);
+	CHECK(zlrs_link_write(&sim.tx.data, payload, sizeof(payload)) == sizeof(payload));
+	req = zlrs_link_slot(&sim.tx.data, ZLRS_SLOT_DATA_A, sim.now_ms);
+	CHECK(req != NULL);
+	zlrs_link_complete(&sim.tx.data, ZLRS_RADIO_FAIL, 0U, 0, 0, sim.now_ms);
+	sim.now_ms += ZLRS_ARQ_TIMEOUT_MS;
+	const uint8_t *buf =
+		zlrs_link_prepare_data(&sim.tx.data, ZLRS_SLOT_DATA_A, sim.now_ms, &size);
+
+	CHECK(buf != NULL && sim.tx.data.prepared_data.retry);
+	CHECK(sim.tx.data.arq_used == 1U && sim.tx.data.stats.tx_retries == 0U);
+	req = zlrs_link_slot(&sim.tx.data, ZLRS_SLOT_DATA_A, sim.now_ms);
+	CHECK(req != NULL && req->buf == buf);
+	CHECK(sim.tx.data.arq_used == 1U && sim.tx.data.arq_seq == 0U);
+	CHECK(sim.tx.data.stats.tx_retries == 1U && sim.tx.data.queue_count == sizeof(payload));
+
+	printf("link: full window can prepare ahead of an RX ACK\n");
+	sim_init(&sim);
+	sim.tx.data.cfg.arq = sim.rx.data.cfg.arq = 1U;
+	sim.tx.data.cfg.hopping = sim.rx.data.cfg.hopping = 0U;
+	pair_and_connect(&sim);
+	CHECK(zlrs_link_write(&sim.tx.data, payload, sizeof(payload)) == sizeof(payload));
+	for (uint8_t i = 0U; i < ZLRS_ARQ_WINDOW; i++) {
+		req = zlrs_link_slot(&sim.tx.data, ZLRS_SLOT_DATA_A, sim.now_ms);
+		CHECK(req != NULL);
+		zlrs_link_complete(&sim.tx.data, ZLRS_RADIO_OK, 0U, 0, 0, sim.now_ms);
+	}
+	CHECK(sim.tx.data.arq_used == ZLRS_ARQ_WINDOW);
+	buf = zlrs_link_prepare_data(&sim.tx.data, ZLRS_SLOT_DATA_A, sim.now_ms, &size);
+	CHECK(buf != NULL && !sim.tx.data.prepared_data.retry);
+	uint8_t ack[32];
+	const uint8_t value[3] = {0U, 0U, 0U};
+	const uint16_t ack_len =
+		build_data_frame(ack, ZLRS_PKT_ACK, sim.tx.data.last_rx_seq + 1U, 0U, value,
+				 sizeof(value), sim.tx.data.session_key_in);
+
+	zlrs_link_rx(&sim.tx.data, ack, ack_len, -60, 0, sim.now_ms);
+	CHECK(sim.tx.data.arq_used == ZLRS_ARQ_WINDOW - 1U);
+	req = zlrs_link_slot(&sim.tx.data, ZLRS_SLOT_DATA_A, sim.now_ms);
+	CHECK(req != NULL && req->buf == buf);
+	CHECK(sim.tx.data.arq_used == ZLRS_ARQ_WINDOW && sim.tx.data.arq_seq == 1U);
+}
+
 static void test_prepared_data_invalidation(void)
 {
 	uint8_t payload[400] = {0};
@@ -2977,6 +3031,7 @@ void test_link(void)
 	test_flrc_max_frame_duplex();
 	test_prepared_data();
 	test_prepared_data_invalidation();
+	test_prepared_data_retry_and_window();
 	test_arq_receive_window();
 	test_arq_receive_window_bounds();
 	test_arq_duplicate_ack_timeout();

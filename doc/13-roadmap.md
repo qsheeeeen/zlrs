@@ -187,6 +187,16 @@ design documents.
   duration is 613/578 us. Retransmissions add 66/25. This validates overlap; tighter reservations
   and lower turnaround costs still need hardware acceptance.
 
+- **Prepared retransmissions and full-window staging (implemented; LF experiment 2026-10-02)**:
+  a predicted timeout can prepare the retained head during RX; its assigned TX increments
+  retry accounting without adding a window entry. A full window can stage a new tail before
+  the current RX ACK releases an entry. All 2263 host checks pass, including two regressions
+  for these cases. A 500 us experiment before this change times out with 10.3/19.4 KiB
+  received. With the change, all five 64 KiB duplex rounds pass byte-exact in 1.856, 1.763,
+  1.812, 1.910 and 1.901 s, with no serial drops, recovery probes or bad tags. However,
+  preparation delays add 47/47 and trigger delays 27/30, so 500 us is not accepted as the
+  default. The stable 1500 us reservation remains; SPI/DMA and RX completion costs remain open.
+
 ## To-do
 
 ### Radio and protocol
