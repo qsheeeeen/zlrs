@@ -106,6 +106,19 @@ design documents.
   all 2177 checks pass with ASan/UBSan. With the direct launch and RF scheduling changes
   below, five unpaced 64 KiB duplex rounds pass byte-exact after an idle interval.
 
+- **Direct timed TX and RF servicing (implemented; both LF boards checked 2026-10-02)**:
+  TIMER1 alarm 3 issues only the prepared five-byte `SET_TX` in a RAM-resident zero-latency
+  ISR; it uses a SRAM mailbox and bounded polling without kernel calls. An ordinary alarm
+  then notifies the owner. All other SPI operations retain DMA. Data24 raises its RF owner
+  to meta-IRQ priority; serial TX/RX notifications run on the system workqueue, and management
+  restores ordinary priority. No upstream source is modified. LF/HF production builds pass.
+  With the idle phase guard, five unpaced 64 KiB duplex rounds pass byte-exact in 4.309, 4.214,
+  4.309, 4.211 and 4.261 s (15.2-15.8 kB/s per direction). Both boards add zero preparation or
+  trigger delays, serial drops, recovery probes or missed timer boundaries during the rounds.
+  Trigger jitter is at most 3 us; `SET_TX` takes 4 us, with observed startup maxima of 269/243 us.
+  Retransmissions add 97/88. This verifies trigger stability at the unchanged 5 ms reservation;
+  it does not establish the physical throughput limit or tighter-slot acceptance.
+
 ## To-do
 
 ### Radio and protocol

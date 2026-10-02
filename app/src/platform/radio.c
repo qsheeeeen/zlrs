@@ -8,6 +8,9 @@
 #include "platform/slot_timer.h"
 
 #include <string.h>
+#include <hardware/gpio.h>
+#include <hardware/structs/spi.h>
+#include <zephyr/dt-bindings/gpio/gpio.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/usp/lora_lbm_transceiver.h>
@@ -402,59 +405,123 @@ int zlrs_radio_launch(void)
 	return 0;
 }
 
-static K_SEM_DEFINE(launch_request_sem, 0, 1);
-static K_SEM_DEFINE(launch_result_sem, 0, 1);
-static uint32_t launch_target_us;
-static int launch_result;
+#define RADIO_NODE     DT_CHOSEN(zephyr_lorawan_transceiver)
+#define RADIO_CS_PIN   DT_SPI_DEV_CS_GPIOS_PIN(RADIO_NODE)
+#define RADIO_BUSY_PIN DT_GPIO_PIN(RADIO_NODE, busy_gpios)
+static spi_hw_t *const launch_spi = (spi_hw_t *)DT_REG_ADDR(DT_BUS(RADIO_NODE));
 
-static void launch_thread(void *p1, void *p2, void *p3)
+/* Published only after the RAL has completed every SPI/DMA preparation operation.
+ * The RF owner blocks until fired. The ISR touches only this mailbox and hardware. */
+static volatile struct {
+	uint8_t command[5];
+	uint32_t target_us;
+	uint32_t irq_us;
+	uint32_t begin_us;
+	uint32_t command_us;
+	int result;
+	bool fired;
+} launch_mailbox;
+
+static void __ramfunc launch_command_isr(uint32_t irq_time_us)
 {
-	ARG_UNUSED(p1);
-	ARG_UNUSED(p2);
-	ARG_UNUSED(p3);
+	uint32_t sent = 0U;
+	uint32_t received = 0U;
+	int result = -EIO;
 
-	for (;;) {
-		struct zlrs_slot_timer_wait timing;
-
-		(void)k_sem_take(&launch_request_sem, K_FOREVER);
-		zlrs_slot_timer_wait_until(launch_target_us, &timing);
-		const uint32_t late_before = diag.trigger_late_starts;
-
-		/* Keep diagnostic accounting after the time-critical command. */
-		launch_result = zlrs_radio_launch();
-		if (timing.armed) {
-			diag.launch_irq_late_us_last = timing.irq_us - launch_target_us;
-			diag.launch_irq_late_us_max =
-				MAX(diag.launch_irq_late_us_max, diag.launch_irq_late_us_last);
-			diag.launch_wake_us_last = timing.wake_us - timing.irq_us;
-			diag.launch_wake_us_max =
-				MAX(diag.launch_wake_us_max, diag.launch_wake_us_last);
-		}
-		if (diag.trigger_late_starts != late_before) {
-			if (timing.armed && diag.launch_irq_late_us_last > 100U) {
-				diag.late_trigger_irq++;
-			} else {
-				diag.late_trigger_wake++;
-			}
-		}
-		k_sem_give(&launch_result_sem);
+	launch_mailbox.irq_us = irq_time_us;
+	launch_mailbox.begin_us = zlrs_slot_timer_now_us();
+	if ((int32_t)(irq_time_us - launch_mailbox.target_us) > 100) {
+		result = -ETIME;
+		goto done;
 	}
+	/* The public RAL preparation leaves SPI idle and the LR2021 in FS, BUSY low.
+	 * Reject an unexpected bus state rather than interfere with another transfer. */
+	if (gpio_get(RADIO_BUSY_PIN) ||
+	    (launch_spi->sr & (SPI_SSPSR_BSY_BITS | SPI_SSPSR_RNE_BITS)) != 0U ||
+	    (launch_spi->cr1 & SPI_SSPCR1_SSE_BITS) == 0U) {
+		goto done;
+	}
+	gpio_put(RADIO_CS_PIN, false);
+	while (received < sizeof(launch_mailbox.command)) {
+		if (sent < sizeof(launch_mailbox.command) &&
+		    (launch_spi->sr & SPI_SSPSR_TNF_BITS) != 0U) {
+			launch_spi->dr = launch_mailbox.command[sent++];
+		}
+		if ((launch_spi->sr & SPI_SSPSR_RNE_BITS) != 0U) {
+			(void)launch_spi->dr;
+			received++;
+		}
+		if (zlrs_slot_timer_now_us() - launch_mailbox.begin_us > 50U) {
+			goto release_cs;
+		}
+	}
+	while ((launch_spi->sr & SPI_SSPSR_BSY_BITS) != 0U) {
+		if (zlrs_slot_timer_now_us() - launch_mailbox.begin_us > 50U) {
+			goto release_cs;
+		}
+	}
+	result = 0;
+release_cs:
+	gpio_put(RADIO_CS_PIN, true);
+done:
+	launch_mailbox.command_us = zlrs_slot_timer_now_us() - launch_mailbox.begin_us;
+	launch_mailbox.result = result;
+	launch_mailbox.fired = true;
 }
-
-/* Timer bottom half: only the prepared launch command may preempt a scheduler lock.
- * The main thread waits for its result and cannot access the RAL until it completes.
- * This thread never touches USB, link state, packet buffers or configuration. */
-K_THREAD_DEFINE(zlrs_radio_launch_tid, 1536, launch_thread, NULL, NULL, NULL, K_PRIO_COOP(0), 0, 0);
 
 int zlrs_radio_launch_at(uint32_t target_us)
 {
 	if (!prepared || request == NULL || !request->is_tx) {
 		return -EINVAL;
 	}
-	launch_target_us = target_us;
-	k_sem_give(&launch_request_sem);
-	(void)k_sem_take(&launch_result_sem, K_FOREVER);
-	return launch_result;
+	BUILD_ASSERT(DT_NODE_HAS_COMPAT(DT_BUS(RADIO_NODE), arm_pl022));
+	BUILD_ASSERT(RADIO_CS_PIN < 32U && RADIO_BUSY_PIN < 32U);
+	BUILD_ASSERT(DT_SPI_DEV_CS_GPIOS_FLAGS(RADIO_NODE) & GPIO_ACTIVE_LOW);
+	prepared = false;
+	/* SET_TX (0x020d), RTC timeout 0: identical to ral_lr20xx_set_tx(). The
+	 * command is staged in SRAM; no flash, HAL, DMA or kernel calls from the ISR. */
+	launch_mailbox.command[0] = 0x02U;
+	launch_mailbox.command[1] = 0x0dU;
+	launch_mailbox.command[2] = 0U;
+	launch_mailbox.command[3] = 0U;
+	launch_mailbox.command[4] = 0U;
+	launch_mailbox.target_us = target_us;
+	launch_mailbox.fired = false;
+	irq_pending = false;
+	pending = true;
+	diag.transactions++;
+	zlrs_slot_timer_launch_at(target_us, launch_command_isr);
+	while (!launch_mailbox.fired) {
+		const int32_t remaining = (int32_t)(slot_end_us - zlrs_slot_timer_now_us());
+
+		if (remaining <= 0) {
+			zlrs_slot_timer_cancel_launch();
+			pending = false;
+			return -ETIMEDOUT;
+		}
+		(void)k_sem_take(&done_sem, K_USEC(remaining));
+	}
+	begin_us = launch_mailbox.begin_us;
+	diag.launch_irq_late_us_last = launch_mailbox.irq_us - target_us;
+	diag.launch_irq_late_us_max =
+		MAX(diag.launch_irq_late_us_max, diag.launch_irq_late_us_last);
+	diag.launch_wake_us_last = zlrs_slot_timer_now_us() - launch_mailbox.irq_us;
+	diag.launch_wake_us_max = MAX(diag.launch_wake_us_max, diag.launch_wake_us_last);
+	diag.launch_cmd_us_last = launch_mailbox.command_us;
+	diag.launch_cmd_us_max = MAX(diag.launch_cmd_us_max, diag.launch_cmd_us_last);
+	diag.launch_jitter_us_last = begin_us - target_us;
+	diag.tx_launch_cmd_us_last = launch_mailbox.command_us;
+	diag.tx_launch_cmd_us_max = MAX(diag.tx_launch_cmd_us_max, diag.tx_launch_cmd_us_last);
+	diag.launch_jitter_us_max = MAX(diag.launch_jitter_us_max, diag.launch_jitter_us_last);
+	if (launch_mailbox.result != 0) {
+		pending = false;
+		if (launch_mailbox.result == -ETIME) {
+			diag.late_starts++;
+			diag.trigger_late_starts++;
+			diag.late_trigger_irq++;
+		}
+	}
+	return launch_mailbox.result;
 }
 
 int zlrs_radio_init(void)

@@ -31,6 +31,7 @@ struct data_ep {
 	const struct device *dev;
 	struct ring_buf rx;
 	struct ring_buf tx;
+	struct k_work notify_work;
 	uint8_t rx_mem[DATA_RX_RING_LEN];
 	uint8_t tx_mem[DATA_TX_RING_LEN];
 	uint32_t rx_dropped;
@@ -127,8 +128,11 @@ static void data_isr(const struct device *dev, void *user_data)
 	}
 }
 
-static void data_ep_resume_rx(struct data_ep *ep)
+/* Peripheral notifications run outside the RF owner. CDC callbacks share a work
+ * queue with USB transfer bookkeeping and must remain its only FIFO callers. */
+static void data_notify(struct k_work *work)
 {
+	struct data_ep *const ep = CONTAINER_OF(work, struct data_ep, notify_work);
 	const unsigned int key = irq_lock();
 
 	/* Serialize this wakeup with the callback's full-ring check. A consumer must
@@ -138,6 +142,16 @@ static void data_ep_resume_rx(struct data_ep *ep)
 		uart_irq_rx_enable(ep->dev);
 	}
 	irq_unlock(key);
+	if (!ring_buf_is_empty(&ep->tx)) {
+		uart_irq_tx_enable(ep->dev);
+	}
+}
+
+static void data_ep_resume_rx(struct data_ep *ep)
+{
+	if (ep->rx_paused && ring_buf_space_get(&ep->rx) >= 64U) {
+		(void)k_work_submit(&ep->notify_work);
+	}
 }
 
 /* Drop bytes from the inactive endpoint: keeping them would send stale data after a switch */
@@ -210,6 +224,7 @@ int zlrs_link_data_init(uint32_t baud)
 
 		ring_buf_init(&data_eps[i].rx, sizeof(data_eps[i].rx_mem), data_eps[i].rx_mem);
 		ring_buf_init(&data_eps[i].tx, sizeof(data_eps[i].tx_mem), data_eps[i].tx_mem);
+		k_work_init(&data_eps[i].notify_work, data_notify);
 
 		/*
 		 * Must be checked: a driver without IRQ transfers returns -ENOSYS/-ENOTSUP, and ignoring
@@ -271,7 +286,7 @@ uint16_t zlrs_link_data_write(const uint8_t *buf, uint16_t len)
 
 	if (written > 0U) {
 		/* tx_enable returns void; a failed send only shows up as a peer timeout or retransmit */
-		uart_irq_tx_enable(ep->dev);
+		(void)k_work_submit(&ep->notify_work);
 	}
 	if (written < len) {
 		/* Counted, not silent: this is passthrough data the host may never see */

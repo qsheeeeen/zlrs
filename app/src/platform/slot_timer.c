@@ -2,7 +2,8 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * TIMER1 alarm 0 advances absolute slot boundaries independently of radio work.
- * The ISR only publishes timing and wakes the thread; SPI stays on the link thread.
+ * Ordinary alarms publish timing and wake the owner. Alarm 3 launches the prepared
+ * command from RAM without kernel interaction, then pends an ordinary notification.
  */
 #include "platform/slot_timer.h"
 #include "zlrs/link/slot_clock.h"
@@ -14,8 +15,9 @@
 #include <zephyr/irq.h>
 #include <zephyr/kernel.h>
 
-#define SLOT_TIMER_NODE DT_ALIAS(zlrs_slot_timer)
-#define SLOT_TIMER_IRQ  DT_IRQ_BY_IDX(SLOT_TIMER_NODE, 0, irq)
+#define SLOT_TIMER_NODE  DT_ALIAS(zlrs_slot_timer)
+#define SLOT_TIMER_IRQ   DT_IRQ_BY_IDX(SLOT_TIMER_NODE, 0, irq)
+#define LAUNCH_TIMER_IRQ DT_IRQ_BY_IDX(SLOT_TIMER_NODE, 3, irq)
 
 static timer_hw_t *const timer = (timer_hw_t *)DT_REG_ADDR(SLOT_TIMER_NODE);
 static const struct device *const clk = DEVICE_DT_GET(DT_CLOCKS_CTLR(SLOT_TIMER_NODE));
@@ -28,8 +30,9 @@ static uint32_t prepare_lead_us;
 static void (*wake_thread)(void);
 static struct zlrs_slot_timer_stats stats;
 static volatile uint32_t delay_irq_us;
+static void (*launch_callback)(uint32_t irq_us);
 
-uint32_t zlrs_slot_timer_now_us(void)
+uint32_t __ramfunc zlrs_slot_timer_now_us(void)
 {
 	return timer->timerawl;
 }
@@ -38,7 +41,7 @@ static void slot_timer_isr(const void *arg)
 {
 	ARG_UNUSED(arg);
 	timer->intr = 1U;
-	timer->intf &= ~1U;
+	hw_clear_bits(&timer->intf, 1U);
 	if (!running) {
 		return;
 	}
@@ -60,7 +63,7 @@ static void slot_timer_isr(const void *arg)
 	timer->alarm[0] = clock.next_us;
 	/* An interrupt between the comparison and the alarm write must not lose an alarm. */
 	if ((int32_t)(zlrs_slot_timer_now_us() - clock.next_us) >= 0) {
-		timer->intf |= 1U;
+		hw_set_bits(&timer->intf, 1U);
 	}
 
 	if (wake_thread != NULL) {
@@ -73,7 +76,7 @@ static void delay_isr(const void *arg)
 	ARG_UNUSED(arg);
 	delay_irq_us = zlrs_slot_timer_now_us();
 	timer->intr = 2U;
-	timer->intf &= ~2U;
+	hw_clear_bits(&timer->intf, 2U);
 	k_sem_give(&delay_sem);
 }
 
@@ -81,10 +84,47 @@ static void deadline_isr(const void *arg)
 {
 	ARG_UNUSED(arg);
 	timer->intr = 4U;
-	timer->intf &= ~4U;
+	hw_clear_bits(&timer->intf, 4U);
 	if (running && wake_thread != NULL) {
 		wake_thread();
 	}
+}
+
+/* Direct IRQ ABI, deliberately without kernel entry/exit or PM bookkeeping.
+ * Only the short, prepared hardware command runs here. Alarm 2 does notification
+ * in ordinary interrupt context, even if a USB handler is still active. */
+static void __ramfunc __attribute__((interrupt("IRQ"))) launch_timer_isr(void)
+{
+	const uint32_t now = timer->timerawl;
+
+	timer->intr = 8U;
+	hw_clear_bits(&timer->intf, 8U);
+	if (launch_callback != NULL) {
+		launch_callback(now);
+	}
+	hw_set_bits(&timer->intf, 4U);
+}
+
+void zlrs_slot_timer_cancel_launch(void)
+{
+	irq_disable(LAUNCH_TIMER_IRQ);
+	hw_clear_bits(&timer->inte, 8U);
+	timer->armed = 8U;
+	timer->intr = 8U;
+	hw_clear_bits(&timer->intf, 8U);
+	NVIC_ClearPendingIRQ(LAUNCH_TIMER_IRQ);
+}
+
+void zlrs_slot_timer_launch_at(uint32_t target_us, void (*fire)(uint32_t irq_us))
+{
+	zlrs_slot_timer_cancel_launch();
+	launch_callback = fire;
+	timer->alarm[3] = target_us;
+	hw_set_bits(&timer->inte, 8U);
+	if ((int32_t)(zlrs_slot_timer_now_us() - target_us) >= 0) {
+		hw_set_bits(&timer->intf, 8U);
+	}
+	irq_enable(LAUNCH_TIMER_IRQ);
 }
 
 void zlrs_slot_timer_deadline(uint32_t deadline_us)
@@ -93,11 +133,11 @@ void zlrs_slot_timer_deadline(uint32_t deadline_us)
 
 	timer->armed = 4U;
 	timer->intr = 4U;
-	timer->intf &= ~4U;
+	hw_clear_bits(&timer->intf, 4U);
 	timer->alarm[2] = deadline_us;
-	timer->inte |= 4U;
+	hw_set_bits(&timer->inte, 4U);
 	if ((int32_t)(zlrs_slot_timer_now_us() - deadline_us) >= 0) {
-		timer->intf |= 4U;
+		hw_set_bits(&timer->intf, 4U);
 	}
 	irq_unlock(key);
 }
@@ -140,6 +180,7 @@ int zlrs_slot_timer_init(void)
 		    DT_IRQ_BY_IDX(SLOT_TIMER_NODE, 1, priority), delay_isr, NULL, 0);
 	IRQ_CONNECT(DT_IRQ_BY_IDX(SLOT_TIMER_NODE, 2, irq),
 		    DT_IRQ_BY_IDX(SLOT_TIMER_NODE, 2, priority), deadline_isr, NULL, 0);
+	IRQ_DIRECT_CONNECT(LAUNCH_TIMER_IRQ, 0, launch_timer_isr, IRQ_ZERO_LATENCY);
 	irq_enable(DT_IRQ_BY_IDX(SLOT_TIMER_NODE, 2, irq));
 	irq_enable(SLOT_TIMER_IRQ);
 	irq_enable(DT_IRQ_BY_IDX(SLOT_TIMER_NODE, 1, irq));
@@ -148,12 +189,13 @@ int zlrs_slot_timer_init(void)
 
 void zlrs_slot_timer_stop(void)
 {
+	zlrs_slot_timer_cancel_launch();
 	const unsigned int key = irq_lock();
 
 	running = false;
 	timer->inte = 0U;
-	timer->armed = 7U;
-	timer->intr = 7U;
+	timer->armed = 15U;
+	timer->intr = 15U;
 	timer->intf = 0U;
 	irq_unlock(key);
 	k_sem_reset(&frame_sem);
@@ -211,11 +253,11 @@ void zlrs_slot_timer_wait_until(uint32_t deadline_us, struct zlrs_slot_timer_wai
 	k_sem_reset(&delay_sem);
 	timer->armed = 2U;
 	timer->intr = 2U;
-	timer->intf &= ~2U;
+	hw_clear_bits(&timer->intf, 2U);
 	timer->alarm[1] = deadline_us;
-	timer->inte |= 2U;
+	hw_set_bits(&timer->inte, 2U);
 	if ((int32_t)(zlrs_slot_timer_now_us() - deadline_us) >= 0) {
-		timer->intf |= 2U;
+		hw_set_bits(&timer->intf, 2U);
 	}
 	irq_unlock(key);
 	do {

@@ -48,8 +48,9 @@ Both links share one radio owner on the link thread. USP supplies RAL, the LR20x
 Zephyr SPI/GPIO support; RAC and the radio planner are not initialized or run.
 
 RP2350 TIMER1 runs at 1 MHz. Alarm 0 advances the four absolute slot boundaries and publishes
-the latest frame; alarm 1 wakes the owner at a slot boundary or fixed TX launch offset; alarm 2
-ends the radio window before the next slot. The ISR performs no SPI. A delayed thread skips
+the latest frame; alarm 1 wakes the owner for preparation; alarm 2 ends the radio window and
+publishes ordinary completion notifications. Alarm 3 issues the prepared five-byte `SET_TX`
+from a RAM-resident zero-latency ISR, bypassing kernel interrupt locks. A delayed thread skips
 expired slots and advances hop/frame state without building or transmitting old packets.
 Frame snapshots consume any pending wake token under the same interrupt lock, and the owner
 rejects an already consumed frame number. Management pauses radio work while the absolute clock keeps running, so missed frames can be
@@ -161,16 +162,18 @@ the log. See [09-protocol](09-protocol.md) 5.2.
 
 | Thread | Priority | Responsibility |
 | --- | --- | --- |
-| Link thread (`main`) | `-2` | link state machines, building and submitting transactions, results, system state broadcast |
-| TX launch (`zlrs_radio_launch`) | highest cooperative priority, meta-IRQ | timer bottom half; only the prepared TX command, with the link thread waiting |
+| Link thread (`main`) | highest cooperative priority, meta-IRQ in data24; `-2` otherwise | link state machines, radio preparation/completion, system state broadcast; management temporarily uses `-2` |
 | USB core / controller | upstream cooperative priorities | USB events; vendor source and scheduling are unchanged |
 | LED thread (`zlrs_led`) | `7` (preemptive) | renders the system state it subscribes to and writes the WS2812 (`app/src/ui/led.c`) |
 | Button thread (`zlrs_button`) | `8` (preemptive) | samples the button, reports a hold on the bus (`app/src/ui/button.c`) |
 | Serial | hardware ISR or upstream CDC workqueue | ring-buffered transfers, no radio decisions |
+| Serial notifications | system workqueue | enables peripheral TX/RX outside the RF thread |
 
-The link thread is cooperative and owns radio preparation and completion. Only the prepared
-TX launch command is handed to its timer bottom half, with radio access serialized by the
-request/result semaphores. `CONFIG_USP_MAIN_THREAD=n` and
+The link thread owns radio preparation and completion. Data24 resumes at DMA, radio and timer
+events even when a cooperative USB worker is active. Serial peripheral notifications use the
+system workqueue; CDC callbacks remain the only callers of CDC FIFO operations. Only the
+prepared TX command is handed to alarm 3; the owner waits without touching SPI until the ISR
+publishes its SRAM result and alarm 2 wakes it. `CONFIG_USP_MAIN_THREAD=n` and
 `CONFIG_LORA_BASICS_MODEM_DRIVERS_EVENT_TRIGGER_NO_THREAD=y`: the GPIO callback only timestamps the IRQ and
 wakes the owner, which reads status and completes the link transaction. Serial work is bounded
 between frames. Flash operations can still delay IRQ handling; delayed boundaries are counted
@@ -222,11 +225,14 @@ before this preparation reservation, so early FIFO loading never overlaps an act
 The frame alarm publishes the next frame early; protocol decisions still use the planned slot
 time and phase correction is included when calculating the final slot deadline.
 
-The final prepared TX command runs in a dedicated meta-IRQ thread, as the timer interrupt's
-bottom half. Unlike the normal link thread, it can preempt a USB scheduler lock. The link thread
-waits for its result and performs no radio access during this handoff. This thread only waits
-for the launch alarm and issues the prepared command; authentication, configuration, FIFO
-access, IRQ draining and protocol callbacks stay on the link thread.
+The final prepared TX command runs in the RAM-resident alarm 3 ISR. It uses only TIMER1,
+GPIO and PL022 registers plus its SRAM mailbox, with a 50 us bounded polling transfer. It
+calls no kernel, RAL, DMA or logging API and can preempt USB interrupts and kernel IRQ locks.
+SPI DMA still performs configuration, FIFO transfers and status reads. Alarm 3 is armed only
+after those transfers finish; the owner performs no SPI access until launch completes. The
+ISR checks BUSY and controller state before asserting CS and rejects a trigger over 100 us
+late. Alarm 2 performs the subsequent kernel notification. Authentication, configuration,
+FIFO access, IRQ draining and protocol callbacks stay on the link thread.
 
 The board calibration table contains exactly three entries because the vendor BSP consumes
 three; HF pads its unused entry with zero, and LF includes both sub-G coverage and 2.4 GHz.

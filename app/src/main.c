@@ -1470,6 +1470,10 @@ static atomic_t mgmt_request;
 /* Run one management session (ends on EXIT or idle timeout), then resume normal mode. Shared. */
 static void enter_management_mode(void)
 {
+	const int previous_priority = k_thread_priority_get(k_current_get());
+
+	/* Filesystem, configuration and USB replies use ordinary thread context. */
+	k_thread_priority_set(k_current_get(), CONFIG_MAIN_THREAD_PRIORITY);
 	LOG_WRN("entering management mode");
 
 	/* 0 = EXIT, 1 = timeout, -1 = no usable port: the log has to tell them apart */
@@ -1498,6 +1502,7 @@ static void enter_management_mode(void)
 	/* Confirmation and log persistence both write flash; finish them before resuming RF. */
 	confirm_image();
 	log_flush();
+	k_thread_priority_set(k_current_get(), previous_priority);
 }
 
 /* ---- application-side actions the management protocol triggers ----------------- */
@@ -1983,6 +1988,8 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 		    slot_prepare_us);
 	shell_print(sh, "launch jitter last/max=%u/%u us TX startup=%u us",
 		    diag.launch_jitter_us_last, diag.launch_jitter_us_max, diag.tx_startup_us_last);
+	shell_print(sh, "TX command last/max=%u/%u us", diag.tx_launch_cmd_us_last,
+		    diag.tx_launch_cmd_us_max);
 	shell_print(sh, "RX errors header=%u crc=%u length=%u payload=%u expired=%u incomplete=%u",
 		    diag.rx_header_errors, diag.rx_crc_errors, diag.rx_length_errors,
 		    diag.rx_payload_errors, diag.rx_expired, diag.rx_incomplete);
@@ -2441,6 +2448,13 @@ int main(void)
 	zlrs_slot_timer_start(frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE,
 			      slot_prepare_us, zlrs_radio_wake);
 	uint32_t consumed_frame = 0U;
+
+	if (ZLRS_DATA24) {
+		/* RF servicing must resume at DMA/radio/timer events even when an upstream
+		 * cooperative USB worker is active. Serial notifications are deferred. */
+		BUILD_ASSERT(CONFIG_NUM_METAIRQ_PRIORITIES >= 1);
+		k_thread_priority_set(k_current_get(), K_PRIO_COOP(0));
+	}
 
 	for (;;) {
 		uint32_t start_us;

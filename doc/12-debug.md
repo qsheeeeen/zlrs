@@ -282,8 +282,10 @@ remains available through `CONFIG_ZLRS_APP_BENCH_RAW_MS`, before the slot owner 
 frames/slots; RAL TX completions, RX packets, setup cost, late launches and chip errors; packet
 build cost and RX phase error/correction. Empty RX windows are expected when the peer is idle.
 It also separates preparation time from launch command time, reports FIFO readiness lead,
-launch jitter and RF startup time. A ready FIFO does not imply the hardware alarm woke the
-owner on time; late launches remain discarded.
+launch jitter and RF startup time. `TX command` isolates the five-byte scheduled trigger
+from the general command timing, which also includes RX. `launch wait` now measures IRQ
+entry and the subsequent result notification; notification latency occurs after actual TX
+and does not delay the trigger. Late launches remain discarded.
 The aggregate abort counter includes those windows and is not a TX failure count.
 Normal logs wait in the RAM queue while RF runs; enter management mode to flush them to the
 console and flash. This keeps flash erase/program operations from masking timer IRQs during
@@ -299,11 +301,12 @@ MTU. Hardware timer scheduling does not by itself establish throughput acceptanc
 [13-roadmap](13-roadmap.md) for the pending radio checks.
 
 The default preparation reservation is 6000 us with SPI DMA (2800 us with polling), and
-the launch offset is 200 us. Receiver clock alignment uses a 500 us startup estimate with
-DMA (250 us with polling). A dedicated
-meta-IRQ thread executes the prepared `SET_TX` as the hardware alarm's bottom half, while the
-link thread waits for its result. USB core/controller threads and CDC work retain upstream
-cooperative scheduling. The radio bottom half can preempt them without changing vendor code.
+the launch offset is 200 us. Receiver clock alignment uses a 250 us startup estimate.
+The RAM-resident zero-latency alarm 3 ISR executes the prepared `SET_TX` with bounded polling,
+while the link thread waits for its result. Data24 raises the RF owner to meta-IRQ priority;
+management temporarily restores ordinary priority. USB core/controller threads and CDC work
+retain upstream cooperative scheduling. Serial notifications are deferred to the system
+workqueue. No vendor source or scheduling changes are needed.
 Keeping the USB core above CDC work also preserves the upstream completion ordering for ZLPs.
 
 Exclusive data24 uses a separate maximum-frame budget and

@@ -21,7 +21,7 @@ int zlrs_radio_launch_at(uint32_t target_us);
 /* Budget for SET_TX, synthesizer and PA startup before the first air bit. */
 #if defined(CONFIG_SPI_PL022_DMA)
 #define ZLRS_RADIO_STARTUP_US       800U
-#define ZLRS_RADIO_PHASE_STARTUP_US 500U
+#define ZLRS_RADIO_PHASE_STARTUP_US 250U
 #else
 #define ZLRS_RADIO_STARTUP_US       500U
 #define ZLRS_RADIO_PHASE_STARTUP_US 250U
@@ -42,6 +42,8 @@ struct zlrs_radio_diag {
 	uint32_t submit_us_max;
 	uint32_t launch_cmd_us_last;
 	uint32_t launch_cmd_us_max;
+	uint32_t tx_launch_cmd_us_last;
+	uint32_t tx_launch_cmd_us_max;
 	uint32_t preload_lead_us_last;
 	uint32_t launch_jitter_us_last;
 	uint32_t launch_jitter_us_max;
