@@ -4,6 +4,36 @@ This document holds **to-dos, the pending-defaults ledger and acceptance criteri
 Finished work gets a one-line summary; details live in code comments and the design is in the
 design documents.
 
+## First performance milestone: 1 kHz CRSF control, 2026-10-04
+
+Prioritize 1 kHz CRSF control before maximizing bidirectional DATA24 throughput. Shorter
+radio frames and a higher proportion of framing overhead are acceptable to achieve stable
+control timing. Protocol fields, channel encoding, PHY and driver/scheduler choices remain
+open under the system-wide design brief below.
+
+- Define a 1000 us control cadence and measure actual fresh RC delivery, launch jitter,
+  sample age and CRSF output timing separately. Repeating an old sample does not establish
+  a 1 kHz input-to-output update rate.
+- Evaluate asymmetric uplink/telemetry scheduling. Local ExpressLRS F1000 configuration
+  uses a 1000 us RF interval, an 8-byte OTA packet and a suggested telemetry ratio of 1:128.
+  Its TX timer skips uplink transmission in telemetry slots: this permits at most
+  992.1875 uplink slots/s and 7.8125 telemetry slots/s before SYNC or other uplink traffic.
+  F1000 carries four 10-bit main channels in every RC packet and multiplexes auxiliary
+  channels; it does not send all sixteen 11-bit CRSF channels every millisecond.
+  See [telemetry allocation](https://www.expresslrs.org/quick-start/transmitters/lua-howto/#packet-rate-and-telemetry-ratio)
+  and [channel encoding](https://www.expresslrs.org/software/switch-config/).
+- If telemetry replaces a control slot, report the resulting control rate and longer update
+  gaps explicitly. To retain a control transmission every millisecond, fit reverse traffic
+  and both direction changes between control deadlines or evaluate a faster underlying cadence.
+- As an initial budget candidate, the existing 2.4 GHz FLRC parameters (2.6 Mbps, CR 3/4,
+  24-bit AGC preamble, 16-bit sync, variable length and CRC16) give 162 us calculated airtime
+  for 22 bytes of CRSF channel data plus the current 7-byte P1 framing. This excludes radio
+  startup, SPI, validation and turnaround. A 26-byte CRSF UART frame at 420000 baud with
+  8N1 occupies about 619 us per port; include sustained input/output capacity and pipeline
+  latency in acceptance. These calculations are not hardware acceptance or a required format.
+- Hardware acceptance remains pending: sustained fresh control updates on both boards,
+  selected telemetry policy, timing tails, loss/failsafe behavior and unattended recovery.
+
 ## DATA24 performance design brief, 2026-10-04
 
 The user requests a system-wide redesign toward the maximum measured bidirectional DATA24
