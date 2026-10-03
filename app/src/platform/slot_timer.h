@@ -31,6 +31,8 @@ uint32_t zlrs_slot_timer_next_frame_us(void);
 void zlrs_slot_timer_wait_until(uint32_t deadline_us, struct zlrs_slot_timer_wait *timing);
 /* The callback runs in a RAM-resident zero-latency ISR: no kernel or driver APIs.
  * A normal alarm-2 interrupt notifies the RF owner after the callback returns. */
-void zlrs_slot_timer_launch_at(uint32_t target_us, void (*fire)(uint32_t irq_us));
+#define ZLRS_SLOT_TIMER_LAUNCH_LEAD_US 25U
+/* False means the deadline cannot be armed in advance; no late software trigger. */
+bool zlrs_slot_timer_launch_at(uint32_t target_us, void (*fire)(uint32_t irq_us));
 void zlrs_slot_timer_cancel_launch(void);
 void zlrs_slot_timer_stats(struct zlrs_slot_timer_stats *out);

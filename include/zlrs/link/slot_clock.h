@@ -20,6 +20,7 @@ typedef struct {
 void zlrs_slot_clock_init(zlrs_slot_clock_t *clock, uint32_t origin_us, uint32_t period_us);
 uint32_t zlrs_slot_clock_offset(uint32_t period_us, uint8_t slot);
 bool zlrs_slot_clock_due(const zlrs_slot_clock_t *clock, uint32_t now_us);
+bool zlrs_slot_clock_launch_ready(uint32_t now_us, uint32_t target_us, uint32_t lead_us);
 uint32_t zlrs_slot_clock_advance(zlrs_slot_clock_t *clock, uint32_t now_us);
 void zlrs_slot_clock_shift(zlrs_slot_clock_t *clock, int32_t shift_us);
 uint32_t zlrs_slot_clock_next_origin(const zlrs_slot_clock_t *clock);

@@ -6,6 +6,7 @@
  */
 #include "platform/radio.h"
 #include "platform/slot_timer.h"
+#include "zlrs/link/slot_clock.h"
 
 #include <string.h>
 #include <hardware/gpio.h>
@@ -302,6 +303,16 @@ static bool flrc_unchanged(const zlrs_radio_req_t *req)
 	       memcmp(&cfg.pkt_params, &flrc_cfg.pkt_params, sizeof(cfg.pkt_params)) == 0;
 }
 
+static int late_tx_prepare(uint32_t target_us)
+{
+	diag.late_starts++;
+	diag.prepare_late_starts++;
+	diag.launch_late_us_last =
+		zlrs_slot_timer_now_us() - (target_us - ZLRS_SLOT_TIMER_LAUNCH_LEAD_US);
+	diag.launch_late_us_max = MAX(diag.launch_late_us_max, diag.launch_late_us_last);
+	return -ETIME;
+}
+
 static int prepare_request(zlrs_link_t *link, const zlrs_radio_req_t *req)
 {
 	const uint32_t start = zlrs_slot_timer_now_us();
@@ -375,13 +386,9 @@ static int prepare_request(zlrs_link_t *link, const zlrs_radio_req_t *req)
 	if (timed_slot) {
 		if (req->is_tx) {
 			/* TX has a fixed launch point; receivers configure before it. */
-			if ((int32_t)(zlrs_slot_timer_now_us() - tx_at_us) > 100) {
-				diag.late_starts++;
-				diag.prepare_late_starts++;
-				diag.launch_late_us_last = zlrs_slot_timer_now_us() - tx_at_us;
-				diag.launch_late_us_max =
-					MAX(diag.launch_late_us_max, diag.launch_late_us_last);
-				return -ETIME;
+			if (!zlrs_slot_clock_launch_ready(zlrs_slot_timer_now_us(), tx_at_us,
+							  ZLRS_SLOT_TIMER_LAUNCH_LEAD_US)) {
+				return late_tx_prepare(tx_at_us);
 			}
 			if ((int32_t)(tx_at_us + ZLRS_RADIO_STARTUP_US +
 				      zlrs_radio_airtime_us(&req->mod, req->size) - slot_end_us) >=
@@ -502,7 +509,7 @@ static void __ramfunc launch_command_isr(uint32_t irq_time_us)
 
 	launch_mailbox.irq_us = irq_time_us;
 	launch_mailbox.begin_us = zlrs_slot_timer_now_us();
-	if ((int32_t)(irq_time_us - launch_mailbox.target_us) > 100) {
+	if ((int32_t)(irq_time_us - launch_mailbox.target_us) > 10) {
 		result = -ETIME;
 		goto done;
 	}
@@ -562,8 +569,11 @@ int zlrs_radio_launch_at(uint32_t target_us)
 	irq_pending = false;
 	idle_in_fs = false;
 	pending = true;
+	if (!zlrs_slot_timer_launch_at(target_us, launch_command_isr)) {
+		pending = false;
+		return late_tx_prepare(target_us);
+	}
 	diag.transactions++;
-	zlrs_slot_timer_launch_at(target_us, launch_command_isr);
 	while (!launch_mailbox.fired) {
 		const int32_t remaining = (int32_t)(slot_end_us - zlrs_slot_timer_now_us());
 

@@ -297,6 +297,11 @@ Normal logs wait in the RAM queue while RF runs; enter management mode to flush 
 console and flash. This keeps flash erase/program operations from masking timer IRQs during
 normal traffic. Startup, explicit configuration persistence and panic handling can still delay IRQs.
 
+Scheduled TX requires at least 25 us before the alarm when preparation/arming finishes.
+Expired alarms are rejected without a software-forced trigger. The ISR also rejects entry
+more than 10 us late before touching SPI. `prepare` includes attempts discarded because
+they missed that arming margin; ARQ retains their bytes for a later slot.
+
 The slot budget uses the native FLRC airtime calculation (variable header, CRC and coding),
 plus `ZLRS_APP_PREPARE_US`, the configured TX guard, a 500 us RF startup allowance and a
 100 us end margin. Packet construction, authentication and FIFO writes belong to the preparation

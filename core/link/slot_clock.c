@@ -22,6 +22,12 @@ bool zlrs_slot_clock_due(const zlrs_slot_clock_t *clock, uint32_t now_us)
 	return (int32_t)(now_us - clock->next_us) >= 0;
 }
 
+bool zlrs_slot_clock_launch_ready(uint32_t now_us, uint32_t target_us, uint32_t lead_us)
+{
+	return lead_us > 0U && lead_us <= INT32_MAX &&
+	       (int32_t)(target_us - now_us) >= (int32_t)lead_us;
+}
+
 uint32_t zlrs_slot_clock_advance(zlrs_slot_clock_t *clock, uint32_t now_us)
 {
 	uint32_t boundaries = 0U;

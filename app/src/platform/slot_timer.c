@@ -128,16 +128,22 @@ void zlrs_slot_timer_cancel_launch(void)
 	NVIC_ClearPendingIRQ(LAUNCH_TIMER_IRQ);
 }
 
-void zlrs_slot_timer_launch_at(uint32_t target_us, void (*fire)(uint32_t irq_us))
+bool zlrs_slot_timer_launch_at(uint32_t target_us, void (*fire)(uint32_t irq_us))
 {
 	zlrs_slot_timer_cancel_launch();
+	if (!zlrs_slot_clock_launch_ready(zlrs_slot_timer_now_us(), target_us,
+					  ZLRS_SLOT_TIMER_LAUNCH_LEAD_US)) {
+		return false;
+	}
 	launch_callback = fire;
 	timer->alarm[3] = target_us;
 	hw_set_bits(&timer->inte, 8U);
-	if ((int32_t)(zlrs_slot_timer_now_us() - target_us) >= 0) {
-		hw_set_bits(&timer->intf, 8U);
+	if (!zlrs_slot_clock_launch_ready(zlrs_slot_timer_now_us(), target_us, 1U)) {
+		zlrs_slot_timer_cancel_launch();
+		return false;
 	}
 	irq_enable(LAUNCH_TIMER_IRQ);
+	return true;
 }
 
 void zlrs_slot_timer_deadline(uint32_t deadline_us)

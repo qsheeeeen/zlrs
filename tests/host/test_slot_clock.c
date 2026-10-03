@@ -72,4 +72,19 @@ void test_slot_clock(void)
 	      (UINT32_MAX - 5U) / 1000U);
 	/* Kernel millisecond wrap preserves normal uint32_t uptime arithmetic. */
 	CHECK(zlrs_slot_clock_timestamp_ms((uint64_t)UINT32_MAX * 1000U, 1999U, 1999U) == 0U);
+	/* TX must be ready before its alarm; an expired deadline cannot be force-fired. */
+	CHECK(zlrs_slot_clock_launch_ready(1000U, 1025U, 25U));
+	CHECK(zlrs_slot_clock_launch_ready(999U, 1025U, 25U));
+	CHECK(!zlrs_slot_clock_launch_ready(1001U, 1025U, 25U));
+	CHECK(!zlrs_slot_clock_launch_ready(1025U, 1025U, 25U));
+	CHECK(!zlrs_slot_clock_launch_ready(1026U, 1025U, 25U));
+	CHECK(zlrs_slot_clock_launch_ready(UINT32_MAX - 15U, 9U, 25U));
+	CHECK(!zlrs_slot_clock_launch_ready(UINT32_MAX - 14U, 9U, 25U));
+	CHECK(!zlrs_slot_clock_launch_ready(9U, UINT32_MAX - 15U, 25U));
+	CHECK(zlrs_slot_clock_launch_ready(UINT32_MAX, 0U, 1U));
+	CHECK(!zlrs_slot_clock_launch_ready(0U, 0U, 1U));
+	CHECK(!zlrs_slot_clock_launch_ready(0U, 1000U, 0U));
+	CHECK(!zlrs_slot_clock_launch_ready(0U, 1000U, UINT32_MAX));
+	CHECK(zlrs_slot_clock_launch_ready(0U, INT32_MAX, INT32_MAX));
+	CHECK(!zlrs_slot_clock_launch_ready(0U, (uint32_t)INT32_MAX + 1U, 1U));
 }

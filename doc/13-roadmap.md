@@ -274,6 +274,19 @@ design documents.
 
 ### Radio and protocol
 
+- **Arm TX only in advance (implemented; LF checked 2026-10-03)**: preparation and TIMER1
+  arming require a 25 us lead. An expired alarm is rejected instead of forcing the interrupt;
+  ISR entry more than 10 us late is rejected before SPI. Fourteen host checks cover the lead
+  boundary, invalid margins, past targets and counter wrap; all 13128 ASan/UBSan checks pass.
+  Five 1048577-byte board-source/sink duplex rounds pass at 56.2-61.2 kB/s per direction.
+  Trigger jitter stays within 2/3 us; neither peer adds late triggers or missed boundaries/slots.
+  RX rejects five preparations that miss the margin, so this does not establish zero missed
+  preparation deadlines. Five 64 KiB USB rounds also pass in 2.105/2.106/2.159/2.108/2.104 s.
+  Verified both-peer, RX and TX software reboots each pass three 64 KiB USB rounds, with
+  trigger jitter within 2 us and no new late triggers; the RX reboot transfer adds one
+  rejected preparation. The experiment still uses 1 ms preparation and fixed 2441 MHz;
+  shipped default and hopping acceptance remain unchanged.
+
 - **One protocol clock (implemented; LF checked 2026-10-03)**: TIMER1 now timestamps actual
   completions, timeout ticks, acquisition and management-triggered pairing as well as planned
   slots. Hardware snapshots show kernel uptime falling another 12 ms behind TIMER1 during a
