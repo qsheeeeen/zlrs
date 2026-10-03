@@ -4,6 +4,48 @@ This document holds **to-dos, the pending-defaults ledger and acceptance criteri
 Finished work gets a one-line summary; details live in code comments and the design is in the
 design documents.
 
+## DATA24 performance design brief, 2026-10-04
+
+The user requests a system-wide redesign toward the maximum measured bidirectional DATA24
+throughput. Existing implementation choices are candidates to replace. Every protocol field,
+its width and even its presence are open to reconsideration, including transmission counters,
+data sequences, ACKs, authentication tags, CRCs, framing, packet types and handshake messages.
+The same applies to ARQ/window policy, MTU, FIFO use, buffering/copies, DMA, thread ownership,
+interrupts, scheduling, slot count, turnaround and transport integration. Earlier 8-byte or
+7-byte frame sketches are candidates, not requirements. Compatibility with existing modes or
+formats does not constrain this exploration. Keep the resulting design clear and maintainable;
+make integration changes inside ZLRS without changing or patching other repositories, and keep
+hardware recovery unattended.
+
+Research directions and acceptance:
+
+- **Alternating confirmation bit**: evaluate an ELRS-inspired ACK that changes on acceptance of
+  each new data block. A stop-and-wait design can use one transmit phase bit and one reverse ACK
+  bit in the header, repeating the phase on retransmission and withholding duplicate delivery.
+  ELRS's confirmation is one bit; its actual DATA header also carries a package index. Neither
+  that index nor our four-frame window is a required design choice. Define initialization,
+  lost data/ACK handling, delayed duplicates, idle periods, resynchronization and peer reboot
+  behavior as part of the candidate protocol. Compare alternatives on measured goodput.
+- **Compact unified framing**: use bits for flags and bounded values, infer fields from agreed
+  context when possible, aggregate packet types, and place link control in the header. Carry
+  reverse ACK/control in a header-only packet when no user data is available. Reconsider each
+  field's purpose before choosing its encoding; do not merely shorten the current format in isolation.
+- **Whole-frame FIFO transfers**: compare one complete TX FIFO write and one complete RX FIFO
+  read per packet with streaming transfers. The current vendor initialization enables separate
+  extended TX/RX FIFOs large enough for a 511-byte frame. Capacity is not the reason for the
+  present 128-byte TX prefix. Measure transaction count, copies, CPU work and critical-path time.
+- **Joint protocol and scheduling design**: consider packet preparation, authentication, FIFO
+  loading, receive validation, ACK generation and the next launch together. A one-bit ACK
+  candidate needs timely reverse confirmation; the current preload can carry an ACK one exchange
+  behind, so adopting it unchanged could waste a complete exchange. Neither a particular preload
+  policy nor a fixed preparation/guard reservation is a prerequisite.
+- **End-to-end evidence**: derive throughput bounds from hardware capabilities and the chosen
+  PHY/protocol, then account for air occupancy, turnaround, ACK latency, aggregation, queue
+  stalls, USB/UART transport, copies, DMA, interrupts and thread scheduling. Use board-generated
+  traffic and host-to-host traffic to separate costs. Compare whole designs under matched loads,
+  with byte-exact delivery, timing, loss, backpressure and unattended recovery measurements on
+  both boards. Reaching the current slot plan's ceiling does not establish the physical limit.
+
 ## Implemented behavior
 
 - **Runtime data24 mode**: management setting `set-mode data24` disables control and uses the
@@ -587,7 +629,8 @@ design documents.
   suite includes these regressions under ASan/UBSan. Both peers must upgrade together because older
   firmware discards receive progress on a recovery probe. Fixed-channel duplex passes the
   short hardware test above; long-duration throughput and latency acceptance remain open.
-  Later the ack can shrink to one header bit once the RX always has a frame to ride along.
+  Evaluate an alternating confirmation bit together with its ARQ and scheduling model, as
+  described in the DATA24 performance design brief above.
 - **Over-the-air firmware update** (optional): images travel over the 2.4G data link, roughly
   10 s per MB.
 
