@@ -202,6 +202,36 @@ class ManagementTests(unittest.TestCase):
             self.assertEqual(mgmt.dump_logs("fake", 115200, 1, directory), 1)
         self.assertEqual(link.write.call_args.args[0], mgmt.encode(mgmt.CMD_EXIT))
 
+    def test_log_read_ack_reports_status_and_offset_then_exits(self):
+        cases = ((bytes([mgmt.CMD_LOG_READ, 2]), "wrong state"),
+                 (bytes([mgmt.CMD_LOG_READ, 0]), "received only an OK ACK"),
+                 (bytes([mgmt.CMD_STATUS, 2]), "mismatched ACK"),
+                 (b"", "malformed"))
+        for ack, reason in cases:
+            with self.subTest(reason=reason):
+                link = Mock()
+                link.__enter__ = Mock(return_value=link)
+                link.__exit__ = Mock(return_value=False)
+                info = b"\x01\x00\x11\x00" + (160).to_bytes(4, "little")
+                chunk = b"\x00" + bytes(4) + b"z" * 80
+                responses = io.BytesIO(
+                    mgmt.encode(mgmt.ACK, bytes([mgmt.CMD_ENTER, 0])) +
+                    mgmt.encode(mgmt.LOG_INFO_RESP, info) +
+                    mgmt.encode(mgmt.LOG_DATA_RESP, chunk) +
+                    mgmt.encode(mgmt.ACK, ack) +
+                    mgmt.encode(mgmt.ACK, bytes([mgmt.CMD_EXIT, 0])))
+                link.read.side_effect = responses.read
+                output = io.StringIO()
+                with tempfile.TemporaryDirectory() as directory, \
+                        patch.dict(sys.modules, {"serial": Mock(Serial=Mock(return_value=link))}), \
+                        contextlib.redirect_stdout(io.StringIO()), \
+                        contextlib.redirect_stderr(output):
+                    self.assertEqual(mgmt.dump_logs("fake", 115200, 1, directory), 1)
+                    self.assertEqual((Path(directory) / "log.0017.bin").read_bytes(), b"z" * 80)
+                self.assertIn("offset 80", output.getvalue())
+                self.assertIn(reason, output.getvalue())
+                self.assertEqual(link.write.call_args.args[0], mgmt.encode(mgmt.CMD_EXIT))
+
     def test_help_has_no_interactive_option(self):
         rc, output = invoke(mgmt, "--help")
         self.assertEqual(rc, 0)

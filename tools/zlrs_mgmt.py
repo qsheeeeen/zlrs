@@ -377,6 +377,9 @@ def dump_logs(port: str, baud: int, timeout: float, out_dir: str,
                 notice("error", "no answer to the log info request", file=sys.stderr)
                 return 1
             if cmd == ACK:
+                if len(payload) != 2 or payload[0] != CMD_LOG_INFO:
+                    notice("error", "log store: malformed or mismatched ACK", file=sys.stderr)
+                    return 1
                 code = payload[1] if len(payload) == 2 else 0xFF
                 notice("error", f"log store: {STATUS_NAMES.get(code, hex(code))}", file=sys.stderr)
                 return 1
@@ -415,8 +418,19 @@ def dump_logs(port: str, baud: int, timeout: float, out_dir: str,
                         except TimeoutError:
                             notice("error", f"{path}: timed out at offset {written}", file=sys.stderr)
                             return 1
+                        if cmd == ACK:
+                            if len(payload) != 2 or payload[0] != CMD_LOG_READ:
+                                reason = "malformed or mismatched ACK"
+                            elif payload[1] == 0:
+                                reason = "expected log data, received only an OK ACK"
+                            else:
+                                reason = STATUS_NAMES.get(payload[1], hex(payload[1]))
+                            notice("error", f"{path}: read failed at offset {written}: {reason}",
+                                   file=sys.stderr)
+                            return 1
                         if cmd != LOG_DATA_RESP or len(payload) < 5:
-                            notice("error", f"{path}: unexpected response 0x{cmd:02x}", file=sys.stderr)
+                            notice("error", f"{path}: unexpected response 0x{cmd:02x} at offset {written}",
+                                   file=sys.stderr)
                             return 1
                         got = payload[5:]
                         if payload[0] != index or int.from_bytes(payload[1:5], "little") != written:
