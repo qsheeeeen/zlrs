@@ -46,6 +46,7 @@ int main(void)
 	test_proto();
 	test_slot_clock();
 	test_bench_pattern();
+	test_radio_fifo();
 	test_link();
 	test_crsf();
 	test_mgmt();

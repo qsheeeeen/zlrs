@@ -274,6 +274,27 @@ design documents.
 
 ### Radio and protocol
 
+- **Read the RX FIFO during FLRC reception (implemented; LF checked 2026-10-03)**:
+  a 128-byte FIFO threshold wakes the RF owner, which copies decoded prefixes through public
+  RAL APIs while the remainder is on air. CRC/tag checks still precede delivery. Restart,
+  abort and completion discard the prefix count; final-length bounds prevent overflow or
+  rereading the prefix. A coalesced FIFO/RX_DONE IRQ cannot adjust phase using its early
+  timestamp. The 8217 new host bounds checks pass; all 21345 ASan/UBSan checks pass.
+  Three 1048577-byte board-source/sink duplex rounds pass at 55.8-60.7 kB/s per direction,
+  without new late preparations, late triggers or missed boundaries/slots. RX completion
+  snapshots fall from roughly 1.1-1.6 ms to 0.2-0.34 ms. CRC errors and one FIFO payload
+  rejection occur during this run; ARQ still delivers every byte with no pattern errors.
+  Five 64 KiB USB rounds pass in 1.555-1.661 s, so this is reduced completion latency,
+  not an accepted USB throughput gain. Verified both-peer software reboots then pass three
+  64 KiB USB rounds in 1.609/1.562/1.610 s, with no new late preparations/triggers or missed
+  boundaries/slots and trigger jitter within 3 us. USB/IP auto-attach is needed for both boards.
+  LF/HF production builds pass; upstream is unchanged.
+  The accepted experiment retains 1 ms preparation and fixed 2441 MHz.
+  A 0.5 ms preparation experiment delivers five 262145-byte RF rounds at 60.3-68.7 kB/s,
+  but adds 39/19 rejected preparations; USB adds another 44/29 and takes 1.604-1.709 s.
+  Fresh packet construction plus SPI still takes about 0.7-0.8 ms when a staged packet
+  cannot be used. The shipped 1.5 ms reservation remains.
+
 - **Management RX wakeup (implemented; LF checked 2026-10-03)**: received bytes signal a
   semaphore instead of waiting for the next 50 ms poll. The idle housekeeping bound and
   synchronous `ENTER` log flush remain. RX overflow counts bytes rather than chunks.

@@ -133,9 +133,11 @@ complete data path, including radio scheduling and ARQ, rather than raw PHY fram
   chasing.
 - **Under usbipd a re-enumerating device disappears from WSL entirely** (`/dev/serial/by-id/`
   goes away): this happens when the application resets into the bootloader or reboots after a
-  slot swap. Re-attach from the Windows side and carry on; the update tool stops at "waiting for
-  the recovery or application port", and `--recovery-port <port> --no-trigger` resumes without
-  starting over.
+  slot swap. Start `usbipd attach --wsl --busid <busid> --auto-attach` on the Windows side for
+  each board before repeated update/reboot checks. This starts the WSL attach loop with the
+  required privileges; launching the Linux helper as an ordinary user silently fails to attach.
+  If an update has already stopped at "waiting for the recovery or application port",
+  `--recovery-port <port> --no-trigger` resumes without starting over.
 - **Radio numbers** (callback latency, frequency-switch cost, packet error rate, throughput) can
   only be measured on the board; Semtech's `packet_error_rate_flrc` sample is a ready-made
   baseline.
@@ -334,6 +336,13 @@ processing, including SPI, authentication and serial output callbacks; `protocol
 the link-completion call. `IRQ service` includes reading and clearing IRQ status over SPI.
 Compare counter deltas during a transfer; boot, management and configuration work can affect
 the lifetime maxima.
+
+`RX FIFO` counts chunks and bytes read while an FLRC packet is still on air, plus their read
+duration. A 128-byte threshold wakes the same RF owner; no SPI runs in the GPIO ISR. Decoded
+prefixes stay private until RX_DONE and authentication, and an error, restart or abort discards
+them. RX_DONE reads only the remaining tail after checking the final length. `coalesced` counts
+completions reported together with a FIFO IRQ: their earlier GPIO timestamp cannot adjust slot
+phase. Short packets keep the normal completion path.
 
 All link timestamps use TIMER1 through one fixed uptime epoch: planned slots, completions,
 tick checks, acquisition and management-triggered pairing. `protocol clock` reports that time

@@ -2069,6 +2069,9 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "RX finish last/max=%u/%u us protocol last/max=%u/%u us",
 		    diag.rx_finish_us_last, diag.rx_finish_us_max, diag.rx_protocol_us_last,
 		    diag.rx_protocol_us_max);
+	shell_print(sh, "RX FIFO chunks=%u bytes=%u read last/max=%u/%u us coalesced=%u",
+		    diag.rx_fifo_chunks, diag.rx_fifo_bytes, diag.rx_fifo_us_last,
+		    diag.rx_fifo_us_max, diag.rx_done_coalesced);
 	shell_print(sh, "TX expired=%u startup max=%u us IRQ service last/max=%u/%u us",
 		    diag.tx_expired, diag.tx_startup_us_max, diag.irq_service_us_last,
 		    diag.irq_service_us_max);

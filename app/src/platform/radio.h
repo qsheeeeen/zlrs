@@ -27,6 +27,18 @@ int zlrs_radio_launch_at(uint32_t target_us);
 uint32_t zlrs_radio_airtime_us(const zlrs_mod_cfg_t *mod, uint16_t len);
 bool zlrs_radio_rx_timing(uint32_t *done_us, uint32_t *airtime_us);
 
+/* FIFO reads consume a prefix. Validate the total before subtracting it or
+ * forming the next buffer pointer; leave remaining unchanged on invalid input. */
+static inline bool zlrs_radio_fifo_remaining(uint16_t capacity, uint16_t copied, uint32_t total,
+					     uint16_t *remaining)
+{
+	if (total > capacity || copied > total) {
+		return false;
+	}
+	*remaining = (uint16_t)(total - copied);
+	return true;
+}
+
 struct zlrs_radio_diag {
 	uint32_t transactions;
 	uint32_t stale_irq;
@@ -75,6 +87,11 @@ struct zlrs_radio_diag {
 	uint32_t rx_finish_us_max;
 	uint32_t rx_protocol_us_last;
 	uint32_t rx_protocol_us_max;
+	uint32_t rx_fifo_chunks;
+	uint32_t rx_fifo_bytes;
+	uint32_t rx_fifo_us_last;
+	uint32_t rx_fifo_us_max;
+	uint32_t rx_done_coalesced;
 	uint32_t launch_late_us_last;
 	uint32_t launch_late_us_max;
 	uint32_t tx_done;
