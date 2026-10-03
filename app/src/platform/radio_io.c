@@ -6,6 +6,7 @@
  * returns, so its five-byte trigger never overlaps a transfer here.
  */
 #include "platform/slot_timer.h"
+#include "platform/radio.h"
 #include "lr20xx_hal.h"
 
 #include <hardware/gpio.h>
@@ -14,6 +15,7 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/dma.h>
 #include <zephyr/drivers/spi.h>
+#include <zephyr/drivers/clock_control.h>
 #include <zephyr/kernel.h>
 
 #define RADIO_NODE  DT_CHOSEN(zephyr_lorawan_transceiver)
@@ -40,6 +42,9 @@ static int tx_channel = -1;
 static int rx_channel = -1;
 static K_SEM_DEFINE(dma_done, 0, 1);
 static volatile int dma_result;
+static volatile uint32_t dma_irq_us;
+static uint32_t busy_us_last;
+static struct zlrs_radio_io_diag io_diag;
 static struct dma_block_config dma_blocks[2];
 static struct dma_config dma_configs[2];
 
@@ -49,6 +54,7 @@ static void dma_complete(const struct device *dev, void *user, uint32_t channel,
 	ARG_UNUSED(user);
 	ARG_UNUSED(channel);
 	dma_result = result;
+	dma_irq_us = zlrs_slot_timer_now_us();
 	k_sem_give(&dma_done);
 }
 
@@ -102,7 +108,11 @@ static int dma_init(void)
 
 static int dma_transfer(const uint8_t *tx, uint8_t *rx, size_t len)
 {
+	const uint32_t start_us = zlrs_slot_timer_now_us();
+	const uint32_t ready_us = busy_us_last;
+
 	if (len > IO_MAX || dma_init() != 0) {
+		io_diag.dma_errors++;
 		return -EIO;
 	}
 	if (tx == NULL) {
@@ -114,6 +124,7 @@ static int dma_transfer(const uint8_t *tx, uint8_t *rx, size_t len)
 	dma_blocks[1].block_size = len;
 	if (dma_config(dma, tx_channel, &dma_configs[0]) != 0 ||
 	    dma_config(dma, rx_channel, &dma_configs[1]) != 0) {
+		io_diag.dma_errors++;
 		return -EIO;
 	}
 	k_sem_reset(&dma_done);
@@ -121,6 +132,7 @@ static int dma_transfer(const uint8_t *tx, uint8_t *rx, size_t len)
 	spi->dmacr = SPI_SSPDMACR_TXDMAE_BITS | SPI_SSPDMACR_RXDMAE_BITS;
 	gpio_put(CS_PIN, false);
 	int result = dma_start(dma, rx_channel);
+	const uint32_t active_us = zlrs_slot_timer_now_us();
 
 	if (result == 0) {
 		result = dma_start(dma, tx_channel);
@@ -147,6 +159,23 @@ static int dma_transfer(const uint8_t *tx, uint8_t *rx, size_t len)
 	if (result == 0 && rx != NULL && rx != rx_bytes) {
 		memcpy(rx, rx_bytes, len);
 	}
+	if (result == 0) {
+		io_diag.dma_transfers++;
+		io_diag.dma_bytes += len;
+		io_diag.dma_len_last = len;
+		io_diag.setup_us_last = active_us - start_us;
+		io_diag.active_us_last = dma_irq_us - active_us;
+		io_diag.wake_us_last = finish - dma_irq_us;
+		io_diag.finish_us_last = zlrs_slot_timer_now_us() - finish;
+		io_diag.busy_us_last = ready_us;
+		io_diag.setup_us_sum += io_diag.setup_us_last;
+		io_diag.active_us_sum += io_diag.active_us_last;
+		io_diag.wake_us_sum += io_diag.wake_us_last;
+		io_diag.finish_us_sum += io_diag.finish_us_last;
+		io_diag.busy_us_sum += ready_us;
+	} else {
+		io_diag.dma_errors++;
+	}
 	return result;
 }
 
@@ -169,7 +198,23 @@ static bool ready(const void *context)
 			return false;
 		}
 	}
+	busy_us_last = zlrs_slot_timer_now_us() - start;
 	return true;
+}
+
+void zlrs_radio_io_diag(struct zlrs_radio_io_diag *out)
+{
+	const struct device *const clk = DEVICE_DT_GET(DT_CLOCKS_CTLR(DT_BUS(RADIO_NODE)));
+	const clock_control_subsys_t clk_id =
+		(clock_control_subsys_t)DT_CLOCKS_CELL_BY_IDX(DT_BUS(RADIO_NODE), 0, clk_id);
+	uint32_t peri_hz;
+	const uint32_t divider =
+		spi->cpsr * (((spi->cr0 & SPI_SSPCR0_SCR_BITS) >> SPI_SSPCR0_SCR_LSB) + 1U);
+
+	*out = io_diag;
+	if (divider > 0U && clock_control_get_rate(clk, clk_id, &peri_hz) == 0) {
+		out->spi_hz = peri_hz / divider;
+	}
 }
 
 static int __ramfunc poll_transfer(const uint8_t *tx, uint8_t *rx, size_t len)

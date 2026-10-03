@@ -354,6 +354,13 @@ ARQ ages by mixing the two sources; kernel time still schedules ordinary Zephyr 
 RF application and protocol hot path in SRAM; compare the same schedule when evaluating the
 effect of Flash instruction fetches. Relocation does not alter the installation/update path.
 
+`SPI DMA` reports the actual peripheral clock/dividers, successful transfer count/bytes and
+errors. Timings split buffer/configuration/RX-channel setup, TX-channel start to RX completion
+callback (`active`), callback to owner resumption (`wake`), final SPI idle/copy work, and the
+preceding BUSY wait. Active time includes driver start and IRQ dispatch, so it is not a logic
+analyzer measurement of SCK alone. Divide total counter deltas by transfer deltas for mean
+costs; these combine TX writes and RX FIFO reads of different lengths.
+
 `TX preload` reports packets staged during RX, packets used by the following TX, and FIFO
 write duration. During a sustained stream, compare counter deltas to verify that preparation
 overlaps RX. A changed session, timeout or periodic SYNC may discard a staged packet; the

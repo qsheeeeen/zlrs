@@ -274,6 +274,14 @@ design documents.
 
 ### Radio and protocol
 
+- **SPI DMA timing (implemented; LF checked 2026-10-03)**: native HAL diagnostics report the
+  actual 15 MHz SCK and separate DMA setup, active transfer, owner wake, finish and preceding
+  BUSY wait. Three 262145-byte RF duplex rounds and three 64 KiB USB rounds pass. During the RF
+  run the peers add 8205/8620 DMA transfers of about 209-210 bytes on average, with no DMA errors;
+  mean setup/active/wake/finish/BUSY costs are about 6.5/142/21/0.35/10 us. Active includes driver
+  start and IRQ dispatch. Reconfiguring DMA is a small part of the measured cost; full FIFO
+  writes and packet construction remain the preparation path to shorten. LF/HF builds pass.
+
 - **Read the RX FIFO during FLRC reception (implemented; LF checked 2026-10-03)**:
   a 128-byte FIFO threshold wakes the RF owner, which copies decoded prefixes through public
   RAL APIs while the remainder is on air. CRC/tag checks still precede delivery. Restart,

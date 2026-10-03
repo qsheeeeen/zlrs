@@ -39,7 +39,28 @@ static inline bool zlrs_radio_fifo_remaining(uint16_t capacity, uint16_t copied,
 	return true;
 }
 
+struct zlrs_radio_io_diag {
+	uint32_t dma_transfers;
+	uint32_t dma_bytes;
+	uint32_t dma_errors;
+	uint32_t dma_len_last;
+	uint32_t setup_us_last;
+	uint32_t active_us_last;
+	uint32_t wake_us_last;
+	uint32_t finish_us_last;
+	uint32_t busy_us_last;
+	uint32_t setup_us_sum;
+	uint32_t active_us_sum;
+	uint32_t wake_us_sum;
+	uint32_t finish_us_sum;
+	uint32_t busy_us_sum;
+	uint32_t spi_hz;
+};
+
+void zlrs_radio_io_diag(struct zlrs_radio_io_diag *out);
+
 struct zlrs_radio_diag {
+	struct zlrs_radio_io_diag io;
 	uint32_t transactions;
 	uint32_t stale_irq;
 	uint32_t stale_irq_bits;
