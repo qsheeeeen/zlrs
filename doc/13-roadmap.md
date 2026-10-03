@@ -274,6 +274,13 @@ design documents.
 
 ### Radio and protocol
 
+- **Word-aligned frame authentication (implemented; both LF boards checked 2026-10-03)**:
+  TX/RX buffers and HMAC blocks use the SDK's word input path. Both boards pass all 38 hardware
+  vectors repeatedly without resetting; 507-byte tags average 84-87 us aligned versus about
+  123 us unaligned. Large diagnostic buffers stay outside the shell stack, leaving 692 bytes
+  free on each board. All 23908 host checks and LF/HF builds pass. The 500/750 us preparation
+  experiments still reject occasional requests, so the diagnostic image retains 1 ms.
+
 - **Fill fallback FLRC TX FIFO during transmission (implemented; LF checked 2026-10-03)**:
   fresh TX preparation writes at most 128 bytes, and the RF owner appends the authenticated
   tail after the hardware timer issues SET_TX. Matching RX-time preloads remain complete.

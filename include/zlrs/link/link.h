@@ -10,6 +10,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdalign.h>
 #include <stdint.h>
 
 #include "zlrs/link/radio.h"
@@ -369,8 +370,9 @@ typedef struct {
 	bool arq_resync;
 
 	/* RX/TX buffers and reassembly */
-	uint8_t tx_buf[ZLRS_FRAME_MAX_LEN];
-	uint8_t rx_buf[ZLRS_FRAME_MAX_LEN];
+	/* Word alignment keeps the hardware SHA backend on its word-feed path. */
+	alignas(uint32_t) uint8_t tx_buf[ZLRS_FRAME_MAX_LEN];
+	alignas(uint32_t) uint8_t rx_buf[ZLRS_FRAME_MAX_LEN];
 	zlrs_prepared_data_t prepared_data;
 	zlrs_reasm_t reasm;
 	uint8_t reasm_buf[ZLRS_REASM_BUF_LEN];

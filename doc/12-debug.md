@@ -42,7 +42,7 @@ quietly end up in a released image.
 | shell `zlrs mgmt` | enter management mode (EXIT returns) |
 | shell `zlrs recovery` | reboot into MCUboot serial recovery |
 | shell `zlrs entropy` | entropy self-test (two 32-byte TRNG blocks) |
-| shell `zlrs crypto` | RP2350 SHA-256/HMAC/HKDF/PBKDF2 known-answer tests and full-frame tag timing; debug shell and hardware backend required |
+| shell `zlrs crypto` | RP2350 SHA-256/HMAC/HKDF/PBKDF2 known-answer tests and aligned/unaligned 251/507-byte tag timing; debug shell and hardware backend required |
 | shell `zlrs mcuboot` | image state as MCUboot sees it (slot headers, confirm bit, copy state) |
 | `CONFIG_ZLRS_APP_DEBUG_STATS_LOG` | 1 Hz `stats:` line (counters, LQ, duty, dynamic power) and `air:` line (completed transactions per link) |
 | `CONFIG_ZLRS_APP_BENCH_RAW_MS` | the first N ms after boot skip the superframe: the TX role sends complete frames back to back, the RX role opens 100 ms receive windows back to back, and both log frames per second |
@@ -368,6 +368,23 @@ callback (`active`), callback to owner resumption (`wake`), final SPI idle/copy 
 preceding BUSY wait. Active time includes driver start and IRQ dispatch, so it is not a logic
 analyzer measurement of SCK alone. Divide total counter deltas by transfer deltas for mean
 costs; these combine TX writes and RX FIFO reads of different lengths.
+
+The portable link's TX/RX frame buffers and hardware HMAC blocks have word alignment, which
+allows the Pico SDK SHA input path to feed whole words. `zlrs crypto` verifies the 507-byte
+full-frame MAC at all four byte offsets against an independent digest, then reports 64-call
+means/maxima for aligned and one-byte-offset inputs. Large diagnostic buffers use static
+storage guarded against concurrent runs, preserving shell stack space. These wall-time
+measurements include interrupt/thread preemption; management entry pauses RF for comparison.
+
+The 2026-10-03 LF check at 2441 MHz, P1 and -10 dBm reports approximately 84-87 us for an
+aligned 507-byte tag versus 123 us at a one-byte offset. Both devices pass all 38 vectors and
+retain at least 692 bytes of shell stack. With the retained 1 ms preparation window, six
+262145-byte RF duplex rounds pass at 55.1-60.9 kB/s per direction. Three 64 KiB USB rounds
+pass in 1.609/1.557/1.561 s; after uptime-proven simultaneous reboots, another three pass in
+1.561/1.556/1.559 s. Transfers add no rejected preparations, late triggers, missed boundaries
+or slots; launch jitter is at most 2 us and FIFO tail I/O/underflow counters stay zero. This
+does not accept a USB throughput gain. Initial configuration still rejects preparations at
+boot, and 500/750 us experiments show occasional preparation/arming rejections.
 
 `TX preload` reports packets staged during RX, packets used by the following TX, and FIFO
 write duration. During a sustained stream, compare counter deltas to verify that preparation

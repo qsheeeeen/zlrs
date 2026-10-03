@@ -3302,6 +3302,9 @@ static void test_data_only_pairing(void)
 
 void test_link(void)
 {
+	CHECK(offsetof(zlrs_link_t, tx_buf) % alignof(uint32_t) == 0U);
+	CHECK(offsetof(zlrs_link_t, rx_buf) % alignof(uint32_t) == 0U);
+	CHECK(offsetof(zlrs_link_t, prepared_data) % alignof(uint32_t) == 0U);
 	test_skipped_slots();
 	test_handshake_cadence();
 	test_data_only_pairing();

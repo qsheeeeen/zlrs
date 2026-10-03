@@ -14,6 +14,7 @@
 #include <zephyr/sys/byteorder.h>
 
 #include <string.h>
+#include <stdalign.h>
 
 #include "zlrs/proto/crypto.h"
 
@@ -28,8 +29,8 @@ LOG_MODULE_REGISTER(crypto_rp2350, CONFIG_APP_LOG_LEVEL);
 K_MUTEX_DEFINE(hash_mutex);
 
 struct hmac_key {
-	uint8_t inner[SHA256_BLOCK_LEN];
-	uint8_t outer[SHA256_BLOCK_LEN];
+	alignas(uint32_t) uint8_t inner[SHA256_BLOCK_LEN];
+	alignas(uint32_t) uint8_t outer[SHA256_BLOCK_LEN];
 };
 
 static void wipe(void *buf, size_t len)
@@ -102,7 +103,7 @@ static void hmac_key_init(struct hmac_key *pads, const uint8_t *key, size_t key_
 static void hmac_compute(const struct hmac_key *pads, const uint8_t *data, size_t len,
 			 uint8_t out[SHA256_LEN])
 {
-	uint8_t inner[SHA256_LEN];
+	alignas(uint32_t) uint8_t inner[SHA256_LEN];
 
 	hash_two(pads->inner, sizeof(pads->inner), data, len, inner);
 	hash_two(pads->outer, sizeof(pads->outer), inner, sizeof(inner), out);
@@ -224,6 +225,11 @@ bool zlrs_ct_equal(const uint8_t *a, const uint8_t *b, size_t len)
 
 #include "platform/crypto.h"
 
+/* Large diagnostic inputs belong outside the 2 KiB shell stack. */
+static alignas(uint32_t) uint8_t crypto_test_packet[507];
+static alignas(uint32_t) uint8_t crypto_test_shifted[510];
+K_MUTEX_DEFINE(crypto_test_mutex);
+
 /* Generated independently with Python hashlib/hmac. Complete digests verify padding,
  * chunk boundaries and long-key reduction before the truncated wire tag is checked. */
 static const struct {
@@ -271,8 +277,8 @@ static int check_vector(const struct shell *sh, unsigned int index, const uint8_
 
 int zlrs_crypto_self_test(const struct shell *sh)
 {
-	uint8_t data_storage[256];
-	uint8_t key_storage[132];
+	static uint8_t data_storage[256];
+	static uint8_t key_storage[132];
 	uint8_t *data = data_storage + 1U;
 	uint8_t *key = key_storage + 1U;
 	uint8_t ctx[16];
@@ -281,7 +287,13 @@ int zlrs_crypto_self_test(const struct shell *sh)
 	struct hmac_key pads;
 	unsigned int count = 0U;
 	int failed = 0;
-	char phrase[101];
+	static char phrase[101];
+	uint8_t *const packet_data = crypto_test_packet;
+	uint8_t *const shifted_data = crypto_test_shifted;
+
+	if (k_mutex_lock(&crypto_test_mutex, K_NO_WAIT) != 0) {
+		return -EBUSY;
+	}
 
 	for (size_t i = 0U; i < 255U; i++) {
 		data[i] = (uint8_t)i;
@@ -323,22 +335,51 @@ int zlrs_crypto_self_test(const struct shell *sh)
 	failed += check_vector(sh, ++count, out, SHA256_LEN,
 			       "ba71e3c0299a60aa5620773114321003bf0a2044b09408313015054a177f510e");
 
-	uint32_t elapsed = 0U;
-	uint32_t worst = 0U;
-
-	for (unsigned int i = 0U; i < 64U; i++) {
-		const uint32_t start = k_cycle_get_32();
-
-		zlrs_tag(key, 32U, data, 251U, tag);
-		const uint32_t cycles = k_cycle_get_32() - start;
-
-		elapsed += cycles;
-		worst = MAX(worst, cycles);
+	/* The maximum P1 frame hashes 507 bytes. Check every word alignment against
+	 * an independent digest before comparing the SDK's word/byte input paths. */
+	for (size_t i = 0U; i < sizeof(crypto_test_packet); i++) {
+		packet_data[i] = (uint8_t)i;
 	}
+	hmac_key_init(&pads, key, 32U);
+	for (size_t offset = 0U; offset < 4U; offset++) {
+		memcpy(shifted_data + offset, packet_data, sizeof(crypto_test_packet));
+		hmac_compute(&pads, shifted_data + offset, sizeof(crypto_test_packet), out);
+		failed += check_vector(
+			sh, ++count, out, SHA256_LEN,
+			"5521f6dafa14f363fe04aba4900cf295b95450e82c0462806ba00988ec5e8590");
+		zlrs_tag(key, 32U, shifted_data + offset, sizeof(crypto_test_packet), tag);
+		failed += check_vector(
+			sh, ++count, tag, sizeof(tag),
+			"5521f6dafa14f363fe04aba4900cf295b95450e82c0462806ba00988ec5e8590");
+	}
+
 	shell_print(sh, "crypto RP2350 SHA-256: %u/%u vectors passed", count - failed, count);
-	shell_print(sh, "crypto 251-byte tag: average=%u us max=%u us (64 calls)",
-		    k_cyc_to_us_ceil32(elapsed) / 64U, k_cyc_to_us_ceil32(worst));
+	const uint16_t lengths[] = {251U, 507U};
+
+	for (size_t n = 0U; n < ARRAY_SIZE(lengths); n++) {
+		for (size_t offset = 0U; offset < 2U; offset++) {
+			uint32_t elapsed = 0U;
+			uint32_t worst = 0U;
+
+			memcpy(shifted_data + offset, packet_data, lengths[n]);
+			for (unsigned int i = 0U; i < 64U; i++) {
+				const uint32_t start = k_cycle_get_32();
+
+				zlrs_tag(key, 32U, shifted_data + offset, lengths[n], tag);
+				const uint32_t cycles = k_cycle_get_32() - start;
+
+				elapsed += cycles;
+				worst = MAX(worst, cycles);
+			}
+			shell_print(
+				sh,
+				"crypto %u-byte tag offset=%u: average=%u us max=%u us (64 calls)",
+				lengths[n], (unsigned int)offset, k_cyc_to_us_ceil32(elapsed) / 64U,
+				k_cyc_to_us_ceil32(worst));
+		}
+	}
 	wipe(&pads, sizeof(pads));
+	k_mutex_unlock(&crypto_test_mutex);
 	return failed == 0 ? 0 : -EIO;
 }
 #endif
