@@ -274,6 +274,17 @@ design documents.
 
 ### Radio and protocol
 
+- **ARQ clock ordering (implemented; LF checked 2026-10-03)**: timeout checks use signed
+  elapsed milliseconds, so an ACK timestamp 1 ms ahead of a planned slot does not become a
+  near-2^32-ms timeout. Fifteen host cases cover future ACKs, the exact timeout and clock wrap;
+  the old implementation fails nine checks. All 13055 ASan/UBSan checks, architecture gates
+  and LF/HF builds pass. Five 262145-byte RF duplex rounds pass every byte at experimental
+  1 ms preparation, with goodput 44.5-57.0 kB/s per direction. Reverse retries remain 650
+  versus 661 in the preceding run, so this edge-case fix does not resolve the sustained retry
+  cost. The RF run adds three late preparations on TX; five subsequent 64 KiB USB rounds pass
+  without added preparation/trigger delays or missed boundaries/slots. Tight-slot acceptance
+  and ACK/loss attribution remain open.
+
 - **Bulk debug stream patterns (implemented; LF checked 2026-10-03)**: source generation and
   receive checking process four bytes together, retaining the exact positional pattern and
   incorrect-byte count. Host cases cover both roles, unaligned buffers, byte/word boundaries,

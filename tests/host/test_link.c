@@ -1776,6 +1776,48 @@ static void test_prepared_data_retry_and_window(void)
 	CHECK(sim.tx.data.arq_used == ZLRS_ARQ_WINDOW && sim.tx.data.arq_seq == 1U);
 }
 
+static void test_arq_timeout_clock_order(void)
+{
+	const uint32_t sent_ms[] = {1000U, 0U, UINT32_MAX - 8U};
+	const int32_t age_ms[] = {-1, 0, 16, 17, 18};
+
+	printf("link: ARQ timeout tolerates a future ACK timestamp and clock wrap\n");
+	for (size_t stamp = 0U; stamp < sizeof(sent_ms) / sizeof(sent_ms[0]); stamp++) {
+		for (size_t age = 0U; age < sizeof(age_ms) / sizeof(age_ms[0]); age++) {
+			sim_t sim;
+			uint8_t payload[700] = {0};
+			uint16_t size;
+			const bool retry = age_ms[age] >= 17;
+
+			sim_init(&sim);
+			sim.tx.data.cfg.arq = sim.rx.data.cfg.arq = 1U;
+			sim.tx.data.cfg.hopping = sim.rx.data.cfg.hopping = 0U;
+			sim.tx.data.cfg.arq_timeout_ms = 17U;
+			pair_and_connect(&sim);
+			CHECK(zlrs_link_write(&sim.tx.data, payload, sizeof(payload)) ==
+			      sizeof(payload));
+			const zlrs_radio_req_t *req =
+				zlrs_link_slot(&sim.tx.data, ZLRS_SLOT_DATA_A, sim.now_ms);
+
+			CHECK(req != NULL);
+			zlrs_link_complete(&sim.tx.data, ZLRS_RADIO_OK, 0U, 0, 0, sim.now_ms);
+			/* ACK handling uses actual uptime, while preparation uses the planned
+			 * slot timestamp. Millisecond quantization can put the ACK 1 ms ahead. */
+			sim.tx.data.arq_sent_ms = sent_ms[stamp];
+			sim.now_ms = sent_ms[stamp] + (uint32_t)age_ms[age];
+			const uint8_t *buf = zlrs_link_prepare_data(&sim.tx.data, ZLRS_SLOT_DATA_A,
+								    sim.now_ms, &size);
+
+			CHECK(buf != NULL);
+			CHECK(sim.tx.data.prepared_data.retry == retry);
+			req = zlrs_link_slot(&sim.tx.data, ZLRS_SLOT_DATA_A, sim.now_ms);
+			CHECK(req != NULL && req->buf == buf);
+			CHECK(sim.tx.data.stats.tx_retries == (retry ? 1U : 0U));
+			CHECK(sim.tx.data.arq_used == (retry ? 1U : 2U));
+		}
+	}
+}
+
 static void test_prepared_data_invalidation(void)
 {
 	uint8_t payload[400] = {0};
@@ -3239,6 +3281,7 @@ void test_link(void)
 	test_prepared_data();
 	test_prepared_data_invalidation();
 	test_prepared_data_retry_and_window();
+	test_arq_timeout_clock_order();
 	test_arq_receive_window();
 	test_arq_receive_window_bounds();
 	test_arq_duplicate_ack_timeout();

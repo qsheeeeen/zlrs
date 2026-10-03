@@ -707,8 +707,11 @@ static bool arq_timed_out(const zlrs_link_t *link, uint32_t now_ms)
 {
 	const uint16_t timeout_ms =
 		link->cfg.arq_timeout_ms > 0U ? link->cfg.arq_timeout_ms : ZLRS_ARQ_TIMEOUT_MS;
+	/* An actual ACK timestamp can be just ahead of the planned slot timestamp.
+	 * Signed elapsed time handles that ordering and the uint32_t clock wrap. */
+	const int32_t age_ms = (int32_t)(now_ms - link->arq_sent_ms);
 
-	return link->arq_used > 0U && (uint32_t)(now_ms - link->arq_sent_ms) >= timeout_ms;
+	return link->arq_used > 0U && age_ms >= (int32_t)timeout_ms;
 }
 
 static bool arq_next_data(const zlrs_link_t *link, bool ack, uint16_t *take, bool *more)
