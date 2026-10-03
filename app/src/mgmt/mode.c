@@ -57,6 +57,7 @@ struct cfg_port {
 };
 
 static struct cfg_port cfg_port;
+static K_SEM_DEFINE(cfg_rx_ready, 0, 1);
 /* Only a host ENTER needs an ACK; shell entry must not send an unsolicited response. */
 static bool cfg_enter_pending;
 
@@ -69,8 +70,13 @@ static void cfg_port_isr(const struct device *dev, void *user_data)
 			uint8_t chunk[32];
 			const int n = uart_fifo_read(dev, chunk, sizeof(chunk));
 
-			if (n > 0 && ring_buf_put(&p->rx, chunk, (uint32_t)n) != (uint32_t)n) {
-				p->rx_dropped++;
+			if (n > 0) {
+				const uint32_t written = ring_buf_put(&p->rx, chunk, (uint32_t)n);
+
+				p->rx_dropped += (uint32_t)n - written;
+				if (written > 0U) {
+					k_sem_give(&cfg_rx_ready);
+				}
 			}
 		}
 
@@ -781,7 +787,9 @@ int zlrs_mgmt_mode_run(const zlrs_mgmt_ctx_t *ctx)
 		}
 
 		if (!any) {
-			k_msleep(CFG_EXIT_POLL_MS);
+			/* Incoming bytes wake this wait immediately; the timeout only bounds
+			 * housekeeping latency when the host is idle. */
+			(void)k_sem_take(&cfg_rx_ready, K_MSEC(CFG_EXIT_POLL_MS));
 		}
 	}
 

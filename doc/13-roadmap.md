@@ -274,6 +274,15 @@ design documents.
 
 ### Radio and protocol
 
+- **Management RX wakeup (implemented; LF checked 2026-10-03)**: received bytes signal a
+  semaphore instead of waiting for the next 50 ms poll. The idle housekeeping bound and
+  synchronous `ENTER` log flush remain. RX overflow counts bytes rather than chunks.
+  Both peers export all seven retained log files (798252/815744 bytes); the latter export
+  completes in about 41 s. After export, five 64 KiB USB duplex rounds pass in
+  1.557-1.561 s, and three 262145-byte board-source/sink rounds pass at 55.3-61.1 kB/s
+  per direction. LF/HF production builds pass. These measurements use the experimental
+  1 ms preparation and fixed 2441 MHz, with CDC traffic INFO logs disabled.
+
 - **Quiet CDC traffic logs (implemented; LF checked 2026-10-03)**: the public
   `USBD_CDC_ACM_LOG_LEVEL_WRN` setting removes per-payload INFO dumps and FIFO wakeup messages.
   The former level floods the deferred queue and rotates files during their own export;

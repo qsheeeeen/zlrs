@@ -50,6 +50,10 @@ While in management mode:
 - the watchdog is disarmed for the session — PBKDF2 on a passphrase takes tens of seconds on
   this MCU and an 8 s watchdog would reset mid-way — and armed again on exit.
 
+Incoming management bytes wake the session immediately. Its 50 ms idle wait only bounds
+housekeeping latency; it does not limit request/reply throughput. `ENTER` replies after the
+session is ready and pending logs have been flushed, including a repeated `ENTER`.
+
 ## 3. Runtime configuration
 
 **Every user-visible setting is configured at runtime, with no firmware rebuild**:
