@@ -1688,6 +1688,14 @@ static void print_link(const struct shell *sh, const char *name, const zlrs_link
 		    link->stats.tx_data_bytes, link->stats.tx_full_data_frames,
 		    link->stats.tx_ack_only_frames);
 	shell_print(sh,
+		    "        ACK DATA=%u staged_old=%u window_stalls=%u retry_age=%u/%u ms"
+		    " delay=%u/%u ms total=%u entries=%u",
+		    link->stats.tx_data_ack_frames, link->stats.tx_staged_stale_ack_frames,
+		    link->stats.tx_arq_window_stalls, link->stats.tx_retry_age_ms_last,
+		    link->stats.tx_retry_age_ms_max, link->stats.tx_ack_delay_ms_last,
+		    link->stats.tx_ack_delay_ms_max, link->stats.tx_ack_delay_ms_sum,
+		    link->stats.tx_ack_entries);
+	shell_print(sh,
 		    "        slot tx %u/%u/%u/%u rx %u/%u/%u/%u got %u/%u/%u/%u fail %u/%u/%u/%u",
 		    link->stats.slot_tx[0], link->stats.slot_tx[1], link->stats.slot_tx[2],
 		    link->stats.slot_tx[3], link->stats.slot_rx[0], link->stats.slot_rx[1],

@@ -649,6 +649,7 @@ static void arq_release_oldest(zlrs_link_t *link, bool delivered)
 
 	for (uint8_t i = 1U; i < link->arq_used; i++) {
 		link->arq_len[i - 1U] = link->arq_len[i];
+		link->arq_first_sent_ms[i - 1U] = link->arq_first_sent_ms[i];
 		link->arq_more[i - 1U] = link->arq_more[i];
 	}
 
@@ -738,6 +739,7 @@ static void arq_commit_data(zlrs_link_t *link, uint16_t len, bool more, uint32_t
 {
 	link->arq_run_bytes = more ? link->arq_run_bytes + len : 0U;
 	link->arq_len[link->arq_used] = len;
+	link->arq_first_sent_ms[link->arq_used] = now_ms;
 	link->arq_more[link->arq_used] = more ? 1U : 0U;
 	link->arq_used++;
 	if (link->arq_used == 1U) {
@@ -845,6 +847,9 @@ static const zlrs_radio_req_t *send_prepared_data(zlrs_link_t *link, uint32_t no
 	link->pending_data_len = 0U;
 	/* RX may have advanced since encoding. The older cumulative ACK is valid, but the
 	 * newly received position must stay pending for the following packet. */
+	link->stats.tx_staged_stale_ack_frames +=
+		packet->ack_present &&
+		packet->ack_seq != (link->arq_rx_started ? link->arq_rx_seq : 0xFFFFU);
 	if (packet->ack_present &&
 	    packet->ack_seq == (link->arq_rx_started ? link->arq_rx_seq : 0xFFFFU)) {
 		link->arq_ack_pending = false;
@@ -870,6 +875,10 @@ static const zlrs_radio_req_t *send_data_arq(zlrs_link_t *link, uint32_t now_ms)
 
 		link->arq_retries++;
 		link->stats.tx_retries++;
+		link->stats.tx_retry_age_ms_last = now_ms - link->arq_sent_ms;
+		if (link->stats.tx_retry_age_ms_last > link->stats.tx_retry_age_ms_max) {
+			link->stats.tx_retry_age_ms_max = link->stats.tx_retry_age_ms_last;
+		}
 		link->arq_sent_ms = now_ms;
 		const zlrs_radio_req_t *req = send_prepared_data(link, now_ms, true);
 
@@ -889,6 +898,9 @@ static const zlrs_radio_req_t *send_data_arq(zlrs_link_t *link, uint32_t now_ms)
 	uint16_t take;
 	bool more;
 
+	if (req == NULL && link->arq_used >= ZLRS_ARQ_WINDOW) {
+		link->stats.tx_arq_window_stalls++;
+	}
 	if (req != NULL || link->arq_used >= ZLRS_ARQ_WINDOW ||
 	    !arq_next_data(link, ack, &take, &more)) {
 		return req;
@@ -963,6 +975,15 @@ static void handle_ack_value(zlrs_link_t *link, uint16_t ack, uint8_t flags, uin
 	}
 
 	while (link->arq_used > 0U && (int16_t)(ack - link->arq_seq) >= 0) {
+		const int32_t elapsed = (int32_t)(now_ms - link->arq_first_sent_ms[0]);
+		const uint32_t delay_ms = elapsed > 0 ? (uint32_t)elapsed : 0U;
+
+		link->stats.tx_ack_delay_ms_last = delay_ms;
+		if (delay_ms > link->stats.tx_ack_delay_ms_max) {
+			link->stats.tx_ack_delay_ms_max = delay_ms;
+		}
+		link->stats.tx_ack_delay_ms_sum += delay_ms;
+		link->stats.tx_ack_entries++;
 		arq_release_oldest(link, true);
 	}
 
@@ -2363,6 +2384,7 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 				link->stats.tx_ack_only_frames++;
 			} else if (frame.payload_len > (link->cfg.arq ? 2U : 0U)) {
 				link->stats.tx_data_frames++;
+				link->stats.tx_data_ack_frames += frame.ack_present;
 				link->stats.tx_data_bytes +=
 					frame.payload_len - (link->cfg.arq ? 2U : 0U);
 				const uint16_t cap = link->cfg.mod.modulation == ZLRS_MOD_LORA

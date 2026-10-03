@@ -347,6 +347,13 @@ counter deltas: `user / DATA packets` gives the mean application bytes per packe
 511-byte FLRC or 255-byte LoRa frames; a smaller configured MTU or a frame without an ACK extension
 can make that count low even when the application fills its configured packet budget.
 
+The `ACK` line counts DATA packets carrying an ACK, staged packets whose ACK was already
+behind receive progress when activated, and transmit windows blocked by a full ARQ window.
+`retry_age` is the last/maximum elapsed time used to retry the oldest frame. `delay` measures
+first transmission to cumulative acknowledgment for each released window entry, including
+retries; `total / entries` gives mean confirmation delay. Use counter deltas to compare runs.
+A stale staged ACK remains valid; the newer receive position stays pending for a later packet.
+
 Previous RAC cost measurements in section 5 are historical measurements of the former backend.
 
 ### DATA source and sink inside the boards

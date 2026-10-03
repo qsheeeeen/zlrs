@@ -147,6 +147,16 @@ typedef struct {
 	uint32_t tx_data_bytes; /* User bytes on air, including retransmissions. */
 	uint32_t tx_full_data_frames;
 	uint32_t tx_ack_only_frames;
+	/* ACK coverage, staging delay and cumulative window pressure. */
+	uint32_t tx_data_ack_frames;
+	uint32_t tx_staged_stale_ack_frames;
+	uint32_t tx_arq_window_stalls;
+	uint32_t tx_retry_age_ms_last;
+	uint32_t tx_retry_age_ms_max;
+	uint32_t tx_ack_delay_ms_last;
+	uint32_t tx_ack_delay_ms_max;
+	uint32_t tx_ack_delay_ms_sum;
+	uint32_t tx_ack_entries;
 	uint32_t rx_frames;
 	uint32_t rx_bytes;
 	/* Transactions per superframe slot (ZLRS_SLOT_*): sent, listened, heard a frame, failed */
@@ -341,6 +351,7 @@ typedef struct {
 	/* ARQ sender: lengths of the frames in flight, head frame at [0] */
 	uint16_t arq_seq;
 	uint16_t arq_len[ZLRS_ARQ_WINDOW];
+	uint32_t arq_first_sent_ms[ZLRS_ARQ_WINDOW];
 	/* MORE flag of each window frame: a retransmit has to reproduce the frame, run boundary included */
 	uint8_t arq_more[ZLRS_ARQ_WINDOW];
 	uint8_t arq_used;

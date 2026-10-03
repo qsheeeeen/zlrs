@@ -274,6 +274,17 @@ design documents.
 
 ### Radio and protocol
 
+- **ACK pipeline diagnostics (implemented; LF checked 2026-10-03)**: DATA ACK coverage,
+  stale staged ACKs, full-window stalls, retry age and first-send confirmation delay are
+  exposed by `zlrs link`. Host cases cover cumulative release, staging, exact retry ages and
+  clock wrap; all 13114 ASan/UBSan checks and LF/HF builds pass. Five 262145-byte RF duplex
+  rounds pass byte-exact at experimental 1 ms preparation, with 44.5-57.6 kB/s per direction
+  and no added late preparation/trigger or missed boundaries/slots. The reverse sender
+  retries 675 times and sends 2137 ACK-bearing DATA packets out of 3295. Its measured mean
+  confirmation delay is only 0.7 ms because negative elapsed values are clamped to zero;
+  planned TIMER1 timestamps and actual kernel timestamps need a consistency check before
+  these delay measurements can establish an ACK timeout budget.
+
 - **ARQ clock ordering (implemented; LF checked 2026-10-03)**: timeout checks use signed
   elapsed milliseconds, so an ACK timestamp 1 ms ahead of a planned slot does not become a
   near-2^32-ms timeout. Fifteen host cases cover future ACKs, the exact timeout and clock wrap;
