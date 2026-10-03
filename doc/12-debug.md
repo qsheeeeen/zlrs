@@ -330,6 +330,11 @@ the link-completion call. `IRQ service` includes reading and clearing IRQ status
 Compare counter deltas during a transfer; boot, management and configuration work can affect
 the lifetime maxima.
 
+All link timestamps use TIMER1 through one fixed uptime epoch: planned slots, completions,
+tick checks, acquisition and management-triggered pairing. `protocol clock` reports that time
+alongside kernel uptime and their signed difference. Kernel delays or drift must not change
+ARQ ages by mixing the two sources; kernel time still schedules ordinary Zephyr work.
+
 `TX setup` splits standby/IRQ handling, modem configuration, FIFO loading and FS/BUSY waiting.
 `TX build` separates serial pumping from protocol construction. The RP2350 build places the
 RF application and protocol hot path in SRAM; compare the same schedule when evaluating the

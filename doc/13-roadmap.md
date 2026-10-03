@@ -274,6 +274,20 @@ design documents.
 
 ### Radio and protocol
 
+- **One protocol clock (implemented; LF checked 2026-10-03)**: TIMER1 now timestamps actual
+  completions, timeout ticks, acquisition and management-triggered pairing as well as planned
+  slots. Hardware snapshots show kernel uptime falling another 12 ms behind TIMER1 during a
+  30 s RF run. Mixing these clocks shortened ACK ages and triggered unnecessary retries.
+  With one clock, five 262145-byte RF duplex rounds pass at 56.2-61.1 kB/s per direction,
+  remaining steady across rounds. Reverse retries fall from 675 to 33 and duplicate DATA
+  received by TX from 645 to 11; mean confirmation delays are 16.0/17.9 ms. During those
+  RF and five 64 KiB USB rounds neither peer adds late preparation/trigger or missed
+  boundaries/slots. Verified RX, TX and both-peer software reboots each pass three byte-exact
+  64 KiB USB rounds; the RX-only reboot transfer still adds one rejected late trigger, and
+  some attempts show up to 52 us jitter. These checks validate the clock repair, not a tighter
+  default or end-to-end USB speed gain. Preparation remains 1.5 ms in shipped builds.
+  All 13114 ASan/UBSan checks, architecture gates and LF/HF builds pass.
+
 - **ACK pipeline diagnostics (implemented; LF checked 2026-10-03)**: DATA ACK coverage,
   stale staged ACKs, full-window stalls, retry age and first-send confirmation delay are
   exposed by `zlrs link`. Host cases cover cumulative release, staging, exact retry ages and

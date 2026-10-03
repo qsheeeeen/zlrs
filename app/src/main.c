@@ -569,7 +569,7 @@ static void load_identity(void)
 	uint8_t root_key[ZLRS_KEY_LEN];
 	zlrs_storage_settings_pairing_t pairing;
 	bool have_root_key = false;
-	const uint32_t now_ms = k_uptime_get_32();
+	const uint32_t now_ms = zlrs_slot_timer_now_ms();
 
 	zlrs_link_set_dev_id(&link_control, device_id);
 	zlrs_link_set_dev_id(&link_data, device_id);
@@ -801,7 +801,7 @@ static void run_slot(uint8_t slot)
 			late_prepare_build_us = prepare_started_us - slot_start_us;
 			late_prepare_spi_us = now_us() - prepare_started_us;
 		}
-		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, k_uptime_get_32());
+		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_slot_timer_now_ms());
 		return;
 	}
 
@@ -819,7 +819,7 @@ static void run_slot(uint8_t slot)
 			   : zlrs_radio_launch();
 
 	if (launch_rc != 0) {
-		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, k_uptime_get_32());
+		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_slot_timer_now_ms());
 		return;
 	}
 
@@ -855,14 +855,14 @@ static void run_slot(uint8_t slot)
 	if (link->req_pending) {
 		zlrs_radio_abort();
 		zlrs_link_complete(link, req->is_tx ? ZLRS_RADIO_FAIL : ZLRS_RADIO_OK, 0U, 0, 0,
-				   k_uptime_get_32());
+				   zlrs_slot_timer_now_ms());
 	}
 
 	if (link->stats.slot_hit[link_slot] != hit_before && link->stats.rx_frames != good_before) {
 		uint32_t done_us;
 		uint32_t airtime_us;
 
-		last_rx_any_ms = k_uptime_get_32();
+		last_rx_any_ms = zlrs_slot_timer_now_ms();
 		/* TX is the clock master. Only RX follows verified packets, timestamped in the GPIO ISR. */
 		if (!role_tx && !phase_adj_set &&
 		    (data_slot ? link == &link_data : link == &link_control) &&
@@ -1000,7 +1000,7 @@ static void adopt_pairing(void)
 
 	if (ZLRS_CONTROL_ENABLED && ZLRS_DATA_ENABLED) {
 		zlrs_link_set_peer(&link_data, source->peer_id, source->pair_salt,
-				   k_uptime_get_32());
+				   zlrs_slot_timer_now_ms());
 	}
 	if (zlrs_storage_settings_save(ZLRS_SETTING_PAIRING, &pairing, sizeof(pairing)) != 0) {
 		return; /* Retry persistence; do not report an unsaved record as saved. */
@@ -1043,7 +1043,7 @@ static void crsf_handle_input(uint8_t type, const uint8_t *payload, uint8_t len)
 	}
 
 	zlrs_link_set_rc(&link_control, payload, len);
-	last_rc_input_ms = k_uptime_get_32();
+	last_rc_input_ms = zlrs_slot_timer_now_ms();
 	rc_input_seen = true;
 }
 
@@ -1499,7 +1499,7 @@ static void confirm_image(void)
 		} else {
 			LOG_ERR("image confirm failed; MCUboot will revert on next reset");
 		}
-	} else if (k_uptime_get_32() >= (uint32_t)CONFIG_ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS) {
+	} else if (zlrs_slot_timer_now_ms() >= (uint32_t)CONFIG_ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS) {
 		/* Never confirmed by the host: reset and let MCUboot roll back instead of clinging on */
 		LOG_ERR("upgrade not confirmed by host: rebooting to roll back");
 		sys_reboot(SYS_REBOOT_COLD);
@@ -1564,7 +1564,7 @@ static void enter_management_mode(void)
 static bool bench_wait(zlrs_link_t *link, const zlrs_radio_req_t *req, uint32_t budget_us)
 {
 	if (zlrs_radio_prepare(link, req) != 0 || zlrs_radio_launch() != 0) {
-		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, k_uptime_get_32());
+		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_slot_timer_now_ms());
 		return false;
 	}
 
@@ -1573,7 +1573,7 @@ static bool bench_wait(zlrs_link_t *link, const zlrs_radio_req_t *req, uint32_t 
 	zlrs_radio_drain();
 	if (link->req_pending) {
 		zlrs_radio_abort();
-		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, k_uptime_get_32());
+		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_slot_timer_now_ms());
 		return false;
 	}
 
@@ -1589,7 +1589,7 @@ static bool bench_wait(zlrs_link_t *link, const zlrs_radio_req_t *req, uint32_t 
 static void bench_raw_at_boot(void)
 {
 	uint32_t left_ms = (uint32_t)CONFIG_ZLRS_APP_BENCH_RAW_MS;
-	uint32_t last_ms = k_uptime_get_32();
+	uint32_t last_ms = zlrs_slot_timer_now_ms();
 	uint32_t tx0 = link_data.stats.tx_frames;
 	uint32_t rx0 = link_data.stats.rx_frames;
 	static uint8_t payload[32];
@@ -1602,7 +1602,7 @@ static void bench_raw_at_boot(void)
 
 	LOG_INF("raw bench: %s for %u ms", role_tx ? "blast" : "listen", (unsigned int)left_ms);
 
-	while ((uint32_t)(k_uptime_get_32() - start_ms) < left_ms) {
+	while ((uint32_t)(zlrs_slot_timer_now_ms() - start_ms) < left_ms) {
 		const zlrs_radio_req_t *req;
 
 		if (role_tx) {
@@ -1626,7 +1626,7 @@ static void bench_raw_at_boot(void)
 		zlrs_watchdog_feed();
 
 		{
-			const uint32_t now = k_uptime_get_32();
+			const uint32_t now = zlrs_slot_timer_now_ms();
 
 			if ((uint32_t)(now - last_ms) >= 1000U) {
 				const uint32_t tx = link_data.stats.tx_frames - tx0;
@@ -2015,6 +2015,11 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 	zlrs_slot_timer_stats(&timer);
 	shell_print(sh, "plan frame=%u us slots=%u us data_mtu=%u prepare=%u us",
 		    frame_period_us, slot_budget_us, data_mtu, slot_prepare_us);
+	const uint32_t protocol_ms = zlrs_slot_timer_now_ms();
+	const uint32_t kernel_ms = k_uptime_get_32();
+
+	shell_print(sh, "protocol clock TIMER1=%u kernel=%u delta=%d ms", protocol_ms,
+		    kernel_ms, (int32_t)(protocol_ms - kernel_ms));
 	shell_print(sh,
 		    "TIMER1 boundaries=%u irq_late_max=%u us missed=%u skipped_frames=%u slots=%u",
 		    timer.boundaries, timer.irq_late_us_max, timer.missed_boundaries,
@@ -2606,7 +2611,7 @@ int main(void)
 		}
 
 		/* Completions timestamp receptions during the slots; timeout checks need a newer time. */
-		const uint32_t now_ms = k_uptime_get_32();
+		const uint32_t now_ms = zlrs_slot_timer_now_ms();
 
 		if (ZLRS_CONTROL_ENABLED) {
 			zlrs_link_tick(&link_control, now_ms);

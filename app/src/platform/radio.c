@@ -724,7 +724,7 @@ bool zlrs_radio_drain(void)
 	const uint32_t protocol_start_us = zlrs_slot_timer_now_us();
 	const bool received = !request->is_tx && status == ZLRS_RADIO_OK && len > 0U;
 
-	zlrs_link_complete(owner, status, len, rssi, snr, k_uptime_get_32());
+	zlrs_link_complete(owner, status, len, rssi, snr, zlrs_slot_timer_now_ms());
 	if (received) {
 		const uint32_t finish_us = zlrs_slot_timer_now_us();
 

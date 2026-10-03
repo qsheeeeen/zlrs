@@ -28,6 +28,7 @@
 #include "link/data.h"
 #include "platform/caps.h"
 #include "platform/recovery.h"
+#include "platform/slot_timer.h"
 #include "platform/watchdog.h"
 #include "state/sys_bus.h"
 #include "storage/log.h"
@@ -419,8 +420,10 @@ static int cfg_save_root_key(void *vctx, const uint8_t key[ZLRS_KEY_LEN])
 	}
 
 	/* Takes effect immediately, no reboot needed */
-	zlrs_link_set_root_key(ctx->control, key, k_uptime_get_32());
-	zlrs_link_set_root_key(ctx->data, key, k_uptime_get_32());
+	const uint32_t now_ms = zlrs_slot_timer_now_ms();
+
+	zlrs_link_set_root_key(ctx->control, key, now_ms);
+	zlrs_link_set_root_key(ctx->data, key, now_ms);
 
 	LOG_INF("root key written");
 
@@ -508,7 +511,7 @@ static int cfg_pair(void *vctx)
 		return ZLRS_MGMT_E_STATE;
 	}
 
-	zlrs_link_press(ctx->active, k_uptime_get_32());
+	zlrs_link_press(ctx->active, zlrs_slot_timer_now_ms());
 	LOG_INF("pairing triggered by management tool");
 
 	return ZLRS_MGMT_OK;

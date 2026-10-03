@@ -223,6 +223,11 @@ uint32_t zlrs_slot_timer_uptime_ms(uint32_t deadline_us)
 	return zlrs_slot_clock_timestamp_ms(uptime_offset_us, timer_us_64(), deadline_us);
 }
 
+uint32_t zlrs_slot_timer_now_ms(void)
+{
+	return (uint32_t)((uptime_offset_us + timer_us_64()) / 1000U);
+}
+
 void zlrs_slot_timer_start(uint32_t period_us, uint32_t prepare_us, void (*wake)(void))
 {
 	zlrs_slot_timer_stop();
