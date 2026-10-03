@@ -301,6 +301,8 @@ firmware therefore keeps a log store in flash, and it is always on (no switch):
 - **Export is a host-side operation**: the store is read over the management port, so it works on a
   board whose radio and console are both misbehaving. `zlrs.py logs` dumps the files to a
   directory; management mode pauses radio work and flushes pending logs before export.
+  CDC warnings and errors remain enabled, while its per-packet INFO dumps are disabled:
+  exporting bytes must not flood the same rotating store being read.
 
 The coredump partition next to it takes the fault case that a log cannot describe (stack, PC,
 registers), and `zlrs mcuboot` reports the image state MCUboot will act on.

@@ -274,6 +274,16 @@ design documents.
 
 ### Radio and protocol
 
+- **Quiet CDC traffic logs (implemented; LF checked 2026-10-03)**: the public
+  `USBD_CDC_ACM_LOG_LEVEL_WRN` setting removes per-payload INFO dumps and FIFO wakeup messages.
+  The former level floods the deferred queue and rotates files during their own export;
+  hardware exports fail at offsets 8640 and 37920 with the oldest listed file already gone.
+  Five 64 KiB USB duplex rounds improve from 2.104-2.159 s to 1.454-1.560 s at unchanged
+  1 ms preparation, with every byte checked. Three 262145-byte RF rounds also pass; this
+  is a serial-path gain rather than a higher PHY rate. Together with event-driven management
+  RX, complete 798252/815744-byte log stores export successfully from the two peers.
+  LF/HF production builds pass, and no upstream source changes are needed.
+
 - **Arm TX only in advance (implemented; LF checked 2026-10-03)**: preparation and TIMER1
   arming require a 25 us lead. An expired alarm is rejected instead of forcing the interrupt;
   ISR entry more than 10 us late is rejected before SPI. Fourteen host checks cover the lead
