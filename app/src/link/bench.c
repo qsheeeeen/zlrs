@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
 #include "link/bench.h"
+#include "link/bench_pattern.h"
 #include "platform/slot_timer.h"
 
 #include <zephyr/kernel.h>
@@ -42,11 +43,6 @@ static struct {
 	atomic_t duration_us;
 	atomic_t first_len;
 } published;
-
-static uint8_t pattern(uint32_t offset, bool sender_tx)
-{
-	return (uint8_t)(offset ^ (offset >> 8) ^ (offset >> 16) ^ (sender_tx ? 0x5aU : 0xa5U));
-}
 
 bool zlrs_bench_pump(zlrs_link_t *link)
 {
@@ -100,9 +96,7 @@ bool zlrs_bench_pump(zlrs_link_t *link)
 		if (len == 0U) {
 			break;
 		}
-		for (uint16_t i = 0U; i < len; i++) {
-			data[i] = pattern(bench.generated + i, bench.role_tx);
-		}
+		zlrs_bench_pattern_fill(data, len, bench.generated, bench.role_tx);
 		bench.generated += zlrs_link_write(link, data, len);
 		atomic_set(&published.generated, bench.generated);
 	}
@@ -121,11 +115,11 @@ bool zlrs_bench_receive(const uint8_t *data, uint16_t len)
 		bench.first_len = len;
 		atomic_set(&published.first_len, len);
 	}
-	for (uint16_t i = 0U; i < len; i++) {
-		const uint32_t offset = bench.received + i;
+	const uint16_t valid =
+		bench.received < bench.target ? MIN(len, bench.target - bench.received) : 0U;
 
-		bench.bad += offset >= bench.target || data[i] != pattern(offset, !bench.role_tx);
-	}
+	bench.bad += len - valid;
+	bench.bad += zlrs_bench_pattern_bad(data, valid, bench.received, !bench.role_tx);
 	bench.received += len;
 	atomic_set(&published.bad, bench.bad);
 	atomic_set(&published.duration_us, now - bench.first_us);

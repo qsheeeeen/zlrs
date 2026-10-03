@@ -274,6 +274,16 @@ design documents.
 
 ### Radio and protocol
 
+- **Bulk debug stream patterns (implemented; LF checked 2026-10-03)**: source generation and
+  receive checking process four bytes together, retaining the exact positional pattern and
+  incorrect-byte count. Host cases cover both roles, unaligned buffers, byte/word boundaries,
+  stream-counter wrap and injected corruption. Five 262145-byte board-source/sink duplex rounds
+  and five 64 KiB USB rounds pass every byte at experimental 1 ms preparation. Neither peer adds
+  late preparation/trigger or missed boundaries/slots during these warm runs. RF goodput ranges
+  from 44.1 to 55.9 kB/s per direction; USB rounds take 2.055/2.061/2.058/2.154/2.058 s.
+  These measurements establish correctness of the faster pattern implementation, not a
+  throughput gain. Reboot and tighter-slot acceptance remain open.
+
 - **Idle DATA hopping (implemented; host checked)**: the DATA receiver keeps its hop epoch
   through legal silence and returns to the SYNC channel after two missed periodic SYNCs.
   The 100 ms SEARCHING repeat timer no longer makes a connected receiver abandon hops before
