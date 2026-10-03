@@ -813,7 +813,8 @@ static void run_slot(uint8_t slot)
 	}
 #endif
 
-	/* Modem, authentication and FIFO are ready: the timer wake leads only to SET_TX. */
+	/* Modem, authentication and FIFO prefix are ready. The timer issues SET_TX;
+	 * the owner then appends a fallback FLRC packet's tail while it is on air. */
 	const int launch_rc =
 		req->is_tx ? zlrs_radio_launch_at(slot_nominal_us + CONFIG_ZLRS_APP_TX_GUARD_US)
 			   : zlrs_radio_launch();
@@ -2047,7 +2048,7 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 		    prepare_wake_us_max);
 	shell_print(sh, "late prepare entry=%u us build=%u us SPI=%u us", late_prepare_entry_us,
 		    late_prepare_build_us, late_prepare_spi_us);
-	shell_print(sh, "launch command last/max=%u/%u us FIFO ready lead=%u us prepare=%u us",
+	shell_print(sh, "launch command last/max=%u/%u us FIFO prefix lead=%u us prepare=%u us",
 		    diag.launch_cmd_us_last, diag.launch_cmd_us_max, diag.preload_lead_us_last,
 		    slot_prepare_us);
 	shell_print(sh, "launch jitter last/max=%u/%u us TX startup=%u us",
@@ -2071,6 +2072,9 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 		    protocol_build_us_last);
 	shell_print(sh, "TX preload packets=%u used=%u last/max=%u/%u us", diag.tx_preloaded,
 		    diag.tx_preload_used, diag.tx_preload_us_last, diag.tx_preload_us_max);
+	shell_print(sh, "TX FIFO tails=%u bytes=%u errors=%u underflows=%u ready last/max=%u/%u us",
+		    diag.tx_fifo_tails, diag.tx_fifo_bytes, diag.tx_fifo_errors,
+		    diag.tx_fifo_underflows, diag.tx_fifo_ready_us_last, diag.tx_fifo_ready_us_max);
 	shell_print(sh, "RX errors header=%u crc=%u length=%u payload=%u expired=%u incomplete=%u",
 		    diag.rx_header_errors, diag.rx_crc_errors, diag.rx_length_errors,
 		    diag.rx_payload_errors, diag.rx_expired, diag.rx_incomplete);

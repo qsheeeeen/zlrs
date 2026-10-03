@@ -2,6 +2,7 @@
 #include "test.h"
 
 #include "../../app/src/platform/radio.h"
+#include <string.h>
 
 void test_radio_fifo(void)
 {
@@ -30,4 +31,23 @@ void test_radio_fifo(void)
 	CHECK(remaining == UINT16_MAX);
 	CHECK(zlrs_radio_fifo_remaining(0U, 0U, 0U, &remaining));
 	CHECK(remaining == 0U);
+
+	/* Fallback TX loads a prefix; appending the tail must reconstruct every byte. */
+	uint8_t packet[511];
+	uint8_t fifo[511];
+
+	for (size_t i = 0U; i < sizeof(packet); i++) {
+		packet[i] = (uint8_t)(i ^ (i >> 8));
+	}
+	for (uint16_t size = 0U; size <= sizeof(packet); size++) {
+		const uint16_t prefix = zlrs_radio_tx_fifo_prefix(true, size);
+
+		CHECK(prefix == (size > 128U ? 128U : size));
+		CHECK(zlrs_radio_tx_fifo_prefix(false, size) == size);
+		CHECK(zlrs_radio_fifo_remaining(sizeof(packet), prefix, size, &remaining));
+		CHECK((uint32_t)prefix + remaining == size);
+		memcpy(fifo, packet, prefix);
+		memcpy(fifo + prefix, packet + prefix, remaining);
+		CHECK(memcmp(fifo, packet, size) == 0);
+	}
 }

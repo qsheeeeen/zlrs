@@ -36,6 +36,7 @@ static bool prepared;
 static bool idle_in_fs;
 static const uint8_t *preloaded_buf;
 static uint16_t preloaded_size;
+static uint16_t tx_fifo_used;
 static volatile bool irq_pending;
 static volatile uint32_t irq_us;
 static uint32_t begin_us;
@@ -333,6 +334,7 @@ static int prepare_request(zlrs_link_t *link, const zlrs_radio_req_t *req)
 	owner = link;
 	request = req;
 	rx_fifo_used = 0U;
+	tx_fifo_used = 0U;
 	k_sem_reset(&done_sem);
 	if ((!reuse_fs && ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC) != RAL_STATUS_OK) ||
 	    ral_get_and_clear_irq_status(&radio.ral, &stale) != RAL_STATUS_OK) {
@@ -363,13 +365,18 @@ static int prepare_request(zlrs_link_t *link, const zlrs_radio_req_t *req)
 	 * start with a fresh FIFO, including retries and packets left by an abort. */
 	if (req->is_tx) {
 		const bool preloaded = req->buf == preloaded_buf && req->size == preloaded_size;
+		const uint16_t prefix =
+			zlrs_radio_tx_fifo_prefix(req->mod.modulation == ZLRS_MOD_FLRC, req->size);
 
 		preloaded_buf = NULL;
 		if (preloaded) {
 			diag.tx_preload_used++;
+			tx_fifo_used = req->size;
 		} else if (lr20xx_radio_fifo_clear_tx(radio.ral.context) != LR20XX_STATUS_OK ||
-			   ral_set_pkt_payload(&radio.ral, req->buf, req->size) != RAL_STATUS_OK) {
+			   ral_set_pkt_payload(&radio.ral, req->buf, prefix) != RAL_STATUS_OK) {
 			return -EIO;
+		} else {
+			tx_fifo_used = prefix;
 		}
 	}
 	stages[3] = zlrs_slot_timer_now_us();
@@ -444,6 +451,32 @@ int zlrs_radio_preload_tx(const uint8_t *buf, uint16_t size)
 	return 0;
 }
 
+/* LR2021 5.3.2 permits writes during the same packet's transmission. The 128-byte
+ * prefix covers startup and owner wakeup; SPI fills the tail faster than FLRC
+ * consumes it. Only the owner calls the HAL, after the timer's SET_TX is finished. */
+static int fill_tx_fifo(void)
+{
+	uint16_t tail;
+
+	if (!request->is_tx || tx_fifo_used == request->size) {
+		return 0;
+	}
+	if (!zlrs_radio_fifo_remaining(ZLRS_FRAME_MAX_LEN, tx_fifo_used, request->size, &tail) ||
+	    ral_set_pkt_payload(&radio.ral, request->buf + tx_fifo_used, tail) != RAL_STATUS_OK) {
+		diag.tx_fifo_errors++;
+		tx_fifo_used = 0U;
+		(void)ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC);
+		pending = false;
+		return -EIO;
+	}
+	tx_fifo_used = request->size;
+	diag.tx_fifo_tails++;
+	diag.tx_fifo_bytes += tail;
+	diag.tx_fifo_ready_us_last = zlrs_slot_timer_now_us() - begin_us;
+	diag.tx_fifo_ready_us_max = MAX(diag.tx_fifo_ready_us_max, diag.tx_fifo_ready_us_last);
+	return 0;
+}
+
 int zlrs_radio_launch(void)
 {
 	int rc;
@@ -485,7 +518,7 @@ int zlrs_radio_launch(void)
 		pending = false;
 		return -EIO;
 	}
-	return 0;
+	return fill_tx_fifo();
 }
 
 #define RADIO_NODE     DT_CHOSEN(zephyr_lorawan_transceiver)
@@ -608,7 +641,7 @@ int zlrs_radio_launch_at(uint32_t target_us)
 			diag.late_trigger_irq++;
 		}
 	}
-	return launch_mailbox.result;
+	return launch_mailbox.result == 0 ? fill_tx_fifo() : launch_mailbox.result;
 }
 
 int zlrs_radio_init(void)
@@ -621,13 +654,14 @@ int zlrs_radio_init(void)
 	    ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC) != RAL_STATUS_OK ||
 	    ral_set_rx_tx_fallback_mode(&radio.ral, RAL_FALLBACK_FS) != RAL_STATUS_OK ||
 	    ral_cfg_fifo_irq(&radio.ral, RAL_RADIO_FIFO_FLAG_THRESHOLD_HIGH,
-			     RAL_RADIO_FIFO_FLAG_NONE, RX_FIFO_THRESHOLD, 0U, 0U,
+			     RAL_RADIO_FIFO_FLAG_UNDERFLOW, RX_FIFO_THRESHOLD, 0U, 0U,
 			     0U) != RAL_STATUS_OK ||
 	    ral_clear_irq_status(&radio.ral, RAL_IRQ_ALL) != RAL_STATUS_OK ||
 	    ral_set_dio_irq_params(&radio.ral, RAL_IRQ_TX_DONE | RAL_IRQ_RX_DONE |
 						       RAL_IRQ_RX_TIMEOUT | RAL_IRQ_RX_HDR_ERROR |
 						       RAL_IRQ_RX_CRC_ERROR |
-						       RAL_IRQ_RX_FIFO_LEVEL) != RAL_STATUS_OK) {
+						       RAL_IRQ_RX_FIFO_LEVEL |
+						       RAL_IRQ_TX_FIFO_LEVEL) != RAL_STATUS_OK) {
 		return -EIO;
 	}
 	lora_transceiver_board_attach_interrupt(transceiver, radio_irq);
@@ -716,6 +750,24 @@ bool zlrs_radio_drain(void)
 		RAL_IRQ_RX_HDR_ERROR | RAL_IRQ_RX_CRC_ERROR | RAL_IRQ_RX_LEN_ERROR;
 	const ral_irq_t chip_errors = RAL_IRQ_CMD_ERROR | RAL_IRQ_ERROR;
 
+	if (request->is_tx && (irq & RAL_IRQ_TX_FIFO_LEVEL) != 0U) {
+		ral_radio_fifo_flag_t rx_flags;
+		ral_radio_fifo_flag_t tx_flags;
+
+		if (ral_get_fifo_irq(&radio.ral, &rx_flags, &tx_flags) != RAL_STATUS_OK) {
+			diag.tx_fifo_errors++;
+			irq |= RAL_IRQ_ERROR;
+		} else if ((tx_flags & RAL_RADIO_FIFO_FLAG_UNDERFLOW) != 0U) {
+			diag.tx_fifo_underflows++;
+			irq |= RAL_IRQ_ERROR;
+		}
+		if ((irq & RAL_IRQ_ERROR) != 0U) {
+			(void)ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC);
+		}
+		(void)ral_clear_fifo_irq(&radio.ral, RAL_RADIO_FIFO_FLAG_NONE,
+					 RAL_RADIO_FIFO_FLAG_ALL);
+	}
+
 	/* RX single falls back after a damaged packet too. Keep the scheduled window
 	 * open for a later valid packet; the RAL clears the RX FIFO before restarting.
 	 * No timer boundary or protocol completion is moved by this retry. */
@@ -746,7 +798,7 @@ bool zlrs_radio_drain(void)
 		    chip_errors)) == 0U) {
 		return false; /* FIFO/timestamp activity is not a completed transaction. */
 	}
-	if (request->is_tx && (irq & RAL_IRQ_TX_DONE) != 0U) {
+	if (request->is_tx && (irq & RAL_IRQ_TX_DONE) != 0U && (irq & chip_errors) == 0U) {
 		status = ZLRS_RADIO_OK;
 		diag.tx_done++;
 		diag.tx_us_last = event_us - begin_us;
@@ -792,6 +844,7 @@ bool zlrs_radio_drain(void)
 	/* The configured hardware fallback already returns a completed packet to FS. */
 	pending = false;
 	rx_fifo_used = 0U;
+	tx_fifo_used = 0U;
 	idle_in_fs = status == ZLRS_RADIO_OK && (irq & chip_errors) == 0U;
 	const uint32_t protocol_start_us = zlrs_slot_timer_now_us();
 	const bool received = !request->is_tx && status == ZLRS_RADIO_OK && len > 0U;
@@ -820,6 +873,7 @@ void zlrs_radio_abort(void)
 	irq_pending = false;
 	prepared = false;
 	rx_fifo_used = 0U;
+	tx_fifo_used = 0U;
 	ral_irq_t discarded = 0;
 	(void)ral_get_and_clear_irq_status(&radio.ral, &discarded);
 	if (active) {

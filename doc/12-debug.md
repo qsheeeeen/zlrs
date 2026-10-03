@@ -354,6 +354,14 @@ ARQ ages by mixing the two sources; kernel time still schedules ordinary Zephyr 
 RF application and protocol hot path in SRAM; compare the same schedule when evaluating the
 effect of Flash instruction fetches. Relocation does not alter the installation/update path.
 
+`TX FIFO` reports fallback packets whose tail is written after SET_TX, tail bytes, I/O
+errors and hardware underflows. FLRC preparation writes the first 128 bytes (or the whole
+packet if shorter); after hardware launch the owner waits for BUSY and appends the remaining
+authenticated bytes through the public RAL. `ready` measures launch to tail-write completion,
+not pre-launch readiness. A matching RX-time preload still uses the complete packet. LoRa
+retains full pre-launch loading. Abort and completion discard the prefix count, and a failed
+tail write or underflow fails the transaction for ARQ to retry.
+
 `SPI DMA` reports the actual peripheral clock/dividers, successful transfer count/bytes and
 errors. Timings split buffer/configuration/RX-channel setup, TX-channel start to RX completion
 callback (`active`), callback to owner resumption (`wake`), final SPI idle/copy work, and the

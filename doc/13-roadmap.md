@@ -274,6 +274,22 @@ design documents.
 
 ### Radio and protocol
 
+- **Fill fallback FLRC TX FIFO during transmission (implemented; LF checked 2026-10-03)**:
+  fresh TX preparation writes at most 128 bytes, and the RF owner appends the authenticated
+  tail after the hardware timer issues SET_TX. Matching RX-time preloads remain complete.
+  Public RAL FIFO writes and underflow IRQs are used; no upstream changes are needed. Tail
+  I/O failure or underflow fails the transaction, and abort/completion resets prefix state.
+  All 23905 ASan/UBSan host checks pass, including 2560 new prefix/tail checks; LF/HF builds
+  and gates pass. At fixed 2441 MHz, P1, -10 dBm and 1 ms preparation, six 262145-byte RF
+  duplex rounds pass every byte at 55.7-61.1 kB/s per direction. Five 64 KiB USB rounds pass
+  in 1.703/1.560/1.559/1.556/1.557 s. Steady RF and USB runs add no late preparations,
+  late triggers or missed boundaries/slots; TX jitter is at most 3 us. Both boards append
+  tails, with no I/O errors/underflows and completion within 507 us of launch. Uptime-proven
+  simultaneous cold reboots are followed by three exact 64 KiB duplex rounds in
+  1.759/1.604/1.557 s with no added timing failures. Initial modem setup still rejects one
+  late preparation on TX at boot; these checks do not accept a smaller preparation window
+  or a USB throughput gain.
+
 - **SPI DMA timing (implemented; LF checked 2026-10-03)**: native HAL diagnostics report the
   actual 15 MHz SCK and separate DMA setup, active transfer, owner wake, finish and preceding
   BUSY wait. Three 262145-byte RF duplex rounds and three 64 KiB USB rounds pass. During the RF

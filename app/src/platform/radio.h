@@ -27,6 +27,14 @@ int zlrs_radio_launch_at(uint32_t target_us);
 uint32_t zlrs_radio_airtime_us(const zlrs_mod_cfg_t *mod, uint16_t len);
 bool zlrs_radio_rx_timing(uint32_t *done_us, uint32_t *airtime_us);
 
+#define ZLRS_RADIO_TX_FIFO_PREFIX 128U
+
+/* FLRC consumes this prefix while the owner appends the authenticated tail. */
+static inline uint16_t zlrs_radio_tx_fifo_prefix(bool flrc, uint16_t size)
+{
+	return flrc && size > ZLRS_RADIO_TX_FIFO_PREFIX ? ZLRS_RADIO_TX_FIFO_PREFIX : size;
+}
+
 /* FIFO reads consume a prefix. Validate the total before subtracting it or
  * forming the next buffer pointer; leave remaining unchanged on invalid input. */
 static inline bool zlrs_radio_fifo_remaining(uint16_t capacity, uint16_t copied, uint32_t total,
@@ -76,6 +84,12 @@ struct zlrs_radio_diag {
 	uint32_t tx_preload_used;
 	uint32_t tx_preload_us_last;
 	uint32_t tx_preload_us_max;
+	uint32_t tx_fifo_tails;
+	uint32_t tx_fifo_bytes;
+	uint32_t tx_fifo_errors;
+	uint32_t tx_fifo_underflows;
+	uint32_t tx_fifo_ready_us_last;
+	uint32_t tx_fifo_ready_us_max;
 	uint32_t launch_cmd_us_last;
 	uint32_t launch_cmd_us_max;
 	uint32_t tx_launch_cmd_us_last;
