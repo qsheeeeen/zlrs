@@ -82,7 +82,6 @@ static uint16_t data_mtu;
  */
 static uint8_t operating_mode = ZLRS_MODE_MIXED;
 #define ZLRS_DATA24          (operating_mode == ZLRS_MODE_DATA24)
-#define ZLRS_CONTROL_1KHZ    IS_ENABLED(CONFIG_ZLRS_APP_CONTROL_1KHZ)
 #define ZLRS_CONTROL_ENABLED (IS_ENABLED(CONFIG_ZLRS_APP_LINK_CONTROL) && !ZLRS_DATA24)
 #define ZLRS_DATA_ENABLED    IS_ENABLED(CONFIG_ZLRS_APP_LINK_DATA)
 /* The CRSF port is part of the control link, and its presence is a devicetree fact: if the
@@ -156,7 +155,6 @@ static uint8_t active_profile;
 /* CRSF port I/O (defined below, called from the link callbacks) */
 static void crsf_send_rc(const uint8_t *payload, uint8_t len);
 static void crsf_send_link_stats(const zlrs_tlm_t *tlm);
-static void pump_crsf(uint32_t now_ms);
 
 #if IS_ENABLED(CONFIG_ZLRS_RP2350_TRNG)
 /* Entropy self-test (defined above main); used by the boot check and the shell command */
@@ -395,20 +393,6 @@ static void plan_mixed_init(void)
 
 static void plan_init(void)
 {
-#if IS_ENABLED(CONFIG_ZLRS_APP_CONTROL_1KHZ)
-	if (ZLRS_CONTROL_1KHZ) {
-		control_mod = zlrs_mod_flrc(CONFIG_ZLRS_APP_RACING_CONTROL_RATE_BPS);
-		data_mod = control_mod;
-		/* TIMER1 publishes four consecutive 1 ms control opportunities per batch.
-		 * Acquisition/maintenance can use an opportunity for the reverse direction. */
-		control_rate_hz = 1000U;
-		frame_period_us = 4000U;
-		slot_budget_us = 1000U;
-		data_mtu = 0U;
-		tlm_every_n = 128U;
-		data_every_n = 1U;
-	} else
-#endif
 	if (ZLRS_DATA24) {
 		/* The data frame, not the unused control plan, determines the slot. All four
 		 * hardware windows form alternating TX/RX pairs; pairing also uses this modem. */
@@ -434,9 +418,8 @@ static void plan_init(void)
 	/* CONNECTED sync period converted to frames (doc/08-protocol.md 5.1): 1000 ms fits an
 	 * uint8 at common frame periods, shorter periods get clamped to 255 frames. */
 	if (CONFIG_ZLRS_APP_RESYNC_PERIOD_MS > 0) {
-		const uint32_t cadence_us = ZLRS_CONTROL_1KHZ ? slot_budget_us : frame_period_us;
 		const uint32_t frames =
-			((uint32_t)CONFIG_ZLRS_APP_RESYNC_PERIOD_MS * 1000U) / cadence_us;
+			((uint32_t)CONFIG_ZLRS_APP_RESYNC_PERIOD_MS * 1000U) / frame_period_us;
 
 		resync_every_n = (uint8_t)MIN(MAX(frames, 1U), 255U);
 	} else {
@@ -553,11 +536,9 @@ static void build_links(void)
 
 	zlrs_link_rate_init(&ctl_cfg.mod);
 
-	/* The floor option exists only when dynamic power is enabled. */
-#if IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)
+	/* Ceiling is min(configured power, region cap); the floor is a Kconfig knob */
 	zlrs_link_power_init(MIN(tx_power_dbm, region->max_tx_power_dbm),
 			     CONFIG_ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM);
-#endif
 }
 
 static bool ensure_device_id(void)
@@ -722,37 +703,7 @@ static void trace_add(char c)
 
 #define TRACE(c) trace_add(c)
 
-static bool control_reverse_due;
-
-static uint8_t next_link_slot(uint8_t slot)
-{
-	if (ZLRS_DATA24) {
-		return (slot & 1U) == 0U ? ZLRS_SLOT_DATA_A : ZLRS_SLOT_DATA_B;
-	}
-	if (ZLRS_CONTROL_1KHZ) {
-		if (control_reverse_due) {
-			control_reverse_due = false;
-			return ZLRS_SLOT_CTL_UP;
-		}
-		return ZLRS_SLOT_CTL_DOWN;
-	}
-	return slot;
-}
-
-static void control_schedule_reverse(uint8_t link_slot)
-{
-	if (!ZLRS_CONTROL_1KHZ || link_slot != ZLRS_SLOT_CTL_DOWN) {
-		return;
-	}
-	control_reverse_due = link_control.state != ZLRS_STATE_CONNECTED ||
-			      link_control.sess_cfm_due ||
-			      (link_control.cfg.resync_every_n != 0U &&
-			       link_control.frame_index % link_control.cfg.resync_every_n == 0U) ||
-			      (link_control.cfg.telemetry &&
-			       link_control.frame_index % link_control.cfg.tlm_every_n == 0U);
-}
-
-static void run_slot(uint8_t slot, uint8_t link_slot)
+static void run_slot(uint8_t slot)
 {
 	/* An idle or early-completed predecessor must not open RX in an earlier slot.
 	 * Both packet preparation and RX entry start at this slot's reserved window. */
@@ -781,7 +732,10 @@ static void run_slot(uint8_t slot, uint8_t link_slot)
 		}
 	}
 
-	const bool data_slot = ZLRS_DATA24 || (!ZLRS_CONTROL_1KHZ && link_slot >= ZLRS_SLOT_DATA_A);
+	const bool data_slot =
+		ZLRS_DATA24 || (slot == ZLRS_SLOT_DATA_A || slot == ZLRS_SLOT_DATA_B);
+	const uint8_t link_slot =
+		ZLRS_DATA24 ? ((slot & 1U) == 0U ? ZLRS_SLOT_DATA_A : ZLRS_SLOT_DATA_B) : slot;
 	zlrs_link_t *link = data_slot ? &link_data : &link_control;
 	const uint32_t slot_start_us = now_us();
 	/* Slot decisions use the planned time even though construction happens before it. */
@@ -800,27 +754,19 @@ static void run_slot(uint8_t slot, uint8_t link_slot)
 	if ((int32_t)(slot_deadline_us - now_us()) <= 100) {
 		missed_slots++;
 		zlrs_link_skip_slot(link, link_slot);
-		control_schedule_reverse(link_slot);
 		return;
 	}
 	const uint32_t pump_at_us = now_us();
 
 	if (data_slot) {
 		pump_serial();
-	} else if (role_tx && link_slot == ZLRS_SLOT_CTL_DOWN) {
-		pump_crsf(zlrs_slot_timer_now_ms());
 	}
 	const uint32_t protocol_at_us = now_us();
 
 	req = zlrs_link_slot(link, link_slot, now_ms);
-	control_schedule_reverse(link_slot);
 
 	if (req == NULL) {
 		return;
-	}
-	if (ZLRS_CONTROL_1KHZ && !req->is_tx) {
-		/* A silent peer must not hold RX past the next TX preparation window. */
-		slot_deadline_us -= slot_prepare_us;
 	}
 
 	/* Advance the protocol even if the scheduled slot was missed; never send it late. */
@@ -1068,7 +1014,7 @@ static void adopt_pairing(void)
 
 /*
  * Failsafe values default to throttle low and everything else centred, which is what a
- * handset sends with its link down. The management protocol can overwrite them (07-firmware 3).
+ * handset sends with its link down. The management protocol can overwrite them (08-firmware 3).
  */
 static void failsafe_init(void)
 {
@@ -1185,12 +1131,6 @@ static void pump_crsf(uint32_t now_ms)
 	if (!zlrs_link_crsf_ready()) {
 		return;
 	}
-	uint32_t received_us;
-
-	if (zlrs_link_crsf_latest_rc(payload, &received_us)) {
-		crsf_handle_input(ZLRS_CRSF_TYPE_RC_CHANNELS, payload, ZLRS_CRSF_RC_PAYLOAD_LEN);
-		last_rc_input_ms = zlrs_slot_timer_uptime_ms(received_us);
-	}
 
 	while ((len = zlrs_link_crsf_read(&type, payload, sizeof(payload))) > 0U) {
 		crsf_handle_input(type, payload, len);
@@ -1292,7 +1232,7 @@ static void report(uint32_t now_ms)
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_SUB_BAND_MIX)
 	/*
-	 * Sub-band mixing (doc/08-protocol.md 5.1): when LQ drops, move slots to sub-G (the link
+ * Sub-band mixing (doc/08-protocol.md 5.1): when LQ drops, move slots to sub-G (the link
 	 * layer picks the order: telemetry, then data, then RC) and move them back when LQ recovers.
 	 * The region duty cap (zlrs_region_mix_level) bounds it; at most one step per second.
 	 */
@@ -2270,24 +2210,6 @@ static int cmd_stream(const struct shell *sh, size_t argc, char **argv)
 	return ZLRS_DATA24 ? zlrs_bench_command(sh, argc, argv) : -ENOTSUP;
 }
 
-static int cmd_crsf(const struct shell *sh, size_t argc, char **argv)
-{
-	struct zlrs_link_crsf_stats stats;
-
-	ARG_UNUSED(argc);
-	ARG_UNUSED(argv);
-	zlrs_link_crsf_stats(&stats);
-	shell_print(sh, "CRSF input=%u consumed=%u superseded=%u malformed=%u dropped=%u",
-		    stats.rc_received, stats.rc_consumed, stats.rc_superseded, crsf_bad_input,
-		    zlrs_link_crsf_rx_dropped());
-	shell_print(sh, "CRSF output=%u dropped=%u RF_RC_rx=%u sample_age_us=%u",
-		    stats.output_frames, stats.output_dropped, counters.rc_rx,
-		    stats.rc_received ? now_us() - stats.rc_received_us : 0U);
-	shell_print(sh, "CRSF control_cadence_us=%u dedicated_1khz=%u",
-		    ZLRS_CONTROL_1KHZ ? slot_budget_us : frame_period_us, ZLRS_CONTROL_1KHZ);
-	return 0;
-}
-
 SHELL_STATIC_SUBCMD_SET_CREATE(
 	zlrs_cmds, SHELL_CMD(status, NULL, "role / SKU / region / link state", cmd_status),
 	SHELL_CMD(link, NULL, "per-link state, frequency, hop index and key fingerprints",
@@ -2300,7 +2222,6 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 	SHELL_CMD(rxwin, " [ms]", "stretch the data link receive window (bench)", cmd_rxwin),
 	SHELL_CMD(rate, " [s]", "measure windows/hits/frames per second per link", cmd_rate),
 	SHELL_CMD(ports, NULL, "state of both data port endpoints", cmd_ports),
-	SHELL_CMD(crsf, NULL, "CRSF latest input, output and control cadence", cmd_crsf),
 	SHELL_CMD(stream, NULL, "RF-only DATA bench: arm <bytes>, start, status, stop", cmd_stream),
 	SHELL_CMD(radio, NULL, "LR2021 timing: preparation, launch and wait", cmd_radio),
 	SHELL_CMD(logstore, NULL, "mount the log filesystem and report the result", cmd_logstore),
@@ -2622,7 +2543,7 @@ int main(void)
 			      slot_prepare_us, zlrs_radio_wake);
 	uint32_t consumed_frame = 0U;
 
-	if (ZLRS_DATA24 || ZLRS_CONTROL_1KHZ) {
+	if (ZLRS_DATA24) {
 		/* RF servicing must resume at DMA/radio/timer events even when an upstream
 		 * cooperative USB worker is active. Serial notifications are deferred. */
 		BUILD_ASSERT(CONFIG_NUM_METAIRQ_PRIORITIES >= 1);
@@ -2641,17 +2562,17 @@ int main(void)
 		while (++consumed_frame < timer_frame) {
 			skipped_frames++;
 			for (uint8_t slot = 0U; slot < 4U; slot++) {
-				const uint8_t link_slot = next_link_slot(slot);
-				const bool data_slot =
-					ZLRS_DATA24 ||
-					(!ZLRS_CONTROL_1KHZ && link_slot >= ZLRS_SLOT_DATA_A);
+				const bool data_slot = ZLRS_DATA24 || slot >= ZLRS_SLOT_DATA_A;
 				zlrs_link_t *link = data_slot ? &link_data : &link_control;
+				const uint8_t link_slot =
+					ZLRS_DATA24 ? ((slot & 1U) == 0U ? ZLRS_SLOT_DATA_A
+									 : ZLRS_SLOT_DATA_B)
+						    : slot;
 
 				if (data_slot ? !ZLRS_DATA_ENABLED : !ZLRS_CONTROL_ENABLED) {
 					continue;
 				}
 				zlrs_link_skip_slot(link, link_slot);
-				control_schedule_reverse(link_slot);
 			}
 		}
 
@@ -2701,10 +2622,8 @@ int main(void)
 				slot == 3U ? zlrs_slot_timer_next_frame_us()
 					   : start_us + ((uint64_t)period * (slot + 1U)) / 4U;
 
-			/* TX can use the cycle; RX reserves preparation for the next direction. */
-			slot_deadline_us =
-				next_us - (ZLRS_CONTROL_1KHZ ? 100U : slot_prepare_us + 100U);
-			run_slot(slot, next_link_slot(slot));
+			slot_deadline_us = next_us - slot_prepare_us - 100U;
+			run_slot(slot);
 		}
 
 		/* Completions timestamp receptions during the slots; timeout checks need a newer time. */
@@ -2735,9 +2654,7 @@ int main(void)
 
 		if (!role_tx) {
 			const zlrs_link_t *const clock_link = active_link();
-			const uint32_t cadence_us = ZLRS_CONTROL_1KHZ
-							    ? period / 4U
-							    : (ZLRS_DATA24 ? period / 2U : period);
+			const uint32_t cadence_us = ZLRS_DATA24 ? period / 2U : period;
 			const uint32_t scan_after_ms = zlrs_slot_clock_scan_delay_ms(
 				cadence_us, clock_link->cfg.resync_every_n, phase_samples > 0U);
 

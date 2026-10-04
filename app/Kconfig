@@ -163,23 +163,11 @@ config ZLRS_APP_RACING_CONTROL_RATE_BPS
 config ZLRS_APP_RACING_CONTROL_RATE_HZ
 	int "Racing mode control frame rate (Hz)"
 	default 500
-	range 50 1000
+	range 50 500
 	depends on ZLRS_APP_BAND_ROLE_SUBG_DATA
 	help
 	  2.4G frames can be denser (500 by default), but the superframe still has to fit the two
 	  data windows that moved to sub-G (see doc/06-architecture.md 2).
-
-config ZLRS_APP_CONTROL_1KHZ
-	bool "Dedicated 1 kHz control cadence on 2.4 GHz"
-	depends on ZLRS_APP_LINK_CONTROL && !ZLRS_APP_LINK_DATA
-	depends on ZLRS_APP_BAND_ROLE_SUBG_DATA
-	default n
-	help
-	  Schedule control opportunities every 1000 us instead of dividing one control
-	  cycle into four equal control/telemetry/data windows. Acquisition and periodic
-	  session maintenance retain reverse opportunities; those replace a control
-	  opportunity and must be accounted for in measured RC delivery. Data24 and
-	  mixed mode keep their own plans.
 
 config ZLRS_APP_CONTROL_RATE_BPS
 	int "Control link rate (bps)"
@@ -194,7 +182,7 @@ config ZLRS_APP_CONTROL_RATE_HZ
 	help
 	  150 = general tier (long range, default), 500 = close-in racing.
 	  At 500 Hz each slot has only a few hundred microseconds and only unlimited-duty regions
-	  can sustain it; the effective rate is clamped by the duty cap (core/region, 08-protocol 4.1).
+	  can sustain it; the effective rate is clamped by the duty cap (core/region, 09-protocol 4.1).
 	  The hardware slot budget also clamps this request to fit packet preparation and airtime.
 
 config ZLRS_APP_DATA_RATE_BPS
