@@ -1,5 +1,5 @@
 /*
- * What this hardware is, derived from devicetree (doc/08-firmware.md 4).
+ * What this hardware is, derived from devicetree (doc/07-firmware.md 4).
  *
  * Application code binds directly to Zephyr devices and the RP2350 platform.
  * These macros describe hardware capabilities and validate feature selections.

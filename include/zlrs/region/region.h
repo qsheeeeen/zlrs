@@ -1,6 +1,6 @@
 /*
  * Region layer: turns "where is this used" into a channel plan, power ceiling and duty
- * cap (doc/09-protocol.md 5.2). Validation at boot and limiting before TX are separate.
+ * cap (doc/08-protocol.md 5.2). Validation at boot and limiting before TX are separate.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -108,7 +108,7 @@ uint32_t zlrs_region_max_frames_per_s(const zlrs_region_t *region, uint32_t rate
 				      uint16_t frame_len);
 
 /*
- * Regulatory ceiling for the sub-band mix (doc/09-protocol.md 5.1): how many of the 4 slots
+ * Regulatory ceiling for the sub-band mix (doc/08-protocol.md 5.1): how many of the 4 slots
  * may land on sub-G. Regions without a duty limit (duty_percent = 0) return 3 = 100%; the
  * others are folded as window length x duty into the four levels (0/1/2/4 slots) and get the
  * highest one that still fits.

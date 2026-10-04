@@ -6,7 +6,7 @@ config ZLRS_MGMT
 	select ZLRS_PROTO
 	help
 	  Framing and command dispatch for the management CDC while the device is in management mode
-	  (entries: doc/08-firmware.md 2, command table: doc/10-security.md 9).
+	  (entries: doc/07-firmware.md 2, command table: doc/09-security.md 9).
 	  Pure C: commands only touch the device through backend callbacks, so the host tests
 	  can run every one of them against a fake backend, see tests/host.
 

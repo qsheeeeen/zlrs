@@ -1,6 +1,6 @@
 /*
  * Log storage: mount the LittleFS the logging subsystem's file backend writes to, and report how
- * the last boot ended. See doc/08-firmware.md 7.
+ * the last boot ended. See doc/07-firmware.md 7.
  *
  * Nothing here implements logging: the messages themselves go through Zephyr's logging subsystem
  * and its file backend (LOG_BACKEND_FS), which also owns the file rotation that makes the store a

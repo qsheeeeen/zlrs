@@ -215,7 +215,7 @@ static void test_control_plan(void)
 }
 
 /*
- * LoRa long-range tier (doc/07-architecture.md 3): a frame is tens of ms, so airtime decides
+ * LoRa long-range tier (doc/06-architecture.md 3): a frame is tens of ms, so airtime decides
  * the frame rate, not the configured number.
  */
 static void test_lora_plan(void)
@@ -261,7 +261,7 @@ static void test_lora_plan(void)
 }
 
 /*
- * Racing mode (doc/07-architecture.md 2): control owns 2.4G, has no region table and the duty
+ * Racing mode (doc/06-architecture.md 2): control owns 2.4G, has no region table and the duty
  * gate does not touch it; the link that moved to sub-G (data) is the regulated one, and its
  * windows amortise into the superframe through data_every_n, trimming the peak rate.
  */
@@ -294,7 +294,7 @@ static void test_racing_plan(void)
 }
 
 /*
- * 1000 Hz timing budget (doc/09-protocol.md 4.1): at 2.6 Mbps a 31 B RC frame takes 108 us and
+ * 1000 Hz timing budget (doc/08-protocol.md 4.1): at 2.6 Mbps a 31 B RC frame takes 108 us and
  * a frame is 1000 us, so the four slots separate cleanly. The protocol side is fine; whether it
  * runs depends on driving the radio directly (RAC schedules in whole milliseconds).
  */

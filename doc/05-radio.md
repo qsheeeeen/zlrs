@@ -2,8 +2,8 @@
 
 Source: Semtech LR2021 Final Datasheet Rev. 1.1 (DS.LR2021, 2025-10-14, 236 pages). Only what
 ZLRS uses is excerpted here: rates and sensitivity, mode-switch timing, the SPI/IRQ interface
-and the pins. How those numbers are used: [07-architecture](07-architecture.md) and
-[09-protocol](09-protocol.md); board calibration: the
+and the pins. How those numbers are used: [06-architecture](06-architecture.md) and
+[08-protocol](08-protocol.md); board calibration: the
 [board README](../boards/zlrs/rp2350_zero_core2021/README.md).
 
 ## Where the part sits
@@ -102,7 +102,7 @@ going low.
 | `TSTXRX` | Tx to Rx | 91 us |
 | `TSRXTX` | Rx to Tx | 107 us |
 
-How the superframe uses these numbers: [07-architecture](07-architecture.md) 4.
+How the superframe uses these numbers: [06-architecture](06-architecture.md) 4.
 
 ## SPI and the host interface
 

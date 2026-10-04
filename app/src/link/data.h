@@ -2,7 +2,7 @@
  * Data link I/O: the passthrough byte stream between host and air.
  *
  * The link itself lives in core/link; this is its host side — the endpoint the host talks to, the
- * RX/TX rings and the drop counters the data link reports (doc/07-architecture.md 5). Which device
+ * RX/TX rings and the drop counters the data link reports (doc/06-architecture.md 5). Which device
  * the implementation binds directly to devicetree UART/CDC devices.
  *
  * Naming: `<dir>/<file>.c` carries `zlrs_<dir>_<file>_*()`, so this is `zlrs_link_data_*()`.

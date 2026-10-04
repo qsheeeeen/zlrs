@@ -84,7 +84,7 @@ static int zlrs_usb_init(void)
 	}
 
 	/*
-	 * USB is optional (doc/08-firmware.md 4): on failure warn but carry on — a non-zero SYS_INIT
+	 * USB is optional (doc/07-firmware.md 4): on failure warn but carry on — a non-zero SYS_INIT
 	 * stops the whole system, and a board that only needs UART or the air should survive it.
 	 */
 	err = zlrs_usb_add_descriptors();

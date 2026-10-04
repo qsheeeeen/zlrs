@@ -11,7 +11,7 @@ unique; the difference here is a Core2021 plus a full wiring set, so the vendor 
 `zlrs`.
 
 **The physical build and how it behaves in each mode are in
-[doc/04-prototype.md](../../../doc/04-prototype.md)**; this document covers the board definition
+[doc/03-prototype.md](../../../doc/03-prototype.md)**; this document covers the board definition
 only: pins and aliases, SKUs and calibration, partitions, build targets and board defaults.
 
 ## 1. Pins and aliases
@@ -26,7 +26,7 @@ only: pins and aliases, SKUs and calibration, partitions, build targets and boar
 | UART0 TX / RX | GP0 / GP1 | `zlrs-control-uart` = `uart0` | the control port, CRSF at 420000 |
 | UART1 TX / RX | GP8 / GP9 | `zlrs-data-uart` = `uart1` | the data port, 115200 by default (changeable in NVS) |
 | Button | GP12 | `zlrs-button`, `smtc-user-button` | to ground with an internal pull-up; none fitted, for your own switch |
-| WS2812B | GP16 | `zlrs-led`, `led-strip` | on the module, driven through PIO0; semantics in [doc/11-ux.md](../../../doc/11-ux.md) |
+| WS2812B | GP16 | `zlrs-led`, `led-strip` | on the module, driven through PIO0; semantics in [doc/10-ux.md](../../../doc/10-ux.md) |
 | Watchdog | - | `watchdog0` = `wdt0` | armed only when `CONFIG_ZLRS_APP_WATCHDOG` is on |
 
 The USB device exposes four CDC nodes; three are enabled by default:
@@ -45,8 +45,8 @@ is the alias the vendor USP samples want; with it in place `usp_zephyr/samples/u
 this board as-is.
 
 Each link has two endpoints (UART and USB CDC); the rule that picks one is in
-[doc/08-firmware.md](../../../doc/08-firmware.md) 1, and the physical interface list is in
-[doc/04-prototype.md](../../../doc/04-prototype.md) 3.
+[doc/07-firmware.md](../../../doc/07-firmware.md) 1, and the physical interface list is in
+[doc/03-prototype.md](../../../doc/03-prototype.md) 3.
 
 ### DMA allocation and peripheral support
 
@@ -119,7 +119,7 @@ calibration tables hang.
 The value must **not** live in `/chosen`: Zephyr's DT macros only export `zephyr,`-prefixed
 chosen properties, a custom prefix reads back as nothing and silently falls back to the HF
 default, so an LF board would never pass the check (exactly what happened on the first
-bring-up, see [doc/12-debug.md](../../../doc/12-debug.md) 5).
+bring-up, see [doc/11-debug.md](../../../doc/11-debug.md) 5).
 
 ## 3. Core2021 and calibration
 
@@ -132,7 +132,7 @@ bring-up, see [doc/12-debug.md](../../../doc/12-debug.md) 5).
   - **LF**: the 470 MHz reference tables, `calibration-freqs` = 433.3 / 470.3 / 498.8 MHz plus
     2.44 GHz (LF covers 470 and 433, hence one extra point).
 - Both sets are **references** and have to be recalibrated for the Core2021's PA network once it
-  is on a board; the acceptance criteria are in [doc/13-roadmap.md](../../../doc/13-roadmap.md).
+  is on a board; the acceptance criteria are in [doc/12-roadmap.md](../../../doc/12-roadmap.md).
 - The 2.4 GHz path is identical on both SKUs (one LR2021 time-sharing two bands) and both
   calibration sets include 2.441 GHz.
 
@@ -154,7 +154,7 @@ disagree about where a slot lives.
 Boot chain: RP2350 bootrom, MCUboot (checking slot0's signature), the application. Slot swaps
 use `swap using move` (no scratch partition needed, rollback works; `swap using offset` goes in
 but never comes back on this board). Image confirmation and recovery entries are described in
-[doc/08-firmware.md](../../../doc/08-firmware.md) 5, the log store in section 7.
+[doc/07-firmware.md](../../../doc/07-firmware.md) 5, the log store in section 7.
 
 BOOTSEL carries the **bootloader image only**; the application is always installed and updated
 through the bootloader:
@@ -203,7 +203,7 @@ Defaults that `Kconfig.defconfig` sets for every variant:
 - `USB_DEVICE_STACK_NEXT` and `USBD_CDC_ACM_CLASS`: the device stack that carries all CDCs.
   **`CDC_ACM_SERIAL_INITIALIZE_AT_BOOT` stays off**: that helper registers only the first CDC,
   while `subsys/usb` builds its own context and registers every one of them
-  (see [doc/08-firmware.md](../../../doc/08-firmware.md) 4).
+  (see [doc/07-firmware.md](../../../doc/07-firmware.md) 4).
 - No console by default: the `cdc_acm_uart3` node is disabled and only
   `app/debug.overlay` enables it, so a production image has no shell.
 - Peripherals such as `CONFIG_UART_LINE_CTRL`, `UART_INTERRUPT_DRIVEN`, `GPIO`, `RESET`,

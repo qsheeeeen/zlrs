@@ -23,7 +23,7 @@
  *
  * The log and coredump partitions cost a third of what used to be NVS space: NVS holds nine keys
  * under 100 B in total, so 32 KB is generous, while a board that reboots on its own needs the
- * lines from before the reset (doc/08-firmware.md 7).
+ * lines from before the reset (doc/07-firmware.md 7).
  */
 
 &flash0 {

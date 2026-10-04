@@ -19,7 +19,7 @@ west build --sysbuild -b "$ZLRS_BOARD" "$ZLRS_APP" -- \
 ```
 
 Production firmware has no console CDC and no shell; its three CDCs are control, data and
-management (see [08-firmware](08-firmware.md) 1).
+management (see [07-firmware](07-firmware.md) 1).
 
 The debug console prints command replies. Deferred logs stay in RAM during RF and are flushed
 to flash at boot or management entry; export them with `tools/zlrs.py logs <directory>`. UART
@@ -51,7 +51,7 @@ quietly end up in a released image.
 | `CONFIG_ZLRS_APP_TX_GUARD_US` | fixed delay from hardware slot boundary to SET_TX; both peers must use the same timing settings |
 
 The shell is gated by `CONFIG_ZLRS_APP_DEBUG_SHELL` and runs on the console CDC; the supported
-configuration paths are in [10-security](10-security.md) 9 and [08-firmware](08-firmware.md) 3.
+configuration paths are in [09-security](09-security.md) 9 and [07-firmware](07-firmware.md) 3.
 
 ## 3. Switches for isolating a layer
 
@@ -79,7 +79,7 @@ boot, and each has a matching host test.
 | `CONFIG_ZLRS_APP_CONTROL_MODULATION_LORA` | LoRa control tier instead of FLRC |
 
 **Features whose default is still open** (rate adaptation, dynamic power) are not
-switches to hide but debts: `doc/13-roadmap.md`, "Pending defaults".
+switches to hide but debts: `doc/12-roadmap.md`, "Pending defaults".
 
 For a fixed-channel 2.4 GHz data-only bench on the LF module:
 
@@ -93,7 +93,7 @@ ZLRS_BOARD=rp2350_zero_core2021/rp2350a/m33/lf zlrs-build -d build-data24 -- \
 This profile disables control, sub-band mixing and hopping. P1 authentication, session handshake and ARQ remain enabled. Fresh devices can pair on the data
 link in this profile; no previous pairing record is needed. Read the **data** section of
 `zlrs link`; management status and the LED follow data when control is disabled. The
-profile isolates faults; it is not a validated reliable-transfer configuration (see `13-roadmap.md`).
+profile isolates faults; it is not a validated reliable-transfer configuration (see `12-roadmap.md`).
 
 Measure end-to-end payload throughput between two paired devices with:
 
@@ -282,7 +282,7 @@ One line each; details live in code comments.
 
 ## 6. Hardware timer and independent RAL driver
 
-Both links use the exclusive RAL driver described in [07-architecture](07-architecture.md) 3.
+Both links use the exclusive RAL driver described in [06-architecture](06-architecture.md) 3.
 `zlrs direct` and runtime `blast` / `listen` commands have been removed; boot-time raw testing
 remains available through `CONFIG_ZLRS_APP_BENCH_RAW_MS`, before the slot owner starts.
 
@@ -311,7 +311,7 @@ window; the guard only places the final launch command relative to the RF slot b
 clamps control PHY to 325 kbps; its control packets cannot fit four equal slots at the requested
 150 Hz with current preparation costs. The application clamps the rate before sizing the data
 MTU. Hardware timer scheduling does not by itself establish throughput acceptance; see
-[13-roadmap](13-roadmap.md) for the pending radio checks.
+[12-roadmap](12-roadmap.md) for the pending radio checks.
 
 The default preparation reservation is 6000 us with SPI DMA (2800 us with polling), and
 the launch offset is 200 us. Receiver clock alignment uses a 250 us startup estimate.

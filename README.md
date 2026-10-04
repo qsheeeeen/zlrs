@@ -22,7 +22,7 @@ the same firmware: choose TX or RX in configuration, connect over USB or UART, a
 ## Get started
 
 The current prototype uses a **Waveshare RP2350-Zero + Core2021**. See the
-[hardware guide](doc/04-prototype.md) for wiring and the [installation guide](doc/03-platform.md)
+[hardware guide](doc/03-prototype.md) for wiring and the [installation guide](doc/02-platform.md)
 for your first firmware installation.
 
 ### Install and update firmware
@@ -57,7 +57,7 @@ python3 tools/zlrs.py set-phrase "my binding phrase" --serial <serial>
 
 Set the same phrase on both devices, choose their TX/RX roles and reboot. Pair them with the
 button or `python3 tools/zlrs.py pair --serial <serial>`. The
-[configuration guide](doc/08-firmware.md) covers UART settings, regions and failsafe settings.
+[configuration guide](doc/07-firmware.md) covers UART settings, regions and failsafe settings.
 
 Run `python3 tools/zlrs.py --help` for all commands.
 
@@ -73,16 +73,16 @@ zlrs-build
 ```
 
 Use the `hf` target for an HF module. Build requirements and flashing steps are in the
-[installation guide](doc/03-platform.md).
+[installation guide](doc/02-platform.md).
 
 ## Learn more
 
-- [Product overview](doc/01-product.md) — use cases and operating modes.
+- [Product](doc/01-product.md) — what ZLRS is, how it is used and what the product includes.
 - [Hardware reference](boards/zlrs/rp2350_zero_core2021/README.md) — boards, pins and peripherals.
-- [Firmware and configuration](doc/08-firmware.md) — device operation and updates.
-- [Architecture](doc/07-architecture.md), [protocol](doc/09-protocol.md) and
-  [security](doc/10-security.md) — implementation details.
-- [Development and debugging](doc/12-debug.md) — developer tools and diagnostics.
-- [Roadmap and hardware validation](doc/13-roadmap.md) — current results and remaining work.
+- [Firmware and configuration](doc/07-firmware.md) — device operation and updates.
+- [Architecture](doc/06-architecture.md), [protocol](doc/08-protocol.md) and
+  [security](doc/09-security.md) — implementation details.
+- [Development and debugging](doc/11-debug.md) — developer tools and diagnostics.
+- [Roadmap and hardware validation](doc/12-roadmap.md) — current results and remaining work.
 
 ZLRS is under active development and uses its own protocol; it is not compatible with ExpressLRS.

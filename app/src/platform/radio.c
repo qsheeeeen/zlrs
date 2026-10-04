@@ -59,7 +59,7 @@ static zlrs_radio_diag_t diag;
 
 #define RX_FIFO_THRESHOLD 128U
 
-/* Rate tiers: since v1.1 the raw rate and bandwidth share one enum, see doc/06-radio.md */
+/* Rate tiers: since v1.1 the raw rate and bandwidth share one enum, see doc/05-radio.md */
 static ral_flrc_raw_bit_rate_t raw_bit_rate(uint32_t rate_bps)
 {
 	switch (rate_bps) {

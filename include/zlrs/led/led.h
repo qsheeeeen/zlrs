@@ -1,6 +1,6 @@
 /*
  * Status LED: one WS2812 pixel expresses link state and alerts. Colour and cadence both carry
- * meaning (colour alone fails in bright light or with colour blindness). Priorities: 11-ux.
+ * meaning (colour alone fails in bright light or with colour blindness). Priorities: 10-ux.
  * The application's LED thread (app/src/ui/led.c) fills this from the system state it subscribes
  * to and writes the result to the strip.
  *

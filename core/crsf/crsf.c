@@ -223,7 +223,7 @@ uint8_t zlrs_crsf_rf_mode(uint32_t rate_bps)
 
 /*
  * LoRa tiers have no "rate", so they are encoded as 0x10 | SF: the handset only needs both
- * ends to agree, and "LoRa, this SF" has to be visible (see doc/07-architecture.md 3).
+ * ends to agree, and "LoRa, this SF" has to be visible (see doc/06-architecture.md 3).
  */
 uint8_t zlrs_crsf_rf_mode_mod(const zlrs_mod_cfg_t *mod)
 {

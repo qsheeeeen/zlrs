@@ -1,7 +1,7 @@
 /*
  * Dynamic TX power: follow the uplink RSSI/LQ the peer reports; losing telemetry goes straight
  * back to the ceiling (the peer is probably gone, and reach beats saving power). Same skeleton
- * as rate adaptation (windows, hold time, hysteresis); thresholds await calibration (09-protocol 4.5).
+ * as rate adaptation (windows, hold time, hysteresis); thresholds await calibration (08-protocol 4.5).
  *
  * SPDX-License-Identifier: Apache-2.0
  */

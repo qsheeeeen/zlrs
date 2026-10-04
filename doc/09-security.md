@@ -1,7 +1,7 @@
 # Security
 
 The identity model, the key tree, pairing and sessions, the security profiles, the threat model
-and the configuration protocol. Frames and states: [09-protocol](09-protocol.md);
+and the configuration protocol. Frames and states: [08-protocol](08-protocol.md);
 implementation: `core/proto/crypto*.c` and `core/link/link.c`.
 
 ## 1. Identity
@@ -77,7 +77,7 @@ Pairing decides **who** we talk to; the session decides **which key** this conve
 - The three messages carry `dev_a`, `dev_b` and the two 4-byte nonces; the TX also ships its
   failsafe channel values. They are tagged with `auth_key` and use the pairing sync word.
 - **No key is transferred**: pairing authenticates the two device ids and exchanges the nonces
-  from which both ends derive `pair_key` ([09-protocol](09-protocol.md) 3.3).
+  from which both ends derive `pair_key` ([08-protocol](08-protocol.md) 3.3).
 - Both nonces are covered by every message, so a recorded handshake cannot be replayed into a
   new pairing.
 
@@ -105,7 +105,7 @@ Properties:
 | --- | --- | --- |
 | `P0` | no tag | debug images only; maximum performance, no authentication |
 | `P1` | 4 B truncated HMAC-SHA256 per frame | production default |
-| `P2` | 4 B tag plus AES-CTR payload encryption (encrypt-then-MAC) | not implemented yet; the last item in [13-roadmap](13-roadmap.md) |
+| `P2` | 4 B tag plus AES-CTR payload encryption (encrypt-then-MAC) | not implemented yet; the last item in [12-roadmap](12-roadmap.md) |
 
 The profile is configuration: `set-profile` stores it, the build carries the default, a
 production image refuses `P0`, and the profile a peer declares in `SYNC` has to match the local
@@ -183,4 +183,4 @@ The idle timeout starts after this flush.
 Sending `ENTER` again in an active session flushes pending logs before acknowledging it.
 
 The tool that speaks it is `tools/zlrs.py`; the update flow built on top is in
-[08-firmware](08-firmware.md) 5.
+[07-firmware](07-firmware.md) 5.

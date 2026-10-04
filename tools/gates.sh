@@ -11,11 +11,11 @@
 #   3. shipped configurations carry no ZLRS_APP_DEBUG_* option. Those exist for bench images;
 #      the marker symbol CONFIG_ZLRS_APP_DEBUG lives in app/debug.conf only.
 #   4. the application is never installed as a UF2: BOOTSEL carries the bootloader image only,
-#      every application image goes through the bootloader (doc/08-firmware.md 5). A document or
+#      every application image goes through the bootloader (doc/07-firmware.md 5). A document or
 #      tool that brings the app-UF2 path back fails here.
 #   5. the log ring fits its partition: the file backend's FILE_SIZE × FILES_LIMIT has to equal
 #      the log_partition in the board's flash layout, or the ring either wastes flash or
-#      overwrites the coredump partition next to it (doc/08-firmware.md 7).
+#      overwrites the coredump partition next to it (doc/07-firmware.md 7).
 #
 # Usage: tools/gates.sh
 

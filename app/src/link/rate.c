@@ -17,7 +17,7 @@ LOG_MODULE_REGISTER(zlrs_link_rate, CONFIG_APP_LOG_LEVEL);
 #if IS_ENABLED(CONFIG_ZLRS_APP_RATE_ADAPT)
 /*
  * Tiers this build may use, fastest first. The thresholds are placeholders: they wait for measured
- * packet-error curves (doc/13-roadmap.md), the mechanism around them is what is being proven.
+ * packet-error curves (doc/12-roadmap.md), the mechanism around them is what is being proven.
  */
 static const zlrs_rate_tier_t rate_tiers[] = {
 	{.mod = {.modulation = ZLRS_MOD_FLRC, .rate_bps = 2600000U}, .min_lq_to_stay = 85U},

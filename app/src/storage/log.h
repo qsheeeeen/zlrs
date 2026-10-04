@@ -1,6 +1,6 @@
 /*
  * Log store: the flash ring the file logging backend writes to (app/src/storage/log.c,
- * doc/08-firmware.md 7). Used by the shell's `zlrs logstore` and the management protocol's export.
+ * doc/07-firmware.md 7). Used by the shell's `zlrs logstore` and the management protocol's export.
  *
  * SPDX-License-Identifier: Apache-2.0
  */

@@ -4,7 +4,7 @@ Target shape: fix the wiring between the RP2350-Zero and the Core2021 onto one P
 USB-C, a button and two 6P serial ports, powered from 5 V. Two layers, with no RF layout
 constraints (the module carries its own matching network and antenna connector).
 
-The prototype (two modules wired directly) is in [04-prototype](04-prototype.md); pins and
+The prototype (two modules wired directly) is in [03-prototype](03-prototype.md); pins and
 aliases are defined in the [board README](../boards/zlrs/rp2350_zero_core2021/README.md).
 
 ## 1. Ports

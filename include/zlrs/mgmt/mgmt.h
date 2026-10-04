@@ -1,6 +1,6 @@
 /*
  * Management protocol: runs on the management CDC while in management mode
- * (table: doc/10-security.md 9). Pure C framing and dispatch: persistence and link actions go to
+ * (table: doc/09-security.md 9). Pure C framing and dispatch: persistence and link actions go to
  * the application through backend callbacks, so the host tests can run every command against a
  * fake one.
  *

@@ -1,9 +1,9 @@
 /*
- * The button: its own thread, one gesture — hold it past the threshold (doc/11-ux.md).
+ * The button: its own thread, one gesture — hold it past the threshold (doc/10-ux.md).
  *
  * Same shape as ui/led.c: the thread owns the hardware and what it learns goes on the bus as a
  * fact (state/sys_bus.h), so the link state machine still only ever runs on the link thread
- * (doc/07-architecture.md 6). What it reports is a counter, not a one-shot event: a consumer that
+ * (doc/06-architecture.md 6). What it reports is a counter, not a one-shot event: a consumer that
  * reads the channel later still sees that a press happened.
  *
  * Why a thread at all: the hold is a timing measurement the main loop should not have to babysit,
@@ -27,7 +27,7 @@ LOG_MODULE_REGISTER(zlrs_ui_button, CONFIG_APP_LOG_LEVEL);
 #define BUTTON_POLL_MS 20U
 
 /*
- * Preemptive like the LED thread (doc/07-architecture.md 6), and below it: a button sample is a
+ * Preemptive like the LED thread (doc/06-architecture.md 6), and below it: a button sample is a
  * GPIO read, so it can wait for the strip to be written.
  */
 #define BUTTON_THREAD_PRIORITY   K_PRIO_PREEMPT(8)

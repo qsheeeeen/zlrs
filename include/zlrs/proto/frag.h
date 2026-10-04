@@ -1,5 +1,5 @@
 /*
- * Reassembly: strictly in seq order, a gap drops the whole run, see doc/09-protocol.md 2.5.
+ * Reassembly: strictly in seq order, a gap drops the whole run, see doc/08-protocol.md 2.5.
  *
  * SPDX-License-Identifier: Apache-2.0
  */

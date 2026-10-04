@@ -557,7 +557,7 @@ static int cfg_enter_recovery(void *vctx)
 	return (zlrs_platform_recovery_enter() == 0) ? ZLRS_MGMT_OK : ZLRS_MGMT_E_STATE;
 }
 
-/* Host confirms this upgrade; the whole flow depends on it (see doc/08-firmware.md 6) */
+/* Host confirms this upgrade; the whole flow depends on it (see doc/07-firmware.md 6) */
 static int cfg_confirm_image(void *ctx)
 {
 	(void)ctx;
@@ -830,7 +830,7 @@ bool zlrs_mgmt_mode_profile_allowed(uint8_t profile)
 		return true;
 	}
 	if (profile == ZLRS_PROFILE_P0) {
-		/* P0 carries no tag at all, so only a bench image may select it (doc/10-security.md 8) */
+		/* P0 carries no tag at all, so only a bench image may select it (doc/09-security.md 8) */
 		return IS_ENABLED(CONFIG_ZLRS_APP_DEBUG);
 	}
 

@@ -2,9 +2,9 @@
 
 The ZLRS protocol: the frame format, how the link state machine moves, how pairing and sessions
 are set up, how the superframe is laid out, how reliable transfer and fragmentation work, and
-how hopping and regulation land in code. Identity and keys: [10-security](10-security.md);
-timing budget: [07-architecture](07-architecture.md) 4; chip parameters:
-[06-radio](06-radio.md).
+how hopping and regulation land in code. Identity and keys: [09-security](09-security.md);
+timing budget: [06-architecture](06-architecture.md) 4; chip parameters:
+[05-radio](05-radio.md).
 
 Protocol version: `ZLRS_PROTO_VERSION` (3 today), carried in `SYNC` and checked by the RX.
 
@@ -109,7 +109,7 @@ PAIR_CFM  {dev_a, dev_b, nonce_a, nonce_b, flags}
 The TX (initiator) sends `PAIR_REQ` and ships its failsafe channel values when it has them; the
 RX answers `PAIR_RESP` with its own id and a fresh `nonce_b`, and the TX finishes with
 `PAIR_CFM`. Both ends keep `nonce_a || nonce_b` as the pair salt, from which the pairing-level
-keys derive ([10-security](10-security.md) 3). Pairing messages are tagged with the shared
+keys derive ([09-security](09-security.md) 3). Pairing messages are tagged with the shared
 `auth_key` and the pairing sync word; once it succeeds both ends switch to their link's normal
 sync word and derived keys.
 

@@ -3,7 +3,7 @@
 How the system is put together: what the two links do, how the bands mix, how the radio is
 shared, how the timing budget is spent, how the code is layered and what the threading and
 callback contracts are. Product: [01-product](01-product.md); platform:
-[03-platform](03-platform.md); protocol: [09-protocol](09-protocol.md).
+[02-platform](02-platform.md); protocol: [08-protocol](08-protocol.md).
 
 ## 1. The two links
 
@@ -33,7 +33,7 @@ board carries one of them, chosen by configuration.
 The migration order is fixed: **telemetry, then data, then the RC downlink**. `r` moves the
 least critical traffic first and the RC last, so latency steps down instead of jittering.
 Sync word derivation labels follow the link (`sync/control`, `sync/data`, `sync/pairing`) rather
-than the band, so mixing leaves the key structure untouched ([10-security](10-security.md) 3).
+than the band, so mixing leaves the key structure untouched ([09-security](09-security.md) 3).
 
 **The regulatory gate only applies to sub-G slots**: 2.4G has no region table. The ceiling for
 `r` comes from the regional duty cap (about 10 frames per second at EU868's 1 %), and going
@@ -56,7 +56,7 @@ from a RAM-resident zero-latency ISR, bypassing kernel interrupt locks. A delaye
 expired slots and advances hop/frame state without building or transmitting old packets.
 Frame snapshots consume any pending wake token under the same interrupt lock, and the owner
 rejects an already consumed frame number. Management pauses radio work while the absolute clock keeps running, so missed frames can be
-accounted for when it resumes. The superframe shape is in [09-protocol](09-protocol.md) 4.
+accounted for when it resumes. The superframe shape is in [08-protocol](08-protocol.md) 4.
 
 The TX is the clock master. The RX follows authenticated packet timestamps captured by the
 GPIO ISR, subtracting packet airtime and the TX launch offset. Corrections are bounded and
@@ -70,7 +70,7 @@ default). The superframe then follows the slower link.
 ## 4. Timing budget and rate tiers
 
 From LR2021 datasheet Rev 1.1 Table 3-23 (typical values); the full table is in
-[06-radio](06-radio.md):
+[05-radio](05-radio.md):
 
 | Symbol | Meaning | typ |
 | --- | --- | --- |
@@ -105,7 +105,7 @@ per frame. Its timer period includes native packet airtime, preparation guard an
 LF is clamped from the configured preparation window and RF budget. The SPI DMA default
 reserves 6000 us for preparation and currently runs CN433 at 27 Hz. ARQ and ACK traffic
 reduce the payload rate further. Hardware results and remaining acceptance are tracked in
-[13-roadmap](13-roadmap.md).
+[12-roadmap](12-roadmap.md).
 
 ## 5. Software layering
 
@@ -156,7 +156,7 @@ calibration selection and launch scheduling.
 
 Every transmission also passes a **regulatory gate**: `core/region` provides the region's
 channel plan, power ceiling and duty cap; a slot with no budget left is given up and counted in
-the log. See [09-protocol](09-protocol.md) 5.2.
+the log. See [08-protocol](08-protocol.md) 5.2.
 
 ## 6. Threading model and callback contract
 
@@ -199,11 +199,11 @@ and an open management session. Three rules make that cheap and safe:
 
 The consumer decides what the facts mean — `core/led` holds the colours and the priority order
 (pure C, host-tested) and the LED thread is its only caller, so adding a consumer (a shell, a log
-exporter, telemetry) never touches a producer. See [11-ux](11-ux.md).
+exporter, telemetry) never touches a producer. See [10-ux](10-ux.md).
 
 Management mode does not run on the link thread either: `main()` enters it, stops submitting
 transactions for the session and runs the management protocol there (see
-[08-firmware](08-firmware.md) 2).
+[07-firmware](07-firmware.md) 2).
 
 ### 6.2 Callback contract
 
@@ -250,7 +250,7 @@ three; HF pads its unused entry with zero, and LF includes both sub-G coverage a
 ## 7. Diagnostics
 
 Diagnostics **add no extra channel**: link quality rides the existing CRSF link statistics frame
-(`0x14`, see [09-protocol](09-protocol.md) 2.4). The data link's overflow and dropped bytes have
+(`0x14`, see [08-protocol](08-protocol.md) 2.4). The data link's overflow and dropped bytes have
 no CRSF field to travel in, so they are counted and exposed through the management protocol's
 `STATUS` response instead. Debug images can additionally print a 1 Hz `stats:` / `air:` line
 (`CONFIG_ZLRS_APP_DEBUG_STATS_LOG`).

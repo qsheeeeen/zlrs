@@ -84,7 +84,7 @@ typedef struct {
 
 /*
  * Bench switches: everything defaults to production; a case can turn one off to show that the
- * link still works without it (doc/12-debug.md 3). Set before the nodes are created.
+ * link still works without it (doc/11-debug.md 3). Set before the nodes are created.
  */
 typedef struct {
 	uint8_t hopping;
@@ -237,7 +237,7 @@ static void node_init(node_t *node, uint8_t role, const uint8_t *root_key,
 	data_cfg.domain = ZLRS_DOMAIN_ISM2400;
 	data_cfg.sync_slot = ZLRS_SYNC_SLOT_DATA;
 	data_cfg.mod = zlrs_mod_flrc(SIM_RATE_DATA);
-	data_cfg.peer_timeout_ms = 0U; /* no peer-loss check on the data link (09-protocol 3.7) */
+	data_cfg.peer_timeout_ms = 0U; /* no peer-loss check on the data link (08-protocol 3.7) */
 	data_cfg.data_mtu = SIM_DATA_MTU;
 
 	zlrs_link_init(&node->ctl, &cfg, fake_random, node, &ctl_ev);
@@ -528,7 +528,7 @@ static void sim_enable_nth(sim_t *sim, uint8_t role, const uint8_t dev_id[ZLRS_D
 
 /*
  * Three nodes, first case: a bystander pair. Different radio sync words mean they cannot hear
- * each other at the physical layer, which is the basis of doc/10-security.md 7.2.
+ * each other at the physical layer, which is the basis of doc/09-security.md 7.2.
  */
 static void test_third_node_isolation(void)
 {
@@ -566,7 +566,7 @@ static void test_third_node_isolation(void)
 /*
  * Three nodes, second case: an attacker has the main TX's dev_id and the sync word from the air,
  * but never heard the pairing (wrong salt). Its frames reach the receiver and fail the tag: this is
- * what mixing the pairing nonce into pair_key buys (doc/10-security.md 3).
+ * what mixing the pairing nonce into pair_key buys (doc/09-security.md 3).
  */
 static void test_intruder_without_pair_salt(void)
 {
@@ -616,7 +616,7 @@ static void test_intruder_without_pair_salt(void)
 
 /*
  * A group member that heard the pairing derives the same keys and can impersonate the real TX
- * to inject RC. That is the inherent cost documented in doc/10-security.md 7.2; this case pins it.
+ * to inject RC. That is the inherent cost documented in doc/09-security.md 7.2; this case pins it.
  */
 static void test_group_member_impersonates(void)
 {
@@ -1263,7 +1263,7 @@ static void test_pairing_rotation(void)
 }
 
 /*
- * Replaying an old SYNC (the weakness tracked in 09-protocol): the RX only adopts a session after
+ * Replaying an old SYNC (the weakness tracked in 08-protocol): the RX only adopts a session after
  * a confirm tagged with the new session key, so a replayed SYNC only earns a response carrying a
  * fresh nonce_r and no old keys. An old SESS_RESP fails at the TX for the same reason.
  */
@@ -2510,7 +2510,7 @@ static void test_failsafe_push(void)
 
 /*
  * The data link is best-effort: it sends nothing while idle and has no peer-loss check
- * (doc/09-protocol.md 3.7), so even a long idle period must not rebuild the session repeatedly:
+ * (doc/08-protocol.md 3.7), so even a long idle period must not rebuild the session repeatedly:
  * otherwise the first data after idle would hit a handshake and waste a sync period.
  */
 static void test_data_idle(void)
@@ -2778,7 +2778,7 @@ static void test_isolation_no_handshake(void)
 
 /*
  * Bench switch three: telemetry off. The control link degrades to downlink RC only: the TX opens
- * no telemetry window (the app drops peer loss with it, doc/12-debug.md 3) and the RX sends none.
+ * no telemetry window (the app drops peer loss with it, doc/11-debug.md 3) and the RX sends none.
  */
 static void test_isolation_no_telemetry(void)
 {
@@ -2808,7 +2808,7 @@ static void test_isolation_no_telemetry(void)
 }
 
 /*
- * Periodic SYNC while connected (doc/09-protocol.md 5.1): crystal drift slowly pulls the hop
+ * Periodic SYNC while connected (doc/08-protocol.md 5.1): crystal drift slowly pulls the hop
  * indices apart and this frame pulls the RX back. The case shifts the index by 4 to fake drift.
  */
 static void test_hop_resync(void)
@@ -2856,7 +2856,7 @@ static void test_hop_resync(void)
 }
 
 /*
- * Sub-band mix (doc/09-protocol.md 5.1): the TX advances it unilaterally, the RX adopts it while
+ * Sub-band mix (doc/08-protocol.md 5.1): the TX advances it unilaterally, the RX adopts it while
  * handling a SYNC, and falls back to the default after missing new versions for too long.
  */
 /*
@@ -2945,7 +2945,7 @@ static void test_sub_mix(void)
 }
 
 /*
- * Automatic reconnect after a peer reboot (the fix for the limitation in doc/09-protocol.md 3.5):
+ * Automatic reconnect after a peer reboot (the fix for the limitation in doc/08-protocol.md 3.5):
  * the RX loses all link state and keeps only its NVS pairing record while the TX keeps running,
  * and the periodic SYNC makes it handshake again. Both links have to come back on their own.
  */
@@ -3059,7 +3059,7 @@ static void test_sync_replay_guard(void)
 }
 
 /*
- * Modulation is per link (doc/07-architecture.md 3): control runs the LoRa long-range tier while
+ * Modulation is per link (doc/06-architecture.md 3): control runs the LoRa long-range tier while
  * data stays on 2.4G FLRC. LoRa sync words are a separately derived byte (top bit as the private
  * bit) and cannot reuse FLRC's four bytes.
  */
@@ -3108,7 +3108,7 @@ static void test_lora_control(void)
 }
 
 /*
- * The protocol side of 1000 Hz (doc/09-protocol.md 4.1): at a 1 ms frame the superframe, hop
+ * The protocol side of 1000 Hz (doc/08-protocol.md 4.1): at a 1 ms frame the superframe, hop
  * lockstep, window thinning and periodic resync all have to hold. The radio needs direct driver
  * access to reach 1000 Hz (RAC schedules in ms); this case pins the protocol and time constants.
  */

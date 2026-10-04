@@ -2,7 +2,7 @@
  * Control link I/O: the CRSF side of it (handset on the TX, flight controller on the RX).
  *
  * The link itself lives in core/link and the CRSF codec in core/crsf; this is the host/peer side
- * of the control link — endpoint, RX frames, TX ring (doc/07-architecture.md 5). Which device that
+ * of the control link — endpoint, RX frames, TX ring (doc/06-architecture.md 5). Which device that
  * the implementation binds directly to devicetree UART/CDC devices.
  *
  * Naming: `<dir>/<file>.c` carries `zlrs_<dir>_<file>_*()`, so this is `zlrs_link_crsf_*()`.
@@ -14,6 +14,8 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+
+#include "zlrs/crsf/crsf.h"
 
 int zlrs_link_crsf_init(void);
 
@@ -31,3 +33,16 @@ uint8_t zlrs_link_crsf_read(uint8_t *type, uint8_t *payload, uint8_t max_len);
 
 /* Statistics: frames dropped because the RX buffer was full */
 uint32_t zlrs_link_crsf_rx_dropped(void);
+
+struct zlrs_link_crsf_stats {
+	uint32_t rc_received;
+	uint32_t rc_consumed;
+	uint32_t rc_superseded;
+	uint32_t rc_received_us;
+	uint32_t output_frames;
+	uint32_t output_dropped;
+};
+
+/* Snapshot and consume the newest valid RC sample; older samples never queue. */
+bool zlrs_link_crsf_latest_rc(uint8_t payload[ZLRS_CRSF_RC_PAYLOAD_LEN], uint32_t *received_us);
+void zlrs_link_crsf_stats(struct zlrs_link_crsf_stats *out);

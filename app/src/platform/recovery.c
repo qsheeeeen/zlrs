@@ -21,7 +21,7 @@ LOG_MODULE_REGISTER(zlrs_platform_recovery, CONFIG_APP_LOG_LEVEL);
 /*
  * Set the boot-mode flag (retained SRAM, survives a reset) so MCUboot waits for a signed image.
  * The only entries are the management protocol's recovery command and the debug shell, see
- * doc/10-security.md 9.
+ * doc/09-security.md 9.
  */
 int zlrs_platform_recovery_enter(void)
 {

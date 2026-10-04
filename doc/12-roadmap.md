@@ -4,6 +4,87 @@ This document holds **to-dos, the pending-defaults ledger and acceptance criteri
 Finished work gets a one-line summary; details live in code comments and the design is in the
 design documents.
 
+## Product direction consolidation, 2026-10-04
+
+The [product page](01-product.md) describes what ZLRS is and how it is used. This roadmap keeps
+the implementation gaps, unresolved performance decisions and hardware evidence. The product has
+three operating shapes: CRSF control and telemetry only, bidirectional data only, and both together.
+CRSF control and telemetry are one service; the roadmap records the work needed to make each shape
+complete and measurable. Further prototype edits and hardware experiments remain tied to the product
+direction recorded here.
+
+- A dedicated 1 ms control experiment is not accepted as 1 kHz control. Its latest 10 s USB/IP
+  run supplied 8470 samples and delivered 6391 distinct samples (639.1 fresh updates/s), with
+  telemetry and hopping disabled. Timer cadence, repeated control frames and fresh delivery
+  are separate measurements; this experiment does not resolve the host/radio loss split.
+- The new mixed-mode target allocates alternating 1 ms control and 1 ms data windows.
+  Whether 500 Hz DATA is the total or each-direction rate remains to be clarified.
+- After the remaining performance decisions are resolved, prepare complete per-mode timing budgets
+  and compare frame, ARQ, security and scheduling designs before continuing implementation.
+
+### 待收敛的产品决策
+
+产品页 [01-product](01-product.md) 已确定通道方向：固定 CH1–CH4 为主通道，
+每次有效控制更新均更新；CH5–CH16 为辅助通道，高速档位下每通道最低新更新率 50 Hz；
+全部 16 个通道保留 11 bit 精度。低速档更新率、最大更新间隔与样本年龄仍待定；本轮
+暂缓急停、解锁的特殊发送优先级与响应时限。以上方向已经确定，硬件状态见下文。
+
+产品页也确定遥测职责：设备生成自己的链路统计，外部飞控遥测通过
+CRSF 端口输入后反向转发，保留消息类型与业务载荷，无需解释飞控业务含义。两类遥测
+均属于 CRSF 业务。自产链路统计的刷新目标为 10 Hz，名义周期 100 ms，
+适用于单 CRSF 与并发模式；统计输出延迟、最大更新间隔与外部遥测的容量、延迟、
+允许丢失及拥塞规则仍待收敛。
+
+无线档位与在线切换方向也已确定：分别定义近距高速与远距档，高速档主控制
+新更新目标为单 CRSF 1000 Hz、并发 500 Hz。首版固定最快档；后续提供跨重启保存的
+自动切换使能配置，默认关闭，关闭时固定最快档，开启时自动选档，不提供手动选档或
+切档。远距档服务量、使能配置的生效规则、两档无线条件与切换连续性阈值继续收敛。
+
+| 编号 | 待定项 | 为什么会影响方案 |
+| --- | --- | --- |
+| Q01 | 控制+遥测+数据的数据 500 Hz 是双向总计，还是每个方向各 500 Hz | 决定每窗口发送次数、反向机会、MTU 与换向预算 |
+| Q02 | 单 CRSF 1000 Hz、并发 500 Hz 的新主控制样本交付目标所需测试条件、允许丢失与维护占用 | 新样本交付口径已明确；需要同时满足辅助通道与遥测指标，确定最大控制间隔 |
+| Q03 | 低速档辅助通道更新率，以及各档最大更新间隔与样本年龄；高速档已定每辅助通道 50 Hz | 决定辅助通道调度、丢包余量与时序验收；主通道集合与 11 bit 精度已确定 |
+| Q04 | 自产链路统计的输出延迟与最大更新间隔，以及外部遥测转发的容量、延迟、允许丢失与拥塞规则 | 链路统计目标 10 Hz 与两类遥测职责已确定；资源预算与该档位控制指标一起验收 |
+| Q05 | 三种模式分别要求的最小吞吐、最大延迟、抖动和丢失上限 | 没有这些值就无法判定候选方案是否合格 |
+| Q06 | 首版各模式固定高速档的频段、无线参数、服务量与距离条件；后续远距档及自动切换的组合 | 首版用于作用距离与性能验收；后续用于配置矩阵、换频成本与切换预算 |
+| Q07 | 加密是否是当前版本必需，认证目标是什么 | 决定协议开销与硬件计算预算 |
+| Q08 | 失联保护、缓存、重启恢复与长期运行的数值边界 | 决定状态机、队列、ARQ 和接受旧数据的规则 |
+| Q09 | 必须在配置工具中开放的模式、频段、频率、速率与遥测参数 | 决定协商、配置版本、状态反馈与固件裁剪的范围 |
+| Q10 | 本阶段必验硬件/端点，以及距离、功率、干扰和测试时长 | 决定哪些证据足以验收；LF/USB 实测不能替代 HF/真实 UART |
+| Q11 | 后续自动切换的使能配置生效规则、双端配置关系、触发条件、控制空窗、数据处理与失败恢复阈值 | 首版固定最快档与后续配置使能已确定；自动切换仍需两端协调、业务连续性和稳定性验收 |
+
+Q01、Q02 的频率口径与 Q04 的遥测规格继续收敛；其余项可以逐项补充，但在对应方案
+开始实现前必须有明确目标或显式标注的阶段范围。旧文档里的距离目标、帧格式和默认值
+只能作为参考，不能填补用户尚未确定的需求。
+
+Earlier distance targets (hundreds of metres for racing and approximately 2 km or more
+for sub-G operation) also require per-mode RF, antenna, power and acceptance conditions.
+
+### 当前实现差距
+
+| 项目 | 当前情况 | 与规格的关系 |
+| --- | --- | --- |
+| 管理运行模式 | 已提交实现支持 mixed / data24；单控制+遥测主要是构建裁剪 | 不等于三种模式都有完整运行时配置 |
+| 独立 2.4 GHz 数据 | 已有 LF 双板双向完整交付记录 | 证明部分功能；最终吞吐、长期稳定及其他硬件仍需验收 |
+| 1 ms 控制实验 | 工作区有未提交的控制原型，两板当前运行该实验镜像；遥测/跳频关闭 | 是隔离实验；完整 CRSF 模式须启用遥测验收，不得标成 1 kHz 功能已完成 |
+| 控制+遥测+数据的新时序 | 只有需求草图，当前 mixed 实现仍是旧计划 | 500 Hz + 500 Hz 尚未实现或通过验收 |
+| 外部 CRSF 遥测转发 | 当前应用只消费 0x16 控制输入并生成 0x14 链路统计，其他输入帧未进入无线遥测转发 | 产品页已定义外部遥测透明转发；功能尚未实现，需覆盖 USB／UART 输入、业务载荷保留与并发服务量 |
+| 无线档位在线切换 | 现有 FLRC rate adaptation 默认关闭，阈值为占位值；自动切换使能配置与完整切换验收仍缺失 | 产品页已定义首版固定最快档、后续配置使能自动切换；仍需验证双端一致性、切换控制空窗与数据交付 |
+| 安全 | 当前 P1 认证与防重放；P2 加密未实现 | 不应把认证描述为数据保密 |
+
+### 后续工作顺序
+
+
+1. 按单控制+遥测、单数据、控制+遥测+数据逐项收敛需求表，补全适用条件与验收阈值。
+2. 编制预算表：逐模式、逐方向列载荷、空口、SPI、认证、启动、切换和排队成本；
+   明确哪些能重叠执行、哪些必须串行，避免重复计时或遗漏关键路径。
+3. 比较整体方案：时序、帧字段逐 bit 布局、ARQ、安全、FIFO 与调度一并设计，列出
+   每个方案满足哪些需求、还差什么以及预计余量。
+4. 选择方案后再实施：每批修改对应具体规格和验证目的；硬件结果更新路线图。
+
+没有收敛的规格，不以调整一个常量、缩短一个字段或临时跑通一次替代设计完成。
+
 ## First performance milestone: 1 kHz CRSF control, 2026-10-04
 
 Prioritize 1 kHz CRSF control before maximizing bidirectional DATA24 throughput. Shorter
@@ -33,6 +114,30 @@ open under the system-wide design brief below.
   latency in acceptance. These calculations are not hardware acceptance or a required format.
 - Hardware acceptance remains pending: sustained fresh control updates on both boards,
   selected telemetry policy, timing tails, loss/failsafe behavior and unattended recovery.
+
+### Mixed-mode timing target, 2026-10-04
+
+The user sets a separate mixed-mode target: alternate a 1000 us control window and a
+1000 us data window. A complete cycle is 2000 us, giving 500 control windows/s and
+500 data windows/s. Whether DATA must transmit 500 times/s total or in each direction
+is unresolved in the pending specifications above. Dedicated control retains the
+1 kHz target; data-only operation keeps an independently sized throughput plan.
+
+- With one data packet per window, alternating data directions gives 250 opportunities/s
+  per direction; fitting both directions inside one window requires a separately measured
+  turnaround budget. Do not assume which allocation the user requires.
+- Control uses the newest sample without retransmitting old control samples. Data
+  remains reliable; aggregate ACKs and link control in shared frame headers, including
+  header-only reverse packets when there is no user data. Telemetry must fit the chosen
+  reverse allocation without silently replacing control opportunities.
+- Derive a smaller MTU from the complete 1000 us window, including preparation, SPI,
+  radio startup, airtime, receive validation and deadline margins. The current 511-byte
+  frame cannot fit. Decide band assignment and account for band-switch costs explicitly.
+- Measure control delivery timing as well as launch timing. Variable-length data appended
+  to control delays whole-frame CRC/authentication completion; aggregation must not create
+  unbounded control latency or jitter.
+- This is a design target, not implemented or accepted hardware behavior. The existing
+  mixed scheduler still uses its previous plan until the new schedule is validated.
 
 ## DATA24 performance design brief, 2026-10-04
 
@@ -666,9 +771,9 @@ Research directions and acceptance:
 
 ### Hardware
 
-- **Carrier board spin**: the two-layer board from [05-carrier](05-carrier.md).
+- **Carrier board spin**: the two-layer board from [04-carrier](04-carrier.md).
 - **Single-port variant**: no USB, one UART port whose link role is configured at runtime
-  ([03-platform](03-platform.md) 2.1). This needs firmware support that does not exist yet: the
+  ([02-platform](02-platform.md) 2.1). This needs firmware support that does not exist yet: the
   `zlrs-link-*` aliases and `zlrs,default-role` property, the `ZLRS_PORT_LINK*` capability
   macros, a port layer that serves either link, and `set-port-role` in the management protocol.
 - **RP2350 TRNG** (verified on hardware, on by default): Zephyr's `entropy_rpi_pico` is unusable
@@ -685,7 +790,7 @@ Research directions and acceptance:
 ### Update path
 
 - **MCUboot slot swap plus host confirmation** (verified on hardware, see
-  [08-firmware](08-firmware.md) 5): all four paths pass: the first image needs no confirmation,
+  [07-firmware](07-firmware.md) 5): all four paths pass: the first image needs no confirmation,
   an upgrade plus `confirm` stays, no confirmation means a reset and rollback after 20/60 s, and
   a hung application is rolled back by the bootloader's 30 s watchdog. Two details: the swap has
   to use `swap using move` (`swap using offset` goes in but never comes back on this board) and
@@ -715,24 +820,24 @@ Research directions and acceptance:
 Some knobs are on or off today only because they have not been accepted on hardware yet — "what
 the system will do" is already decided, "proven on a board" is not. Each row is that debt: the
 knob, its default today, what has to be measured, and what happens afterwards. This is the only
-place where "not tested yet" is written down; [12-debug](12-debug.md) owns the switches
+place where "not tested yet" is written down; [11-debug](11-debug.md) owns the switches
 themselves.
 
 | Knob | Default today | What is missing | Afterwards |
 | --- | --- | --- | --- |
-| `ZLRS_APP_RATE_ADAPT` | off | per-tier packet error rate and SNR thresholds, measured with a second module | on, thresholds replaced (the placeholders in `app/src/link/rate.c` are ignored today) |
+| `ZLRS_APP_RATE_ADAPT` | off | per-tier packet error rate and SNR thresholds, runtime enable configuration and transition acceptance | first release stays at the fastest tier; later opt-in runtime adaptation, default off, with measured thresholds |
 | `ZLRS_APP_WATCHDOG` | on | a long run on hardware without false resets (PBKDF2 inside management mode is the slowest feed interval) | stays on |
 | `ZLRS_APP_DATA_ARQ` | on | throughput and latency on hardware; the ack can shrink to one header bit once the RX always has a frame to ride along | stays on, window sized from measurements |
 | `ZLRS_APP_DYNAMIC_POWER` | on | thresholds and hysteresis from measured RSSI/SNR | stays on, thresholds replaced |
 | `ZLRS_APP_SUB_BAND_MIX` | on | switching cost and interference benefit, with two modules | stays on |
 | `ZLRS_APP_FHSS`, `ZLRS_APP_SESSION_HANDSHAKE`, `ZLRS_APP_TELEMETRY` | on | the first two-module session (pairing, session, telemetry round trip) | stay on |
-| rate tier and frame-rate values, telemetry period | compile time | management-protocol commands to match [08-firmware](08-firmware.md) 3 | runtime, stored in NVS (role and security profile already are) |
+| rate tier and frame-rate values, telemetry period | compile time | management-protocol commands to match [07-firmware](07-firmware.md) 3 | runtime, stored in NVS (role and security profile already are) |
 
 The switches that cut the product's *shape* (which links, which band role, which modulation) are
 not debt: they stay and any image may set them. The ones that only exist to isolate a layer on
 the bench — P0, hopping off, session handshake off, telemetry off, ARQ off, sub-band mixing off,
 radio off — are gated by `CONFIG_ZLRS_APP_DEBUG`, so a shipped configuration cannot reach them;
-see [12-debug](12-debug.md) 3.
+see [11-debug](11-debug.md) 3.
 
 ## Acceptance criteria
 

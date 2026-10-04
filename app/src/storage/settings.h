@@ -1,5 +1,5 @@
 /*
- * Persistence: root key, device id and pairing record live in NVS (doc/10-security.md 2).
+ * Persistence: root key, device id and pairing record live in NVS (doc/09-security.md 2).
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -34,7 +34,7 @@ enum zlrs_setting {
 };
 
 /*
- * Pairing record: peer identity plus the two pairing nonces (see doc/10-security.md 2, 3).
+ * Pairing record: peer identity plus the two pairing nonces (see doc/09-security.md 2, 3).
  * One pairing, one record; there is no other shape.
  */
 typedef struct {

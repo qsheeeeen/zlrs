@@ -11,7 +11,7 @@
  * There is deliberately no per-LED-kind code here: the strip is whatever devicetree instantiates
  * behind Zephyr's led_strip API — WS2812 over PIO, SPI or UART, APA102, … — and a board without one
  * has no device at all. The thread then keeps draining the bus and simply has nothing to show
- * (doc/11-ux.md).
+ * (doc/10-ux.md).
  *
  * Why a thread at all: the strip write is the slowest step of the LED path and the main loop is the
  * superframe. The thread is preemptive, so it only runs while the link thread is blocked, and the
@@ -33,7 +33,7 @@
 
 LOG_MODULE_REGISTER(zlrs_led, CONFIG_APP_LOG_LEVEL);
 
-/* 20 Hz looks continuous to the eye and costs nothing on the strip (doc/11-ux.md) */
+/* 20 Hz looks continuous to the eye and costs nothing on the strip (doc/10-ux.md) */
 #define LED_REFRESH_MS 50U
 
 /* Debug images attenuate the complete frame so the bench pixel is not glaring. The core renderer
@@ -55,7 +55,7 @@ LOG_MODULE_REGISTER(zlrs_led, CONFIG_APP_LOG_LEVEL);
 #define LED_DROP_HOLD_MS 1000U
 
 /*
- * The link and RAC threads are cooperative (doc/07-architecture.md 6), so this one is preemptive:
+ * The link and RAC threads are cooperative (doc/06-architecture.md 6), so this one is preemptive:
  * it runs only while the link thread is blocked, and the link thread preempts it again the moment
  * it wakes. A strip write therefore never stretches a slot.
  */
@@ -176,7 +176,7 @@ static void led_thread(void *p1, void *p2, void *p3)
 
 		/*
 		 * An alarm outranks the boot self-test: it has to show at once rather than after the
-		 * role-colour window, so the engine is asked past that window (doc/11-ux.md). The
+		 * role-colour window, so the engine is asked past that window (doc/10-ux.md). The
 		 * engine shows both the failsafe and the fault as the red "no usable link" colour.
 		 */
 		const bool alarm = alerts.failsafe || alerts.fault;

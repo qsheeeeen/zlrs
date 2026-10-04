@@ -21,7 +21,7 @@ typedef struct {
 	uint32_t freq_hz; /* carrier frequency */
 	/*
 	 * Modulation: an FLRC rate or LoRa SF/bandwidth/coding rate/preamble, see
-	 * doc/07-architecture.md 3. The application configures the corresponding RAL parameters.
+	 * doc/06-architecture.md 3. The application configures the corresponding RAL parameters.
 	 */
 	zlrs_mod_cfg_t mod;
 	uint8_t sync_slot; /* sync word slot: 1 control, 2 data, 3 pairing */

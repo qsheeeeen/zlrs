@@ -4,7 +4,7 @@
  * The host enters it through the dedicated management CDC; the protocol — framing, command
  * dispatch — is core/mgmt and pure C, so every command lands here as a callback. This file is
  * where a command becomes a device action: an NVS write, a pairing, a reboot into recovery
- * (doc/08-firmware.md 2, doc/10-security.md 9).
+ * (doc/07-firmware.md 2, doc/09-security.md 9).
  *
  * The session works on the application's live state, handed in as a context instead of an
  * indirection table: the commands persist values (they take effect on the next boot), so the
@@ -42,13 +42,13 @@ typedef struct {
 int zlrs_mgmt_mode_run(const zlrs_mgmt_ctx_t *ctx);
 
 /*
- * The host confirmed this image (see the upgrade flow in doc/08-firmware.md 6).
+ * The host confirmed this image (see the upgrade flow in doc/07-firmware.md 6).
  * It is the only verdict on whether this image stays: without a confirm after an upgrade,
  * the next reset lets MCUboot roll back.
  */
 bool zlrs_mgmt_mode_image_confirmed(void);
 
-/* May this image run that profile? P0 is a debug-image move, P2 is not implemented (08-firmware 4) */
+/* May this image run that profile? P0 is a debug-image move, P2 is not implemented (07-firmware 4) */
 bool zlrs_mgmt_mode_profile_allowed(uint8_t profile);
 
 /* Dedicated management CDC, initialized and polled directly by the application. */

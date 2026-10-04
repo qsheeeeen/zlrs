@@ -19,7 +19,7 @@
 #   ├── zlrs/                this repository == manifest repository (west.yml self.path)
 #   ├── zephyr/              Zephyr v4.4.0 plus the modules it imports
 #   ├── usp_zephyr/          Semtech usp_zephyr v1.2.1
-#   ├── bootloader/mcuboot/  MCUboot: the bootloader image and its imgtool (doc/08-firmware.md 5)
+#   ├── bootloader/mcuboot/  MCUboot: the bootloader image and its imgtool (doc/07-firmware.md 5)
 #   └── modules/lib/usp/     Semtech usp v1.2.1
 #
 # The toolchain comes from the Zephyr SDK (default $HOME/zephyr-sdk-1.0.0, ZLRS_SDK_DIR overrides):

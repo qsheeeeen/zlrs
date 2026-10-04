@@ -5,7 +5,7 @@ config ZLRS_LED
 	bool "Status LED patterns (state -> colour and cadence)"
 	select ZLRS_LINK
 	help
-	  Maps link state and alerts onto one pixel's colour and cadence (table: doc/11-ux.md).
+	  Maps link state and alerts onto one pixel's colour and cadence (table: doc/10-ux.md).
 	  Pure C, see tests/host; the thread that renders the application's system state through
 	  this engine, and the strip it writes, live in the application (app/src/ui/led.c).
 

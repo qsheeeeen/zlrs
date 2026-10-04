@@ -4,7 +4,7 @@
  *
  * Trade-off: CRSF is only a port format here (handset <-> module, receiver <-> flight
  * controller) and has nothing to do with ExpressLRS. Addresses are not validated when
- * parsing (handsets and FCs use several); the caller picks it when sending (08-firmware 1).
+ * parsing (handsets and FCs use several); the caller picks it when sending (07-firmware 1).
  *
  * SPDX-License-Identifier: Apache-2.0
  */

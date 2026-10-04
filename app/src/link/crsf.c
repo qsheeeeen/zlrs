@@ -5,6 +5,7 @@
  */
 
 #include "link/crsf.h"
+#include "platform/slot_timer.h"
 
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
@@ -52,6 +53,9 @@ static struct crsf_ep crsf_eps[2] = {
 static zlrs_crsf_parser_t crsf_parser;
 static const struct device *crsf_rx_source; /* endpoint that last fed the parser */
 static uint32_t crsf_rx_dropped;
+static uint8_t latest_rc[ZLRS_CRSF_RC_PAYLOAD_LEN];
+static bool rc_pending;
+static struct zlrs_link_crsf_stats stats;
 
 /* USB wins after DTR or four received bytes; otherwise a used UART wins.
  * Default to USB so a receive-only host does not have to send first. */
@@ -103,15 +107,30 @@ static void crsf_isr(const struct device *dev, void *user_data)
 				if (result != ZLRS_CRSF_FRAME) {
 					continue;
 				}
+				if (crsf_parser.type == ZLRS_CRSF_TYPE_RC_CHANNELS &&
+				    crsf_parser.payload_len == sizeof(latest_rc)) {
+					const unsigned int key = irq_lock();
+
+					stats.rc_superseded += rc_pending;
+					memcpy(latest_rc, ZLRS_CRSF_PAYLOAD(&crsf_parser),
+					       sizeof(latest_rc));
+					stats.rc_received++;
+					stats.rc_received_us = zlrs_slot_timer_now_us();
+					rc_pending = true;
+					irq_unlock(key);
+					continue;
+				}
 
 				record[0] = crsf_parser.payload_len;
 				record[1] = crsf_parser.type;
 				memcpy(&record[2], ZLRS_CRSF_PAYLOAD(&crsf_parser),
 				       crsf_parser.payload_len);
 
-				if (ring_buf_put(&crsf_frame_ring, record,
+				if (ring_buf_space_get(&crsf_frame_ring) <
+					    (uint32_t)crsf_parser.payload_len + 2U ||
+				    ring_buf_put(&crsf_frame_ring, record,
 						 (uint32_t)crsf_parser.payload_len + 2U) !=
-				    (uint32_t)crsf_parser.payload_len + 2U) {
+					    (uint32_t)crsf_parser.payload_len + 2U) {
 					crsf_rx_dropped++;
 				}
 			}
@@ -199,9 +218,11 @@ uint8_t zlrs_link_crsf_write(uint8_t type, const uint8_t *payload, uint8_t paylo
 		return 0U;
 	}
 
-	if (ring_buf_put(&ep->tx, frame, len) != len) {
+	if (ring_buf_space_get(&ep->tx) < len || ring_buf_put(&ep->tx, frame, len) != len) {
+		stats.output_dropped++;
 		return 0U; /* TX buffer full: CRSF is best-effort, the caller counts the drop */
 	}
+	stats.output_frames++;
 
 	uart_irq_tx_enable(ep->dev);
 
@@ -242,4 +263,27 @@ uint8_t zlrs_link_crsf_read(uint8_t *type, uint8_t *payload, uint8_t max_len)
 uint32_t zlrs_link_crsf_rx_dropped(void)
 {
 	return crsf_rx_dropped;
+}
+
+bool zlrs_link_crsf_latest_rc(uint8_t payload[ZLRS_CRSF_RC_PAYLOAD_LEN], uint32_t *received_us)
+{
+	const unsigned int key = irq_lock();
+	const bool ready = rc_pending;
+
+	if (ready) {
+		memcpy(payload, latest_rc, sizeof(latest_rc));
+		*received_us = stats.rc_received_us;
+		rc_pending = false;
+		stats.rc_consumed++;
+	}
+	irq_unlock(key);
+	return ready;
+}
+
+void zlrs_link_crsf_stats(struct zlrs_link_crsf_stats *out)
+{
+	const unsigned int key = irq_lock();
+
+	*out = stats;
+	irq_unlock(key);
 }

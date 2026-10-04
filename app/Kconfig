@@ -16,7 +16,7 @@ config ZLRS_APP_DEBUG
 	  Marks an image built for the bench: it allows the ZLRS_APP_DEBUG_* options below, and
 	  nothing that depends on it belongs in a production image. app/debug.conf sets it; the
 	  configs that produce shipped images (app/prj.conf, boards/) must not mention it (CI gate).
-	  See doc/12-debug.md 1.
+	  See doc/11-debug.md 1.
 
 menu "Hardware and product shape"
 
@@ -83,7 +83,7 @@ config ZLRS_APP_RP2350_CRYPTO
 # The only knob on the upgrade path: how long the host has to confirm. The mechanism itself
 # (an image under MCUboot stays unconfirmed until the host says so, then either becomes
 # permanent or is rolled back) has no switch — the board definition brings the image
-# manager and the boot mode with it. See doc/08-firmware.md 6.
+# manager and the boot mode with it. See doc/07-firmware.md 6.
 config ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS
 	int "Host confirm timeout (ms)"
 	default 60000
@@ -108,7 +108,7 @@ choice ZLRS_APP_SECURITY_PROFILE
 	default ZLRS_APP_SECURITY_PROFILE_P1
 	help
 	  P1 is the production profile: a 4-byte tag on every frame. P0 carries no tag and is for
-	  the bench only. See doc/10-security.md 8.
+	  the bench only. See doc/09-security.md 8.
 
 config ZLRS_APP_SECURITY_PROFILE_P0
 	# Selecting P0 is a bench move (no tag at all), so only a debug image may do it.
@@ -125,7 +125,7 @@ choice ZLRS_APP_BAND_ROLE
 	help
 	  Long-range mode (default): control owns sub-G (distance), data owns 2.4G (throughput).
 	  Racing mode swaps them: control takes 2.4G alone (short airtime, high frame rate) and data
-	  moves to sub-G under the regional rules (or is turned off). See doc/07-architecture.md 2.
+	  moves to sub-G under the regional rules (or is turned off). See doc/06-architecture.md 2.
 
 config ZLRS_APP_BAND_ROLE_SUBG_CONTROL
 	bool "Long range: control on sub-G, data on 2.4G"
@@ -140,7 +140,7 @@ choice ZLRS_APP_CONTROL_MODULATION
 	default ZLRS_APP_CONTROL_MODULATION_FLRC
 	depends on ZLRS_APP_BAND_ROLE_SUBG_CONTROL
 	help
-	  Modulation is per link (doc/07-architecture.md 3): data always runs FLRC on 2.4G, while
+	  Modulation is per link (doc/06-architecture.md 3): data always runs FLRC on 2.4G, while
 	  control can move to the LoRa long-range tier, the way out when the narrow band
 	  (868/470/433) cannot fit wide FLRC. The superframe period follows the slower link.
 
@@ -163,11 +163,23 @@ config ZLRS_APP_RACING_CONTROL_RATE_BPS
 config ZLRS_APP_RACING_CONTROL_RATE_HZ
 	int "Racing mode control frame rate (Hz)"
 	default 500
-	range 50 500
+	range 50 1000
 	depends on ZLRS_APP_BAND_ROLE_SUBG_DATA
 	help
 	  2.4G frames can be denser (500 by default), but the superframe still has to fit the two
-	  data windows that moved to sub-G (see doc/07-architecture.md 2).
+	  data windows that moved to sub-G (see doc/06-architecture.md 2).
+
+config ZLRS_APP_CONTROL_1KHZ
+	bool "Dedicated 1 kHz control cadence on 2.4 GHz"
+	depends on ZLRS_APP_LINK_CONTROL && !ZLRS_APP_LINK_DATA
+	depends on ZLRS_APP_BAND_ROLE_SUBG_DATA
+	default n
+	help
+	  Schedule control opportunities every 1000 us instead of dividing one control
+	  cycle into four equal control/telemetry/data windows. Acquisition and periodic
+	  session maintenance retain reverse opportunities; those replace a control
+	  opportunity and must be accounted for in measured RC delivery. Data24 and
+	  mixed mode keep their own plans.
 
 config ZLRS_APP_CONTROL_RATE_BPS
 	int "Control link rate (bps)"
@@ -182,7 +194,7 @@ config ZLRS_APP_CONTROL_RATE_HZ
 	help
 	  150 = general tier (long range, default), 500 = close-in racing.
 	  At 500 Hz each slot has only a few hundred microseconds and only unlimited-duty regions
-	  can sustain it; the effective rate is clamped by the duty cap (core/region, 09-protocol 4.1).
+	  can sustain it; the effective rate is clamped by the duty cap (core/region, 08-protocol 4.1).
 	  The hardware slot budget also clamps this request to fit packet preparation and airtime.
 
 config ZLRS_APP_DATA_RATE_BPS
@@ -283,26 +295,26 @@ config ZLRS_APP_RESYNC_PERIOD_MS
 	help
 	  Once connected, send a SYNC on the sync channel this often: the peer re-aligns its hop
 	  index (crystal drift accumulates into missed hops) and spots a peer reboot or re-pair.
-	  See doc/09-protocol.md 3.6. Converted to frames, at least one.
+	  See doc/08-protocol.md 3.6. Converted to frames, at least one.
 
 config ZLRS_APP_CRSF_TIMEOUT_MS
 	int "Timeout before the TX switches to failsafe values (ms)"
 	default 100
 	help
 	  With the handset unplugged or powered off, the TX swaps in the preset failsafe payload
-	  when no RC frame arrives within this window. See doc/09-protocol.md 3.4.
+	  when no RC frame arrives within this window. See doc/08-protocol.md 3.4.
 
 config ZLRS_APP_MGMT_TIMEOUT_S
 	int "Management mode idle timeout (s)"
 	default 300
 	help
-	  Management mode exits after this long without a command, see doc/08-firmware.md 2.
+	  Management mode exits after this long without a command, see doc/07-firmware.md 2.
 
 config ZLRS_APP_PAIR_HOLD_MS
 	int "Hold time needed to start pairing (ms)"
 	default 1000
 	help
-	  The button has exactly one action: holding it this long starts pairing (doc/11-ux.md).
+	  The button has exactly one action: holding it this long starts pairing (doc/10-ux.md).
 	  There is no press-and-hold-at-boot gesture; management mode comes from the management port.
 
 config ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM
@@ -313,17 +325,17 @@ config ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM
 
 endmenu
 
-menu "Pending acceptance (see doc/13-roadmap.md)"
+menu "Pending acceptance (see doc/12-roadmap.md)"
 
 config ZLRS_APP_FHSS
 	# These five features are on in any image that goes on air; a debug image may switch one
-	# off to isolate a layer (doc/12-debug.md 3), a production configuration cannot.
+	# off to isolate a layer (doc/11-debug.md 3), a production configuration cannot.
 	bool "Per-frame frequency hopping" if ZLRS_APP_DEBUG
 	default y
 	help
 	  With this off every frame stays on the sync channel (entry 0 of the hop table), which is
 	  how layer isolation separates timing from the hop table. A fixed channel does not satisfy the
-	  FCC 15.247 hopping rules: debug images only, see doc/09-protocol.md 5.2.
+	  FCC 15.247 hopping rules: debug images only, see doc/08-protocol.md 5.2.
 
 config ZLRS_APP_SESSION_HANDSHAKE
 	bool "Session handshake (fresh key per session)" if ZLRS_APP_DEBUG
@@ -332,7 +344,7 @@ config ZLRS_APP_SESSION_HANDSHAKE
 	  Off: the pairing-level link_auth doubles as the session key. The RX counts a SYNC as
 	  established and reports back with SESS_RESP, saving a derivation and one confirm message.
 	  The cost is no per-session key rotation: recorded frames stay replayable across sessions.
-	  Debug images only, see doc/10-security.md 3.
+	  Debug images only, see doc/09-security.md 3.
 
 config ZLRS_APP_TELEMETRY
 	bool "Uplink telemetry on the control link" if ZLRS_APP_DEBUG
@@ -348,7 +360,7 @@ config ZLRS_APP_DATA_ARQ
 	help
 	  On by default: the receiver acknowledges payloads and the sender retransmits the window
 	  until it is acked. Costs latency and RAM; off means best-effort (drop when full, count it).
-	  See doc/09-protocol.md 4.3.
+	  See doc/08-protocol.md 4.3.
 
 config ZLRS_APP_SUB_BAND_MIX
 	bool "Sub-band mixing (move slots between 2.4G and sub-G by LQ)" if ZLRS_APP_DEBUG
@@ -356,14 +368,14 @@ config ZLRS_APP_SUB_BAND_MIX
 	help
 	  When LQ drops, telemetry slots move to sub-G first, then the data link, and only then the
 	  RC downlink; recovery moves them back in reverse. The duty cap bounds it; see
-	  doc/09-protocol.md 5.1.
+	  doc/08-protocol.md 5.1.
 
 config ZLRS_APP_RATE_ADAPT
 	bool "Adapt the rate tier to link quality"
 	default n
 	depends on ZLRS_APP_CONTROL_MODULATION_FLRC
 	help
-	  Thresholds need measured curves (see doc/13-roadmap.md), so this is off by default;
+	  Thresholds need measured curves (see doc/12-roadmap.md), so this is off by default;
 	  turn it on and the tier table and hysteresis in app/src/link/rate.c take over.
 
 config ZLRS_APP_DYNAMIC_POWER
@@ -383,7 +395,7 @@ config ZLRS_APP_WATCHDOG
 	help
 	  Armed in PRE_KERNEL_1 (app/src/platform/watchdog.c); feeding happens in the blocking
 	  loops, so a stuck main loop counts as dead too. It only turns a hang into a reset; the
-	  rollback verdict is MCUboot's image confirm bit (doc/08-firmware.md 6). This saves
+	  rollback verdict is MCUboot's image confirm bit (doc/07-firmware.md 6). This saves
 	  reaching for BOOTSEL.
 
 config ZLRS_APP_WATCHDOG_TIMEOUT_MS

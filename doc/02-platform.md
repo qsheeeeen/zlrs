@@ -1,15 +1,15 @@
 # Hardware platform
 
 What ZLRS runs on: target shapes, board, build targets, image layout, toolchain and flashing.
-Ports and operating modes are in [08-firmware](08-firmware.md); the physical builds in
-[04-prototype](04-prototype.md) and [05-carrier](05-carrier.md).
+Ports and operating modes are in [07-firmware](07-firmware.md); the physical builds in
+[03-prototype](03-prototype.md) and [04-carrier](04-carrier.md).
 
 ## 1. Target shapes
 
 | Shape | What it is |
 | --- | --- |
-| **Prototype** | a Waveshare RP2350-Zero and a Waveshare Core2021 wired together, exposing USB-C only; see [04-prototype](04-prototype.md) |
-| **Carrier board** | the same wiring turned into a PCB exposing USB-C, a button and two 6P serial ports; see [05-carrier](05-carrier.md) |
+| **Prototype** | a Waveshare RP2350-Zero and a Waveshare Core2021 wired together, exposing USB-C only; see [03-prototype](03-prototype.md) |
+| **Carrier board** | the same wiring turned into a PCB exposing USB-C, a button and two 6P serial ports; see [04-carrier](04-carrier.md) |
 | **Single-port** | a smaller board with one UART port, no native USB; its link role is configuration |
 
 All three shapes share one firmware. What differs is devicetree (which ports and peripherals
@@ -19,7 +19,7 @@ exist) and, for deliberate cuts like "no data link", Kconfig.
 
 | Item | Choice |
 | --- | --- |
-| Radio | Semtech LR2021 (QFN32), SPI + BUSY + DIO; parameters in [06-radio](06-radio.md) |
+| Radio | Semtech LR2021 (QFN32), SPI + BUSY + DIO; parameters in [05-radio](05-radio.md) |
 | MCU board | Waveshare RP2350-Zero: RP2350A (Cortex-M33), 4 MB QSPI flash, native USB, on-board WS2812B |
 | Radio module | Waveshare Core2021, with HF (850-930 MHz) and LF (410-510 MHz) sub-G SKUs |
 | Board definition | `boards/zlrs/rp2350_zero_core2021/`: pins, aliases, SKU calibration tables, flash partitions |
@@ -62,7 +62,7 @@ after flashing is defined.
 ## 3. Build targets
 
 Two targets, one per sub-G SKU, and both are bootloader targets (an image that cannot be updated
-through the bootloader has no reason to exist, see [08-firmware](08-firmware.md) 5):
+through the bootloader has no reason to exist, see [07-firmware](07-firmware.md) 5):
 
 | Target | Notes |
 | --- | --- |
@@ -88,11 +88,11 @@ upgrade.
 
 NVS keeps the root key, device id, pairing record, failsafe values, baud rate, region, power
 ceiling, role and security profile — nine keys, under 100 B in total, which is why NVS is small
-and the flash around it goes to the log store ([08-firmware](08-firmware.md) 7).
+and the flash around it goes to the log store ([07-firmware](07-firmware.md) 7).
 
 Offsets and sizes: [board README]
 (../boards/zlrs/rp2350_zero_core2021/README.md#4-partitions-and-boot).
-Upgrade flow and recovery entries: [08-firmware](08-firmware.md) 5.
+Upgrade flow and recovery entries: [07-firmware](07-firmware.md) 5.
 
 ## 5. Toolchain and build
 
@@ -126,9 +126,9 @@ python3 tools/zlrs.py update --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if0
 ```
 
 The application is never dragged on as a UF2: that path has no rollback
-([08-firmware](08-firmware.md) 5).
+([07-firmware](07-firmware.md) 5).
 
-Recovery ports, image confirmation and rollback are described in [08-firmware](08-firmware.md) 5.
+Recovery ports, image confirmation and rollback are described in [07-firmware](07-firmware.md) 5.
 
 ## 7. Adding hardware
 
@@ -143,4 +143,4 @@ Recovery ports, image confirmation and rollback are described in [08-firmware](0
    change.
 
 No application code is expected to change. If it does, a capability is missing from the
-[capability macros](08-firmware.md#4-build-time-choices-and-trimming) and belongs there.
+[capability macros](07-firmware.md#4-build-time-choices-and-trimming) and belongs there.

@@ -2,8 +2,8 @@
 
 What the firmware looks like from outside: USB and ports, operating modes, runtime
 configuration, build-time choices, boot and updates, and the error-handling rules.
-Architecture: [07-architecture](07-architecture.md); protocol: [09-protocol](09-protocol.md);
-security: [10-security](10-security.md); debugging: [12-debug](12-debug.md).
+Architecture: [06-architecture](06-architecture.md); protocol: [08-protocol](08-protocol.md);
+security: [09-security](09-security.md); debugging: [11-debug](11-debug.md).
 
 ## 1. USB and ports
 
@@ -15,7 +15,7 @@ The firmware presents three CDCs by default:
 | data | the passthrough stream | UART1 (GP8/GP9, 115200 by default, changeable in NVS) |
 | **management** | the management protocol: enter management mode, read and write parameters | - |
 
-Debug builds add one more **console** CDC (kernel log plus shell, see [12-debug](12-debug.md)).
+Debug builds add one more **console** CDC (kernel log plus shell, see [11-debug](11-debug.md)).
 In bootloader mode the device shows two CDCs (recovery and console) instead.
 
 The name each mode announces over USB comes from `CONFIG_ZLRS_USB_PRODUCT`: `ZLRS` for the
@@ -71,7 +71,7 @@ session is ready and pending logs have been flushed, including a repeated `ENTER
 | pairing | start pairing at once, erase the pairing record (next boot) |
 | factory reset | wipes NVS (keys, pairing, failsafe, baud, region, power, role, profile); effective on the next boot |
 
-The command set is in [10-security](10-security.md) 9.
+The command set is in [09-security](09-security.md) 9.
 
 Who decides what:
 
@@ -84,9 +84,9 @@ Who decides what:
 | Operating mode (`mixed` / `data24`) | runtime, effective after reboot | `set-mode`, stored in NVS; `data24` uses 2.4 GHz for pairing and data |
 | Role TX / RX, security profile | runtime, default at build time | `set-role` / `set-profile`, stored in NVS |
 | Region, power ceiling, baud rate, failsafe values, pairing | runtime | management protocol, stored in NVS |
-| Rate tier, frame rate, telemetry period | build time today | the ledger in [13-roadmap](13-roadmap.md) tracks the missing commands |
+| Rate tier, frame rate, telemetry period | build time today | the ledger in [12-roadmap](12-roadmap.md) tracks the missing commands |
 | Hardware presence (ports, management channel, button, LED, watchdog, TRNG, radio design) | devicetree | `app/src/platform/caps.h` |
-| Bench isolation (`RADIO=n`, hopping off, P0, …) | build time, debug images only | `ZLRS_APP_DEBUG*`, see [12-debug](12-debug.md) 3 |
+| Bench isolation (`RADIO=n`, hopping off, P0, …) | build time, debug images only | `ZLRS_APP_DEBUG*`, see [11-debug](11-debug.md) 3 |
 
 Two properties follow and are worth stating explicitly: **one image runs both roles** (a field
 is flashed with the same file, roles are assigned during configuration), and **defaults are
@@ -133,8 +133,8 @@ What a build decides:
 | telemetry period, resync period, CRSF timeout, config timeout, pairing hold | `CONFIG_ZLRS_APP_*` | timing parameters |
 | default role and default profile | `CONFIG_ZLRS_APP_ROLE_TX`, profile choice | the stored value wins once the tool writes one |
 | which links exist | `CONFIG_ZLRS_APP_LINK_CONTROL` / `LINK_DATA` | a deliberate cut for a control-only or data-only product |
-| feature enable | ARQ, sub-band mixing, rate adaptation, dynamic power, watchdog | see the ledger in [13-roadmap](13-roadmap.md) |
-| bench isolation | debug images only | radio off, hopping off, session handshake off, telemetry off, P0; see [12-debug](12-debug.md) 3 |
+| feature enable | ARQ, sub-band mixing, rate adaptation, dynamic power, watchdog | see the ledger in [12-roadmap](12-roadmap.md) |
+| bench isolation | debug images only | radio off, hopping off, session handshake off, telemetry off, P0; see [11-debug](11-debug.md) 3 |
 
 **One firmware has to fit several hardware configurations**; that is a hard requirement:
 
@@ -186,7 +186,7 @@ What the hardware provides also bounds what the software may do:
 | one port | one link, role chosen by configuration | two simultaneous links |
 | a management CDC | configuration protocol, management mode, recovery entry | using it as a link endpoint |
 | a button | long press to pair | — (pairing from the tool always works) |
-| a status LED | the LED language ([11-ux](11-ux.md)) | — |
+| a status LED | the LED language ([10-ux](10-ux.md)) | — |
 | NVS | keys, pairing, failsafe, baud, region, power, role, profile | **required**: a board without NVS is rejected |
 | a hardware watchdog | reset on a hang, rollback assistance | — |
 
@@ -198,7 +198,7 @@ while this firmware has several, so that switch stays off.
 
 ## 5. Boot, recovery and updates
 
-Partitions and the boot chain are in [03-platform](03-platform.md) 4. There are three ways into
+Partitions and the boot chain are in [02-platform](02-platform.md) 4. There are three ways into
 serial recovery, none needing the button:
 
 | Entry | When it applies |
@@ -246,7 +246,7 @@ the recovery port, read the active slot, write the other one and mark it test, w
 application, check the image hash and send `confirm`. The tool writes pending but **never
 permanent**. A broken *application* is recovered through the bootloader too (serial recovery is
 always reachable); only a broken *bootloader* needs BOOTSEL and a UF2 drag
-(see [12-debug](12-debug.md)).
+(see [11-debug](11-debug.md)).
 Production images use their own signing key; changing that key means reflashing the bootloader.
 
 **An image dragged onto BOOTSEL has no rollback**: it goes straight into slot0 with an empty
@@ -278,7 +278,7 @@ the signature check, the confirmation and the rollback apply.
   and fed from the blocking loops, so a stuck main loop counts as dead too. It turns a hang into
   a reset; the rollback verdict is MCUboot's confirm bit.
 - **Regulatory and security mistakes are visible**: a region the radio design cannot cover, a
-  missing root key and a lost peer are all distinct LED states ([11-ux](11-ux.md)).
+  missing root key and a lost peer are all distinct LED states ([10-ux](10-ux.md)).
 
 ## 7. The log store
 

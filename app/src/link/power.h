@@ -3,7 +3,7 @@
  *
  * The policy is core/link's (`zlrs_power_update`, host-tested); this is its application — the
  * ceiling the region and the build set, the uplink quality from telemetry, and the once-a-second
- * verdict (doc/09-protocol.md 4.5). Losing telemetry means the other end is probably gone, which
+ * verdict (doc/08-protocol.md 4.5). Losing telemetry means the other end is probably gone, which
  * the policy answers by going back to the ceiling.
  *
  * Naming: `<dir>/<file>.c` carries `zlrs_<dir>_<file>_*()`, so this is `zlrs_link_power_*()`.
@@ -27,6 +27,6 @@ void zlrs_link_power_telemetry(uint8_t rssi_neg_dbm, uint8_t lq_percent);
 /* Once-a-second verdict: move the control link's TX power when the policy says so */
 void zlrs_link_power_tick(zlrs_link_t *control, uint32_t now_ms);
 
-/* Where the control loop is now, for the bench line in doc/12-debug.md 3 */
+/* Where the control loop is now, for the bench line in doc/11-debug.md 3 */
 void zlrs_link_power_stats(int8_t *current_dbm, uint32_t *raises, uint32_t *lowers,
 			   uint32_t *fallbacks);

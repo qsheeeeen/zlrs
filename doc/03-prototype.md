@@ -6,7 +6,7 @@ data are two UARTs on the module pads and need wires of your own. No button is f
 wire from GP12 to GND stands in for it.
 
 Pins and aliases are defined in the [board README](../boards/zlrs/rp2350_zero_core2021/README.md);
-ports and modes in [08-firmware](08-firmware.md) 1 and 2.
+ports and modes in [07-firmware](07-firmware.md) 1 and 2.
 
 ## 1. What it is made of
 
@@ -17,7 +17,7 @@ ports and modes in [08-firmware](08-firmware.md) 1 and 2.
 | Antenna | 433 MHz on the module's connector | check the 2.4G path against the module drawing once it is on a board |
 | Power | USB-C | the Zero feeds 3V3 to the Core2021 and the two share ground |
 | Button | none fitted: short GP12 to GND with a wire | the devicetree enables the internal pull-up |
-| Status LED | the module's own WS2812 (GP16) | semantics in [11-ux](11-ux.md) |
+| Status LED | the module's own WS2812 (GP16) | semantics in [10-ux](10-ux.md) |
 
 ## 2. Wiring between the modules
 
@@ -45,7 +45,7 @@ One USB-C port that shows up differently depending on the mode:
 | Mode | What USB shows |
 | --- | --- |
 | Application | three CDCs: control, data, management |
-| Debug (application + overlay) | the same plus a console CDC (logs and shell), see [12-debug](12-debug.md) |
+| Debug (application + overlay) | the same plus a console CDC (logs and shell), see [11-debug](11-debug.md) |
 | Serial recovery | two CDCs: recovery and console |
 | ROM BOOTSEL | an `RPI-RP2` mass-storage volume (drag a UF2 onto it) |
 
@@ -55,10 +55,10 @@ One USB-C port that shows up differently depending on the mode:
 | UART0 GP0/1 | control port, CRSF at 420000 | not forwarded (radio stopped) | not initialised | no firmware |
 | UART1 GP8/9 | data port, passthrough | incoming bytes are dropped and counted | unused | no firmware |
 | Button (jumper) | hold 1 s or more to pair | ignored once management mode is up | unused | BOOTSEL is the chip-level button |
-| Status LED | see [11-ux](11-ux.md) | white at 1 Hz after half a second | MCUboot does not drive it | not driven |
+| Status LED | see [10-ux](10-ux.md) | white at 1 Hz after half a second | MCUboot does not drive it | not driven |
 
 Management mode is entered by a command the tool sends on the management CDC; details in
-[08-firmware](08-firmware.md) 2.
+[07-firmware](07-firmware.md) 2.
 
 ## 4. Flashing
 
@@ -77,7 +77,7 @@ python3 tools/zlrs.py update --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if0
 
 **The application is never installed as a UF2**: BOOTSEL is the bootloader's door, and everything
 with an application in it goes through the bootloader so that signature checks, confirmation and
-rollback apply ([08-firmware](08-firmware.md) 5).
+rollback apply ([07-firmware](07-firmware.md) 5).
 
 ## 5. Wiring and placement
 
