@@ -25,7 +25,28 @@ The current prototype uses a **Waveshare RP2350-Zero + Core2021**. See the
 [hardware guide](doc/04-prototype.md) for wiring and the [installation guide](doc/03-platform.md)
 for your first firmware installation.
 
-Once firmware is installed, plug in USB and use the device tool:
+### Install and update firmware
+
+First, install MCUboot once: hold **BOOTSEL** while connecting USB, then copy the bootloader
+UF2 (`mcuboot/zephyr/zephyr.uf2` in your build output) to the USB drive. The board restarts in
+MCUboot recovery mode.
+
+With one device connected, install the signed application image through USB:
+
+```shell
+python3 tools/zlrs.py update --no-trigger --image <signed.bin>
+```
+
+For later updates, use the running device's serial:
+
+```shell
+python3 tools/zlrs.py update --serial <serial> --image <signed.bin>
+```
+
+The tool locates the device through reboot, uploads the image, verifies it and confirms the
+upgrade. With multiple devices connected, use `--serial <serial>` for the first install too.
+
+### Configure and pair
 
 ```shell
 python3 tools/zlrs.py list
@@ -38,14 +59,7 @@ Set the same phrase on both devices, choose their TX/RX roles and reboot. Pair t
 button or `python3 tools/zlrs.py pair --serial <serial>`. The
 [configuration guide](doc/08-firmware.md) covers UART settings, regions and failsafe settings.
 
-With a new firmware image, updates take one command:
-
-```shell
-python3 tools/zlrs.py update --serial <serial> --image <signed.bin>
-```
-
-The tool locates the device through reboot, uploads the image, verifies it and confirms the
-upgrade. Run `python3 tools/zlrs.py --help` for all commands.
+Run `python3 tools/zlrs.py --help` for all commands.
 
 ### Build from source
 
