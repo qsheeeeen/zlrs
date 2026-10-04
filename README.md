@@ -1,13 +1,13 @@
 # ZLRS
 
-**CRSF control and bidirectional serial data over one wireless link.**
+**CRSF control and telemetry, UART data, or both over one wireless link.**
 
-ZLRS brings control, telemetry and data together on the Semtech LR2021. The same firmware runs
-on both ends: choose TX or RX in configuration, connect over USB or UART, and pair your devices.
+ZLRS supports control, telemetry and bidirectional UART data on the Semtech LR2021. Both ends use
+the same firmware: choose TX or RX in configuration, connect over USB or UART, and pair your devices.
 
 ## Features
 
-- **Control and data together** — CRSF control and telemetry alongside a separate serial byte stream.
+- **Flexible operation** — use CRSF control and telemetry, UART data, or both together.
 - **Two-way data transfer** — ARQ acknowledgements, retransmissions and reassembly for reliable delivery.
 - **Dual-band operation** — sub-GHz and 2.4 GHz, with frequency hopping and configurable band roles.
 - **Standalone data mode** — use 2.4 GHz exclusively for pairing and bidirectional serial data.
