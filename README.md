@@ -21,9 +21,9 @@ the same firmware: choose TX or RX in configuration, connect over USB or UART, a
 
 ## Get started
 
-The current prototype uses a **Waveshare RP2350-Zero + Core2021**. The LF build defaults to
-**CN433**; the HF build defaults to **FCC915**. See the [hardware guide](doc/04-prototype.md)
-for wiring and the [installation guide](doc/03-platform.md) for your first firmware installation.
+The current prototype uses a **Waveshare RP2350-Zero + Core2021**. See the
+[hardware guide](doc/04-prototype.md) for wiring and the [installation guide](doc/03-platform.md)
+for your first firmware installation.
 
 Once firmware is installed, plug in USB and use the device tool:
 
