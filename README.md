@@ -9,11 +9,12 @@ the same firmware: choose TX or RX in configuration, connect over USB or UART, a
 
 - **Flexible operation** — use CRSF control and telemetry, bidirectional UART data, or both together.
 - **Two-way data transfer** — ARQ acknowledgements, retransmissions and reassembly for reliable delivery.
+- **Link security** — authenticated pairing, fresh session keys, packet authentication and
+  replay protection.
 - **Dual-band operation** — sub-GHz and 2.4 GHz, with frequency hopping and configurable band roles.
 - **Standalone data mode** — use 2.4 GHz exclusively for pairing and bidirectional serial data.
 - **One firmware, two roles** — select TX or RX without rebuilding; settings and pairing survive reboot.
 - **Simple pairing** — a shared binding phrase, with pairing available through the button or device tool.
-- **Authenticated sessions** — P1 packet authentication and replay protection.
 - **USB management and updates** — discover devices, inspect status, change settings and upgrade from one CLI;
   upgrades include image verification, confirmation and rollback support.
 - **Visible status** — an on-board LED shows link, pairing and device state.
