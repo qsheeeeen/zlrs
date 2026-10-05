@@ -1,0 +1,15 @@
+# zlrs-build writes the sysbuild application database here.
+# Start clangd with --query-driver=**/arm-zephyr-eabi-gcc to discover SDK headers.
+CompileFlags:
+  CompilationDatabase: ../build/app
+  Add:
+    - --target=arm-none-eabi
+  Remove:
+    # GCC-only options from the Zephyr application compile commands.
+    - -fno-printf-return-value
+    - -fno-reorder-functions
+    - -fno-defer-pop
+    - -mfp16-format=*
+    - --param=*
+    - -specs=*
+    - --specs=*
