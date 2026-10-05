@@ -25,22 +25,47 @@ The current prototype uses a **Waveshare RP2350-Zero + Core2021**. See the
 [hardware guide](doc/03-prototype.md) for wiring and the [installation guide](doc/02-platform.md)
 for your first firmware installation.
 
+### Build firmware
+
+Create the workspace, clone ZLRS and run the setup script:
+
+```shell
+mkdir -p ~/zlrs-workspace
+cd ~/zlrs-workspace
+git clone https://github.com/qsheeeeen/zlrs.git
+cd zlrs
+tools/setup-zephyr.sh
+```
+
+If Zephyr SDK is missing, follow the installation commands printed by the script. Then build
+the firmware for an LF module:
+
+```shell
+cd ~/zlrs-workspace/zlrs
+export ZLRS_BOARD=rp2350_zero_core2021/rp2350a/m33/lf
+source tools/zephyr-env.sh
+zlrs-build
+```
+
+Use `rp2350_zero_core2021/rp2350a/m33/hf` for an HF module. Build output is in `../build`;
+run the commands below from `~/zlrs-workspace/zlrs`.
+
 ### Install and update firmware
 
 First, install MCUboot once: hold **BOOTSEL** while connecting USB, then copy the bootloader
-UF2 (`mcuboot/zephyr/zephyr.uf2` in your build output) to the USB drive. The board restarts in
+UF2 (`../build/mcuboot/zephyr/zephyr.uf2`) to the USB drive. The board restarts in
 MCUboot recovery mode.
 
 With one device connected, install the signed application image through USB:
 
 ```shell
-python3 tools/zlrs.py update --no-trigger --image <signed.bin>
+python3 tools/zlrs.py update --no-trigger --image ../build/app/zephyr/zephyr.signed.bin
 ```
 
 For later updates, use the running device's serial:
 
 ```shell
-python3 tools/zlrs.py update --serial <serial> --image <signed.bin>
+python3 tools/zlrs.py update --serial <serial> --image ../build/app/zephyr/zephyr.signed.bin
 ```
 
 The tool locates the device through reboot, uploads the image, verifies it and confirms the
@@ -60,20 +85,6 @@ button or `python3 tools/zlrs.py pair --serial <serial>`. The
 [configuration guide](doc/07-firmware.md) covers UART settings, regions and failsafe settings.
 
 Run `python3 tools/zlrs.py --help` for all commands.
-
-### Build from source
-
-With the Zephyr SDK installed, run from this repository:
-
-```shell
-tools/setup-zephyr.sh
-export ZLRS_BOARD=rp2350_zero_core2021/rp2350a/m33/lf
-source tools/zephyr-env.sh
-zlrs-build
-```
-
-Use the `hf` target for an HF module. Build requirements and flashing steps are in the
-[installation guide](doc/02-platform.md).
 
 ## Learn more
 
