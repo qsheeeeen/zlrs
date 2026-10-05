@@ -4,6 +4,36 @@ This document holds **to-dos, the pending-defaults ledger and acceptance criteri
 Finished work gets a one-line summary; details live in code comments and the design is in the
 design documents.
 
+## Zephyr SHA-256 driver migration, 2026-10-05
+
+- ZLRS owns `drivers/crypto/rp2350_sha256.c`, based on the upstream RP2350 Crypto driver,
+  with multipart hashing, context ownership checks and digest restart within a session.
+  The board's `zlrs,rp2350-sha256` binding selects this driver without upstream changes.
+  Hardware availability follows `ZLRS_HAS_SHA256` in `app/src/platform/caps.h`; there is
+  no application backend option. HMAC/HKDF/PBKDF2 derivation rules stay the same.
+- HMAC feeds the key prefix and message through update/compute without joining input buffers;
+  the previous 575-byte scratch buffer is removed. Hardware input errors return `-EIO`, and
+  an invalid context cannot release another session's ROM lock.
+- HF production application and MCUboot compile in the default `build` directory; the SHA
+  driver and protocol crypto text are in SRAM. Both LF boards initially passed 38/38 known-answer
+  vectors in five runs per board. With RF paused, aligned 507-byte tags take 102-105 us versus
+  86 us in the previous direct SDK baseline; the migration adds driver/session overhead.
+  Hardware tests now live in `tests/hardware/crypto`, a separate Ztest application, and are
+  absent from application/driver sources. Both LF boards pass all six Ztest cases, including
+  session/error checks and 100000-round passphrase derivation (4307/4308 ms); the runner verifies
+  rollback to the previous confirmed image. The standalone test uses minimal libc to avoid a
+  USB DPRAM halfword-store fault in SDK picolibc's memcpy; its 73 us aligned full-frame tag time
+  is not an application speedup.
+- After removing the embedded tests, both LF boards run the confirmed application image
+  `da762608943792c8a3e58342e3b96d25150d58f549f56111ed5ba5a78f6529b8`.
+  At 2441 MHz, -10 dBm and P1, three USB duplex rounds deliver 65536 bytes per direction
+  exactly (42.1-48.3 kB/s); three RF-only duplex rounds deliver 262145 bytes per direction
+  with zero bad bytes (45.2-46.5 kB/s). Neither run adds timer misses, skipped frames or late
+  launches or authentication failures; SPI errors, TX FIFO underflows and chip errors stay zero.
+  CRC failures and ARQ retransmissions remain, so these runs establish functional delivery,
+  not a throughput improvement. HF hardware and real-UART acceptance remain pending.
+- Connecting PSA to the Zephyr hardware driver is deferred to a later change.
+
 ## Product direction consolidation, 2026-10-04
 
 The [product page](01-product.md) describes what ZLRS is and how it is used. This roadmap keeps

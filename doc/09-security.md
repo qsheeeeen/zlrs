@@ -127,8 +127,8 @@ one.
 - Input is a **passphrase** (at least 12 characters recommended) or 64 hex characters.
 - PBKDF2-HMAC-SHA256, **100,000 rounds**, fixed salt `zlrs/kdf/v1` that carries the KDF version;
   the derivation runs on the device, so a third-party configurator cannot weaken it.
-- 100,000 rounds take roughly a second on this MCU, which is why management mode disarms the
-  watchdog.
+- Derivation runs in management mode with the watchdog disarmed; its duration depends on the
+  crypto backend.
 - MAC: HMAC-SHA256 truncated to 4 bytes. Keeping PBKDF2, HKDF and the MAC in one hash family
   means P1 needs no AES.
 
@@ -139,14 +139,24 @@ one.
 | per-frame tag | HMAC-SHA256 truncated to 4 B |
 | P2 encryption (planned) | AES-CTR with the MAC over the ciphertext |
 
-RP2350 uses its SHA-256 accelerator through the public Pico SDK interfaces
-(`app/src/platform/crypto_rp2350.c`, `CONFIG_ZLRS_APP_RP2350_CRYPTO`). Hashing leaves interrupts
-enabled and does not allocate DMA channels. A mutex protects complete hash operations and
-the ROM SHA lock coordinates other hardware users; hardware faults are fatal rather than
-producing an authentication tag. HMAC, HKDF and PBKDF2 retain the same derivation rules.
-Other targets use Zephyr PSA Crypto (`core/proto/crypto_psa.c`). Host tests use the pure C
-backend (`tests/host/crypto_soft.c`); `zlrs crypto` checks independent known-answer vectors
-on hardware, including complete digests and multi-block derivation.
+The application uses the SHA-256 accelerator through Zephyr's Crypto API
+(`app/src/platform/crypto.c`). The board binds it to ZLRS's driver
+(`drivers/crypto/rp2350_sha256.c`, compatible `zlrs,rp2350-sha256`), based on the upstream
+RP2350 driver with multipart hashing and session ownership added. `ZLRS_HAS_SHA256` in
+`app/src/platform/caps.h` follows the peripheral and driver; there is no application backend
+switch. Each digest uses `hash_begin_session()`, `hash_update()`, `hash_compute()` and
+`hash_free_session()`. HMAC's key prefix and frame data stay in their original buffers and are
+fed in order without a concatenation copy. A mutex protects complete protocol hash sessions
+and provides priority inheritance; the driver rejects access from other contexts while a
+session owns the accelerator. Pico SDK handles partial input words and final SHA padding
+inside the driver. Hashing leaves interrupts enabled and does not allocate DMA channels;
+reported driver failures are fatal rather than producing an authentication tag.
+HMAC, HKDF and PBKDF2 retain the same derivation rules. PSA is not connected to this driver yet.
+Boards without the driver use Zephyr PSA Crypto (`core/proto/crypto_psa.c`). Host tests use the
+pure C backend (`tests/host/crypto_soft.c`). The separate Zephyr Ztest application in
+`tests/hardware/crypto` checks the real driver and protocol backend using public APIs,
+including multipart SHA-256, wire tags and multi-block derivation. Test vectors and timing
+code are excluded from the application and driver sources; see [hardware tests](11-debug.md#7-hardware-test-applications).
 
 ## 9. Management protocol
 

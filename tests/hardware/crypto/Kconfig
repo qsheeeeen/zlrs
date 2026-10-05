@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: Apache-2.0
+
+source "Kconfig.zephyr"
+
+# The production adapter uses the application's standard logging setting.
+module = APP
+module-str = app
+source "subsys/logging/Kconfig.template.log_config"

@@ -42,7 +42,7 @@ quietly end up in a released image.
 | shell `zlrs mgmt` | enter management mode (EXIT returns) |
 | shell `zlrs recovery` | reboot into MCUboot serial recovery |
 | shell `zlrs entropy` | entropy self-test (two 32-byte TRNG blocks) |
-| shell `zlrs crypto` | RP2350 SHA-256/HMAC/HKDF/PBKDF2 known-answer tests and aligned/unaligned 251/507-byte tag timing; debug shell and hardware backend required |
+| `tests/hardware/crypto` | separate Ztest firmware for SHA-256, HMAC tags, HKDF/PBKDF2 and aligned/unaligned tag timing; see section 7 |
 | shell `zlrs mcuboot` | image state as MCUboot sees it (slot headers, confirm bit, copy state) |
 | `CONFIG_ZLRS_APP_DEBUG_STATS_LOG` | 1 Hz `stats:` line (counters, LQ, duty, dynamic power) and `air:` line (completed transactions per link) |
 | `CONFIG_ZLRS_APP_BENCH_RAW_MS` | the first N ms after boot skip the superframe: the TX role sends complete frames back to back, the RX role opens 100 ms receive windows back to back, and both log frames per second |
@@ -369,15 +369,18 @@ preceding BUSY wait. Active time includes driver start and IRQ dispatch, so it i
 analyzer measurement of SCK alone. Divide total counter deltas by transfer deltas for mean
 costs; these combine TX writes and RX FIFO reads of different lengths.
 
-The portable link's TX/RX frame buffers and hardware HMAC blocks have word alignment, which
-allows the Pico SDK SHA input path to feed whole words. `zlrs crypto` verifies the 507-byte
-full-frame MAC at all four byte offsets against an independent digest, then reports 64-call
-means/maxima for aligned and one-byte-offset inputs. Large diagnostic buffers use static
-storage guarded against concurrent runs, preserving shell stack space. These wall-time
-measurements include interrupt/thread preemption; management entry pauses RF for comparison.
+ZLRS's RP2350 Crypto driver supports multipart SHA-256. HMAC feeds its word-aligned key prefix
+and the frame buffer directly through update/compute; the application keeps no concatenation
+buffer. The separate `tests/hardware/crypto` application verifies tags for a 507-byte frame
+at all four byte offsets, checks driver session reuse and malformed inputs, and reports
+64-call means/maxima for aligned and one-byte-offset inputs. These wall-time measurements
+include driver calls, session setup/free and interrupt/thread preemption. A standalone test
+runs without the RF/application threads, so its timings are not a radio scheduling budget.
+The earlier `zlrs crypto` and `zlrs kdf` test commands have been removed from the application.
 
-The 2026-10-03 LF check at 2441 MHz, P1 and -10 dBm reports approximately 84-87 us for an
-aligned 507-byte tag versus 123 us at a one-byte offset. Both devices pass all 38 vectors and
+The 2026-10-03 LF check used the previous direct Pico SDK backend. At 2441 MHz, P1 and -10 dBm
+it reported approximately 84-87 us for an aligned 507-byte tag versus 123 us at a one-byte
+offset. Both devices pass all 38 vectors and
 retain at least 692 bytes of shell stack. With the retained 1 ms preparation window, six
 262145-byte RF duplex rounds pass at 55.1-60.9 kB/s per direction. Three 64 KiB USB rounds
 pass in 1.609/1.557/1.561 s; after uptime-proven simultaneous reboots, another three pass in
@@ -421,3 +424,67 @@ and last deliveries. Completion requires `rx == target`, `queued == target` and 
 both boards. `zlrs stream stop` restores serial forwarding once the source queue is empty;
 arm/stop returns busy when queued bytes still need delivery. Only the RF owner mutates link
 queues and benchmark state; shell commands wait for that owner to apply them.
+
+
+## 7. Hardware test applications
+
+Keep host tests in `tests/host` and Zephyr device tests in `tests/hardware`. A hardware test
+application has its own CMake/Kconfig configuration, test source and Ztest manifest. It links
+production sources and calls public interfaces, without embedding vectors, test hooks or
+benchmarks in `app` or `drivers`. The SHA-256 application is `tests/hardware/crypto`.
+
+Build it in the workspace's usual `build` directory. Reuse the application's sysbuild
+configuration so signing, partitions and MCUboot recovery match the installed bootloader:
+
+```sh
+export ZLRS_BOARD=rp2350_zero_core2021/rp2350a/m33/lf
+export ZLRS_APP="$PWD/tests/hardware/crypto"
+source tools/zephyr-env.sh
+zlrs-build -p auto -- -DSB_APPLICATION_CONFIG_DIR="$ZLRS_REPO_ROOT/app"
+```
+
+The signed image is `../build/crypto/zephyr/zephyr.signed.bin`. Start from confirmed working
+firmware and install it through MCUboot; do not use a test application UF2. The test runner
+uses the existing update tool with `--no-wait`, opens the test console CDC to start Ztest, saves
+the full output, and checks that MCUboot restores the previous firmware hash:
+
+```sh
+python3 tests/hardware/crypto/run.py --serial 425030433435300D \
+  --log /tmp/zlrs-crypto-rx.log
+python3 tests/hardware/crypto/run.py --serial 4250304334353014 \
+  --log /tmp/zlrs-crypto-tx.log
+```
+
+The test firmware leaves its image unconfirmed, changes no pairing/settings records, and
+reboots three seconds after the tests finish. Without a host connection it reboots after
+45 seconds. Its watchdog remains armed. On WSL, USB forwarding must follow re-enumeration,
+including the `ZLRS CRYPTO TEST` device, during upgrade and rollback.
+
+Coverage includes SHA padding/block boundaries, one-shot and 1/3/64-byte chunks, multiple
+digests per session, competing/invalid sessions, invalid input and overflow, long HMAC keys,
+unaligned full-frame tags, multi-block HKDF and the production 100000-round PBKDF2 rule.
+The adapter and driver run from SRAM, matching the application. The test uses Zephyr's minimal
+libc with byte copies: the SDK picolibc `memcpy` faults on a halfword store while the RP2350 UDC
+copies enumeration replies into USB DPRAM. Startup banners stay disabled until the USB context
+exists, logs are deferred, and Ztest's `printk` output goes directly to the console. These are
+test application settings; upstream UDC/library sources are unchanged.
+
+Both LF boards pass all six cases on 2026-10-05, including 32 SHA variants and 13 authentication
+tag vectors. Production 100000-round passphrase derivation takes 4307/4308 ms. Standalone
+aligned 507-byte tags average 73 us and one-byte-offset tags 112 us. Those measurements use the
+test libc and have no RF/application threads; they are not a measured application speedup.
+Duplex acceptance uses the actual ZLRS application image after the embedded tests are removed:
+three USB rounds deliver 65536 bytes per direction exactly at 42.1-48.3 kB/s; three RF-only
+rounds deliver 262145 bytes per direction with zero bad bytes at 45.2-46.5 kB/s. Both LF boards
+use DATA24 at 2441 MHz, -10 dBm and P1. Timer misses, skipped frames and late-launch counts
+do not increase during either run, with zero SPI errors or TX FIFO underflows. CRC failures
+and ARQ retries remain; these checks do not establish a speedup over the previous backend.
+
+To return the build directory to the normal LF debug data image:
+
+```sh
+export ZLRS_APP="$ZLRS_REPO_ROOT/app"
+zlrs-build -p auto -- \
+  -DEXTRA_CONF_FILE="$ZLRS_REPO_ROOT/app/debug.conf;$ZLRS_REPO_ROOT/app/data24-debug.conf" \
+  -DDTC_OVERLAY_FILE="$ZLRS_REPO_ROOT/app/debug.overlay"
+```
