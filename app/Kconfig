@@ -70,16 +70,6 @@ config ZLRS_APP_LINK_DATA
 	help
 	  Off: only the control link runs, which is how RC and telemetry get proven on their own.
 
-config ZLRS_APP_RP2350_CRYPTO
-	bool "RP2350 hardware SHA-256 for link authentication and key derivation"
-	default y
-	depends on SOC_RP2350A_M33 && DT_HAS_RASPBERRYPI_PICO_SHA256_ENABLED
-	select PICOSDK_USE_SHA256
-	help
-	  Use the Pico SDK SHA-256 accelerator for HMAC, HKDF and PBKDF2. This replaces
-	  the PSA protocol backend without changing keys or authenticated frame bytes.
-	  No interrupts are masked while hashing; the radio SPI DMA channels stay independent.
-
 # The only knob on the upgrade path: how long the host has to confirm. The mechanism itself
 # (an image under MCUboot stays unconfirmed until the host says so, then either becomes
 # permanent or is rolled back) has no switch — the board definition brings the image

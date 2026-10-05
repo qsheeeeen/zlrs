@@ -4,5 +4,6 @@
 menu "zlrs drivers"
 
 rsource "entropy/Kconfig"
+rsource "crypto/Kconfig"
 
 endmenu

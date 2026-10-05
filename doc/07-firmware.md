@@ -85,7 +85,7 @@ Who decides what:
 | Role TX / RX, security profile | runtime, default at build time | `set-role` / `set-profile`, stored in NVS |
 | Region, power ceiling, baud rate, failsafe values, pairing | runtime | management protocol, stored in NVS |
 | Rate tier, frame rate, telemetry period | build time today | the ledger in [12-roadmap](12-roadmap.md) tracks the missing commands |
-| Hardware presence (ports, management channel, button, LED, watchdog, TRNG, radio design) | devicetree | `app/src/platform/caps.h` |
+| Hardware presence (ports, management channel, button, LED, watchdog, SHA-256, TRNG, radio design) | devicetree | `app/src/platform/caps.h` |
 | Bench isolation (`RADIO=n`, hopping off, P0, …) | build time, debug images only | `ZLRS_APP_DEBUG*`, see [11-debug](11-debug.md) 3 |
 
 Two properties follow and are worth stating explicitly: **one image runs both roles** (a field

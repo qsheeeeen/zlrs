@@ -1,0 +1,12 @@
+# Copyright (c) 2026 zlrs contributors
+# SPDX-License-Identifier: Apache-2.0
+
+config ZLRS_RP2350_SHA256
+	bool "ZLRS RP2350 SHA-256 Crypto driver"
+	default y
+	depends on DT_HAS_ZLRS_RP2350_SHA256_ENABLED && CRYPTO && SOC_RP2350A_M33
+	select PICOSDK_USE_SHA256
+	help
+	  Hardware SHA-256 through the Zephyr Crypto API, with one-shot and multipart
+	  hashing. Pico SDK handles word-aligned input and partial words without joining
+	  input buffers. One active session owns the accelerator and the ROM SHA lock.

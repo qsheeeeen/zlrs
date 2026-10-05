@@ -2,7 +2,7 @@
  * Crypto primitives: HKDF-SHA256 derivation and a 4-byte truncated per-frame tag. Tag length,
  * domain separation and KDF context concatenation live here; swapping the backend (PSA,
  * hardware acceleration) means replacing the .c file. See core/proto/crypto_psa.c,
- * app/src/platform/crypto_rp2350.c and 09-security.
+ * app/src/platform/crypto.c and 09-security.
  *
  * SPDX-License-Identifier: Apache-2.0
  */

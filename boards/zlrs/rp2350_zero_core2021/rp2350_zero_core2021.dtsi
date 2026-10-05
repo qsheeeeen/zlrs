@@ -63,8 +63,9 @@
 	status = "okay";
 };
 
-/* Link authentication and key derivation use the independent SHA-256 accelerator. */
+/* ZLRS's Zephyr Crypto driver supports multipart input for HMAC without copying. */
 &sha256 {
+	compatible = "zlrs,rp2350-sha256";
 	status = "okay";
 };
 

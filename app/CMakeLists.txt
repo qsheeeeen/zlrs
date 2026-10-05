@@ -13,6 +13,7 @@ target_sources(app PRIVATE
   src/link/power.c
   src/link/rate.c
   src/main.c
+  src/platform/crypto.c
   src/platform/slot_timer.c
   src/platform/recovery.c
   src/platform/watchdog.c
@@ -32,6 +33,7 @@ target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG_SHELL app PRIVATE src/link/bench.c)
 if(CONFIG_ZLRS_APP_RAM_RADIO)
   set(zlrs_ram_sources
     src/main.c
+    src/platform/crypto.c
     src/platform/radio.c
     src/link/data.c
     ../core/link/link.c
@@ -42,20 +44,17 @@ if(CONFIG_ZLRS_APP_RAM_RADIO)
   if(CONFIG_ZLRS_APP_RP2350_RADIO_IO)
     list(APPEND zlrs_ram_sources src/platform/radio_io.c)
   endif()
-  if(CONFIG_ZLRS_APP_RP2350_CRYPTO)
-    list(APPEND zlrs_ram_sources src/platform/crypto_rp2350.c)
-  endif()
   if(CONFIG_ZLRS_APP_DEBUG_SHELL)
     list(APPEND zlrs_ram_sources src/link/bench.c)
   endif()
-  # The RF owner also calls the public radio and DMA helpers. Relocate their compiled
+  # The RF owner also calls the public radio, DMA and crypto helpers. Relocate their compiled
   # text through Zephyr's build API; upstream files and behavior remain unchanged.
   get_property(zlrs_driver_libraries GLOBAL PROPERTY ZEPHYR_LIBS)
   foreach(zlrs_driver_library IN LISTS zlrs_driver_libraries)
     get_target_property(zlrs_driver_sources ${zlrs_driver_library} SOURCES)
     get_target_property(zlrs_driver_dir ${zlrs_driver_library} SOURCE_DIR)
     foreach(zlrs_driver_source IN LISTS zlrs_driver_sources)
-      if(zlrs_driver_source MATCHES "(^|/)(dma_rpi_pico|lr20xx_radio_(common|fifo|flrc)|lr20xx_system|ral_lr20xx|ralf_lr20xx)\\.c$")
+      if(zlrs_driver_source MATCHES "(^|/)(rp2350_sha256|dma_rpi_pico|lr20xx_radio_(common|fifo|flrc)|lr20xx_system|ral_lr20xx|ralf_lr20xx)\\.c$")
         if(NOT IS_ABSOLUTE "${zlrs_driver_source}")
           set(zlrs_driver_source "${zlrs_driver_dir}/${zlrs_driver_source}")
         endif()
@@ -65,8 +64,6 @@ if(CONFIG_ZLRS_APP_RAM_RADIO)
   endforeach()
   zephyr_code_relocate(FILES ${zlrs_ram_sources} LOCATION RAM_TEXT)
 endif()
-
-target_sources_ifdef(CONFIG_ZLRS_APP_RP2350_CRYPTO app PRIVATE src/platform/crypto_rp2350.c)
 
 if(CONFIG_ZLRS_APP_RP2350_RADIO_IO)
   # Select our implementation of the public Semtech HAL without editing the module.

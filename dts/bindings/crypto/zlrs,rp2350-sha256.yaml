@@ -1,0 +1,12 @@
+# Copyright (c) 2026 zlrs contributors
+# SPDX-License-Identifier: Apache-2.0
+
+description: ZLRS RP2350 SHA-256 accelerator with multipart hashing
+
+compatible: "zlrs,rp2350-sha256"
+
+include: base.yaml
+
+properties:
+  reg:
+    required: true

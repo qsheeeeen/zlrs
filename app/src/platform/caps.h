@@ -30,6 +30,9 @@
 #define ZLRS_HAS_WDT    DT_NODE_EXISTS(DT_ALIAS(watchdog0))
 #define ZLRS_HAS_NVS    IS_ENABLED(CONFIG_NVS)
 #define ZLRS_HAS_USB    IS_ENABLED(CONFIG_ZLRS_USB)
+#define ZLRS_HAS_SHA256                                                                            \
+	(DT_NODE_HAS_STATUS(DT_NODELABEL(sha256), okay) &&                                         \
+	 IS_ENABLED(CONFIG_ZLRS_RP2350_SHA256))
 
 /* ---- radio design: band and the frequency coverage the PA network is built for ---- */
 #define ZLRS_RF_BAND        DT_PROP(DT_NODELABEL(zlrs_rf), band)

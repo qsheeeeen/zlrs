@@ -43,7 +43,6 @@
 #include "link/power.h"
 #include "link/rate.h"
 #include "platform/caps.h"
-#include "platform/crypto.h"
 #include "platform/recovery.h"
 #include "platform/slot_timer.h"
 #include "platform/watchdog.h"
@@ -1427,17 +1426,19 @@ static void fault_loop(void)
 }
 
 /*
- * The PSA provider must be initialised before the first key import; on failure stay off the
- * air: the KDF and the per-frame tags depend on it, so transmitting blind is pointless.
+ * Initialise PSA before key imports on boards using the fallback backend.
+ * The Zephyr SHA-256 driver is initialised by the device model.
  */
 static void crypto_init(void)
 {
+#if !ZLRS_HAS_SHA256
 	const psa_status_t st = psa_crypto_init();
 
 	if (st != PSA_SUCCESS) {
 		LOG_ERR("psa_crypto_init failed (%d)", (int)st);
 		fault_loop();
 	}
+#endif
 }
 
 static void broadcast_state(void)
@@ -1770,58 +1771,6 @@ static int cmd_link(const struct shell *sh, size_t argc, char **argv)
 		    radio_diag.empty_irq, radio_diag.overruns, radio_diag.rx_windows,
 		    radio_diag.late_starts);
 #endif
-
-	return 0;
-}
-
-/*
- * KDF self test: IKM 0x0b*22, zero salt, info 0xf0..0xf9 (independently computed vector).
- * Two ends deriving different keys from the same pairing inputs have different inputs or a broken KDF;
- * this tells those apart without a second device.
- */
-static int cmd_kdf(const struct shell *sh, size_t argc, char **argv)
-{
-	static const uint8_t ikm[22] = {
-		0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b,
-		0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b,
-	};
-	static const uint8_t info[10] = {0xf0, 0xf1, 0xf2, 0xf3, 0xf4,
-					 0xf5, 0xf6, 0xf7, 0xf8, 0xf9};
-	static const uint8_t want[32] = {
-		0xab, 0xba, 0xfb, 0x13, 0xf5, 0xc1, 0xbc, 0x48, 0x9d, 0x42, 0x03,
-		0x13, 0x58, 0x17, 0x95, 0x6d, 0xd5, 0x21, 0xb3, 0x9e, 0x3b, 0xd6,
-		0x1d, 0x1c, 0xc8, 0x5c, 0xef, 0x88, 0x4d, 0x1f, 0x8e, 0x2e,
-	};
-	uint8_t out[32];
-	uint8_t ikm_fixed[32];
-	uint8_t ctx_fixed[16];
-	uint8_t pair_out[32];
-
-	ARG_UNUSED(argc);
-	ARG_UNUSED(argv);
-
-	/* Empty label: the info the KDF builds is then exactly the vector's info */
-	zlrs_kdf(ikm, sizeof(ikm), "", info, sizeof(info), out, sizeof(out));
-	shell_print(sh, "kdf hkdf-sha256 %s", memcmp(out, want, sizeof(want)) == 0 ? "ok" : "FAIL");
-	shell_print(sh, "  got  %02x%02x%02x%02x%02x%02x%02x%02x...", out[0], out[1], out[2],
-		    out[3], out[4], out[5], out[6], out[7]);
-	shell_print(sh, "  want %02x%02x%02x%02x%02x%02x%02x%02x...", want[0], want[1], want[2],
-		    want[3], want[4], want[5], want[6], want[7]);
-
-	/*
-	 * Same call the pairing makes, but with fixed inputs: two boards that disagree here disagree
-	 * inside the KDF, not in the record they feed it.
-	 */
-	for (uint8_t i = 0U; i < sizeof(ikm_fixed); i++) {
-		ikm_fixed[i] = i;
-	}
-	for (uint8_t i = 0U; i < sizeof(ctx_fixed); i++) {
-		ctx_fixed[i] = (uint8_t)(0x40U + i);
-	}
-	zlrs_kdf(ikm_fixed, sizeof(ikm_fixed), "zlrs/pair", ctx_fixed, sizeof(ctx_fixed), pair_out,
-		 sizeof(pair_out));
-	shell_print(sh, "kdf fixed %08x%08x%08x%08x", le32(pair_out), le32(&pair_out[4]),
-		    le32(&pair_out[8]), le32(&pair_out[12]));
 
 	return 0;
 }
@@ -2196,15 +2145,6 @@ static int cmd_mcuboot(const struct shell *sh, size_t argc, char **argv)
 }
 #endif
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_RP2350_CRYPTO)
-static int cmd_crypto(const struct shell *sh, size_t argc, char **argv)
-{
-	ARG_UNUSED(argc);
-	ARG_UNUSED(argv);
-	return zlrs_crypto_self_test(sh);
-}
-#endif
-
 static int cmd_stream(const struct shell *sh, size_t argc, char **argv)
 {
 	return ZLRS_DATA24 ? zlrs_bench_command(sh, argc, argv) : -ENOTSUP;
@@ -2214,10 +2154,6 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 	zlrs_cmds, SHELL_CMD(status, NULL, "role / SKU / region / link state", cmd_status),
 	SHELL_CMD(link, NULL, "per-link state, frequency, hop index and key fingerprints",
 		  cmd_link),
-	SHELL_CMD(kdf, NULL, "run the HKDF-SHA256 test vector", cmd_kdf),
-#if IS_ENABLED(CONFIG_ZLRS_APP_RP2350_CRYPTO)
-	SHELL_CMD(crypto, NULL, "check crypto vectors and measure full-frame tags", cmd_crypto),
-#endif
 	SHELL_CMD(rekey, NULL, "re-derive the control link keys from its record", cmd_rekey),
 	SHELL_CMD(rxwin, " [ms]", "stretch the data link receive window (bench)", cmd_rxwin),
 	SHELL_CMD(rate, " [s]", "measure windows/hits/frames per second per link", cmd_rate),

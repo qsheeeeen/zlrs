@@ -10,6 +10,7 @@ zephyr_library_sources(
   mod.c
   tlm.c
 )
-if(NOT CONFIG_ZLRS_APP_RP2350_CRYPTO)
+# The Zephyr driver follows devicetree; boards without it retain the PSA backend.
+if(NOT CONFIG_ZLRS_RP2350_SHA256)
   zephyr_library_sources(crypto_psa.c)
 endif()
