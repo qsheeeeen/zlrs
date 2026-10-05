@@ -1817,15 +1817,6 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 		    diag.tx_prepare_us_last[0], diag.tx_prepare_us_last[1],
 		    diag.tx_prepare_us_last[2], diag.tx_prepare_us_last[3]);
 	shell_print(sh, "FS reuse=%u", diag.fs_reused);
-	shell_print(sh, "SPI DMA transfers=%u bytes=%u errors=%u last=%u B rate=%u Hz",
-		    diag.io.dma_transfers, diag.io.dma_bytes, diag.io.dma_errors,
-		    diag.io.dma_len_last, diag.io.spi_hz);
-	shell_print(sh, "SPI DMA last setup/active/wake/finish/busy=%u/%u/%u/%u/%u us",
-		    diag.io.setup_us_last, diag.io.active_us_last, diag.io.wake_us_last,
-		    diag.io.finish_us_last, diag.io.busy_us_last);
-	shell_print(sh, "SPI DMA total setup/active/wake/finish/busy=%u/%u/%u/%u/%u us",
-		    diag.io.setup_us_sum, diag.io.active_us_sum, diag.io.wake_us_sum,
-		    diag.io.finish_us_sum, diag.io.busy_us_sum);
 	shell_print(sh, "TX build serial=%u protocol=%u us", serial_pump_us_last,
 		    protocol_build_us_last);
 	shell_print(sh, "TX preload packets=%u used=%u last/max=%u/%u us", diag.tx_preloaded,

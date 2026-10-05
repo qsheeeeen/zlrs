@@ -44,46 +44,10 @@ if(CONFIG_ZLRS_APP_RAM_RADIO)
     ${zlrs_app_dir}/../core/proto/frag.c
     ${zlrs_app_dir}/../core/proto/fhss.c
   )
-  if(CONFIG_ZLRS_APP_RP2350_RADIO_IO)
-    list(APPEND zlrs_ram_sources ${zlrs_app_dir}/src/platform/radio_io.c)
+  if(CONFIG_ZLRS_RP2350_SHA256)
+    list(APPEND zlrs_ram_sources ${zlrs_app_dir}/../drivers/crypto/rp2350_sha256.c)
   endif()
-  # The RF owner also calls the public radio, DMA and crypto helpers. Relocate their compiled
-  # text through Zephyr's build API; upstream files and behavior remain unchanged.
-  get_property(zlrs_driver_libraries GLOBAL PROPERTY ZEPHYR_LIBS)
-  foreach(zlrs_driver_library IN LISTS zlrs_driver_libraries)
-    get_target_property(zlrs_driver_sources ${zlrs_driver_library} SOURCES)
-    get_target_property(zlrs_driver_dir ${zlrs_driver_library} SOURCE_DIR)
-    foreach(zlrs_driver_source IN LISTS zlrs_driver_sources)
-      if(zlrs_driver_source MATCHES "(^|/)(rp2350_sha256|dma_rpi_pico|lr20xx_radio_(common|fifo|flrc)|lr20xx_system|ral_lr20xx|ralf_lr20xx)\\.c$")
-        if(NOT IS_ABSOLUTE "${zlrs_driver_source}")
-          set(zlrs_driver_source "${zlrs_driver_dir}/${zlrs_driver_source}")
-        endif()
-        list(APPEND zlrs_ram_sources "${zlrs_driver_source}")
-      endif()
-    endforeach()
-  endforeach()
   zephyr_code_relocate(FILES ${zlrs_ram_sources} LOCATION RAM_TEXT)
-endif()
-
-if(CONFIG_ZLRS_APP_RP2350_RADIO_IO)
-  # Select our implementation of the public Semtech HAL without editing the module.
-  # Keep its board/BSP and radio driver sources. Fail if the module layout changes.
-  get_property(zlrs_libraries GLOBAL PROPERTY ZEPHYR_LIBS)
-  set(zlrs_hal_replaced FALSE)
-  foreach(zlrs_library IN LISTS zlrs_libraries)
-    get_target_property(zlrs_sources ${zlrs_library} SOURCES)
-    foreach(zlrs_source IN LISTS zlrs_sources)
-      if(zlrs_source MATCHES "(^|/)lr20xx/lr20xx_hal\\.c$")
-        list(REMOVE_ITEM zlrs_sources ${zlrs_source})
-        set_property(TARGET ${zlrs_library} PROPERTY SOURCES "${zlrs_sources}")
-        set(zlrs_hal_replaced TRUE)
-      endif()
-    endforeach()
-  endforeach()
-  if(NOT zlrs_hal_replaced)
-    message(FATAL_ERROR "Cannot select the ZLRS LR2021 HAL: module source not found")
-  endif()
-  target_sources(app PRIVATE ${zlrs_app_dir}/src/platform/radio_io.c)
 endif()
 
 # Make the application version depend on the git index so that APP_VERSION_STRING

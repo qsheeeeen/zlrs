@@ -894,7 +894,4 @@ void zlrs_radio_abort(void)
 void zlrs_radio_diag(zlrs_radio_diag_t *out)
 {
 	*out = diag;
-#if IS_ENABLED(CONFIG_ZLRS_APP_RP2350_RADIO_IO)
-	zlrs_radio_io_diag(&out->io);
-#endif
 }
