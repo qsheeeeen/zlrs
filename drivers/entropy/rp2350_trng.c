@@ -23,7 +23,7 @@
  *
  * Two hard rules: no interrupts disabled, no spinlocks; and bounded waits (timeout = error).
  * **No software fallback**: a failed read or a failed entropy check is a failure, reported
- * upward (CSPRNG / PSA / boot self-test). Random numbers that merely look fine are not acceptable.
+ * upward (CSPRNG / PSA). Random numbers that merely look fine are not acceptable.
  *
  * A request reads fresh blocks straight into the caller's buffer and stops the source when it is
  * done. An earlier version kept a pool of ready blocks and handed out of it; the second read then
@@ -282,8 +282,8 @@ static int trng_init(const struct device *dev)
 	struct trng_data *data = dev->data;
 
 	/*
-	 * Register self-test: the driver reads 192 bit (6 EHR words), so first confirm this IP really
-	 * has a 192-bit EHR. If it does not, this is not the TRNG we know and it must not feed entropy.
+	 * Hardware capability check: the driver reads 192 bit (6 EHR words), so first confirm
+	 * this IP has a 192-bit EHR. Otherwise, it is not the TRNG we know and must not feed entropy.
 	 */
 	if ((cfg->regs->rng_version & TRNG_RNG_VERSION_EHR_WIDTH_192_BITS) == 0U) {
 		LOG_ERR("TRNG reports a 128-bit EHR (RNG_VERSION 0x%x)", cfg->regs->rng_version);

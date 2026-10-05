@@ -187,7 +187,7 @@ bool zlrs_storage_settings_new_dev_id(uint8_t out[ZLRS_DEV_ID_LEN])
 		return false;
 	}
 
-	/* Read a full block, the size the driver and the self-test are known to handle */
+	/* Read a full block, the size the entropy driver supports */
 	rc = entropy_get_entropy(entropy_dev, block, sizeof(block));
 	if (rc != 0) {
 		LOG_ERR("no dev id: entropy read failed (%d)", rc);

@@ -2,50 +2,50 @@
 # SPDX-License-Identifier: Apache-2.0
 
 cmake_minimum_required(VERSION 3.20.0)
-find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+# An including test application initializes its own Zephyr project first.
+if("${CMAKE_CURRENT_SOURCE_DIR}" STREQUAL "${CMAKE_CURRENT_LIST_DIR}")
+  find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+  project(app LANGUAGES C)
+endif()
 
-project(app LANGUAGES C)
+set(zlrs_app_dir "${CMAKE_CURRENT_LIST_DIR}")
 
 target_sources(app PRIVATE
-  src/mgmt/mode.c
-  src/link/crsf.c
-  src/link/data.c
-  src/link/power.c
-  src/link/rate.c
-  src/main.c
-  src/platform/crypto.c
-  src/platform/slot_timer.c
-  src/platform/recovery.c
-  src/platform/watchdog.c
-  src/platform/radio.c
-  src/state/sys_bus.c
-  src/storage/log.c
-  src/storage/settings.c
-  src/ui/button.c
-  src/ui/led.c
+  ${zlrs_app_dir}/src/mgmt/mode.c
+  ${zlrs_app_dir}/src/link/crsf.c
+  ${zlrs_app_dir}/src/link/data.c
+  ${zlrs_app_dir}/src/link/power.c
+  ${zlrs_app_dir}/src/link/rate.c
+  ${zlrs_app_dir}/src/main.c
+  ${zlrs_app_dir}/src/platform/crypto.c
+  ${zlrs_app_dir}/src/platform/slot_timer.c
+  ${zlrs_app_dir}/src/platform/recovery.c
+  ${zlrs_app_dir}/src/platform/watchdog.c
+  ${zlrs_app_dir}/src/platform/radio.c
+  ${zlrs_app_dir}/src/state/sys_bus.c
+  ${zlrs_app_dir}/src/storage/log.c
+  ${zlrs_app_dir}/src/storage/settings.c
+  ${zlrs_app_dir}/src/ui/button.c
+  ${zlrs_app_dir}/src/ui/led.c
 )
 
 # App-internal headers are included the way they sit on disk: "platform/radio.h",
 # "link/data.h", "platform/caps.h", ... (the layers are described in doc/06-architecture.md 5).
-target_include_directories(app PRIVATE src)
-target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG_SHELL app PRIVATE src/link/bench.c)
+target_include_directories(app PRIVATE "${zlrs_app_dir}/src")
 
 if(CONFIG_ZLRS_APP_RAM_RADIO)
   set(zlrs_ram_sources
-    src/main.c
-    src/platform/crypto.c
-    src/platform/radio.c
-    src/link/data.c
-    ../core/link/link.c
-    ../core/proto/frame.c
-    ../core/proto/frag.c
-    ../core/proto/fhss.c
+    ${zlrs_app_dir}/src/main.c
+    ${zlrs_app_dir}/src/platform/crypto.c
+    ${zlrs_app_dir}/src/platform/radio.c
+    ${zlrs_app_dir}/src/link/data.c
+    ${zlrs_app_dir}/../core/link/link.c
+    ${zlrs_app_dir}/../core/proto/frame.c
+    ${zlrs_app_dir}/../core/proto/frag.c
+    ${zlrs_app_dir}/../core/proto/fhss.c
   )
   if(CONFIG_ZLRS_APP_RP2350_RADIO_IO)
-    list(APPEND zlrs_ram_sources src/platform/radio_io.c)
-  endif()
-  if(CONFIG_ZLRS_APP_DEBUG_SHELL)
-    list(APPEND zlrs_ram_sources src/link/bench.c)
+    list(APPEND zlrs_ram_sources ${zlrs_app_dir}/src/platform/radio_io.c)
   endif()
   # The RF owner also calls the public radio, DMA and crypto helpers. Relocate their compiled
   # text through Zephyr's build API; upstream files and behavior remain unchanged.
@@ -83,7 +83,7 @@ if(CONFIG_ZLRS_APP_RP2350_RADIO_IO)
   if(NOT zlrs_hal_replaced)
     message(FATAL_ERROR "Cannot select the ZLRS LR2021 HAL: module source not found")
   endif()
-  target_sources(app PRIVATE src/platform/radio_io.c)
+  target_sources(app PRIVATE ${zlrs_app_dir}/src/platform/radio_io.c)
 endif()
 
 # Make the application version depend on the git index so that APP_VERSION_STRING
@@ -92,7 +92,7 @@ find_package(Git QUIET)
 if(GIT_FOUND)
   execute_process(
     COMMAND ${GIT_EXECUTABLE} rev-parse --absolute-git-dir
-    WORKING_DIRECTORY .
+    WORKING_DIRECTORY "${zlrs_app_dir}"
     OUTPUT_VARIABLE application_git_dir
     OUTPUT_STRIP_TRAILING_WHITESPACE
     ERROR_QUIET

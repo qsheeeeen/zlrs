@@ -40,11 +40,6 @@ void zlrs_storage_log_absent(void)
 	LOG_WRN("no log partition on this board, logs are not kept across reboots");
 }
 
-int zlrs_storage_log_probe(void)
-{
-	return -ENODEV;
-}
-
 int zlrs_storage_log_info(zlrs_mgmt_log_info_t *out)
 {
 	ARG_UNUSED(out);
@@ -233,23 +228,6 @@ int zlrs_storage_log_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *
 	*out_len = (uint8_t)got;
 
 	return ZLRS_MGMT_OK;
-}
-
-/*
- * Bench entry: run the mount again on demand and report what it returned, so a board with no
- * mounted log store can say why without another reboot (main.c: `zlrs logstore`).
- */
-int zlrs_storage_log_probe(void)
-{
-	int rc;
-
-	if (log_mounted) {
-		return 0;
-	}
-
-	rc = log_store_mount();
-
-	return (int)rc;
 }
 
 /* Retry before erasing: a reset during a write leaves LittleFS work to do on the next mount, and

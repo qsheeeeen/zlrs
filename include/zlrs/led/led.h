@@ -30,7 +30,7 @@ typedef struct {
 	bool paired;     /* pairing record present */
 	bool failsafe;   /* sending/outputting failsafe values (TX input timeout, RX unconnected) */
 	bool drop_recent;   /* a drop in the last second (passthrough backlog or ARQ give-up) */
-	bool role_tx;       /* role, used only during the boot self-test window */
+	bool role_tx;       /* role, used only during the boot role indication window */
 	uint8_t link_state; /* control link state, ZLRS_STATE_* */
 	uint8_t lq_percent;
 	uint32_t uptime_ms; /* ms since power-up: the first ZLRS_LED_BOOT_MS show the role colour */
@@ -39,7 +39,7 @@ typedef struct {
 /* Colour to show now. now_ms is a millisecond clock, used only for blink phase */
 zlrs_led_rgb_t zlrs_led_frame(const zlrs_led_input_t *in, uint32_t now_ms);
 
-/* Boot self-test window: the role colour is shown for this long after power-up */
+/* Boot role indication window: the role colour is shown for this long after power-up */
 #define ZLRS_LED_BOOT_MS 1500U
 
 /* Number of pixels to drive: one on the prototype */

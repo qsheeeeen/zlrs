@@ -2204,13 +2204,6 @@ uint16_t zlrs_link_tx_space(const zlrs_link_t *link)
 	return (uint16_t)(ZLRS_LINK_TX_QUEUE_LEN - link->queue_count);
 }
 
-void zlrs_link_rederive(zlrs_link_t *link)
-{
-	if (link->configured && link->paired) {
-		derive_pair(link);
-	}
-}
-
 void zlrs_link_pair_ctx(const zlrs_link_t *link, uint8_t out[ZLRS_PAIR_CTX_LEN])
 {
 	ordered_ids(link, out);
@@ -2230,34 +2223,6 @@ const zlrs_radio_req_t *zlrs_link_listen(zlrs_link_t *link)
 
 	return submit_rx(link, slot_freq_hz(link, SLOT_DATA), link->cfg.sync_slot, link->sync_word,
 			 link->cfg.rx_timeout_ms);
-}
-
-const zlrs_radio_req_t *zlrs_link_blast(zlrs_link_t *link, const uint8_t *data, uint16_t len)
-{
-	const uint8_t type =
-		(link->cfg.role == ZLRS_ROLE_TX) ? ZLRS_PKT_DATA_UP : ZLRS_PKT_DATA_DOWN;
-	uint16_t frame_len;
-
-	if (data == NULL || len == 0U || len > ZLRS_PAYLOAD_MAX_LEN) {
-		return NULL;
-	}
-
-	frame_len = build_frame(link, type, 0U, data, len, tag_key_for(link, type, true));
-	if (frame_len == 0U) {
-		return NULL;
-	}
-
-	/* Raw transaction: nothing was taken from the queue, so nothing is committed on completion */
-	link->pending_data_len = 0U;
-
-	return submit_tx(link, frame_len, slot_freq_hz(link, SLOT_DATA), link->cfg.sync_slot,
-			 link->sync_word);
-}
-
-const zlrs_radio_req_t *zlrs_link_listen_raw(zlrs_link_t *link, uint16_t timeout_ms)
-{
-	return submit_rx(link, slot_freq_hz(link, SLOT_DATA), link->cfg.sync_slot, link->sync_word,
-			 timeout_ms);
 }
 
 void zlrs_link_set_mix(zlrs_link_t *link, uint8_t mix)

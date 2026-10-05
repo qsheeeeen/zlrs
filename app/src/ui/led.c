@@ -5,7 +5,7 @@
  * and puts them on the device. The priority table and the colours are core/led's (pure C,
  * host-tested in tests/host/test_led.c) and this thread is their only caller, so nothing a producer
  * touches names a colour. The timings the state does not carry live here too: the delay that keeps
- * a tool round-trip from flashing white, the one-second drop overlay, and the boot self-test
+ * a tool round-trip from flashing white, the one-second drop overlay, and the boot role indication
  * window.
  *
  * There is deliberately no per-LED-kind code here: the strip is whatever devicetree instantiates
@@ -141,7 +141,7 @@ static void led_thread(void *p1, void *p2, void *p3)
 
 	for (;;) {
 		/* A state change wakes the thread at once; the timeout keeps the blink phase and the
-		 * boot self-test window moving while nothing changes. */
+		 * boot role indication window moving while nothing changes. */
 		if (zbus_sub_wait(&zlrs_led_sub, &chan, K_MSEC(LED_REFRESH_MS)) == 0) {
 			have_state = true;
 		}
@@ -175,7 +175,7 @@ static void led_thread(void *p1, void *p2, void *p3)
 		}
 
 		/*
-		 * An alarm outranks the boot self-test: it has to show at once rather than after the
+		 * An alarm outranks the boot role indication: show it immediately, before
 		 * role-colour window, so the engine is asked past that window (doc/10-ux.md). The
 		 * engine shows both the failsafe and the fault as the red "no usable link" colour.
 		 */

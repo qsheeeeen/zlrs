@@ -102,7 +102,7 @@ zlrs_led_rgb_t zlrs_led_frame(const zlrs_led_input_t *in, uint32_t now_ms)
 		return blink(scale(white, 30U), now_ms, 1000U, 500U);
 	}
 
-	/* 2. Boot self-test: steady theme colour for ZLRS_LED_BOOT_MS (blue = TX, green = RX) */
+	/* 2. Boot role indication: theme colour for ZLRS_LED_BOOT_MS (blue = TX, green = RX) */
 	if (in->uptime_ms < ZLRS_LED_BOOT_MS) {
 		return scale(theme_color(in), 30U);
 	}

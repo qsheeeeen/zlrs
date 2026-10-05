@@ -260,7 +260,7 @@ the signature check, the confirmation and the rollback apply.
 ## 6. Error handling
 
 - **A fatal fault stops the air, not the device**: a region/radio-design mismatch, a PSA
-  failure or an entropy self-test failure drops into `fault_loop()`, which shows the fast red
+  initialization failure drops into `fault_loop()`, which shows the fast red
   alarm, keeps feeding the watchdog and keeps the management port serving — so the device can still
   be entered, reconfigured and reflashed instead of needing BOOTSEL.
 - **A fault on an unconfirmed image reboots instead**: 2 s after the fault the application

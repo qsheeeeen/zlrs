@@ -400,13 +400,6 @@ void zlrs_link_set_dev_id(zlrs_link_t *link, const uint8_t dev_id[ZLRS_DEV_ID_LE
  */
 uint16_t zlrs_link_tx_space(const zlrs_link_t *link);
 
-/*
- * Recompute the pairing-level keys from the record the link holds now (ids, salt, root key).
- * Bench entry: two ends that show the same record but different keys can be told apart by
- * re-deriving on both and comparing again.
- */
-void zlrs_link_rederive(zlrs_link_t *link);
-
 /* The exact bytes the pairing KDF is fed with: both ids (sorted) then the salt (sorted) */
 #define ZLRS_PAIR_CTX_LEN (2U * ZLRS_DEV_ID_LEN + ZLRS_PAIR_SALT_LEN)
 void zlrs_link_pair_ctx(const zlrs_link_t *link, uint8_t out[ZLRS_PAIR_CTX_LEN]);
@@ -418,14 +411,6 @@ void zlrs_link_pair_ctx(const zlrs_link_t *link, uint8_t out[ZLRS_PAIR_CTX_LEN])
  * always, which is what a weak peer needs.
  */
 const zlrs_radio_req_t *zlrs_link_listen(zlrs_link_t *link);
-
-/*
- * Bench-only raw radio access, no state machine and no ARQ in the way:
- * blast() sends one complete frame right now, listen_raw() opens one window of the given length.
- * They answer "does the radio hear the peer at all" independently of slots, phases and retries.
- */
-const zlrs_radio_req_t *zlrs_link_blast(zlrs_link_t *link, const uint8_t *data, uint16_t len);
-const zlrs_radio_req_t *zlrs_link_listen_raw(zlrs_link_t *link, uint16_t timeout_ms);
 
 /* Change modulation at runtime (rate adaptation); effective with the next transaction */
 void zlrs_link_set_mod(zlrs_link_t *link, const zlrs_mod_cfg_t *mod);

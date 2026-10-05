@@ -8,14 +8,12 @@
 
 #include <zephyr/app_version.h>
 #include <zephyr/devicetree.h>
-#include <zephyr/drivers/entropy.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/logging/log_ctrl.h>
 #include <zephyr/random/random.h>
 #include <zephyr/sys/reboot.h>
 
-#include <stdlib.h>
 #include <string.h>
 
 #include <psa/crypto.h>
@@ -37,9 +35,6 @@
 #include "mgmt/mode.h"
 #include "link/crsf.h"
 #include "link/data.h"
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_SHELL)
-#include "link/bench.h"
-#endif
 #include "link/power.h"
 #include "link/rate.h"
 #include "platform/caps.h"
@@ -155,11 +150,6 @@ static uint8_t active_profile;
 static void crsf_send_rc(const uint8_t *payload, uint8_t len);
 static void crsf_send_link_stats(const zlrs_tlm_t *tlm);
 
-#if IS_ENABLED(CONFIG_ZLRS_RP2350_TRNG)
-/* Entropy self-test (defined above main); used by the boot check and the shell command */
-static int entropy_selftest(void);
-#endif
-
 static uint8_t rc_payload[ZLRS_RC_PAYLOAD_LEN];
 static uint8_t failsafe_payload[ZLRS_CRSF_RC_PAYLOAD_LEN];
 static uint32_t last_rc_input_ms;
@@ -209,11 +199,6 @@ static void on_data(void *ctx, const uint8_t *data, uint16_t len)
 {
 	(void)ctx;
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_SHELL)
-	if (zlrs_bench_receive(data, len)) {
-		return;
-	}
-#endif
 	counters.data_rx += zlrs_link_data_write(data, len);
 }
 
@@ -602,12 +587,6 @@ static void load_identity(void)
 
 static void pump_serial(void);
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
-/* Result of the at-boot raw bench, kept for `zlrs radio`: the console drops the log line often */
-static uint32_t raw_bench_frames;
-static uint32_t raw_bench_ms;
-#endif
-
 /* Wait against real elapsed time. Hardware alarms wake the thread at slot deadlines. */
 static void radio_wait_done(uint32_t budget_us)
 {
@@ -952,11 +931,6 @@ static void pump_serial(void)
 	if (!ZLRS_DATA_ENABLED) {
 		return; /* no data link: nothing to forward from the UART */
 	}
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_SHELL)
-	if (zlrs_bench_pump(&link_data)) {
-		return;
-	}
-#endif
 
 	/*
 	 * The UART ISR only fills its RX ring. The radio thread owns link_data, so feed the link queue
@@ -1377,7 +1351,7 @@ static void enter_management_mode(void);
 #endif
 
 /*
- * State on a fatal error (region vs SKU mismatch, entropy self-test failure, PSA init failure):
+ * State on a fatal error (region vs SKU mismatch or PSA init failure):
  * alarm but stay reachable. Red LED, the management port still up, so the host can enter it,
  * trigger serial recovery and reflash. A regulatory or security problem is worth staying off
  * the air for, but the device must stay flashable — otherwise one bad image means BOOTSEL.
@@ -1385,8 +1359,6 @@ static void enter_management_mode(void);
  * Exception: a test image (not yet confirmed by the host) resets on a fatal error so that
  * MCUboot rolls back — a flashable fault state is no reason to keep a broken build running.
  */
-/* Set when the entropy self-test never passed: keys then come from a weaker source */
-static bool entropy_degraded;
 
 static void fault_loop(void)
 {
@@ -1404,7 +1376,7 @@ static void fault_loop(void)
 	}
 #endif
 
-	/* One fact, once: the fault outranks the boot self-test and shows as the red alert colour
+	/* The fault outranks the boot role indication and shows as the red alert colour
 	 * (app/src/ui/led.c). Nothing else is published here — the links stop, so their last
 	 * snapshot is also the truth. */
 	zlrs_sys_publish_alerts(&alerts);
@@ -1557,104 +1529,6 @@ static void enter_management_mode(void)
 
 #endif /* ZLRS_MGMT_ENABLED */
 
-#if CONFIG_ZLRS_APP_BENCH_RAW_MS > 0
-/*
- * Bench helpers: run one radio transaction and report whether it finished. Debug images only — the
- * raw radio test is what says whether the two radios can hear each other at all, with no slots,
- * phases or ARQ involved (doc/11-debug.md 4).
- */
-static bool bench_wait(zlrs_link_t *link, const zlrs_radio_req_t *req, uint32_t budget_us)
-{
-	if (zlrs_radio_prepare(link, req) != 0 || zlrs_radio_launch() != 0) {
-		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_slot_timer_now_ms());
-		return false;
-	}
-
-	radio_wait_done(budget_us);
-
-	zlrs_radio_drain();
-	if (link->req_pending) {
-		zlrs_radio_abort();
-		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_slot_timer_now_ms());
-		return false;
-	}
-
-	return true;
-}
-
-/*
- * Raw radio bench at boot, see CONFIG_ZLRS_APP_BENCH_RAW_MS. The role decides the direction: the TX
- * role sends complete frames back to back, the RX role opens 100 ms windows back to back. Both log
- * once a second, which is all the host needs — the console stays usable because nothing has to be
- * typed while this runs.
- */
-static void bench_raw_at_boot(void)
-{
-	uint32_t left_ms = (uint32_t)CONFIG_ZLRS_APP_BENCH_RAW_MS;
-	uint32_t last_ms = zlrs_slot_timer_now_ms();
-	uint32_t tx0 = link_data.stats.tx_frames;
-	uint32_t rx0 = link_data.stats.rx_frames;
-	static uint8_t payload[32];
-	const uint32_t start_ms = last_ms;
-	uint32_t seq = 0U;
-
-	if (left_ms == 0U) {
-		return;
-	}
-
-	LOG_INF("raw bench: %s for %u ms", role_tx ? "blast" : "listen", (unsigned int)left_ms);
-
-	while ((uint32_t)(zlrs_slot_timer_now_ms() - start_ms) < left_ms) {
-		const zlrs_radio_req_t *req;
-
-		if (role_tx) {
-			for (uint8_t i = 0U; i < sizeof(payload); i++) {
-				payload[i] = (uint8_t)(seq + i);
-			}
-			req = zlrs_link_blast(&link_data, payload, sizeof(payload));
-			if (req != NULL) {
-				seq++;
-			}
-		} else {
-			req = zlrs_link_listen_raw(&link_data, 100U);
-		}
-		if (req == NULL) {
-			k_usleep(200);
-			continue;
-		}
-		/* The direct backend programs the radio itself per transaction, which needs more room than
-		 * the planner path: give the bench a budget that is not the thing being measured. */
-		(void)bench_wait(&link_data, req, role_tx ? 100000U : 120000U);
-		zlrs_watchdog_feed();
-
-		{
-			const uint32_t now = zlrs_slot_timer_now_ms();
-
-			if ((uint32_t)(now - last_ms) >= 1000U) {
-				const uint32_t tx = link_data.stats.tx_frames - tx0;
-				const uint32_t rx = link_data.stats.rx_frames - rx0;
-
-				LOG_INF("raw: %s %u tx/s, %u rx/s, rssi %d",
-					role_tx ? "blast" : "listen", (unsigned int)tx,
-					(unsigned int)rx, link_data.stats.last_rssi);
-				tx0 = link_data.stats.tx_frames;
-				rx0 = link_data.stats.rx_frames;
-				last_ms = now;
-			}
-		}
-	}
-
-	LOG_INF("raw bench done: %u frames sent, %u heard", (unsigned int)seq,
-		(unsigned int)(link_data.stats.rx_frames - rx0));
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
-	/* Kept for `zlrs radio`: the console drops this line often enough to lose the measurement */
-	raw_bench_frames = seq;
-	raw_bench_ms = (uint32_t)CONFIG_ZLRS_APP_BENCH_RAW_MS;
-#endif
-}
-
-#endif /* CONFIG_ZLRS_APP_BENCH_RAW_MS */
-
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_SHELL)
 /* Little-endian u32 out of an id or key, for bench output that has to be comparable */
 static uint32_t le32(const uint8_t *p)
@@ -1775,38 +1649,6 @@ static int cmd_link(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
-/*
- * Bench: stretch the data link's receive window. A steady-state window is a couple of
- * milliseconds in a multi-millisecond frame, so almost everything depends on the two ends being
- * phased; this takes the phase out of the question and asks whether the receive path works at all
- * (continuous listening, peer transmitting). 0 restores the build's value.
- */
-static uint16_t rxwin_default;
-static uint16_t acqwin_default;
-
-static int cmd_rxwin(const struct shell *sh, size_t argc, char **argv)
-{
-	unsigned long ms = 0UL;
-
-	if (argc > 1) {
-		ms = strtoul(argv[1], NULL, 0);
-		if (ms > 500UL) {
-			ms = 500UL;
-		}
-	}
-	if (rxwin_default == 0U) {
-		rxwin_default = link_data.cfg.rx_timeout_ms;
-		acqwin_default = link_data.cfg.acq_timeout_ms;
-	}
-	link_data.cfg.rx_timeout_ms = (uint16_t)ms;
-	link_data.cfg.acq_timeout_ms = (uint16_t)ms;
-
-	shell_print(sh, "data link window = %lu ms (default %u); `zlrs link` shows wins and hits",
-		    ms, rxwin_default);
-
-	return 0;
-}
-
 /* Bench: print the init breadcrumbs (see trace_add) */
 static int cmd_trace(const struct shell *sh, size_t argc, char **argv)
 {
@@ -1821,19 +1663,6 @@ static int cmd_trace(const struct shell *sh, size_t argc, char **argv)
 	}
 	buf[len] = '\0';
 	shell_print(sh, "init trace: [%s] len=%u", buf, (unsigned int)len);
-
-	return 0;
-}
-
-/* Bench: ask the log store to mount again and print the error it returns */
-static int cmd_logstore(const struct shell *sh, size_t argc, char **argv)
-{
-	const int rc = zlrs_storage_log_probe();
-
-	ARG_UNUSED(argc);
-	ARG_UNUSED(argv);
-
-	shell_print(sh, "log store mount: %d", rc);
 
 	return 0;
 }
@@ -1865,32 +1694,12 @@ static int cmd_rate(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
-/* Bench: show the pair key, re-derive it from the record on hand, show it again */
-static int cmd_rekey(const struct shell *sh, size_t argc, char **argv)
-{
-	const uint32_t before = fingerprint(link_control.pair_key, ZLRS_KEY_LEN);
-	uint32_t after;
-
-	ARG_UNUSED(argc);
-	ARG_UNUSED(argv);
-
-	zlrs_link_rederive(&link_control);
-	after = fingerprint(link_control.pair_key, ZLRS_KEY_LEN);
-	shell_print(sh, "ctl pair_key %08x -> %08x %s", before, after,
-		    (before == after) ? "same" : "CHANGED");
-
-	return 0;
-}
-
 static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
 
 	shell_print(sh, "role   : %s", role_tx ? "TX" : "RX");
-	if (entropy_degraded) {
-		shell_print(sh, "entropy: DEGRADED (self-test failed at boot)");
-	}
 	shell_print(sh, "sub-G  : %s (band %d)", ZLRS_RF_BAND == ZLRS_BAND_SUBG_LF ? "LF" : "HF",
 		    ZLRS_RF_BAND);
 	shell_print(sh, "region : %s (max %d dBm)", (region != NULL) ? region->name : "?",
@@ -2059,23 +1868,6 @@ static int cmd_recovery(const struct shell *sh, size_t argc, char **argv)
 }
 #endif
 
-#if IS_ENABLED(CONFIG_ZLRS_RP2350_TRNG)
-static int cmd_entropy(const struct shell *sh, size_t argc, char **argv)
-{
-	ARG_UNUSED(argc);
-	ARG_UNUSED(argv);
-
-	if (entropy_selftest() != 0) {
-		shell_print(sh, "entropy: FAIL");
-		return -1;
-	}
-
-	shell_print(sh, "entropy: ok");
-
-	return 0;
-}
-#endif
-
 #if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
 /*
  * Debug helper: dump the image state as MCUboot sees it. First thing to look at when an
@@ -2145,22 +1937,13 @@ static int cmd_mcuboot(const struct shell *sh, size_t argc, char **argv)
 }
 #endif
 
-static int cmd_stream(const struct shell *sh, size_t argc, char **argv)
-{
-	return ZLRS_DATA24 ? zlrs_bench_command(sh, argc, argv) : -ENOTSUP;
-}
-
 SHELL_STATIC_SUBCMD_SET_CREATE(
 	zlrs_cmds, SHELL_CMD(status, NULL, "role / SKU / region / link state", cmd_status),
 	SHELL_CMD(link, NULL, "per-link state, frequency, hop index and key fingerprints",
 		  cmd_link),
-	SHELL_CMD(rekey, NULL, "re-derive the control link keys from its record", cmd_rekey),
-	SHELL_CMD(rxwin, " [ms]", "stretch the data link receive window (bench)", cmd_rxwin),
 	SHELL_CMD(rate, " [s]", "measure windows/hits/frames per second per link", cmd_rate),
 	SHELL_CMD(ports, NULL, "state of both data port endpoints", cmd_ports),
-	SHELL_CMD(stream, NULL, "RF-only DATA bench: arm <bytes>, start, status, stop", cmd_stream),
 	SHELL_CMD(radio, NULL, "LR2021 timing: preparation, launch and wait", cmd_radio),
-	SHELL_CMD(logstore, NULL, "mount the log filesystem and report the result", cmd_logstore),
 	SHELL_CMD(trace, NULL, "print the init breadcrumbs", cmd_trace),
 #if ZLRS_MGMT_ENABLED
 	SHELL_CMD(mgmt, NULL, "enter management mode (EXIT returns)", cmd_mgmt),
@@ -2171,9 +1954,6 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 #ifdef PICO_RP2350
 	SHELL_CMD(bootsel, NULL, "reboot into the RP2350 ROM bootloader (USB drive)", cmd_bootsel),
 #endif
-#if IS_ENABLED(CONFIG_ZLRS_RP2350_TRNG)
-	SHELL_CMD(entropy, NULL, "entropy self-test (two 32-byte TRNG blocks)", cmd_entropy),
-#endif
 #if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
 	SHELL_CMD(mcuboot, NULL, "image state as MCUboot sees it (debug)", cmd_mcuboot),
 #endif
@@ -2181,40 +1961,6 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 
 SHELL_CMD_REGISTER(zlrs, &zlrs_cmds, "zlrs debug commands", NULL);
 #endif /* CONFIG_ZLRS_APP_DEBUG_SHELL */
-
-#if IS_ENABLED(CONFIG_ZLRS_RP2350_TRNG)
-/*
- * Entropy self-test: read two 32-byte blocks in a row; both must succeed and differ.
- * On failure, report it — no software fallback. A broken hardware entropy source is broken;
- * keys, device id and pairing must not rest on random numbers that merely look fine.
- */
-static int entropy_selftest(void)
-{
-	const struct device *const dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_entropy));
-	uint8_t a[32];
-	uint8_t b[32];
-
-	if (!device_is_ready(dev)) {
-		LOG_ERR("entropy device not ready");
-		return -1;
-	}
-
-	if (entropy_get_entropy(dev, a, sizeof(a)) != 0 ||
-	    entropy_get_entropy(dev, b, sizeof(b)) != 0) {
-		LOG_ERR("entropy self-test failed: TRNG read error");
-		return -1;
-	}
-
-	if (memcmp(a, b, sizeof(a)) == 0) {
-		LOG_ERR("entropy self-test failed: two identical blocks");
-		return -1;
-	}
-
-	LOG_INF("entropy self-test ok");
-
-	return 0;
-}
-#endif /* CONFIG_ZLRS_RP2350_TRNG */
 
 int main(void)
 {
@@ -2268,38 +2014,11 @@ int main(void)
 
 #if ZLRS_MGMT_ENABLED
 	/*
-	 * Bring the management port up early: any later fatal step (entropy, region/SKU, PSA) lands in
+	 * Bring the management port up early: later fatal steps (region/SKU, PSA) land in
 	 * fault_loop, and that path stays flashable only while the management port is alive.
 	 */
 	(void)zlrs_mgmt_init();
 	TRACE('C');
-#endif
-
-#if IS_ENABLED(CONFIG_ZLRS_RP2350_TRNG)
-	/*
-	 * The entropy source is retried and then reported rather than fatal. Parking the whole
-	 * application in fault_loop() over a self-test means the device cannot be reached at all —
-	 * no link, no management port, nothing to debug — and the TRNG does come back on its own after a
-	 * reset far more often than not. A device that boots and says "entropy is degraded" is
-	 * strictly more useful than one that blinks forever.
-	 */
-	{
-		int rc = -1;
-
-		for (uint8_t try = 0U; try < 3U; try++) {
-			rc = entropy_selftest();
-			if (rc == 0) {
-				break;
-			}
-			k_msleep(20);
-		}
-		TRACE('E');
-		if (rc != 0) {
-			entropy_degraded = true;
-			LOG_ERR("entropy self-test failed (%d) after 3 tries: running degraded",
-				rc);
-		}
-	}
 #endif
 
 	/* Identity comes before anything that could use it; without one, stay off the air */
@@ -2460,10 +2179,6 @@ int main(void)
 	}
 
 	TRACE('d');
-#if CONFIG_ZLRS_APP_BENCH_RAW_MS > 0
-	/* Bench images only: run the raw radio bench before the superframe takes over */
-	bench_raw_at_boot();
-#endif
 
 	LOG_INF("entering superframe loop: %u Hz, %s / %s (%s)", (unsigned int)control_rate_hz,
 		ZLRS_CONTROL_ENABLED ? "control on" : "control off",

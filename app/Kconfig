@@ -214,18 +214,6 @@ config ZLRS_APP_TX_GUARD_US
 	  The radio and FIFO are prepared ahead of the slot boundary. Only SET_TX runs at
 	  this fixed offset; receivers enter RX as soon as their preparation is complete.
 
-config ZLRS_APP_BENCH_RAW_MS
-	int "Raw radio bench at boot (ms, 0 = off)"
-	default 0
-	range 0 60000
-	help
-	  Debug images only. For this long after boot the application skips the superframe and does raw
-	  radio work instead: the TX role sends complete frames back to back, the RX role opens 100 ms
-	  receive windows back to back, and both log how many frames went out and came in each second.
-	  It answers "can these two radios hear each other at all" with no slots, no phases and no ARQ
-	  involved — and it needs no console interaction, which matters when a long radio transaction
-	  makes the forwarded USB console drop.
-
 config ZLRS_APP_FLRC_PREAMBLE_BITS
 	int "FLRC preamble length (bits)"
 	default 24
