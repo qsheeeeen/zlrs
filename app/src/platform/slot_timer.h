@@ -34,5 +34,7 @@ void zlrs_slot_timer_wait_until(uint32_t deadline_us, struct zlrs_slot_timer_wai
 #define ZLRS_SLOT_TIMER_LAUNCH_LEAD_US 25U
 /* False means the deadline cannot be armed in advance; no late software trigger. */
 bool zlrs_slot_timer_launch_at(uint32_t target_us, void (*fire)(uint32_t irq_us));
+bool zlrs_slot_timer_launch_ready(uint32_t now_us, uint32_t target_us, uint32_t lead_us);
+uint32_t zlrs_slot_timer_scan_delay_ms(uint32_t cadence_us, uint8_t sync_every_n, bool acquired);
 void zlrs_slot_timer_cancel_launch(void);
 void zlrs_slot_timer_stats(struct zlrs_slot_timer_stats *out);

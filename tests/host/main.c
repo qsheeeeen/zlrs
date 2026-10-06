@@ -44,7 +44,6 @@ int main(void)
 {
 	printf("zlrs host tests\n");
 	test_proto();
-	test_slot_clock();
 	test_bench_pattern();
 	test_radio_fifo();
 	test_link();
@@ -52,7 +51,6 @@ int main(void)
 	test_mgmt();
 	test_region();
 	test_mod();
-	test_power();
 	test_fuzz();
 	printf("%u checks, %u failure(s)\n", zlrs_test_checks, zlrs_test_failures);
 

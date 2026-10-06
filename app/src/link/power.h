@@ -1,10 +1,9 @@
 /*
  * Dynamic TX power: follow the quality the peer reports, so the link uses only what it needs.
  *
- * The policy is core/link's (`zlrs_power_update`, host-tested); this is its application — the
- * ceiling the region and the build set, the uplink quality from telemetry, and the once-a-second
- * verdict (doc/08-protocol.md 4.5). Losing telemetry means the other end is probably gone, which
- * the policy answers by going back to the ceiling.
+ * The application module owns the policy, the ceiling the region and the build set, the uplink
+ * quality from telemetry, and the once-a-second verdict (doc/08-protocol.md 4.5). Losing telemetry
+ * means the other end is probably gone, which the policy answers by going back to the ceiling.
  *
  * Naming: `<dir>/<file>.c` carries `zlrs_<dir>_<file>_*()`, so this is `zlrs_link_power_*()`.
  *

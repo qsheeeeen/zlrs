@@ -47,7 +47,6 @@
 #include "zlrs/crsf/crsf.h"
 #include "zlrs/mgmt/mgmt.h"
 #include "zlrs/link/link.h"
-#include "zlrs/link/slot_clock.h"
 #include "zlrs/region/region.h"
 #include "zlrs/proto/tlm.h"
 
@@ -2278,7 +2277,7 @@ int main(void)
 		if (!role_tx) {
 			const zlrs_link_t *const clock_link = active_link();
 			const uint32_t cadence_us = ZLRS_DATA24 ? period / 2U : period;
-			const uint32_t scan_after_ms = zlrs_slot_clock_scan_delay_ms(
+			const uint32_t scan_after_ms = zlrs_slot_timer_scan_delay_ms(
 				cadence_us, clock_link->cfg.resync_every_n, phase_samples > 0U);
 
 			if ((uint32_t)(now_ms - last_rx_any_ms) > scan_after_ms) {

@@ -340,8 +340,8 @@ config ZLRS_APP_DYNAMIC_POWER
 	help
 	  With signal to spare, drop power (saves energy, less interference); when it gets tight, come
 	  back up. Losing telemetry means the ceiling (the other end is probably gone). Applied once a
-	  second from app/src/link/power.c; thresholds and hysteresis live in core/link/power.c and
-	  wait for measurements.
+	  second from app/src/link/power.c; thresholds and hysteresis are in that file and wait for
+	  measurements.
 
 config ZLRS_APP_WATCHDOG
 	bool "Watchdog: reset on a crash or a stuck loop (helps rollback, is not rollback)"

@@ -6,7 +6,6 @@
  */
 #include "platform/radio.h"
 #include "platform/slot_timer.h"
-#include "zlrs/link/slot_clock.h"
 
 #include <string.h>
 #include <hardware/gpio.h>
@@ -397,7 +396,7 @@ static int prepare_request(zlrs_link_t *link, const zlrs_radio_req_t *req)
 	if (timed_slot) {
 		if (req->is_tx) {
 			/* TX has a fixed launch point; receivers configure before it. */
-			if (!zlrs_slot_clock_launch_ready(zlrs_slot_timer_now_us(), tx_at_us,
+			if (!zlrs_slot_timer_launch_ready(zlrs_slot_timer_now_us(), tx_at_us,
 							  ZLRS_SLOT_TIMER_LAUNCH_LEAD_US)) {
 				return late_tx_prepare(tx_at_us);
 			}

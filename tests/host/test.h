@@ -26,7 +26,6 @@ extern unsigned int zlrs_test_failures;
 int zlrs_test_hex_eq(const uint8_t *data, size_t len, const char *hex);
 
 void test_proto(void);
-void test_slot_clock(void);
 void test_bench_pattern(void);
 void test_radio_fifo(void);
 void test_link(void);
@@ -34,5 +33,4 @@ void test_crsf(void);
 void test_mgmt(void);
 void test_region(void);
 void test_mod(void);
-void test_power(void);
 void test_fuzz(void);

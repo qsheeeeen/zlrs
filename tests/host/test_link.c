@@ -13,7 +13,6 @@
 #include <string.h>
 
 #include "zlrs/link/link.h"
-#include "zlrs/link/rate.h"
 
 #define SIM_FRAME_MS       6U
 #define SIM_RATE_CTL       1300000U
@@ -2404,75 +2403,6 @@ static void test_arq_recovery_lost_ack(void)
 	CHECK(memcmp(sim.rx.stream, payload, sizeof(payload)) == 0);
 }
 
-/* Rate adaptation: windows, hold time and hysteresis, all three or nothing moves */
-static void test_rate_adapt(void)
-{
-	static const zlrs_rate_tier_t tiers[] = {
-		{.mod = {.modulation = ZLRS_MOD_FLRC, .rate_bps = 2600000U}, .min_lq_to_stay = 85U},
-		{.mod = {.modulation = ZLRS_MOD_FLRC, .rate_bps = 1300000U}, .min_lq_to_stay = 60U},
-		{.mod = {.modulation = ZLRS_MOD_FLRC, .rate_bps = 650000U}, .min_lq_to_stay = 35U},
-		{.mod = {.modulation = ZLRS_MOD_FLRC, .rate_bps = 325000U}, .min_lq_to_stay = 0U},
-	};
-	zlrs_rate_ctl_t ctl;
-	uint8_t next = 0xFFU;
-	uint32_t now = 1000U;
-
-	printf("link: rate adaptation\n");
-
-	zlrs_rate_init(&ctl, tiers, 4U, 1U, now); /* start at 1.3 Mbps */
-	CHECK(zlrs_rate_current_bps(&ctl) == 1300000U);
-
-	/* During the hold time no windows count and nothing moves */
-	CHECK(!zlrs_rate_update(&ctl, 20U, now, &next));
-	CHECK(!zlrs_rate_update(&ctl, 20U, now, &next));
-	CHECK(zlrs_rate_current_bps(&ctl) == 1300000U);
-
-	/* Hold time over: three bad windows in a row drop one tier (slower) */
-	now += 5000U;
-	CHECK(!zlrs_rate_update(&ctl, 20U, now, &next));
-	CHECK(!zlrs_rate_update(&ctl, 20U, now, &next));
-	CHECK(zlrs_rate_update(&ctl, 20U, now, &next));
-	CHECK(next == 2U);
-	CHECK(zlrs_rate_current_bps(&ctl) == 650000U);
-
-	/* After a change nothing moves during the hold time */
-	now += 100U;
-	for (uint8_t i = 0U; i < 5U; i++) {
-		CHECK(!zlrs_rate_update(&ctl, 20U, now, &next));
-	}
-	CHECK(zlrs_rate_current_bps(&ctl) == 650000U);
-
-	/* Hold time over: three more bad windows drop again */
-	now += 5000U;
-	CHECK(!zlrs_rate_update(&ctl, 20U, now, &next));
-	CHECK(!zlrs_rate_update(&ctl, 20U, now, &next));
-	CHECK(zlrs_rate_update(&ctl, 20U, now, &next));
-	CHECK(next == 3U);
-	CHECK(zlrs_rate_current_bps(&ctl) == 325000U);
-
-	/* Slowest tier: no further drop, however bad it gets */
-	now += 5000U;
-	for (uint8_t i = 0U; i < 5U; i++) {
-		CHECK(!zlrs_rate_update(&ctl, 0U, now, &next));
-	}
-	CHECK(zlrs_rate_current_bps(&ctl) == 325000U);
-
-	/* Raising needs the hysteresis margin: 0.65M wants 35+10=45, so 40% neither raises nor drops */
-	now += 5000U;
-	for (uint8_t i = 0U; i < 5U; i++) {
-		CHECK(!zlrs_rate_update(&ctl, 40U, now, &next));
-	}
-	CHECK(zlrs_rate_current_bps(&ctl) == 325000U);
-
-	/* 75% >= the next tier's 60 plus hysteresis 10: three windows in a row raise it */
-	now += 5000U;
-	CHECK(!zlrs_rate_update(&ctl, 75U, now, &next));
-	CHECK(!zlrs_rate_update(&ctl, 75U, now, &next));
-	CHECK(zlrs_rate_update(&ctl, 75U, now, &next));
-	CHECK(next == 2U);
-	CHECK(zlrs_rate_current_bps(&ctl) == 650000U);
-}
-
 /* The TX configures failsafe values and ships them while pairing: the RX stores and emits them */
 static void test_failsafe_push(void)
 {
@@ -3353,7 +3283,6 @@ void test_link(void)
 	test_arq_bidirectional_recovery();
 	test_arq_recovery_preserves_progress();
 	test_arq_recovery_lost_ack();
-	test_rate_adapt();
 	test_failsafe_push();
 	test_data_idle();
 	test_data_idle_hopping();

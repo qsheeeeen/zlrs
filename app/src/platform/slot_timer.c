@@ -6,7 +6,6 @@
  * command from RAM without kernel interaction, then pends an ordinary notification.
  */
 #include "platform/slot_timer.h"
-#include "zlrs/link/slot_clock.h"
 
 #include <hardware/structs/timer.h>
 #include <hardware/ticks.h>
@@ -19,12 +18,94 @@
 #define SLOT_TIMER_IRQ   DT_IRQ_BY_IDX(SLOT_TIMER_NODE, 0, irq)
 #define LAUNCH_TIMER_IRQ DT_IRQ_BY_IDX(SLOT_TIMER_NODE, 3, irq)
 
+struct slot_clock {
+	uint32_t period_us;
+	uint32_t origin_us;
+	uint32_t next_us;
+	uint32_t frame;
+	uint32_t published_origin_us;
+	uint8_t slot;
+	int32_t shift_us;
+};
+
+static uint32_t slot_clock_offset(uint32_t period_us, uint8_t slot)
+{
+	return (uint32_t)(((uint64_t)period_us * slot) / 4U);
+}
+
+static bool slot_clock_due(const struct slot_clock *clock, uint32_t now_us)
+{
+	return (int32_t)(now_us - clock->next_us) >= 0;
+}
+
+bool zlrs_slot_timer_launch_ready(uint32_t now_us, uint32_t target_us, uint32_t lead_us)
+{
+	return lead_us > 0U && lead_us <= INT32_MAX &&
+	       (int32_t)(target_us - now_us) >= (int32_t)lead_us;
+}
+
+static uint32_t slot_clock_advance(struct slot_clock *clock, uint32_t now_us)
+{
+	uint32_t boundaries = 0U;
+
+	while (slot_clock_due(clock, now_us)) {
+		if (clock->slot == 0U) {
+			clock->published_origin_us = clock->origin_us;
+			clock->frame++;
+		}
+		if (++clock->slot == 4U) {
+			clock->slot = 0U;
+			clock->origin_us += clock->period_us + (uint32_t)clock->shift_us;
+			clock->shift_us = 0;
+		}
+		clock->next_us =
+			clock->origin_us + slot_clock_offset(clock->period_us, clock->slot);
+		boundaries++;
+	}
+	return boundaries;
+}
+
+static void slot_clock_shift(struct slot_clock *clock, int32_t shift_us)
+{
+	const int32_t limit = (int32_t)(clock->period_us / 16U);
+
+	clock->shift_us = shift_us > limit ? limit : (shift_us < -limit ? -limit : shift_us);
+}
+
+static uint32_t slot_clock_next_origin(const struct slot_clock *clock)
+{
+	/* Slot 3 already installs the next origin, including the queued phase correction. */
+	return clock->slot == 0U ? clock->origin_us
+				 : clock->origin_us + clock->period_us + (uint32_t)clock->shift_us;
+}
+
+uint32_t zlrs_slot_timer_scan_delay_ms(uint32_t cadence_us, uint8_t sync_every_n, bool acquired)
+{
+	const uint32_t minimum_ms = 300U;
+
+	if (!acquired || sync_every_n == 0U) {
+		return minimum_ms;
+	}
+	const uint64_t gap_us = (uint64_t)cadence_us * (2U * sync_every_n + 1U);
+	const uint32_t gap_ms = (uint32_t)((gap_us + 999U) / 1000U);
+
+	return gap_ms > minimum_ms ? gap_ms : minimum_ms;
+}
+
+static uint32_t slot_clock_timestamp_ms(uint64_t uptime_offset_us, uint64_t timer_us,
+					uint32_t deadline_us)
+{
+	const int32_t delta_us = (int32_t)(deadline_us - (uint32_t)timer_us);
+
+	return (uint32_t)((uptime_offset_us + timer_us + delta_us) / 1000U);
+}
+
 static timer_hw_t *const timer = (timer_hw_t *)DT_REG_ADDR(SLOT_TIMER_NODE);
 static const struct device *const clk = DEVICE_DT_GET(DT_CLOCKS_CTLR(SLOT_TIMER_NODE));
 static const struct reset_dt_spec reset = RESET_DT_SPEC_GET(SLOT_TIMER_NODE);
 static K_SEM_DEFINE(frame_sem, 0, 1);
 static K_SEM_DEFINE(delay_sem, 0, 1);
-static zlrs_slot_clock_t clock;
+static struct slot_clock slot_clock;
 static bool running;
 static uint32_t prepare_lead_us;
 static uint64_t uptime_offset_us;
@@ -60,22 +141,22 @@ static void slot_timer_isr(const void *arg)
 	}
 
 	const uint32_t now = zlrs_slot_timer_now_us();
-	const uint32_t before = clock.frame;
+	const uint32_t before = slot_clock.frame;
 
-	if (zlrs_slot_clock_due(&clock, now)) {
-		stats.irq_late_us_max = MAX(stats.irq_late_us_max, now - clock.next_us);
-		const uint32_t elapsed = zlrs_slot_clock_advance(&clock, now);
+	if (slot_clock_due(&slot_clock, now)) {
+		stats.irq_late_us_max = MAX(stats.irq_late_us_max, now - slot_clock.next_us);
+		const uint32_t elapsed = slot_clock_advance(&slot_clock, now);
 
 		stats.boundaries += elapsed;
 		stats.missed_boundaries += elapsed - 1U;
-		if (clock.frame != before) {
+		if (slot_clock.frame != before) {
 			k_sem_give(&frame_sem);
 		}
 	}
 
-	timer->alarm[0] = clock.next_us;
+	timer->alarm[0] = slot_clock.next_us;
 	/* An interrupt between the comparison and the alarm write must not lose an alarm. */
-	if ((int32_t)(zlrs_slot_timer_now_us() - clock.next_us) >= 0) {
+	if ((int32_t)(zlrs_slot_timer_now_us() - slot_clock.next_us) >= 0) {
 		hw_set_bits(&timer->intf, 1U);
 	}
 
@@ -131,14 +212,14 @@ void zlrs_slot_timer_cancel_launch(void)
 bool zlrs_slot_timer_launch_at(uint32_t target_us, void (*fire)(uint32_t irq_us))
 {
 	zlrs_slot_timer_cancel_launch();
-	if (!zlrs_slot_clock_launch_ready(zlrs_slot_timer_now_us(), target_us,
+	if (!zlrs_slot_timer_launch_ready(zlrs_slot_timer_now_us(), target_us,
 					  ZLRS_SLOT_TIMER_LAUNCH_LEAD_US)) {
 		return false;
 	}
 	launch_callback = fire;
 	timer->alarm[3] = target_us;
 	hw_set_bits(&timer->inte, 8U);
-	if (!zlrs_slot_clock_launch_ready(zlrs_slot_timer_now_us(), target_us, 1U)) {
+	if (!zlrs_slot_timer_launch_ready(zlrs_slot_timer_now_us(), target_us, 1U)) {
 		zlrs_slot_timer_cancel_launch();
 		return false;
 	}
@@ -165,7 +246,7 @@ void zlrs_slot_timer_shift(int32_t shift_us)
 {
 	const unsigned int key = irq_lock();
 
-	zlrs_slot_clock_shift(&clock, shift_us);
+	slot_clock_shift(&slot_clock, shift_us);
 	irq_unlock(key);
 }
 
@@ -226,7 +307,7 @@ void zlrs_slot_timer_stop(void)
 
 uint32_t zlrs_slot_timer_uptime_ms(uint32_t deadline_us)
 {
-	return zlrs_slot_clock_timestamp_ms(uptime_offset_us, timer_us_64(), deadline_us);
+	return slot_clock_timestamp_ms(uptime_offset_us, timer_us_64(), deadline_us);
 }
 
 uint32_t zlrs_slot_timer_now_ms(void)
@@ -238,12 +319,17 @@ void zlrs_slot_timer_start(uint32_t period_us, uint32_t prepare_us, void (*wake)
 {
 	zlrs_slot_timer_stop();
 	const unsigned int key = irq_lock();
+	const uint32_t origin_us = zlrs_slot_timer_now_us() + 1000U;
 
-	zlrs_slot_clock_init(&clock, zlrs_slot_timer_now_us() + 1000U, period_us);
+	slot_clock = (struct slot_clock){
+		.period_us = period_us < 4U ? 4U : period_us,
+		.origin_us = origin_us,
+		.next_us = origin_us,
+	};
 	prepare_lead_us = prepare_us;
 	wake_thread = wake;
 	running = true;
-	timer->alarm[0] = clock.next_us;
+	timer->alarm[0] = slot_clock.next_us;
 	timer->inte = 1U;
 	irq_unlock(key);
 }
@@ -254,8 +340,8 @@ void zlrs_slot_timer_wait_frame(uint32_t *start_us, uint32_t *frame)
 	const unsigned int key = irq_lock();
 
 	/* Publish early enough to preload the radio before the actual RF frame origin. */
-	*start_us = clock.published_origin_us + prepare_lead_us;
-	*frame = clock.frame;
+	*start_us = slot_clock.published_origin_us + prepare_lead_us;
+	*frame = slot_clock.frame;
 	/* An ISR between taking the token and this snapshot may publish a newer frame. */
 	k_sem_reset(&frame_sem);
 	irq_unlock(key);
@@ -264,7 +350,7 @@ void zlrs_slot_timer_wait_frame(uint32_t *start_us, uint32_t *frame)
 uint32_t zlrs_slot_timer_next_frame_us(void)
 {
 	const unsigned int key = irq_lock();
-	const uint32_t origin = zlrs_slot_clock_next_origin(&clock) + prepare_lead_us;
+	const uint32_t origin = slot_clock_next_origin(&slot_clock) + prepare_lead_us;
 
 	irq_unlock(key);
 	return origin;

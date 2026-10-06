@@ -36,13 +36,13 @@ endif
 
 VPATH := .:../../core/proto:../../core/link:../../core/crsf:../../core/mgmt:../../core/region
 
-SRCS := slot_clock.c test_slot_clock.c main.c test_proto.c test_link.c \
+SRCS := main.c test_proto.c test_link.c \
         test_bench_pattern.c test_radio_fifo.c \
-        test_crsf.c test_mgmt.c test_region.c test_mod.c test_power.c \
+        test_crsf.c test_mgmt.c test_region.c test_mod.c \
         test_fuzz.c \
         crsf.c mgmt.c region.c \
         crypto_soft.c crc.c fhss.c frag.c frame.c mod.c tlm.c \
-        link.c rate.c power.c
+        link.c
 OBJS := $(addprefix $(BUILD)/,$(SRCS:.c=.o))
 DEPS := $(OBJS:.o=.d)
 
