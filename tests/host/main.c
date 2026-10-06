@@ -4,7 +4,8 @@
  *
  * Host-side tests for the protocol core and the link layer. Neither needs Zephyr, so they run
  *
- *   make -C tests/host run
+ *   cmake -S tests/host -B build/host && cmake --build build/host
+ *   ctest --test-dir build/host --output-on-failure
  *
  * Expected values: RFC vectors for SHA-256 / HMAC / HKDF / PBKDF2, standard vectors for CRC,
  * and a two-node simulation (a fake radio, no hardware) for link behaviour.

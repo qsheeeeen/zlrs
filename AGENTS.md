@@ -20,7 +20,9 @@ tools/setup-zephyr.sh          # Install the west workspace and dependencies
 source tools/zephyr-env.sh     # Select SDK, workspace, and board
 zlrs-build                    # Build application plus MCUboot with sysbuild
 zlrs-rebuild-app               # Rebuild app in an existing sysbuild tree
-make -C tests/host run         # Run host tests with ASan and UBSan
+cmake -S tests/host -B build/host
+cmake --build build/host
+ctest --test-dir build/host --output-on-failure # Run host tests with ASan and UBSan
 tests/gates.sh                # Check architecture and configuration rules
 ```
 

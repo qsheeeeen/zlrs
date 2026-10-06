@@ -35,11 +35,13 @@ jobs:
       - name: toolchain info
         run: |
           cc --version | head -1
-          make --version | head -1
+          cmake --version | head -1
           python3 --version
-      # Host tests carry ASan + UBSan by default; CI also turns on leak detection (restricted
-      # containers without ptrace cannot start it, so it stays off locally).
-      - name: host tests (ASan + UBSan)
-        run: make -C tests/host run LEAKS=1
+      - name: configure host tests
+        run: cmake -S tests/host -B build/host -DZLRS_HOST_LEAKS=ON
+      - name: build host tests
+        run: cmake --build build/host --parallel
+      - name: host tests (ASan + UBSan + LSan)
+        run: ctest --test-dir build/host --output-on-failure
       - name: device tool tests
         run: python3 tests/tools/run.py

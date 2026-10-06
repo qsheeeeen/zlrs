@@ -106,8 +106,9 @@ source tools/zephyr-env.sh   # once per new shell
 zlrs-build                   # = west build --sysbuild -b $ZLRS_BOARD $ZLRS_APP
 ```
 
-The host tests need no workspace: `make -C tests/host run` compiles the same `core/` sources
-against a host shim. The full command and dependency list is in the [README](../README.md).
+The host tests need no workspace. Configure and build them with CMake, then run them through
+CTest; they compile the same `core/` sources against a host shim. The full command and dependency
+list is in the [README](../README.md).
 
 ## 6. Flashing
 

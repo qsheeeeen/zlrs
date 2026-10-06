@@ -6,8 +6,8 @@
  * near-legal variants, and assert they only reject, never overrun or run away. Seeds are fixed.
  *
  * On its own it checks the logic invariants; the host tests carry ASan + UBSan by default
- * (`make -C tests/host run`), so overruns and UB surface immediately. For more rounds:
- * `make -C tests/host run FUZZ_ITERS=2000000`.
+ * (`ctest --test-dir build/host`), so overruns and UB surface immediately. For more rounds, set
+ * `-DZLRS_HOST_FUZZ_ITERS=2000000` when configuring the CMake project.
  */
 
 #include "test.h"
@@ -21,7 +21,7 @@
 #include "zlrs/proto/frame.h"
 
 #ifndef FUZZ_ITERS
-#define FUZZ_ITERS 20000U /* override with make FUZZ_ITERS=... */
+#define FUZZ_ITERS 20000U /* CMake supplies the configurable value. */
 #endif
 #define FUZZ_BUF_LEN 128U
 

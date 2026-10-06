@@ -453,7 +453,9 @@ fuzz tests keep their integration role. `tests/gates.sh` holds architecture/conf
 Run checks directly from `tests/`:
 
 ```sh
-make -C tests/host run
+cmake -S tests/host -B build/host
+cmake --build build/host
+ctest --test-dir build/host --output-on-failure
 python3 tests/tools/run.py
 python3 tests/tools/run.py --module zlrs_mgmt
 tests/gates.sh
