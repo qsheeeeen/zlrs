@@ -46,7 +46,7 @@ While in management mode:
 - the radio neither receives nor transmits and the link state freezes;
 - bytes arriving on the data port are **dropped and counted**, never buffered; normal traffic
   resumes on exit;
-- the status LED shows white at 1 Hz, after half a second (tool round-trips do not flash);
+- the status LED shows steady white after half a second (tool round-trips do not flash);
 - the watchdog is disarmed for the session — PBKDF2 on a passphrase takes tens of seconds on
   this MCU and an 8 s watchdog would reset mid-way — and armed again on exit.
 
@@ -148,7 +148,7 @@ has no such port or peripheral" and everything still builds. Whether there is a 
 management port, a button or a status LED is therefore a devicetree fact
 (`app/src/platform/caps.h`), not a switch — a switch could only disagree with the board.
 `ZLRS_APP_CORE` enables the pure C libraries every image carries (`ZLRS_PROTO`, `ZLRS_LINK`,
-`ZLRS_REGION`, `ZLRS_CRSF`, `ZLRS_MGMT`, `ZLRS_LED`).
+`ZLRS_REGION`, `ZLRS_CRSF`, `ZLRS_MGMT`).
 
 That header is the whole hardware interface:
 

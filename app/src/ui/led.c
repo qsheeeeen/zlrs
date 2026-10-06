@@ -1,12 +1,6 @@
 /*
- * Status LED: the consumer of the system state that renders it on the board's pixel.
- *
- * The application publishes facts (app/src/state/sys_bus.h); this file decides what they look like
- * and puts them on the device. The priority table and the colours are core/led's (pure C,
- * host-tested in tests/host/test_led.c) and this thread is their only caller, so nothing a producer
- * touches names a colour. The timings the state does not carry live here too: the delay that keeps
- * a tool round-trip from flashing white, the one-second drop overlay, and the boot role indication
- * window.
+ * Status LED: consume system state, choose the display pattern and write it to the board's pixel.
+ * All LED behaviour belongs to the application; the producers publish facts, not colours.
  *
  * There is deliberately no per-LED-kind code here: the strip is whatever devicetree instantiates
  * behind Zephyr's led_strip API — WS2812 over PIO, SPI or UART, APA102, … — and a board without one
@@ -29,15 +23,14 @@
 #include <string.h>
 
 #include "state/sys_bus.h"
-#include "zlrs/led/led.h"
+#include "ui/led.h"
 
 LOG_MODULE_REGISTER(zlrs_led, CONFIG_APP_LOG_LEVEL);
 
 /* 20 Hz looks continuous to the eye and costs nothing on the strip (doc/10-ux.md) */
 #define LED_REFRESH_MS 50U
 
-/* Debug images attenuate the complete frame so the bench pixel is not glaring. The core renderer
- * remains portable and keeps its production brightness tiers; this is an output-stage policy. */
+/* Debug images attenuate the complete frame so the bench pixel is not glaring. */
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
 #define LED_OUTPUT_BRIGHTNESS_PERCENT CONFIG_ZLRS_APP_DEBUG_LED_BRIGHTNESS_PERCENT
 #else
@@ -45,14 +38,87 @@ LOG_MODULE_REGISTER(zlrs_led, CONFIG_APP_LOG_LEVEL);
 #endif
 
 /*
- * A management session is only worth showing once it survives a tool round-trip: the update tool and
- * `zlrs-mgmt.py` open a session per command and leave within ~100 ms, and flashing white for
+ * A management session is only worth showing once it survives a tool round-trip: the update tool
+ * and `zlrs-mgmt.py` open a session per command and leave within ~100 ms, and flashing white for
  * that looks like a fault.
  */
 #define LED_CONFIG_DELAY_MS 500U
 
 /* The drop hint is an overlay on the connected colour, so it has to end on its own */
 #define LED_DROP_HOLD_MS 1000U
+
+#define LED_PIXELS 1U
+
+static const struct zlrs_led_color off = {0U, 0U, 0U};
+static const struct zlrs_led_color white = {255U, 255U, 255U};
+static const struct zlrs_led_color purple = {160U, 0U, 200U};
+static const struct zlrs_led_color yellow = {255U, 180U, 0U};
+static const struct zlrs_led_color blue = {0U, 90U, 255U};
+static const struct zlrs_led_color green = {0U, 255U, 0U};
+static const struct zlrs_led_color red = {255U, 0U, 0U};
+static const struct zlrs_led_color orange = {255U, 80U, 0U};
+
+static struct zlrs_led_color blink(struct zlrs_led_color color, uint32_t now_ms,
+				   uint32_t period_ms, uint32_t on_ms)
+{
+	return ((now_ms % period_ms) < on_ms) ? color : off;
+}
+
+static struct zlrs_led_color alternate(struct zlrs_led_color first,
+					struct zlrs_led_color second, uint32_t now_ms,
+					uint32_t period_ms)
+{
+	return ((now_ms % period_ms) < (period_ms / 2U)) ? first : second;
+}
+
+static struct zlrs_led_color theme_color(bool role_tx)
+{
+	return role_tx ? blue : green;
+}
+
+static struct zlrs_led_color link_state_frame(const struct zlrs_led_frame_input *in,
+					      uint32_t now_ms)
+{
+	const struct zlrs_led_color theme = theme_color(in->role_tx);
+
+	switch (in->link_state) {
+	case ZLRS_STATE_CONNECTED:
+		if (in->lq_percent >= 80U) {
+			return blink(theme, now_ms, 250U, 200U);
+		}
+		if (in->lq_percent >= 50U) {
+			return blink(theme, now_ms, 250U, 50U);
+		}
+		return blink(theme, now_ms, 500U, 250U);
+	case ZLRS_STATE_PAIRING:
+		return blink(theme, now_ms, 1000U, 300U);
+	case ZLRS_STATE_SEARCHING:
+		return theme;
+	case ZLRS_STATE_UNPAIRED:
+		return alternate(theme, yellow, now_ms, 500U);
+	case ZLRS_STATE_UNCONFIGURED:
+	default:
+		return blink(purple, now_ms, 2000U, 200U);
+	}
+}
+
+struct zlrs_led_color zlrs_app_led_frame(const struct zlrs_led_frame_input *in,
+					 uint32_t now_ms)
+{
+	if (in == NULL) {
+		return off;
+	}
+	if (in->mgmt_mode) {
+		return white;
+	}
+	if (in->failsafe) {
+		return alternate(theme_color(in->role_tx), red, now_ms, 500U);
+	}
+	if (in->drop_recent) {
+		return alternate(theme_color(in->role_tx), orange, now_ms, 500U);
+	}
+	return link_state_frame(in, now_ms);
+}
 
 /*
  * The link and RAC threads are cooperative (doc/06-architecture.md 6), so this one is preemptive:
@@ -81,14 +147,14 @@ ZBUS_CHAN_ADD_OBS(zlrs_mode_chan, zlrs_led_sub, 0);
 static const struct device *const led_strip = DEVICE_DT_GET_OR_NULL(DT_ALIAS(zlrs_led));
 
 /*
- * Show one frame. The renderer produces one colour (ZLRS_LED_PIXELS); everything about turning it
+ * Show one frame. The renderer produces one colour (LED_PIXELS); everything about turning it
  * into a signal — colour order, pixel count, reset timing — belongs to the driver behind the strip
  * API and comes from devicetree.
  */
-static int led_write(zlrs_led_rgb_t color)
+static int led_write(struct zlrs_led_color color)
 {
 	static bool error_logged;
-	static struct led_rgb pixels[ZLRS_LED_PIXELS];
+	static struct led_rgb pixels[LED_PIXELS];
 
 	if (!device_is_ready(led_strip)) {
 		return -1; /* no status LED on this board */
@@ -103,7 +169,7 @@ static int led_write(zlrs_led_rgb_t color)
 	 * driver really breaks, "the LED is dark" looks like "the state never happened" while
 	 * everything keeps running. The caller retries, so report the first failure only.
 	 */
-	if (led_strip_update_rgb(led_strip, pixels, ZLRS_LED_PIXELS) != 0) {
+	if (led_strip_update_rgb(led_strip, pixels, LED_PIXELS) != 0) {
 		if (!error_logged) {
 			error_logged = true;
 			LOG_ERR("led strip update failed (%s); status led is stale", led_strip->name);
@@ -127,7 +193,7 @@ static void led_thread(void *p1, void *p2, void *p3)
 	bool mgmt_was = false;
 	bool have_state = false;
 	bool write_ok = false;
-	zlrs_led_rgb_t on_strip = {0};
+	struct zlrs_led_color on_strip = {0};
 
 	ARG_UNUSED(p1);
 	ARG_UNUSED(p2);
@@ -140,8 +206,7 @@ static void led_thread(void *p1, void *p2, void *p3)
 	}
 
 	for (;;) {
-		/* A state change wakes the thread at once; the timeout keeps the blink phase and the
-		 * boot role indication window moving while nothing changes. */
+		/* A state change wakes the thread at once; the timeout keeps pattern phases moving. */
 		if (zbus_sub_wait(&zlrs_led_sub, &chan, K_MSEC(LED_REFRESH_MS)) == 0) {
 			have_state = true;
 		}
@@ -174,27 +239,21 @@ static void led_thread(void *p1, void *p2, void *p3)
 			mgmt_since = now_ms;
 		}
 
-		/*
-		 * An alarm outranks the boot role indication: show it immediately, before
-		 * role-colour window, so the engine is asked past that window (doc/10-ux.md). The
-		 * engine shows both the failsafe and the fault as the red "no usable link" colour.
-		 */
+		/* Faults and failsafe share the red/theme pattern. Management mode wins over alarms,
+		 * followed by recent drops and the underlying link state. */
 		const bool alarm = alerts.failsafe || alerts.fault;
-		const zlrs_led_input_t in = {
+		const struct zlrs_led_frame_input in = {
 			.mgmt_mode = mgmt_was &&
 				       (uint32_t)(now_ms - mgmt_since) >= LED_CONFIG_DELAY_MS,
-			.configured = link.configured,
-			.paired = link.paired,
 			.failsafe = alarm,
 			.drop_recent = drop_bytes > 0U &&
 				       (uint32_t)(now_ms - drop_ms) < LED_DROP_HOLD_MS,
 			.role_tx = link.role_tx,
 			.link_state = link.state,
 			.lq_percent = link.lq_percent,
-			.uptime_ms = alarm ? ZLRS_LED_BOOT_MS : now_ms,
 		};
 
-		const zlrs_led_rgb_t color = zlrs_led_frame(&in, now_ms);
+		const struct zlrs_led_color color = zlrs_app_led_frame(&in, now_ms);
 
 		/* The strip holds the colour it was given, so an unchanged frame is not worth a PIO
 		 * push; a write that failed is retried, or the strip would stay stale for good. */

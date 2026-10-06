@@ -52,7 +52,6 @@ int main(void)
 	test_mgmt();
 	test_region();
 	test_mod();
-	test_led();
 	test_power();
 	test_fuzz();
 	printf("%u checks, %u failure(s)\n", zlrs_test_checks, zlrs_test_failures);

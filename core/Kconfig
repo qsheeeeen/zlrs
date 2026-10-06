@@ -11,6 +11,5 @@ rsource "link/Kconfig"
 rsource "crsf/Kconfig"
 rsource "mgmt/Kconfig"
 rsource "region/Kconfig"
-rsource "led/Kconfig"
 
 endmenu

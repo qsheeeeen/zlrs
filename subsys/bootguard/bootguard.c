@@ -59,12 +59,11 @@ SYS_INIT(bootguard_disarm_watchdog, PRE_KERNEL_1, 51);
 #if defined(CONFIG_IS_BOOTLOADER) && DT_NODE_EXISTS(DT_ALIAS(zlrs_led)) && \
 	IS_ENABLED(CONFIG_LED_STRIP)
 
-/* MCUboot has no application LED thread. A dim amber pulse identifies serial recovery and makes
- * an upgrade distinguishable from a dead USB device without keeping the pixel continuously lit. */
+/* MCUboot has no application LED thread. White at 2 Hz identifies serial recovery and updates. */
 #define BOOTGUARD_LED_STACK_SIZE 512U
 #define BOOTGUARD_LED_PRIORITY   K_PRIO_PREEMPT(8)
-#define BOOTGUARD_LED_PERIOD_MS  1000U
-#define BOOTGUARD_LED_ON_MS      120U
+#define BOOTGUARD_LED_PERIOD_MS  500U
+#define BOOTGUARD_LED_ON_MS      250U
 
 static const struct device *const bootguard_led = DEVICE_DT_GET(DT_ALIAS(zlrs_led));
 
@@ -82,9 +81,9 @@ static void bootguard_led_thread(void *p1, void *p2, void *p3)
 	}
 
 	for (;;) {
-		pixel.r = on ? 32U : 0U;
-		pixel.g = on ? 12U : 0U;
-		pixel.b = 0U;
+		pixel.r = on ? 255U : 0U;
+		pixel.g = on ? 255U : 0U;
+		pixel.b = on ? 255U : 0U;
 		(void)led_strip_update_rgb(bootguard_led, &pixel, 1U);
 		on = !on;
 		k_msleep(on ? (BOOTGUARD_LED_PERIOD_MS - BOOTGUARD_LED_ON_MS)

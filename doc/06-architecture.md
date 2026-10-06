@@ -117,7 +117,6 @@ core/link/             link layer: state machine, pairing and sessions, superfra
 core/crsf/             CRSF codec: RC channels and the link statistics frame
 core/mgmt/           management protocol: framing, command dispatch, status encoding
 core/region/           region tables, power and duty limits, the control time plan
-core/led/              status LED engine: state to colour and cadence
 include/zlrs/          public headers for everything in core/
 subsys/usb/            USB device stack: usbd context plus every CDC in devicetree
 subsys/bootguard/      bootloader-side watchdog handling
@@ -197,9 +196,8 @@ and an open management session. Three rules make that cheap and safe:
 - publishing costs a channel copy and a notification push, both `K_NO_WAIT`, so the superframe
   never waits for a consumer.
 
-The consumer decides what the facts mean — `core/led` holds the colours and the priority order
-(pure C, host-tested) and the LED thread is its only caller, so adding a consumer (a shell, a log
-exporter, telemetry) never touches a producer. See [10-ux](10-ux.md).
+The LED consumer decides how to display those facts — colours, cadence and priority are implemented
+in `app/src/ui/led.c`. Producers remain independent of display choices. See [10-ux](10-ux.md).
 
 Management mode does not run on the link thread either: `main()` enters it, stops submitting
 transactions for the session and runs the management protocol there (see

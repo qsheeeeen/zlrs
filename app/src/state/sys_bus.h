@@ -3,8 +3,8 @@
  *
  * Producers publish what the device *is* doing and nothing about how it should look: opinions
  * live with the consumers. The LED thread (app/src/ui/led.c) is the one consumer today and it
- * owns the display rules — colours, cadence and priorities are core/led's job (doc/10-ux.md) and
- * the thread is their only caller.
+ * owns the display rules — colours, cadence and priorities live in app/src/ui/led.c
+ * (doc/10-ux.md).
  *
  * One channel per fact, because a channel has one writer: a publisher writes the whole message,
  * so two owners on one channel would each blank the other's field.

@@ -36,12 +36,9 @@ config ZLRS_APP_CORE
 	select ZLRS_REGION
 	select ZLRS_CRSF
 	select ZLRS_MGMT
-	select ZLRS_LED
 	help
-	  The pure C layers every image carries: framing and hopping, superframe and pairing, the
-	  regulatory gate, the CRSF codec, the management protocol and the LED patterns. They have no
-	  visible switch; whether there is a port or a LED to use them with comes from devicetree
-	  (app/src/platform/caps.h), and USB is selected by the board.
+	  The protocol, link, region, CRSF and management modules every image carries. Optional ports
+	  and LEDs are described by devicetree (app/src/platform/caps.h); USB is selected by the board.
 
 config ZLRS_APP_ROLE_TX
 	bool "Build as the TX role"
@@ -397,7 +394,7 @@ config ZLRS_APP_DEBUG_BOOT_DELAY_MS
 
 config ZLRS_APP_DEBUG_LED_BRIGHTNESS_PERCENT
 	int "Status LED brightness (percent)"
-	default 20
+	default 10
 	range 1 100
 	help
 	  Scales every status LED frame in a development image. Keep the debug LED dim on the bench;
