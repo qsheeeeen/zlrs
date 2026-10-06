@@ -23,7 +23,8 @@
  *
  * Two hard rules: no interrupts disabled, no spinlocks; and bounded waits (timeout = error).
  * **No software fallback**: a failed read or a failed entropy check is a failure, reported
- * upward (CSPRNG / PSA). Random numbers that merely look fine are not acceptable.
+ * through Zephyr's cryptographic random API. Random numbers that merely look fine are
+ * not acceptable.
  *
  * A request reads fresh blocks straight into the caller's buffer and stops the source when it is
  * done. An earlier version kept a pool of ready blocks and handed out of it; the second read then

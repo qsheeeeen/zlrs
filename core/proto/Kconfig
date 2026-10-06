@@ -3,16 +3,10 @@
 
 config ZLRS_PROTO
 	bool "Protocol core (framing, FHSS sequence, reassembly, CRC)"
-	select PSA_CRYPTO
-	select PSA_WANT_ALG_HKDF
-	select PSA_WANT_ALG_HMAC
-	select PSA_WANT_ALG_SHA_256
-	select PSA_WANT_KEY_TYPE_DERIVE
-	select PSA_WANT_KEY_TYPE_HMAC
 	help
-	  Pure C, no Zephyr dependency. Protocol crypto uses the Zephyr hardware backend
-	  when the SHA-256 driver is present, otherwise core/proto/crypto_psa.c. The host
-	  tests use tests/host/crypto_soft.c. All backends must produce identical bytes.
+	  Pure C framing and protocol crypto, without a Zephyr dependency. HMAC, HKDF
+	  and PBKDF2 use the SHA-256 operation supplied by the application. Host tests
+	  can supply a software SHA-256 implementation.
 
 module = ZLRS_PROTO
 module-str = zlrs_proto

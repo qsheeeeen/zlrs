@@ -16,8 +16,6 @@
 
 #include <string.h>
 
-#include <psa/crypto.h>
-
 #if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
 #include <zephyr/retention/bootmode.h>
 #include <zephyr/dfu/mcuboot.h>
@@ -1351,7 +1349,7 @@ static void enter_management_mode(void);
 #endif
 
 /*
- * State on a fatal error (region vs SKU mismatch or PSA init failure):
+ * State on a fatal configuration error (region vs radio-design mismatch):
  * alarm but stay reachable. Red LED, the management port still up, so the host can enter it,
  * trigger serial recovery and reflash. A regulatory or security problem is worth staying off
  * the air for, but the device must stay flashable — otherwise one bad image means BOOTSEL.
@@ -1395,22 +1393,6 @@ static void fault_loop(void)
 
 		k_msleep(20);
 	}
-}
-
-/*
- * Initialise PSA before key imports on boards using the fallback backend.
- * The Zephyr SHA-256 driver is initialised by the device model.
- */
-static void crypto_init(void)
-{
-#if !ZLRS_HAS_SHA256
-	const psa_status_t st = psa_crypto_init();
-
-	if (st != PSA_SUCCESS) {
-		LOG_ERR("psa_crypto_init failed (%d)", (int)st);
-		fault_loop();
-	}
-#endif
 }
 
 static void broadcast_state(void)
@@ -2005,7 +1987,7 @@ int main(void)
 
 #if ZLRS_MGMT_ENABLED
 	/*
-	 * Bring the management port up early: later fatal steps (region/SKU, PSA) land in
+	 * Bring the management port up early: later fatal configuration steps land in
 	 * fault_loop, and that path stays flashable only while the management port is alive.
 	 */
 	(void)zlrs_mgmt_init();
@@ -2142,7 +2124,6 @@ int main(void)
 	TRACE('1');
 	plan_init();
 	build_links();
-	crypto_init();
 	load_identity();
 	failsafe_init();
 

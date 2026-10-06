@@ -1,36 +1,21 @@
 /*
  * SPDX-License-Identifier: Apache-2.0
  *
- * Protocol crypto through the Zephyr SHA-256 driver. HMAC, HKDF and PBKDF2 keep
- * the existing protocol derivation rules; the driver owns the hardware and padding.
+ * Protocol authentication and key derivation. Firmware and host tests share these
+ * HMAC, HKDF and PBKDF2 rules; only the SHA-256 operation is supplied separately.
  */
 
-#include "platform/caps.h"
-
-#if ZLRS_HAS_SHA256
-
-#include <zephyr/crypto/crypto.h>
-#include <zephyr/device.h>
-#include <zephyr/kernel.h>
-#include <zephyr/logging/log.h>
-#include <zephyr/sys/byteorder.h>
-
-#include <string.h>
-#include <stdalign.h>
-
 #include "zlrs/proto/crypto.h"
+#include "sha256.h"
 
-LOG_MODULE_REGISTER(zlrs_crypto, CONFIG_APP_LOG_LEVEL);
+#include <stdalign.h>
+#include <string.h>
 
-#define SHA256_LEN       32U
+#define SHA256_LEN       ZLRS_SHA256_LEN
 #define SHA256_BLOCK_LEN 64U
 #define INFO_MAX         96U
 
-static const struct device *const hash_dev = DEVICE_DT_GET(DT_NODELABEL(sha256));
-
-/* Serialize complete sessions and preserve priority inheritance between the shell
- * and RF owner when a lower-priority caller is interrupted between hash chunks. */
-K_MUTEX_DEFINE(hash_mutex);
+_Static_assert(ZLRS_KEY_LEN == SHA256_LEN, "The protocol uses 32-byte keys");
 
 struct hmac_key {
 	alignas(uint32_t) uint8_t inner[SHA256_BLOCK_LEN];
@@ -46,59 +31,12 @@ static void wipe(void *buf, size_t len)
 	}
 }
 
-/* Feed both spans in order without copying. The driver retains partial words and
- * SHA state across update/compute; freeing releases it for other driver/ROM users. */
-static void hash_two(const uint8_t *first, size_t first_len, const uint8_t *second,
-		     size_t second_len, uint8_t out[SHA256_LEN])
-{
-	struct hash_ctx ctx = {.flags = CAP_SEPARATE_IO_BUFS | CAP_SYNC_OPS};
-	struct hash_pkt pkt = {.in_buf = first, .in_len = first_len};
-	int rc;
-
-	if (!device_is_ready(hash_dev)) {
-		LOG_ERR("SHA-256 device unavailable");
-		k_panic();
-	}
-	if (k_mutex_lock(&hash_mutex, K_FOREVER) != 0) {
-		k_panic();
-	}
-	const int64_t lock_started = k_uptime_get();
-
-	do {
-		rc = hash_begin_session(hash_dev, &ctx, CRYPTO_HASH_ALGO_SHA256);
-		if (rc != -EBUSY || k_uptime_get() - lock_started >= 100) {
-			break;
-		}
-		k_usleep(50);
-	} while (true);
-	if (rc == 0) {
-		rc = hash_update(&ctx, &pkt);
-		if (rc == 0) {
-			pkt.in_buf = second;
-			pkt.in_len = second_len;
-			pkt.out_buf = out;
-			rc = hash_compute(&ctx, &pkt);
-		}
-		const int free_rc = hash_free_session(hash_dev, &ctx);
-
-		if (rc == 0) {
-			rc = free_rc;
-		}
-	}
-	k_mutex_unlock(&hash_mutex);
-	if (rc != 0) {
-		/* Never turn a failed driver operation into an authentication tag. */
-		LOG_ERR("SHA-256 driver failed: %d", rc);
-		k_panic();
-	}
-}
-
 static void hmac_key_init(struct hmac_key *pads, const uint8_t *key, size_t key_len)
 {
 	uint8_t digest[SHA256_LEN];
 
 	if (key_len > SHA256_BLOCK_LEN) {
-		hash_two(key, key_len, NULL, 0U, digest);
+		zlrs_sha256(key, key_len, NULL, 0U, digest);
 		key = digest;
 		key_len = sizeof(digest);
 	}
@@ -116,8 +54,8 @@ static void hmac_compute(const struct hmac_key *pads, const uint8_t *data, size_
 {
 	alignas(uint32_t) uint8_t inner[SHA256_LEN];
 
-	hash_two(pads->inner, sizeof(pads->inner), data, len, inner);
-	hash_two(pads->outer, sizeof(pads->outer), inner, sizeof(inner), out);
+	zlrs_sha256(pads->inner, sizeof(pads->inner), data, len, inner);
+	zlrs_sha256(pads->outer, sizeof(pads->outer), inner, sizeof(inner), out);
 	wipe(inner, sizeof(inner));
 }
 
@@ -167,7 +105,8 @@ void zlrs_kdf(const uint8_t *key, size_t key_len, const char *label, const uint8
 		}
 		msg[previous + info_len] = (uint8_t)counter;
 		hmac_compute(&pads, msg, previous + info_len + 1U, t);
-		const size_t take = MIN(out_len - copied, sizeof(t));
+		const size_t remaining = out_len - copied;
+		const size_t take = remaining < sizeof(t) ? remaining : sizeof(t);
 
 		memcpy(out + copied, t, take);
 		copied += take;
@@ -187,7 +126,6 @@ void zlrs_pbkdf2_sha256(const char *phrase, const uint8_t *salt, size_t salt_len
 	uint8_t u[SHA256_LEN];
 	uint8_t t[SHA256_LEN];
 
-	BUILD_ASSERT(ZLRS_KEY_LEN == SHA256_LEN);
 	if (iterations == 0U || salt_len > ZLRS_KEY_LEN) {
 		memset(out, 0, ZLRS_KEY_LEN);
 		return;
@@ -195,7 +133,10 @@ void zlrs_pbkdf2_sha256(const char *phrase, const uint8_t *salt, size_t salt_len
 	if (salt_len > 0U) {
 		memcpy(block, salt, salt_len);
 	}
-	sys_put_be32(1U, block + salt_len);
+	block[salt_len] = 0U;
+	block[salt_len + 1U] = 0U;
+	block[salt_len + 2U] = 0U;
+	block[salt_len + 3U] = 1U;
 	hmac_key_init(&pads, (const uint8_t *)phrase, strlen(phrase));
 	hmac_compute(&pads, block, salt_len + 4U, u);
 	memcpy(t, u, sizeof(t));
@@ -229,5 +170,3 @@ bool zlrs_ct_equal(const uint8_t *a, const uint8_t *b, size_t len)
 	}
 	return diff == 0U;
 }
-
-#endif /* ZLRS_HAS_SHA256 */

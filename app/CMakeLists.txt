@@ -17,7 +17,7 @@ target_sources(app PRIVATE
   ${zlrs_app_dir}/src/link/power.c
   ${zlrs_app_dir}/src/link/rate.c
   ${zlrs_app_dir}/src/main.c
-  ${zlrs_app_dir}/src/platform/crypto.c
+  ${zlrs_app_dir}/src/platform/sha256.c
   ${zlrs_app_dir}/src/platform/slot_timer.c
   ${zlrs_app_dir}/src/platform/recovery.c
   ${zlrs_app_dir}/src/platform/watchdog.c
@@ -31,15 +31,17 @@ target_sources(app PRIVATE
 
 # App-internal headers are included the way they sit on disk: "platform/radio.h",
 # "link/data.h", "platform/caps.h", ... (the layers are described in doc/06-architecture.md 5).
-target_include_directories(app PRIVATE "${zlrs_app_dir}/src")
+# core/proto supplies the private SHA declaration used by the platform implementation.
+target_include_directories(app PRIVATE "${zlrs_app_dir}/src" "${zlrs_app_dir}/../core/proto")
 
 if(CONFIG_ZLRS_APP_RAM_RADIO)
   set(zlrs_ram_sources
     ${zlrs_app_dir}/src/main.c
-    ${zlrs_app_dir}/src/platform/crypto.c
+    ${zlrs_app_dir}/src/platform/sha256.c
     ${zlrs_app_dir}/src/platform/radio.c
     ${zlrs_app_dir}/src/link/data.c
     ${zlrs_app_dir}/../core/link/link.c
+    ${zlrs_app_dir}/../core/proto/crypto.c
     ${zlrs_app_dir}/../core/proto/frame.c
     ${zlrs_app_dir}/../core/proto/frag.c
     ${zlrs_app_dir}/../core/proto/fhss.c
