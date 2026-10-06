@@ -259,9 +259,9 @@ the signature check, the confirmation and the rollback apply.
 
 ## 6. Error handling
 
-- **A fatal fault stops the air, not the device**: a region/radio-design mismatch, a PSA
-  initialization failure drops into `fault_loop()`, which shows the fast red
-  alarm, keeps feeding the watchdog and keeps the management port serving — so the device can still
+- **A fatal configuration fault stops the air, not the device**: a region/radio-design mismatch
+  drops into `fault_loop()`, which shows the 2 Hz theme/red failsafe pattern, keeps feeding the
+  watchdog and keeps the management port serving — so the device can still
   be entered, reconfigured and reflashed instead of needing BOOTSEL.
 - **A fault on an unconfirmed image reboots instead**: 2 s after the fault the application
   resets and MCUboot rolls back. A flashable fault state is no reason to keep a broken build.

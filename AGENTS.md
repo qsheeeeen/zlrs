@@ -21,10 +21,10 @@ source tools/zephyr-env.sh     # Select SDK, workspace, and board
 zlrs-build                    # Build application plus MCUboot with sysbuild
 zlrs-rebuild-app               # Rebuild app in an existing sysbuild tree
 make -C tests/host run         # Run host tests with ASan and UBSan
-tools/gates.sh                # Check architecture and configuration rules
+tests/gates.sh                # Check architecture and configuration rules
 ```
 
-Set `ZLRS_BOARD=rp2350_zero_core2021/rp2350a/m33/lf` for the LF target; HF is default. Run `python3 tools/zlrs.py --self-test` for management, recovery, and update checks.
+Set `ZLRS_BOARD=rp2350_zero_core2021/rp2350a/m33/lf` for the LF target; HF is default. Run `python3 tests/tools/run.py` for management, recovery, and update checks.
 
 ## Coding Style & Naming Conventions
 
@@ -38,7 +38,7 @@ git ls-files '*.c' '*.h' | xargs clang-format --dry-run --Werror
 
 ## Testing Guidelines
 
-Use the custom C harness in `tests/host/test.h`; organize cases in `test_<module>.c`. Add regression cases for changed behavior, especially loss, replay, timing, malformed input, and backpressure. Host crypto uses `crypto_soft.c`; it does not exercise the production PSA backend. Report firmware builds and hardware validation separately from simulation results.
+Use the custom C harness in `tests/host/test.h`; organize cases in `test_<module>.c`. Add regression cases for changed behavior, especially loss, replay, timing, malformed input, and backpressure. Host crypto links the production `core/proto/crypto.c` with `sha256_soft.c`; it does not exercise the hardware SHA driver. Report firmware builds and hardware validation separately from simulation results.
 
 ## Commit & Pull Request Guidelines
 

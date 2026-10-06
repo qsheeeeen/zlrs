@@ -5,14 +5,13 @@
 #
 #   make -C tests/host run
 #
-# The protocol core and link layer use the same lib/ sources as the device; crypto comes from
-# crypto_soft.c here (same interface, no dependencies, the device uses PSA). All this needs is a
-# C compiler; no workspace setup.
+# Protocol and link state-machine code use the same core/ sources as the device.
+# sha256_soft.c replaces only the hardware SHA operation. No workspace setup is needed.
 
 CC      ?= cc
 # -MMD -MP: header dependencies go into .d files so a changed header rebuilds, no stale layout
 CFLAGS  ?= -std=c11 -O2 -Wall -Wextra -Werror -MMD -MP
-CPPFLAGS += -I../../include
+CPPFLAGS += -I../../include -I../../core/proto
 
 # ASan + UBSan are on by default: the host is the cheapest place to catch overruns and UB.
 #   SANITIZE=0  turn them off for a faster build (separate directory, no cross-contamination)
@@ -36,12 +35,13 @@ endif
 
 VPATH := .:../../core/proto:../../core/link:../../core/crsf:../../core/mgmt:../../core/region
 
-SRCS := main.c test_proto.c test_link.c \
-        test_bench_pattern.c test_radio_fifo.c \
+SRCS := main.c \
+        test_crypto.c test_frame.c test_frag.c test_fhss.c test_tlm.c test_link.c \
+        test_data_pattern.c test_radio.c \
         test_crsf.c test_mgmt.c test_region.c test_mod.c \
         test_fuzz.c \
         crsf.c mgmt.c region.c \
-        crypto_soft.c crc.c fhss.c frag.c frame.c mod.c tlm.c \
+        sha256_soft.c crypto.c crc.c fhss.c frag.c frame.c mod.c tlm.c \
         link.c
 OBJS := $(addprefix $(BUILD)/,$(SRCS:.c=.o))
 DEPS := $(OBJS:.o=.d)

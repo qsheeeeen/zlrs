@@ -44,10 +44,10 @@ The superframe period follows the slower link: data windows amortise into every 
 
 ## 3. Time sharing and scheduling
 
-Both links share one radio owner on the link thread. USP supplies RAL, the LR20xx driver and
-board support; RAC and the radio planner are not initialized or run. ZLRS implements the
-public Semtech HAL on RP2350: short commands use bounded polling, FIFO transfers use one
-contiguous SPI DMA transaction, and read responses send only NOPs on MOSI.
+Both links share one radio owner on the link thread. USP supplies RAL, the LR20xx driver,
+board support and its Zephyr HAL; RAC and the radio planner are not initialized or run.
+Ordinary commands and FIFO transfers use that HAL and the Zephyr SPI driver. CMake registers
+ZLRS's own sources and leaves upstream library source lists unchanged.
 
 RP2350 TIMER1 runs at 1 MHz. Alarm 0 advances the four absolute slot boundaries and publishes
 the latest frame; alarm 1 wakes the owner for preparation; alarm 2 ends the radio window and
@@ -112,8 +112,7 @@ reduce the payload rate further. Hardware results and remaining acceptance are t
 ```
 include/zlrs/proto/    protocol core headers (frame, hop tables, fragmentation, telemetry, crypto)
 core/proto/            protocol core: framing, hop tables, key derivation, tags, airtime model
-core/link/             link layer: state machine, pairing and sessions, superframe slots,
-                       reliable transfer, rate adaptation and dynamic power
+core/link/             link layer: state machine, pairing and sessions, reliable transfer
 core/crsf/             CRSF codec: RC channels and the link statistics frame
 core/mgmt/           management protocol: framing, command dispatch, status encoding
 core/region/           region tables, power and duty limits, the control time plan
@@ -123,7 +122,8 @@ subsys/bootguard/      bootloader-side watchdog handling
 drivers/entropy/       the RP2350 TRNG driver we own
 app/src/               Zephyr application, one directory per layer:
   main.c                 the application: superframe, link wiring, reporting, debug shell
-  platform/              hardware capabilities, RP2350 slot timer, LR2021 driver, watchdog and recovery
+  platform/              hardware capabilities, SHA device access, RP2350 slot timer, radio,
+                         watchdog and recovery
   link/                  the links' I/O and tuning: data (passthrough), CRSF, rate
                          adaptation, dynamic power
   mgmt/                  management CDC, session and device commands in mode.c
@@ -133,15 +133,19 @@ app/src/               Zephyr application, one directory per layer:
   storage/               the flash-backed state: NVS settings and the log ring
 boards/                board definitions (devicetree, defconfig, README)
 dts/bindings/          bindings for ZLRS-specific nodes
-tools/                 host-side helpers (management, recovery, update, throughput, UF32 packaging)
+tools/                 workspace setup, management, recovery and firmware update tools
+tests/                 host/module tests, hardware test applications and data measurements
 tests/host/            host build of core/ plus the two-node radio simulation
 ```
 
-The rule: the protocol core and the link layer build and run on the host (the same `core/`
-sources, crypto through a soft implementation in `tests/host/crypto_soft.c`); on target the
-crypto primitives go through Zephyr's PSA (`core/proto/crypto_psa.c`). `core/` includes no
-Zephyr headers, and `app/` never branches on a board name — both are CI gates (`tools/gates.sh`,
-see the README's "Gates" section).
+The rule: the protocol core and the link layer build and run on the host using the same `core/`
+sources. `core/proto/crypto.c` owns HMAC, HKDF, PBKDF2 and the protocol derivation rules.
+Its private `sha256.h` declares one SHA operation over two input spans: firmware supplies it
+through `app/src/platform/sha256.c` and Zephyr's Crypto API; host tests supply it through
+`tests/host/sha256_soft.c`. This is a fixed link-time dependency, without a runtime backend
+table or platform context. `core/` includes no Zephyr headers, and `app/` never branches on a
+board name — both are CI gates (`tests/gates.sh`, see
+[11-debug](11-debug.md#7-tests-organized-by-module) for commands).
 
 The application binds directly to Zephyr and RP2350 for rapid prototyping. There is no
 `ports/` layer: `link/data.c` and `link/crsf.c` own their devicetree UART/CDC devices, endpoint

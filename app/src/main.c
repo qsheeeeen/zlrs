@@ -1349,7 +1349,8 @@ static void enter_management_mode(void);
 
 /*
  * State on a fatal configuration error (region vs radio-design mismatch):
- * alarm but stay reachable. Red LED, the management port still up, so the host can enter it,
+ * alarm but stay reachable. The failsafe LED pattern is shown while the management port remains
+ * up, so the host can enter it,
  * trigger serial recovery and reflash. A regulatory or security problem is worth staying off
  * the air for, but the device must stay flashable — otherwise one bad image means BOOTSEL.
  *
@@ -1373,7 +1374,7 @@ static void fault_loop(void)
 	}
 #endif
 
-	/* The fault outranks the boot role indication and shows as the red alert colour
+	/* The fault outranks link and drop indications and uses the failsafe pattern
 	 * (app/src/ui/led.c). Nothing else is published here — the links stop, so their last
 	 * snapshot is also the truth. */
 	zlrs_sys_publish_alerts(&alerts);

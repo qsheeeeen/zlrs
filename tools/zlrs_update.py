@@ -19,7 +19,7 @@
 #   python3 tools/zlrs.py update --port /dev/ttyACM1            # finds the image itself
 #   python3 tools/zlrs.py update --port /dev/ttyACM1 --image build/app/zephyr/zephyr.signed.bin
 #   python3 tools/zlrs.py update --recovery-port /dev/ttyACM0 --no-trigger   # already in recovery
-#   python3 tools/zlrs.py update --self-test                    # no device needed
+#   python3 tests/tools/run.py --module zlrs_update              # no device needed
 #
 # Requires pyserial (for the trigger) and smpmgr (for the upload; pip install smpmgr).
 # Use --client none to keep the script from uploading: it prints the command instead.
@@ -298,59 +298,6 @@ def run_trigger(port: str, baud: int) -> int:
     ).returncode
 
 
-def self_test() -> int:
-    """Everything verifiable without a device: image path, port matching, client command lines."""
-    problems = []
-
-    # Port matching: application patterns must not match the bootloader's ports
-    fake = [
-        "/dev/serial/by-id/usb-zlrs_ZLRS_1234-if01",
-        "/dev/serial/by-id/usb-zlrs_ZLRS_MCUBOOT_1234-if01",
-    ]
-    original = glob.glob
-    glob.glob = lambda pattern: list(fake)  # type: ignore[assignment]
-    try:
-        app_ports = find_by_id(APP_PORT_HINT, exclude=RECOVERY_PORT_HINT)
-        rec_ports = find_by_id(RECOVERY_PORT_HINT)
-        if app_ports != [fake[0]]:
-            problems.append(f"application port matches are wrong: {app_ports}")
-        if rec_ports != [fake[1]]:
-            problems.append(f"recovery port matches are wrong: {rec_ports}")
-    finally:
-        glob.glob = original  # type: ignore[assignment]
-
-    # Upload command line
-    cmd = upload_command("smpmgr", "/dev/ttyACM0", Path("zephyr.signed.bin"), DEFAULT_BAUD)
-    if cmd[0] != "smpmgr" or "upgrade" not in cmd or cmd[-1] != "zephyr.signed.bin":
-        problems.append(f"upload command is wrong: {cmd}")
-    # No upload command may mark an image permanent: that is the application's job after it boots
-    if "--confirm" in cmd:
-        problems.append(f"upload command must not pass --confirm (only the app marks permanent): {cmd}")
-    # The inactive slot must be named: serial recovery defaults to the primary slot
-    slotted = slot_upload_command("smpmgr", "/dev/ttyACM0", Path("zephyr.signed.bin"),
-                                  DEFAULT_BAUD, 1)
-    if "--slot" not in slotted or slotted[slotted.index("--slot") + 1] != "2":
-        problems.append(f"upload command must name the inactive slot: {slotted}")
-
-    probe = mgmt_probe_command("/dev/ttyACM0")
-    if "status" not in probe or "/dev/ttyACM0" not in probe:
-        problems.append(f"host confirm command is wrong: {probe}")
-
-    # Validate the trigger frame without launching a nested CLI process.
-    import zlrs_recovery
-    if zlrs_recovery.build_request() != bytes.fromhex("a55a034100e4"):
-        problems.append("recovery trigger frame differs from the firmware")
-
-    if problems:
-        print("self-test: FAIL")
-        for problem in problems:
-            print(f"  - {problem}")
-        return 1
-
-    print("self-test: ok (port matching, upload command, trigger script all line up)")
-    return 0
-
-
 def configure_parser(parser):
     parser.add_argument("--port", help="application management port for the recovery trigger")
     parser.add_argument("--serial", help="USB serial substring; retained across reboot")
@@ -369,7 +316,6 @@ def configure_parser(parser):
                         help="USB port discovery timeout in seconds")
     parser.add_argument("--no-confirm-check", action="store_true",
                         help="verify the image but leave it unconfirmed for rollback testing")
-    parser.add_argument("--self-test", action="store_true", help="check without a device")
     return parser
 
 
@@ -390,9 +336,6 @@ def main(args=None, parser=None) -> int:
     """)
         configure_parser(parser)
         args = parser.parse_args()
-    if args.self_test:
-        return self_test()
-
     # Complete preflight before asking the application to reboot.
     image = (Path(args.image).expanduser() if args.image else default_image()).resolve()
     if not image.is_file():

@@ -4,13 +4,65 @@ This document holds **to-dos, the pending-defaults ledger and acceptance criteri
 Finished work gets a one-line summary; details live in code comments and the design is in the
 design documents.
 
+## Protocol crypto and hardware SHA separation, 2026-10-06
+
+- Removed the PSA protocol backend, protocol Kconfig dependencies and application PSA
+  initialization. `core/proto/crypto.c` now owns HMAC, HKDF, PBKDF2 and protocol derivation rules.
+  `app/src/platform/sha256.c` supplies one SHA operation through the existing Zephyr driver.
+  Firmware requires the SHA peripheral/driver; there is no software fallback or runtime selector.
+- Host tests link the same protocol algorithms with `tests/host/sha256_soft.c`. The existing
+  hardware crypto cases now mirror `core/proto` and retain the firmware's SRAM placement.
+  Wire tags, key derivation parameters and algorithms retain their existing rules.
+- HF production and LF debug application/MCUboot builds pass in the normal `build` directory;
+  the build tree is left on LF debug. Application PSA and Mbed TLS are disabled, no PSA sources
+  are compiled, and protocol crypto, SHA access and the driver remain in SRAM. Test execution,
+  hardware tag vectors, pairing, timing and bidirectional delivery after this separation remain
+  pending.
+- Security review follow-ups: prevent old authenticated frames from passing the signed 16-bit
+  sequence comparison after a session advances by half the sequence space; define the acceptable
+  forgery budget for 32-bit tags; propagate invalid derivation arguments as errors and make
+  sensitive-data clearing consistent. Removing PSA also removes its wrapper's zero-tag-on-error
+  path. These protocol/interface issues are not fixed by separating the source files.
+
+## Radio integration cleanup, 2026-10-05
+
+- Removed the CMake code that inspected upstream targets and excluded their HAL source.
+  Ordinary radio commands and FIFO I/O now use USP's original HAL and Zephyr SPI driver.
+  `radio_io.c`, its Kconfig option and custom DMA diagnostics are removed.
+- SRAM placement lists only ZLRS-owned application, protocol and SHA driver sources.
+  No build rule scans upstream library source lists for replacement or relocation.
+- TIMER1 slot scheduling and its prepared SET_TX trigger are separate from this HAL change.
+  The trigger still uses the existing bounded register polling in the launch ISR.
+- Earlier custom-HAL/DMA throughput records below describe the previous integration.
+  LF/HF application and MCUboot builds pass after restoration. Hardware delivery,
+  timing and throughput after restoration remain unverified.
+- Removing USP entirely would require a ZLRS LR2021 command driver, modem configuration,
+  FIFO/IRQ handling, board initialization and calibration. This is a separate design decision.
+
+## Test migration by module, 2026-10-05
+
+- Existing tests now match production modules: portable cases in `tests/host`, mirrored hardware
+  paths under `tests/hardware`, and one `test_zlrs*.py` per tool under `tests/tools`. Hardware
+  applications only assemble these files; the mapping and commands are in [11-debug](11-debug.md#7-tests-organized-by-module).
+- Normal app/core sources no longer contain the entropy smoke test, raw radio loop, generated
+  RF stream, rekey/window experiments or test-only mount/raw APIs. Production driver capability
+  checks, TRNG health/error handling, status counters and LED patterns remain runtime work.
+- The unit image assembles nine cases; radio tests link the actual firmware and replace public
+  data/radio interfaces only in the test image. Both test configurations compile for LF, including
+  the raw-radio variant; LF/HF normal firmware and the host test binary also compile.
+  Repeating hardware acceptance after migration remains pending; earlier
+  crypto and duplex records below describe the pre-migration images.
+- Checks run directly from `tests/`; the `tools/gates.sh`, tool `--self-test` and CLI `throughput`
+  compatibility entries are removed. CI and current usage documents call the test scripts.
+  The firmware build rules live in `app/CMakeLists.txt`, which the radio test includes directly.
+
 ## Zephyr SHA-256 driver migration, 2026-10-05
 
 - ZLRS owns `drivers/crypto/rp2350_sha256.c`, based on the upstream RP2350 Crypto driver,
   with multipart hashing, context ownership checks and digest restart within a session.
   The board's `zlrs,rp2350-sha256` binding selects this driver without upstream changes.
-  Hardware availability follows `ZLRS_HAS_SHA256` in `app/src/platform/caps.h`; there is
-  no application backend option. HMAC/HKDF/PBKDF2 derivation rules stay the same.
+  At that stage, hardware availability followed `ZLRS_HAS_SHA256` in `app/src/platform/caps.h`;
+  there was no application backend option. HMAC/HKDF/PBKDF2 derivation rules stay the same.
 - HMAC feeds the key prefix and message through update/compute without joining input buffers;
   the previous 575-byte scratch buffer is removed. Hardware input errors return `-EIO`, and
   an invalid context cannot release another session's ROM lock.
@@ -18,8 +70,9 @@ design documents.
   driver and protocol crypto text are in SRAM. Both LF boards initially passed 38/38 known-answer
   vectors in five runs per board. With RF paused, aligned 507-byte tags take 102-105 us versus
   86 us in the previous direct SDK baseline; the migration adds driver/session overhead.
-  Hardware tests now live in `tests/hardware/crypto`, a separate Ztest application, and are
-  absent from application/driver sources. Both LF boards pass all six Ztest cases, including
+  Hardware tests now live in `tests/hardware/unit`, a separate Ztest application, and are
+  absent from application/driver sources. Before consolidation, both LF boards passed the six
+  crypto Ztest cases, including
   session/error checks and 100000-round passphrase derivation (4307/4308 ms); the runner verifies
   rollback to the previous confirmed image. The standalone test uses minimal libc to avoid a
   USB DPRAM halfword-store fault in SDK picolibc's memcpy; its 73 us aligned full-frame tag time
@@ -32,7 +85,8 @@ design documents.
   launches or authentication failures; SPI errors, TX FIFO underflows and chip errors stay zero.
   CRC failures and ARQ retransmissions remain, so these runs establish functional delivery,
   not a throughput improvement. HF hardware and real-UART acceptance remain pending.
-- Connecting PSA to the Zephyr hardware driver is deferred to a later change.
+- The subsequent crypto separation removes PSA from the protocol path; hardware PSA integration
+  is no longer part of this prototype's implementation plan.
 
 ## Product direction consolidation, 2026-10-04
 

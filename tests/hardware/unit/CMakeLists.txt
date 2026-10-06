@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: Apache-2.0
+
+cmake_minimum_required(VERSION 3.20.0)
+find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+project(unit)
+
+get_filename_component(zlrs_root "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
+target_sources(app PRIVATE
+  src/main.c
+  ../drivers/crypto/test_rp2350_sha256.c
+  ../drivers/entropy/test_rp2350_trng.c
+  ../core/proto/test_crypto.c
+  ../app/storage/test_log.c
+  ../core/link/test_link.c
+  ../app/link/test_rate.c
+  ../app/link/test_power.c
+  ../app/platform/test_slot_timer.c
+  ../app/ui/test_led.c
+  "${zlrs_root}/app/src/state/sys_bus.c"
+  "${zlrs_root}/app/src/link/rate.c"
+  "${zlrs_root}/app/src/link/power.c"
+  "${zlrs_root}/app/src/platform/slot_timer.c"
+  "${zlrs_root}/app/src/ui/led.c"
+  "${zlrs_root}/app/src/platform/sha256.c"
+  "${zlrs_root}/app/src/storage/log.c")
+target_include_directories(app PRIVATE "${zlrs_root}/app/src" "${zlrs_root}/core/proto" ..)
+
+# Match production placement of the protocol algorithms, SHA operation and driver.
+zephyr_code_relocate(FILES
+  "${zlrs_root}/app/src/platform/sha256.c"
+  "${zlrs_root}/core/proto/crypto.c"
+  "${zlrs_root}/drivers/crypto/rp2350_sha256.c"
+  LOCATION RAM_TEXT)

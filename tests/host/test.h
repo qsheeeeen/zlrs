@@ -25,9 +25,13 @@ extern unsigned int zlrs_test_failures;
 /* Compare against a hex string, case-insensitive */
 int zlrs_test_hex_eq(const uint8_t *data, size_t len, const char *hex);
 
-void test_proto(void);
-void test_bench_pattern(void);
-void test_radio_fifo(void);
+void test_crypto(void);
+void test_frame(void);
+void test_frag(void);
+void test_fhss(void);
+void test_tlm(void);
+void test_data_pattern(void);
+void test_radio(void);
 void test_link(void);
 void test_crsf(void);
 void test_mgmt(void);

@@ -22,8 +22,9 @@ nonces) in NVS, and re-pairing replaces it.
 
 The design targets two levels and explicitly not a third:
 
-- **L1 - a hostile outsider**: someone with a radio can record, replay, forge or jam. Everything
-  they see is ciphertext and tags; forging a frame means breaking HMAC-SHA256.
+- **L1 - a hostile outsider**: someone with a radio can record, replay, forge or jam. P1 exposes
+  plaintext and a 32-bit authentication tag. Forgery resistance is limited by that tag length;
+  payload encryption requires the unimplemented P2 profile.
 - **L2 - a stolen device or a leaked group key**, mitigated by per-frame authentication, per
   session keys and replay protection rather than by secrecy of the format.
 - **L3 - an adversary with the root key and physical access** is out of scope: there is no
@@ -139,24 +140,32 @@ one.
 | per-frame tag | HMAC-SHA256 truncated to 4 B |
 | P2 encryption (planned) | AES-CTR with the MAC over the ciphertext |
 
-The application uses the SHA-256 accelerator through Zephyr's Crypto API
-(`app/src/platform/crypto.c`). The board binds it to ZLRS's driver
+`core/proto/crypto.c` implements HMAC, HKDF, PBKDF2, root-key derivation and tag comparison
+once, without Zephyr headers. Its private `sha256.h` declares the only hash operation it needs:
+SHA-256 over two spans in order. Protocol algorithms and parameters are shared by firmware
+and host tests.
+
+`app/src/platform/sha256.c` implements that operation through Zephyr's Crypto API and the
+SHA peripheral selected by devicetree. Firmware requires ZLRS's driver
 (`drivers/crypto/rp2350_sha256.c`, compatible `zlrs,rp2350-sha256`), based on the upstream
-RP2350 driver with multipart hashing and session ownership added. `ZLRS_HAS_SHA256` in
-`app/src/platform/caps.h` follows the peripheral and driver; there is no application backend
-switch. Each digest uses `hash_begin_session()`, `hash_update()`, `hash_compute()` and
-`hash_free_session()`. HMAC's key prefix and frame data stay in their original buffers and are
-fed in order without a concatenation copy. A mutex protects complete protocol hash sessions
-and provides priority inheritance; the driver rejects access from other contexts while a
-session owns the accelerator. Pico SDK handles partial input words and final SHA padding
-inside the driver. Hashing leaves interrupts enabled and does not allocate DMA channels;
-reported driver failures are fatal rather than producing an authentication tag.
-HMAC, HKDF and PBKDF2 retain the same derivation rules. PSA is not connected to this driver yet.
-Boards without the driver use Zephyr PSA Crypto (`core/proto/crypto_psa.c`). Host tests use the
-pure C backend (`tests/host/crypto_soft.c`). The separate Zephyr Ztest application in
-`tests/hardware/crypto` checks the real driver and protocol backend using public APIs,
-including multipart SHA-256, wire tags and multi-block derivation. Test vectors and timing
-code are excluded from the application and driver sources; see [hardware tests](11-debug.md#7-hardware-test-applications).
+RP2350 driver with multipart hashing and session ownership added. Each digest uses
+`hash_begin_session()`, `hash_update()`, `hash_compute()` and `hash_free_session()`. HMAC's
+key prefix and frame data stay in their original buffers and are fed without a concatenation
+copy. A mutex protects complete hash sessions and provides priority inheritance; the driver
+rejects access from other contexts while a session owns the accelerator. Pico SDK handles
+partial input words and final SHA padding inside the driver. Hashing leaves interrupts enabled
+and does not allocate DMA channels; reported driver failures stop execution rather than
+producing an authentication tag. There is no PSA protocol backend or runtime backend selection.
+
+Host tests replace only the SHA operation with `tests/host/sha256_soft.c`, linking the same
+protocol algorithms. The separate Zephyr Ztest application in `tests/hardware/unit` checks
+the real driver and shared algorithms, including multipart SHA-256, wire tags and multi-block
+derivation. Test vectors and timing code are excluded from production sources; see
+[hardware tests](11-debug.md#7-tests-organized-by-module).
+
+The 16-bit sequence comparison across long sessions, the 32-bit tag budget and explicit
+failure reporting for invalid derivation parameters need further work. The current code review
+and acceptance gaps are tracked in [12-roadmap](12-roadmap.md).
 
 ## 9. Management protocol
 

@@ -30,7 +30,7 @@ can be dropped, so export files through management rather than printing them to 
 
 `CONFIG_ZLRS_APP_DEBUG` is the marker for "this image is for the bench": the options named
 `ZLRS_APP_DEBUG_*` depend on it, and shipped configurations (`app/prj.conf`, everything under
-`boards/`) may not mention it. `tools/gates.sh` enforces that, so a bench-only switch cannot
+`boards/`) may not mention it. `tests/gates.sh` enforces that, so a bench-only switch cannot
 quietly end up in a released image.
 
 ## 2. Debug entries
@@ -41,13 +41,12 @@ quietly end up in a released image.
 | shell `zlrs ports` | per-endpoint `ready / active / rx_total / rx_dropped` for the data port |
 | shell `zlrs mgmt` | enter management mode (EXIT returns) |
 | shell `zlrs recovery` | reboot into MCUboot serial recovery |
-| shell `zlrs entropy` | entropy self-test (two 32-byte TRNG blocks) |
-| `tests/hardware/crypto` | separate Ztest firmware for SHA-256, HMAC tags, HKDF/PBKDF2 and aligned/unaligned tag timing; see section 7 |
+| `tests/hardware/unit` | separate Ztest firmware, with one source file per tested module; see section 7 |
 | shell `zlrs mcuboot` | image state as MCUboot sees it (slot headers, confirm bit, copy state) |
 | `CONFIG_ZLRS_APP_DEBUG_STATS_LOG` | 1 Hz `stats:` line (counters, LQ, duty, dynamic power) and `air:` line (completed transactions per link) |
-| `CONFIG_ZLRS_APP_BENCH_RAW_MS` | the first N ms after boot skip the superframe: the TX role sends complete frames back to back, the RX role opens 100 ms receive windows back to back, and both log frames per second |
+| `tests/hardware/radio` | test firmware for the actual scheduler with generated data endpoints, or raw radio testing before the scheduler starts |
 | `CONFIG_ZLRS_APP_DEBUG_BOOT_DELAY_MS` | wait that long after USB is up before continuing init, so a panic during init is visible on an open console |
-| `CONFIG_ZLRS_APP_DEBUG_LED_BRIGHTNESS_PERCENT` | attenuate the status pixel in a debug image (the default is 20%); production images keep the normal LED levels |
+| `CONFIG_ZLRS_APP_DEBUG_LED_BRIGHTNESS_PERCENT` | attenuate the status pixel in a debug image (the default is 10%); production images use full brightness |
 | `CONFIG_ZLRS_APP_TX_GUARD_US` | fixed delay from hardware slot boundary to SET_TX; both peers must use the same timing settings |
 
 The shell is gated by `CONFIG_ZLRS_APP_DEBUG_SHELL` and runs on the console CDC; the supported
@@ -81,24 +80,28 @@ boot, and each has a matching host test.
 **Features whose default is still open** (rate adaptation, dynamic power) are not
 switches to hide but debts: `doc/12-roadmap.md`, "Pending defaults".
 
-For a fixed-channel 2.4 GHz data-only bench on the LF module:
+Build the normal LF development firmware with its console:
 
 ```sh
+export ZLRS_BOARD=rp2350_zero_core2021/rp2350a/m33/lf
+export ZLRS_APP="$PWD/app"
 source tools/zephyr-env.sh
-ZLRS_BOARD=rp2350_zero_core2021/rp2350a/m33/lf zlrs-build -d build-data24 -- \
-  -DEXTRA_CONF_FILE="$ZLRS_REPO_ROOT/app/debug.conf;$ZLRS_REPO_ROOT/app/data24-debug.conf" \
+zlrs-build -p auto -- \
+  -DEXTRA_CONF_FILE="$ZLRS_REPO_ROOT/app/debug.conf" \
   -DDTC_OVERLAY_FILE="$ZLRS_REPO_ROOT/app/debug.overlay"
 ```
 
-This profile disables control, sub-band mixing and hopping. P1 authentication, session handshake and ARQ remain enabled. Fresh devices can pair on the data
-link in this profile; no previous pairing record is needed. Read the **data** section of
-`zlrs link`; management status and the LED follow data when control is disabled. The
-profile isolates faults; it is not a validated reliable-transfer configuration (see `12-roadmap.md`).
+After installing, select data-only operation on both devices with
+`python3 tools/zlrs.py set-mode data24 --all`, then reboot both to apply. Pairing runs on 2.4 GHz
+in this mode; no previous pairing record is required. Read the **data** section of `zlrs link`;
+management status and the LED follow the data link. This uses the normal hopping and preparation
+defaults. Fixed-channel isolation and the 1 ms preparation window belong to the radio test image
+in section 7.
 
 Measure end-to-end payload throughput between two paired devices with:
 
 ```sh
-python3 tools/zlrs.py throughput --tx-port <TX-serial> --rx-port <RX-serial>
+python3 tests/hardware/app/link/test_data.py --tx-port <TX-serial> --rx-port <RX-serial>
 ```
 
 On Linux or WSL, serial fragments select the matching data CDC (`...-if02`). The default runs
@@ -167,15 +170,15 @@ complete data path, including radio scheduling and ARQ, rather than raw PHY fram
 - **`zlrs rate`** prints the last second per link: receive windows, how many of them heard a
   frame, frames sent and the state. That is the number to compare when a link misbehaves; a
   receiver problem shows up as a hit rate near zero with the window count unchanged.
-- **`zlrs rxwin <ms>`** stretches the data link's receive window (0 restores it). With the window
+- **`test_radio rxwin <ms>`** (radio test image only) stretches the data link's receive window (0 restores it). With the window
   at tens of milliseconds the receiver is effectively listening continuously, which separates
   "the two ends are not aligned" from "the receiver does not hear frames at all".
-- **The raw radio bench separates the radio from the scheduler**: with
-  `CONFIG_ZLRS_APP_BENCH_RAW_MS` the TX role blasts complete frames and the RX role listens in
-  100 ms windows, no slots and no phases involved. On this bench that reads 142 of 143 frames per
-  second at -42 dBm, so a superframe that delivers far less is a timing problem, not a radio,
-  band, sync word or framing problem. It runs by itself at boot, which matters because a long
-  radio transaction can drop the forwarded console.
+- **The raw radio test separates the driver from the scheduler**: build the radio test image
+  with `CONFIG_ZLRS_TEST_RAW_MS`, wait for both boards to report `RAW ready=1`, then issue
+  `test_radio start` on both. TX sends 32-byte patterns and RX opens 100 ms windows at 2441 MHz;
+  the test checks received bytes without protocol authentication, ARQ or the slot scheduler.
+  The earlier embedded raw bench recorded 142 of 143 frames/s at -42 dBm. That is historical
+  evidence for the old bench, not acceptance of the new independent test image.
 
 ## 5. Traps we have hit
 
@@ -283,8 +286,8 @@ One line each; details live in code comments.
 ## 6. Hardware timer and independent RAL driver
 
 Both links use the exclusive RAL driver described in [06-architecture](06-architecture.md) 3.
-`zlrs direct` and runtime `blast` / `listen` commands have been removed; boot-time raw testing
-remains available through `CONFIG_ZLRS_APP_BENCH_RAW_MS`, before the slot owner starts.
+`zlrs direct` and runtime `blast` / `listen` commands have been removed; raw testing now lives in `tests/hardware/app/platform/test_radio.c`, before the slot owner starts
+in the separate radio test image.
 
 `zlrs radio` reports TIMER1 boundaries, maximum IRQ lateness, missed boundaries and skipped
 frames/slots; RAL TX completions, RX packets, setup cost, late launches and chip errors; packet
@@ -362,16 +365,15 @@ not pre-launch readiness. A matching RX-time preload still uses the complete pac
 retains full pre-launch loading. Abort and completion discard the prefix count, and a failed
 tail write or underflow fails the transaction for ARQ to retry.
 
-`SPI DMA` reports the actual peripheral clock/dividers, successful transfer count/bytes and
-errors. Timings split buffer/configuration/RX-channel setup, TX-channel start to RX completion
-callback (`active`), callback to owner resumption (`wake`), final SPI idle/copy work, and the
-preceding BUSY wait. Active time includes driver start and IRQ dispatch, so it is not a logic
-analyzer measurement of SCK alone. Divide total counter deltas by transfer deltas for mean
-costs; these combine TX writes and RX FIFO reads of different lengths.
+Ordinary SPI commands and FIFO transfers use the upstream USP HAL and Zephyr SPI driver.
+DMA follows the board's SPI configuration. The former custom HAL's per-DMA counters are removed;
+`TX setup`, IRQ service and FIFO timing still measure the radio owner's public driver calls.
+Application SRAM placement covers ZLRS-owned code; it does not inspect or relocate upstream
+library sources. Historical custom-HAL measurements remain in `12-roadmap.md`.
 
 ZLRS's RP2350 Crypto driver supports multipart SHA-256. HMAC feeds its word-aligned key prefix
 and the frame buffer directly through update/compute; the application keeps no concatenation
-buffer. The separate `tests/hardware/crypto` application verifies tags for a 507-byte frame
+buffer. The separate `tests/hardware/unit` application verifies tags for a 507-byte frame
 at all four byte offsets, checks driver session reuse and malformed inputs, and reports
 64-call means/maxima for aligned and one-byte-offset inputs. These wall-time measurements
 include driver calls, session setup/free and interrupt/thread preemption. A standalone test
@@ -412,8 +414,8 @@ Previous RAC cost measurements in section 5 are historical measurements of the f
 
 ### DATA source and sink inside the boards
 
-In exclusive data24, `zlrs stream arm <bytes>` enables the debug-only source/sink (1 byte to
-16 MiB), `zlrs stream start` starts this board's source, and `zlrs stream status` reports queued,
+In the separate radio test image, `test_data arm <bytes>` enables the debug-only source/sink (1 byte to
+16 MiB), `test_data start` starts this board's source, and `test_data status` reports queued,
 received and incorrect bytes plus receive goodput. Arm both boards before starting either.
 Each direction uses a different deterministic byte pattern; the receiver checks every byte,
 including its position. This retains the actual frame, authentication, ARQ, FIFO and RF paths
@@ -421,70 +423,117 @@ while replacing the USB/UART input and output. It does not measure end-to-end se
 
 `goodput_Bps` uses bytes after the first delivered packet divided by the time between the first
 and last deliveries. Completion requires `rx == target`, `queued == target` and `bad == 0` on
-both boards. `zlrs stream stop` restores serial forwarding once the source queue is empty;
-arm/stop returns busy when queued bytes still need delivery. Only the RF owner mutates link
-queues and benchmark state; shell commands wait for that owner to apply them.
+both boards. `test_data stop` restores serial forwarding once the source queue is empty;
+arm/stop returns busy when queued bytes still need delivery. The test image wraps the public
+data read/write and TX-space interfaces at link time. The
+production RF owner still runs its normal pump, slot timer, protocol and radio driver; shell
+commands wait for that owner to apply them. The normal app has no generator, sink or test hook.
 
 
-## 7. Hardware test applications
+## 7. Tests organized by module
 
-Keep host tests in `tests/host` and Zephyr device tests in `tests/hardware`. A hardware test
-application has its own CMake/Kconfig configuration, test source and Ztest manifest. It links
-production sources and calls public interfaces, without embedding vectors, test hooks or
-benchmarks in `app` or `drivers`. The SHA-256 application is `tests/hardware/crypto`.
+Existing tests use `test_<module>` names. Host tests remain in `tests/host`; hardware tests mirror
+production paths below `tests/hardware`; Python tool tests live in `tests/tools`. Each file owns
+its module's fixtures, vectors and assertions. Entry points only assemble and run those files.
 
-Build it in the workspace's usual `build` directory. Reuse the application's sysbuild
-configuration so signing, partitions and MCUboot recovery match the installed bootloader:
+| Production module | Test file |
+| --- | --- |
+| `core/proto/frame.c`, `frag.c`, `fhss.c`, `tlm.c` | `tests/host/test_frame.c`, `test_frag.c`, `test_fhss.c`, `test_tlm.c` |
+| `core/proto/crypto.c` | `tests/host/test_crypto.c` (software SHA), `tests/hardware/core/proto/test_crypto.c` (hardware SHA) |
+| `drivers/crypto/rp2350_sha256.c` | `tests/hardware/drivers/crypto/test_rp2350_sha256.c` |
+| `drivers/entropy/rp2350_trng.c` | `tests/hardware/drivers/entropy/test_rp2350_trng.c` |
+| `app/src/storage/log.c` | `tests/hardware/app/storage/test_log.c` |
+| `core/link/link.c` | `tests/host/test_link.c`, `tests/hardware/core/link/test_link.c` |
+| `app/src/link/data.c` | `tests/hardware/app/link/test_data.c`, `test_data.py` |
+| `app/src/platform/radio.c` | `tests/host/test_radio.c`, `tests/hardware/app/platform/test_radio.c` |
+| `tools/zlrs.py`, `zlrs_mgmt.py`, `zlrs_recovery.py`, `zlrs_update.py`, `zlrs_cli.py` | corresponding `tests/tools/test_zlrs*.py` files |
+
+The former `test_proto.c` aggregation is split by module. The existing two-node simulation and
+fuzz tests keep their integration role. `tests/gates.sh` holds architecture/configuration checks.
+Run checks directly from `tests/`:
+
+```sh
+make -C tests/host run
+python3 tests/tools/run.py
+python3 tests/tools/run.py --module zlrs_mgmt
+tests/gates.sh
+```
+
+### Unit test firmware
+
+`tests/hardware/unit` assembles nine Ztest cases from five module test files. It links the actual
+SHA driver, shared protocol crypto, link core and log store, and calls public APIs. Vectors, test-only
+commands and benchmarks are absent from normal application/driver/core sources. The driver's
+hardware capability checks, TRNG health checks and runtime error handling stay in production.
+
+Build in the workspace's usual `build` directory and reuse the application's signing/partitions:
 
 ```sh
 export ZLRS_BOARD=rp2350_zero_core2021/rp2350a/m33/lf
-export ZLRS_APP="$PWD/tests/hardware/crypto"
+export ZLRS_APP="$PWD/tests/hardware/unit"
 source tools/zephyr-env.sh
 zlrs-build -p auto -- -DSB_APPLICATION_CONFIG_DIR="$ZLRS_REPO_ROOT/app"
+python3 tests/hardware/unit/run.py --serial 425030433435300D \
+  --log /tmp/zlrs-unit-rx.log
+python3 tests/hardware/unit/run.py --serial 4250304334353014 \
+  --log /tmp/zlrs-unit-tx.log
 ```
 
-The signed image is `../build/crypto/zephyr/zephyr.signed.bin`. Start from confirmed working
-firmware and install it through MCUboot; do not use a test application UF2. The test runner
-uses the existing update tool with `--no-wait`, opens the test console CDC to start Ztest, saves
-the full output, and checks that MCUboot restores the previous firmware hash:
+The signed image is `../build/unit/zephyr/zephyr.signed.bin`. The runner uses the existing updater
+with `--no-wait`, opens the `ZLRS UNIT TEST` console, captures the full Ztest output and verifies
+rollback to the previous confirmed image. The image reboots three seconds after completion, or
+45 seconds without a host. The watchdog stays armed. It does not write pairing/settings records;
+the log test uses the production log mount and inventory path. On WSL, USB forwarding must follow
+re-enumeration during upgrade and rollback. Install through MCUboot, not an application UF2.
+
+SHA driver tests cover padding/block boundaries, one-shot and 1/3/64-byte chunks, digest/session
+reuse, ownership, invalid input and overflow. Protocol tests cover long HMAC keys, unaligned tags,
+multi-block HKDF and the production 100000-round PBKDF2 rule. Protocol algorithms, the SHA operation
+and the driver run from SRAM. Host tests share these algorithms and replace only SHA-256.
+Minimal libc avoids the SDK picolibc memcpy halfword-store fault in USB DPRAM; Ztest printk goes
+directly to the console, while logs stay deferred. Upstream UDC/library sources are unchanged.
+
+Before this consolidation, both LF boards passed the original six crypto cases: 32 SHA variants,
+13 tags and full passphrase derivation (4307/4308 ms). Their standalone 507-byte tags averaged
+73 us aligned and 112 us at offset one, with a different libc and no RF/application threads.
+Those results are not acceptance of the new nine-case application or an application speedup.
+
+### Radio test firmware
+
+`tests/hardware/radio` includes `app/CMakeLists.txt`, so it compiles the
+same scheduler, protocol, platform and drivers. Only this image links data/radio test sources and
+GNU linker wrappers for public interfaces; the normal app neither calls nor includes test code.
+The file for data owns the generated stream and byte checks; the file for radio owns raw requests,
+receive-window experiments and restoration. Commands are `test_data` and `test_radio`.
+Its `prj.conf` selects data-only operation, disables hopping/sub-band mixing and sets a 1 ms
+preparation window. These isolation settings apply only to this test firmware.
 
 ```sh
-python3 tests/hardware/crypto/run.py --serial 425030433435300D \
-  --log /tmp/zlrs-crypto-rx.log
-python3 tests/hardware/crypto/run.py --serial 4250304334353014 \
-  --log /tmp/zlrs-crypto-tx.log
+export ZLRS_APP="$ZLRS_REPO_ROOT/tests/hardware/radio"
+zlrs-build -p auto -- -DSB_APPLICATION_CONFIG_DIR="$ZLRS_REPO_ROOT/app"
+python3 tests/hardware/radio/run.py --serial 4250304334353014 --peer 425030433435300D \
+  --log /tmp/zlrs-radio.json
 ```
 
-The test firmware leaves its image unconfirmed, changes no pairing/settings records, and
-reboots three seconds after the tests finish. Without a host connection it reboots after
-45 seconds. Its watchdog remains armed. On WSL, USB forwarding must follow re-enumeration,
-including the `ZLRS CRYPTO TEST` device, during upgrade and rollback.
+The signed path is `../build/radio/zephyr/zephyr.signed.bin`. The runner installs it unconfirmed
+on both boards, checks complete RF delivery in both directions, requests restoration and verifies
+both previous firmware hashes. It records before/after radio counters and per-round results.
+For raw tests, rebuild with `-DEXTRA_CONF_FILE="$ZLRS_REPO_ROOT/tests/hardware/radio/raw.conf"`
+and pass `--raw` to the runner. Both boards wait for host start before the configured raw interval.
+The test image gives the host 120 seconds to finish before the normal app's confirmation timeout
+resets it. Do not confirm this test image. Radio test migration still requires hardware acceptance.
 
-Coverage includes SHA padding/block boundaries, one-shot and 1/3/64-byte chunks, multiple
-digests per session, competing/invalid sessions, invalid input and overflow, long HMAC keys,
-unaligned full-frame tags, multi-block HKDF and the production 100000-round PBKDF2 rule.
-The adapter and driver run from SRAM, matching the application. The test uses Zephyr's minimal
-libc with byte copies: the SDK picolibc `memcpy` faults on a halfword store while the RP2350 UDC
-copies enumeration replies into USB DPRAM. Startup banners stay disabled until the USB context
-exists, logs are deferred, and Ztest's `printk` output goes directly to the console. These are
-test application settings; upstream UDC/library sources are unchanged.
+Run the data-port test directly with `python3 tests/hardware/app/link/test_data.py`; it works on
+normal firmware. The device CLI contains only management and upgrade commands.
+Previous normal-firmware validation delivered three USB rounds of 65536 bytes per direction
+exactly at 42.1-48.3 kB/s and three RF-only rounds of 262145 bytes with zero bad bytes at
+45.2-46.5 kB/s, at 2441 MHz/-10 dBm/P1. These are pre-migration records.
 
-Both LF boards pass all six cases on 2026-10-05, including 32 SHA variants and 13 authentication
-tag vectors. Production 100000-round passphrase derivation takes 4307/4308 ms. Standalone
-aligned 507-byte tags average 73 us and one-byte-offset tags 112 us. Those measurements use the
-test libc and have no RF/application threads; they are not a measured application speedup.
-Duplex acceptance uses the actual ZLRS application image after the embedded tests are removed:
-three USB rounds deliver 65536 bytes per direction exactly at 42.1-48.3 kB/s; three RF-only
-rounds deliver 262145 bytes per direction with zero bad bytes at 45.2-46.5 kB/s. Both LF boards
-use DATA24 at 2441 MHz, -10 dBm and P1. Timer misses, skipped frames and late-launch counts
-do not increase during either run, with zero SPI errors or TX FIFO underflows. CRC failures
-and ARQ retries remain; these checks do not establish a speedup over the previous backend.
-
-To return the build directory to the normal LF debug data image:
+To restore the default build directory to the normal LF development application:
 
 ```sh
 export ZLRS_APP="$ZLRS_REPO_ROOT/app"
 zlrs-build -p auto -- \
-  -DEXTRA_CONF_FILE="$ZLRS_REPO_ROOT/app/debug.conf;$ZLRS_REPO_ROOT/app/data24-debug.conf" \
+  -DEXTRA_CONF_FILE="$ZLRS_REPO_ROOT/app/debug.conf" \
   -DDTC_OVERLAY_FILE="$ZLRS_REPO_ROOT/app/debug.overlay"
 ```

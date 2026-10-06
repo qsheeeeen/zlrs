@@ -10,17 +10,13 @@
 #
 # Usage:
 #   python3 tools/zlrs.py recovery --port /dev/ttyACM2   # management port (third CDC in app mode)
-#   python3 tools/zlrs.py --self-test           # no device: check the framing
+#   python3 tests/tools/run.py --module zlrs_recovery   # no device: check recovery framing
 #
 # Then upload a signed image with an mcumgr client:
 #   smpmgr --port <recovery port> upgrade zephyr.signed.bin
 #
 # The ports change: three CDCs in application mode (management port is ttyACM2), two in bootloader
 # mode (recovery first, console second). Find recovery by /dev/serial/by-id/...MCUBOOT...-if00.
-
-from pathlib import Path
-import re
-import sys
 
 SOF = b"\xa5\x5a"
 VERSION = 3
@@ -43,24 +39,3 @@ def build_request() -> bytes:
     body = bytes([VERSION, CMD_RECOVERY, 0])
 
     return SOF + body + bytes([crc8(body)])
-
-
-def self_test() -> int:
-    request = build_request()
-    want = bytes.fromhex("a55a034100e4")
-
-    header = Path(__file__).resolve().parent.parent / "include/zlrs/mgmt/mgmt.h"
-    match = re.search(r"#define\s+ZLRS_MGMT_VERSION\s+(\d+)U", header.read_text())
-    if match is None or int(match[1]) != VERSION:
-        print("self-test: FAIL recovery protocol version differs from firmware", file=sys.stderr)
-        return 1
-
-    if request != want:
-        print(f"self-test: FAIL wrong framing: {request.hex()} != {want.hex()}", file=sys.stderr)
-        return 1
-    if request[3] != CMD_RECOVERY:
-        print("self-test: FAIL wrong command id", file=sys.stderr)
-        return 1
-
-    print("self-test: ok (recovery frame matches the C side)")
-    return 0

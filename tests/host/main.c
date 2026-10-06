@@ -42,10 +42,14 @@ int zlrs_test_hex_eq(const uint8_t *data, size_t len, const char *hex)
 
 int main(void)
 {
-	printf("zlrs host tests\n");
-	test_proto();
-	test_bench_pattern();
-	test_radio_fifo();
+	printf("ZLRS host tests\n");
+	test_crypto();
+	test_frame();
+	test_frag();
+	test_fhss();
+	test_tlm();
+	test_data_pattern();
+	test_radio();
 	test_link();
 	test_crsf();
 	test_mgmt();

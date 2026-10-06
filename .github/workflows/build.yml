@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # The quick check on every push and PR: unit and simulation tests for the pure C layers plus the
-# management tool's framing self-test. No Zephyr workspace needed; results in under a minute.
+# device tools' unit tests. No Zephyr workspace needed; results in under a minute.
 #
 # Firmware builds (~5 GB workspace, ~10 minutes) live in firmware.yml; see the notes there.
 
@@ -36,7 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: tree gates
-        run: tools/gates.sh
+        run: tests/gates.sh
 
   host-tests:
     runs-on: ubuntu-24.04
@@ -52,7 +52,5 @@ jobs:
       # containers without ptrace cannot start it, so it stays off locally).
       - name: host tests (ASan + UBSan)
         run: make -C tests/host run LEAKS=1
-      - name: device tool self-tests
-        run: python3 tools/zlrs.py --self-test
-      - name: operator CLI regressions
-        run: python3 tools/tests/test_cli.py
+      - name: device tool tests
+        run: python3 tests/tools/run.py

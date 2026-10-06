@@ -6,7 +6,7 @@
 #
 #   tools/zlrs.py status --port /dev/ttyACM2
 #   tools/zlrs.py set-phrase --port /dev/ttyACM2 "correct horse battery staple"
-#   tools/zlrs.py --self-test          # no device: frame byte-for-byte against the C side
+#   python3 tests/tools/run.py --module zlrs_mgmt   # no device: check management framing
 #
 # Except for `enter`, every command first sends enter-management-mode and waits for the ACK.
 # The three USB CDCs are CRSF, data port and management port (/dev/ttyACM0/1/2).
@@ -178,82 +178,6 @@ def status_text(payload: bytes) -> str:
     ]
     return "\n\n".join(title + "\n" + fields(rows) for title, rows in sections)
 
-
-
-def self_test() -> int:
-    """Frames must match the output of zlrs_mgmt_encode() on the C side byte for byte."""
-    cases = [
-        ("enter", CMD_ENTER, b"", "a55a03000050"),
-        ("status", CMD_STATUS, b"", "a55a0301005b"),
-        ("pair", CMD_PAIR, b"", "a55a03020046"),
-        ("erase-pair", CMD_ERASE_PAIR, b"", "a55a0303004d"),
-        ("set-phrase", CMD_SET_PHRASE, b"hello", "a55a03110568656c6c6ff7"),
-        ("set-key-hex", CMD_SET_KEY_HEX, b"00" * 32, None),
-        ("set-baud", CMD_SET_BAUD, bytes([0x00, 0x25, 0x06, 0x00]), "a55a0321040025060056"),
-        ("set-region", CMD_SET_REGION, bytes([3]), "a55a032201038f"),
-        ("set-power", CMD_SET_POWER, bytes([20]), "a55a032301140a"),
-        ("set-role", CMD_SET_ROLE, bytes([1]), "a55a0324010150"),
-        ("set-profile", CMD_SET_PROFILE, bytes([2]), "a55a0325010279"),
-        ("new-dev-id", CMD_NEW_DEV_ID, b"", "a55a032600df"),
-        ("factory-reset", CMD_FACTORY_RESET, b"", "a55a034000ef"),
-        ("recovery", CMD_RECOVERY, b"", "a55a034100e4"),
-        ("build", CMD_BUILD, b"", "a55a031200f6"),
-        ("image-hash", CMD_IMAGE_HASH, b"", "a55a031300fd"),
-        ("confirm", CMD_CONFIRM, b"", "a55a034200f9"),
-        ("exit", CMD_EXIT, b"", "a55a03300055"),
-    ]
-
-    failures = 0
-    for name, cmd, payload, want in cases:
-        if want is None:
-            # Only check that a legal frame comes out and decodes again
-            frame = encode(cmd, payload)
-            got_cmd, got_payload = decode(frame)
-            if got_cmd != cmd or got_payload != payload:
-                print(f"  FAIL {name}: round trip")
-                failures += 1
-            continue
-        got = encode(cmd, payload).hex()
-        if got != want:
-            print(f"  FAIL {name}: got {got} want {want}")
-            failures += 1
-
-    # One-way check: decode that frame again
-    cmd, payload = decode(bytes.fromhex("a55a03110568656c6c6ff7"))
-    if cmd != CMD_SET_PHRASE or payload != b"hello":
-        print("  FAIL decode round trip")
-        failures += 1
-
-    # Channel payload: all zeros gives 22 zero bytes; the default is throttle low, the rest centred
-    if channels_to_payload([0] * 16) != bytes(22):
-        print("  FAIL channels all zero")
-        failures += 1
-    default = channels_to_payload(parse_channels("@default"))
-    if len(default) != 22 or default[0] != 0xAC:
-        print("  FAIL channels default")
-        failures += 1
-
-    # Target picking: with exactly one module present and no flags the result has to be a
-    # one-element list. Returning the path itself made the caller iterate its characters.
-    fake = argparse.ArgumentParser()
-    fake.add_argument("--port")
-    fake.add_argument("--serial")
-    fake.add_argument("--all", action="store_true")
-    plain = argparse.Namespace(port=None, serial=None, all=False)
-    saved = globals()["app_ports"]
-    globals()["app_ports"] = lambda: ["/dev/serial/by-id/usb-fake-if04"]
-
-    try:
-        picked = pick_targets(plain, fake)
-    finally:
-        globals()["app_ports"] = saved
-
-    if picked != ["/dev/serial/by-id/usb-fake-if04"]:
-        print(f"  FAIL pick one module: {picked!r}")
-        failures += 1
-
-    print(f"self-test: {'ok' if failures == 0 else str(failures) + ' failure(s)'}")
-    return 0 if failures == 0 else 1
 
 
 def read_response(link):
@@ -523,7 +447,6 @@ def add_options(parser, include_list=True):
                         help="skip the enter-management-mode step (when already in it)")
     parser.add_argument("--keep", action="store_true",
                         help="stay in management mode after the command (the default leaves it, which restores the radio)")
-    parser.add_argument("--self-test", action="store_true", help="check framing, then exit")
 
 
 def add_commands(sub, parents=()):
@@ -584,9 +507,6 @@ def main(args=None, parser=None) -> int:
         sub = parser.add_subparsers(dest="command", title="commands", metavar="COMMAND")
         add_commands(sub)
         args = parser.parse_args()
-
-    if args.self_test:
-        return self_test()
 
     if args.list:
         ports = app_ports()

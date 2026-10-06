@@ -55,7 +55,7 @@ One USB-C port that shows up differently depending on the mode:
 | UART0 GP0/1 | control port, CRSF at 420000 | not forwarded (radio stopped) | not initialised | no firmware |
 | UART1 GP8/9 | data port, passthrough | incoming bytes are dropped and counted | unused | no firmware |
 | Button (jumper) | hold 1 s or more to pair | ignored once management mode is up | unused | BOOTSEL is the chip-level button |
-| Status LED | see [10-ux](10-ux.md) | white at 1 Hz after half a second | MCUboot does not drive it | not driven |
+| Status LED | see [10-ux](10-ux.md) | steady white after half a second | white at 2 Hz | not driven |
 
 Management mode is entered by a command the tool sends on the management CDC; details in
 [07-firmware](07-firmware.md) 2.
