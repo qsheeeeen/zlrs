@@ -85,23 +85,9 @@ else
 fi
 
 echo "==> [4/5] west update"
-# "west list" resolves the whole manifest, which needs zephyr's imported west.yml, and that file
-# only exists once zephyr has been cloned. In a fresh workspace the listing itself fails, and that
-# just means nothing has been cloned yet, so go straight to the update instead of bailing out.
-if PROJECTS="$(cd "${WS}" && "${WEST}" list -f '{path}' 2>/dev/null)"; then
-	INCOMPLETE="$(for project in ${PROJECTS}; do
-		[ -e "${WS}/${project}/.git" ] || echo "${project}"
-	done)"
-else
-	INCOMPLETE="zephyr"
-fi
-if [ -n "${INCOMPLETE}" ]; then
-	[ -d "${WS}/zephyr" ] || echo "    the first run pulls Zephyr and its modules: about 5 GB"
-	echo "    $(echo "${INCOMPLETE}" | wc -l) projects missing: $(echo "${INCOMPLETE}" | tr '\n' ' ')"
-	(cd "${WS}" && "${WEST}" update --narrow -o=--depth=1)
-else
-	echo "    all projects present, skipping (run (cd ${WS} && west update) to sync)"
-fi
+# Always sync to the manifest revisions, including in an existing workspace.
+[ -d "${WS}/zephyr" ] || echo "    the first run pulls Zephyr and its modules: about 5 GB"
+(cd "${WS}" && "${WEST}" update --narrow -o=--depth=1)
 
 echo "==> [5/5] Zephyr's Python build dependencies"
 "${VENV_DIR}/bin/python" -m pip install --quiet --no-warn-script-location \
