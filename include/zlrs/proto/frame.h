@@ -22,19 +22,17 @@ typedef enum {
 	ZLRS_PKT_TLM = 1,       /* RX -> TX: telemetry */
 	ZLRS_PKT_DATA_UP = 2,   /* TX -> RX: passthrough data */
 	ZLRS_PKT_DATA_DOWN = 3, /* RX -> TX: passthrough data */
-	ZLRS_PKT_ACK = 4,       /* both ways: passthrough ACK (ARQ profile) */
-	ZLRS_PKT_SYNC = 5,      /* TX -> RX: session setup */
-	ZLRS_PKT_PAIR_REQ = 6,  /* TX -> RX: pairing */
-	ZLRS_PKT_PAIR_RESP = 7, /* RX -> TX: pairing */
-	ZLRS_PKT_PAIR_CFM = 8,  /* TX -> RX: pairing */
-	ZLRS_PKT_SESS_RESP = 9, /* RX -> TX: session response carrying its nonce */
-	ZLRS_PKT_SESS_CFM = 10, /* TX -> RX: session confirm, tagged with the new session key */
+	ZLRS_PKT_SYNC = 4,      /* TX -> RX: session setup */
+	ZLRS_PKT_PAIR_REQ = 5,  /* TX -> RX: pairing */
+	ZLRS_PKT_PAIR_RESP = 6, /* RX -> TX: pairing */
+	ZLRS_PKT_PAIR_CFM = 7,  /* TX -> RX: pairing */
+	ZLRS_PKT_SESS_RESP = 8, /* RX -> TX: session response carrying its nonce */
+	ZLRS_PKT_SESS_CFM = 9,  /* TX -> RX: session confirm, tagged with the new session key */
 } zlrs_pkt_type_t;
 
 /* low 2 bits of the header */
-#define ZLRS_FLAG_MORE    0x01U /* more fragments follow */
-#define ZLRS_FLAG_ACK_REQ 0x02U /* legacy: acknowledgement requested */
-#define ZLRS_FLAG_ACK     ZLRS_FLAG_ACK_REQ /* DATA frame carries a cumulative ACK extension */
+#define ZLRS_FLAG_MORE 0x01U /* more fragments follow */
+#define ZLRS_FLAG_ACK  0x02U /* DATA: toggles after each accepted data packet */
 
 /* Security profiles, see doc/09-security.md 8 */
 typedef enum {
@@ -51,8 +49,6 @@ typedef struct {
 	uint8_t type;
 	uint8_t flags;
 	uint16_t seq;
-	bool ack_present;
-	uint16_t ack_seq;
 	const uint8_t *payload;
 	uint16_t payload_len;
 	const uint8_t *tag;

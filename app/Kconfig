@@ -313,8 +313,9 @@ config ZLRS_APP_DATA_ARQ
 	bool "Reliable data transfer (ARQ)" if ZLRS_APP_DEBUG
 	default y
 	help
-	  On by default: the receiver acknowledges payloads and the sender retransmits the window
-	  until it is acked. Costs latency and RAM; off means best-effort (drop when full, count it).
+	  On by default: the receiver flips a header ACK bit for each accepted data packet.
+	  The sender waits for that flip before sending the next packet and retransmits on timeout.
+	  Off means best-effort (drop when full, count it).
 	  See doc/08-protocol.md 4.3.
 
 config ZLRS_APP_SUB_BAND_MIX

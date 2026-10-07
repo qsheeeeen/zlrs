@@ -148,10 +148,10 @@ typedef struct {
 	uint32_t tx_data_bytes; /* User bytes on air, including retransmissions. */
 	uint32_t tx_full_data_frames;
 	uint32_t tx_ack_only_frames;
-	/* ACK coverage, staging delay and cumulative window pressure. */
+	/* ACK coverage, staging delay and stop-and-wait pressure. */
 	uint32_t tx_data_ack_frames;
 	uint32_t tx_staged_stale_ack_frames;
-	uint32_t tx_arq_window_stalls;
+	uint32_t tx_arq_wait_stalls;
 	uint32_t tx_retry_age_ms_last;
 	uint32_t tx_retry_age_ms_max;
 	uint32_t tx_ack_delay_ms_last;
@@ -168,9 +168,9 @@ typedef struct {
 	uint32_t rx_bad_tag;
 	uint32_t rx_bad_frame;
 	uint32_t rx_dup;
-	uint32_t rx_out_of_order; /* ARQ: drops caused by sequence-number jumps */
-	uint32_t tx_retries;      /* ARQ: retransmissions */
-	uint32_t tx_arq_drop;     /* ARQ: recovery probes after retry exhaustion (bytes are kept) */
+	uint32_t rx_out_of_order;   /* ARQ: drops caused by sequence-number jumps */
+	uint32_t tx_retries;        /* ARQ: retransmissions */
+	uint32_t tx_arq_retry_runs; /* ARQ: long retry runs (bytes are kept) */
 	uint32_t rx_frag_drop;
 	uint32_t rx_syncs;      /* SYNC frames received */
 	uint32_t tx_syncs;      /* SYNC frames sent */
@@ -205,33 +205,17 @@ typedef struct {
 
 /*
  * Bytes the link will hold for the air. ARQ keeps a frame in this queue until the peer
- * acknowledges it, so the queue has to cover the in-flight window plus whatever the application
+ * acknowledges it, so the queue has to cover that packet plus whatever the application
  * hands over in the meantime; at 512 a single 512-byte write filled it and everything after that
  * was dropped before it ever reached the air.
  */
 #define ZLRS_LINK_TX_QUEUE_LEN 4096U
 #define ZLRS_LINK_TLM_MAX_LEN  32U
 
-/*
- * ARQ profile (the data-link default, see doc/08-protocol.md 4.3): cumulative ACKs over a
- * fixed window, retransmit until acked or timed out. The window is a run of frames from the
- * head; bytes are only committed to the queue on ACK, so retransmits need no extra buffer.
- */
-#define ZLRS_ARQ_WINDOW      4U
+/* Stop-and-wait ARQ: one outstanding DATA packet in each direction. */
 #define ZLRS_ARQ_TIMEOUT_MS  30U
-/*
- * Retries before probing the peer for its cumulative ACK. Both ends retain their bytes and
- * sequence positions across recovery; only a new session resets them. At the default retry
- * cadence, 64 attempts allow about two seconds before the recovery probe takes over.
- */
+/* Count long retry runs for diagnostics; continue retransmitting without resetting progress. */
 #define ZLRS_ARQ_MAX_RETRIES 64U
-
-typedef struct {
-	uint16_t seq;
-	uint16_t len; /* Zero marks an empty slot; DATA always carries at least one byte. */
-	uint8_t flags;
-	uint8_t payload[ZLRS_PAYLOAD_MAX_LEN - 2U];
-} zlrs_arq_rx_frame_t;
 
 /* A DATA packet encoded during RX. Sender state commits only when its TX slot runs. */
 typedef struct {
@@ -244,10 +228,9 @@ typedef struct {
 	uint16_t data_len;
 	uint16_t data_mtu;
 	uint16_t run_bytes;
-	uint16_t ack_seq;
 	zlrs_profile_t profile;
 	bool more;
-	bool ack_present;
+	bool ack_bit;
 	bool retry;
 	bool valid;
 } zlrs_prepared_data_t;
@@ -349,25 +332,21 @@ typedef struct {
 	uint16_t queue_count;
 	uint16_t pending_data_len;
 
-	/* ARQ sender: lengths of the frames in flight, head frame at [0] */
+	/* ARQ sender: one packet retained until the peer ACK bit changes. */
 	uint16_t arq_seq;
-	uint16_t arq_len[ZLRS_ARQ_WINDOW];
-	uint32_t arq_first_sent_ms[ZLRS_ARQ_WINDOW];
-	/* MORE flag of each window frame: a retransmit has to reproduce the frame, run boundary included */
-	uint8_t arq_more[ZLRS_ARQ_WINDOW];
+	uint16_t arq_len;
+	uint32_t arq_first_sent_ms;
+	/* Retransmissions preserve the data sequence, payload and MORE flag. */
+	uint8_t arq_more;
 	uint8_t arq_used;
 	uint8_t arq_retries;
 	uint32_t arq_sent_ms;
 	/* Bytes already queued into the run that is being sent (0 = the next frame starts a new one) */
 	uint16_t arq_run_bytes;
-	/* ARQ receiver: highest in-order sequence number plus a pending cumulative ACK */
+	/* ARQ receiver: last accepted data sequence determines the ACK toggle. */
 	uint16_t arq_rx_seq;
 	bool arq_rx_started;
 	bool arq_ack_pending;
-	/* Retain authenticated frames beyond a gap until they can be delivered in order. */
-	zlrs_arq_rx_frame_t arq_rx[ZLRS_ARQ_WINDOW];
-	/* Retries ran out: wait for the peer's cumulative ACK, retaining the transmit window. */
-	bool arq_resync;
 
 	/* RX/TX buffers and reassembly */
 	/* Word alignment keeps the hardware SHA backend on its word-feed path. */

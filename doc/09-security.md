@@ -120,8 +120,9 @@ one.
   `SESS_CFM` verifies.
 - A `SYNC` that asks for a session change is believed only after recent total silence, so an old
   `SYNC` cannot be replayed inside a live session.
-- ARQ keeps a window of unacknowledged frames; duplicates are answered with the same cumulative
-  ack instead of being delivered twice.
+- ARQ retains one outstanding DATA per direction. The authenticated header ACK bit flips on
+  each accepted in-order data packet; duplicates repeat the same bit without duplicate delivery.
+  Retransmissions retain the inner data sequence and use a fresh outer frame sequence.
 
 ## 8. Parameters and algorithms
 

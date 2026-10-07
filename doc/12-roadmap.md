@@ -238,13 +238,9 @@ hardware recovery unattended.
 
 Research directions and acceptance:
 
-- **Alternating confirmation bit**: evaluate an ELRS-inspired ACK that changes on acceptance of
-  each new data block. A stop-and-wait design can use one transmit phase bit and one reverse ACK
-  bit in the header, repeating the phase on retransmission and withholding duplicate delivery.
-  ELRS's confirmation is one bit; its actual DATA header also carries a package index. Neither
-  that index nor our four-frame window is a required design choice. Define initialization,
-  lost data/ACK handling, delayed duplicates, idle periods, resynchronization and peer reboot
-  behavior as part of the candidate protocol. Compare alternatives on measured goodput.
+- **Alternating confirmation bit**: the current protocol uses stop-and-wait and one reverse
+  ACK toggle in the header, retaining the 2-byte data sequence for deduplication and reassembly.
+  Measure goodput and ACK latency on both boards before selecting a tighter scheduling policy.
 - **Compact unified framing**: use bits for flags and bounded values, infer fields from agreed
   context when possible, aggregate packet types, and place link control in the header. Carry
   reverse ACK/control in a header-only packet when no user data is available. Reconsider each
@@ -266,6 +262,29 @@ Research directions and acceptance:
   both boards. Reaching the current slot plan's ceiling does not establish the physical limit.
 
 ## Implemented behavior
+
+- **Protocol v4 header ACK toggle**: removes the standalone ACK type, ACK sequence extension,
+  sliding send/receive windows and recovery probes. Each direction retains one DATA until
+  the peer's header ACK bit flips; duplicates repeat the existing bit and timeouts retransmit
+  the same data sequence. Empty reverse DATA is 7 bytes under P1. SYNC, SESS_RESP and SESS_CFM
+  require their fixed current lengths; short-format compatibility is removed. Host regression
+  coverage includes data/ACK loss, duplex recovery, replay, malformed DATA, wraparound and
+  prepared-packet invalidation. LF/HF application plus MCUboot sysbuild, architecture gates and
+  all 41 tool tests pass. On 2026-10-08 both LF production devices (USB serials ending 3014/TX
+  and 300D/RX) were attached through usbipd, updated through MCUboot, hash-verified and confirmed
+  with image hash `612bf784699d8f79565bc28d019e00b7c4400592efdda0d1cc5acfc92b47c42f`.
+  Existing data24/P1/pairing settings were retained (CN433, -10 dBm power ceiling). Three paced
+  4 KiB duplex rounds and five unpaced 64 KiB duplex rounds passed byte-exact with no extra bytes.
+  The 64 KiB rounds took 1.454-1.706 s each (38.4-45.1 kB/s in each direction). Separately, each
+  direction delivered 128 KiB byte-exact after pausing only the receiving board's radio for 2 s
+  during transfer; elapsed times including the pause and 250 ms duplicate check were 5.027 s
+  TX-to-RX and 5.531 s RX-to-TX. The pause used management ENTER/EXIT with no local data input on
+  that board, so its deliberate input discard did not alter the test stream. An earlier duplex
+  management-pause check lost 2928 RX-to-TX bytes: management mode discards local port input
+  (`app/src/mgmt/mode.c`), so that check is not evidence of air-protocol lossless recovery.
+  Evidence is retained under `build/validation-ack-v4/`. Mixed-mode control, HF hardware,
+  long-duration stability and a matched comparison with the previous protocol remain pending.
+  Earlier entries below record validation of their original firmware revisions.
 
 - **Runtime data24 mode**: management setting `set-mode data24` disables control and uses the
   2.4 GHz data link for pairing, session setup and bidirectional serial transfer. Switching back

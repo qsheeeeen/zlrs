@@ -88,7 +88,7 @@ static uint8_t operating_mode = ZLRS_MODE_MIXED;
 
 /* Copy batch only; the pump drains until its source or the link queue is empty. */
 #define SERIAL_PUMP_CHUNK_LEN 256U
-#define REPORT_PERIOD_MS 1000U
+#define REPORT_PERIOD_MS      1000U
 
 static zlrs_link_t link_control;
 static zlrs_link_t link_data;
@@ -313,8 +313,8 @@ static void plan_mixed_init(void)
 	/* Four equal hardware slots must fit control and the larger pairing packets. */
 	const uint32_t control_window_us =
 		zlrs_radio_airtime_us(&control_mod, MAX(CTL_FRAME_LEN, ZLRS_PAIR_PAYLOAD_LEN +
-							       ZLRS_FRAME_HDR_LEN +
-							       ZLRS_TAG_LEN)) +
+									       ZLRS_FRAME_HDR_LEN +
+									       ZLRS_TAG_LEN)) +
 		CONFIG_ZLRS_APP_PREPARE_US + CONFIG_ZLRS_APP_TX_GUARD_US + ZLRS_RADIO_STARTUP_US +
 		100U;
 	const uint32_t hardware_max_hz = MAX(1U, 1000000U / (4U * control_window_us));
@@ -362,8 +362,8 @@ static void plan_mixed_init(void)
 	slot_budget_us = frame_period_us / 4U;
 	tlm_every_n = plan.tlm_every_n;
 	data_every_n = plan.data_every_n;
-	LOG_INF("data plan: mtu=%u frame=%u us slot_prepare=%u us", data_mtu,
-		frame_period_us, slot_prepare_us);
+	LOG_INF("data plan: mtu=%u frame=%u us slot_prepare=%u us", data_mtu, frame_period_us,
+		slot_prepare_us);
 
 	if (plan.clamped_by_duty) {
 		LOG_WRN("region %s duty %u%%: control rate %u Hz -> %u Hz", region->name,
@@ -635,8 +635,8 @@ static zlrs_radio_diag_t radio_diag;
 #endif
 
 /* TX owns the absolute clock; RX follows verified IRQ timestamps and scans when deaf. */
-#define ZLRS_PHASE_DEADBAND_US   100
-#define ZLRS_PHASE_SCAN_STEP_US  25U
+#define ZLRS_PHASE_DEADBAND_US  100
+#define ZLRS_PHASE_SCAN_STEP_US 25U
 
 static uint32_t frame_start_us;
 static uint32_t slot_deadline_us;
@@ -1603,10 +1603,9 @@ static void mgmt_debug_link(struct mgmt_debug_report_writer *writer, const char 
 			  "  DATA               : %u packets   %u user B   full %u   ACK-only %u\n",
 			  stats->tx_data_frames, stats->tx_data_bytes, stats->tx_full_data_frames,
 			  stats->tx_ack_only_frames);
-	mgmt_debug_append(writer,
-			  "  ACK                : %u DATA ACKs   %u stale   %u window stalls\n",
+	mgmt_debug_append(writer, "  ACK                : %u DATA ACKs   %u stale   %u ACK waits\n",
 			  stats->tx_data_ack_frames, stats->tx_staged_stale_ack_frames,
-			  stats->tx_arq_window_stalls);
+			  stats->tx_arq_wait_stalls);
 	mgmt_debug_append(writer,
 			  "  ACK timing         : retry age %u/%u ms   confirmation %u/%u ms\n",
 			  stats->tx_retry_age_ms_last, stats->tx_retry_age_ms_max,
@@ -1629,19 +1628,19 @@ static void mgmt_debug_link(struct mgmt_debug_report_writer *writer, const char 
 			  "  Session TX/RX      : SYNC %u/%u   response %u/%u   confirm %u/%u\n",
 			  stats->tx_syncs, stats->rx_syncs, stats->sess_resp_tx,
 			  stats->sess_resp_rx, stats->sess_cfm_tx, stats->sess_cfm_rx);
-	mgmt_debug_append(
-		writer,
-		"  ARQ / receive      : retries %u   restarts %u   dup %u   out-of-order %u\n",
-		stats->tx_retries, stats->tx_arq_drop, stats->rx_dup, stats->rx_out_of_order);
+	mgmt_debug_append(writer,
+			  "  ARQ / receive      : retries %u   long retry runs %u   dup %u   "
+			  "out-of-order %u\n",
+			  stats->tx_retries, stats->tx_arq_retry_runs, stats->rx_dup,
+			  stats->rx_out_of_order);
 	mgmt_debug_append(writer, "  Data loss          : fragment drops %u   dropped %u B\n",
 			  stats->rx_frag_drop, stats->data_drop_bytes);
 	mgmt_debug_append(writer, "  Queues             : TX %u   ARQ %u   reassembly %u B\n",
 			  (unsigned int)link->queue_count, (unsigned int)link->arq_used,
 			  (unsigned int)link->reasm.len);
-	mgmt_debug_append(writer,
-			  "  Sequence / ACK     : TX %u   RX %u   pending %u   recovery %u\n",
+	mgmt_debug_append(writer, "  Sequence / ACK     : TX %u   RX %u   pending %u\n",
 			  (unsigned int)link->arq_seq, (unsigned int)link->arq_rx_seq,
-			  (unsigned int)link->arq_ack_pending, (unsigned int)link->arq_resync);
+			  (unsigned int)link->arq_ack_pending);
 	mgmt_debug_append(
 		writer, "  Decode errors      : tag %u   frame %u   hop advances %u   resync %u\n",
 		stats->rx_bad_tag, stats->rx_bad_frame, stats->hop_advances, stats->hop_resync);
@@ -2371,8 +2370,8 @@ int main(void)
 	 */
 
 	log_flush();
-	zlrs_slot_timer_start(frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE,
-			      slot_prepare_us, zlrs_radio_wake);
+	zlrs_slot_timer_start(frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE, slot_prepare_us,
+			      zlrs_radio_wake);
 	uint32_t consumed_frame = 0U;
 
 	if (ZLRS_DATA24) {

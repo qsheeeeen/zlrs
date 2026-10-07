@@ -18,7 +18,7 @@ void test_frame(void)
 	zlrs_frame_t out;
 	zlrs_frame_t in = {
 		.type = ZLRS_PKT_RC,
-		.flags = ZLRS_FLAG_MORE | ZLRS_FLAG_ACK_REQ,
+		.flags = ZLRS_FLAG_MORE | ZLRS_FLAG_ACK,
 		.seq = 0x0102U,
 		.payload = payload,
 		.payload_len = sizeof(payload),
@@ -35,7 +35,7 @@ void test_frame(void)
 
 	len = zlrs_frame_encode(&in, buf, sizeof(buf));
 	CHECK(len == ZLRS_FRAME_HDR_LEN + sizeof(payload) + ZLRS_TAG_LEN);
-	CHECK(buf[0] == (uint8_t)((ZLRS_PKT_RC << 2) | ZLRS_FLAG_MORE | ZLRS_FLAG_ACK_REQ));
+	CHECK(buf[0] == (uint8_t)((ZLRS_PKT_RC << 2) | ZLRS_FLAG_MORE | ZLRS_FLAG_ACK));
 	CHECK(buf[1] == 0x02U && buf[2] == 0x01U); /* little-endian */
 	CHECK(buf[3] == 0x5aU);
 	CHECK(memcmp(&buf[ZLRS_FRAME_HDR_LEN + sizeof(payload)], tag, sizeof(tag)) == 0);
@@ -56,28 +56,26 @@ void test_frame(void)
 	CHECK(!zlrs_frame_decode(&out, buf, len, (uint8_t)(ZLRS_TAG_LEN + 1U)));
 	CHECK(zlrs_frame_encode(&in, buf, 4U) == 0U);
 
-	/* ACK metadata is a signed header extension; the decoded payload stays user data. */
+	/* The ACK toggle stays in the authenticated header and consumes no payload bytes. */
 	in.type = ZLRS_PKT_DATA_DOWN;
 	in.flags = ZLRS_FLAG_MORE | ZLRS_FLAG_ACK;
-	in.ack_present = true;
-	in.ack_seq = 0x1234U;
 	len = zlrs_frame_encode(&in, buf, sizeof(buf));
-	CHECK(len == ZLRS_FRAME_HDR_LEN + 2U + sizeof(payload) + ZLRS_TAG_LEN);
-	CHECK(buf[3] == 0x34U && buf[4] == 0x12U);
+	CHECK(len == ZLRS_FRAME_HDR_LEN + sizeof(payload) + ZLRS_TAG_LEN);
+	CHECK(buf[3] == payload[0]);
 	CHECK(zlrs_frame_decode(&out, buf, len, ZLRS_TAG_LEN));
-	CHECK(out.ack_present && out.ack_seq == 0x1234U);
+	CHECK((out.flags & ZLRS_FLAG_ACK) != 0U);
 	CHECK(out.payload_len == sizeof(payload) &&
 	      memcmp(out.payload, payload, sizeof(payload)) == 0);
-	CHECK(zlrs_frame_mac_len(&out) == ZLRS_FRAME_HDR_LEN + 2U + sizeof(payload));
+	CHECK(zlrs_frame_mac_len(&out) == ZLRS_FRAME_HDR_LEN + sizeof(payload));
 	in.payload = NULL;
 	in.payload_len = 0U;
 	len = zlrs_frame_encode(&in, buf, sizeof(buf));
-	CHECK(len == ZLRS_FRAME_HDR_LEN + 2U + ZLRS_TAG_LEN);
+	CHECK(len == ZLRS_FRAME_HDR_LEN + ZLRS_TAG_LEN);
 	CHECK(zlrs_frame_decode(&out, buf, len, ZLRS_TAG_LEN));
-	CHECK(out.ack_present && out.payload_len == 0U && out.payload == NULL);
+	CHECK((out.flags & ZLRS_FLAG_ACK) != 0U && out.payload_len == 0U && out.payload == NULL);
 
 	/* Full FLRC capacity with a tag and ACK; invalid lengths cannot wrap the sum. */
-	uint8_t large_payload[ZLRS_PAYLOAD_MAX_LEN - 2U];
+	uint8_t large_payload[ZLRS_PAYLOAD_MAX_LEN];
 
 	memset(large_payload, 0xa5, sizeof(large_payload));
 	in.payload = large_payload;
@@ -88,9 +86,13 @@ void test_frame(void)
 	CHECK(zlrs_frame_decode(&out, buf, len, ZLRS_TAG_LEN));
 	CHECK(out.payload_len == sizeof(large_payload));
 	CHECK(memcmp(out.payload, large_payload, sizeof(large_payload)) == 0);
-	CHECK(out.ack_present && out.ack_seq == in.ack_seq);
+	CHECK(out.flags == in.flags);
 	CHECK(zlrs_frame_encode(&in, buf, sizeof(buf) - 1U) == 0U);
 	in.payload_len = UINT16_MAX;
 	CHECK(zlrs_frame_encode(&in, buf, sizeof(buf)) == 0U);
 	CHECK(!zlrs_frame_decode(&out, buf, sizeof(buf) + 1U, ZLRS_TAG_LEN));
+	buf[0] = 0xFCU;
+	CHECK(!zlrs_frame_decode(&out, buf, len, ZLRS_TAG_LEN));
+	in.type = 63U;
+	CHECK(zlrs_frame_encode(&in, buf, sizeof(buf)) == 0U);
 }
