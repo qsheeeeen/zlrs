@@ -689,6 +689,53 @@ static int cfg_log_read(void *ctx, uint8_t index, uint32_t offset, uint8_t len, 
 	return zlrs_storage_log_read(index, offset, len, out, out_len);
 }
 
+#if defined(CONFIG_ZLRS_APP_DEBUG)
+static uint8_t cfg_debug_ack(uint8_t cmd, uint8_t status, uint8_t *out, size_t out_len)
+{
+	const uint8_t payload[2] = {cmd, status};
+
+	return zlrs_mgmt_encode(out, out_len, ZLRS_MGMT_CMD_ACK, payload, sizeof(payload));
+}
+
+static uint8_t cfg_debug_report(const zlrs_mgmt_ctx_t *ctx, const uint8_t *request,
+				uint8_t request_len, uint8_t *out, size_t out_len)
+{
+	uint8_t body[ZLRS_MGMT_PAYLOAD_MAX_LEN];
+	uint16_t offset;
+	uint16_t total_len = 0U;
+	uint8_t written = 0U;
+
+	if (request_len != ZLRS_MGMT_DEBUG_REPORT_REQ_LEN) {
+		return cfg_debug_ack(ZLRS_MGMT_CMD_DEBUG_REPORT, ZLRS_MGMT_E_PARAM, out, out_len);
+	}
+	if (ctx->debug_report == NULL) {
+		return cfg_debug_ack(ZLRS_MGMT_CMD_DEBUG_REPORT, ZLRS_MGMT_E_STATE, out, out_len);
+	}
+
+	offset = (uint16_t)request[1] | ((uint16_t)request[2] << 8);
+	const int rc =
+		ctx->debug_report(request[0], offset, &body[ZLRS_MGMT_DEBUG_REPORT_HEADER_LEN],
+				  ZLRS_MGMT_DEBUG_REPORT_CHUNK_MAX, &total_len, &written);
+
+	if (rc != ZLRS_MGMT_OK) {
+		return cfg_debug_ack(ZLRS_MGMT_CMD_DEBUG_REPORT, (uint8_t)rc, out, out_len);
+	}
+	if (written > ZLRS_MGMT_DEBUG_REPORT_CHUNK_MAX || offset > total_len ||
+	    (uint32_t)offset + written > total_len || (offset < total_len && written == 0U)) {
+		return cfg_debug_ack(ZLRS_MGMT_CMD_DEBUG_REPORT, ZLRS_MGMT_E_STATE, out, out_len);
+	}
+
+	body[0] = request[0];
+	body[1] = (uint8_t)(offset & 0xFFU);
+	body[2] = (uint8_t)(offset >> 8);
+	body[3] = (uint8_t)(total_len & 0xFFU);
+	body[4] = (uint8_t)(total_len >> 8);
+
+	return zlrs_mgmt_encode(out, out_len, ZLRS_MGMT_CMD_DEBUG_REPORT_RESP, body,
+				(uint8_t)(ZLRS_MGMT_DEBUG_REPORT_HEADER_LEN + written));
+}
+#endif
+
 /* ---- session ------------------------------------------------------------- */
 
 int zlrs_mgmt_mode_run(const zlrs_mgmt_ctx_t *ctx)
@@ -777,9 +824,20 @@ int zlrs_mgmt_mode_run(const zlrs_mgmt_ctx_t *ctx)
 				last_activity_ms = k_uptime_get_32();
 			}
 
-			const uint8_t len = zlrs_mgmt_dispatch(
-				&backend, cfg_parser.cmd, ZLRS_MGMT_PAYLOAD(&cfg_parser),
-				cfg_parser.payload_len, cfg_tx_line, sizeof(cfg_tx_line));
+			uint8_t len;
+
+#if defined(CONFIG_ZLRS_APP_DEBUG)
+			if (cfg_parser.cmd == ZLRS_MGMT_CMD_DEBUG_REPORT) {
+				len = cfg_debug_report(ctx, ZLRS_MGMT_PAYLOAD(&cfg_parser),
+						       cfg_parser.payload_len, cfg_tx_line,
+						       sizeof(cfg_tx_line));
+			} else
+#endif
+			{
+				len = zlrs_mgmt_dispatch(
+					&backend, cfg_parser.cmd, ZLRS_MGMT_PAYLOAD(&cfg_parser),
+					cfg_parser.payload_len, cfg_tx_line, sizeof(cfg_tx_line));
+			}
 
 			if (len > 0U) {
 				(void)mgmt_write(cfg_tx_line, len);

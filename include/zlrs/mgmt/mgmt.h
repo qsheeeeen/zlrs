@@ -48,6 +48,7 @@ extern "C" {
 #define ZLRS_MGMT_CMD_CONFIRM       0x42U /* host confirms this upgrade (no confirm = rollback) */
 #define ZLRS_MGMT_CMD_LOG_INFO      0x50U /* what the log store holds */
 #define ZLRS_MGMT_CMD_LOG_READ      0x51U /* one chunk: log index (1) + offset (4) + length (1) */
+#define ZLRS_MGMT_CMD_DEBUG_REPORT  0x60U /* debug image only: report id (1) + offset (2) */
 
 /* device -> host */
 #define ZLRS_MGMT_CMD_ACK             0x80U /* [cmd][status] */
@@ -56,6 +57,16 @@ extern "C" {
 #define ZLRS_MGMT_CMD_IMAGE_HASH_RESP 0x83U /* ZLRS_MGMT_IMAGE_HASH_LEN bytes of image hash */
 #define ZLRS_MGMT_CMD_LOG_INFO_RESP   0x90U /* see zlrs_mgmt_log_info_t */
 #define ZLRS_MGMT_CMD_LOG_DATA_RESP   0x91U /* log index (1) + offset (4) + bytes */
+#define ZLRS_MGMT_CMD_DEBUG_REPORT_RESP 0x84U /* report id + offset + total + text chunk */
+
+#define ZLRS_MGMT_DEBUG_REPORT_LINK  1U
+#define ZLRS_MGMT_DEBUG_REPORT_RATE  2U
+#define ZLRS_MGMT_DEBUG_REPORT_RADIO 3U
+#define ZLRS_MGMT_DEBUG_REPORT_POWER 4U
+#define ZLRS_MGMT_DEBUG_REPORT_REQ_LEN 3U
+#define ZLRS_MGMT_DEBUG_REPORT_HEADER_LEN 5U
+#define ZLRS_MGMT_DEBUG_REPORT_CHUNK_MAX \
+	(ZLRS_MGMT_PAYLOAD_MAX_LEN - ZLRS_MGMT_DEBUG_REPORT_HEADER_LEN)
 
 /* status codes */
 #define ZLRS_MGMT_OK        0U

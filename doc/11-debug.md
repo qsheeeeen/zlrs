@@ -24,9 +24,10 @@ management (see [07-firmware](07-firmware.md) 1).
 The debug console prints command replies. Deferred logs stay in RAM during RF and are flushed
 to flash at boot or management entry; export them with `tools/zlrs.py logs <directory>`. UART
 and shell log backends are disabled so an unopened terminal cannot block log processing.
-Console TX uses polling with an 8 KiB CDC FIFO, enough for complete `zlrs link`, `zlrs ports`
-and `zlrs radio` replies. It does not wait for an unopened host; output exceeding that FIFO
-can be dropped, so export files through management rather than printing them to the shell.
+Console TX uses polling with an 8 KiB CDC FIFO for short shell replies. Detailed link, rate,
+radio and power reports use the management port, which transfers them in bounded chunks. The
+console does not wait for an unopened host; output exceeding that FIFO can be dropped, so export
+files through management rather than printing them to the shell.
 
 `CONFIG_ZLRS_APP_DEBUG` is the marker for "this image is for the bench": the options named
 `ZLRS_APP_DEBUG_*` depend on it, and shipped configurations (`app/prj.conf`, everything under
@@ -41,6 +42,10 @@ quietly end up in a released image.
 | shell `zlrs ports` | per-endpoint `ready / active / rx_total / rx_dropped` for the data port |
 | shell `zlrs mgmt` | enter management mode (EXIT returns) |
 | shell `zlrs recovery` | reboot into MCUboot serial recovery |
+| management `link` | `python3 tools/zlrs.py link`: link counters, frequency, RSSI, LQ, queues and ARQ state |
+| management `rate` | `python3 tools/zlrs.py rate`: latest one-second receive-window and TX rates |
+| management `radio` | `python3 tools/zlrs.py radio`: timer, IRQ, RAL, FIFO and packet timing diagnostics |
+| management `power` | `python3 tools/zlrs.py power`: regional ceiling and live per-link LR2021 setpoints; not an RF output measurement |
 | `tests/hardware/unit` | separate Ztest firmware, with one source file per tested module; see section 7 |
 | shell `zlrs mcuboot` | image state as MCUboot sees it (slot headers, confirm bit, copy state) |
 | `CONFIG_ZLRS_APP_DEBUG_STATS_LOG` | 1 Hz `stats:` line (counters, LQ, duty, dynamic power) and `air:` line (completed transactions per link) |
@@ -49,8 +54,17 @@ quietly end up in a released image.
 | `CONFIG_ZLRS_APP_DEBUG_LED_BRIGHTNESS_PERCENT` | attenuate the status pixel in a debug image (the default is 10%); production images use full brightness |
 | `CONFIG_ZLRS_APP_TX_GUARD_US` | fixed delay from hardware slot boundary to SET_TX; both peers must use the same timing settings |
 
-The shell is gated by `CONFIG_ZLRS_APP_DEBUG_SHELL` and runs on the console CDC; the supported
-configuration paths are in [09-security](09-security.md) 9 and [07-firmware](07-firmware.md) 3.
+The shell is gated by `CONFIG_ZLRS_APP_DEBUG_SHELL` and runs on the console CDC. Detailed
+management reports are gated by `CONFIG_ZLRS_APP_DEBUG`; each report enters management mode,
+pauses RF briefly, reads the snapshot, then exits and resumes RF. The CLI selects the management
+CDC automatically when one module is connected; add `--serial <USB-serial-substring>` when
+several modules are connected. The supported configuration paths are in
+[09-security](09-security.md) 9 and [07-firmware](07-firmware.md) 3.
+
+The configured power target is shared by both links. In mixed mode, the sub-G control link is
+clamped to the region's limit, while 2.4 GHz data uses the configured target; adaptive power only
+changes the control link. The reported dBm values are LR2021 setpoints, not measured radiated
+power, which can differ between bands and RF paths.
 
 ## 3. Switches for isolating a layer
 
@@ -93,10 +107,10 @@ zlrs-build -p auto -- \
 
 After installing, select data-only operation on both devices with
 `python3 tools/zlrs.py set-mode data24 --all`, then reboot both to apply. Pairing runs on 2.4 GHz
-in this mode; no previous pairing record is required. Read the **data** section of `zlrs link`;
-management status and the LED follow the data link. This uses the normal hopping and preparation
-defaults. Fixed-channel isolation and the 1 ms preparation window belong to the radio test image
-in section 7.
+in this mode; no previous pairing record is required. Read the **data** section of the management
+`link` report; management status and the LED follow the data link. This uses the normal hopping
+and preparation defaults. Fixed-channel isolation and the 1 ms preparation window belong to the
+radio test image in section 7.
 
 Measure end-to-end payload throughput between two paired devices with:
 
@@ -167,7 +181,7 @@ complete data path, including radio scheduling and ARQ, rather than raw PHY fram
   twelve consecutive open/query/close cycles on both LF boards. Hold one connection for a
   measurement and reject missing statistics. A reboot command alone proves nothing: compare
   kernel uptime before and after. USB/IP can preserve device paths through a real reboot.
-- **`zlrs rate`** prints the last second per link: receive windows, how many of them heard a
+- **Management `rate`** prints the last second per link: receive windows, how many heard a
   frame, frames sent and the state. That is the number to compare when a link misbehaves; a
   receiver problem shows up as a hit rate near zero with the window count unchanged.
 - **`test_radio rxwin <ms>`** (radio test image only) stretches the data link's receive window (0 restores it). With the window
@@ -242,8 +256,8 @@ One line each; details live in code comments.
   window per 53 ms frame still needs the phase to be right, and the lock only ever *lengthens* a
   frame, so the end that is behind keeps stretching. What a working link needs is a slot budget
   that covers a whole receive window, which means an honest frame period for this radio port.
-- **Where those milliseconds come from** (`zlrs radio`, 2.4G data link, hopping off, back-to-back
-  TX from the at-boot raw bench, 142 frames/s = 7.0 ms per transaction):
+- **Where those milliseconds come from** (management `radio`, 2.4G data link, hopping off,
+  back-to-back TX from the at-boot raw bench, 142 frames/s = 7.0 ms per transaction):
 
   | Part | Measured | Why |
   | --- | --- | --- |
@@ -264,8 +278,8 @@ One line each; details live in code comments.
   is safe, but the delayed workqueue hop is not where the milliseconds are.
 - **The console drops log lines in bursts**: the reported `TX/air/rx/win/tm/rd/key` group loses
   lines whenever the host reads in bursts, and the line that carries the numbers under test is
-  often one of them. Anything a measurement depends on needs a shell command (`zlrs radio`,
-  `zlrs link`) or a counter the tooling reads, never a log line.
+  often one of them. Anything a measurement depends on needs a management command (`radio`,
+  `link`) or a counter the tooling reads, never a log line.
 - Sending one confirmation for the pairing and session handshakes is a coin flip: the two ends do
   not share a slot phase while they are still finding each other. Both handshakes repeat, and the
   initiator keeps listening where a peer that missed the confirm is still answering.
@@ -289,9 +303,9 @@ Both links use the exclusive RAL driver described in [06-architecture](06-archit
 `zlrs direct` and runtime `blast` / `listen` commands have been removed; raw testing now lives in `tests/hardware/app/platform/test_radio.c`, before the slot owner starts
 in the separate radio test image.
 
-`zlrs radio` reports TIMER1 boundaries, maximum IRQ lateness, missed boundaries and skipped
-frames/slots; RAL TX completions, RX packets, setup cost, late launches and chip errors; packet
-build cost and RX phase error/correction. Empty RX windows are expected when the peer is idle.
+The management `radio` report shows TIMER1 boundaries, maximum IRQ lateness, missed boundaries and
+skipped frames/slots; RAL TX completions, RX packets, setup cost, late launches and chip errors;
+packet build cost and RX phase error/correction. Empty RX windows are expected when the peer is idle.
 It also separates preparation time from launch command time, reports FIFO readiness lead,
 launch jitter and RF startup time. `TX command` isolates the five-byte scheduled trigger
 from the general command timing, which also includes RX. `launch wait` now measures IRQ
@@ -333,9 +347,9 @@ the deadline 100 us before preparation and another 100 us for completion; an exa
 deadline is rejected by the radio size check. Control cadence and regional limits do not size
 data24 slots.
 
-`zlrs radio` splits late attempts into `prepare` (the packet/FIFO missed the launch point) and
-`trigger` (the prepared launch call ran late). `RX finish` measures GPIO IRQ to completed link
-processing, including SPI, authentication and serial output callbacks; `protocol` measures just
+The management `radio` report splits late attempts into `prepare` (the packet/FIFO missed the
+launch point) and `trigger` (the prepared launch call ran late). `RX finish` measures GPIO IRQ to
+completed link processing, including SPI, authentication and serial output callbacks; `protocol` measures just
 the link-completion call. `IRQ service` includes reading and clearing IRQ status over SPI.
 Compare counter deltas during a transfer; boot, management and configuration work can affect
 the lifetime maxima.
@@ -397,9 +411,10 @@ overlaps RX. A changed session, timeout or periodic SYNC may discard a staged pa
 normal path then reloads its own bytes. The current RX IRQ and completion semaphore are kept
 intact throughout staging.
 
-`zlrs link` also reports successful DATA packets, their user bytes (including retransmissions),
-frames at the modem's maximum length, and empty DATA replies carrying only an ACK. Use transfer
-counter deltas: `user / DATA packets` gives the mean application bytes per packet. `full` counts
+The management `link` report also shows successful DATA packets, their user bytes (including
+retransmissions), frames at the modem's maximum length, and empty DATA replies carrying only an
+ACK. Use transfer counter deltas: `user / DATA packets` gives the mean application bytes per
+packet. `full` counts
 511-byte FLRC or 255-byte LoRa frames; a smaller configured MTU or a frame without an ACK extension
 can make that count low even when the application fills its configured packet budget.
 

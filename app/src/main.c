@@ -16,6 +16,11 @@
 
 #include <string.h>
 
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
+#include <stdarg.h>
+#include <stdio.h>
+#endif
+
 #if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
 #include <zephyr/retention/bootmode.h>
 #include <zephyr/dfu/mcuboot.h>
@@ -43,9 +48,9 @@
 #include "state/sys_bus.h"
 #include "storage/log.h"
 #include "storage/settings.h"
+#include "zlrs/mgmt/mgmt.h"
 
 #include "zlrs/crsf/crsf.h"
-#include "zlrs/mgmt/mgmt.h"
 #include "zlrs/link/link.h"
 #include "zlrs/region/region.h"
 #include "zlrs/proto/tlm.h"
@@ -110,7 +115,7 @@ static zlrs_mod_cfg_t data_mod;
 #endif
 
 /* Fingerprint for the bench output: enough to compare two ends, not enough to leak the key */
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_SHELL) || IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
 static uint32_t fingerprint(const uint8_t *data, size_t len)
 {
 	uint32_t h = 2166136261U;
@@ -605,7 +610,7 @@ static void radio_wait_done(uint32_t budget_us)
 }
 
 /* Debug measurements of the absolute frame clock, slot work and authenticated RX offsets. */
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
 typedef struct {
 	uint32_t frames;
 	uint32_t frame_us_last; /* measured period of the last frame */
@@ -623,6 +628,9 @@ typedef struct {
 
 static bench_t bench;
 static uint32_t prev_frame_start_us;
+#endif
+
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
 static zlrs_radio_diag_t radio_diag;
 #endif
 
@@ -780,7 +788,7 @@ static void run_slot(uint8_t slot)
 		return;
 	}
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
 	/* How much of a slot goes into the port's own submit path (vs. the air) */
 	bench.submit_us_last = now_us() - slot_start_us;
 	if (bench.submit_us_last > bench.submit_us_max) {
@@ -865,7 +873,7 @@ static void run_slot(uint8_t slot)
 		}
 	}
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
 	{
 		const uint32_t took_us = now_us() - slot_start_us;
 
@@ -1123,9 +1131,9 @@ static void pump_crsf(uint32_t now_ms)
 	}
 }
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
 /*
- * Bench: measure one link over a few seconds. Receive windows, how many of them heard a frame, and
+ * Debug reports use the most recent one-second window: receive windows, how many heard a frame, and
  * frames sent, all as a rate: that is the number a marginal antenna or a misaligned slot shows up
  * in, and it is what tells a receiver problem apart from a protocol one.
  */
@@ -1149,18 +1157,18 @@ static rate_snap_t rate_snapshot(const zlrs_link_t *link)
 }
 
 /*
- * Most recent one-second window, kept up to date by report(). The shell command must not block:
- * sleeping in the shell thread stalls the console CDC and the host drops the device (measured).
+ * Most recent one-second window, kept up to date by report().
  */
 static struct {
 	uint32_t wins;
 	uint32_t hits;
 	uint32_t tx;
+	uint32_t span_ms;
 	uint8_t state;
 } rate_last[2];
 
 static void rate_update(uint8_t idx, const zlrs_link_t *link, const rate_snap_t *before,
-			uint32_t span_ms)
+			uint32_t span_ms, bool configured)
 {
 	const rate_snap_t now = rate_snapshot(link);
 	const uint32_t wins = now.wins - before->wins;
@@ -1168,17 +1176,18 @@ static void rate_update(uint8_t idx, const zlrs_link_t *link, const rate_snap_t 
 	const uint32_t tx = now.tx - before->tx;
 	const uint32_t span = (span_ms != 0U) ? span_ms : 1U;
 
-	rate_last[idx].wins = (wins * 1000U) / span;
-	rate_last[idx].hits = (hits * 1000U) / span;
-	rate_last[idx].tx = (tx * 1000U) / span;
-	rate_last[idx].state = link->state;
+	rate_last[idx].wins = wins;
+	rate_last[idx].hits = hits;
+	rate_last[idx].tx = tx;
+	rate_last[idx].span_ms = span;
+	rate_last[idx].state = configured ? link->state : ZLRS_STATE_UNCONFIGURED;
 }
 #endif
 
 static void report(uint32_t now_ms)
 {
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
-	/* Per-second link rates for `zlrs rate` (see below) */
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
+	/* Per-second link rates are read by the debug management report. */
 	static rate_snap_t rate_before[2];
 	static uint32_t rate_ms;
 #endif
@@ -1188,11 +1197,11 @@ static void report(uint32_t now_ms)
 	}
 	last_report_ms = now_ms;
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
 	rate_update(0U, &link_control, &rate_before[0],
-		    (rate_ms != 0U) ? now_ms - rate_ms : REPORT_PERIOD_MS);
+		    (rate_ms != 0U) ? now_ms - rate_ms : REPORT_PERIOD_MS, ZLRS_CONTROL_ENABLED);
 	rate_update(1U, &link_data, &rate_before[1],
-		    (rate_ms != 0U) ? now_ms - rate_ms : REPORT_PERIOD_MS);
+		    (rate_ms != 0U) ? now_ms - rate_ms : REPORT_PERIOD_MS, ZLRS_DATA_ENABLED);
 	rate_before[0] = rate_snapshot(&link_control);
 	rate_before[1] = rate_snapshot(&link_data);
 	rate_ms = now_ms;
@@ -1261,7 +1270,7 @@ static void report(uint32_t now_ms)
 		link_control.stats.rssi_min, link_control.stats.rssi_max);
 	/*
 	 * Listen windows per slot and how many of them heard a frame: a window that almost never
-	 * hears anything is a phase problem, not a range problem (see zlrs link for the rest).
+	 * hears anything is a phase problem, not a range problem (see the management link report).
 	 */
 	LOG_INF("win : ctl rx %u/%u/%u/%u got %u/%u/%u/%u | sync tx=%u rx=%u resp %u+%u cfm %u+%u",
 		link_control.stats.slot_rx[0], link_control.stats.slot_rx[1],
@@ -1328,6 +1337,11 @@ static void report(uint32_t now_ms)
 #endif
 
 	/* Every line above covers one second: the next one gets a fresh timing window */
+#endif /* CONFIG_ZLRS_APP_DEBUG_STATS_LOG */
+
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
+	/* Each management snapshot reports timing maxima from the preceding one-second interval. */
+	phase_hits = 0U;
 	bench.frame_us_min = 0U;
 	bench.frame_us_max = 0U;
 	bench.rx_offset_min = 0U;
@@ -1336,7 +1350,7 @@ static void report(uint32_t now_ms)
 	for (uint8_t i = 0U; i < 4U; i++) {
 		bench.slot_us_max[i] = 0U;
 	}
-#endif /* CONFIG_ZLRS_APP_DEBUG_STATS_LOG */
+#endif
 }
 
 /*
@@ -1455,7 +1469,8 @@ static void confirm_image(void)
 		} else {
 			LOG_ERR("image confirm failed; MCUboot will revert on next reset");
 		}
-	} else if (zlrs_slot_timer_now_ms() >= (uint32_t)CONFIG_ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS) {
+	} else if (zlrs_slot_timer_now_ms() >=
+		   (uint32_t)CONFIG_ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS) {
 		/* Never confirmed by the host: reset and let MCUboot roll back instead of clinging on */
 		LOG_ERR("upgrade not confirmed by host: rebooting to roll back");
 		sys_reboot(SYS_REBOOT_COLD);
@@ -1463,6 +1478,435 @@ static void confirm_image(void)
 #else
 #endif
 }
+
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
+#define MGMT_DEBUG_REPORT_CAPACITY 4096U
+
+struct mgmt_debug_report_writer {
+	size_t len;
+	bool failed;
+};
+
+static char mgmt_debug_report[MGMT_DEBUG_REPORT_CAPACITY];
+static uint16_t mgmt_debug_report_len;
+static uint8_t mgmt_debug_report_id;
+
+static void mgmt_debug_append(struct mgmt_debug_report_writer *writer, const char *format, ...)
+{
+	va_list args;
+	const size_t remaining = sizeof(mgmt_debug_report) - writer->len;
+	int written;
+
+	if (writer->failed || remaining == 0U) {
+		writer->failed = true;
+		return;
+	}
+
+	va_start(args, format);
+	written = vsnprintf(&mgmt_debug_report[writer->len], remaining, format, args);
+	va_end(args);
+
+	if (written < 0 || (size_t)written >= remaining) {
+		writer->failed = true;
+		return;
+	}
+	writer->len += (size_t)written;
+}
+
+static const char *mgmt_debug_state(uint8_t state)
+{
+	switch (state) {
+	case ZLRS_STATE_UNCONFIGURED:
+		return "unconfigured";
+	case ZLRS_STATE_UNPAIRED:
+		return "unpaired";
+	case ZLRS_STATE_PAIRING:
+		return "pairing";
+	case ZLRS_STATE_SEARCHING:
+		return "searching";
+	case ZLRS_STATE_CONNECTED:
+		return "connected";
+	default:
+		return "unknown";
+	}
+}
+
+static const char *mgmt_debug_bands(const zlrs_link_cfg_t *cfg)
+{
+	const bool primary_24 = cfg->domain == ZLRS_DOMAIN_ISM2400;
+	const bool second_24 = cfg->second_domain == ZLRS_DOMAIN_ISM2400;
+
+	if (cfg->second_domain == 0xFFU || cfg->second_domain == cfg->domain) {
+		return primary_24 ? "2.4 GHz" : "sub-G";
+	}
+	return (primary_24 || second_24) ? "2.4 GHz + sub-G" : "sub-G";
+}
+
+static void mgmt_debug_frequency(struct mgmt_debug_report_writer *writer, uint32_t hz)
+{
+	if (hz >= 1000000000U) {
+		mgmt_debug_append(writer, "%u.%03u GHz", hz / 1000000000U,
+				  (hz % 1000000000U) / 1000000U);
+	} else {
+		mgmt_debug_append(writer, "%u.%03u MHz", hz / 1000000U, (hz % 1000000U) / 1000U);
+	}
+}
+
+static void mgmt_debug_phy(struct mgmt_debug_report_writer *writer, const zlrs_mod_cfg_t *mod)
+{
+	if (mod->modulation == ZLRS_MOD_FLRC) {
+		mgmt_debug_append(writer, "FLRC, %u.%03u Mbps", mod->rate_bps / 1000000U,
+				  (mod->rate_bps / 1000U) % 1000U);
+	} else {
+		mgmt_debug_append(writer, "LoRa, SF%u / %u kHz", (unsigned int)mod->sf,
+				  mod->bw_hz / 1000U);
+	}
+}
+
+static void mgmt_debug_link(struct mgmt_debug_report_writer *writer, const char *name,
+			    const zlrs_link_t *link, bool active)
+{
+	const zlrs_link_stats_t *const stats = &link->stats;
+	const uint32_t frequency_hz = zlrs_fhss_current_hz(&link->fhss);
+
+	mgmt_debug_append(writer, "\n[%s LINK]\n", name);
+	mgmt_debug_append(writer, "  Hopping bands      : %s\n", mgmt_debug_bands(&link->cfg));
+	mgmt_debug_append(writer, "  Link state / role  : %-12s / %s\n",
+			  active ? mgmt_debug_state(link->state) : "unconfigured",
+			  link->cfg.role == ZLRS_ROLE_TX ? "TX" : "RX");
+	mgmt_debug_append(writer, "  Pairing / session  : %s / %s   Profile: P%u\n",
+			  link->paired ? "paired" : "not paired",
+			  link->session_valid ? "active" : "inactive",
+			  (unsigned int)link->cfg.profile);
+	mgmt_debug_append(writer, "  Frequency          : ");
+	mgmt_debug_frequency(writer, frequency_hz);
+	mgmt_debug_append(writer, "   Hop: %u   Frame: %u\n", (unsigned int)link->fhss.index,
+			  link->frame_index);
+	mgmt_debug_append(writer, "  PHY / TX setpoint  : ");
+	mgmt_debug_phy(writer, &link->cfg.mod);
+	mgmt_debug_append(writer, "   /   %d dBm\n", (int)link->cfg.tx_power_dbm);
+	mgmt_debug_append(writer, "  RF frames          : TX %u   RX %u   Failed %u\n",
+			  stats->tx_frames, stats->rx_frames, stats->radio_fail);
+	if (stats->rx_frames != 0U && stats->last_rssi != 0) {
+		mgmt_debug_append(writer,
+				  "  Signal             : RSSI %d dBm   Link quality %u%%\n",
+				  (int)stats->last_rssi, (unsigned int)stats->lq_percent);
+	} else if (stats->rx_frames != 0U) {
+		mgmt_debug_append(writer, "  Signal             : RSSI n/a   Link quality %u%%\n",
+				  (unsigned int)stats->lq_percent);
+	} else {
+		mgmt_debug_append(writer, "  Signal             : no received frames yet\n");
+	}
+	mgmt_debug_append(writer, "  RF bytes           : TX %u B   RX %u B\n", stats->tx_bytes,
+			  stats->rx_bytes);
+	mgmt_debug_append(writer,
+			  "  DATA               : %u packets   %u user B   full %u   ACK-only %u\n",
+			  stats->tx_data_frames, stats->tx_data_bytes, stats->tx_full_data_frames,
+			  stats->tx_ack_only_frames);
+	mgmt_debug_append(writer,
+			  "  ACK                : %u DATA ACKs   %u stale   %u window stalls\n",
+			  stats->tx_data_ack_frames, stats->tx_staged_stale_ack_frames,
+			  stats->tx_arq_window_stalls);
+	mgmt_debug_append(writer,
+			  "  ACK timing         : retry age %u/%u ms   confirmation %u/%u ms\n",
+			  stats->tx_retry_age_ms_last, stats->tx_retry_age_ms_max,
+			  stats->tx_ack_delay_ms_last, stats->tx_ack_delay_ms_max);
+	mgmt_debug_append(writer, "  ACK totals         : %u ms across %u entries\n",
+			  stats->tx_ack_delay_ms_sum, stats->tx_ack_entries);
+	mgmt_debug_append(writer, "  Slots TX           : %u / %u / %u / %u\n", stats->slot_tx[0],
+			  stats->slot_tx[1], stats->slot_tx[2], stats->slot_tx[3]);
+	mgmt_debug_append(
+		writer, "  Slots RX / hit     : %u / %u / %u / %u   |   %u / %u / %u / %u\n",
+		stats->slot_rx[0], stats->slot_rx[1], stats->slot_rx[2], stats->slot_rx[3],
+		stats->slot_hit[0], stats->slot_hit[1], stats->slot_hit[2], stats->slot_hit[3]);
+	mgmt_debug_append(writer, "  Slot failures      : %u / %u / %u / %u\n", stats->slot_fail[0],
+			  stats->slot_fail[1], stats->slot_fail[2], stats->slot_fail[3]);
+	mgmt_debug_append(writer, "  Pairing TX/RX      : %u/%u/%u  /  %u/%u/%u   rejected %u\n",
+			  stats->pair_req_tx, stats->pair_resp_tx, stats->pair_cfm_tx,
+			  stats->pair_req_rx, stats->pair_resp_rx, stats->pair_cfm_rx,
+			  stats->pair_rejects);
+	mgmt_debug_append(writer,
+			  "  Session TX/RX      : SYNC %u/%u   response %u/%u   confirm %u/%u\n",
+			  stats->tx_syncs, stats->rx_syncs, stats->sess_resp_tx,
+			  stats->sess_resp_rx, stats->sess_cfm_tx, stats->sess_cfm_rx);
+	mgmt_debug_append(
+		writer,
+		"  ARQ / receive      : retries %u   restarts %u   dup %u   out-of-order %u\n",
+		stats->tx_retries, stats->tx_arq_drop, stats->rx_dup, stats->rx_out_of_order);
+	mgmt_debug_append(writer, "  Data loss          : fragment drops %u   dropped %u B\n",
+			  stats->rx_frag_drop, stats->data_drop_bytes);
+	mgmt_debug_append(writer, "  Queues             : TX %u   ARQ %u   reassembly %u B\n",
+			  (unsigned int)link->queue_count, (unsigned int)link->arq_used,
+			  (unsigned int)link->reasm.len);
+	mgmt_debug_append(writer,
+			  "  Sequence / ACK     : TX %u   RX %u   pending %u   recovery %u\n",
+			  (unsigned int)link->arq_seq, (unsigned int)link->arq_rx_seq,
+			  (unsigned int)link->arq_ack_pending, (unsigned int)link->arq_resync);
+	mgmt_debug_append(
+		writer, "  Decode errors      : tag %u   frame %u   hop advances %u   resync %u\n",
+		stats->rx_bad_tag, stats->rx_bad_frame, stats->hop_advances, stats->hop_resync);
+	mgmt_debug_append(writer, "  Cadence            : telemetry 1/%u   data 1/%u   sync 1/%u\n",
+			  (unsigned int)link->cfg.tlm_every_n, (unsigned int)link->cfg.data_every_n,
+			  (unsigned int)link->cfg.resync_every_n);
+}
+
+static void mgmt_debug_rate(struct mgmt_debug_report_writer *writer)
+{
+	static const char *const names[2] = {"Control", "Data"};
+
+	mgmt_debug_append(writer, "Link      Windows/s  Heard/s  Hit rate    TX/s  State\n");
+	mgmt_debug_append(writer, "--------- ---------- -------- --------- ------- -----------\n");
+	for (uint8_t i = 0U; i < ARRAY_SIZE(rate_last); i++) {
+		const uint32_t span = (rate_last[i].span_ms != 0U) ? rate_last[i].span_ms : 1U;
+		const uint32_t windows_x10 = (rate_last[i].wins * 10000U + span / 2U) / span;
+		const uint32_t heard_x10 = (rate_last[i].hits * 10000U + span / 2U) / span;
+		const uint32_t hit_x10 =
+			(rate_last[i].wins != 0U)
+				? (rate_last[i].hits * 1000U + rate_last[i].wins / 2U) /
+					  rate_last[i].wins
+				: 0U;
+		const uint32_t tx_x10 = (rate_last[i].tx * 10000U + span / 2U) / span;
+
+		mgmt_debug_append(writer, "%-9s %6u.%u %6u.%u %7u.%u%% %5u.%u %s\n", names[i],
+				  windows_x10 / 10U, windows_x10 % 10U, heard_x10 / 10U,
+				  heard_x10 % 10U, hit_x10 / 10U, hit_x10 % 10U, tx_x10 / 10U,
+				  tx_x10 % 10U, mgmt_debug_state(rate_last[i].state));
+	}
+	mgmt_debug_append(writer, "\nHit rate = heard frames / listen windows. Rates use the "
+				  "latest sample interval.\n"
+				  "TX counts successful RF frames.\n");
+}
+
+static void mgmt_debug_radio(struct mgmt_debug_report_writer *writer)
+{
+	zlrs_radio_diag_t diag;
+	struct zlrs_slot_timer_stats timer;
+	const uint32_t protocol_ms = zlrs_slot_timer_now_ms();
+	const uint32_t kernel_ms = k_uptime_get_32();
+	const uint32_t max_airtime_us = zlrs_radio_airtime_us(&data_mod, ZLRS_FRAME_MAX_LEN);
+
+	zlrs_radio_diag(&diag);
+	zlrs_slot_timer_stats(&timer);
+	mgmt_debug_append(writer, "[FRAME PLAN]\n");
+	mgmt_debug_append(writer, "  Frame period       : %u.%03u ms\n", frame_period_us / 1000U,
+			  frame_period_us % 1000U);
+	mgmt_debug_append(writer, "  Slot budget        : %u.%03u ms   Preparation: %u.%03u ms\n",
+			  slot_budget_us / 1000U, slot_budget_us % 1000U, slot_prepare_us / 1000U,
+			  slot_prepare_us % 1000U);
+	mgmt_debug_append(writer, "  Data MTU           : %u B   Full-frame airtime: %u.%03u ms\n",
+			  (unsigned int)data_mtu, max_airtime_us / 1000U, max_airtime_us % 1000U);
+	mgmt_debug_append(writer, "  Launch guard       : %u us\n",
+			  (unsigned int)CONFIG_ZLRS_APP_TX_GUARD_US);
+
+	mgmt_debug_append(writer, "\n[CLOCK / TIMER]\n");
+	mgmt_debug_append(writer, "  TIMER1 / kernel    : %u / %u ms   Delta: %+d ms\n",
+			  protocol_ms, kernel_ms, (int32_t)(protocol_ms - kernel_ms));
+	mgmt_debug_append(writer, "  Boundaries         : %u   IRQ max lateness: %u us\n",
+			  timer.boundaries, timer.irq_late_us_max);
+	mgmt_debug_append(writer, "  Missed / skipped   : %u boundaries   %u frames   %u slots\n",
+			  timer.missed_boundaries, skipped_frames, missed_slots);
+	mgmt_debug_append(
+		writer, "  Prepare wait       : skipped %u   late %u us   IRQ %u us   wake %u us\n",
+		prepare_wait_skipped, prepare_wait_late_us_max, prepare_irq_late_us_max,
+		prepare_wake_us_max);
+	mgmt_debug_append(writer,
+			  "  Phase correction   : error %+d us   applied %+d us   hits %u\n",
+			  (int)phase_err_us, (int)phase_last_us, phase_hits);
+
+	mgmt_debug_append(writer, "\n[RADIO DRIVER]\n");
+	mgmt_debug_append(writer, "  RAL transactions   : %u   TX done %u   RX packets %u\n",
+			  diag.transactions, diag.tx_done, diag.rx_packets);
+	mgmt_debug_append(writer, "  Overrun / late     : %u / %u   Empty IRQ: %u\n", diag.overruns,
+			  diag.late_starts, diag.empty_irq);
+	mgmt_debug_append(writer, "  Setup last / max   : %u / %u us   TX %u us   RX %u us\n",
+			  diag.submit_us_last, diag.submit_us_max, diag.tx_us_last,
+			  diag.rx_us_last);
+	mgmt_debug_append(writer, "  IRQ status         : 0x%08x   Stale IRQs: %u (0x%08x)\n",
+			  diag.irq_last, diag.stale_irq, diag.stale_irq_bits);
+
+	mgmt_debug_append(writer, "\n[TRANSMIT TIMING]\n");
+	mgmt_debug_append(writer, "  Late launch        : %u attempts   last / max %u / %u us\n",
+			  diag.prepare_late_starts + diag.trigger_late_starts,
+			  diag.launch_late_us_last, diag.launch_late_us_max);
+	mgmt_debug_append(writer, "  Late by phase      : prepare %u   trigger %u\n",
+			  diag.prepare_late_starts, diag.trigger_late_starts);
+	mgmt_debug_append(writer, "  Launch IRQ delay   : last / max %u / %u us   Late IRQ %u\n",
+			  diag.launch_irq_late_us_last, diag.launch_irq_late_us_max,
+			  diag.late_trigger_irq);
+	mgmt_debug_append(writer, "  Launch wake delay  : last / max %u / %u us   Late wake %u\n",
+			  diag.launch_wake_us_last, diag.launch_wake_us_max,
+			  diag.late_trigger_wake);
+	mgmt_debug_append(writer, "  Preparation cost   : entry %u us   build %u us   SPI %u us\n",
+			  late_prepare_entry_us, late_prepare_build_us, late_prepare_spi_us);
+	mgmt_debug_append(
+		writer, "  Launch command     : last / max %u / %u us   FIFO lead %u us\n",
+		diag.launch_cmd_us_last, diag.launch_cmd_us_max, diag.preload_lead_us_last);
+	mgmt_debug_append(writer, "  Jitter / startup   : %u / %u us   TX startup %u us\n",
+			  diag.launch_jitter_us_last, diag.launch_jitter_us_max,
+			  diag.tx_startup_us_last);
+	mgmt_debug_append(writer, "  TX command         : last / max %u / %u us\n",
+			  diag.tx_launch_cmd_us_last, diag.tx_launch_cmd_us_max);
+	mgmt_debug_append(
+		writer,
+		"  TX setup phases    : standby/IRQ %u   modem %u   FIFO %u   FS/BUSY %u us\n",
+		diag.tx_prepare_us_last[0], diag.tx_prepare_us_last[1], diag.tx_prepare_us_last[2],
+		diag.tx_prepare_us_last[3]);
+	mgmt_debug_append(writer, "  FIFO preload       : %u packets   %u used   %u / %u us\n",
+			  diag.tx_preloaded, diag.tx_preload_used, diag.tx_preload_us_last,
+			  diag.tx_preload_us_max);
+	mgmt_debug_append(writer, "  FIFO tail          : %u   %u B   errors %u   underflows %u\n",
+			  diag.tx_fifo_tails, diag.tx_fifo_bytes, diag.tx_fifo_errors,
+			  diag.tx_fifo_underflows);
+	mgmt_debug_append(writer, "  FIFO ready         : last / max %u / %u us\n",
+			  diag.tx_fifo_ready_us_last, diag.tx_fifo_ready_us_max);
+
+	mgmt_debug_append(writer, "\n[RECEIVE TIMING]\n");
+	mgmt_debug_append(writer,
+			  "  Decode errors      : header %u   CRC %u   length %u   payload %u\n",
+			  diag.rx_header_errors, diag.rx_crc_errors, diag.rx_length_errors,
+			  diag.rx_payload_errors);
+	mgmt_debug_append(writer,
+			  "  Window outcomes    : expired %u   incomplete %u   restarted %u\n",
+			  diag.rx_expired, diag.rx_incomplete, diag.rx_restarted);
+	mgmt_debug_append(writer, "  RX finish          : last / max %u / %u us\n",
+			  diag.rx_finish_us_last, diag.rx_finish_us_max);
+	mgmt_debug_append(writer, "  Link processing    : last / max %u / %u us\n",
+			  diag.rx_protocol_us_last, diag.rx_protocol_us_max);
+	mgmt_debug_append(writer,
+			  "  FIFO reads         : %u chunks   %u B   %u / %u us   coalesced %u\n",
+			  diag.rx_fifo_chunks, diag.rx_fifo_bytes, diag.rx_fifo_us_last,
+			  diag.rx_fifo_us_max, diag.rx_done_coalesced);
+	mgmt_debug_append(writer, "  IRQ service        : last / max %u / %u us   TX expired %u\n",
+			  diag.irq_service_us_last, diag.irq_service_us_max, diag.tx_expired);
+
+	mgmt_debug_append(writer, "\n[BUILD / RADIO HEALTH]\n");
+	mgmt_debug_append(writer, "  Serial / protocol  : %u / %u us\n", serial_pump_us_last,
+			  protocol_build_us_last);
+	mgmt_debug_append(writer, "  Packet build       : last / max %u / %u us\n",
+			  packet_build_us_last, packet_build_us_max);
+	mgmt_debug_append(writer, "  FS reused          : %u   TX startup max: %u us\n",
+			  diag.fs_reused, diag.tx_startup_us_max);
+	mgmt_debug_append(writer, "  Chip errors        : 0x%04x\n",
+			  (unsigned int)diag.chip_errors);
+	if (diag.chip_error_freq_hz != 0U) {
+		mgmt_debug_append(writer, "  Last error channel : ");
+		mgmt_debug_frequency(writer, diag.chip_error_freq_hz);
+		mgmt_debug_append(writer, "\n");
+	} else {
+		mgmt_debug_append(writer, "  Last error channel : none recorded\n");
+	}
+}
+
+static int mgmt_debug_render(uint8_t report_id, struct mgmt_debug_report_writer *writer)
+{
+	switch (report_id) {
+	case ZLRS_MGMT_DEBUG_REPORT_LINK:
+		mgmt_debug_link(writer, "CONTROL", &link_control, ZLRS_CONTROL_ENABLED);
+		mgmt_debug_link(writer, "DATA", &link_data, ZLRS_DATA_ENABLED);
+		return ZLRS_MGMT_OK;
+	case ZLRS_MGMT_DEBUG_REPORT_RATE:
+		mgmt_debug_rate(writer);
+		return ZLRS_MGMT_OK;
+	case ZLRS_MGMT_DEBUG_REPORT_RADIO:
+		mgmt_debug_radio(writer);
+		return ZLRS_MGMT_OK;
+	case ZLRS_MGMT_DEBUG_REPORT_POWER: {
+		int8_t current_dbm = 0;
+		uint32_t raises = 0U;
+		uint32_t lowers = 0U;
+		uint32_t fallbacks = 0U;
+		const int8_t subg_ceiling = (region != NULL)
+						    ? MIN(tx_power_dbm, region->max_tx_power_dbm)
+						    : tx_power_dbm;
+
+		mgmt_debug_append(writer, "[POWER LIMITS]\n");
+		mgmt_debug_append(writer, "  Configured target      : %+d dBm\n",
+				  (int)tx_power_dbm);
+		mgmt_debug_append(writer, "  Sub-G region cap       : %s / %+d dBm\n",
+				  (region != NULL) ? region->name : "unknown",
+				  (region != NULL) ? (int)region->max_tx_power_dbm : 0);
+		mgmt_debug_append(writer, "  Sub-G link ceiling     : %+d dBm\n",
+				  (int)subg_ceiling);
+
+		mgmt_debug_append(writer, "\n[PER-LINK TX SETPOINTS]\n");
+		mgmt_debug_append(writer, "  %-8s %-20s %-12s %s\n", "Link", "RF bands", "Mode",
+				  "LR2021 target");
+		mgmt_debug_append(writer, "  %-8s %-20s %-12s %s\n", "--------",
+				  "--------------------", "------------", "-------------");
+		mgmt_debug_append(writer, "  %-8s %-20s %-12s %+4d dBm\n", "Control",
+				  mgmt_debug_bands(&link_control.cfg),
+				  ZLRS_CONTROL_ENABLED ? "enabled" : "unconfigured",
+				  (int)link_control.cfg.tx_power_dbm);
+		mgmt_debug_append(writer, "  %-8s %-20s %-12s %+4d dBm\n", "Data",
+				  mgmt_debug_bands(&link_data.cfg),
+				  ZLRS_DATA_ENABLED ? "enabled" : "unconfigured",
+				  (int)link_data.cfg.tx_power_dbm);
+#if IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)
+		zlrs_link_power_stats(&current_dbm, &raises, &lowers, &fallbacks);
+		const int8_t floor_dbm = (int8_t)MIN((int)CONFIG_ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM,
+						     (int)subg_ceiling);
+
+		mgmt_debug_append(writer, "\n[ADAPTIVE CONTROL POWER]\n");
+		if (ZLRS_CONTROL_ENABLED) {
+			mgmt_debug_append(writer,
+					  "  Current / range      : %+d dBm / %+d..%+d dBm\n",
+					  (int)current_dbm, (int)floor_dbm, (int)subg_ceiling);
+			mgmt_debug_append(writer,
+					  "  Changes up / down    : %u / %u   Fallbacks: %u\n",
+					  raises, lowers, fallbacks);
+		} else {
+			mgmt_debug_append(
+				writer,
+				"  Status               : unconfigured (control link disabled)\n");
+		}
+#else
+		mgmt_debug_append(writer, "\n[ADAPTIVE CONTROL POWER]\n  Disabled\n");
+#endif
+		mgmt_debug_append(
+			writer, "\nSub-G control is clamped to its regional ceiling; 2.4 GHz data "
+				"uses the configured target.\n"
+				"These are LR2021 setpoints; RF output is not measured.\n");
+		return ZLRS_MGMT_OK;
+	}
+	default:
+		return ZLRS_MGMT_E_PARAM;
+	}
+}
+
+static int mgmt_debug_report_read(uint8_t report_id, uint16_t offset, uint8_t *out,
+				  uint8_t capacity, uint16_t *total_len, uint8_t *written)
+{
+	if (out == NULL || total_len == NULL || written == NULL ||
+	    capacity > ZLRS_MGMT_DEBUG_REPORT_CHUNK_MAX) {
+		return ZLRS_MGMT_E_PARAM;
+	}
+
+	if (offset == 0U) {
+		struct mgmt_debug_report_writer writer = {0};
+		const int rc = mgmt_debug_render(report_id, &writer);
+
+		if (rc != ZLRS_MGMT_OK) {
+			return rc;
+		}
+		if (writer.failed || writer.len > UINT16_MAX) {
+			return ZLRS_MGMT_E_STATE;
+		}
+		mgmt_debug_report_len = (uint16_t)writer.len;
+		mgmt_debug_report_id = report_id;
+	} else if (report_id != mgmt_debug_report_id || offset > mgmt_debug_report_len) {
+		return ZLRS_MGMT_E_PARAM;
+	}
+
+	const uint16_t remaining = mgmt_debug_report_len - offset;
+	const uint8_t chunk_len = (remaining < capacity) ? (uint8_t)remaining : capacity;
+
+	memcpy(out, &mgmt_debug_report[offset], chunk_len);
+	*total_len = mgmt_debug_report_len;
+	*written = chunk_len;
+
+	return ZLRS_MGMT_OK;
+}
+#endif
 
 #if ZLRS_MGMT_ENABLED
 /* The shell entry only sets this flag: the session runs in the main loop (superframe stopped,
@@ -1489,6 +1933,9 @@ static void enter_management_mode(void)
 			.device_id = device_id,
 			.region_id = region_id,
 			.tx_power_dbm = tx_power_dbm,
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
+			.debug_report = mgmt_debug_report_read,
+#endif
 		};
 		const int rc = zlrs_mgmt_mode_run(&ctx);
 
@@ -1512,125 +1959,6 @@ static void enter_management_mode(void)
 #endif /* ZLRS_MGMT_ENABLED */
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_SHELL)
-/* Little-endian u32 out of an id or key, for bench output that has to be comparable */
-static uint32_t le32(const uint8_t *p)
-{
-	return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
-	       ((uint32_t)p[3] << 24);
-}
-
-static void print_link(const struct shell *sh, const char *name, const zlrs_link_t *link)
-{
-	/* Little-endian u32 out of the pairing salt, printed as the two nonces they are */
-	const uint8_t *salt = link->pair_salt;
-	const uint32_t salt_a = le32(salt);
-	const uint32_t salt_b = le32(&salt[4]);
-
-	/*
-	 * hop is the index both ends have to agree on; frame is this end's own frame counter and
-	 * adv how often it has moved the table, which is what shows where a desync comes from.
-	 */
-	shell_print(sh,
-		    "%-7s state=%u paired=%u sess=%u freq=%u hop=%u frame=%u adv=%u resync=%u"
-		    " pair_key=%08x word=%08x",
-		    name, link->state, link->paired ? 1U : 0U, link->session_valid ? 1U : 0U,
-		    zlrs_fhss_current_hz(&link->fhss), link->fhss.index, link->frame_index,
-		    link->stats.hop_advances, link->stats.hop_resync,
-		    fingerprint(link->pair_key, sizeof(link->pair_key)),
-		    fingerprint(link->sync_word, sizeof(link->sync_word)));
-	shell_print(sh, "        tx=%u rx=%u fail=%u rssi=%d..%d lq=%u%%", link->stats.tx_frames,
-		    link->stats.rx_frames, link->stats.radio_fail, link->stats.rssi_min,
-		    link->stats.rssi_max, link->stats.lq_percent);
-	shell_print(sh, "        bytes tx=%u rx=%u DATA packets=%u user=%u full=%u ACK-only=%u",
-		    link->stats.tx_bytes, link->stats.rx_bytes, link->stats.tx_data_frames,
-		    link->stats.tx_data_bytes, link->stats.tx_full_data_frames,
-		    link->stats.tx_ack_only_frames);
-	shell_print(sh,
-		    "        ACK DATA=%u staged_old=%u window_stalls=%u retry_age=%u/%u ms"
-		    " delay=%u/%u ms total=%u entries=%u",
-		    link->stats.tx_data_ack_frames, link->stats.tx_staged_stale_ack_frames,
-		    link->stats.tx_arq_window_stalls, link->stats.tx_retry_age_ms_last,
-		    link->stats.tx_retry_age_ms_max, link->stats.tx_ack_delay_ms_last,
-		    link->stats.tx_ack_delay_ms_max, link->stats.tx_ack_delay_ms_sum,
-		    link->stats.tx_ack_entries);
-	shell_print(sh,
-		    "        slot tx %u/%u/%u/%u rx %u/%u/%u/%u got %u/%u/%u/%u fail %u/%u/%u/%u",
-		    link->stats.slot_tx[0], link->stats.slot_tx[1], link->stats.slot_tx[2],
-		    link->stats.slot_tx[3], link->stats.slot_rx[0], link->stats.slot_rx[1],
-		    link->stats.slot_rx[2], link->stats.slot_rx[3], link->stats.slot_hit[0],
-		    link->stats.slot_hit[1], link->stats.slot_hit[2], link->stats.slot_hit[3],
-		    link->stats.slot_fail[0], link->stats.slot_fail[1], link->stats.slot_fail[2],
-		    link->stats.slot_fail[3]);
-	shell_print(sh, "        pair tx %u/%u/%u rx %u/%u/%u rej=%u sent=%u pending=%u wait=%u",
-		    link->stats.pair_req_tx, link->stats.pair_resp_tx, link->stats.pair_cfm_tx,
-		    link->stats.pair_req_rx, link->stats.pair_resp_rx, link->stats.pair_cfm_rx,
-		    link->stats.pair_rejects, link->pair_cfm_sent, link->pair_cfm_pending ? 1U : 0U,
-		    link->pair_wait_cfm ? 1U : 0U);
-	shell_print(sh, "        sync tx=%u rx=%u resp %u+%u cfm %u+%u", link->stats.tx_syncs,
-		    link->stats.rx_syncs, link->stats.sess_resp_tx, link->stats.sess_resp_rx,
-		    link->stats.sess_cfm_tx, link->stats.sess_cfm_rx);
-	/* Paired ends must agree on the id pair and the salt: a mismatch here is why keys differ */
-	shell_print(sh, "        dev=%08x peer=%08x salt=%08x/%08x root=%08x auth=%08x",
-		    le32(link->dev_id), le32(link->peer_id), salt_a, salt_b,
-		    fingerprint(link->root_key, sizeof(link->root_key)),
-		    fingerprint(link->auth_key, sizeof(link->auth_key)));
-	/* Raw key words: two ends must agree byte for byte, fingerprints hide which half differs */
-	shell_print(sh, "        key=%08x%08x%08x%08x", le32(link->pair_key),
-		    le32(&link->pair_key[4]), le32(&link->pair_key[8]), le32(&link->pair_key[12]));
-	/* Data path health: what the ARQ gave up on, and what the reassembler threw away */
-	shell_print(sh, "        arq retx=%u restarts=%u | rx dup=%u ooo=%u frag_drop=%u lost=%u B",
-		    link->stats.tx_retries, link->stats.tx_arq_drop, link->stats.rx_dup,
-		    link->stats.rx_out_of_order, link->stats.rx_frag_drop,
-		    link->stats.data_drop_bytes);
-	shell_print(sh,
-		    "        queue=%u window=%u seq=%u rx_seq=%u ack=%u recovery=%u"
-		    " reasm=%u bad_tag=%u bad_frame=%u",
-		    link->queue_count, link->arq_used, link->arq_seq, link->arq_rx_seq,
-		    link->arq_ack_pending, link->arq_resync, link->reasm.len,
-		    link->stats.rx_bad_tag, link->stats.rx_bad_frame);
-	shell_print(sh, "        cadence tlm=1/%u data=1/%u resync=1/%u arq_timeout=%u ms",
-		    link->cfg.tlm_every_n, link->cfg.data_every_n, link->cfg.resync_every_n,
-		    link->cfg.arq_timeout_ms);
-	/* The exact KDF context the link derives from: byte compare of two ends settles the rest */
-	{
-		uint8_t ctx[ZLRS_PAIR_CTX_LEN];
-
-		zlrs_link_pair_ctx(link, ctx);
-		shell_print(sh, "        raw dev=%02x%02x%02x%02x peer=%02x%02x%02x%02x",
-			    link->dev_id[0], link->dev_id[1], link->dev_id[2], link->dev_id[3],
-			    link->peer_id[0], link->peer_id[1], link->peer_id[2], link->peer_id[3]);
-		shell_print(sh,
-			    "        ctx=%02x%02x%02x%02x%02x%02x%02x%02x"
-			    "%02x%02x%02x%02x%02x%02x%02x%02x",
-			    ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6], ctx[7], ctx[8],
-			    ctx[9], ctx[10], ctx[11], ctx[12], ctx[13], ctx[14], ctx[15]);
-	}
-}
-
-static int cmd_link(const struct shell *sh, size_t argc, char **argv)
-{
-	ARG_UNUSED(argc);
-	ARG_UNUSED(argv);
-
-	print_link(sh, "control", &link_control);
-	print_link(sh, "data", &link_data);
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
-	shell_print(sh, "bench  frame=%u us (%u..%u) slot=%u/%u/%u/%u rx=slot%u+%u (%u..%u)",
-		    bench.frame_us_last, bench.frame_us_min, bench.frame_us_max,
-		    bench.slot_us_last[0], bench.slot_us_last[1], bench.slot_us_last[2],
-		    bench.slot_us_last[3], bench.rx_slot, bench.rx_offset_us, bench.rx_offset_min,
-		    bench.rx_offset_max);
-	shell_print(sh,
-		    "radio  txn=%u stale_irq=%u(%08x) empty_irq=%u overruns=%u rx_win=%u "
-		    "late_starts=%u",
-		    radio_diag.transactions, radio_diag.stale_irq, radio_diag.stale_irq_bits,
-		    radio_diag.empty_irq, radio_diag.overruns, radio_diag.rx_windows,
-		    radio_diag.late_starts);
-#endif
-
-	return 0;
-}
-
 /* Bench: print the init breadcrumbs (see trace_add) */
 static int cmd_trace(const struct shell *sh, size_t argc, char **argv)
 {
@@ -1645,33 +1973,6 @@ static int cmd_trace(const struct shell *sh, size_t argc, char **argv)
 	}
 	buf[len] = '\0';
 	shell_print(sh, "init trace: [%s] len=%u", buf, (unsigned int)len);
-
-	return 0;
-}
-
-static int cmd_rate(const struct shell *sh, size_t argc, char **argv)
-{
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
-	static const char *const names[2] = {"control", "data"};
-#endif
-
-	ARG_UNUSED(argc);
-	ARG_UNUSED(argv);
-
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
-	for (uint8_t i = 0U; i < 2U; i++) {
-		const uint32_t wins = rate_last[i].wins;
-		const uint32_t hits = rate_last[i].hits;
-		const uint32_t permille = (wins != 0U) ? (hits * 1000U) / wins : 0U;
-
-		shell_print(sh, "%-7s %u wins/s, %u got/s (%u.%u%% of windows), %u tx/s, state %u",
-			    names[i], (unsigned int)wins, (unsigned int)hits,
-			    (unsigned int)(permille / 10U), (unsigned int)(permille % 10U),
-			    (unsigned int)rate_last[i].tx, rate_last[i].state);
-	}
-#else
-	shell_print(sh, "no rate measurements in this image (CONFIG_ZLRS_APP_DEBUG_STATS_LOG=n)");
-#endif
 
 	return 0;
 }
@@ -1736,94 +2037,6 @@ static int cmd_ports(const struct shell *sh, size_t argc, char **argv)
 	}
 	shell_print(sh, "air-to-port=%u B host_drop=%u B", counters.data_rx,
 		    zlrs_link_data_tx_dropped());
-
-	return 0;
-}
-
-/*
- * Bench: where the milliseconds in a transaction go. The per-second log line carrying this gets
- * dropped by the console whenever the host reads in bursts, and this is the number the timing
- * work turns on, so it has to be readable on demand.
- */
-static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
-{
-	zlrs_radio_diag_t diag;
-	struct zlrs_slot_timer_stats timer;
-
-	ARG_UNUSED(argc);
-	ARG_UNUSED(argv);
-	zlrs_radio_diag(&diag);
-	zlrs_slot_timer_stats(&timer);
-	shell_print(sh, "plan frame=%u us slots=%u us data_mtu=%u prepare=%u us",
-		    frame_period_us, slot_budget_us, data_mtu, slot_prepare_us);
-	const uint32_t protocol_ms = zlrs_slot_timer_now_ms();
-	const uint32_t kernel_ms = k_uptime_get_32();
-
-	shell_print(sh, "protocol clock TIMER1=%u kernel=%u delta=%d ms", protocol_ms,
-		    kernel_ms, (int32_t)(protocol_ms - kernel_ms));
-	shell_print(sh,
-		    "TIMER1 boundaries=%u irq_late_max=%u us missed=%u skipped_frames=%u slots=%u",
-		    timer.boundaries, timer.irq_late_us_max, timer.missed_boundaries,
-		    skipped_frames, missed_slots);
-	shell_print(sh,
-		    "RAL txn=%u tx_done=%u rx_packets=%u overruns=%u late_starts=%u empty_irq=%u",
-		    diag.transactions, diag.tx_done, diag.rx_packets, diag.overruns,
-		    diag.late_starts, diag.empty_irq);
-	shell_print(sh, "setup last/max=%u/%u us tx=%u us rx=%u us irq=%08x stale=%u",
-		    diag.submit_us_last, diag.submit_us_max, diag.tx_us_last, diag.rx_us_last,
-		    diag.irq_last, diag.stale_irq);
-	shell_print(sh, "stale bits=%08x airtime %uB=%u us guard=%u us", diag.stale_irq_bits,
-		    ZLRS_FRAME_MAX_LEN, zlrs_radio_airtime_us(&data_mod, ZLRS_FRAME_MAX_LEN),
-		    CONFIG_ZLRS_APP_TX_GUARD_US);
-	shell_print(sh, "late launch last/max=%u/%u us", diag.launch_late_us_last,
-		    diag.launch_late_us_max);
-	shell_print(sh, "late launch prepare=%u trigger=%u", diag.prepare_late_starts,
-		    diag.trigger_late_starts);
-	shell_print(sh, "launch wait IRQ last/max=%u/%u us wake=%u/%u us late IRQ=%u wake=%u",
-		    diag.launch_irq_late_us_last, diag.launch_irq_late_us_max,
-		    diag.launch_wake_us_last, diag.launch_wake_us_max,
-		    diag.late_trigger_irq, diag.late_trigger_wake);
-	shell_print(sh, "prepare wait skipped=%u late max=%u us IRQ max=%u us wake max=%u us",
-		    prepare_wait_skipped, prepare_wait_late_us_max, prepare_irq_late_us_max,
-		    prepare_wake_us_max);
-	shell_print(sh, "late prepare entry=%u us build=%u us SPI=%u us", late_prepare_entry_us,
-		    late_prepare_build_us, late_prepare_spi_us);
-	shell_print(sh, "launch command last/max=%u/%u us FIFO prefix lead=%u us prepare=%u us",
-		    diag.launch_cmd_us_last, diag.launch_cmd_us_max, diag.preload_lead_us_last,
-		    slot_prepare_us);
-	shell_print(sh, "launch jitter last/max=%u/%u us TX startup=%u us",
-		    diag.launch_jitter_us_last, diag.launch_jitter_us_max, diag.tx_startup_us_last);
-	shell_print(sh, "TX command last/max=%u/%u us", diag.tx_launch_cmd_us_last,
-		    diag.tx_launch_cmd_us_max);
-	shell_print(sh, "TX setup standby/IRQ=%u modem=%u FIFO=%u FS/BUSY=%u us",
-		    diag.tx_prepare_us_last[0], diag.tx_prepare_us_last[1],
-		    diag.tx_prepare_us_last[2], diag.tx_prepare_us_last[3]);
-	shell_print(sh, "FS reuse=%u", diag.fs_reused);
-	shell_print(sh, "TX build serial=%u protocol=%u us", serial_pump_us_last,
-		    protocol_build_us_last);
-	shell_print(sh, "TX preload packets=%u used=%u last/max=%u/%u us", diag.tx_preloaded,
-		    diag.tx_preload_used, diag.tx_preload_us_last, diag.tx_preload_us_max);
-	shell_print(sh, "TX FIFO tails=%u bytes=%u errors=%u underflows=%u ready last/max=%u/%u us",
-		    diag.tx_fifo_tails, diag.tx_fifo_bytes, diag.tx_fifo_errors,
-		    diag.tx_fifo_underflows, diag.tx_fifo_ready_us_last, diag.tx_fifo_ready_us_max);
-	shell_print(sh, "RX errors header=%u crc=%u length=%u payload=%u expired=%u incomplete=%u",
-		    diag.rx_header_errors, diag.rx_crc_errors, diag.rx_length_errors,
-		    diag.rx_payload_errors, diag.rx_expired, diag.rx_incomplete);
-	shell_print(sh, "RX window restarts=%u", diag.rx_restarted);
-	shell_print(sh, "RX finish last/max=%u/%u us protocol last/max=%u/%u us",
-		    diag.rx_finish_us_last, diag.rx_finish_us_max, diag.rx_protocol_us_last,
-		    diag.rx_protocol_us_max);
-	shell_print(sh, "RX FIFO chunks=%u bytes=%u read last/max=%u/%u us coalesced=%u",
-		    diag.rx_fifo_chunks, diag.rx_fifo_bytes, diag.rx_fifo_us_last,
-		    diag.rx_fifo_us_max, diag.rx_done_coalesced);
-	shell_print(sh, "TX expired=%u startup max=%u us IRQ service last/max=%u/%u us",
-		    diag.tx_expired, diag.tx_startup_us_max, diag.irq_service_us_last,
-		    diag.irq_service_us_max);
-	shell_print(sh, "chip errors=%04x packet build last/max=%u/%u us", diag.chip_errors,
-		    packet_build_us_last, packet_build_us_max);
-	shell_print(sh, "phase error/correction=%d/%d us hits=%u frame=%u us", phase_err_us,
-		    phase_last_us, phase_hits, frame_period_us);
-	shell_print(sh, "last chip error frequency=%u Hz", diag.chip_error_freq_hz);
 
 	return 0;
 }
@@ -1912,11 +2125,7 @@ static int cmd_mcuboot(const struct shell *sh, size_t argc, char **argv)
 
 SHELL_STATIC_SUBCMD_SET_CREATE(
 	zlrs_cmds, SHELL_CMD(status, NULL, "role / SKU / region / link state", cmd_status),
-	SHELL_CMD(link, NULL, "per-link state, frequency, hop index and key fingerprints",
-		  cmd_link),
-	SHELL_CMD(rate, " [s]", "measure windows/hits/frames per second per link", cmd_rate),
 	SHELL_CMD(ports, NULL, "state of both data port endpoints", cmd_ports),
-	SHELL_CMD(radio, NULL, "LR2021 timing: preparation, launch and wait", cmd_radio),
 	SHELL_CMD(trace, NULL, "print the init breadcrumbs", cmd_trace),
 #if ZLRS_MGMT_ENABLED
 	SHELL_CMD(mgmt, NULL, "enter management mode (EXIT returns)", cmd_mgmt),
@@ -2201,7 +2410,7 @@ int main(void)
 
 		frame_start_us = start_us;
 		phase_adj_set = false;
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
 		if (bench.frames > 0U) {
 			bench.frame_us_last = start_us - prev_frame_start_us;
 			if (bench.frame_us_min == 0U || bench.frame_us_last < bench.frame_us_min) {

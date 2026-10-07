@@ -22,6 +22,11 @@
 
 #include "zlrs/link/link.h"
 
+#if defined(CONFIG_ZLRS_APP_DEBUG)
+typedef int (*zlrs_mgmt_debug_report_fn)(uint8_t report_id, uint16_t offset, uint8_t *out,
+					 uint8_t capacity, uint16_t *total_len, uint8_t *written);
+#endif
+
 /* What the commands act on: the application's live state, handed in when a session opens */
 typedef struct {
 	zlrs_link_t *control; /* the link the commands act on (keys, pairing, failsafe) */
@@ -32,6 +37,9 @@ typedef struct {
 	uint8_t *device_id;   /* the identity, replaced by NEW_DEV_ID (ZLRS_DEV_ID_LEN bytes) */
 	uint8_t region_id;    /* the live region: a command persists, it does not switch */
 	int8_t tx_power_dbm; /* the live TX power: what a region or power command is checked against */
+#if defined(CONFIG_ZLRS_APP_DEBUG)
+	zlrs_mgmt_debug_report_fn debug_report;
+#endif
 } zlrs_mgmt_ctx_t;
 
 /*

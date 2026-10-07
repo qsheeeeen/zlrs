@@ -373,8 +373,9 @@ config ZLRS_APP_DEBUG_SHELL
 	select SHELL
 	select SHELL_BACKEND_SERIAL
 	help
-	  Opens a shell on the console port: `zlrs status` / `zlrs ports` / `zlrs config` /
-	  `zlrs recovery`. Bench debugging only, off in production.
+	  Opens a shell on the console port for basic status, port and recovery commands. Detailed
+	  link, rate, radio and power diagnostics are available through the management port in a debug
+	  image. Bench debugging only, off in production.
 
 config ZLRS_APP_DEBUG_STATS_LOG
 	bool "Status lines once a second on the console (bench debugging)"

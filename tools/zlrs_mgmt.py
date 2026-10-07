@@ -43,14 +43,20 @@ CMD_RECOVERY = 0x41
 CMD_CONFIRM = 0x42
 CMD_LOG_INFO = 0x50
 CMD_LOG_READ = 0x51
+CMD_DEBUG_REPORT = 0x60
 CMD_BUILD = 0x12
 CMD_IMAGE_HASH = 0x13
 ACK = 0x80
 STATUS_RESP = 0x81
 BUILD_RESP = 0x82
 IMAGE_HASH_RESP = 0x83
+DEBUG_REPORT_RESP = 0x84
 LOG_INFO_RESP = 0x90
 LOG_DATA_RESP = 0x91
+
+DEBUG_REPORTS = {"link": 1, "rate": 2, "radio": 3, "power": 4}
+DEBUG_REPORT_CHUNK_MAX = 85
+DEBUG_REPORT_MAX_LEN = 4096
 
 COMMAND_MESSAGES = {
     CMD_ENTER: "Management mode entered; radio paused",
@@ -198,6 +204,56 @@ def read_response(link):
             return decode(bytes(buf))
 
 
+def read_debug_report(link, report_id: int) -> bytes:
+    """Read a debug-only text report in bounded management frames."""
+    report = bytearray()
+    offset = 0
+    total = None
+
+    while total is None or offset < total:
+        request = bytes([report_id]) + offset.to_bytes(2, "little")
+        link.write(encode(CMD_DEBUG_REPORT, request))
+        cmd, payload = read_response(link)
+
+        if cmd == ACK:
+            if len(payload) != 2 or payload[0] != CMD_DEBUG_REPORT:
+                raise ValueError("ACK does not match the debug report command")
+            if payload[1] == 4:
+                raise ValueError("detailed reports require a debug firmware image")
+            raise ValueError(STATUS_NAMES.get(payload[1], hex(payload[1])))
+        if cmd != DEBUG_REPORT_RESP or len(payload) < 5:
+            raise ValueError(f"unexpected debug report response 0x{cmd:02x}")
+
+        got_id = payload[0]
+        got_offset = int.from_bytes(payload[1:3], "little")
+        got_total = int.from_bytes(payload[3:5], "little")
+        chunk = payload[5:]
+        if got_id != report_id or got_offset != offset:
+            raise ValueError("debug report id or offset does not match the request")
+        if got_total > DEBUG_REPORT_MAX_LEN:
+            raise ValueError(f"debug report is too large ({got_total} bytes)")
+        if total is not None and got_total != total:
+            raise ValueError("debug report length changed while reading")
+        if len(chunk) > DEBUG_REPORT_CHUNK_MAX or offset + len(chunk) > got_total:
+            raise ValueError("invalid debug report chunk length")
+        if got_total > offset and not chunk:
+            raise ValueError("debug report ended before all bytes arrived")
+
+        total = got_total
+        report.extend(chunk)
+        offset += len(chunk)
+
+    if len(report) != total:
+        raise ValueError("debug report is incomplete")
+    return bytes(report)
+
+
+def device_heading(port: str) -> None:
+    """Separate each target block in multi-device output."""
+    print("-" * 72)
+    heading(f"Device: {port}")
+
+
 def talk(port: str, baud: int, frame: bytes, expect: bool, timeout: float,
          prelude: bytes | None, quiet: bool = False) -> int:
     try:
@@ -219,6 +275,18 @@ def talk(port: str, baud: int, frame: bytes, expect: bool, timeout: float,
             if cmd != ACK or len(payload) != 2 or payload[0] != CMD_ENTER or code != 0:
                 notice("error", f"entering management mode failed: {STATUS_NAMES.get(code, hex(code))}", file=sys.stderr)
                 return 1
+
+        if frame[3] == CMD_DEBUG_REPORT:
+            if len(frame) != 9 or frame[4] != 3:
+                raise ValueError("bad debug report request")
+            report_id = frame[5]
+            report_name = next((name for name, ident in DEBUG_REPORTS.items()
+                                if ident == report_id), None)
+            if report_name is None:
+                raise ValueError(f"unknown debug report id {report_id}")
+            heading(f"ZLRS {report_name.title()} Diagnostics")
+            print(read_debug_report(link, report_id).decode(errors="replace"), end="")
+            return 0
 
         link.write(frame)
         if not expect:
@@ -459,6 +527,10 @@ def add_commands(sub, parents=()):
 
     command("enter", help="enter management mode")
     command("status", help="read link state, pairing and runtime settings", description="read link state, pairing and runtime settings")
+    for name in DEBUG_REPORTS:
+        description = ("compare per-link TX power limits and setpoints" if name == "power"
+                       else f"read detailed {name} diagnostics")
+        command(name, help=f"{description} (debug firmware only)")
     command("pair", help="start pairing on this device (start the peer too)", description="start pairing on this device (start the peer too)")
     command("erase-pair", help="erase the peer pairing record", description="erase the peer pairing record")
     phrase = command("set-phrase", help="derive the root key from a binding phrase", description="derive the root key from a binding phrase")
@@ -540,7 +612,7 @@ def main(args=None, parser=None) -> int:
         rc = 0
         for port in targets:
             if len(targets) > 1:
-                heading(f"Device: {port}")
+                device_heading(port)
             this = dump_logs(port, args.baud, args.timeout,
                              args.out_dir if len(targets) == 1 else os.path.join(args.out_dir,
                                                                                 os.path.basename(port)),
@@ -553,6 +625,9 @@ def main(args=None, parser=None) -> int:
         frame, expect = encode(CMD_ENTER), True
     elif args.command == "status":
         frame, expect = encode(CMD_STATUS), True
+    elif args.command in DEBUG_REPORTS:
+        frame = encode(CMD_DEBUG_REPORT, bytes([DEBUG_REPORTS[args.command], 0, 0]))
+        expect = True
     elif args.command == "pair":
         frame, expect = encode(CMD_PAIR), True
     elif args.command == "erase-pair":
@@ -625,7 +700,7 @@ def main(args=None, parser=None) -> int:
     rc = 0
     for port in targets:
         if len(targets) > 1:
-            heading(f"Device: {port}")
+            device_heading(port)
         try:
             this = talk(port, args.baud, frame, expect, args.timeout, prelude)
         except (OSError, ValueError, TimeoutError) as exc:

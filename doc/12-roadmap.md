@@ -330,7 +330,8 @@ Research directions and acceptance:
   LF/HF production applications build. Before the preparation-boundary fix, 3/4 ms reservations
   increased late attempts and gave no throughput gain; those reservations are not accepted.
   The final five-round check added 15 preparation delays per board, versus 69/49 delayed trigger
-  attempts. IRQ-to-link-completion and protocol-call timings are available in `zlrs radio`;
+  attempts. IRQ-to-link-completion and protocol-call timings are available in the management
+  `radio` report;
   their lifetime maxima include startup/session work. Trigger latency, completion SPI and
   authentication still need optimization before shrinking the slots further.
 
@@ -635,7 +636,8 @@ Research directions and acceptance:
 
 - **ACK pipeline diagnostics (implemented; LF checked 2026-10-03)**: DATA ACK coverage,
   stale staged ACKs, full-window stalls, retry age and first-send confirmation delay are
-  exposed by `zlrs link`. Host cases cover cumulative release, staging, exact retry ages and
+  exposed by the management `link` report. Host cases cover cumulative release, staging, exact
+  retry ages and
   clock wrap; all 13114 ASan/UBSan checks and LF/HF builds pass. Five 262145-byte RF duplex
   rounds pass byte-exact at experimental 1 ms preparation, with 44.5-57.6 kB/s per direction
   and no added late preparation/trigger or missed boundaries/slots. The reverse sender
