@@ -9,7 +9,7 @@
 #pragma once
 
 /* Current wire format only; SYNC must declare this exact version. */
-#define ZLRS_PROTO_VERSION 4U
+#define ZLRS_PROTO_VERSION 5U
 
 /* Frame: common header(1) + seq(2) + payload + tag(0/4). */
 #define ZLRS_FRAME_HDR_LEN      3U
@@ -17,13 +17,6 @@
 #define ZLRS_LORA_FRAME_MAX_LEN 255U
 #define ZLRS_FRAME_MAX_LEN      511U
 #define ZLRS_PAYLOAD_MAX_LEN    (ZLRS_FRAME_MAX_LEN - ZLRS_FRAME_HDR_LEN - ZLRS_TAG_LEN)
-
-/*
- * Reassembly timeout. ARQ retransmits every 30 ms, so leave enough headroom or a retransmit
- * lets the reassembler discard a half-finished message.
- */
-#define ZLRS_FRAG_TIMEOUT_MS 100U
-#define ZLRS_REASM_BUF_LEN   512U
 
 /* Sync words: 4 bytes, slot 1 control link, slot 2 data link, slot 3 pairing */
 #define ZLRS_SYNC_WORD_LEN     4U
@@ -51,8 +44,5 @@
 /* Control link RC payload: CRSF's 22 bytes of channel data carried as-is */
 #define ZLRS_RC_PAYLOAD_LEN 22U
 
-/* Failsafe values in the management protocol: that same 22-byte CRSF channel payload */
-#define ZLRS_FAILSAFE_LEN ZLRS_RC_PAYLOAD_LEN
-
-/* Pairing payload: endpoint IDs, nonces, profile and failsafe RC channels. */
-#define ZLRS_PAIR_PAYLOAD_LEN (17U + ZLRS_RC_PAYLOAD_LEN)
+/* Pairing payload: endpoint IDs and nonces. */
+#define ZLRS_PAIR_PAYLOAD_LEN 16U

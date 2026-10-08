@@ -43,7 +43,7 @@
 
 /* ---- capabilities the software insists on ---- */
 #if !ZLRS_HAS_NVS
-#error "zlrs keeps keys, pairing and failsafe values in NVS; a board without NVS is not supported"
+#error "zlrs keeps keys and pairing in NVS; a board without NVS is not supported"
 #endif
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_LINK_CONTROL) && !ZLRS_PORT_CTRL_FIXED

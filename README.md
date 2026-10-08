@@ -82,7 +82,7 @@ python3 tools/zlrs.py set-phrase "my binding phrase" --serial <serial>
 
 Set the same phrase on both devices, choose their TX/RX roles and reboot. Pair them with the
 button or `python3 tools/zlrs.py pair --serial <serial>`. The
-[configuration guide](doc/07-firmware.md) covers UART settings, regions and failsafe settings.
+[configuration guide](doc/07-firmware.md) covers UART settings, regions and link-loss behavior.
 
 Run `python3 tools/zlrs.py --help` for all commands.
 

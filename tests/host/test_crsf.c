@@ -72,13 +72,6 @@ static void test_channels(void)
 
 		CHECK(back[i] == want);
 	}
-
-	/* Default failsafe: throttle low, the rest centred */
-	zlrs_crsf_channels_default(back);
-	CHECK(back[0] == ZLRS_CRSF_CHANNEL_MIN);
-	for (uint8_t i = 1U; i < ZLRS_CRSF_CHANNEL_COUNT; i++) {
-		CHECK(back[i] == ZLRS_CRSF_CHANNEL_MID);
-	}
 }
 
 static void test_encode_parse(void)
@@ -91,7 +84,9 @@ static void test_encode_parse(void)
 
 	printf("crsf encode/parse\n");
 
-	zlrs_crsf_channels_default(channels);
+	for (uint8_t i = 0U; i < ZLRS_CRSF_CHANNEL_COUNT; i++) {
+		channels[i] = ZLRS_CRSF_CHANNEL_MID;
+	}
 	zlrs_crsf_channels_pack(payload, channels);
 
 	len = zlrs_crsf_encode(frame, ZLRS_CRSF_ADDR_FC, ZLRS_CRSF_TYPE_RC_CHANNELS, payload,
@@ -202,7 +197,7 @@ static void test_link_statistics(void)
 	in.uplink_lq = 97U;
 	in.uplink_snr_db = -3;
 	in.active_antenna = 0U;
-	in.rf_mode = zlrs_crsf_rf_mode(1300000U);
+	in.rf_mode = zlrs_crsf_rf_mode(50U);
 	in.uplink_tx_power = zlrs_crsf_tx_power_index(20);
 	in.downlink_rssi = zlrs_crsf_rssi_from_dbm(-65);
 	in.downlink_lq = 100U;
@@ -229,15 +224,8 @@ static void test_link_statistics(void)
 	/* Unknown rate tiers get no id */
 	CHECK(zlrs_crsf_rf_mode(12345U) == 0xFFU);
 
-	/* Modulation aware: LoRa tiers encode the SF (0x10 | SF), FLRC matches the old entry point */
-	{
-		const zlrs_mod_cfg_t lora = zlrs_mod_lora(7U, 125000U, 1U, 8U);
-		const zlrs_mod_cfg_t flrc = zlrs_mod_flrc(1300000U);
-
-		CHECK(zlrs_crsf_rf_mode_mod(&lora) == 0x17U);
-		CHECK(zlrs_crsf_rf_mode_mod(&flrc) == 1U);
-		CHECK(zlrs_crsf_rf_mode_mod(NULL) == 0xFFU);
-	}
+	CHECK(zlrs_crsf_rf_mode(4U) == 0U);
+	CHECK(zlrs_crsf_rf_mode(150U) == 2U);
 }
 
 void test_crsf(void)

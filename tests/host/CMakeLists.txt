@@ -18,7 +18,6 @@ add_executable(zlrs_host_tests
   main.c
   test_crypto.c
   test_frame.c
-  test_frag.c
   test_fhss.c
   test_tlm.c
   test_link.c
@@ -36,7 +35,6 @@ add_executable(zlrs_host_tests
   ../../core/proto/crypto.c
   ../../core/proto/crc.c
   ../../core/proto/fhss.c
-  ../../core/proto/frag.c
   ../../core/proto/frame.c
   ../../core/proto/mod.c
   ../../core/proto/tlm.c

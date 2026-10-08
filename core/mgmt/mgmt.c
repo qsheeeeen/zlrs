@@ -345,9 +345,6 @@ uint8_t zlrs_mgmt_dispatch(const zlrs_mgmt_backend_t *backend, uint8_t cmd, cons
 		return handle_set_key(backend, payload, payload_len, out, out_len, cmd);
 	case ZLRS_MGMT_CMD_SET_PHRASE:
 		return handle_set_phrase(backend, payload, payload_len, out, out_len, cmd);
-	case ZLRS_MGMT_CMD_SET_FAILSAFE:
-		/* 22-byte CRSF channel payload */
-		return handle_setting(backend, cmd, payload, payload_len, 22U, out, out_len);
 	case ZLRS_MGMT_CMD_SET_BAUD:
 		/* 4-byte little-endian baud rate; the value itself is checked by the backend */
 		return handle_setting(backend, cmd, payload, payload_len, 4U, out, out_len);

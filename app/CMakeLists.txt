@@ -43,7 +43,6 @@ if(CONFIG_ZLRS_APP_RAM_RADIO)
     ${zlrs_app_dir}/../core/link/link.c
     ${zlrs_app_dir}/../core/proto/crypto.c
     ${zlrs_app_dir}/../core/proto/frame.c
-    ${zlrs_app_dir}/../core/proto/frag.c
     ${zlrs_app_dir}/../core/proto/fhss.c
   )
   if(CONFIG_ZLRS_RP2350_SHA256)

@@ -159,13 +159,6 @@ void zlrs_crsf_channels_unpack(const uint8_t in[ZLRS_CRSF_RC_PAYLOAD_LEN],
 	}
 }
 
-void zlrs_crsf_channels_default(uint16_t channels[ZLRS_CRSF_CHANNEL_COUNT])
-{
-	for (uint8_t i = 0U; i < ZLRS_CRSF_CHANNEL_COUNT; i++) {
-		channels[i] = (i == 0U) ? ZLRS_CRSF_CHANNEL_MIN : ZLRS_CRSF_CHANNEL_MID;
-	}
-}
-
 uint8_t zlrs_crsf_rssi_from_dbm(int16_t dbm)
 {
 	if (dbm >= 0) {
@@ -205,37 +198,18 @@ uint8_t zlrs_crsf_tx_power_index(int8_t dbm)
 	return best;
 }
 
-uint8_t zlrs_crsf_rf_mode(uint32_t rate_bps)
+uint8_t zlrs_crsf_rf_mode(uint32_t frames_per_second)
 {
-	switch (rate_bps) {
-	case 2600000U:
+	switch (frames_per_second) {
+	case 4U:
 		return 0U;
-	case 1300000U:
+	case 50U:
 		return 1U;
-	case 650000U:
+	case 150U:
 		return 2U;
-	case 325000U:
-		return 3U;
 	default:
-		return 0xFFU; /* unknown tier */
+		return 0xFFU; /* Reserved: this rate has no CRSF 0x14 profile. */
 	}
-}
-
-/*
- * LoRa tiers have no "rate", so they are encoded as 0x10 | SF: the handset only needs both
- * ends to agree, and "LoRa, this SF" has to be visible (see doc/06-architecture.md 3).
- */
-uint8_t zlrs_crsf_rf_mode_mod(const zlrs_mod_cfg_t *mod)
-{
-	if (mod == NULL) {
-		return 0xFFU;
-	}
-
-	if (mod->modulation == (uint8_t)ZLRS_MOD_LORA) {
-		return (uint8_t)(0x10U | (mod->sf & 0x0FU));
-	}
-
-	return zlrs_crsf_rf_mode(mod->rate_bps);
 }
 
 void zlrs_crsf_link_stats_encode(uint8_t out[ZLRS_CRSF_LINK_STATS_LEN],

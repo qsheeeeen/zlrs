@@ -16,8 +16,6 @@
 typedef struct {
 	uint8_t saved_key[ZLRS_KEY_LEN];
 	bool key_saved;
-	uint8_t failsafe[22];
-	bool failsafe_saved;
 	uint32_t baud;
 	bool baud_saved;
 	uint32_t pair_count;
@@ -107,13 +105,6 @@ static int fake_save_setting(void *ctx, uint8_t cmd, const uint8_t *value, uint8
 	fake_dev_t *dev = ctx;
 
 	switch (cmd) {
-	case ZLRS_MGMT_CMD_SET_FAILSAFE:
-		if (len != 22U) {
-			return ZLRS_MGMT_E_PARAM;
-		}
-		memcpy(dev->failsafe, value, sizeof(dev->failsafe));
-		dev->failsafe_saved = true;
-		return ZLRS_MGMT_OK;
 	case ZLRS_MGMT_CMD_SET_BAUD:
 		if (len != 4U) {
 			return ZLRS_MGMT_E_PARAM;
@@ -402,23 +393,6 @@ static void test_dispatch(void)
 	CHECK(parse_response(resp, len, &parser));
 	CHECK(ZLRS_MGMT_PAYLOAD(&parser)[1] == ZLRS_MGMT_OK);
 	CHECK(fake.pair_count == 1U);
-
-	/* SET_FAILSAFE: a 22-byte channel payload */
-	for (uint8_t i = 0U; i < 22U; i++) {
-		payload[i] = (uint8_t)(0x40U + i);
-	}
-	len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_SET_FAILSAFE, payload, 22U, resp,
-				 sizeof(resp));
-	CHECK(parse_response(resp, len, &parser));
-	CHECK(ZLRS_MGMT_PAYLOAD(&parser)[1] == ZLRS_MGMT_OK);
-	CHECK(fake.failsafe_saved);
-	CHECK(memcmp(fake.failsafe, payload, 22U) == 0);
-
-	/* A wrong length is rejected */
-	len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_SET_FAILSAFE, payload, 21U, resp,
-				 sizeof(resp));
-	CHECK(parse_response(resp, len, &parser));
-	CHECK(ZLRS_MGMT_PAYLOAD(&parser)[1] == ZLRS_MGMT_E_PARAM);
 
 	/* SET_BAUD: 4 bytes little-endian */
 	payload[0] = 0x00U;

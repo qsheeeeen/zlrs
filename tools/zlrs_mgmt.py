@@ -29,7 +29,6 @@ CMD_PAIR = 0x02
 CMD_ERASE_PAIR = 0x03
 CMD_SET_KEY_HEX = 0x10
 CMD_SET_PHRASE = 0x11
-CMD_SET_FAILSAFE = 0x20
 CMD_SET_BAUD = 0x21
 CMD_SET_REGION = 0x22
 CMD_SET_POWER = 0x23
@@ -64,7 +63,6 @@ COMMAND_MESSAGES = {
     CMD_ERASE_PAIR: "Pairing record erased",
     CMD_SET_KEY_HEX: "Root key saved",
     CMD_SET_PHRASE: "Binding phrase saved",
-    CMD_SET_FAILSAFE: "Failsafe channels saved",
     CMD_SET_BAUD: "Data UART baud rate saved",
     CMD_SET_REGION: "Region saved",
     CMD_SET_POWER: "TX power ceiling saved",
@@ -91,10 +89,6 @@ STATUS_NAMES = {
 
 STATE_NAMES = dict(enumerate(("unconfigured", "unpaired", "pairing", "searching", "connected")))
 REGION_NAMES = dict(enumerate(("FCC915", "EU868", "CN470", "CN433")))
-
-CHANNEL_MIN = 172
-CHANNEL_MID = 992
-
 
 def crc8(data: bytes) -> int:
     """DVB-S2 polynomial 0xD5, the same algorithm as zlrs_crc8() on the device."""
@@ -126,37 +120,6 @@ def decode(frame: bytes):
         raise ValueError("bad crc")
     return frame[3], frame[5:-1]
 
-
-def channels_to_payload(channels) -> bytes:
-    """Channel values (11 bit) -> 22-byte payload, the same layout as a CRSF channel frame."""
-    acc = 0
-    bits = 0
-    out = bytearray()
-    for value in channels:
-        acc |= value & 0x7FF
-        bits += 11
-        while bits >= 8:
-            out.append(acc & 0xFF)
-            acc >>= 8
-            bits -= 8
-    return bytes(out)
-
-
-def parse_channels(text: str):
-    """Shorthands such as '172,992,...' or '@min'."""
-    if text.startswith("@"):
-        count = 16
-        if text != "@default":
-            raise ValueError(f"unknown preset {text}")
-        return [CHANNEL_MIN] + [CHANNEL_MID] * (count - 1)
-
-    values = [int(part, 0) for part in text.split(",")]
-    if len(values) != 16:
-        raise ValueError("need exactly 16 channel values")
-    for value in values:
-        if not CHANNEL_MIN <= value <= 1811:
-            raise ValueError(f"channel {value} out of range {CHANNEL_MIN}..1811")
-    return values
 
 
 def status_text(payload: bytes) -> str:
@@ -537,8 +500,6 @@ def add_commands(sub, parents=()):
     phrase.add_argument("phrase", help="1..32 UTF-8 bytes; use the same phrase on both peers")
     key = command("set-key-hex", help="set a 32-byte root key", description="set a 32-byte root key")
     key.add_argument("hex_key", help="64 hex characters")
-    failsafe = command("set-failsafe", help="set all 16 failsafe channel values", description="set all 16 failsafe channel values")
-    failsafe.add_argument("channels", help="16 channel values, or @default")
     baud = command("set-baud", help="set the data UART baud rate", description="set the data UART baud rate")
     baud.add_argument("data_baud", type=bounded_int(9600, 4000000), help="data UART baud rate")
     region = command("set-region", help="select a region compatible with the HF/LF board", description="select a region compatible with the HF/LF board")
@@ -641,13 +602,6 @@ def main(args=None, parser=None) -> int:
         if len(args.hex_key) != 64 or any(c not in "0123456789abcdefABCDEF" for c in args.hex_key):
             parser.error("the root key must be exactly 64 hex characters")
         frame, expect = encode(CMD_SET_KEY_HEX, args.hex_key.encode()), True
-    elif args.command == "set-failsafe":
-        try:
-            channels = parse_channels(args.channels)
-        except ValueError as exc:
-            parser.error(str(exc))
-        frame = encode(CMD_SET_FAILSAFE, channels_to_payload(channels))
-        expect = True
     elif args.command == "set-baud":
         frame = encode(CMD_SET_BAUD, args.data_baud.to_bytes(4, "little"))
         expect = True

@@ -1,6 +1,6 @@
 /*
  * CRSF framing for the ground-side ports (never over the air). Frames and CRC follow CRSF
- * convention (DVB-S2 polynomial 0xD5); only RC_CHANNELS_PACKED and LINK_STATISTICS exist.
+ * convention (DVB-S2 polynomial 0xD5); RC_CHANNELS_PACKED and link-statistics frames are used.
  *
  * Trade-off: CRSF is only a port format here (handset <-> module, receiver <-> flight
  * controller) and has nothing to do with ExpressLRS. Addresses are not validated when
@@ -15,8 +15,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "zlrs/proto/mod.h"
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -26,8 +24,9 @@ extern "C" {
 #define ZLRS_CRSF_ADDR_TX_MODULE 0xEAU /* module -> handset */
 
 /* frame types */
-#define ZLRS_CRSF_TYPE_LINK_STATISTICS 0x14U
-#define ZLRS_CRSF_TYPE_RC_CHANNELS     0x16U
+#define ZLRS_CRSF_TYPE_LINK_STATISTICS    0x14U
+#define ZLRS_CRSF_TYPE_RC_CHANNELS        0x16U
+#define ZLRS_CRSF_TYPE_LINK_STATISTICS_TX 0x1DU
 
 /* Frame length limit comes from CRSF: no more than 64 bytes in total */
 #define ZLRS_CRSF_FRAME_MAX_LEN   64U
@@ -83,27 +82,20 @@ void zlrs_crsf_channels_pack(uint8_t out[ZLRS_CRSF_RC_PAYLOAD_LEN],
 void zlrs_crsf_channels_unpack(const uint8_t in[ZLRS_CRSF_RC_PAYLOAD_LEN],
 			       uint16_t channels[ZLRS_CRSF_CHANNEL_COUNT]);
 
-/* Default failsafe: throttle (channel 0) low, the rest centred, matching the boot default */
-void zlrs_crsf_channels_default(uint16_t channels[ZLRS_CRSF_CHANNEL_COUNT]);
-
 /* RSSI: CRSF reports strength as the negated dBm, -70 dBm -> 70 */
 uint8_t zlrs_crsf_rssi_from_dbm(int16_t dbm);
 
 /* TX power index: 0=0mW 1=10 2=25 3=100 4=500 5=1000 6=2000 7=250 8=50 */
 uint8_t zlrs_crsf_tx_power_index(int8_t dbm);
 
-/*
- * Rate tier numbers are zlrs's own; both ends only have to agree on them
- * (FLRC 2.6M=0 / 1.3M=1 / 0.65M=2 / 0.325M=3, LoRa = 0x10 | SF)
+/* CRSF 0x14 profiles: 4/50/150 fps -> 0/1/2; other rates are reserved (0xff).
+ * Use the standard 0x1D fps field to report rates outside that enumeration.
  */
-uint8_t zlrs_crsf_rf_mode(uint32_t rate_bps);
-
-/* Modulation-aware variant: LoRa tiers encode the SF, the rest match the above */
-uint8_t zlrs_crsf_rf_mode_mod(const zlrs_mod_cfg_t *mod);
+uint8_t zlrs_crsf_rf_mode(uint32_t frames_per_second);
 
 typedef struct {
 	uint8_t uplink_rssi_ant1; /* negated dBm, see zlrs_crsf_rssi_from_dbm() */
-	uint8_t uplink_rssi_ant2; /* single antenna here, same value as ant1 */
+	uint8_t uplink_rssi_ant2; /* single antenna here, 0 when absent */
 	uint8_t uplink_lq;        /* 0–100 % */
 	int8_t uplink_snr_db;
 	uint8_t active_antenna;  /* 0 = antenna 1 */

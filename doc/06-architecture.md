@@ -110,7 +110,7 @@ reduce the payload rate further. Hardware results and remaining acceptance are t
 ## 5. Software layering
 
 ```
-include/zlrs/proto/    protocol core headers (frame, hop tables, fragmentation, telemetry, crypto)
+include/zlrs/proto/    protocol core headers (frame, hop tables, telemetry, crypto)
 core/proto/            protocol core: framing, hop tables, key derivation, tags, airtime model
 core/link/             link layer: state machine, pairing and sessions, reliable transfer
 core/crsf/             CRSF codec: RC channels and the link statistics frame
@@ -222,7 +222,7 @@ share cached modem parameters and stay in standby/FS between transactions. Every
 FIFO before writing: an aborted packet must not contaminate the next packet.
 
 The RP2350 build relocates the RF application's main, radio I/O, hardware crypto and portable
-link/frame/fragment/hopping text to SRAM through Zephyr's code-relocation API. Core sources
+link/frame/hopping text to SRAM through Zephyr's code-relocation API. Core sources
 remain platform independent; MCUboot still installs the signed Flash image, and startup copies
 the selected text to SRAM. FIFO DMA uses two channels allocated through the public controller
 API and a single RX-completion semaphore.

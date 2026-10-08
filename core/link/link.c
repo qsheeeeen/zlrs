@@ -20,31 +20,12 @@ static const uint8_t pairing_sync_word[ZLRS_SYNC_WORD_LEN] = {'Z', 'L', 'R', 'S'
 #define LABEL_LINK_AUTH         "zlrs/link-auth"
 #define LABEL_SESSION           "zlrs/session"
 
-/* Pairing payload length: dev_a(4) + dev_b(4) + nonce_a(4) + nonce_b(4) */
-/*
- * Pairing payload: both dev_ids (8) + two nonces (8) + flags (1) + failsafe values (22).
- * Only the initiator (TX) fills in the failsafe values: it sets FLAG_FAILSAFE when it has
- * any and the responder stores them; without the flag the responder keeps its own instead
- */
-#define PAIR_PAYLOAD_LEN     ZLRS_PAIR_PAYLOAD_LEN
-#define PAIR_FLAGS_OFFSET    16U
-#define PAIR_FAILSAFE_OFFSET 17U
-#define PAIR_FLAG_FAILSAFE   0x01U
+#define PAIR_PAYLOAD_LEN ZLRS_PAIR_PAYLOAD_LEN
 
 static void derive_session_keys(zlrs_link_t *link, uint32_t nonce_t, uint32_t nonce_r);
 static void session_activate(zlrs_link_t *link, uint16_t hop_index);
 static void roll_session(zlrs_link_t *link, uint32_t now_ms);
 static void lq_account(zlrs_link_t *link, uint16_t seq);
-
-/*
- * Start a fresh reassembly. Only ARQ can hand the reassembler every frame of a run, so only ARQ
- * may keep a half run alive indefinitely (see zlrs_reasm_set_expiry).
- */
-static void reasm_restart(zlrs_link_t *link)
-{
-	zlrs_reasm_init(&link->reasm, link->reasm_buf, sizeof(link->reasm_buf));
-	zlrs_reasm_set_expiry(&link->reasm, link->cfg.arq == 0U);
-}
 
 static uint32_t rd32(const uint8_t *p)
 {
@@ -365,18 +346,12 @@ static void session_activate(zlrs_link_t *link, uint16_t hop_index)
 	link->sess_ack_due = false;
 	link->tx_seq = 0U;
 	link->sess_sync_frame = link->frame_index;
-	/*
-	 * A half message from the old session must not be stitched onto the new one: the peer's
-	 * sequence numbers restart, so what arrives next belongs to a different stream.
-	 */
-	reasm_restart(link);
 	/* Sequence numbers restart per session; the LQ window must not span sessions */
 	link->lq_last_seq = 0U;
 	link->stats.lq_rx = 0U;
 	link->stats.lq_expected = 0U;
 	/* Session reset releases the outstanding packet; its bytes stay queued for retransmission. */
 	link->arq_used = 0U;
-	link->arq_run_bytes = 0U;
 	link->arq_retries = 0U;
 	link->arq_seq = 0U;
 	link->arq_rx_started = false;
@@ -593,6 +568,9 @@ static const zlrs_radio_req_t *send_sess_cfm(zlrs_link_t *link)
 
 static const zlrs_radio_req_t *send_rc(zlrs_link_t *link)
 {
+	if (link->rc_len != ZLRS_RC_PAYLOAD_LEN) {
+		return NULL;
+	}
 	uint16_t len = build_frame(link, ZLRS_PKT_RC, 0U, link->rc_payload, link->rc_len,
 				   tag_key_for(link, ZLRS_PKT_RC, true));
 
@@ -637,8 +615,7 @@ static void queue_copy(const zlrs_link_t *link, uint16_t offset, uint8_t *out, u
 }
 
 /* Send the outstanding packet: data sequence is retained across retransmissions. */
-static const zlrs_radio_req_t *arq_send_slot(zlrs_link_t *link, uint16_t seq, uint16_t len,
-					     bool more)
+static const zlrs_radio_req_t *arq_send_slot(zlrs_link_t *link, uint16_t seq, uint16_t len)
 {
 	uint8_t payload[ZLRS_PAYLOAD_MAX_LEN];
 	const uint8_t type =
@@ -649,10 +626,8 @@ static const zlrs_radio_req_t *arq_send_slot(zlrs_link_t *link, uint16_t seq, ui
 	payload[1] = (uint8_t)(seq >> 8);
 	queue_copy(link, 0U, payload + 2U, len);
 
-	frame_len = build_frame(link, type,
-				(more ? ZLRS_FLAG_MORE : 0U) |
-					(receive_ack_bit(link) ? ZLRS_FLAG_ACK : 0U),
-				payload, (uint16_t)(len + 2U), tag_key_for(link, type, true));
+	frame_len = build_frame(link, type, receive_ack_bit(link) ? ZLRS_FLAG_ACK : 0U, payload,
+				(uint16_t)(len + 2U), tag_key_for(link, type, true));
 	if (frame_len == 0U) {
 		return NULL;
 	}
@@ -676,32 +651,23 @@ static bool arq_timed_out(const zlrs_link_t *link, uint32_t now_ms)
 	return link->arq_used > 0U && age_ms >= (int32_t)timeout_ms;
 }
 
-static bool arq_next_data(const zlrs_link_t *link, uint16_t *take, bool *more)
+static bool arq_next_data(const zlrs_link_t *link, uint16_t *take)
 {
 	const uint16_t inflight = arq_inflight_bytes(link);
-	const uint16_t mtu = link->cfg.data_mtu;
-
-	if (link->queue_count <= inflight || mtu == 0U) {
+	if (link->queue_count <= inflight || link->cfg.data_mtu == 0U) {
 		return false;
 	}
 	*take = link->queue_count - inflight;
-	*more = *take > mtu;
-	if (*more) {
-		*take = mtu;
-	}
-	/* End a run before its next fragment could overflow the receiver's reassembly buffer. */
-	if (*more && (uint32_t)link->arq_run_bytes + *take + mtu > ZLRS_REASM_BUF_LEN) {
-		*more = false;
+	if (*take > link->cfg.data_mtu) {
+		*take = link->cfg.data_mtu;
 	}
 	return true;
 }
 
-static void arq_commit_data(zlrs_link_t *link, uint16_t len, bool more, uint32_t now_ms)
+static void arq_commit_data(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 {
-	link->arq_run_bytes = more ? link->arq_run_bytes + len : 0U;
 	link->arq_len = len;
 	link->arq_first_sent_ms = now_ms;
-	link->arq_more = more ? 1U : 0U;
 	link->arq_used = 1U;
 	link->arq_retries = 0U;
 	link->arq_sent_ms = now_ms;
@@ -733,10 +699,8 @@ const uint8_t *zlrs_link_prepare_data(zlrs_link_t *link, uint8_t slot, uint32_t 
 	packet->retry = arq_timed_out(link, now_ms);
 	if (packet->retry) {
 		packet->data_len = link->arq_len;
-		packet->more = link->arq_more != 0U;
 	} else {
-		if (link->arq_used != 0U ||
-		    !arq_next_data(link, &packet->data_len, &packet->more)) {
+		if (link->arq_used != 0U || !arq_next_data(link, &packet->data_len)) {
 			return NULL;
 		}
 	}
@@ -750,15 +714,13 @@ const uint8_t *zlrs_link_prepare_data(zlrs_link_t *link, uint8_t slot, uint32_t 
 	queue_copy(link, offset, payload + 2U, packet->data_len);
 	memcpy(packet->key, tag_key_for(link, type, true), ZLRS_KEY_LEN);
 	packet->size = encode_frame(link, packet->buf, packet->frame_seq, type,
-				    (packet->more ? ZLRS_FLAG_MORE : 0U) |
-					    (packet->ack_bit ? ZLRS_FLAG_ACK : 0U),
-				    payload, packet->data_len + 2U, packet->key);
+				    packet->ack_bit ? ZLRS_FLAG_ACK : 0U, payload,
+				    packet->data_len + 2U, packet->key);
 	if (packet->size == 0U) {
 		return NULL;
 	}
 	packet->frame_index = frame;
 	packet->data_mtu = link->cfg.data_mtu;
-	packet->run_bytes = link->arq_run_bytes;
 	packet->profile = link->cfg.profile;
 	packet->valid = true;
 	*size = packet->size;
@@ -772,15 +734,13 @@ static const zlrs_radio_req_t *send_prepared_data(zlrs_link_t *link, uint32_t no
 	const uint16_t inflight = arq_inflight_bytes(link);
 	const uint16_t data_seq = (uint16_t)(link->arq_seq + (retry ? 0U : link->arq_used));
 	const bool data_valid =
-		retry ? link->arq_used > 0U && packet->data_len == link->arq_len &&
-				packet->more == (link->arq_more != 0U)
+		retry ? link->arq_used > 0U && packet->data_len == link->arq_len
 		      : link->arq_used == 0U && link->queue_count >= inflight + packet->data_len;
 
 	if (!packet->valid || packet->retry != retry || !data_valid ||
 	    packet->frame_index != link->frame_index || packet->frame_seq != link->tx_seq ||
 	    packet->data_seq != data_seq || packet->data_mtu != link->cfg.data_mtu ||
-	    packet->run_bytes != link->arq_run_bytes || packet->profile != link->cfg.profile ||
-	    (packet->buf[0] >> 2) != type ||
+	    packet->profile != link->cfg.profile || (packet->buf[0] >> 2) != type ||
 	    !zlrs_ct_equal(packet->key, tag_key_for(link, type, true), ZLRS_KEY_LEN)) {
 		packet->valid = false;
 		return NULL;
@@ -794,7 +754,7 @@ static const zlrs_radio_req_t *send_prepared_data(zlrs_link_t *link, uint32_t no
 	link->req.buf = packet->buf;
 	link->tx_seq++;
 	if (!retry) {
-		arq_commit_data(link, packet->data_len, packet->more, now_ms);
+		arq_commit_data(link, packet->data_len, now_ms);
 	}
 	link->pending_data_len = 0U;
 	link->stats.tx_staged_stale_ack_frames += packet->ack_bit != receive_ack_bit(link);
@@ -827,23 +787,22 @@ static const zlrs_radio_req_t *send_data_arq(zlrs_link_t *link, uint32_t now_ms)
 			return req;
 		}
 
-		/* Retransmit the head frame: same sequence number, length and MORE as the original */
-		return arq_send_slot(link, link->arq_seq, link->arq_len, link->arq_more != 0U);
+		/* Retransmit the head frame: same sequence number and payload as the original */
+		return arq_send_slot(link, link->arq_seq, link->arq_len);
 	}
 
 	const zlrs_radio_req_t *req = send_prepared_data(link, now_ms, false);
 	uint16_t take;
-	bool more;
 
 	if (req == NULL && link->arq_used != 0U) {
 		link->stats.tx_arq_wait_stalls++;
 	}
-	if (req != NULL || link->arq_used != 0U || !arq_next_data(link, &take, &more)) {
+	if (req != NULL || link->arq_used != 0U || !arq_next_data(link, &take)) {
 		return req;
 	}
-	req = arq_send_slot(link, link->arq_seq, take, more);
+	req = arq_send_slot(link, link->arq_seq, take);
 	if (req != NULL) {
-		arq_commit_data(link, take, more, now_ms);
+		arq_commit_data(link, take, now_ms);
 	}
 	return req;
 }
@@ -885,7 +844,6 @@ static const zlrs_radio_req_t *send_data(zlrs_link_t *link, uint32_t now_ms)
 	uint8_t payload[ZLRS_PAYLOAD_MAX_LEN];
 	uint16_t take = link->queue_count;
 	uint16_t len;
-	uint8_t flags = 0U;
 	uint8_t type;
 
 	if (link->cfg.arq) {
@@ -897,24 +855,12 @@ static const zlrs_radio_req_t *send_data(zlrs_link_t *link, uint32_t now_ms)
 	}
 	if (take > link->cfg.data_mtu) {
 		take = link->cfg.data_mtu;
-		flags = ZLRS_FLAG_MORE;
 	}
-	/*
-	 * Same run limit as the ARQ path: the receiver assembles until it sees a frame without MORE and
-	 * can only hold ZLRS_REASM_BUF_LEN bytes, so a longer run has to be cut into separate messages
-	 * here instead of arriving as one run the peer has to throw away.
-	 */
-	if ((flags & ZLRS_FLAG_MORE) != 0U &&
-	    ((uint32_t)link->arq_run_bytes + take + link->cfg.data_mtu > ZLRS_REASM_BUF_LEN)) {
-		flags = 0U;
-	}
-	link->arq_run_bytes =
-		((flags & ZLRS_FLAG_MORE) != 0U) ? (uint16_t)(link->arq_run_bytes + take) : 0U;
 
 	queue_copy(link, 0U, payload, take);
 
 	type = (link->cfg.role == ZLRS_ROLE_TX) ? ZLRS_PKT_DATA_UP : ZLRS_PKT_DATA_DOWN;
-	len = build_frame(link, type, flags, payload, take, tag_key_for(link, type, true));
+	len = build_frame(link, type, 0U, payload, take, tag_key_for(link, type, true));
 	link->pending_data_len = take;
 
 	return submit_tx(link, len, slot_freq_hz(link, SLOT_DATA), link->cfg.sync_slot,
@@ -937,12 +883,6 @@ static void pair_payload_fill(const zlrs_link_t *link, uint8_t out[PAIR_PAYLOAD_
 	memcpy(&out[ZLRS_DEV_ID_LEN], dev_b, ZLRS_DEV_ID_LEN);
 	wr32(&out[2U * ZLRS_DEV_ID_LEN], nonce_a);
 	wr32(&out[2U * ZLRS_DEV_ID_LEN + 4U], nonce_b);
-
-	/* The initiator ships its failsafe values along, the responder stores them */
-	if (initiator && link->failsafe_len == ZLRS_RC_PAYLOAD_LEN) {
-		out[PAIR_FLAGS_OFFSET] = PAIR_FLAG_FAILSAFE;
-		memcpy(&out[PAIR_FAILSAFE_OFFSET], link->failsafe, ZLRS_RC_PAYLOAD_LEN);
-	}
 }
 
 static const zlrs_radio_req_t *send_pair(zlrs_link_t *link, uint8_t type, uint32_t nonce_a,
@@ -987,19 +927,10 @@ static uint16_t acq_timeout_ms(const zlrs_link_t *link)
 
 /* ---- receive: dispatch --------------------------------------------------- */
 
-static void deliver_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
+static void deliver_data(zlrs_link_t *link, const zlrs_frame_t *frame)
 {
-	switch (zlrs_reasm_push(&link->reasm, frame, now_ms)) {
-	case ZLRS_REASM_DONE:
-		if (link->ev.on_data != NULL && link->reasm.len > 0U) {
-			link->ev.on_data(link->ev.ctx, link->reasm.buf, link->reasm.len);
-		}
-		break;
-	case ZLRS_REASM_DROPPED:
-		link->stats.rx_frag_drop++;
-		break;
-	default:
-		break;
+	if (link->ev.on_data != NULL && frame->payload_len > 0U) {
+		link->ev.on_data(link->ev.ctx, frame->payload, frame->payload_len);
 	}
 }
 
@@ -1037,10 +968,10 @@ static void handle_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 		inner.tag = NULL;
 		link->arq_rx_started = true;
 		link->arq_rx_seq = seq;
-		deliver_data(link, &inner, now_ms);
+		deliver_data(link, &inner);
 		return;
 	}
-	deliver_data(link, frame, now_ms);
+	deliver_data(link, frame);
 }
 
 static void pairing_complete(zlrs_link_t *link, uint32_t now_ms)
@@ -1243,16 +1174,6 @@ static bool handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame, uint
 		}
 		link->pair_wait_cfm = true;
 
-		/* The TX ships failsafe values (the flag is set only if it has them): store and hand over */
-		if ((frame->payload[PAIR_FLAGS_OFFSET] & PAIR_FLAG_FAILSAFE) != 0U) {
-			memcpy(link->failsafe, &frame->payload[PAIR_FAILSAFE_OFFSET],
-			       ZLRS_RC_PAYLOAD_LEN);
-			link->failsafe_len = ZLRS_RC_PAYLOAD_LEN;
-			if (link->ev.on_failsafe != NULL) {
-				link->ev.on_failsafe(link->ev.ctx, link->failsafe,
-						     link->failsafe_len);
-			}
-		}
 		return true;
 
 	case ZLRS_PKT_PAIR_RESP:
@@ -1966,7 +1887,6 @@ void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg, uint32_t (*ra
 		link->ev = *events;
 	}
 
-	reasm_restart(link);
 	link->last_rx_seq = 0xFFFFU;
 	link->stats.lq_percent = 100U;
 	link->state = ZLRS_STATE_UNCONFIGURED;
@@ -2269,7 +2189,11 @@ void zlrs_link_set_rc(zlrs_link_t *link, const uint8_t *channels, uint16_t len)
 	if (len > sizeof(link->rc_payload)) {
 		len = sizeof(link->rc_payload);
 	}
-	memcpy(link->rc_payload, channels, len);
+	if (len > 0U && channels != NULL) {
+		memcpy(link->rc_payload, channels, len);
+	} else {
+		len = 0U;
+	}
 	link->rc_len = len;
 }
 
@@ -2280,14 +2204,4 @@ void zlrs_link_set_tlm(zlrs_link_t *link, const uint8_t *payload, uint16_t len)
 	}
 	memcpy(link->tlm_payload, payload, len);
 	link->tlm_len = len;
-}
-
-void zlrs_link_set_failsafe(zlrs_link_t *link, const uint8_t *payload, uint16_t len)
-{
-	if (payload == NULL || len != ZLRS_RC_PAYLOAD_LEN) {
-		return;
-	}
-
-	memcpy(link->failsafe, payload, ZLRS_RC_PAYLOAD_LEN);
-	link->failsafe_len = ZLRS_RC_PAYLOAD_LEN;
 }

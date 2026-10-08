@@ -314,15 +314,6 @@ static int check_mode(const zlrs_mgmt_ctx_t *ctx, const uint8_t *value, uint8_t 
 }
 
 /* The two settings the running device uses at once, not on the next boot */
-static void apply_failsafe(const zlrs_mgmt_ctx_t *ctx, const uint8_t *value, uint8_t len)
-{
-	if (ctx->failsafe != NULL) {
-		memcpy(ctx->failsafe, value, len);
-	}
-	/* The new values travel to the peer with the next pairing */
-	zlrs_link_set_failsafe(ctx->control, value, len);
-}
-
 static const struct cfg_setting cfg_settings[] = {
 	{.cmd = ZLRS_MGMT_CMD_SET_MODE,
 	 .setting = ZLRS_SETTING_MODE,
@@ -330,12 +321,6 @@ static const struct cfg_setting cfg_settings[] = {
 	 .effect = "it takes effect on the next boot",
 	 .check = check_mode,
 	 .applied = NULL},
-	{.cmd = ZLRS_MGMT_CMD_SET_FAILSAFE,
-	 .setting = ZLRS_SETTING_FAILSAFE,
-	 .name = "failsafe values",
-	 .effect = "they go to the peer with the next pairing",
-	 .check = NULL,
-	 .applied = apply_failsafe},
 	{.cmd = ZLRS_MGMT_CMD_SET_BAUD,
 	 .setting = ZLRS_SETTING_BAUD,
 	 .name = "data baud",

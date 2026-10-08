@@ -34,7 +34,6 @@ extern "C" {
 #define ZLRS_MGMT_CMD_SET_PHRASE    0x11U /* passphrase, derived into a root key on the device */
 #define ZLRS_MGMT_CMD_BUILD         0x12U /* read the build string (which version is running) */
 #define ZLRS_MGMT_CMD_IMAGE_HASH    0x13U /* MCUboot hash of this image (the update verdict) */
-#define ZLRS_MGMT_CMD_SET_FAILSAFE  0x20U /* 22-byte RC payload */
 #define ZLRS_MGMT_CMD_SET_BAUD      0x21U /* 4-byte little-endian baud rate */
 #define ZLRS_MGMT_CMD_SET_REGION    0x22U /* 1-byte region id (0..3) */
 #define ZLRS_MGMT_CMD_SET_POWER     0x23U /* 1-byte signed dBm */
@@ -51,21 +50,21 @@ extern "C" {
 #define ZLRS_MGMT_CMD_DEBUG_REPORT  0x60U /* debug image only: report id (1) + offset (2) */
 
 /* device -> host */
-#define ZLRS_MGMT_CMD_ACK             0x80U /* [cmd][status] */
-#define ZLRS_MGMT_CMD_STATUS_RESP     0x81U /* see zlrs_mgmt_status_t */
-#define ZLRS_MGMT_CMD_BUILD_RESP      0x82U /* build string, at most ZLRS_MGMT_BUILD_MAX_LEN */
-#define ZLRS_MGMT_CMD_IMAGE_HASH_RESP 0x83U /* ZLRS_MGMT_IMAGE_HASH_LEN bytes of image hash */
-#define ZLRS_MGMT_CMD_LOG_INFO_RESP   0x90U /* see zlrs_mgmt_log_info_t */
-#define ZLRS_MGMT_CMD_LOG_DATA_RESP   0x91U /* log index (1) + offset (4) + bytes */
+#define ZLRS_MGMT_CMD_ACK               0x80U /* [cmd][status] */
+#define ZLRS_MGMT_CMD_STATUS_RESP       0x81U /* see zlrs_mgmt_status_t */
+#define ZLRS_MGMT_CMD_BUILD_RESP        0x82U /* build string, at most ZLRS_MGMT_BUILD_MAX_LEN */
+#define ZLRS_MGMT_CMD_IMAGE_HASH_RESP   0x83U /* ZLRS_MGMT_IMAGE_HASH_LEN bytes of image hash */
+#define ZLRS_MGMT_CMD_LOG_INFO_RESP     0x90U /* see zlrs_mgmt_log_info_t */
+#define ZLRS_MGMT_CMD_LOG_DATA_RESP     0x91U /* log index (1) + offset (4) + bytes */
 #define ZLRS_MGMT_CMD_DEBUG_REPORT_RESP 0x84U /* report id + offset + total + text chunk */
 
-#define ZLRS_MGMT_DEBUG_REPORT_LINK  1U
-#define ZLRS_MGMT_DEBUG_REPORT_RATE  2U
-#define ZLRS_MGMT_DEBUG_REPORT_RADIO 3U
-#define ZLRS_MGMT_DEBUG_REPORT_POWER 4U
-#define ZLRS_MGMT_DEBUG_REPORT_REQ_LEN 3U
+#define ZLRS_MGMT_DEBUG_REPORT_LINK       1U
+#define ZLRS_MGMT_DEBUG_REPORT_RATE       2U
+#define ZLRS_MGMT_DEBUG_REPORT_RADIO      3U
+#define ZLRS_MGMT_DEBUG_REPORT_POWER      4U
+#define ZLRS_MGMT_DEBUG_REPORT_REQ_LEN    3U
 #define ZLRS_MGMT_DEBUG_REPORT_HEADER_LEN 5U
-#define ZLRS_MGMT_DEBUG_REPORT_CHUNK_MAX \
+#define ZLRS_MGMT_DEBUG_REPORT_CHUNK_MAX                                                           \
 	(ZLRS_MGMT_PAYLOAD_MAX_LEN - ZLRS_MGMT_DEBUG_REPORT_HEADER_LEN)
 
 /* status codes */
@@ -126,7 +125,7 @@ typedef struct {
 	int (*save_root_key)(void *ctx, const uint8_t key[ZLRS_KEY_LEN]);
 	int (*read_status)(void *ctx, zlrs_mgmt_status_t *out);
 	/*
-	 * Every simple setting arrives here: failsafe, baud, region, power, role and profile. `value`
+	 * Every simple setting arrives here: baud, region, power, role and profile. `value`
 	 * is the payload exactly as the host sent it — this layer checks its length and, for an
 	 * enumerated value, that it is in range — and `cmd` says what it means. Decoding (the baud is
 	 * little-endian), any further validation and everything it does to the device belong to the

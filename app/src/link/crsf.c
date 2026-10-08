@@ -109,11 +109,14 @@ static void crsf_isr(const struct device *dev, void *user_data)
 				memcpy(&record[2], ZLRS_CRSF_PAYLOAD(&crsf_parser),
 				       crsf_parser.payload_len);
 
-				if (ring_buf_put(&crsf_frame_ring, record,
-						 (uint32_t)crsf_parser.payload_len + 2U) !=
-				    (uint32_t)crsf_parser.payload_len + 2U) {
+				const uint32_t size = (uint32_t)crsf_parser.payload_len + 2U;
+
+				/* One ISR producer: the thread consumer can only increase free space. */
+				if (ring_buf_space_get(&crsf_frame_ring) < size) {
 					crsf_rx_dropped++;
+					continue;
 				}
+				(void)ring_buf_put(&crsf_frame_ring, record, size);
 			}
 		}
 
@@ -199,9 +202,12 @@ uint8_t zlrs_link_crsf_write(uint8_t type, const uint8_t *payload, uint8_t paylo
 		return 0U;
 	}
 
-	if (ring_buf_put(&ep->tx, frame, len) != len) {
-		return 0U; /* TX buffer full: CRSF is best-effort, the caller counts the drop */
+	/* One thread producer: the ISR consumer can only increase free space.
+	 * Drop whole frames under backpressure; a partial frame corrupts the next one's CRC. */
+	if (ring_buf_space_get(&ep->tx) < len) {
+		return 0U;
 	}
+	(void)ring_buf_put(&ep->tx, frame, len);
 
 	uart_irq_tx_enable(ep->dev);
 

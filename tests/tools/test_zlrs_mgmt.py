@@ -23,7 +23,7 @@ class ManagementTests(unittest.TestCase):
 
     def test_invalid_parameters_fail_before_port_access(self):
         cases = [("set-phrase", ""), ("set-phrase", "中" * 11),
-                 ("set-key-hex", "z" * 64), ("set-failsafe", "bad"),
+                 ("set-key-hex", "z" * 64),
                  ("set-baud", "0"), ("set-power", "256")]
         with patch.object(mgmt, "talk") as talk:
             for command, value in cases:
@@ -183,11 +183,6 @@ class FramingTests(unittest.TestCase):
         self.assertEqual(mgmt.decode(bytes.fromhex("a55a03110568656c6c6ff7")),
                          (mgmt.CMD_SET_PHRASE, b"hello"))
 
-    def test_control_channel_payloads(self):
-        self.assertEqual(mgmt.channels_to_payload([0] * 16), bytes(22))
-        payload = mgmt.channels_to_payload(mgmt.parse_channels("@default"))
-        self.assertEqual(len(payload), 22)
-        self.assertEqual(payload[0], 0xAC)
 
     def test_single_module_is_a_target_list(self):
         args = argparse.Namespace(port=None, serial=None, all=False)

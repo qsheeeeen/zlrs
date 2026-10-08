@@ -118,6 +118,16 @@ Measure end-to-end payload throughput between two paired devices with:
 python3 tests/hardware/app/link/test_data.py --tx-port <TX-serial> --rx-port <RX-serial>
 ```
 
+For two paired boards running mixed mode, check USB CRSF forwarding, standard `0x14`/`0x1D`
+telemetry, cut failsafe after input loss and recovery with:
+
+```sh
+python3 tests/hardware/app/link/test_crsf.py --tx-serial <TX-serial> --rx-serial <RX-serial>
+```
+
+This verifies the receiver's output frames and CRC; flight-controller failsafe configuration
+and the handset's display still require checks with those devices attached.
+
 On Linux or WSL, serial fragments select the matching data CDC (`...-if02`). The default runs
 three simultaneous bidirectional rounds of 4096 bytes per direction, verifies every byte, and
 prints iperf-style one-second transfer and bitrate intervals plus a per-direction summary.

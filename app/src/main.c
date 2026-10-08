@@ -152,8 +152,6 @@ static uint8_t active_profile;
 static void crsf_send_rc(const uint8_t *payload, uint8_t len);
 static void crsf_send_link_stats(const zlrs_tlm_t *tlm);
 
-static uint8_t rc_payload[ZLRS_RC_PAYLOAD_LEN];
-static uint8_t failsafe_payload[ZLRS_CRSF_RC_PAYLOAD_LEN];
 static uint32_t last_rc_input_ms;
 static uint32_t last_tlm_up_ms;
 static bool rc_input_seen;
@@ -230,21 +228,6 @@ static void on_state(void *ctx, uint8_t state)
 	}
 
 	LOG_INF("%s link -> %s", (kind == ZLRS_LINK_CONTROL) ? "control" : "data", name);
-}
-
-/* RX: failsafe values arrive from the TX during pairing; store them and use them right away */
-static void on_failsafe(void *ctx, const uint8_t *payload, uint16_t len)
-{
-	(void)ctx;
-
-	if (len != sizeof(failsafe_payload)) {
-		return;
-	}
-
-	memcpy(failsafe_payload, payload, sizeof(failsafe_payload));
-	(void)zlrs_storage_settings_save(ZLRS_SETTING_FAILSAFE, failsafe_payload,
-					 sizeof(failsafe_payload));
-	LOG_INF("failsafe values received from TX");
 }
 
 /*
@@ -474,7 +457,6 @@ static void build_links(void)
 		.on_rc = on_rc,
 		.on_tlm = on_tlm,
 		.on_state = on_state,
-		.on_failsafe = on_failsafe,
 		.ctx = (void *)(uintptr_t)ZLRS_LINK_CONTROL,
 	};
 	const zlrs_link_events_t data_ev = {
@@ -990,26 +972,6 @@ static void adopt_pairing(void)
 		source->peer_id[2], source->peer_id[3]);
 }
 
-/*
- * Failsafe values default to throttle low and everything else centred, which is what a
- * handset sends with its link down. The management protocol can overwrite them (08-firmware 3).
- */
-static void failsafe_init(void)
-{
-	uint16_t channels[ZLRS_CRSF_CHANNEL_COUNT];
-
-	if (zlrs_storage_settings_load(ZLRS_SETTING_FAILSAFE, failsafe_payload,
-				       sizeof(failsafe_payload)) != (int)sizeof(failsafe_payload)) {
-		/* Never configured: use the default (throttle low, the rest centred) */
-		zlrs_crsf_channels_default(channels);
-		zlrs_crsf_channels_pack(failsafe_payload, channels);
-	}
-	memcpy(rc_payload, failsafe_payload, sizeof(rc_payload));
-
-	/* TX side: these values travel to the RX with the next pairing */
-	zlrs_link_set_failsafe(&link_control, failsafe_payload, sizeof(failsafe_payload));
-}
-
 /* TX: RC frames from the handset become air-side RC payloads */
 static void crsf_handle_input(uint8_t type, const uint8_t *payload, uint8_t len)
 {
@@ -1041,18 +1003,23 @@ static void crsf_send_link_stats(const zlrs_tlm_t *tlm)
 
 	memset(&stats, 0, sizeof(stats));
 	stats.uplink_rssi_ant1 = tlm->rssi_neg_dbm;
-	stats.uplink_rssi_ant2 = tlm->rssi_neg_dbm;
-	stats.uplink_lq = tlm->lq_percent;
+	stats.uplink_rssi_ant2 = tlm->rssi_ant2_neg_dbm;
+	stats.uplink_lq = rc_input_seen ? tlm->lq_percent : 0U;
 	stats.uplink_snr_db = tlm->snr_db;
-	stats.active_antenna = 0U;
-	stats.rf_mode = tlm->rf_mode;
-	stats.uplink_tx_power = tlm->tx_power;
+	stats.active_antenna = tlm->active_antenna;
+	stats.rf_mode = zlrs_crsf_rf_mode(control_rate_hz);
+	stats.uplink_tx_power = zlrs_crsf_tx_power_index(link_control.cfg.tx_power_dbm);
 	stats.downlink_rssi = zlrs_crsf_rssi_from_dbm(link_control.stats.last_rssi);
 	stats.downlink_lq = link_control.stats.lq_percent;
 	stats.downlink_snr_db = link_control.stats.last_snr;
 
 	zlrs_crsf_link_stats_encode(payload, &stats);
 	(void)zlrs_link_crsf_write(ZLRS_CRSF_TYPE_LINK_STATISTICS, payload, sizeof(payload));
+	/* Detailed standard report preserves the RX's own power and actual frame rate. */
+	uint8_t tx_payload[ZLRS_TLM_LEN];
+	zlrs_tlm_encode(tx_payload, tlm);
+	(void)zlrs_link_crsf_write(ZLRS_CRSF_TYPE_LINK_STATISTICS_TX, tx_payload,
+				   sizeof(tx_payload));
 }
 
 /* RX: rebuild the received RC payload into a CRSF frame for the flight controller */
@@ -1080,28 +1047,23 @@ static void crsf_report_tlm(uint32_t now_ms)
 	tlm.lq_percent = link_control.stats.lq_percent;
 	tlm.rssi_neg_dbm = zlrs_crsf_rssi_from_dbm(link_control.stats.last_rssi);
 	tlm.snr_db = link_control.stats.last_snr;
-	tlm.rf_mode = zlrs_crsf_rf_mode_mod(&link_control.cfg.mod);
-	tlm.tx_power = zlrs_crsf_tx_power_index(link_control.cfg.tx_power_dbm);
-	tlm.state = link_control.state;
-	if (link_control.paired) {
-		tlm.flags |= ZLRS_TLM_FLAG_PAIRED;
-	}
-	if (link_control.session_valid) {
-		tlm.flags |= ZLRS_TLM_FLAG_SESSION;
-	}
+	/* No calibrated RSSI percentage is available; do not substitute link quality. */
+	tlm.rssi_percent = 0U;
+	tlm.rf_power_dbm = link_control.cfg.tx_power_dbm > 0 ? link_control.cfg.tx_power_dbm : 0U;
+	tlm.fps = control_rate_hz / 10U > 255U ? 255U : control_rate_hz / 10U;
 
 	zlrs_tlm_encode(payload, &tlm);
 	zlrs_link_set_tlm(&link_control, payload, sizeof(payload));
 }
 
-/* CRSF task in the main loop: read frames, TX failsafe timeout, RX output and reporting */
+/* CRSF task in the main loop: read frames, cut stale RC input, and report telemetry */
 static void pump_crsf(uint32_t now_ms)
 {
 	uint8_t type = 0U;
 	uint8_t payload[ZLRS_CRSF_PAYLOAD_MAX_LEN];
 	uint8_t len;
 
-	/* Bench builds can drop the CRSF port: the TX then sends only the configured failsafe values */
+	/* No CRSF port means no RC input and no synthetic channel output */
 	if (!ZLRS_CRSF_ENABLED || !ZLRS_CONTROL_ENABLED) {
 		return;
 	}
@@ -1115,18 +1077,15 @@ static void pump_crsf(uint32_t now_ms)
 	}
 
 	if (role_tx) {
-		/* Handset unplugged or powered off: switch to the preset failsafe values at once */
+		/* Handset unplugged or powered off: stop sending RC frames */
 		if (rc_input_seen &&
 		    (uint32_t)(now_ms - last_rc_input_ms) > CONFIG_ZLRS_APP_CRSF_TIMEOUT_MS) {
 			rc_input_seen = false;
-			zlrs_link_set_rc(&link_control, failsafe_payload, sizeof(failsafe_payload));
-			LOG_WRN("CRSF input timeout: sending failsafe values");
+			zlrs_link_set_rc(&link_control, NULL, 0U);
+			LOG_WRN("CRSF input timeout: cutting RC output");
 		}
 	} else {
-		/* RX: keep emitting failsafe values while unconnected, so the flight controller stays safe */
-		if (link_control.state != ZLRS_STATE_CONNECTED) {
-			crsf_send_rc(failsafe_payload, sizeof(failsafe_payload));
-		}
+		/* Forward only newly received RC frames; the FC detects missing frames. */
 		crsf_report_tlm(now_ms);
 	}
 }
@@ -1422,13 +1381,13 @@ static void broadcast_state(void)
 	link.state = active->state;
 	link.lq_percent = active->stats.lq_percent;
 
-	/* TX without RC input sends failsafe values; an unconnected RX outputs them to the FC */
+	/* TX without RC input cuts air RC frames; RX only forwards newly received channels */
 	if (ZLRS_CONTROL_ENABLED && link_control.state == ZLRS_STATE_CONNECTED) {
 		ever_connected = true;
 	}
 	/*
 	 * Failsafe only means something after a first connection: the TX was connected and then lost
-	 * the handset (sending failsafe), or the RX was connected and dropped (outputting failsafe).
+	 * the handset (RC output cut), or the RX was connected and dropped (RC output cut).
 	 * A device that never connected shows its normal state (purple/yellow/cyan), never red.
 	 */
 	alerts.failsafe = ever_connected &&
@@ -1633,11 +1592,9 @@ static void mgmt_debug_link(struct mgmt_debug_report_writer *writer, const char 
 			  "out-of-order %u\n",
 			  stats->tx_retries, stats->tx_arq_retry_runs, stats->rx_dup,
 			  stats->rx_out_of_order);
-	mgmt_debug_append(writer, "  Data loss          : fragment drops %u   dropped %u B\n",
-			  stats->rx_frag_drop, stats->data_drop_bytes);
-	mgmt_debug_append(writer, "  Queues             : TX %u   ARQ %u   reassembly %u B\n",
-			  (unsigned int)link->queue_count, (unsigned int)link->arq_used,
-			  (unsigned int)link->reasm.len);
+	mgmt_debug_append(writer, "  Data loss          : dropped %u B\n", stats->data_drop_bytes);
+	mgmt_debug_append(writer, "  Queues             : TX %u   ARQ %u\n",
+			  (unsigned int)link->queue_count, (unsigned int)link->arq_used);
 	mgmt_debug_append(writer, "  Sequence / ACK     : TX %u   RX %u   pending %u\n",
 			  (unsigned int)link->arq_seq, (unsigned int)link->arq_rx_seq,
 			  (unsigned int)link->arq_ack_pending);
@@ -1928,7 +1885,6 @@ static void enter_management_mode(void)
 			.data = &link_data,
 			.active = active_link(),
 			.mode = operating_mode,
-			.failsafe = failsafe_payload,
 			.device_id = device_id,
 			.region_id = region_id,
 			.tx_power_dbm = tx_power_dbm,
@@ -1942,9 +1898,9 @@ static void enter_management_mode(void)
 			LOG_WRN("management mode ended without EXIT (rc %d)", rc);
 		}
 	}
-	memcpy(rc_payload, failsafe_payload, sizeof(rc_payload));
+	rc_input_seen = false;
 	TRACE('2');
-	zlrs_link_set_rc(&link_control, rc_payload, sizeof(rc_payload));
+	zlrs_link_set_rc(&link_control, NULL, 0U);
 
 	LOG_INF("management mode done, back to normal");
 	/* Confirmation and log persistence both write flash; finish them before resuming RF. */
@@ -2176,7 +2132,7 @@ int main(void)
 		LOG_WRN("isolation: data link off, no serial passthrough");
 	}
 	if (!ZLRS_CRSF_ENABLED) {
-		LOG_WRN("no CRSF port on this board, TX sends the configured failsafe values");
+		LOG_WRN("no CRSF port on this board, RC output stays cut");
 	}
 	if (!ZLRS_MGMT_ENABLED) {
 		LOG_WRN("no management port on this board, parameters can only come from the "
@@ -2184,13 +2140,13 @@ int main(void)
 	}
 
 	/*
-	 * Bring NVS up first: region, power, keys, pairing, failsafe values and baud all come from
+	 * Bring NVS up first: region, power, keys, pairing and baud all come from
 	 * it. A broken NVS is survivable, but the consequences are worth spelling out: nothing can
 	 * be read or written, so the device stays unconfigured and off the air. store logs its own error.
 	 */
 	TRACE('S');
 	if (zlrs_storage_settings_init() != 0) {
-		LOG_ERR("store unavailable: keys, pairing and failsafe will not persist");
+		LOG_ERR("store unavailable: keys and pairing will not persist");
 	}
 
 #if ZLRS_MGMT_ENABLED
@@ -2333,7 +2289,6 @@ int main(void)
 	plan_init();
 	build_links();
 	load_identity();
-	failsafe_init();
 
 	/* The data port must come up before management mode: the session reads that port directly */
 	{
@@ -2346,7 +2301,7 @@ int main(void)
 		(void)zlrs_link_data_init(baud);
 	}
 
-	zlrs_link_set_rc(&link_control, rc_payload, sizeof(rc_payload));
+	zlrs_link_set_rc(&link_control, NULL, 0U);
 	if (ZLRS_CRSF_ENABLED) {
 		(void)zlrs_link_crsf_init();
 	}

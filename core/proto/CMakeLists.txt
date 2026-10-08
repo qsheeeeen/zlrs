@@ -6,7 +6,6 @@ zephyr_library_sources(
   crc.c
   crypto.c
   fhss.c
-  frag.c
   frame.c
   mod.c
   tlm.c

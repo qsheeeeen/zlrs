@@ -61,7 +61,6 @@ session is ready and pending logs have been flushed, including a repeated `ENTER
 | Parameter | Notes |
 | --- | --- |
 | root key / passphrase | the device derives the root key from a passphrase with PBKDF2 (100,000 rounds), or you write 64 hex characters; takes effect at once |
-| failsafe values | a 22-byte CRSF channel payload, shipped to the peer during pairing |
 | data port baud rate | 9600-4000000, effective on the next boot |
 | region | 0 = FCC915, 1 = EU868, 2 = CN470, 3 = CN433; a fresh board starts on its radio design's `default-region`, and a write is checked against that design (band and frequency coverage) and refused on a mismatch; effective on the next boot |
 | TX power ceiling | never above the chosen region's limit; effective on the next boot |
@@ -69,7 +68,7 @@ session is ready and pending logs have been flushed, including a repeated `ENTER
 | device id | generated from the TRNG on the first boot; `new-dev-id` replaces it at once and erases the pairing record |
 | security profile | `p1` is the production profile, `p0` (no tag) is refused unless this is a debug image, `p2` is not implemented yet; effective on the next boot, and the peer has to run the same profile |
 | pairing | start pairing at once, erase the pairing record (next boot) |
-| factory reset | wipes NVS (keys, pairing, failsafe, baud, region, power, role, profile); effective on the next boot |
+| factory reset | wipes NVS (keys, pairing, baud, region, power, role, profile); effective on the next boot |
 
 The command set is in [09-security](09-security.md) 9.
 
@@ -83,7 +82,7 @@ Who decides what:
 | Band role and control modulation | build time | Kconfig choices |
 | Operating mode (`mixed` / `data24`) | runtime, effective after reboot | `set-mode`, stored in NVS; `data24` uses 2.4 GHz for pairing and data |
 | Role TX / RX, security profile | runtime, default at build time | `set-role` / `set-profile`, stored in NVS |
-| Region, power ceiling, baud rate, failsafe values, pairing | runtime | management protocol, stored in NVS |
+| Region, power ceiling, baud rate, pairing | runtime | management protocol, stored in NVS |
 | Rate tier, frame rate, telemetry period | build time today | the ledger in [12-roadmap](12-roadmap.md) tracks the missing commands |
 | Hardware presence (ports, management channel, button, LED, watchdog, SHA-256, TRNG, radio design) | devicetree | `app/src/platform/caps.h` |
 | Bench isolation (`RADIO=n`, hopping off, P0, …) | build time, debug images only | `ZLRS_APP_DEBUG*`, see [11-debug](11-debug.md) 3 |
@@ -187,7 +186,7 @@ What the hardware provides also bounds what the software may do:
 | a management CDC | configuration protocol, management mode, recovery entry | using it as a link endpoint |
 | a button | long press to pair | — (pairing from the tool always works) |
 | a status LED | the LED language ([10-ux](10-ux.md)) | — |
-| NVS | keys, pairing, failsafe, baud, region, power, role, profile | **required**: a board without NVS is rejected |
+| NVS | keys, pairing, baud, region, power, role, profile | **required**: a board without NVS is rejected |
 | a hardware watchdog | reset on a hang, rollback assistance | — |
 
 **Each image builds its own USB stack** (`subsys/usb`, `CONFIG_ZLRS_USB`, enabled separately by

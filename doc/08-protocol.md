@@ -1,12 +1,12 @@
 # Over-the-air protocol
 
 The ZLRS protocol: the frame format, how the link state machine moves, how pairing and sessions
-are set up, how the superframe is laid out, how reliable transfer and fragmentation work, and
+are set up, how the superframe is laid out, how reliable transfer works, and
 how hopping and regulation land in code. Identity and keys: [09-security](09-security.md);
 timing budget: [06-architecture](06-architecture.md) 4; chip parameters:
 [05-radio](05-radio.md).
 
-Protocol version: `ZLRS_PROTO_VERSION` (4 today), carried in `SYNC` and checked by the RX.
+Protocol version: `ZLRS_PROTO_VERSION` (5 today), carried in `SYNC` and checked by the RX.
 
 ## 1. Frame format
 
@@ -15,7 +15,7 @@ frame. What the protocol adds is:
 
 | Field | Size | Purpose |
 | --- | --- | --- |
-| `header` | 1 B | 6-bit packet type tells the receiver how to parse the frame; 2-bit flags carry `MORE` and the reverse DATA ACK toggle. |
+| `header` | 1 B | 6-bit packet type tells the receiver how to parse the frame; bit 1 is the reverse DATA ACK toggle and bit 0 is reserved. |
 | `seq` | 2 B | Per-transmission frame number. The receiver uses it to reject replayed frames. |
 | `payload` | 0-504 B | Packet-specific content. ARQ DATA starts with a 2-byte data sequence, followed by user bytes; an empty DATA reply has no payload. |
 | `tag` | 0 or 4 B | Truncated HMAC-SHA256. Authenticates the ZLRS frame so modified or forged fields are rejected; omitted only in the debug P0 profile. |
@@ -25,7 +25,7 @@ adds its own physical-layer framing around these bytes; those fields are listed 
 
 FLRC accepts up to 511 bytes for the entire ZLRS frame. With P1 authentication, ARQ carries
 502 user bytes, including when reporting the reverse ACK bit. LoRa retains its 255-byte limit and
-the link clamps its MTU separately. Both peers must run protocol version 4. The public LR20xx
+the link clamps its MTU separately. Both peers must run protocol version 5. The public LR20xx
 RAL already configures separate TX/RX FIFOs large enough to hold a full FLRC frame; no FIFO
 streaming or upstream changes are required. See the [LR2021 datasheet, sections 5.3 and 18.2](https://www.mouser.com/pdfDocs/61979758LR2021_V1_1_datasheet.pdf).
 
@@ -65,9 +65,20 @@ of an unrelated signal matching.
 | 8 | `SESS_RESP` | RX to TX | session response carrying `nonce_r` |
 | 9 | `SESS_CFM` | TX to RX | session confirmation, tagged with the new session key |
 
-The telemetry payload is 8 bytes: LQ percent, uplink RSSI (as negated dBm, CRSF convention),
-SNR (0 under FLRC, which cannot measure it), the RX's rate tier id, the RX's power tier id, the
-RX link state and a flags word (paired / session).
+The telemetry payload is the standard CRSF `0x1D Link Statistics TX` payload: RSSI, RSSI percent,
+link quality, SNR, receiver RF power in dBm, actual frame rate divided by 10, antenna 2 RSSI and
+active antenna. The TX additionally emits standard CRSF `0x14 Link Statistics` for handset status.
+
+`0x14` uplink power is the ground TX's power, not the air RX's power. Its RF profile enumeration
+only defines 4/50/150 fps; other rates use reserved `0xff`, and `0x1D` reports the actual rate at
+10 fps resolution. RSSI percentage is zero until a calibrated mapping exists. The unsigned
+`0x1D` dBm field cannot represent negative bench power, so negative setpoints saturate to zero.
+
+RC uses CRSF cut failsafe: the TX clears its channel payload after the handset-input timeout,
+and RX only forwards newly received RC. Neither end generates preset channel values at boot,
+after management mode or during link loss. The flight controller detects missing `0x16` frames;
+the [CRSF specification](https://github.com/tbs-fpv/tbs-crsf-spec/blob/main/crsf.md#0x16-rc-channels-packed-payload)
+recommends that the FC wait one second before starting its failsafe routine.
 
 ## 3. Link state machine
 
@@ -98,17 +109,14 @@ RX link state and a flags word (paired / session).
 Three messages carry one nonce from each end:
 
 ```
-PAIR_REQ  {dev_a, dev_b=0, nonce_a, nonce_b=0, flags, failsafe 22 B}
-PAIR_RESP {dev_a, dev_b, nonce_a, nonce_b, flags, failsafe 22 B}
-PAIR_CFM  {dev_a, dev_b, nonce_a, nonce_b, flags, failsafe 22 B}
+PAIR_REQ  {dev_a, dev_b=0, nonce_a, nonce_b=0}
+PAIR_RESP {dev_a, dev_b, nonce_a, nonce_b}
+PAIR_CFM  {dev_a, dev_b, nonce_a, nonce_b}
 ```
 
-All three pairing payloads are fixed at 39 bytes; flags bit 0 marks the 22-byte failsafe field
-as valid. Unused failsafe bytes are zero.
-
-The TX (initiator) sends `PAIR_REQ` and ships its failsafe channel values when it has them; the
-RX answers `PAIR_RESP` with its own id and a fresh `nonce_b`, and the TX finishes with
-`PAIR_CFM`. Both ends keep `nonce_a || nonce_b` as the pair salt, from which the pairing-level
+All three pairing payloads are fixed at 16 bytes. The TX (initiator) sends `PAIR_REQ`; the RX
+answers `PAIR_RESP` with its own id and a fresh `nonce_b`, and the TX finishes with `PAIR_CFM`.
+Both ends keep `nonce_a || nonce_b` as the pair salt, from which the pairing-level
 keys derive ([09-security](09-security.md) 3). Pairing messages are tagged with the shared
 `auth_key` and the pairing sync word; once it succeeds both ends switch to their link's normal
 sync word and derived keys.
@@ -183,22 +191,14 @@ amortises the data window over the frames in between.
 
 ### 4.2 Fragmentation
 
-Messages larger than one frame are split with `MORE` and reassembled in data-sequence order
-under ARQ, or outer frame-sequence order in best-effort mode. The reassembly buffer is 512 B;
-the sender closes a run before it could overflow. Best-effort gaps drop the incomplete run.
-ARQ waits for the missing packet and preserves the partial run across retransmissions.
-
-The 100 ms half-run timeout (`ZLRS_FRAG_TIMEOUT_MS`) applies to the best-effort path only, where a
-lost frame never comes back and the half message can only be dropped. With ARQ it is off: a
-retransmit may well arrive tens of milliseconds later than the frame before it, and expiring the
-run would throw away bytes the ACK already covered — the loss the sender can neither see nor
-repair.
+Messages larger than one frame are split at the radio MTU. Each accepted packet is delivered to
+the byte stream immediately; packet boundaries are not message boundaries.
 
 ### 4.3 Reliable transfer (ARQ)
 
 The data link uses stop-and-wait independently in each direction:
 
-- Header bit 0 is `MORE`; bit 1 is the ACK toggle for data received from the peer.
+- Header bit 1 is the ACK toggle for data received from the peer; bit 0 is reserved and must be zero.
   The toggle starts at 0 for every new session and flips only after accepting the next
   in-order data packet. Empty DATA and duplicate data never flip it.
 - Each sender keeps exactly one outstanding packet. Before receiving the matching flipped
@@ -207,15 +207,15 @@ The data link uses stop-and-wait independently in each direction:
 - Every DATA reports the current receive toggle, even when it is 0. With no reverse user
   data, the receiver sends an empty DATA containing only the common header and tag
   (7 bytes under P1). There is no ACK packet type, ACK sequence field or header extension.
-- ARQ payload retains a 2-byte data sequence for deduplication and reassembly. Retransmissions
-  keep that sequence, payload and MORE flag but obtain a fresh outer transmission sequence.
+- ARQ payload retains a 2-byte data sequence for deduplication. Retransmissions keep that sequence
+  and payload but obtain a fresh outer transmission sequence.
   Duplicates repeat the same receive toggle; future data sequences are rejected.
 - The sender retransmits after its configured timeout. The core fallback is 30 ms;
   the application budgets two data opportunities, with a 10 ms minimum in data24.
   Unchanged ACK bits do not postpone the timer. Long retry runs are counted every 64 retries,
   and the same packet continues to be retransmitted without a recovery probe or progress reset.
 - A new session resets both data sequences and receive toggles. Repeated confirmation of the
-  existing session, periodic SYNC and idle periods preserve transfer and reassembly progress.
+  existing session, periodic SYNC and idle periods preserve stream progress.
 - ACK bits are authenticated with the DATA header; malformed DATA cannot acknowledge bytes.
   Replay checks run before ACK processing.
 
@@ -223,10 +223,10 @@ Connected data24 may encode and authenticate its next eligible DATA during RX an
 its separate TX FIFO. Preparation never advances sequence numbers, hopping or queue state.
 While a packet is outstanding only its timed-out retransmission can be prepared; the next
 packet becomes eligible after ACK. Activation validates the cached sequence, key, MTU and
-run boundary. A prepared packet can report the previous reverse ACK toggle; any newer receive
+profile. A prepared packet can report the previous reverse ACK toggle; any newer receive
 progress remains pending for the following DATA reply.
 
-Only the current wire format is implemented; both peers must run version 4.
+Only the current wire format is implemented; both peers must run version 5.
 
 An idle transmit slot remains idle rather than listening to the opposite direction. After the
 RX data link misses two periodic SYNC intervals, its A window listens on the sync channel until an authenticated periodic SYNC restores frame/hop alignment. The

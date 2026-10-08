@@ -7,7 +7,7 @@
 #include <string.h>
 
 #define FRAME_TYPE_SHIFT 2U
-#define FRAME_FLAG_MASK  0x03U
+#define FRAME_FLAG_MASK  ZLRS_FLAG_ACK
 #define FRAME_TYPE_MAX   ZLRS_PKT_SESS_CFM
 
 uint8_t zlrs_profile_tag_len(zlrs_profile_t profile)
@@ -27,7 +27,8 @@ uint16_t zlrs_frame_encode(const zlrs_frame_t *frame, uint8_t *buf, uint16_t cap
 	/* Validate the wide sum before narrowing: a forged payload length must not wrap. */
 	const uint32_t len = ZLRS_FRAME_HDR_LEN + (uint32_t)frame->payload_len + tag_len;
 
-	if (frame->type > FRAME_TYPE_MAX || len > cap || len > ZLRS_FRAME_MAX_LEN) {
+	if (frame->type > FRAME_TYPE_MAX || (frame->flags & ~FRAME_FLAG_MASK) != 0U || len > cap ||
+	    len > ZLRS_FRAME_MAX_LEN) {
 		return 0U;
 	}
 	if (frame->payload_len > 0U && frame->payload == NULL) {
@@ -58,7 +59,7 @@ bool zlrs_frame_decode(zlrs_frame_t *frame, const uint8_t *buf, uint16_t len, ui
 	}
 
 	frame->type = (uint8_t)(buf[0] >> FRAME_TYPE_SHIFT);
-	if (frame->type > FRAME_TYPE_MAX) {
+	if (frame->type > FRAME_TYPE_MAX || (buf[0] & 0x01U) != 0U) {
 		return false;
 	}
 	frame->flags = (uint8_t)(buf[0] & FRAME_FLAG_MASK);

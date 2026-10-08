@@ -125,13 +125,6 @@ static void fx_on_state(void *ctx, uint8_t state)
 	(void)state;
 }
 
-static void fx_on_failsafe(void *ctx, const uint8_t *payload, uint16_t len)
-{
-	(void)ctx;
-	(void)payload;
-	(void)len;
-}
-
 static uint32_t fx_random(void *ctx)
 {
 	(void)ctx;
@@ -175,7 +168,6 @@ static void fx_link_init(zlrs_link_t *link, uint8_t arq)
 		.on_tlm = fx_on_tlm,
 		.on_data = fx_on_data,
 		.on_state = fx_on_state,
-		.on_failsafe = fx_on_failsafe,
 		.ctx = NULL,
 	};
 

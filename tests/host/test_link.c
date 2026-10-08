@@ -43,9 +43,6 @@ struct node {
 	uint8_t tlm[ZLRS_LINK_TLM_MAX_LEN];
 	uint16_t tlm_len;
 	uint32_t tlm_count;
-	uint8_t failsafe[ZLRS_RC_PAYLOAD_LEN];
-	uint16_t failsafe_len;
-	uint32_t failsafe_count;
 	uint8_t stream[2048];
 	uint32_t stream_len;
 	uint8_t ctl_state;
@@ -161,19 +158,6 @@ static void on_data(void *ctx, const uint8_t *data, uint16_t len)
 	node->stream_len += len;
 }
 
-static void on_failsafe(void *ctx, const uint8_t *payload, uint16_t len)
-{
-	link_ctx_t *lc = ctx;
-	node_t *node = lc->node;
-
-	if (len > sizeof(node->failsafe)) {
-		len = sizeof(node->failsafe);
-	}
-	memcpy(node->failsafe, payload, len);
-	node->failsafe_len = len;
-	node->failsafe_count++;
-}
-
 static void on_state(void *ctx, uint8_t state)
 {
 	link_ctx_t *lc = ctx;
@@ -213,7 +197,6 @@ static void node_init(node_t *node, uint8_t role, const uint8_t *root_key,
 		.on_rc = on_rc,
 		.on_tlm = on_tlm,
 		.on_state = on_state,
-		.on_failsafe = on_failsafe,
 		.ctx = &node->ctl_ctx,
 	};
 	zlrs_link_events_t data_ev = {
@@ -241,6 +224,8 @@ static void node_init(node_t *node, uint8_t role, const uint8_t *root_key,
 
 	zlrs_link_init(&node->ctl, &cfg, fake_random, node, &ctl_ev);
 	zlrs_link_init(&node->data, &data_cfg, fake_random, node, &data_ev);
+	uint8_t channels[ZLRS_RC_PAYLOAD_LEN] = {0};
+	zlrs_link_set_rc(&node->ctl, channels, sizeof(channels));
 	zlrs_link_set_dev_id(&node->ctl, dev_id);
 	zlrs_link_set_dev_id(&node->data, dev_id);
 
@@ -773,7 +758,7 @@ static void pair_put_u32(uint8_t *p, uint32_t v)
 static void test_pairing_repeat_req(void)
 {
 	sim_t sim;
-	uint8_t payload[2U * ZLRS_DEV_ID_LEN + ZLRS_PAIR_SALT_LEN + 1U + ZLRS_RC_PAYLOAD_LEN];
+	uint8_t payload[ZLRS_PAIR_PAYLOAD_LEN];
 	uint8_t frame[ZLRS_FRAME_MAX_LEN];
 	const uint32_t nonce_a = 0x11111111U;
 	const uint32_t other_a = 0x22222222U;
@@ -1434,17 +1419,13 @@ static void test_data_passthrough(void)
 	CHECK(memcmp(sim.tx.stream, reverse, sizeof(reverse)) == 0);
 }
 
-/*
- * A write larger than the receiver's reassembly buffer must still arrive whole. The sender marks
- * "more" while it has bytes left, so one long write used to become one run the peer could not
- * hold: the reassembler dropped it (correctly) and the bytes were simply gone.
- */
+/* A byte stream longer than one radio packet must arrive without message buffering. */
 static void test_data_long_write(void)
 {
 	sim_t sim;
 	static uint8_t payload[1024];
 
-	printf("link: data write longer than the reassembly buffer\n");
+	printf("link: data write larger than one radio packet\n");
 	sim_init(&sim);
 	pair_and_connect(&sim);
 
@@ -1455,7 +1436,6 @@ static void test_data_long_write(void)
 	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(payload), 6000);
 	CHECK(sim.rx.stream_len == sizeof(payload));
 	CHECK(memcmp(sim.rx.stream, payload, sizeof(payload)) == 0);
-	CHECK(sim.rx.data.stats.rx_frag_drop == 0U);
 }
 static void test_rx_rejects(void)
 {
@@ -1498,54 +1478,42 @@ static void test_rx_rejects(void)
 	CHECK(sim.rx.ctl.stats.rx_bad_frame == frame_before + 1U);
 }
 
-static void test_frag_drop(void)
+static void test_stream_delivery(void)
 {
 	sim_t sim;
 	uint8_t frame[ZLRS_FRAME_MAX_LEN];
 	uint8_t chunk[6] = {1U, 2U, 3U, 4U, 5U, 6U};
-	const uint8_t *key;
-	uint32_t drop_before;
-	uint16_t seq;
-	uint16_t len;
-
-	printf("link: fragmentation recovery\n");
 	sim_init(&sim);
 	pair_and_connect(&sim);
-	CHECK(sim.rx.data.state == ZLRS_STATE_CONNECTED);
+	uint16_t seq = sim.rx.data.last_rx_seq + 1U;
+	for (unsigned int i = 0U; i < 3U; i++) {
+		uint16_t len = build_data_frame(frame, ZLRS_PKT_DATA_UP, seq, 0U, chunk,
+						sizeof(chunk), sim.rx.data.session_key_in);
+		sim_inject(&sim, &sim.rx.data, frame, len);
+		CHECK(sim.rx.stream_len == (i + 1U) * sizeof(chunk));
+		CHECK(memcmp(sim.rx.stream + i * sizeof(chunk), chunk, sizeof(chunk)) == 0);
+		seq += 2U;
+		sim.now_ms += 200U;
+	}
+}
 
-	key = sim.rx.data.session_key_in; /* the RX verifies the TX's frames with in */
-	seq = (uint16_t)(sim.rx.data.last_rx_seq + 1U);
-
-	/* Gap: drop the whole run */
-	drop_before = sim.rx.data.stats.rx_frag_drop;
-	len = build_data_frame(frame, ZLRS_PKT_DATA_UP, seq, ZLRS_FLAG_MORE, chunk, sizeof(chunk),
-			       key);
-	CHECK(len > 0U);
-	sim_inject(&sim, &sim.rx.data, frame, len);
-	CHECK(sim.rx.data.reasm.len == sizeof(chunk));
-
-	seq = (uint16_t)(seq + 2U);
-	len = build_data_frame(frame, ZLRS_PKT_DATA_UP, seq, ZLRS_FLAG_MORE, chunk, sizeof(chunk),
-			       key);
-	sim_inject(&sim, &sim.rx.data, frame, len);
-	CHECK(sim.rx.data.stats.rx_frag_drop == drop_before + 1U);
-	CHECK(sim.rx.data.reasm.len == 0U);
-	CHECK(sim.rx.stream_len == 0U);
-
-	/* Timeout: the leftovers go and a new run starts */
-	seq = (uint16_t)(seq + 1U);
-	len = build_data_frame(frame, ZLRS_PKT_DATA_UP, seq, ZLRS_FLAG_MORE, chunk, sizeof(chunk),
-			       key);
-	sim_inject(&sim, &sim.rx.data, frame, len);
-	CHECK(sim.rx.data.reasm.len == sizeof(chunk));
-
-	sim.now_ms += ZLRS_FRAG_TIMEOUT_MS + 5U;
-	seq = (uint16_t)(seq + 1U);
-	len = build_data_frame(frame, ZLRS_PKT_DATA_UP, seq, ZLRS_FLAG_MORE, chunk, sizeof(chunk),
-			       key);
-	sim_inject(&sim, &sim.rx.data, frame, len);
-	CHECK(sim.rx.data.reasm.len == sizeof(chunk)); /* only the new fragment is left */
-	CHECK(sim.rx.data.stats.rx_frag_drop == drop_before + 1U);
+static void test_rc_cut(void)
+{
+	sim_t sim;
+	uint8_t channels[ZLRS_RC_PAYLOAD_LEN] = {0x5a};
+	sim_init(&sim);
+	pair_and_connect(&sim);
+	zlrs_link_set_rc(&sim.tx.ctl, channels, sizeof(channels));
+	sim_run(&sim, 10U);
+	uint32_t received = sim.rx.rc_count;
+	CHECK(received > 0U);
+	zlrs_link_set_rc(&sim.tx.ctl, NULL, 0U);
+	sim_run(&sim, 100U);
+	CHECK(sim.tx.ctl.rc_len == 0U);
+	CHECK(sim.rx.rc_count == received);
+	zlrs_link_set_rc(&sim.tx.ctl, channels, sizeof(channels));
+	SIM_UNTIL(&sim, sim.rx.rc_count > received, 2000);
+	CHECK(memcmp(sim.rx.rc, channels, sizeof(channels)) == 0);
 }
 
 static void test_recovery(void)
@@ -2036,7 +2004,6 @@ static void test_prepared_data(void)
 	CHECK(memcmp(sim.tx.stream, payload, sizeof(payload)) == 0);
 	CHECK(sim.packets_prepared > 0U && sim.packets_used > 0U);
 	CHECK(sim.tx.data.stats.rx_bad_tag == 0U && sim.rx.data.stats.rx_bad_tag == 0U);
-	CHECK(sim.tx.data.stats.rx_frag_drop == 0U && sim.rx.data.stats.rx_frag_drop == 0U);
 
 	/* A changed key must discard an encoded packet and authenticate the normal path afresh. */
 	sim_run(&sim, 20U);
@@ -2079,7 +2046,6 @@ static void test_flrc_max_frame_duplex(void)
 	CHECK(memcmp(sim.rx.stream, down, sizeof(down)) == 0);
 	CHECK(memcmp(sim.tx.stream, up, sizeof(up)) == 0);
 	CHECK(sim.tx.data.stats.tx_retries > 0U);
-	CHECK(sim.rx.data.stats.rx_frag_drop == 0U && sim.tx.data.stats.rx_frag_drop == 0U);
 	CHECK(sim.tx.data.stats.tx_data_bytes >= sizeof(down));
 	sim_run(&sim, 20U);
 	CHECK(sim.tx.data.stats.tx_ack_only_frames > 0U);
@@ -2132,7 +2098,6 @@ static void test_arq_stop_and_wait_loss(void)
 			CHECK(sim.tx.data.stats.tx_retries == lost);
 			CHECK(sim.rx.stream_len == sizeof(payload));
 			CHECK(memcmp(sim.rx.stream, payload, sizeof(payload)) == 0);
-			CHECK(sim.rx.data.stats.rx_frag_drop == 0U);
 			CHECK(sim.tx.data.stats.data_drop_bytes == 0U);
 		}
 	}
@@ -2236,12 +2201,7 @@ static void test_arq_duplicate_ack_timeout(void)
 	}
 }
 
-/*
- * ARQ: a run survives a retransmit that lands past the reassembly timeout. On a lossy slot the
- * head frame of a run is repeated for tens of milliseconds, and a receiver that expires the half
- * run in the meantime throws away bytes its ACK already covered — the peer is never told, so the
- * passthrough loses a chunk in the middle of every message.
- */
+/* ARQ preserves the delivered stream prefix while later packets wait for retries. */
 static void test_arq_slow_run(void)
 {
 	sim_t sim;
@@ -2260,8 +2220,7 @@ static void test_arq_slow_run(void)
 	}
 	CHECK(zlrs_link_write(&sim.tx.data, want, sizeof(want)) == sizeof(want));
 
-	/* The first frame of the run lands, the rest of the air goes quiet for longer than the
-	 * reassembly timeout before the retransmit gets through */
+	/* The first packet lands before a prolonged outage in the reverse ACK direction. */
 	sim_run(&sim, 1U);
 	sim.drop_data_down = 30;
 	sim_run(&sim, 30U);
@@ -2385,8 +2344,7 @@ static void test_arq_recovery_preserves_progress(void)
 			CHECK(zlrs_link_write(&sim.tx.data, payload, sizeof(payload)) ==
 			      sizeof(payload));
 			sim_run(&sim, 1U);
-			CHECK(sim.rx.data.reasm.active);
-			CHECK(sim.rx.stream_len == 0U);
+			CHECK(sim.rx.stream_len == 128U);
 		} else {
 			CHECK(zlrs_link_write(&sim.tx.data, payload, 128U) == 128U);
 			SIM_UNTIL(&sim, sim.tx.data.queue_count == 0U, 2000);
@@ -2427,41 +2385,6 @@ static void test_arq_recovery_lost_ack(void)
 	CHECK(sim.tx.data.queue_count == 0U);
 	CHECK(sim.rx.stream_len == sizeof(payload));
 	CHECK(memcmp(sim.rx.stream, payload, sizeof(payload)) == 0);
-}
-
-/* The TX configures failsafe values and ships them while pairing: the RX stores and emits them */
-static void test_failsafe_push(void)
-{
-	sim_t sim;
-	uint8_t want[ZLRS_RC_PAYLOAD_LEN];
-
-	printf("link: failsafe push\n");
-
-	sim_init(&sim);
-	for (uint8_t i = 0U; i < sizeof(want); i++) {
-		want[i] = (uint8_t)(0x40U + i);
-	}
-	zlrs_link_set_failsafe(&sim.tx.ctl, want, sizeof(want));
-
-	pair_and_connect(&sim);
-
-	/* The link layer stored them */
-	CHECK(sim.rx.ctl.failsafe_len == sizeof(want));
-	CHECK(memcmp(sim.rx.ctl.failsafe, want, sizeof(want)) == 0);
-	/* The application callback fired too (the RX writes NVS and uses them) */
-	CHECK(sim.rx.failsafe_count == 1U);
-	CHECK(sim.rx.failsafe_len == sizeof(want));
-	CHECK(memcmp(sim.rx.failsafe, want, sizeof(want)) == 0);
-
-	/* Values with the wrong length are refused */
-	zlrs_link_set_failsafe(&sim.tx.ctl, want, sizeof(want) - 1U);
-	CHECK(sim.tx.ctl.failsafe_len == sizeof(want));
-
-	/* With nothing set on the TX, the RX keeps its own values instead of being zeroed */
-	sim_init(&sim);
-	pair_and_connect(&sim);
-	CHECK(sim.rx.ctl.failsafe_len == 0U);
-	CHECK(sim.rx.failsafe_count == 0U);
 }
 
 /*
@@ -3286,7 +3209,8 @@ void test_link(void)
 	test_data_passthrough();
 	test_data_long_write();
 	test_rx_rejects();
-	test_frag_drop();
+	test_stream_delivery();
+	test_rc_cut();
 	test_recovery();
 	test_hop_lockstep();
 	test_unconfigured();
@@ -3310,7 +3234,6 @@ void test_link(void)
 	test_arq_bidirectional_recovery();
 	test_arq_recovery_preserves_progress();
 	test_arq_recovery_lost_ack();
-	test_failsafe_push();
 	test_data_idle();
 	test_data_idle_hopping();
 	test_cadence();

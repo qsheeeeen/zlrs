@@ -29,11 +29,10 @@ typedef int (*zlrs_mgmt_debug_report_fn)(uint8_t report_id, uint16_t offset, uin
 
 /* What the commands act on: the application's live state, handed in when a session opens */
 typedef struct {
-	zlrs_link_t *control; /* the link the commands act on (keys, pairing, failsafe) */
+	zlrs_link_t *control; /* the link the commands act on (keys, pairing) */
 	zlrs_link_t *data;    /* a fresh device id goes to both links */
 	zlrs_link_t *active;  /* pairing and status use this link */
 	uint8_t mode;         /* live ZLRS_MODE_*; writes take effect after reboot */
-	uint8_t *failsafe;    /* the application's failsafe payload (ZLRS_FAILSAFE_LEN bytes) */
 	uint8_t *device_id;   /* the identity, replaced by NEW_DEV_ID (ZLRS_DEV_ID_LEN bytes) */
 	uint8_t region_id;    /* the live region: a command persists, it does not switch */
 	int8_t tx_power_dbm; /* the live TX power: what a region or power command is checked against */

@@ -75,8 +75,8 @@ Pairing decides **who** we talk to; the session decides **which key** this conve
   same authenticated exchange and persisted pairing record.
 - The window is opened by a 1 s button hold or by the `pair` command and lasts 30 s; `PAIR_REQ`
   repeats every 100 ms.
-- The three messages carry `dev_a`, `dev_b` and the two 4-byte nonces; the TX also ships its
-  failsafe channel values. They are tagged with `auth_key` and use the pairing sync word.
+- The three messages carry `dev_a`, `dev_b` and the two 4-byte nonces. They are tagged with
+  `auth_key` and use the pairing sync word.
 - **No key is transferred**: pairing authenticates the two device ids and exchanges the nonces
   from which both ends derive `pair_key` ([08-protocol](08-protocol.md) 3.3).
 - Both nonces are covered by every message, so a recorded handshake cannot be replayed into a
@@ -182,7 +182,6 @@ and response frames, documented by `include/zlrs/mgmt/mgmt.h` and implemented in
 | erase pairing | effective on the next boot |
 | write passphrase | the device derives the root key with PBKDF2 |
 | write root key | 64 hex characters |
-| write failsafe values | a 22-byte CRSF channel payload |
 | set data baud | 9600-4000000, effective on the next boot |
 | set region | validated against the board's radio design, refused on mismatch, next boot |
 | set power ceiling | never above the chosen region's limit, next boot |

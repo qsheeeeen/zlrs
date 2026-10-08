@@ -27,7 +27,6 @@ int zlrs_test_hex_eq(const uint8_t *data, size_t len, const char *hex);
 
 void test_crypto(void);
 void test_frame(void);
-void test_frag(void);
 void test_fhss(void);
 void test_tlm(void);
 void test_data_pattern(void);

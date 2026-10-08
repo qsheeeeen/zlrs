@@ -263,6 +263,31 @@ Research directions and acceptance:
 
 ## Implemented behavior
 
+- **Protocol v5 CRSF telemetry, cut failsafe and immediate DATA delivery**: TLM carries the
+  standard eight-byte CRSF `0x1D` payload. TX emits `0x1D` and `0x14`, with ground TX power in
+  the latter and air RX power in the former. Handset timeout cuts RC transmission; RX forwards
+  only received channel frames. Pairing is 16 bytes, without failsafe channels or flags; preset
+  channels, their management command and storage setting are removed. DATA is a byte stream:
+  MORE, reassembly and half-message expiry are removed. Host tests cover immediate delivery,
+  RC cut/recovery and rejecting the reserved header bit, alongside existing ARQ loss/replay/wrap
+  tests. Host sanitizers, 40 tool tests, architecture gates, modified C formatting and LF/HF
+  application builds pass. On 2026-10-08 both LF boards were MCUboot-updated, hash-verified and
+  confirmed with `1d3e7b48b48964b29d1786cd9699e6c099fbd7301fe108790153a0e1a37c8eb4`.
+  Three mixed-mode USB CRSF rounds verified exact channel payloads, no boot or cut RC output,
+  fresh channels after recovery, standard telemetry lengths/fields and zero CRC errors. The
+  first candidate exposed a partial-frame enqueue under CRSF backpressure; both RX record and
+  TX frame queues now reject whole frames when capacity is insufficient, and the final rounds
+  also had zero CRC errors while draining initial USB backlog. Three paced mixed-mode 4 KiB
+  duplex rounds were byte-exact (6.567-6.574 s). After restoring data24, five unpaced 64 KiB
+  duplex rounds were byte-exact with no extra bytes (1.554-1.961 s, 33.4-42.2 kB/s per direction).
+  Pausing only the receiving radio for 2 s during a 128 KiB stream passed in both directions
+  (5.729/5.631 s including pause and duplicate check). Original data24/P1/pairing, CN433,
+  -10 dBm and 115200 baud settings were restored. Evidence: `build/validation-crsf-v5/` and
+  `tests/hardware/app/link/test_crsf.py`. Actual handset display/FC failsafe, HF hardware and
+  long-duration acceptance remain pending. `0x14` has no standard profile for rates outside
+  4/50/150 fps; `0x1D` reports those rates at 10 fps resolution. RSSI percentage remains
+  uncalibrated, and its unsigned dBm power field cannot represent negative bench setpoints.
+
 - **Protocol v4 header ACK toggle**: removes the standalone ACK type, ACK sequence extension,
   sliding send/receive windows and recovery probes. Each direction retains one DATA until
   the peer's header ACK bit flips; duplicates repeat the existing bit and timeouts retransmit

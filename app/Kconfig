@@ -253,11 +253,11 @@ config ZLRS_APP_RESYNC_PERIOD_MS
 	  See doc/08-protocol.md 3.6. Converted to frames, at least one.
 
 config ZLRS_APP_CRSF_TIMEOUT_MS
-	int "Timeout before the TX switches to failsafe values (ms)"
+	int "Timeout before the TX cuts RC output (ms)"
 	default 100
 	help
-	  With the handset unplugged or powered off, the TX swaps in the preset failsafe payload
-	  when no RC frame arrives within this window. See doc/08-protocol.md 3.4.
+	  With the handset unplugged or powered off, the TX stops sending RC frames when no RC
+	  frame arrives within this window. The flight controller applies its own failsafe policy.
 
 config ZLRS_APP_MGMT_TIMEOUT_S
 	int "Management mode idle timeout (s)"

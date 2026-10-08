@@ -30,9 +30,8 @@ typedef enum {
 	ZLRS_PKT_SESS_CFM = 9,  /* TX -> RX: session confirm, tagged with the new session key */
 } zlrs_pkt_type_t;
 
-/* low 2 bits of the header */
-#define ZLRS_FLAG_MORE 0x01U /* more fragments follow */
-#define ZLRS_FLAG_ACK  0x02U /* DATA: toggles after each accepted data packet */
+/* Header bit 0 is reserved and must be zero. */
+#define ZLRS_FLAG_ACK 0x02U /* DATA: toggles after each accepted data packet */
 
 /* Security profiles, see doc/09-security.md 8 */
 typedef enum {

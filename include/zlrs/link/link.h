@@ -17,7 +17,6 @@
 #include "zlrs/proto/limits.h"
 #include "zlrs/proto/crypto.h"
 #include "zlrs/proto/fhss.h"
-#include "zlrs/proto/frag.h"
 #include "zlrs/proto/frame.h"
 
 #ifdef __cplusplus
@@ -136,8 +135,6 @@ typedef struct {
 	void (*on_tlm)(void *ctx, const uint8_t *payload, uint16_t len);
 	void (*on_data)(void *ctx, const uint8_t *data, uint16_t len);
 	void (*on_state)(void *ctx, uint8_t state);
-	/* RX side: failsafe values (RC payload) from the TX during pairing; store and output them */
-	void (*on_failsafe)(void *ctx, const uint8_t *payload, uint16_t len);
 	void *ctx;
 } zlrs_link_events_t;
 
@@ -171,14 +168,13 @@ typedef struct {
 	uint32_t rx_out_of_order;   /* ARQ: drops caused by sequence-number jumps */
 	uint32_t tx_retries;        /* ARQ: retransmissions */
 	uint32_t tx_arq_retry_runs; /* ARQ: long retry runs (bytes are kept) */
-	uint32_t rx_frag_drop;
-	uint32_t rx_syncs;      /* SYNC frames received */
-	uint32_t tx_syncs;      /* SYNC frames sent */
-	uint32_t sess_resp_rx;  /* TX: peer answered a SYNC */
-	uint32_t sess_resp_tx;  /* RX: answered a SYNC */
-	uint32_t sess_cfm_rx;   /* RX: session confirmed */
-	uint32_t sess_cfm_tx;   /* TX: confirmations sent */
-	uint32_t mix_changes;   /* how often a new sub-band mix was adopted */
+	uint32_t rx_syncs;          /* SYNC frames received */
+	uint32_t tx_syncs;          /* SYNC frames sent */
+	uint32_t sess_resp_rx;      /* TX: peer answered a SYNC */
+	uint32_t sess_resp_tx;      /* RX: answered a SYNC */
+	uint32_t sess_cfm_rx;       /* RX: session confirmed */
+	uint32_t sess_cfm_tx;       /* TX: confirmations sent */
+	uint32_t mix_changes;       /* how often a new sub-band mix was adopted */
 	uint32_t mix_fallbacks; /* fallbacks to the default mix after missing new SYNC versions */
 	uint32_t hop_resync;    /* hop-index corrections received through SYNC */
 	uint32_t hop_advances;  /* times this link moved its hop index by itself */
@@ -227,9 +223,7 @@ typedef struct {
 	uint16_t data_seq;
 	uint16_t data_len;
 	uint16_t data_mtu;
-	uint16_t run_bytes;
 	zlrs_profile_t profile;
-	bool more;
 	bool ack_bit;
 	bool retry;
 	bool valid;
@@ -322,9 +316,6 @@ typedef struct {
 	uint16_t rc_len;
 	uint8_t tlm_payload[ZLRS_LINK_TLM_MAX_LEN];
 	uint16_t tlm_len;
-	/* Failsafe values: the TX side ships its own, the RX keeps the last ones received */
-	uint8_t failsafe[ZLRS_RC_PAYLOAD_LEN];
-	uint16_t failsafe_len;
 
 	/* passthrough queue */
 	uint8_t tx_queue[ZLRS_LINK_TX_QUEUE_LEN];
@@ -336,25 +327,20 @@ typedef struct {
 	uint16_t arq_seq;
 	uint16_t arq_len;
 	uint32_t arq_first_sent_ms;
-	/* Retransmissions preserve the data sequence, payload and MORE flag. */
-	uint8_t arq_more;
+	/* Retransmissions preserve the data sequence and payload. */
 	uint8_t arq_used;
 	uint8_t arq_retries;
 	uint32_t arq_sent_ms;
-	/* Bytes already queued into the run that is being sent (0 = the next frame starts a new one) */
-	uint16_t arq_run_bytes;
 	/* ARQ receiver: last accepted data sequence determines the ACK toggle. */
 	uint16_t arq_rx_seq;
 	bool arq_rx_started;
 	bool arq_ack_pending;
 
-	/* RX/TX buffers and reassembly */
+	/* RX/TX buffers */
 	/* Word alignment keeps the hardware SHA backend on its word-feed path. */
 	alignas(uint32_t) uint8_t tx_buf[ZLRS_FRAME_MAX_LEN];
 	alignas(uint32_t) uint8_t rx_buf[ZLRS_FRAME_MAX_LEN];
 	zlrs_prepared_data_t prepared_data;
-	zlrs_reasm_t reasm;
-	uint8_t reasm_buf[ZLRS_REASM_BUF_LEN];
 
 	/* transaction to submit next */
 	zlrs_radio_req_t req;
@@ -412,9 +398,6 @@ void zlrs_link_set_peer(zlrs_link_t *link, const uint8_t peer_id[ZLRS_DEV_ID_LEN
 
 /* Button: a long press starts pairing (re-pairing takes this path too, the new record wins) */
 void zlrs_link_press(zlrs_link_t *link, uint32_t now_ms);
-
-/* TX side sets the failsafe values shipped during pairing (RC payload, 08-protocol 3.4) */
-void zlrs_link_set_failsafe(zlrs_link_t *link, const uint8_t *payload, uint16_t len);
 
 /* Superframe slot: return the transaction to submit, or NULL when there is none */
 const zlrs_radio_req_t *zlrs_link_slot(zlrs_link_t *link, uint8_t slot, uint32_t now_ms);

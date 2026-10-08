@@ -86,7 +86,7 @@ Boot chain: RP2350 bootrom -> MCUboot (signature check) -> slot0, with `swap usi
 swaps (`swap using offset` goes in but never comes back on this board) and rollback after a failed
 upgrade.
 
-NVS keeps the root key, device id, pairing record, failsafe values, baud rate, region, power
+NVS keeps the root key, device id, pairing record, baud rate, region, power
 ceiling, role and security profile — nine keys, under 100 B in total, which is why NVS is small
 and the flash around it goes to the log store ([07-firmware](07-firmware.md) 7).
 

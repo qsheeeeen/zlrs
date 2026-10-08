@@ -18,7 +18,7 @@ void test_frame(void)
 	zlrs_frame_t out;
 	zlrs_frame_t in = {
 		.type = ZLRS_PKT_RC,
-		.flags = ZLRS_FLAG_MORE | ZLRS_FLAG_ACK,
+		.flags = ZLRS_FLAG_ACK,
 		.seq = 0x0102U,
 		.payload = payload,
 		.payload_len = sizeof(payload),
@@ -35,7 +35,7 @@ void test_frame(void)
 
 	len = zlrs_frame_encode(&in, buf, sizeof(buf));
 	CHECK(len == ZLRS_FRAME_HDR_LEN + sizeof(payload) + ZLRS_TAG_LEN);
-	CHECK(buf[0] == (uint8_t)((ZLRS_PKT_RC << 2) | ZLRS_FLAG_MORE | ZLRS_FLAG_ACK));
+	CHECK(buf[0] == (uint8_t)((ZLRS_PKT_RC << 2) | ZLRS_FLAG_ACK));
 	CHECK(buf[1] == 0x02U && buf[2] == 0x01U); /* little-endian */
 	CHECK(buf[3] == 0x5aU);
 	CHECK(memcmp(&buf[ZLRS_FRAME_HDR_LEN + sizeof(payload)], tag, sizeof(tag)) == 0);
@@ -46,6 +46,13 @@ void test_frame(void)
 	CHECK(out.payload != NULL && memcmp(out.payload, payload, sizeof(payload)) == 0);
 	CHECK(out.tag != NULL && memcmp(out.tag, tag, sizeof(tag)) == 0);
 	CHECK(zlrs_frame_mac_len(&out) == ZLRS_FRAME_HDR_LEN + sizeof(payload));
+	/* The removed MORE bit is reserved, and cannot be silently accepted. */
+	buf[0] |= 0x01U;
+	CHECK(!zlrs_frame_decode(&out, buf, len, ZLRS_TAG_LEN));
+	buf[0] &= (uint8_t)~0x01U;
+	in.flags |= 0x01U;
+	CHECK(zlrs_frame_encode(&in, buf, sizeof(buf)) == 0U);
+	in.flags = ZLRS_FLAG_ACK;
 
 	/* P0: no tag */
 	CHECK(zlrs_frame_decode(&out, buf, ZLRS_FRAME_HDR_LEN + sizeof(payload), 0U));
@@ -58,7 +65,7 @@ void test_frame(void)
 
 	/* The ACK toggle stays in the authenticated header and consumes no payload bytes. */
 	in.type = ZLRS_PKT_DATA_DOWN;
-	in.flags = ZLRS_FLAG_MORE | ZLRS_FLAG_ACK;
+	in.flags = ZLRS_FLAG_ACK;
 	len = zlrs_frame_encode(&in, buf, sizeof(buf));
 	CHECK(len == ZLRS_FRAME_HDR_LEN + sizeof(payload) + ZLRS_TAG_LEN);
 	CHECK(buf[3] == payload[0]);

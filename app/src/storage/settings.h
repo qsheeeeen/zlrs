@@ -23,7 +23,6 @@ enum zlrs_setting {
 	ZLRS_SETTING_ROOT_KEY, /* ZLRS_KEY_LEN bytes */
 	ZLRS_SETTING_DEV_ID,   /* ZLRS_DEV_ID_LEN bytes */
 	ZLRS_SETTING_PAIRING,  /* struct zlrs_storage_settings_pairing_t */
-	ZLRS_SETTING_FAILSAFE, /* ZLRS_FAILSAFE_LEN bytes */
 	ZLRS_SETTING_BAUD,     /* uint32_t */
 	ZLRS_SETTING_REGION,   /* uint8_t */
 	ZLRS_SETTING_POWER,    /* int8_t */
@@ -56,7 +55,7 @@ int zlrs_storage_settings_save(enum zlrs_setting id, const void *value, size_t l
 /* Erase one record; a record that is not there already counts as erased */
 int zlrs_storage_settings_erase(enum zlrs_setting id);
 
-/* Factory reset: every record the table knows (keys, pairing, failsafe, baud, region, role, ...) */
+/* Factory reset: every record the table knows (keys, pairing, baud, region, role, ...) */
 int zlrs_storage_settings_erase_all(void);
 
 /* A device id is an identity only when it is not all zero (a failed or lazy entropy read) */

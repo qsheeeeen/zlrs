@@ -46,7 +46,6 @@ int main(void)
 	printf("ZLRS host tests\n");
 	test_crypto();
 	test_frame();
-	test_frag();
 	test_fhss();
 	test_tlm();
 	test_data_pattern();
