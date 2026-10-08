@@ -128,6 +128,32 @@ python3 tests/hardware/app/link/test_crsf.py --tx-serial <TX-serial> --rx-serial
 This verifies the receiver's output frames and CRC; flight-controller failsafe configuration
 and the handset's display still require checks with those devices attached.
 
+The full device/routing suite for mixed mode also exercises broadcast/directed discovery,
+all menu entries and multi-chunk reads, rejected writes, command CRCs, model matching,
+telemetry enable/disable, 23-byte RC, CRSF Shot, opaque telemetry/MSP and simultaneous DATA:
+
+```sh
+python3 tests/hardware/app/link/test_crsf_device.py --tx-serial <TX-serial> --rx-serial <RX-serial>
+```
+
+Run with non-negative power (10 dBm on the LF bench) to exercise detailed `0x1C`/`0x1D`
+power fields; dynamic ground power may be below the configured ceiling. The suite restores
+model zero, model matching off and telemetry enabled. It uses real radios and USB CDC peers;
+it does not establish module-bay electrical timing, physical UART baud negotiation, actual
+handset rendering or the FC's failsafe/MSP transaction behavior.
+
+The state suite reboots both boards through CRSF, verifies NVS model persistence, restores
+model zero, exercises bind/cancel and re-pairs the same devices. It also checks stale input
+on management exit and a queued MSP frame across a one-second RF interruption:
+
+```sh
+python3 tests/hardware/app/link/test_crsf_state.py --tx-serial <TX-serial> --rx-serial <RX-serial>
+```
+
+For data24, use `test_crsf_device.py --data-only` with the same serial arguments. It verifies
+remote discovery/menu and independent CRSF/MSP traffic alongside bidirectional DATA, with
+channel output disabled.
+
 On Linux or WSL, serial fragments select the matching data CDC (`...-if02`). The default runs
 three simultaneous bidirectional rounds of 4096 bytes per direction, verifies every byte, and
 prints iperf-style one-second transfer and bitrate intervals plus a per-direction summary.

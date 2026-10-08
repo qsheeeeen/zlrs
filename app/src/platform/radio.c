@@ -827,7 +827,8 @@ bool zlrs_radio_drain(void)
 			ral_flrc_rx_pkt_status_t pkt;
 
 			if (ral_get_flrc_rx_pkt_status(&radio.ral, &pkt) == RAL_STATUS_OK) {
-				rssi = pkt.rssi_sync_in_dbm;
+				/* RX_DONE makes the whole-packet measurement available. */
+				rssi = pkt.rssi_avg_in_dbm;
 			}
 		} else {
 			ral_lora_rx_pkt_status_t pkt;

@@ -23,11 +23,19 @@ only: pins and aliases, SKUs and calibration, partitions, build targets and boar
 | BUSY | GP13 | same node (`busy-gpios`) | module busy, active high, internal pull-up |
 | NRESET | GP14 | same node (`reset-gpios`) | reset, active low |
 | DIO8 | GP15 | same node (`dios/dio@8`) | IRQ, active high, internal pull-down |
-| UART0 TX / RX | GP0 / GP1 | `zlrs-control-uart` = `uart0` | the control port, CRSF at 420000 |
+| UART0 TX / RX | GP0 / GP1 | `zlrs-control-uart` = `uart0` | CRSF: TX role 400000, RX role 420000 |
 | UART1 TX / RX | GP8 / GP9 | `zlrs-data-uart` = `uart1` | the data port, 115200 by default (changeable in NVS) |
 | Button | GP12 | `zlrs-button`, `smtc-user-button` | to ground with an internal pull-up; none fitted, for your own switch |
 | WS2812B | GP16 | `zlrs-led`, `led-strip` | on the module, driven through PIO0; semantics in [doc/10-ux.md](../../../doc/10-ux.md) |
 | Watchdog | - | `watchdog0` = `wdt0` | armed only when `CONFIG_ZLRS_APP_WATCHDOG` is on |
+
+In the TX role, a handset module bay uses one CRSF signal: connect GP0 and GP1 to that signal
+and share ground. GP0 is high impedance while receiving; firmware enables it for one reply
+that fits between handset frames. TIMER0's Zephyr counter releases the line after the UART
+shifter completes, separately from TIMER1 radio scheduling. The default electrical signal is
+non-inverted 3.3 V; an inverted module-bay signal requires a suitable external adapter.
+In the RX role, use ordinary crossed TX/RX wiring to the FC at 420000 baud.
+These electrical and reply-window paths still need verification with an actual handset and FC.
 
 The USB device exposes four CDC nodes; three are enabled by default:
 

@@ -51,6 +51,7 @@
 #include "zlrs/mgmt/mgmt.h"
 
 #include "zlrs/crsf/crsf.h"
+#include "zlrs/crsf/device.h"
 #include "zlrs/link/link.h"
 #include "zlrs/region/region.h"
 #include "zlrs/proto/tlm.h"
@@ -69,9 +70,9 @@ static uint8_t resync_every_n;
 static uint16_t data_mtu;
 
 /* Rough control frame airtime: 22 B RC + 3 B header + 4 B tag + 2 B CRC */
-#define CTL_FRAME_LEN 31U
+#define CTL_FRAME_LEN (3U + ZLRS_RC_PAYLOAD_MAX_LEN + 66U + 7U)
 /* Telemetry frame: 8 B payload plus header and tag */
-#define CTL_TLM_LEN   15U
+#define CTL_TLM_LEN   (2U + ZLRS_TLM_LEN + 66U + 7U)
 /*
  * Both links can run alone. Mixed mode pairs on control; data24 pairs and transfers on data.
  * Build switches remove support; the saved operating mode selects which links run.
@@ -82,7 +83,7 @@ static uint8_t operating_mode = ZLRS_MODE_MIXED;
 #define ZLRS_DATA_ENABLED    IS_ENABLED(CONFIG_ZLRS_APP_LINK_DATA)
 /* The CRSF port is part of the control link, and its presence is a devicetree fact: if the
  * board has the port at all, the control link uses it. */
-#define ZLRS_CRSF_ENABLED    (ZLRS_CONTROL_ENABLED && ZLRS_PORT_CTRL_FIXED)
+#define ZLRS_CRSF_ENABLED    ZLRS_PORT_CTRL_FIXED
 /* Same shape for the management port: the CDC in devicetree is the whole answer */
 #define ZLRS_MGMT_ENABLED    ZLRS_PORT_MGMT
 
@@ -142,6 +143,39 @@ static uint8_t device_id[ZLRS_DEV_ID_LEN];
  */
 static bool role_tx;
 static uint8_t active_profile;
+static zlrs_crsf_device_t crsf_device;
+static uint32_t crsf_requested_rate;
+static uint8_t crsf_model;
+static uint8_t crsf_model_match;
+static uint8_t crsf_fc_telemetry = 1U;
+static uint32_t crsf_reboot_ms;
+static bool crsf_air_reply;
+static zlrs_tlm_t crsf_peer_tlm;
+static uint32_t crsf_peer_tlm_ms;
+static bool crsf_peer_tlm_seen;
+static bool crsf_dispatch_frame(const uint8_t *frame, uint8_t len, bool from_air);
+
+static struct {
+	uint8_t frame[64];
+	uint8_t len;
+} crsf_air_inputs[8];
+static uint8_t crsf_air_head;
+static uint8_t crsf_air_count;
+
+static bool on_crsf(void *ctx, const uint8_t *frame, uint8_t len)
+{
+	(void)ctx;
+	if (crsf_air_count == ARRAY_SIZE(crsf_air_inputs)) {
+		return false;
+	}
+	const uint8_t tail =
+		(uint8_t)((crsf_air_head + crsf_air_count) % ARRAY_SIZE(crsf_air_inputs));
+
+	memcpy(crsf_air_inputs[tail].frame, frame, len);
+	crsf_air_inputs[tail].len = len;
+	crsf_air_count++;
+	return true;
+}
 
 /* The profile a build starts on, and which ones it may run: P1 is the production profile, P0
  * carries no tag at all so only a debug image may select it, P2 is not implemented yet. */
@@ -155,6 +189,8 @@ static void crsf_send_link_stats(const zlrs_tlm_t *tlm);
 static uint32_t last_rc_input_ms;
 static uint32_t last_tlm_up_ms;
 static bool rc_input_seen;
+static uint32_t last_rc_input_us;
+static int32_t crsf_timing_offset_us;
 static uint32_t crsf_bad_input;
 static uint32_t last_report_ms;
 /* Long presses already turned into a pairing request (app/src/ui/button.c) */
@@ -176,7 +212,9 @@ static void on_rc(void *ctx, const uint8_t *payload, uint16_t len)
 
 	counters.rc_rx++;
 	/* RX: rebuild the air-side channel payload into a CRSF frame for the flight controller */
-	crsf_send_rc(payload, (uint8_t)len);
+	if (len <= ZLRS_RC_PAYLOAD_MAX_LEN) {
+		crsf_send_rc(payload, (uint8_t)len);
+	}
 }
 
 static void on_tlm(void *ctx, const uint8_t *payload, uint16_t len)
@@ -188,7 +226,9 @@ static void on_tlm(void *ctx, const uint8_t *payload, uint16_t len)
 	counters.tlm_rx++;
 	/* TX: turn the RX uplink quality into the link-stats frame the handset reads */
 	if (zlrs_tlm_decode(payload, len, &tlm)) {
-		crsf_send_link_stats(&tlm);
+		crsf_peer_tlm = tlm;
+		crsf_peer_tlm_ms = zlrs_slot_timer_now_ms();
+		crsf_peer_tlm_seen = true;
 
 		/* Just stash it: the power verdict runs in report() at 1 Hz (doc/08-protocol.md 4.5) */
 		zlrs_link_power_telemetry(tlm.rssi_neg_dbm, tlm.lq_percent);
@@ -291,6 +331,9 @@ static void plan_mixed_init(void)
 #endif
 	data_mod =
 		zlrs_mod_flrc(zlrs_region_clamp_rate(data_region, CONFIG_ZLRS_APP_DATA_RATE_BPS));
+	if (crsf_requested_rate != 0U) {
+		req.want_hz = crsf_requested_rate;
+	}
 	req.mod = &control_mod;
 
 	/* Four equal hardware slots must fit control and the larger pairing packets. */
@@ -418,6 +461,8 @@ static void build_links(void)
 {
 	zlrs_link_cfg_t ctl_cfg = {
 		.kind = ZLRS_LINK_CONTROL,
+		.model_id = crsf_model,
+		.model_match = crsf_model_match != 0U,
 		.role = role_tx ? ZLRS_ROLE_TX : ZLRS_ROLE_RX,
 		/* Band role: control on sub-G by default, swapped in racing mode (doc/01-product.md 3.2) */
 		.domain = CONTROL_ON_SUBG ? region->domain : ZLRS_DOMAIN_ISM2400,
@@ -455,12 +500,14 @@ static void build_links(void)
 	zlrs_link_cfg_t data_cfg = ctl_cfg;
 	const zlrs_link_events_t ctl_ev = {
 		.on_rc = on_rc,
+		.on_crsf = on_crsf,
 		.on_tlm = on_tlm,
 		.on_state = on_state,
 		.ctx = (void *)(uintptr_t)ZLRS_LINK_CONTROL,
 	};
 	const zlrs_link_events_t data_ev = {
 		.on_data = on_data,
+		.on_crsf = on_crsf,
 		.on_state = on_state,
 		.ctx = (void *)(uintptr_t)ZLRS_LINK_DATA,
 	};
@@ -972,20 +1019,232 @@ static void adopt_pairing(void)
 		source->peer_id[2], source->peer_id[3]);
 }
 
-/* TX: RC frames from the handset become air-side RC payloads */
-static void crsf_handle_input(uint8_t type, const uint8_t *payload, uint8_t len)
+static bool crsf_emit(void *ctx, uint8_t type, const uint8_t *payload, uint8_t len)
 {
-	if (type != ZLRS_CRSF_TYPE_RC_CHANNELS) {
-		return; /* other handset/flight-controller frames are not consumed by design */
+	(void)ctx;
+	if (!crsf_air_reply) {
+		return (type == ZLRS_CRSF_TYPE_RADIO
+				? zlrs_link_crsf_write_latest(type, payload, len)
+				: zlrs_link_crsf_write(type, payload, len)) != 0U;
 	}
-	if (len != ZLRS_CRSF_RC_PAYLOAD_LEN) {
-		crsf_bad_input++;
-		return;
-	}
+	uint8_t frame[64];
+	const uint8_t size = zlrs_crsf_encode(frame, ZLRS_CRSF_ADDR_FC, type, payload, len);
 
-	zlrs_link_set_rc(&link_control, payload, len);
-	last_rc_input_ms = zlrs_slot_timer_now_ms();
+	return zlrs_link_write_crsf(active_link(), frame, size);
+}
+
+static bool crsf_save(enum zlrs_setting setting, const void *value, size_t len)
+{
+	/* This callback runs on the RF owner after all four slots have completed. */
+	zlrs_link_set_rc(&link_control, NULL, 0U);
+	rc_input_seen = false;
+	zlrs_link_crsf_flush();
+	return zlrs_storage_settings_save(setting, value, len) == 0;
+}
+
+static bool crsf_write_parameter(void *ctx, uint8_t id, int32_t value)
+{
+	(void)ctx;
+	const uint8_t byte = (uint8_t)value;
+	bool saved;
+
+	switch (id) {
+	case ZLRS_CRSF_PARAM_RATE: {
+		const uint32_t rate = (uint32_t)value;
+
+		return crsf_save(ZLRS_SETTING_CONTROL_RATE, &rate, sizeof(rate));
+	}
+	case ZLRS_CRSF_PARAM_POWER: {
+		const int8_t power = (int8_t)value;
+		const zlrs_region_t *pending =
+			zlrs_region_get((uint8_t)crsf_device.values[ZLRS_CRSF_PARAM_REGION]);
+
+		return pending != NULL && power <= pending->max_tx_power_dbm &&
+		       crsf_save(ZLRS_SETTING_POWER, &power, sizeof(power));
+	}
+	case ZLRS_CRSF_PARAM_REGION: {
+		const zlrs_region_t *want = zlrs_region_get(byte);
+
+		saved = want != NULL &&
+			zlrs_region_validate(want, ZLRS_RF_DESIGN,
+					     (int8_t)crsf_device.values[ZLRS_CRSF_PARAM_POWER]) ==
+				0 &&
+			crsf_save(ZLRS_SETTING_REGION, &byte, sizeof(byte));
+		if (saved) {
+			crsf_device.max_power_dbm = want->max_tx_power_dbm;
+		}
+		return saved;
+	}
+	case ZLRS_CRSF_PARAM_MODEL:
+		saved = crsf_save(ZLRS_SETTING_MODEL, &byte, sizeof(byte));
+		if (saved) {
+			crsf_model = byte;
+			link_control.cfg.model_id = byte;
+		}
+		return saved;
+	case ZLRS_CRSF_PARAM_MODEL_MATCH:
+		saved = crsf_save(ZLRS_SETTING_MODEL_MATCH, &byte, sizeof(byte));
+		if (saved) {
+			crsf_model_match = byte;
+			link_control.cfg.model_match = byte != 0U;
+		}
+		return saved;
+	case ZLRS_CRSF_PARAM_TELEMETRY:
+		saved = crsf_save(ZLRS_SETTING_CRSF_TELEMETRY, &byte, sizeof(byte));
+		if (saved) {
+			crsf_fc_telemetry = byte;
+		}
+		return saved;
+	case ZLRS_CRSF_PARAM_MODE:
+		if ((byte == ZLRS_MODE_MIXED && !IS_ENABLED(CONFIG_ZLRS_APP_LINK_CONTROL)) ||
+		    (byte == ZLRS_MODE_DATA24 && !ZLRS_DATA_ENABLED)) {
+			return false;
+		}
+		return crsf_save(ZLRS_SETTING_MODE, &byte, sizeof(byte));
+	default:
+		return false;
+	}
+}
+
+static bool crsf_command(void *ctx, uint8_t group, uint8_t command, const uint8_t *data,
+			 uint8_t len)
+{
+	(void)ctx;
+	if (group != 0x10U) {
+		return false;
+	}
+	switch (command) {
+	case 1U:
+		if (active_link()->state != ZLRS_STATE_PAIRING) {
+			zlrs_link_press(active_link(), zlrs_slot_timer_now_ms());
+		}
+		return true;
+	case 2U:
+		if (active_link()->state == ZLRS_STATE_PAIRING) {
+			(void)zlrs_link_cancel_pair(active_link(), zlrs_slot_timer_now_ms());
+		}
+		return true;
+	case 5U:
+		if (len != 1U) {
+			return false;
+		}
+		/* The handset owns model selection; do not write flash on every startup. */
+		crsf_model = data[0];
+		link_control.cfg.model_id = data[0];
+		zlrs_link_set_rc(&link_control, NULL, 0U);
+		rc_input_seen = false;
+		return true;
+	case 0x0AU:
+	case 0x0BU:
+		crsf_fc_telemetry = command == 0x0AU;
+		crsf_device.values[ZLRS_CRSF_PARAM_TELEMETRY] = crsf_fc_telemetry;
+		return true;
+	case 0x80U:
+		crsf_reboot_ms = zlrs_slot_timer_now_ms() + 2000U;
+		return true;
+	case 0x81U:
+		crsf_reboot_ms = 0U;
+		return true;
+	default:
+		return false;
+	}
+}
+
+static bool crsf_speed(void *ctx, uint8_t port, uint32_t baud)
+{
+	(void)ctx;
+	return !crsf_air_reply && zlrs_link_crsf_speed(port, baud);
+}
+
+static void crsf_device_setup(void)
+{
+	const zlrs_crsf_device_ops_t ops = {
+		.send = crsf_emit,
+		.write = crsf_write_parameter,
+		.command = crsf_command,
+		.speed = crsf_speed,
+	};
+
+	zlrs_crsf_device_init(&crsf_device, role_tx ? ZLRS_CRSF_ADDR_TX_MODULE : ZLRS_CRSF_ADDR_RX,
+			      &ops);
+	crsf_device.serial = (uint32_t)device_id[0] << 24 | (uint32_t)device_id[1] << 16 |
+			     (uint32_t)device_id[2] << 8 | device_id[3];
+	crsf_device.hardware = ZLRS_RF_BAND;
+	crsf_device.version = APP_VERSION_STRING " | RC,TLM,parameters,model,MSP,CRSF Shot,baud";
+	crsf_device.firmware = APP_VERSION_NUMBER;
+	crsf_device.values[ZLRS_CRSF_PARAM_RATE] =
+		crsf_requested_rate != 0U ? crsf_requested_rate : control_rate_hz;
+	crsf_device.values[ZLRS_CRSF_PARAM_POWER] = tx_power_dbm;
+	crsf_device.max_power_dbm = region->max_tx_power_dbm;
+	crsf_device.values[ZLRS_CRSF_PARAM_REGION] = region_id;
+	crsf_device.values[ZLRS_CRSF_PARAM_MODEL] = crsf_model;
+	crsf_device.values[ZLRS_CRSF_PARAM_MODEL_MATCH] = crsf_model_match;
+	crsf_device.values[ZLRS_CRSF_PARAM_TELEMETRY] = crsf_fc_telemetry;
+	crsf_device.values[ZLRS_CRSF_PARAM_MODE] = operating_mode;
+}
+
+static bool crsf_dispatch_frame(const uint8_t *frame, uint8_t len, bool from_air)
+{
+	if (!zlrs_crsf_frame_valid(frame, len)) {
+		return true; /* Drop malformed CRSF without repeatedly retrying an invalid command. */
+	}
+	const uint8_t type = frame[2];
+	const uint8_t *payload = frame + 3U;
+	const uint8_t size = len - 4U;
+
+	if (type == ZLRS_CRSF_TYPE_COMMAND && !zlrs_crsf_command_valid(payload, size)) {
+		return true;
+	}
+	crsf_air_reply = from_air;
+	const enum zlrs_crsf_dispatch result =
+		zlrs_crsf_device_handle(&crsf_device, type, payload, size);
+	crsf_air_reply = false;
+	if (result == ZLRS_CRSF_RETRY) {
+		return false;
+	}
+	if (result == ZLRS_CRSF_INVALID) {
+		return true;
+	}
+	const bool broadcast_ping = type == ZLRS_CRSF_TYPE_DEVICE_PING && payload[0] == 0U;
+
+	if (result == ZLRS_CRSF_HANDLED && !broadcast_ping) {
+		return true;
+	}
+	if (from_air) {
+		/* Local responses never loop back onto the radio. Preserve the extended header. */
+		if (role_tx && type < 0x28U && !crsf_fc_telemetry) {
+			return true;
+		}
+		return zlrs_link_crsf_write_frame(frame, len);
+	}
+	if (!role_tx && type < 0x28U && !crsf_fc_telemetry) {
+		return true;
+	}
+	return zlrs_link_write_crsf(active_link(), frame, len);
+}
+
+static bool crsf_handle_input(const zlrs_link_crsf_input_t *input, uint32_t now_ms)
+{
+	const uint8_t type = input->frame[2];
+	const uint8_t len = input->len - 4U;
+
+	if (type != ZLRS_CRSF_TYPE_RC_CHANNELS) {
+		return crsf_dispatch_frame(input->frame, input->len, false);
+	}
+	if (!role_tx || !ZLRS_CONTROL_ENABLED || len < ZLRS_CRSF_RC_PAYLOAD_LEN) {
+		crsf_bad_input++;
+		return true;
+	}
+	if ((uint32_t)(now_ms - input->received_ms) > CONFIG_ZLRS_APP_CRSF_TIMEOUT_MS) {
+		return true;
+	}
+	const uint8_t known = MIN(len, ZLRS_RC_PAYLOAD_MAX_LEN);
+
+	zlrs_link_set_rc(&link_control, input->frame + 3U, known);
+	last_rc_input_ms = input->received_ms;
+	last_rc_input_us = input->received_us;
 	rc_input_seen = true;
+	return true;
 }
 
 /*
@@ -1004,32 +1263,54 @@ static void crsf_send_link_stats(const zlrs_tlm_t *tlm)
 	memset(&stats, 0, sizeof(stats));
 	stats.uplink_rssi_ant1 = tlm->rssi_neg_dbm;
 	stats.uplink_rssi_ant2 = tlm->rssi_ant2_neg_dbm;
-	stats.uplink_lq = rc_input_seen ? tlm->lq_percent : 0U;
+	stats.uplink_lq = tlm->lq_percent;
 	stats.uplink_snr_db = tlm->snr_db;
 	stats.active_antenna = tlm->active_antenna;
 	stats.rf_mode = zlrs_crsf_rf_mode(control_rate_hz);
 	stats.uplink_tx_power = zlrs_crsf_tx_power_index(link_control.cfg.tx_power_dbm);
 	stats.downlink_rssi = zlrs_crsf_rssi_from_dbm(link_control.stats.last_rssi);
-	stats.downlink_lq = link_control.stats.lq_percent;
+	stats.downlink_lq =
+		link_control.state == ZLRS_STATE_CONNECTED && crsf_peer_tlm_seen &&
+				(uint32_t)(zlrs_slot_timer_now_ms() - crsf_peer_tlm_ms) <=
+					link_control.cfg.peer_timeout_ms
+			? link_control.stats.lq_percent
+			: 0U;
 	stats.downlink_snr_db = link_control.stats.last_snr;
 
 	zlrs_crsf_link_stats_encode(payload, &stats);
-	(void)zlrs_link_crsf_write(ZLRS_CRSF_TYPE_LINK_STATISTICS, payload, sizeof(payload));
+	(void)zlrs_link_crsf_write_latest(ZLRS_CRSF_TYPE_LINK_STATISTICS, payload, sizeof(payload));
 	/* Detailed standard report preserves the RX's own power and actual frame rate. */
 	uint8_t tx_payload[ZLRS_TLM_LEN];
 	zlrs_tlm_encode(tx_payload, tlm);
-	(void)zlrs_link_crsf_write(ZLRS_CRSF_TYPE_LINK_STATISTICS_TX, tx_payload,
-				   sizeof(tx_payload));
+	if (link_control.peer_power_dbm >= 0) {
+		(void)zlrs_link_crsf_write_latest(ZLRS_CRSF_TYPE_LINK_STATISTICS_TX, tx_payload,
+						  sizeof(tx_payload));
+	}
+	if (link_control.cfg.tx_power_dbm >= 0) {
+		const uint8_t downlink[7] = {
+			stats.downlink_rssi,
+			zlrs_crsf_rssi_percent(link_control.stats.last_rssi, -100),
+			stats.downlink_lq,
+			(uint8_t)stats.downlink_snr_db,
+			(uint8_t)link_control.cfg.tx_power_dbm,
+			0U,
+			0U,
+		};
+
+		(void)zlrs_link_crsf_write_latest(ZLRS_CRSF_TYPE_LINK_STATISTICS_RX, downlink,
+						  sizeof(downlink));
+	}
 }
 
 /* RX: rebuild the received RC payload into a CRSF frame for the flight controller */
 static void crsf_send_rc(const uint8_t *payload, uint8_t len)
 {
-	if (!ZLRS_CRSF_ENABLED || len != ZLRS_CRSF_RC_PAYLOAD_LEN) {
+	if (!ZLRS_CRSF_ENABLED ||
+	    (len != ZLRS_CRSF_RC_PAYLOAD_LEN && len != ZLRS_RC_PAYLOAD_MAX_LEN)) {
 		return;
 	}
 
-	(void)zlrs_link_crsf_write(ZLRS_CRSF_TYPE_RC_CHANNELS, payload, len);
+	(void)zlrs_link_crsf_write_latest(ZLRS_CRSF_TYPE_RC_CHANNELS, payload, len);
 }
 
 /* RX: report the uplink quality measured on this side back to the TX */
@@ -1044,49 +1325,96 @@ static void crsf_report_tlm(uint32_t now_ms)
 	last_tlm_up_ms = now_ms;
 
 	memset(&tlm, 0, sizeof(tlm));
-	tlm.lq_percent = link_control.stats.lq_percent;
+	tlm.lq_percent =
+		link_control.state == ZLRS_STATE_CONNECTED ? link_control.stats.lq_percent : 0U;
 	tlm.rssi_neg_dbm = zlrs_crsf_rssi_from_dbm(link_control.stats.last_rssi);
 	tlm.snr_db = link_control.stats.last_snr;
-	/* No calibrated RSSI percentage is available; do not substitute link quality. */
-	tlm.rssi_percent = 0U;
+	/* Relative RSSI uses a modem reference, independently of packet success rate. */
+	tlm.rssi_percent =
+		zlrs_crsf_rssi_percent(link_control.stats.last_rssi,
+				       control_mod.modulation == ZLRS_MOD_LORA ? -120 : -100);
 	tlm.rf_power_dbm = link_control.cfg.tx_power_dbm > 0 ? link_control.cfg.tx_power_dbm : 0U;
 	tlm.fps = control_rate_hz / 10U > 255U ? 255U : control_rate_hz / 10U;
 
 	zlrs_tlm_encode(payload, &tlm);
 	zlrs_link_set_tlm(&link_control, payload, sizeof(payload));
+	zlrs_crsf_link_stats_t stats = {
+		.uplink_rssi_ant1 = tlm.rssi_neg_dbm,
+		.uplink_lq = tlm.lq_percent,
+		.uplink_snr_db = tlm.snr_db,
+		.rf_mode = zlrs_crsf_rf_mode(control_rate_hz),
+		.uplink_tx_power = zlrs_crsf_tx_power_index(link_control.peer_power_dbm),
+	};
+	uint8_t link_payload[ZLRS_CRSF_LINK_STATS_LEN];
+
+	zlrs_crsf_link_stats_encode(link_payload, &stats);
+	(void)zlrs_link_crsf_write_latest(ZLRS_CRSF_TYPE_LINK_STATISTICS, link_payload,
+					  sizeof(link_payload));
+	/* The standard unsigned dBm field cannot describe negative bench powers. */
+	if (link_control.cfg.tx_power_dbm >= 0) {
+		(void)zlrs_link_crsf_write_latest(ZLRS_CRSF_TYPE_LINK_STATISTICS_TX, payload,
+						  sizeof(payload));
+	}
 }
 
 /* CRSF task in the main loop: read frames, cut stale RC input, and report telemetry */
 static void pump_crsf(uint32_t now_ms)
 {
-	uint8_t type = 0U;
-	uint8_t payload[ZLRS_CRSF_PAYLOAD_MAX_LEN];
-	uint8_t len;
+	zlrs_link_crsf_input_t input;
+	static uint32_t timing_ms;
+	static zlrs_link_crsf_input_t pending;
+	static bool have_pending;
 
-	/* No CRSF port means no RC input and no synthetic channel output */
-	if (!ZLRS_CRSF_ENABLED || !ZLRS_CONTROL_ENABLED) {
+	if (!ZLRS_CRSF_ENABLED || !zlrs_link_crsf_ready()) {
 		return;
 	}
-
-	if (!zlrs_link_crsf_ready()) {
-		return;
+	zlrs_link_crsf_poll();
+	/* Channel freshness does not wait for configuration/telemetry backpressure. */
+	if (zlrs_link_crsf_read_rc(&input)) {
+		(void)crsf_handle_input(&input, zlrs_slot_timer_now_ms());
 	}
-
-	while ((len = zlrs_link_crsf_read(&type, payload, sizeof(payload))) > 0U) {
-		crsf_handle_input(type, payload, len);
+	while (crsf_air_count != 0U) {
+		if (!crsf_dispatch_frame(crsf_air_inputs[crsf_air_head].frame,
+					 crsf_air_inputs[crsf_air_head].len, true)) {
+			break;
+		}
+		crsf_air_head = (uint8_t)((crsf_air_head + 1U) % ARRAY_SIZE(crsf_air_inputs));
+		crsf_air_count--;
 	}
-
+	crsf_device.bind_status = active_link()->state == ZLRS_STATE_PAIRING ? 2U : 0U;
+	while (have_pending || zlrs_link_crsf_read(&pending)) {
+		/* Re-read after a settings write; flash can advance the clock substantially. */
+		now_ms = zlrs_slot_timer_now_ms();
+		have_pending = !crsf_handle_input(&pending, now_ms);
+		if (have_pending) {
+			break;
+		}
+	}
+	now_ms = zlrs_slot_timer_now_ms();
 	if (role_tx) {
-		/* Handset unplugged or powered off: stop sending RC frames */
 		if (rc_input_seen &&
 		    (uint32_t)(now_ms - last_rc_input_ms) > CONFIG_ZLRS_APP_CRSF_TIMEOUT_MS) {
 			rc_input_seen = false;
 			zlrs_link_set_rc(&link_control, NULL, 0U);
-			LOG_WRN("CRSF input timeout: cutting RC output");
 		}
-	} else {
-		/* Forward only newly received RC frames; the FC detects missing frames. */
+		if (ZLRS_CONTROL_ENABLED && (uint32_t)(now_ms - timing_ms) >= 100U) {
+			zlrs_tlm_t report = crsf_peer_tlm;
+
+			if (!crsf_peer_tlm_seen || link_control.state != ZLRS_STATE_CONNECTED ||
+			    (uint32_t)(now_ms - crsf_peer_tlm_ms) >
+				    link_control.cfg.peer_timeout_ms) {
+				report.lq_percent = 0U;
+			}
+			crsf_send_link_stats(&report);
+			(void)zlrs_crsf_device_timing(&crsf_device, frame_period_us,
+						      rc_input_seen ? crsf_timing_offset_us : 0);
+			timing_ms = now_ms;
+		}
+	} else if (ZLRS_CONTROL_ENABLED) {
 		crsf_report_tlm(now_ms);
+	}
+	if (crsf_reboot_ms != 0U && (int32_t)(now_ms - crsf_reboot_ms) >= 0) {
+		sys_reboot(SYS_REBOOT_COLD);
 	}
 }
 
@@ -1381,17 +1709,21 @@ static void broadcast_state(void)
 	link.state = active->state;
 	link.lq_percent = active->stats.lq_percent;
 
-	/* TX without RC input cuts air RC frames; RX only forwards newly received channels */
+	/* The RF service stays available without channels; failsafe follows RC freshness. */
 	if (ZLRS_CONTROL_ENABLED && link_control.state == ZLRS_STATE_CONNECTED) {
 		ever_connected = true;
 	}
 	/*
 	 * Failsafe only means something after a first connection: the TX was connected and then lost
-	 * the handset (RC output cut), or the RX was connected and dropped (RC output cut).
+	 * the handset (RC output cut), or the RX stopped receiving matching channels.
 	 * A device that never connected shows its normal state (purple/yellow/cyan), never red.
 	 */
-	alerts.failsafe = ever_connected &&
-			  (role_tx ? !rc_input_seen : (link_control.state != ZLRS_STATE_CONNECTED));
+	alerts.failsafe =
+		ever_connected &&
+		(role_tx ? !rc_input_seen
+			 : (link_control.state != ZLRS_STATE_CONNECTED || counters.rc_rx == 0U ||
+			    (uint32_t)(zlrs_slot_timer_now_ms() - link_control.last_rc_ms) >
+				    CONFIG_ZLRS_APP_CRSF_TIMEOUT_MS));
 	alerts.fault = false;
 	alerts.data_drop_bytes = drops;
 
@@ -1899,6 +2231,7 @@ static void enter_management_mode(void)
 		}
 	}
 	rc_input_seen = false;
+	zlrs_link_crsf_flush();
 	TRACE('2');
 	zlrs_link_set_rc(&link_control, NULL, 0U);
 
@@ -2286,6 +2619,13 @@ int main(void)
 	}
 
 	TRACE('1');
+	(void)zlrs_storage_settings_load(ZLRS_SETTING_CONTROL_RATE, &crsf_requested_rate,
+					 sizeof(crsf_requested_rate));
+	(void)zlrs_storage_settings_load(ZLRS_SETTING_MODEL, &crsf_model, sizeof(crsf_model));
+	(void)zlrs_storage_settings_load(ZLRS_SETTING_MODEL_MATCH, &crsf_model_match,
+					 sizeof(crsf_model_match));
+	(void)zlrs_storage_settings_load(ZLRS_SETTING_CRSF_TELEMETRY, &crsf_fc_telemetry,
+					 sizeof(crsf_fc_telemetry));
 	plan_init();
 	build_links();
 	load_identity();
@@ -2303,7 +2643,8 @@ int main(void)
 
 	zlrs_link_set_rc(&link_control, NULL, 0U);
 	if (ZLRS_CRSF_ENABLED) {
-		(void)zlrs_link_crsf_init();
+		(void)zlrs_link_crsf_init(role_tx);
+		crsf_device_setup();
 	}
 
 	TRACE('c');
@@ -2402,6 +2743,33 @@ int main(void)
 		const uint32_t period = frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE;
 
 		for (uint8_t slot = 0U; slot < 4U; slot++) {
+			if (slot == 0U && ZLRS_CRSF_ENABLED) {
+				zlrs_link_crsf_input_t latest;
+
+				if (zlrs_link_crsf_read_rc(&latest)) {
+					(void)crsf_handle_input(&latest, zlrs_slot_timer_now_ms());
+				}
+				/* The error is measured from the actual handset reception to the RC
+				 * preparation deadline. Positive means early, negative means late. */
+				if (role_tx && rc_input_seen) {
+					int32_t offset = (int32_t)(start_us - slot_prepare_us -
+								   last_rc_input_us);
+
+					offset %= (int32_t)period;
+					if (offset > (int32_t)period / 2) {
+						offset -= (int32_t)period;
+					} else if (offset < -(int32_t)period / 2) {
+						offset += (int32_t)period;
+					}
+					crsf_timing_offset_us = offset;
+				}
+			}
+			if (role_tx && rc_input_seen &&
+			    (uint32_t)(zlrs_slot_timer_now_ms() - last_rc_input_ms) >
+				    CONFIG_ZLRS_APP_CRSF_TIMEOUT_MS) {
+				rc_input_seen = false;
+				zlrs_link_set_rc(&link_control, NULL, 0U);
+			}
 			zlrs_watchdog_feed();
 			slot_nominal_us = start_us + ((uint64_t)period * slot) / 4U;
 			const uint32_t next_us =

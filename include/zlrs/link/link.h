@@ -128,12 +128,16 @@ typedef struct {
 	 * correct drift and notice a peer that changed sessions (reboot/re-pair) and re-handshake.
 	 */
 	uint8_t resync_every_n;
+	uint8_t model_id;
+	bool model_match;
 } zlrs_link_cfg_t;
 
 typedef struct {
 	void (*on_rc)(void *ctx, const uint8_t *payload, uint16_t len);
 	void (*on_tlm)(void *ctx, const uint8_t *payload, uint16_t len);
 	void (*on_data)(void *ctx, const uint8_t *data, uint16_t len);
+	/* false retains the peer's frame for retry instead of acknowledging a dropped frame. */
+	bool (*on_crsf)(void *ctx, const uint8_t *frame, uint8_t len);
 	void (*on_state)(void *ctx, uint8_t state);
 	void *ctx;
 } zlrs_link_events_t;
@@ -205,8 +209,9 @@ typedef struct {
  * hands over in the meantime; at 512 a single 512-byte write filled it and everything after that
  * was dropped before it ever reached the air.
  */
-#define ZLRS_LINK_TX_QUEUE_LEN 4096U
-#define ZLRS_LINK_TLM_MAX_LEN  32U
+#define ZLRS_LINK_TX_QUEUE_LEN   4096U
+#define ZLRS_LINK_TLM_MAX_LEN    32U
+#define ZLRS_LINK_CRSF_QUEUE_LEN 8U
 
 /* Stop-and-wait ARQ: one outstanding DATA packet in each direction. */
 #define ZLRS_ARQ_TIMEOUT_MS  30U
@@ -312,7 +317,7 @@ typedef struct {
 	uint32_t sub_mix_seen_ms;
 
 	/* payloads */
-	uint8_t rc_payload[ZLRS_RC_PAYLOAD_LEN];
+	uint8_t rc_payload[ZLRS_RC_PAYLOAD_MAX_LEN];
 	uint16_t rc_len;
 	uint8_t tlm_payload[ZLRS_LINK_TLM_MAX_LEN];
 	uint16_t tlm_len;
@@ -335,6 +340,20 @@ typedef struct {
 	uint16_t arq_rx_seq;
 	bool arq_rx_started;
 	bool arq_ack_pending;
+
+	/* Complete CRSF frames; their stop-and-wait service never consumes user DATA bytes. */
+	uint8_t crsf_queue[ZLRS_LINK_CRSF_QUEUE_LEN][64];
+	uint8_t crsf_sizes[ZLRS_LINK_CRSF_QUEUE_LEN];
+	uint8_t crsf_head;
+	uint8_t crsf_count;
+	uint16_t crsf_tx_seq;
+	uint16_t crsf_rx_seq;
+	bool crsf_rx_started;
+	bool crsf_inflight;
+	bool crsf_ack_pending;
+	uint32_t crsf_sent_ms;
+	int8_t peer_power_dbm;
+	uint32_t last_rc_ms;
 
 	/* RX/TX buffers */
 	/* Word alignment keeps the hardware SHA backend on its word-feed path. */
@@ -431,6 +450,8 @@ uint16_t zlrs_link_write(zlrs_link_t *link, const uint8_t *data, uint16_t len);
 /* Control link payloads: the TX side sets RC, the RX side sets TLM */
 void zlrs_link_set_rc(zlrs_link_t *link, const uint8_t *channels, uint16_t len);
 void zlrs_link_set_tlm(zlrs_link_t *link, const uint8_t *payload, uint16_t len);
+bool zlrs_link_write_crsf(zlrs_link_t *link, const uint8_t *frame, uint8_t len);
+bool zlrs_link_cancel_pair(zlrs_link_t *link, uint32_t now_ms);
 
 #ifdef __cplusplus
 }

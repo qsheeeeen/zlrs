@@ -30,6 +30,7 @@ add_executable(zlrs_host_tests
   test_fuzz.c
   sha256_soft.c
   ../../core/crsf/crsf.c
+  ../../core/crsf/device.c
   ../../core/mgmt/mgmt.c
   ../../core/region/region.c
   ../../core/proto/crypto.c

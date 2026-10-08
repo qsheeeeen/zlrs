@@ -4,6 +4,60 @@ This document holds **to-dos, the pending-defaults ledger and acceptance criteri
 Finished work gets a one-line summary; details live in code comments and the design is in the
 design documents.
 
+## CRSF 功能补齐与互操作验收，2026-10-08
+
+roadmap 中的 CRSF 功能已实现，设计与菜单见 [07-firmware](07-firmware.md)，独立转发
+服务和 v6 空中封装见 [08-protocol](08-protocol.md)。两块 LF 板通过 USB CDC＋真实无线
+链路验证；真实遥控器、模块仓单线电气时序及实际飞控的验收继续保留在本表。
+
+| 优先级 | 帧类型／功能 | 已实现行为 | 当前验证与待验收项 |
+| --- | --- | --- | --- |
+| 最高 | `0x28 / 0x29` 设备发现 | 名称、序列号、硬件／固件版本、十项参数及版本 0；广播与定向查询及跨无线发现 | 两块 LF 板通过；真实 EdgeTX 初始化待验收 |
+| 高 | 通用遥测转发：`0x08 / 0x02 / 0x1E / 0x21` 等 | 独立可靠 CRSF 队列，保留类型、业务载荷、扩展目的／来源地址，与用户 DATA 隔离 | LF 板逐字节及最大 64B 帧通过；真实 UART、遥控器显示、拥塞容量／延迟待验收 |
+| 高 | RX 向飞控输出 `0x14` | RX 上行测量及对端 TX 功率；未知下行字段置零，单天线索引 0 | USB 帧和 CRC 通过；实际 FC OSD、记录和失联行为待验收 |
+| 高 | `0x2B / 0x2C / 0x2D` 参数菜单 | 标准 FLOAT／选择／命令／INFO／目录；分块重读、校验、NVS 持久化、确认重启 | LF 菜单、INFO 分块和两端模型跨重启保存通过；非法功率／跨 SKU 区域拒绝；真实 EdgeTX 菜单待验收 |
+| 中 | `0x32.0x10` 配对、模型与遥测命令 | 配对／取消、模型选择／查询、RX 模型匹配 cut、遥测开关；内层 `0xBA` 与外层 `0xD5` CRC | LF 实际配对、取消保留 peer、模型／错误 CRC／遥测开关通过；真实遥控器触发流程待验收 |
+| 中 | `0x3A.0x10` CRSF Shot | 实际更新周期；偏移按通道接收时间和 RF 准备期限计算，标准大端 100 ns 单位 | 主机向量及 LF 报文通过；EdgeTX 采用偏移后的样本年龄、交付延迟和抖动待测 |
+| 中 | `0x1C` 地面端详细统计及 `0x1D` | 地面／空中分别报告自己的测量和功率；RSSI 不被 TX 完成／空接收覆盖，负功率不伪装为零 dBm | LF 标准载荷和 CRC 通过；天线／RSSI 映射校准及真实显示待验收 |
+| 后续 | `0x7A / 0x7B` MSP | 双向不解释业务的完整帧转发；同时支持 FC 使用的 `0x7C` 等不透明帧 | LF 请求／响应载荷与并发 DATA 通过；实际 FC 事务、业务分块／超时待验收 |
+| 按需 | `0x32.0x0A.0x70 / 0x71` 串口速率协商 | 本地 UART 接受支持的速率，旧速率回复完再切换，一秒无有效输入回默认；拒绝 USB／远端物理速率变更 | 主机接受／拒绝及 LF USB 拒绝通过；真实 UART 双端切换、高刷新率预算待验收 |
+
+互操作基础已补齐：接受 22B 通道后的状态字节；记录 ISR 接收时间；最新 RC 与其他
+CRSF 队列分离，转发背压保留待发送帧；接口切换／管理退出清理输入，发送完整帧并让
+过期 RC 停止输出；TX 默认 400 kbaud、RX 默认 420 kbaud。单线回复使用实际帧间隔预算，
+UART 移位寄存器完成后由独立 TIMER0 counter 释放 GP0，真实单线接线尚未验收。
+周期输出合并同类型的最新待发送值，避免低速单线回复时旧统计积压；本机响应与转发帧
+保持完整帧队列。failsafe 状态跟随有效通道的新鲜度，配置服务保持在线不会掩盖 cut。
+
+当前 `0x14` RF profile 取最接近的标准 4／50／150 fps 档，并非 ZLRS 实际帧率；实际
+帧率在 `0x1D`／CRSF Shot 中报告。RSSI 百分比按名义灵敏度映射，尚未校准；基础功率
+枚举向下量化，不能精确表示低功率台架值。最大 CRSF 转发帧使控制预算增至 RC 99B、
+TLM 83B（P1），LF CN433 混合模式实际约 24 Hz；不代表产品页高刷新率目标已经达到。
+
+最终 LF 镜像 `466dbef2fd3302210c1172c8fe75eb0eb606d1ac7c0ebdf72677a1627b882aa3`
+在两板均经 MCUboot 升级、运行哈希核对和确认。三轮完整 CRSF 用例各含双向 4096B DATA，
+均逐字节一致，CRSF CRC 错误为零；状态用例通过模型持久化、确认重启、配对／取消、
+管理退出后不复播过期 RC、暂停期间排队 MSP 恢复后只交付一次。主机 ASan／UBSan、
+40 项工具测试、架构检查及 LF／HF 应用＋MCUboot 构建通过；修改文件格式通过，整仓
+格式检查仍存在其他文件的既存失败。真实 UART／HF 板验证继续待验收。
+
+无线相位重捕获需单独优化：最终状态用例中，USB 重新连接稳定后等待远端设备发现
+分别为 TX 重启 12.448 s、RX 重启 9.998 s；较早一次 TX 重启等待 45.523 s。
+这些不是从掉线到恢复的完整时延，还未计入 MCUboot／USB/IP 重新枚举等待。当前每帧
+25 us 相位扫描在低刷新率下较慢，不能把功能恢复通过当成恢复时延达标。
+
+data24 的 CRSF 发现／远端参数及 MSP／遥测＋双向 4096B DATA 通过；三轮每方向
+65536B DATA 及分别暂停接收端无线两秒的每方向 131072B 恢复用例，均逐字节一致、
+无额外字节。两板已恢复 `data24`、`-10 dBm`、CN433、P1、DATA UART 115200，
+模型 0／模型匹配关闭，运行哈希仍为上述最终镜像。
+
+CRSF 服务在 data24 仍支持发现／菜单／不透明转发，RC 和周期控制链路统计关闭。
+保留类型与设备专用动作不伪造成 ZLRS 硬件能力：未知遥测／MSP 可以透传；本机不支持的
+直接命令返回拒绝。`0x17` 官方暂不推荐新增实现，`0x18` 未使用，不列入补齐目标。
+参考 [TBS CRSF 规范](https://github.com/tbs-fpv/tbs-crsf-spec/blob/main/crsf.md)、
+[EdgeTX 通道及初始化实现](https://github.com/EdgeTX/edgetx/blob/main/radio/src/pulses/crossfire.cpp)
+和 [Betaflight CRSF 接收实现](https://github.com/betaflight/betaflight/blob/master/src/main/rx/crsf.c)。
+
 ## Protocol crypto and hardware SHA separation, 2026-10-06
 
 - Removed the PSA protocol backend, protocol Kconfig dependencies and application PSA

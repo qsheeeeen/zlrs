@@ -2,10 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 config ZLRS_CRSF
-	bool "CRSF codec (channel packing, link statistics frame)"
+	bool "CRSF framing, routing and device protocol"
 	help
-	  CRSF framing for the two ground-side ports (handset <-> module, receiver -> flight
-	  controller): 16-channel packing and the link statistics frame. Pure C, see tests/host.
+	  CRSF channel packing, frame validation, link statistics, device discovery,
+	  parameter menus, commands, baud negotiation and CRSF Shot timing reports.
+	  Other telemetry and MSP frames are routed unchanged by the application.
+	  Pure C, see tests/host.
 
 module = ZLRS_CRSF
 module-str = zlrs_crsf

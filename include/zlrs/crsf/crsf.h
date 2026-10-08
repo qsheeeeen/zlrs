@@ -1,10 +1,8 @@
 /*
- * CRSF framing for the ground-side ports (never over the air). Frames and CRC follow CRSF
- * convention (DVB-S2 polynomial 0xD5); RC_CHANNELS_PACKED and link-statistics frames are used.
- *
- * Trade-off: CRSF is only a port format here (handset <-> module, receiver <-> flight
- * controller) and has nothing to do with ExpressLRS. Addresses are not validated when
- * parsing (handsets and FCs use several); the caller picks it when sending (07-firmware 1).
+ * CRSF framing for handset/module and receiver/FC ports. Frames use the standard DVB-S2
+ * polynomial 0xD5; command frames additionally use 0xBA. The radio link encapsulates complete
+ * serial frames in its separate CRSF service. Static and dynamic device addresses are accepted;
+ * the caller selects the outgoing serial sync byte.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -19,14 +17,27 @@
 extern "C" {
 #endif
 
-/* TX addresses: the usual convention, the receiver does not validate them */
-#define ZLRS_CRSF_ADDR_FC        0xC8U /* receiver -> FC, handset -> module */
-#define ZLRS_CRSF_ADDR_TX_MODULE 0xEAU /* module -> handset */
+/* Standard device addresses; 0xC8 also serves as the common serial sync byte. */
+#define ZLRS_CRSF_ADDR_FC        0xC8U
+#define ZLRS_CRSF_ADDR_HANDSET   0xEAU
+#define ZLRS_CRSF_ADDR_TX_MODULE 0xEEU
+#define ZLRS_CRSF_ADDR_RX        0xECU
+#define ZLRS_CRSF_ADDR_BROADCAST 0x00U
 
 /* frame types */
 #define ZLRS_CRSF_TYPE_LINK_STATISTICS    0x14U
 #define ZLRS_CRSF_TYPE_RC_CHANNELS        0x16U
+#define ZLRS_CRSF_TYPE_LINK_STATISTICS_RX 0x1CU
 #define ZLRS_CRSF_TYPE_LINK_STATISTICS_TX 0x1DU
+#define ZLRS_CRSF_TYPE_DEVICE_PING        0x28U
+#define ZLRS_CRSF_TYPE_DEVICE_INFO        0x29U
+#define ZLRS_CRSF_TYPE_PARAMETER_ENTRY    0x2BU
+#define ZLRS_CRSF_TYPE_PARAMETER_READ     0x2CU
+#define ZLRS_CRSF_TYPE_PARAMETER_WRITE    0x2DU
+#define ZLRS_CRSF_TYPE_COMMAND            0x32U
+#define ZLRS_CRSF_TYPE_RADIO              0x3AU
+#define ZLRS_CRSF_TYPE_MSP_REQUEST        0x7AU
+#define ZLRS_CRSF_TYPE_MSP_RESPONSE       0x7BU
 
 /* Frame length limit comes from CRSF: no more than 64 bytes in total */
 #define ZLRS_CRSF_FRAME_MAX_LEN   64U
@@ -62,12 +73,19 @@ typedef struct {
 	uint8_t payload_len; /* payload length of the last frame */
 	uint32_t frames_ok;
 	uint32_t frames_bad;
+	uint32_t last_byte_ms;
 } zlrs_crsf_parser_t;
 
 #define ZLRS_CRSF_PAYLOAD(p) ((p)->buf + 3U)
 
 void zlrs_crsf_parser_init(zlrs_crsf_parser_t *p);
 enum zlrs_crsf_result zlrs_crsf_feed(zlrs_crsf_parser_t *p, uint8_t byte);
+enum zlrs_crsf_result zlrs_crsf_feed_at(zlrs_crsf_parser_t *p, uint8_t byte, uint32_t now_ms);
+bool zlrs_crsf_frame_valid(const uint8_t *frame, uint8_t len);
+bool zlrs_crsf_extended(uint8_t type);
+bool zlrs_crsf_command_valid(const uint8_t *payload, uint8_t len);
+uint8_t zlrs_crsf_command_crc(const uint8_t *payload, uint8_t len);
+uint8_t zlrs_crsf_rssi_percent(int16_t dbm, int16_t sensitivity_dbm);
 
 /* CRC8, polynomial 0xD5; the check value for "123456789" is 0xBC */
 uint8_t zlrs_crsf_crc8(const uint8_t *data, size_t len);
@@ -88,8 +106,8 @@ uint8_t zlrs_crsf_rssi_from_dbm(int16_t dbm);
 /* TX power index: 0=0mW 1=10 2=25 3=100 4=500 5=1000 6=2000 7=250 8=50 */
 uint8_t zlrs_crsf_tx_power_index(int8_t dbm);
 
-/* CRSF 0x14 profiles: 4/50/150 fps -> 0/1/2; other rates are reserved (0xff).
- * Use the standard 0x1D fps field to report rates outside that enumeration.
+/* Closest nominal CRSF 0x14 profile (4/50/150 fps -> 0/1/2).
+ * The detailed 0x1D FPS field reports the actual ZLRS rate in 10 fps units.
  */
 uint8_t zlrs_crsf_rf_mode(uint32_t frames_per_second);
 

@@ -28,6 +28,7 @@
 		 * (see the partition table in this directory's README) */
 	};
 	aliases {
+		zlrs-crsf-port = &crsf_port;
 		lora-transceiver = &lora_core2021;
 		zlrs-control-uart = &uart0;
 		zlrs-data-uart = &uart1;
@@ -41,6 +42,13 @@
 		zlrs-slot-timer = &timer1;
 		/* The vendor USP samples (packet_error_rate_flrc and friends) expect this alias */
 		smtc-user-button = &zlrs_button;
+	};
+	crsf_port: crsf-port {
+		compatible = "zlrs,crsf-port";
+		release-timer = <&timer0>;
+		tx-gpios = <&gpio0 0 GPIO_ACTIVE_HIGH>;
+		handset-baud = <400000>;
+		fc-baud = <420000>;
 	};
 
 	buttons {
@@ -428,6 +436,11 @@ zephyr_udc0: &usbd {
 };
 
 /* TIMER1 is dedicated to radio slot boundaries; SysTick remains the kernel clock. */
+/* UART line release uses the public counter API, separately from TIMER1 RF scheduling. */
+&timer0 {
+	status = "okay";
+};
+
 &timer1 {
 	interrupts = <4 0>, <5 0>, <6 0>, <7 0>;
 	compatible = "zlrs,rp2350-slot-timer";

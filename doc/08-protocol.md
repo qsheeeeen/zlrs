@@ -6,7 +6,8 @@ how hopping and regulation land in code. Identity and keys: [09-security](09-sec
 timing budget: [06-architecture](06-architecture.md) 4; chip parameters:
 [05-radio](05-radio.md).
 
-Protocol version: `ZLRS_PROTO_VERSION` (5 today), carried in `SYNC` and checked by the RX.
+Protocol version: `ZLRS_PROTO_VERSION` (6 today), carried in `SYNC` and checked by the RX.
+Version 6 requires both peers to be upgraded; previous wire formats are not accepted.
 
 ## 1. Frame format
 
@@ -15,17 +16,18 @@ frame. What the protocol adds is:
 
 | Field | Size | Purpose |
 | --- | --- | --- |
-| `header` | 1 B | 6-bit packet type tells the receiver how to parse the frame; bit 1 is the reverse DATA ACK toggle and bit 0 is reserved. |
+| `header` | 1 B | 6-bit packet type; bit 1 acknowledges the reverse service (DATA on DATA packets, CRSF on RC/TLM/CRSF packets); bit 0 is reserved. |
 | `seq` | 2 B | Per-transmission frame number. The receiver uses it to reject replayed frames. |
 | `payload` | 0-504 B | Packet-specific content. ARQ DATA starts with a 2-byte data sequence, followed by user bytes; an empty DATA reply has no payload. |
 | `tag` | 0 or 4 B | Truncated HMAC-SHA256. Authenticates the ZLRS frame so modified or forged fields are rejected; omitted only in the debug P0 profile. |
 
-Multi-byte fields are little-endian. The tag covers the header, `seq` and payload. The LR2021
+ZLRS multi-byte fields are little-endian; encapsulated CRSF keeps its standard big-endian fields.
+The tag covers the header, `seq` and payload. The LR2021
 adds its own physical-layer framing around these bytes; those fields are listed below.
 
 FLRC accepts up to 511 bytes for the entire ZLRS frame. With P1 authentication, ARQ carries
 502 user bytes, including when reporting the reverse ACK bit. LoRa retains its 255-byte limit and
-the link clamps its MTU separately. Both peers must run protocol version 5. The public LR20xx
+the link clamps its MTU separately. Both peers must run protocol version 6. The public LR20xx
 RAL already configures separate TX/RX FIFOs large enough to hold a full FLRC frame; no FIFO
 streaming or upstream changes are required. See the [LR2021 datasheet, sections 5.3 and 18.2](https://www.mouser.com/pdfDocs/61979758LR2021_V1_1_datasheet.pdf).
 
@@ -54,8 +56,8 @@ of an unrelated signal matching.
 
 | # | Type | Direction | Purpose |
 | --- | --- | --- | --- |
-| 0 | `RC` | TX to RX | CRSF channel payload (22 B) |
-| 1 | `TLM` | RX to TX | uplink telemetry (8 B, see [tlm.h] layout below) |
+| 0 | `RC` | TX to RX | model id, channel length, signed ground TX power, channels and optional CRSF service frame |
+| 1 | `TLM` | RX to TX | telemetry length, signed air RX power, telemetry and optional CRSF service frame |
 | 2 | `DATA_UP` | TX to RX | passthrough data |
 | 3 | `DATA_DOWN` | RX to TX | passthrough data |
 | 4 | `SYNC` | TX to RX | session setup, hop alignment, profile and mix declaration |
@@ -64,15 +66,60 @@ of an unrelated signal matching.
 | 7 | `PAIR_CFM` | TX to RX | pairing |
 | 8 | `SESS_RESP` | RX to TX | session response carrying `nonce_r` |
 | 9 | `SESS_CFM` | TX to RX | session confirmation, tagged with the new session key |
+| 10 | `CRSF` | both | reliable complete CRSF frame in data24, or empty service acknowledgment |
+
+The RC payload is `{model:u8, rc_len:u8, tx_dbm:i8, channels[rc_len], service?}`.
+`rc_len` is 0, 22 or 23. The optional 23rd byte preserves EdgeTX's additional status field;
+future bytes after the known channel/status fields are ignored at serial input. Zero length
+keeps discovery, configuration and telemetry reachable while handset input is absent and does
+not emit an FC channel frame. Model mismatch also suppresses channel delivery without stopping
+configuration traffic.
+
+The TLM payload is `{tlm_len:u8, rx_dbm:i8, telemetry[tlm_len], service?}`; the application
+uses an eight-byte telemetry body. With P1 and a maximum 64-byte CRSF service frame, RC consumes
+99 bytes and TLM 83 bytes including header and tag. The control slot budget reserves these
+maximum lengths before choosing its actual cadence.
 
 The telemetry payload is the standard CRSF `0x1D Link Statistics TX` payload: RSSI, RSSI percent,
 link quality, SNR, receiver RF power in dBm, actual frame rate divided by 10, antenna 2 RSSI and
 active antenna. The TX additionally emits standard CRSF `0x14 Link Statistics` for handset status.
 
-`0x14` uplink power is the ground TX's power, not the air RX's power. Its RF profile enumeration
-only defines 4/50/150 fps; other rates use reserved `0xff`, and `0x1D` reports the actual rate at
-10 fps resolution. RSSI percentage is zero until a calibrated mapping exists. The unsigned
-`0x1D` dBm field cannot represent negative bench power, so negative setpoints saturate to zero.
+Both ends emit `0x14` to their serial peer; TX additionally emits `0x1C` and `0x1D`.
+`0x14` uplink power is the ground TX's power, transmitted in the RC metadata, rather than
+the air RX's power. Its standard RF profile enumeration only defines 4/50/150 fps. ZLRS chooses
+the nearest nominal profile, which is an approximation; `0x1D` and CRSF Shot report the actual
+cadence (10 fps resolution and 100 ns units respectively). Basic power uses the standard power
+tier enumeration, rounding down; it cannot represent arbitrary low bench setpoints precisely.
+RSSI percent maps the modem RSSI linearly from the nominal sensitivity (-100 dBm FLRC,
+-120 dBm LoRa) to -50 dBm, clamped to 0–100; calibration remains a hardware acceptance item.
+FLRC uses the packet-average RSSI after RX_DONE and has no SNR measurement. Single-antenna
+fields use antenna zero. RX leaves unknown downlink fields zero. Unsigned detailed power fields
+cannot represent negative dBm; the relevant `0x1C`/`0x1D` frame is omitted at negative power,
+while `0x14` and cut failsafe remain available.
+
+### 2.1 CRSF service transport
+
+An optional service is `{service_seq:u16LE, complete_crsf_frame[4..64]}`. Each direction has
+its own eight-frame queue, stop-and-wait sequence and receive acknowledgment toggle, separate
+from DATA. RC/TLM carry the service alongside control/statistics. In data24, packet type 10
+uses the same service body and occupies at most one in four DATA opportunities unless a service
+acknowledgment is pending. The DATA stream never contains CRSF bytes.
+
+An unchanged sequence is a retransmission, delivered only once within the session. The receiver
+advances the toggle only after its application accepts the complete frame; backpressure keeps
+the sender's frame pending. An empty service carrier reports the reverse toggle. Frame length,
+CRSF CRC, ZLRS authentication and replay checks precede acknowledgment processing. A new session
+restarts service sequences while retaining queued frames; delivery spanning a session reset
+may repeat an accepted frame whose acknowledgment was lost. Application commands therefore
+set state rather than toggle it, and MSP retains its own transaction sequencing.
+
+The routing layer consumes locally addressed device discovery, parameters and commands, and
+forwards other complete frames with their type, payload and extended destination/origin intact.
+Broadcast device discovery also reaches the other end and the attached serial peer. The final
+serial sync byte is `0xEA` for the handset and `0xC8` for the FC. This supports opaque telemetry,
+MSP and future frame types without interpreting their application payloads. Unsupported commands
+addressed to ZLRS return a negative command acknowledgment; reserved types and device-specific
+actions are not implemented as fictitious ZLRS hardware capabilities.
 
 RC uses CRSF cut failsafe: the TX clears its channel payload after the handset-input timeout,
 and RX only forwards newly received RC. Neither end generates preset channel values at boot,
@@ -101,7 +148,7 @@ recommends that the FC wait one second before starting its failsafe routine.
 | `PAIRING` | pairing succeeds | `SEARCHING` | peer id and both nonces stored, normal sync word adopted |
 | `PAIRING` | window expires | `UNPAIRED` | |
 | `SEARCHING` | `SYNC` answered with `SESS_RESP`, then `SESS_CFM` verifies | `CONNECTED` | hop index aligned from `SYNC` |
-| `CONNECTED` | peer timeout (250 ms on the TX, 100 ms on the RX), or the TX loses its RC input | `SEARCHING` | |
+| `CONNECTED` | peer timeout (250 ms on the TX, 100 ms on the RX) | `SEARCHING` | Loss of handset input cuts channels; metadata keeps the RF session available. |
 | any | `erase-pair`, `factory-reset` (both next boot) | `UNCONFIGURED` / `UNPAIRED` | |
 
 ### 3.3 Pairing

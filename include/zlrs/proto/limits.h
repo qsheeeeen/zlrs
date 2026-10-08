@@ -9,7 +9,7 @@
 #pragma once
 
 /* Current wire format only; SYNC must declare this exact version. */
-#define ZLRS_PROTO_VERSION 5U
+#define ZLRS_PROTO_VERSION 6U
 
 /* Frame: common header(1) + seq(2) + payload + tag(0/4). */
 #define ZLRS_FRAME_HDR_LEN      3U
@@ -42,7 +42,8 @@
 #define ZLRS_FRAME_RATE_HZ 150U
 
 /* Control link RC payload: CRSF's 22 bytes of channel data carried as-is */
-#define ZLRS_RC_PAYLOAD_LEN 22U
+#define ZLRS_RC_PAYLOAD_LEN     22U
+#define ZLRS_RC_PAYLOAD_MAX_LEN 23U /* optional handset status byte */
 
 /* Pairing payload: endpoint IDs and nonces. */
 #define ZLRS_PAIR_PAYLOAD_LEN 16U

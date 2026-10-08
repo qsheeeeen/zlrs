@@ -8,7 +8,7 @@
 
 #define FRAME_TYPE_SHIFT 2U
 #define FRAME_FLAG_MASK  ZLRS_FLAG_ACK
-#define FRAME_TYPE_MAX   ZLRS_PKT_SESS_CFM
+#define FRAME_TYPE_MAX   ZLRS_PKT_CRSF
 
 uint8_t zlrs_profile_tag_len(zlrs_profile_t profile)
 {

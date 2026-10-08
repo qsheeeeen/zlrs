@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "zlrs/link/link.h"
+#include "zlrs/crsf/crsf.h"
 
 #define SIM_FRAME_MS       6U
 #define SIM_RATE_CTL       1300000U
@@ -37,8 +38,12 @@ struct node {
 	uint8_t dev_id[ZLRS_DEV_ID_LEN];
 
 	/* callback records */
-	uint8_t rc[ZLRS_RC_PAYLOAD_LEN];
+	uint8_t rc[ZLRS_RC_PAYLOAD_MAX_LEN];
 	uint16_t rc_len;
+	uint8_t crsf[2048];
+	uint16_t crsf_len;
+	uint16_t crsf_count;
+	bool crsf_blocked;
 	uint32_t rc_count;
 	uint8_t tlm[ZLRS_LINK_TLM_MAX_LEN];
 	uint16_t tlm_len;
@@ -158,6 +163,19 @@ static void on_data(void *ctx, const uint8_t *data, uint16_t len)
 	node->stream_len += len;
 }
 
+static bool on_crsf(void *ctx, const uint8_t *frame, uint8_t len)
+{
+	link_ctx_t *lc = ctx;
+	node_t *node = lc->node;
+	if (node->crsf_blocked || node->crsf_len + len > sizeof(node->crsf)) {
+		return false;
+	}
+	memcpy(node->crsf + node->crsf_len, frame, len);
+	node->crsf_len += len;
+	node->crsf_count++;
+	return true;
+}
+
 static void on_state(void *ctx, uint8_t state)
 {
 	link_ctx_t *lc = ctx;
@@ -195,12 +213,14 @@ static void node_init(node_t *node, uint8_t role, const uint8_t *root_key,
 	};
 	zlrs_link_events_t ctl_ev = {
 		.on_rc = on_rc,
+		.on_crsf = on_crsf,
 		.on_tlm = on_tlm,
 		.on_state = on_state,
 		.ctx = &node->ctl_ctx,
 	};
 	zlrs_link_events_t data_ev = {
 		.on_data = on_data,
+		.on_crsf = on_crsf,
 		.on_state = on_state,
 		.ctx = &node->data_ctx,
 	};
@@ -738,6 +758,32 @@ static void test_pairing(void)
 	CHECK(sim.tx.ctl.state == ZLRS_STATE_UNPAIRED);
 	CHECK(sim.tx.ctl.stats.tx_frames > 10U); /* PAIR_REQ went out the whole time */
 	CHECK(!sim.tx.ctl.paired);
+}
+
+static void test_pairing_cancel(void)
+{
+	sim_t sim;
+
+	printf("link: cancel pairing preserves peer and restores session discovery\n");
+	sim_init(&sim);
+	CHECK(!zlrs_link_cancel_pair(&sim.tx.ctl, sim.now_ms));
+	zlrs_link_press(&sim.tx.ctl, sim.now_ms);
+	CHECK(zlrs_link_cancel_pair(&sim.tx.ctl, sim.now_ms));
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_UNPAIRED && !sim.tx.ctl.paired);
+	pair_and_connect(&sim);
+	uint8_t peer[ZLRS_DEV_ID_LEN];
+	uint8_t salt[sizeof(sim.tx.ctl.pair_salt)];
+
+	memcpy(peer, sim.tx.ctl.peer_id, sizeof(peer));
+	memcpy(salt, sim.tx.ctl.pair_salt, sizeof(salt));
+	zlrs_link_press(&sim.tx.ctl, sim.now_ms);
+	CHECK(zlrs_link_cancel_pair(&sim.tx.ctl, sim.now_ms));
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_SEARCHING && sim.tx.ctl.paired);
+	CHECK(!sim.tx.ctl.session_valid && !sim.tx.ctl.pair_cfm_pending);
+	CHECK(memcmp(peer, sim.tx.ctl.peer_id, sizeof(peer)) == 0);
+	CHECK(memcmp(salt, sim.tx.ctl.pair_salt, sizeof(salt)) == 0);
+	SIM_UNTIL(&sim, sim.tx.ctl.state == ZLRS_STATE_CONNECTED, 2000);
+	CHECK(sim.tx.ctl.state == ZLRS_STATE_CONNECTED);
 }
 
 /* Little-endian u32 into a payload: the pairing messages carry the two nonces that way */
@@ -2558,7 +2604,7 @@ static void test_isolation_no_tag(void)
 
 	/* A frame on air is header plus payload, no tag */
 	sim_slot(&sim, ZLRS_SLOT_CTL_DOWN);
-	CHECK(sim.down_len == (uint16_t)(ZLRS_FRAME_HDR_LEN + sizeof(rc)));
+	CHECK(sim.down_len == (uint16_t)(ZLRS_FRAME_HDR_LEN + 3U + sizeof(rc)));
 
 	/* Passthrough keeps working */
 	memset(chunk, 0x62U, sizeof(chunk));
@@ -3179,8 +3225,102 @@ static void test_data_only_pairing(void)
 	CHECK(memcmp(sim.tx.data.pair_salt, sim.rx.data.pair_salt, sizeof(old_salt)) == 0);
 }
 
+static void test_crsf_relay(void)
+{
+	sim_t sim;
+	uint8_t frame[64];
+	const uint8_t payload[] = {0xC8, 0xEA, 0x10, 0x20, 0x30};
+	const uint8_t size = zlrs_crsf_encode(frame, 0xC8, 0x7A, payload, sizeof(payload));
+	uint8_t rc[23];
+	memset(rc, 0x31, sizeof(rc));
+	rc[22] = 2;
+
+	printf("link: CRSF service retries, backpressure, model matching and DATA isolation\n");
+	for (uint8_t data_only = 0; data_only < 2; data_only++) {
+		sim_init(&sim);
+		if (data_only) {
+			sim.data24_slots = true;
+			sim.prepare_data = true;
+			zlrs_link_press(&sim.tx.data, sim.now_ms);
+			zlrs_link_press(&sim.rx.data, sim.now_ms);
+			SIM_UNTIL(&sim,
+				  sim.tx.data.state == ZLRS_STATE_CONNECTED &&
+					  sim.rx.data.state == ZLRS_STATE_CONNECTED,
+				  500);
+		} else {
+			pair_and_connect(&sim);
+		}
+		zlrs_link_t *tx = data_only ? &sim.tx.data : &sim.tx.ctl;
+		zlrs_link_t *rx = data_only ? &sim.rx.data : &sim.rx.ctl;
+		sim.rx.crsf_blocked = true;
+		CHECK(zlrs_link_write_crsf(tx, frame, size));
+		sim_run(&sim, 32);
+		CHECK(sim.rx.crsf_count == 0 && tx->crsf_count == 1 && tx->crsf_inflight);
+		sim.rx.crsf_blocked = false;
+		sim.drop_down = 2;
+		sim.drop_up = 2;
+		CHECK(zlrs_link_write_crsf(rx, frame, size));
+		SIM_UNTIL(&sim, tx->crsf_count == 0 && rx->crsf_count == 0, 400);
+		CHECK(tx->crsf_count == 0 && rx->crsf_count == 0);
+		CHECK(sim.rx.crsf_count == 1 && sim.tx.crsf_count == 1);
+		CHECK(sim.rx.crsf_len == size && memcmp(sim.rx.crsf, frame, size) == 0);
+		const uint8_t user[] = {0xEE, 0x28, 0x7A, 0xBA, 0xC8, 0xD5};
+		CHECK(zlrs_link_write(&sim.tx.data, user, sizeof(user)) == sizeof(user));
+		SIM_UNTIL(&sim, sim.rx.stream_len == sizeof(user), 400);
+		CHECK(sim.rx.stream_len == sizeof(user) &&
+		      memcmp(sim.rx.stream, user, sizeof(user)) == 0);
+		sim_run(&sim, 40);
+		CHECK(sim.rx.crsf_count == 1 && sim.tx.crsf_count == 1);
+		if (!data_only) {
+			tx->cfg.model_id = 7;
+			rx->cfg.model_id = 8;
+			rx->cfg.model_match = true;
+			zlrs_link_set_rc(tx, rc, sizeof(rc));
+			const uint32_t before = sim.rx.rc_count;
+			sim_run(&sim, 8);
+			CHECK(sim.rx.rc_count == before);
+			rx->cfg.model_id = 7;
+			sim_run(&sim, 8);
+			CHECK(sim.rx.rc_count > before && sim.rx.rc_len == 23);
+			CHECK(memcmp(sim.rx.rc, rc, sizeof(rc)) == 0);
+			CHECK(rx->peer_power_dbm == tx->cfg.tx_power_dbm);
+			zlrs_link_set_rc(tx, NULL, 0);
+			const uint32_t cut = sim.rx.rc_count;
+			CHECK(zlrs_link_write_crsf(tx, frame, size));
+			SIM_UNTIL(&sim, tx->crsf_count == 0, 200);
+			CHECK(sim.rx.rc_count == cut && sim.rx.crsf_count == 2);
+		}
+	}
+	/* Queue rejection is atomic and invalid CRCs never occupy a service slot. */
+	sim_init(&sim);
+	frame[size - 1] ^= 1;
+	CHECK(!zlrs_link_write_crsf(&sim.tx.ctl, frame, size));
+	frame[size - 1] ^= 1;
+	for (uint8_t i = 0; i < ZLRS_LINK_CRSF_QUEUE_LEN; i++) {
+		CHECK(zlrs_link_write_crsf(&sim.tx.ctl, frame, size));
+	}
+	CHECK(!zlrs_link_write_crsf(&sim.tx.ctl, frame, size));
+}
+
 void test_link(void)
 {
+	/* TX completion, silence and failed RX must not turn the last measured RSSI/SNR into 0. */
+	sim_t signal;
+
+	sim_init(&signal);
+	zlrs_link_t *measured = &signal.rx.ctl;
+
+	measured->stats.last_rssi = -71;
+	measured->stats.last_snr = -4;
+	measured->req_is_tx = true;
+	zlrs_link_complete(measured, ZLRS_RADIO_OK, 0U, 0, 0, 1U);
+	CHECK(measured->stats.last_rssi == -71 && measured->stats.last_snr == -4);
+	measured->req_is_tx = false;
+	zlrs_link_complete(measured, ZLRS_RADIO_OK, 0U, 0, 0, 2U);
+	CHECK(measured->stats.last_rssi == -71 && measured->stats.last_snr == -4);
+	zlrs_link_complete(measured, ZLRS_RADIO_FAIL, 0U, 0, 0, 3U);
+	CHECK(measured->stats.last_rssi == -71 && measured->stats.last_snr == -4);
+	test_crsf_relay();
 	CHECK(offsetof(zlrs_link_t, tx_buf) % alignof(uint32_t) == 0U);
 	CHECK(offsetof(zlrs_link_t, rx_buf) % alignof(uint32_t) == 0U);
 	CHECK(offsetof(zlrs_link_t, prepared_data) % alignof(uint32_t) == 0U);
@@ -3188,6 +3328,7 @@ void test_link(void)
 	test_handshake_cadence();
 	test_data_only_pairing();
 	test_pairing();
+	test_pairing_cancel();
 	test_pairing_repeat_req();
 	test_pairing_lost_confirm();
 	test_pairing_id_order();

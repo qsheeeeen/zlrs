@@ -11,7 +11,7 @@ The firmware presents three CDCs by default:
 
 | CDC | Purpose | Its UART endpoint |
 | --- | --- | --- |
-| control | CRSF: channels down, telemetry up | UART0 (GP0/GP1, 420000) |
+| control | CRSF channels, telemetry, configuration and MSP | UART0 (GP0/GP1, TX role 400000; RX role 420000) |
 | data | the passthrough stream | UART1 (GP8/GP9, 115200 by default, changeable in NVS) |
 | **management** | the management protocol: enter management mode, read and write parameters | - |
 
@@ -29,6 +29,19 @@ ever received a host byte, otherwise the UART. The second rule exists for USB/IP
 alone would leave the CDC unselected and host bytes would be dropped silently as "not the
 active endpoint". The ISR records "a byte arrived" **before** checking the active endpoint, so
 the first frame is never lost to that lag (selection is local to `app/src/link/crsf.c` and `app/src/link/data.c`).
+
+For CRSF, the USB/IP fallback lasts one second after a **valid frame** instead of permanently
+latching on the first byte. UART becomes active again when USB DTR is off and that interval
+expires. Switching endpoints discards queued input and pending output after any frame already
+being transmitted. RC uses a separate latest-sample slot so configuration backpressure cannot
+hold an old control sample ahead of a new one. CRSF output queues complete frames and expires
+queued channel frames after the input timeout. The DATA port retains its existing byte-based
+selection rule.
+
+Locally generated channel/statistics/timing frames replace the same type's unsent queued
+value, bounding periodic backlog even when the handset's single-wire reply rate is low.
+Routed frames and device responses keep complete-frame FIFO ordering and backpressure.
+During baud negotiation, new periodic output waits until the old-speed response is drained.
 
 The two links choose their endpoints independently. The management CDC carries no passthrough
 traffic, only the management protocol; a board without that CDC simply has no management mode.
@@ -72,6 +85,39 @@ session is ready and pending logs have been flushed, including a repeated `ENTER
 
 The command set is in [09-security](09-security.md) 9.
 
+### CRSF device menu and commands
+
+TX module address is `0xEE`, receiver `0xEC`, handset `0xEA`, FC `0xC8`. Both devices answer
+directed and broadcast discovery and advertise ten parameters, with root folder zero:
+
+| ID | Parameter | Type | Application |
+| --- | --- | --- | --- |
+| 1 | Rate target | FLOAT with zero decimals, Hz | 4–1000 requested Hz, saved; actual rate is budget-clamped on reboot |
+| 2 | Power | FLOAT with zero decimals, dBm | -17 to the selected region ceiling, saved; applies on reboot |
+| 3 | Region | TEXT_SELECTION | SKU and power validated before saving; applies on reboot |
+| 4 | Bind | COMMAND | start/cancel/poll the local pairing window |
+| 5 | Model ID | FLOAT with zero decimals | 0–255, saved and applied immediately |
+| 6 | Model match | TEXT_SELECTION | Off/On, saved; RX cuts channels from a different model |
+| 7 | Telemetry | TEXT_SELECTION | Off/On, saved; gates external FC telemetry, preserves link statistics and configuration |
+| 8 | Mode | TEXT_SELECTION | Mixed/DATA24, saved; applies on reboot |
+| 9 | Firmware | INFO | version and implemented services, read-only |
+| 10 | Apply / reboot | COMMAND | START asks for confirmation; CONFIRM replies then reboots after two seconds; CANCEL aborts |
+
+Both peers need matching mode and control-rate targets. Read chunks start at zero and may be
+re-requested; accepted FLOAT/TEXT_SELECTION writes echo `0x2D` only after persistence succeeds.
+Rejected writes return the unchanged `0x2B` definition. Commands return their updated `0x2B`
+status. Model selection via direct `0x32.0x10.0x05` is volatile because the handset sends it
+during startup; the menu's Model ID is the persistent fallback.
+
+Direct commands support local bind/cancel, model selection/query and external telemetry
+enable/disable. Both ends must enter pairing, through their CRSF menu/command, management
+command or button. The TX sends CRSF Shot at 10 Hz, using the actual RC input timestamp and
+RF preparation deadline. UART speed proposals accept port zero at 115200, 400000, 416666,
+420000, 1000000 or 2000000 baud. The response finishes at the old baud before an idle UART
+switches; no valid traffic for one second restores the role's default baud. USB and requests
+routed over the radio reject physical baud changes. UART negotiation and handset scheduling
+still require electrical interoperability acceptance.
+
 Who decides what:
 
 | Decision | When | How |
@@ -83,7 +129,8 @@ Who decides what:
 | Operating mode (`mixed` / `data24`) | runtime, effective after reboot | `set-mode`, stored in NVS; `data24` uses 2.4 GHz for pairing and data |
 | Role TX / RX, security profile | runtime, default at build time | `set-role` / `set-profile`, stored in NVS |
 | Region, power ceiling, baud rate, pairing | runtime | management protocol, stored in NVS |
-| Rate tier, frame rate, telemetry period | build time today | the ledger in [12-roadmap](12-roadmap.md) tracks the missing commands |
+| Control rate target, model id/match, external FC telemetry | runtime | CRSF parameter menu; the rate target applies on reboot and is clamped to the radio budget |
+| Rate tier, telemetry period | build time today | the ledger in [12-roadmap](12-roadmap.md) tracks performance work |
 | Hardware presence (ports, management channel, button, LED, watchdog, SHA-256, TRNG, radio design) | devicetree | `app/src/platform/caps.h` |
 | Bench isolation (`RADIO=n`, hopping off, P0, …) | build time, debug images only | `ZLRS_APP_DEBUG*`, see [11-debug](11-debug.md) 3 |
 
@@ -103,7 +150,9 @@ python3 tools/zlrs.py set-mode data24 --all
 Reboot both peers after saving the mode. Assign one TX and one RX, set the same binding phrase,
 then run `python3 tools/zlrs.py pair --all` or hold each device's pairing button. No previous
 pairing record is needed: pairing, session handshake and bidirectional data all run on the
-2.4 GHz data link. CRSF/control is disabled and sub-band mixing cannot move data to sub-G.
+2.4 GHz data link. RC and periodic control-link statistics are disabled; CRSF device discovery,
+parameters, commands and opaque telemetry/MSP use the separate CRSF service on the data link.
+Sub-band mixing cannot move data to sub-G.
 P1 authentication, FHSS and ARQ keep their normal settings. Status shows the **active** mode;
 a saved mode change appears there only after reboot.
 

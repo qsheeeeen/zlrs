@@ -10,20 +10,13 @@
 
 #include "zlrs/proto/crc.h"
 
-/* Address bytes the parser accepts; anything else is dropped while idle */
+/* Standard static addresses and the dynamic device-address range. */
 static bool valid_address(uint8_t byte)
 {
-	switch (byte) {
-	case 0x00U: /* broadcast */
-	case ZLRS_CRSF_ADDR_FC:
-	case 0xECU: /* receiver */
-	case 0xEEU: /* module */
-	case ZLRS_CRSF_ADDR_TX_MODULE:
-	case 0xEFU: /* management port */
-		return true;
-	default:
-		return false;
-	}
+	return byte == 0U || byte == 0x10U || byte == 0x12U || (byte >= 0x20U && byte <= 0x7FU) ||
+	       byte == 0x80U || (byte >= 0x90U && byte <= 0x97U) || byte == 0xC0U ||
+	       byte == 0xC2U || byte == 0xC8U || byte == 0xCEU || byte == 0xEAU || byte == 0xECU ||
+	       byte == 0xEEU;
 }
 
 void zlrs_crsf_parser_init(zlrs_crsf_parser_t *p)
@@ -90,6 +83,27 @@ enum zlrs_crsf_result zlrs_crsf_feed(zlrs_crsf_parser_t *p, uint8_t byte)
 
 	if (crc != p->buf[total - 1U]) {
 		p->frames_bad++;
+		/* A truncated frame may have consumed the beginning of the next one. Retain
+		 * a plausible suffix, preferring static addresses over payload-like dynamic ones. */
+		uint8_t start = total;
+		for (uint8_t i = 1U; i + 1U < total; i++) {
+			const uint8_t address = p->buf[i];
+			const uint8_t length = p->buf[i + 1U];
+
+			if (!valid_address(address) || length < 2U || length > 62U ||
+			    (uint16_t)i + length + 2U <= total) {
+				continue;
+			}
+			if (start == total || address == 0xC8U || address == 0xEAU ||
+			    address == 0xECU || address == 0xEEU) {
+				start = i;
+			}
+		}
+		if (start < total) {
+			p->len = total - start;
+			memmove(p->buf, p->buf + start, p->len);
+			p->need = p->buf[1] + 2U;
+		}
 		return ZLRS_CRSF_BAD_CRC;
 	}
 
@@ -100,7 +114,8 @@ enum zlrs_crsf_result zlrs_crsf_feed(zlrs_crsf_parser_t *p, uint8_t byte)
 uint8_t zlrs_crsf_encode(uint8_t *out, uint8_t addr, uint8_t type, const uint8_t *payload,
 			 uint8_t payload_len)
 {
-	if (payload_len > ZLRS_CRSF_PAYLOAD_MAX_LEN) {
+	if (out == NULL || (payload_len > 0U && payload == NULL) ||
+	    payload_len > ZLRS_CRSF_PAYLOAD_MAX_LEN) {
 		return 0U;
 	}
 
@@ -200,16 +215,9 @@ uint8_t zlrs_crsf_tx_power_index(int8_t dbm)
 
 uint8_t zlrs_crsf_rf_mode(uint32_t frames_per_second)
 {
-	switch (frames_per_second) {
-	case 4U:
-		return 0U;
-	case 50U:
-		return 1U;
-	case 150U:
-		return 2U;
-	default:
-		return 0xFFU; /* Reserved: this rate has no CRSF 0x14 profile. */
-	}
+	/* CRSF has only three TBS profiles. Report the closest nominal profile; detailed
+	 * 0x1D FPS remains the source of the actual update rate for ZLRS modems. */
+	return frames_per_second < 27U ? 0U : (frames_per_second < 100U ? 1U : 2U);
 }
 
 void zlrs_crsf_link_stats_encode(uint8_t out[ZLRS_CRSF_LINK_STATS_LEN],
@@ -240,4 +248,60 @@ void zlrs_crsf_link_stats_decode(const uint8_t in[ZLRS_CRSF_LINK_STATS_LEN],
 	stats->downlink_rssi = in[7];
 	stats->downlink_lq = in[8];
 	stats->downlink_snr_db = (int8_t)in[9];
+}
+
+/* UART frames cannot legitimately pause for several milliseconds between bytes. */
+enum zlrs_crsf_result zlrs_crsf_feed_at(zlrs_crsf_parser_t *p, uint8_t byte, uint32_t now_ms)
+{
+	if (p->len != 0U && (uint32_t)(now_ms - p->last_byte_ms) > 3U) {
+		p->len = 0U;
+		p->need = 0U;
+		p->frames_bad++;
+	}
+	p->last_byte_ms = now_ms;
+	return zlrs_crsf_feed(p, byte);
+}
+
+bool zlrs_crsf_extended(uint8_t type)
+{
+	return type >= 0x28U && type != 0x34U;
+}
+
+bool zlrs_crsf_frame_valid(const uint8_t *frame, uint8_t len)
+{
+	return frame != NULL && len >= 4U && len <= ZLRS_CRSF_FRAME_MAX_LEN &&
+	       valid_address(frame[0]) && frame[1] == len - 2U &&
+	       (!zlrs_crsf_extended(frame[2]) || len >= 6U) &&
+	       zlrs_crsf_crc8(frame + 2U, len - 3U) == frame[len - 1U];
+}
+
+uint8_t zlrs_crsf_command_crc(const uint8_t *payload, uint8_t len)
+{
+	uint8_t crc = 0U;
+	/* Inner CRC starts with the command frame type, then destination and origin. */
+	for (uint16_t i = 0U; i <= len; i++) {
+		crc ^= i == 0U ? ZLRS_CRSF_TYPE_COMMAND : payload[i - 1U];
+		for (uint8_t bit = 0U; bit < 8U; bit++) {
+			crc = (uint8_t)((crc << 1) ^ ((crc & 0x80U) ? 0xBAU : 0U));
+		}
+	}
+	return crc;
+}
+
+bool zlrs_crsf_command_valid(const uint8_t *payload, uint8_t len)
+{
+	return payload != NULL && len >= 5U &&
+	       zlrs_crsf_command_crc(payload, len - 1U) == payload[len - 1U];
+}
+
+uint8_t zlrs_crsf_rssi_percent(int16_t dbm, int16_t sensitivity_dbm)
+{
+	/* Relative to this modem's sensitivity and a -50 dBm strong-signal reference. */
+	if (sensitivity_dbm >= -50 || dbm <= sensitivity_dbm) {
+		return 0U;
+	}
+	if (dbm >= -50) {
+		return 100U;
+	}
+	return (uint8_t)(((int32_t)dbm - sensitivity_dbm) * 100 / (-50 - sensitivity_dbm));
 }

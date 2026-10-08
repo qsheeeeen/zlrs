@@ -20,15 +20,19 @@ int zlrs_storage_settings_init(void);
  * works with these names and the generic calls below.
  */
 enum zlrs_setting {
-	ZLRS_SETTING_ROOT_KEY, /* ZLRS_KEY_LEN bytes */
-	ZLRS_SETTING_DEV_ID,   /* ZLRS_DEV_ID_LEN bytes */
-	ZLRS_SETTING_PAIRING,  /* struct zlrs_storage_settings_pairing_t */
-	ZLRS_SETTING_BAUD,     /* uint32_t */
-	ZLRS_SETTING_REGION,   /* uint8_t */
-	ZLRS_SETTING_POWER,    /* int8_t */
-	ZLRS_SETTING_ROLE,     /* uint8_t */
-	ZLRS_SETTING_PROFILE,  /* uint8_t */
-	ZLRS_SETTING_MODE,     /* uint8_t: ZLRS_MODE_* */
+	ZLRS_SETTING_ROOT_KEY,       /* ZLRS_KEY_LEN bytes */
+	ZLRS_SETTING_DEV_ID,         /* ZLRS_DEV_ID_LEN bytes */
+	ZLRS_SETTING_PAIRING,        /* struct zlrs_storage_settings_pairing_t */
+	ZLRS_SETTING_BAUD,           /* uint32_t */
+	ZLRS_SETTING_REGION,         /* uint8_t */
+	ZLRS_SETTING_POWER,          /* int8_t */
+	ZLRS_SETTING_ROLE,           /* uint8_t */
+	ZLRS_SETTING_PROFILE,        /* uint8_t */
+	ZLRS_SETTING_MODE,           /* uint8_t: ZLRS_MODE_* */
+	ZLRS_SETTING_CONTROL_RATE,   /* uint32_t: requested Hz; airtime plan can limit it */
+	ZLRS_SETTING_MODEL,          /* uint8_t */
+	ZLRS_SETTING_MODEL_MATCH,    /* uint8_t */
+	ZLRS_SETTING_CRSF_TELEMETRY, /* uint8_t: external FC telemetry */
 	ZLRS_SETTING_COUNT,
 };
 

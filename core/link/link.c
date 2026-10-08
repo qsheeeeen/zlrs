@@ -6,6 +6,8 @@
 
 #include <string.h>
 
+#include "zlrs/crsf/crsf.h"
+
 /* Public sync word used while pairing, slot 3 */
 static const uint8_t pairing_sync_word[ZLRS_SYNC_WORD_LEN] = {'Z', 'L', 'R', 'S'};
 
@@ -356,6 +358,11 @@ static void session_activate(zlrs_link_t *link, uint16_t hop_index)
 	link->arq_seq = 0U;
 	link->arq_rx_started = false;
 	link->arq_ack_pending = false;
+	link->crsf_tx_seq = 0U;
+	link->crsf_rx_started = false;
+	link->crsf_inflight = false;
+	link->crsf_ack_pending = false;
+	link->last_rc_ms = 0U;
 	zlrs_fhss_set_index(&link->fhss, hop_index);
 }
 
@@ -566,25 +573,134 @@ static const zlrs_radio_req_t *send_sess_cfm(zlrs_link_t *link)
 	return submit_tx(link, len, sync_freq_hz(link), link->cfg.sync_slot, link->sync_word);
 }
 
-static const zlrs_radio_req_t *send_rc(zlrs_link_t *link)
+static bool crsf_ack_bit(const zlrs_link_t *link)
 {
-	if (link->rc_len != ZLRS_RC_PAYLOAD_LEN) {
-		return NULL;
-	}
-	uint16_t len = build_frame(link, ZLRS_PKT_RC, 0U, link->rc_payload, link->rc_len,
-				   tag_key_for(link, ZLRS_PKT_RC, true));
-
-	return submit_tx(link, len, slot_freq_hz(link, SLOT_RC), link->cfg.sync_slot,
-			 link->sync_word);
+	return link->crsf_rx_started && ((link->crsf_rx_seq + 1U) & 1U) != 0U;
 }
 
-static const zlrs_radio_req_t *send_tlm(zlrs_link_t *link)
+static uint16_t crsf_append(zlrs_link_t *link, uint8_t *payload, uint16_t offset)
 {
-	uint16_t len = build_frame(link, ZLRS_PKT_TLM, 0U, link->tlm_payload, link->tlm_len,
-				   tag_key_for(link, ZLRS_PKT_TLM, true));
+	if (link->crsf_count == 0U) {
+		return offset;
+	}
+	const uint8_t len = link->crsf_sizes[link->crsf_head];
 
-	return submit_tx(link, len, slot_freq_hz(link, SLOT_TLM), link->cfg.sync_slot,
-			 link->sync_word);
+	payload[offset++] = (uint8_t)link->crsf_tx_seq;
+	payload[offset++] = (uint8_t)(link->crsf_tx_seq >> 8);
+	memcpy(payload + offset, link->crsf_queue[link->crsf_head], len);
+	return offset + len;
+}
+
+static void crsf_sent(zlrs_link_t *link, uint32_t now_ms)
+{
+	link->crsf_ack_pending = false;
+	if (link->crsf_count != 0U) {
+		link->crsf_inflight = true;
+		link->crsf_sent_ms = now_ms;
+	}
+}
+
+static const zlrs_radio_req_t *send_rc(zlrs_link_t *link, uint32_t now_ms)
+{
+	uint8_t payload[3U + ZLRS_RC_PAYLOAD_MAX_LEN + 2U + 64U];
+
+	/* A zero-length control sample keeps RF discovery and telemetry alive without
+	 * fabricating a CRSF channel frame on the flight-controller port. */
+	payload[0] = link->cfg.model_id;
+	payload[1] = (uint8_t)link->rc_len;
+	payload[2] = (uint8_t)link->cfg.tx_power_dbm;
+	memcpy(payload + 3U, link->rc_payload, link->rc_len);
+	const uint16_t size = crsf_append(link, payload, 3U + link->rc_len);
+	const uint16_t len = build_frame(link, ZLRS_PKT_RC, crsf_ack_bit(link) ? ZLRS_FLAG_ACK : 0U,
+					 payload, size, tag_key_for(link, ZLRS_PKT_RC, true));
+	const zlrs_radio_req_t *req = submit_tx(link, len, slot_freq_hz(link, SLOT_RC),
+						link->cfg.sync_slot, link->sync_word);
+
+	if (req != NULL) {
+		crsf_sent(link, now_ms);
+	}
+	return req;
+}
+
+static const zlrs_radio_req_t *send_tlm(zlrs_link_t *link, uint32_t now_ms)
+{
+	uint8_t payload[2U + ZLRS_LINK_TLM_MAX_LEN + 2U + 64U];
+
+	payload[0] = (uint8_t)link->tlm_len;
+	payload[1] = (uint8_t)link->cfg.tx_power_dbm;
+	memcpy(payload + 2U, link->tlm_payload, link->tlm_len);
+	const uint16_t size = crsf_append(link, payload, 2U + link->tlm_len);
+	const uint16_t len =
+		build_frame(link, ZLRS_PKT_TLM, crsf_ack_bit(link) ? ZLRS_FLAG_ACK : 0U, payload,
+			    size, tag_key_for(link, ZLRS_PKT_TLM, true));
+	const zlrs_radio_req_t *req = submit_tx(link, len, slot_freq_hz(link, SLOT_TLM),
+						link->cfg.sync_slot, link->sync_word);
+
+	if (req != NULL) {
+		crsf_sent(link, now_ms);
+	}
+	return req;
+}
+
+static bool crsf_shape(const uint8_t *payload, uint16_t len)
+{
+	return len == 0U || (len >= 6U && len <= 66U &&
+			     zlrs_crsf_frame_valid(payload + 2U, (uint8_t)(len - 2U)));
+}
+
+static void crsf_receive(zlrs_link_t *link, const zlrs_frame_t *frame, uint16_t offset)
+{
+	const bool bit = (frame->flags & ZLRS_FLAG_ACK) != 0U;
+
+	if (link->crsf_inflight && bit == (((link->crsf_tx_seq + 1U) & 1U) != 0U)) {
+		link->crsf_head = (uint8_t)((link->crsf_head + 1U) % ZLRS_LINK_CRSF_QUEUE_LEN);
+		link->crsf_count--;
+		link->crsf_tx_seq++;
+		link->crsf_inflight = false;
+	}
+	if (frame->payload_len == offset) {
+		return;
+	}
+	const uint8_t *payload = frame->payload + offset;
+	const uint16_t seq = (uint16_t)(payload[0] | (uint16_t)payload[1] << 8);
+	const uint16_t next = link->crsf_rx_started ? (uint16_t)(link->crsf_rx_seq + 1U) : 0U;
+
+	link->crsf_ack_pending = true;
+	if (seq != next) {
+		return; /* Retransmissions retain their service sequence, never redeliver. */
+	}
+	const uint8_t len = (uint8_t)(frame->payload_len - offset - 2U);
+
+	if (link->ev.on_crsf != NULL && link->ev.on_crsf(link->ev.ctx, payload + 2U, len)) {
+		link->crsf_rx_seq = seq;
+		link->crsf_rx_started = true;
+	}
+}
+
+static const zlrs_radio_req_t *send_crsf(zlrs_link_t *link, uint32_t now_ms)
+{
+	uint8_t payload[66];
+	const uint32_t timeout =
+		link->cfg.arq_timeout_ms != 0U ? link->cfg.arq_timeout_ms : ZLRS_ARQ_TIMEOUT_MS;
+
+	/* At most one in four DATA opportunities, unless only an ACK is pending. */
+	if (!link->crsf_ack_pending &&
+	    (link->crsf_count == 0U || (link->frame_index & 3U) != 0U ||
+	     (link->crsf_inflight && (int32_t)(now_ms - link->crsf_sent_ms) < (int32_t)timeout))) {
+		return NULL;
+	}
+	const uint16_t size = crsf_append(link, payload, 0U);
+	const uint16_t len =
+		build_frame(link, ZLRS_PKT_CRSF, crsf_ack_bit(link) ? ZLRS_FLAG_ACK : 0U, payload,
+			    size, tag_key_for(link, ZLRS_PKT_CRSF, true));
+	const zlrs_radio_req_t *req = submit_tx(link, len, slot_freq_hz(link, SLOT_DATA),
+						link->cfg.sync_slot, link->sync_word);
+
+	if (req != NULL) {
+		link->prepared_data.valid = false;
+		crsf_sent(link, now_ms);
+	}
+	return req;
 }
 
 /* ---- ARQ (optional data-link mode, see doc/08-protocol.md 4.3) ------------- */
@@ -1412,8 +1528,8 @@ static int handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 
 	/* For the initiator any session frame from the peer means the link is up */
 	if (link->state == ZLRS_STATE_SEARCHING && link->cfg.role == ZLRS_ROLE_TX &&
-	    (frame.type == ZLRS_PKT_TLM || frame.type == ZLRS_PKT_DATA_UP ||
-	     frame.type == ZLRS_PKT_DATA_DOWN)) {
+	    (frame.type == ZLRS_PKT_TLM || frame.type == ZLRS_PKT_CRSF ||
+	     frame.type == ZLRS_PKT_DATA_UP || frame.type == ZLRS_PKT_DATA_DOWN)) {
 		set_state(link, ZLRS_STATE_CONNECTED, now_ms);
 	}
 
@@ -1437,14 +1553,56 @@ static int handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 	lq_account(link, frame.seq);
 
 	switch (frame.type) {
-	case ZLRS_PKT_RC:
-		if (link->ev.on_rc != NULL && frame.payload_len > 0U) {
-			link->ev.on_rc(link->ev.ctx, frame.payload, frame.payload_len);
+	case ZLRS_PKT_RC: {
+		if (link->cfg.role != ZLRS_ROLE_RX || frame.payload_len < 3U) {
+			link->stats.rx_bad_frame++;
+			break;
+		}
+		const uint8_t rc_len = frame.payload[1];
+		const uint16_t offset = 3U + rc_len;
+
+		if ((rc_len != 0U && rc_len != ZLRS_RC_PAYLOAD_LEN &&
+		     rc_len != ZLRS_RC_PAYLOAD_MAX_LEN) ||
+		    offset > frame.payload_len ||
+		    !crsf_shape(frame.payload + offset, frame.payload_len - offset)) {
+			link->stats.rx_bad_frame++;
+			break;
+		}
+		link->peer_power_dbm = (int8_t)frame.payload[2];
+		crsf_receive(link, &frame, offset);
+		if (rc_len != 0U &&
+		    (!link->cfg.model_match || frame.payload[0] == link->cfg.model_id) &&
+		    link->ev.on_rc != NULL) {
+			link->last_rc_ms = now_ms;
+			link->ev.on_rc(link->ev.ctx, frame.payload + 3U, rc_len);
 		}
 		break;
-	case ZLRS_PKT_TLM:
-		if (link->ev.on_tlm != NULL && frame.payload_len > 0U) {
-			link->ev.on_tlm(link->ev.ctx, frame.payload, frame.payload_len);
+	}
+	case ZLRS_PKT_TLM: {
+		if (link->cfg.role != ZLRS_ROLE_TX || frame.payload_len < 2U) {
+			link->stats.rx_bad_frame++;
+			break;
+		}
+		const uint8_t tlm_len = frame.payload[0];
+		const uint16_t offset = 2U + tlm_len;
+
+		if (tlm_len > ZLRS_LINK_TLM_MAX_LEN || offset > frame.payload_len ||
+		    !crsf_shape(frame.payload + offset, frame.payload_len - offset)) {
+			link->stats.rx_bad_frame++;
+			break;
+		}
+		link->peer_power_dbm = (int8_t)frame.payload[1];
+		crsf_receive(link, &frame, offset);
+		if (link->ev.on_tlm != NULL && tlm_len != 0U) {
+			link->ev.on_tlm(link->ev.ctx, frame.payload + 2U, tlm_len);
+		}
+		break;
+	}
+	case ZLRS_PKT_CRSF:
+		if (crsf_shape(frame.payload, frame.payload_len)) {
+			crsf_receive(link, &frame, 0U);
+		} else {
+			link->stats.rx_bad_frame++;
 		}
 		break;
 	case ZLRS_PKT_DATA_UP:
@@ -1635,7 +1793,7 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot, uin
 			if (sync_frame(link)) {
 				return send_sync(link, now_ms);
 			}
-			return send_rc(link);
+			return send_rc(link, now_ms);
 		}
 		return submit_rx(link, slot_freq_hz(link, SLOT_RC), link->cfg.sync_slot,
 				 link->sync_word, link->cfg.rx_timeout_ms);
@@ -1672,7 +1830,7 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot, uin
 		if (link->cfg.telemetry == 0U) {
 			return NULL;
 		}
-		return send_tlm(link);
+		return send_tlm(link, now_ms);
 	}
 
 	/*
@@ -1701,7 +1859,7 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot, uin
 				 link->sync_word, link->cfg.rx_timeout_ms);
 	}
 
-	return send_tlm(link);
+	return send_tlm(link, now_ms);
 }
 
 static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32_t now_ms)
@@ -1822,7 +1980,10 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 	if (tx_side == a) {
 		const zlrs_radio_req_t *req;
 
-		req = send_data(link, now_ms);
+		req = send_crsf(link, now_ms);
+		if (req == NULL) {
+			req = send_data(link, now_ms);
+		}
 
 		if (req != NULL) {
 			return req;
@@ -1995,6 +2156,21 @@ void zlrs_link_press(zlrs_link_t *link, uint32_t now_ms)
 	set_state(link, ZLRS_STATE_PAIRING, now_ms);
 }
 
+bool zlrs_link_cancel_pair(zlrs_link_t *link, uint32_t now_ms)
+{
+	if (link->state != ZLRS_STATE_PAIRING) {
+		return false;
+	}
+	link->pair_cfm_pending = false;
+	link->pair_wait_cfm = false;
+	link->session_valid = false;
+	link->session_pending = false;
+	link->sess_resp_due = false;
+	link->sess_cfm_due = false;
+	set_state(link, link->paired ? ZLRS_STATE_SEARCHING : ZLRS_STATE_UNPAIRED, now_ms);
+	return true;
+}
+
 const zlrs_radio_req_t *zlrs_link_slot(zlrs_link_t *link, uint8_t slot, uint32_t now_ms)
 {
 	link->slot = slot;
@@ -2035,8 +2211,6 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 	const uint8_t slot = (link->slot < 4U) ? link->slot : 0U;
 
 	link->req_pending = false;
-	link->stats.last_rssi = rssi;
-	link->stats.last_snr = snr;
 
 	if (status != ZLRS_RADIO_OK) {
 		link->stats.radio_fail++;
@@ -2080,11 +2254,17 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 	}
 
 	link->stats.slot_rx[slot]++;
-	if (rssi != 0) {
+	if (rx_len > 0U) {
+		/* A TX completion or empty RX window has no signal measurement. Preserve the
+		 * last packet rather than overwriting telemetry with their zero placeholders. */
+		link->stats.last_rssi = rssi;
+		link->stats.last_snr = snr;
+	}
+	if (rx_len > 0U && rssi != 0) {
 		if (link->stats.rssi_min == 0 || rssi < link->stats.rssi_min) {
 			link->stats.rssi_min = rssi;
 		}
-		if (rssi > link->stats.rssi_max) {
+		if (link->stats.rssi_max == 0 || rssi > link->stats.rssi_max) {
 			link->stats.rssi_max = rssi;
 		}
 	}
@@ -2186,8 +2366,8 @@ uint16_t zlrs_link_write(zlrs_link_t *link, const uint8_t *data, uint16_t len)
 
 void zlrs_link_set_rc(zlrs_link_t *link, const uint8_t *channels, uint16_t len)
 {
-	if (len > sizeof(link->rc_payload)) {
-		len = sizeof(link->rc_payload);
+	if (len != ZLRS_RC_PAYLOAD_LEN && len != ZLRS_RC_PAYLOAD_MAX_LEN) {
+		len = 0U;
 	}
 	if (len > 0U && channels != NULL) {
 		memcpy(link->rc_payload, channels, len);
@@ -2204,4 +2384,18 @@ void zlrs_link_set_tlm(zlrs_link_t *link, const uint8_t *payload, uint16_t len)
 	}
 	memcpy(link->tlm_payload, payload, len);
 	link->tlm_len = len;
+}
+
+bool zlrs_link_write_crsf(zlrs_link_t *link, const uint8_t *frame, uint8_t len)
+{
+	if (!zlrs_crsf_frame_valid(frame, len) || link->crsf_count == ZLRS_LINK_CRSF_QUEUE_LEN) {
+		return false;
+	}
+	const uint8_t tail =
+		(uint8_t)((link->crsf_head + link->crsf_count) % ZLRS_LINK_CRSF_QUEUE_LEN);
+
+	memcpy(link->crsf_queue[tail], frame, len);
+	link->crsf_sizes[tail] = len;
+	link->crsf_count++;
+	return true;
 }
