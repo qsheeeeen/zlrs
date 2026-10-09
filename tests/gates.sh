@@ -52,6 +52,11 @@ if hit=$(rg -n 'zlrs/crsf/|zlrs_crsf_' core/link); then
 	echo "$hit"
 fi
 
+if hit=$(rg -n 'link_(control|data)\.' app/src/rf); then
+	bad "RF accesses link storage directly instead of using link operations/views:"
+	echo "$hit"
+fi
+
 if [ -e app/src/state/sys_bus.c ] || [ -e app/src/state/sys_bus.h ]; then
 	bad "centralized module channels returned"
 fi

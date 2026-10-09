@@ -381,6 +381,10 @@ typedef struct {
 typedef struct {
 	uint32_t frequency_hz;
 	uint32_t frame_index;
+	uint32_t last_rx_frame;
+	uint32_t sess_nonce_t;
+	uint32_t sess_nonce_r;
+	bool sess_cfm_due;
 	uint16_t hop_index;
 	uint16_t queue_count;
 	uint16_t arq_used;
@@ -468,6 +472,9 @@ const zlrs_radio_req_t *zlrs_link_slot(zlrs_link_t *link, uint8_t slot, uint32_t
  * NULL means that handshake, recovery, cadence or backpressure requires the normal path. */
 const uint8_t *zlrs_link_prepare_data(zlrs_link_t *link, uint8_t slot, uint32_t now_ms,
 				      uint16_t *size);
+
+/* After stopping radio work, discard staged encoding without losing queued/reliable data. */
+void zlrs_link_discard_prepared_data(zlrs_link_t *link);
 
 /* Advance a missed slot without building a packet, consuming data or changing session state. */
 void zlrs_link_skip_slot(zlrs_link_t *link, uint8_t slot);

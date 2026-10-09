@@ -1744,14 +1744,14 @@ static void enter_management_mode(void)
 		zlrs_link_get_state(&link_data), stats->tx_frames, stats->rx_frames,
 		stats->radio_fail, stats->rx_bad_tag, stats->tx_syncs, stats->rx_syncs,
 		stats->sess_resp_tx, stats->sess_resp_rx, stats->sess_cfm_tx, stats->sess_cfm_rx,
-		data.queue_count, data.arq_used, data.frame_index, link_data.last_rx_frame,
-		link_data.sess_cfm_due ? 1U : 0U);
+		data.queue_count, data.arq_used, data.frame_index, data.last_rx_frame,
+		data.sess_cfm_due ? 1U : 0U);
 	LOG_INF("data progress: hop=%u fail_a=%u fail_b=%u dup=%u ooo=%u retry=%u "
 		"seq=%u/%u nonces=%08x/%08x pair=%08x",
 		data.hop_index, stats->slot_fail[ZLRS_SLOT_DATA_A],
 		stats->slot_fail[ZLRS_SLOT_DATA_B], stats->rx_dup, stats->rx_out_of_order,
-		stats->tx_retries, data.arq_seq, data.arq_rx_seq, link_data.sess_nonce_t,
-		link_data.sess_nonce_r, data.pair_fingerprint);
+		stats->tx_retries, data.arq_seq, data.arq_rx_seq, data.sess_nonce_t,
+		data.sess_nonce_r, data.pair_fingerprint);
 	zlrs_radio_diag_t radio_state;
 	zlrs_radio_diag(&radio_state);
 	LOG_INF("radio snapshot: late=%u setup=%u errors=%04x error_freq=%u phase=%d/%d",
@@ -1904,8 +1904,8 @@ void zlrs_rf_pause(void)
 		zlrs_radio_abort();
 	}
 	if (links_ready) {
-		link_control.prepared_data.valid = false;
-		link_data.prepared_data.valid = false;
+		zlrs_link_discard_prepared_data(&link_control);
+		zlrs_link_discard_prepared_data(&link_data);
 		zlrs_link_crsf_service_reset();
 	}
 }

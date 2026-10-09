@@ -1969,7 +1969,7 @@ static void test_arq_ack_diagnostics(void)
 
 static void test_prepared_data_invalidation(void)
 {
-	for (uint8_t change = 0U; change < 5U; change++) {
+	for (uint8_t change = 0U; change < 6U; change++) {
 		sim_t sim;
 		uint8_t payload[400] = {0};
 		uint16_t size;
@@ -1993,8 +1993,16 @@ static void test_prepared_data_invalidation(void)
 			sim.tx.data.arq_used = 1U;
 			sim.tx.data.arq_len = 128U;
 			sim.tx.data.arq_sent_ms = sim.now_ms - ZLRS_ARQ_TIMEOUT_MS;
-		} else {
+		} else if (change == 4U) {
 			sim.tx.data.cfg.resync_every_n = 1U;
+		} else {
+			const uint16_t seq = sim.tx.data.tx_seq;
+			const uint32_t frame = sim.tx.data.frame_index;
+			zlrs_link_discard_prepared_data(&sim.tx.data);
+			zlrs_link_discard_prepared_data(&sim.tx.data);
+			CHECK(sim.tx.data.queue_count == sizeof(payload));
+			CHECK(sim.tx.data.tx_seq == seq && sim.tx.data.frame_index == frame);
+			CHECK(sim.tx.data.arq_ack_pending && sim.tx.data.session_valid);
 		}
 		const zlrs_radio_req_t *req =
 			zlrs_link_slot(&sim.tx.data, ZLRS_SLOT_DATA_A, sim.now_ms);

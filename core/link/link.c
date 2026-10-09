@@ -843,6 +843,11 @@ const uint8_t *zlrs_link_prepare_data(zlrs_link_t *link, uint8_t slot, uint32_t 
 	return packet->buf;
 }
 
+void zlrs_link_discard_prepared_data(zlrs_link_t *link)
+{
+	link->prepared_data.valid = false;
+}
+
 static const zlrs_radio_req_t *send_prepared_data(zlrs_link_t *link, uint32_t now_ms, bool retry)
 {
 	zlrs_prepared_data_t *packet = &link->prepared_data;

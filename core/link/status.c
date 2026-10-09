@@ -69,6 +69,10 @@ zlrs_link_diagnostics_t zlrs_link_get_diagnostics(const zlrs_link_t *link)
 	return (zlrs_link_diagnostics_t){
 		.frequency_hz = link->fhss.domain != NULL ? zlrs_fhss_current_hz(&link->fhss) : 0U,
 		.frame_index = link->frame_index,
+		.last_rx_frame = link->last_rx_frame,
+		.sess_nonce_t = link->sess_nonce_t,
+		.sess_nonce_r = link->sess_nonce_r,
+		.sess_cfm_due = link->sess_cfm_due,
 		.hop_index = link->fhss.index,
 		.queue_count = link->queue_count,
 		.arq_used = link->arq_used,
