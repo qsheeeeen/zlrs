@@ -30,6 +30,7 @@ enum zlrs_crsf_dispatch {
  */
 typedef struct {
 	bool (*send)(void *ctx, uint8_t type, const uint8_t *payload, uint8_t len);
+	/* Business owner validates and applies; false returns the unchanged definition. */
 	bool (*write)(void *ctx, uint8_t parameter, int32_t value);
 	bool (*command)(void *ctx, uint8_t group, uint8_t command, const uint8_t *data,
 			uint8_t len);
@@ -49,6 +50,7 @@ typedef struct {
 	uint8_t bind_status;
 	uint8_t reboot_status;
 	int8_t max_power_dbm;
+	int8_t min_power_dbm;
 } zlrs_crsf_device_t;
 
 void zlrs_crsf_device_init(zlrs_crsf_device_t *device, uint8_t address,

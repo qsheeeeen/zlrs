@@ -40,6 +40,7 @@ add_executable(zlrs_host_tests
   ../../core/proto/mod.c
   ../../core/proto/tlm.c
   ../../core/link/link.c
+  ../../core/link/status.c
 )
 
 set_target_properties(zlrs_host_tests PROPERTIES

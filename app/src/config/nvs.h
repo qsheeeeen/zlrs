@@ -1,5 +1,5 @@
 /*
- * Persistence: root key, device id and pairing record live in NVS (doc/09-security.md 2).
+ * Private configuration storage: NVS layout, identity generation and record access.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -15,9 +15,8 @@
 int zlrs_storage_settings_init(void);
 
 /*
- * The settings that live in NVS. One entry per record: the table in settings.c is the only place
- * that knows an NVS id and a size, and everything else — the application, the management commands —
- * works with these names and the generic calls below.
+ * The settings that live in NVS. One entry per record: the table in nvs.c is the only place
+ * that knows an NVS id and a size. Only the configuration owner accesses these records.
  */
 enum zlrs_setting {
 	ZLRS_SETTING_ROOT_KEY,       /* ZLRS_KEY_LEN bytes */
@@ -74,6 +73,3 @@ bool zlrs_storage_settings_dev_id_valid(const uint8_t id[ZLRS_DEV_ID_LEN]);
  * is seeded lazily and was observed handing back zeros during boot.
  */
 bool zlrs_storage_settings_new_dev_id(uint8_t out[ZLRS_DEV_ID_LEN]);
-
-/* Parse 64 hex characters into a root key, returns 0 on success */
-int zlrs_storage_settings_parse_hex_key(const char *hex, uint8_t out[ZLRS_KEY_LEN]);

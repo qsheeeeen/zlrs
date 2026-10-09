@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#include "link/crsf.h"
+#include "crsf/serial.h"
 
 #include <hardware/gpio.h>
 #include <string.h>

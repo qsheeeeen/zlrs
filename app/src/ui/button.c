@@ -2,7 +2,7 @@
  * The button: its own thread, one gesture — hold it past the threshold (doc/10-ux.md).
  *
  * Same shape as ui/led.c: the thread owns the hardware and what it learns goes on the bus as a
- * fact (state/sys_bus.h), so the link state machine still only ever runs on the link thread
+ * fact (ui/button.h), so the link state machine still only ever runs on the link thread
  * (doc/06-architecture.md 6). What it reports is a counter, not a one-shot event: a consumer that
  * reads the channel later still sees that a press happened.
  *
@@ -19,9 +19,12 @@
 #include <zephyr/logging/log.h>
 
 #include "platform/caps.h"
-#include "state/sys_bus.h"
+#include "ui/button.h"
 
 LOG_MODULE_REGISTER(zlrs_ui_button, CONFIG_APP_LOG_LEVEL);
+
+ZBUS_CHAN_DEFINE(zlrs_input_chan, struct zlrs_input, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
+		 ZBUS_MSG_INIT(0));
 
 /* One sample per this: the debounce a mechanical button needs, and finer than the 1 s hold */
 #define BUTTON_POLL_MS 20U
@@ -41,6 +44,7 @@ static void button_thread(void *p1, void *p2, void *p3)
 	struct zlrs_input input = {0};
 	bool down = false;
 	bool fired = false;
+	bool pending = false;
 	uint32_t since_ms = 0U;
 
 	ARG_UNUSED(p1);
@@ -76,11 +80,14 @@ static void button_thread(void *p1, void *p2, void *p3)
 			input.button_holds++;
 			LOG_INF("pairing requested (button held %u ms)",
 				(unsigned int)(now_ms - since_ms));
-			zlrs_sys_publish_input(&input);
+			pending = true;
 		} else if (pressed == 0 && down) {
 			down = false;
 		}
 
+		if (pending && zbus_chan_pub(&zlrs_input_chan, &input, K_NO_WAIT) == 0) {
+			pending = false;
+		}
 		k_msleep(BUTTON_POLL_MS);
 	}
 }

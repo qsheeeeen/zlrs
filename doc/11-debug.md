@@ -91,8 +91,8 @@ boot, and each has a matching host test.
 | `CONFIG_ZLRS_APP_BAND_ROLE_*` | control on sub-G (long range) or on 2.4G (racing) |
 | `CONFIG_ZLRS_APP_CONTROL_MODULATION_LORA` | LoRa control tier instead of FLRC |
 
-**Features whose default is still open** (rate adaptation, dynamic power) are not
-switches to hide but debts: `doc/12-roadmap.md`, "Pending defaults".
+Rate adaptation stays off by default; dynamic power thresholds still need calibration.
+Their configuration and acceptance work is tracked in [12-roadmap](12-roadmap.md#3-功能与性能).
 
 Build the normal LF development firmware with its console:
 
@@ -200,7 +200,7 @@ complete data path, including radio scheduling and ARQ, rather than raw PHY fram
   bands — the numbers look like a radio fault and mean nothing.
 - **How a bench board is flashed, and why the image must be confirmed**: `smpmgr upgrade --slot 1
   <img>` writes the secondary slot and marks a test swap, MCUboot swaps it in, and the application
-  only makes that permanent once the host confirms (`confirm_image()` in `app/src/main.c`). Until
+  only makes that permanent once the host confirms (`confirm_image()` in `app/src/rf/rf.c`). Until
   then it reboots itself after `CONFIG_ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS` (60 s) so MCUboot can
   revert — and with nothing valid in the other slot, MCUboot ends up in serial recovery instead of
   booting the application. From the host that reads as "the board reboots every minute and then
@@ -419,7 +419,8 @@ Ordinary SPI commands and FIFO transfers use the upstream USP HAL and Zephyr SPI
 DMA follows the board's SPI configuration. The former custom HAL's per-DMA counters are removed;
 `TX setup`, IRQ service and FIFO timing still measure the radio owner's public driver calls.
 Application SRAM placement covers ZLRS-owned code; it does not inspect or relocate upstream
-library sources. Historical custom-HAL measurements remain in `12-roadmap.md`.
+library sources. Historical measurements belong with their test artifacts and git history;
+[12-roadmap](12-roadmap.md) tracks pending work and acceptance only.
 
 ZLRS's RP2350 Crypto driver supports multipart SHA-256. HMAC feeds its word-aligned key prefix
 and the frame buffer directly through update/compute; the application keeps no concatenation
@@ -487,6 +488,11 @@ Existing tests use `test_<module>` names. Host tests remain in `tests/host`; har
 production paths below `tests/hardware`; Python tool tests live in `tests/tools`. Each file owns
 its module's fixtures, vectors and assertions. Entry points only assemble and run those files.
 
+重构后的验证以固件构建和上机用例为主；host 测试可选并尽量薄，保留必要的纯函数／
+协议向量检查。现有测试清单描述当前资产，不要求各业务模块都有 host 替身，也不为测试
+增加生产接口包装、虚拟硬件后端或另一套运行时。模块边界见
+[06-architecture](06-architecture.md#8-模块职责与通信)。
+
 | Production module | Test file |
 | --- | --- |
 | `core/proto/frame.c`, `frag.c`, `fhss.c`, `tlm.c` | `tests/host/test_frame.c`, `test_frag.c`, `test_fhss.c`, `test_tlm.c` |
@@ -495,7 +501,7 @@ its module's fixtures, vectors and assertions. Entry points only assemble and ru
 | `drivers/entropy/rp2350_trng.c` | `tests/hardware/drivers/entropy/test_rp2350_trng.c` |
 | `app/src/storage/log.c` | `tests/hardware/app/storage/test_log.c` |
 | `core/link/link.c` | `tests/host/test_link.c`, `tests/hardware/core/link/test_link.c` |
-| `app/src/link/data.c` | `tests/hardware/app/link/test_data.c`, `test_data.py` |
+| `app/src/data/data.c` | `tests/hardware/app/link/test_data.c`, `test_data.py` |
 | `app/src/platform/radio.c` | `tests/host/test_radio.c`, `tests/hardware/app/platform/test_radio.c` |
 | `tools/zlrs.py`, `zlrs_mgmt.py`, `zlrs_recovery.py`, `zlrs_update.py`, `zlrs_cli.py` | corresponding `tests/tools/test_zlrs*.py` files |
 
@@ -578,6 +584,20 @@ resets it. Do not confirm this test image. Radio test migration still requires h
 
 Run the data-port test directly with `python3 tests/hardware/app/link/test_data.py`; it works on
 normal firmware. The device CLI contains only management and upgrade commands.
+`tests/hardware/app/link/test_module_owners.py` checks shared CRSF/management configuration
+rules, saved versus active settings, delivery after either peer reboots, and exact DATA delivery
+after holding each output unread for three seconds. It uses two normal-firmware boards:
+
+```sh
+python3 tests/hardware/app/link/test_module_owners.py \
+  --tx-serial <TX-serial> --rx-serial <RX-serial> --bytes 65536
+# In data24, skip mixed-mode configuration and RC assertions:
+python3 tests/hardware/app/link/test_module_owners.py \
+  --tx-serial <TX-serial> --rx-serial <RX-serial> --bytes 65536 --data-only
+```
+
+Keep hardware results and image identities in validation artifacts. USB CRSF tests do not
+cover handset/flight-controller UART wiring or interoperability.
 Previous normal-firmware validation delivered three USB rounds of 65536 bytes per direction
 exactly at 42.1-48.3 kB/s and three RF-only rounds of 262145 bytes with zero bad bytes at
 45.2-46.5 kB/s, at 2441 MHz/-10 dBm/P1. These are pre-migration records.

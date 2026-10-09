@@ -44,7 +44,7 @@ static struct {
 
 uint16_t __real_zlrs_link_tx_space(const zlrs_link_t *link);
 uint16_t __real_zlrs_link_data_read(uint8_t *buf, uint16_t len);
-uint16_t __real_zlrs_link_data_write(const uint8_t *buf, uint16_t len);
+bool __real_zlrs_link_data_receive(const uint8_t *buf, uint16_t len);
 
 uint16_t __wrap_zlrs_link_tx_space(const zlrs_link_t *link)
 {
@@ -108,10 +108,10 @@ uint16_t __wrap_zlrs_link_data_read(uint8_t *buf, uint16_t len)
 	return len;
 }
 
-uint16_t __wrap_zlrs_link_data_write(const uint8_t *buf, uint16_t len)
+bool __wrap_zlrs_link_data_receive(const uint8_t *buf, uint16_t len)
 {
 	if (!stream.active) {
-		return __real_zlrs_link_data_write(buf, len);
+		return __real_zlrs_link_data_receive(buf, len);
 	}
 	const uint32_t now = zlrs_slot_timer_now_us();
 
@@ -119,9 +119,8 @@ uint16_t __wrap_zlrs_link_data_write(const uint8_t *buf, uint16_t len)
 		stream.first_us = now;
 		atomic_set(&published.first_len, len);
 	}
-	const uint16_t valid = stream.received < stream.target
-				       ? MIN(len, stream.target - stream.received)
-				       : 0U;
+	const uint16_t valid =
+		stream.received < stream.target ? MIN(len, stream.target - stream.received) : 0U;
 
 	stream.bad += len - valid;
 	stream.bad += zlrs_bench_pattern_bad(buf, valid, stream.received, !stream.role_tx);
@@ -130,7 +129,7 @@ uint16_t __wrap_zlrs_link_data_write(const uint8_t *buf, uint16_t len)
 	atomic_set(&published.duration_us, now - stream.first_us);
 	/* Publish completion after the error and timing counters. */
 	atomic_set(&published.received, stream.received);
-	return len;
+	return true;
 }
 
 static int cmd_data(const struct shell *sh, size_t argc, char **argv)
@@ -140,8 +139,8 @@ static int cmd_data(const struct shell *sh, size_t argc, char **argv)
 		const uint32_t first = atomic_get(&published.first_len);
 		const uint32_t duration = atomic_get(&published.duration_us);
 		const uint32_t rate = duration != 0U && received > first
-					  ? (uint64_t)(received - first) * 1000000U / duration
-					  : 0U;
+					      ? (uint64_t)(received - first) * 1000000U / duration
+					      : 0U;
 
 		shell_print(sh,
 			    "BENCH active=%u target=%u queued=%u rx=%u bad=%u duration_us=%u "

@@ -1,10 +1,10 @@
 /*
- * Data link I/O, see link/data.h: rings, ISR and counters for the passthrough.
+ * Data link I/O, see data/data.h: rings, ISR and counters for the passthrough.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "link/data.h"
+#include "data/data.h"
 
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
@@ -15,8 +15,12 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <string.h>
 
 LOG_MODULE_REGISTER(zlrs_link_data, CONFIG_APP_LOG_LEVEL);
+
+ZBUS_CHAN_DEFINE(zlrs_data_chan, struct zlrs_data_status, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
+		 ZBUS_MSG_INIT(0));
 
 /*
  * Sized for the air side: an ARQ frame can carry several hundred bytes and the host drains the
@@ -35,8 +39,7 @@ struct data_ep {
 	uint8_t rx_mem[DATA_RX_RING_LEN];
 	uint8_t tx_mem[DATA_TX_RING_LEN];
 	uint32_t rx_dropped;
-	uint32_t rx_total;   /* bytes received (one of the endpoint-choice inputs) */
-	uint32_t tx_dropped; /* bytes the air side handed over that the host side had no room for */
+	uint32_t rx_total; /* bytes received (one of the endpoint-choice inputs) */
 	bool ready;
 	bool rx_paused;
 };
@@ -274,37 +277,22 @@ uint16_t zlrs_link_data_read(uint8_t *buf, uint16_t len)
 	return got;
 }
 
-uint16_t zlrs_link_data_write(const uint8_t *buf, uint16_t len)
+bool zlrs_link_data_receive(const uint8_t *buf, uint16_t len)
 {
 	struct data_ep *const ep = data_active();
 
 	if (ep == NULL) {
-		return 0U;
+		return false;
 	}
-
-	const uint32_t written = ring_buf_put(&ep->tx, buf, len);
-
-	if (written > 0U) {
-		/* tx_enable returns void; a failed send only shows up as a peer timeout or retransmit */
-		(void)k_work_submit(&ep->notify_work);
+	const unsigned int key = irq_lock();
+	if (ring_buf_space_get(&ep->tx) < len) {
+		irq_unlock(key);
+		return false;
 	}
-	if (written < len) {
-		/* Counted, not silent: this is passthrough data the host may never see */
-		ep->tx_dropped += (uint32_t)(len - written);
-	}
-
-	return (uint16_t)written;
-}
-
-uint32_t zlrs_link_data_tx_dropped(void)
-{
-	uint32_t dropped = 0U;
-
-	for (size_t i = 0U; i < ARRAY_SIZE(data_eps); i++) {
-		dropped += data_eps[i].tx_dropped;
-	}
-
-	return dropped;
+	(void)ring_buf_put(&ep->tx, buf, len);
+	irq_unlock(key);
+	(void)k_work_submit(&ep->notify_work);
+	return true;
 }
 
 uint32_t zlrs_link_data_dropped(void)
@@ -316,4 +304,22 @@ uint32_t zlrs_link_data_dropped(void)
 	}
 
 	return dropped;
+}
+
+void zlrs_link_data_poll(void)
+{
+	const struct data_ep *const ep = data_active();
+	const struct zlrs_data_status status = {
+		.ready = ep != NULL,
+		.usb_active = ep == &data_eps[DATA_USB],
+		.input_paused = ep != NULL && ep->rx_paused,
+		.dropped = zlrs_link_data_dropped(),
+	};
+	static struct zlrs_data_status last;
+	static bool published;
+	if ((!published || memcmp(&last, &status, sizeof(last)) != 0) &&
+	    zbus_chan_pub(&zlrs_data_chan, &status, K_NO_WAIT) == 0) {
+		last = status;
+		published = true;
+	}
 }

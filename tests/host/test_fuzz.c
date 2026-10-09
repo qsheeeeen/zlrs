@@ -112,11 +112,12 @@ static void fx_on_tlm(void *ctx, const uint8_t *payload, uint16_t len)
 	(void)len;
 }
 
-static void fx_on_data(void *ctx, const uint8_t *data, uint16_t len)
+static bool fx_on_data(void *ctx, const uint8_t *data, uint16_t len)
 {
 	(void)ctx;
 	(void)data;
 	(void)len;
+	return true;
 }
 
 static void fx_on_state(void *ctx, uint8_t state)

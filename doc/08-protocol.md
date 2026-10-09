@@ -66,7 +66,7 @@ of an unrelated signal matching.
 | 7 | `PAIR_CFM` | TX to RX | pairing |
 | 8 | `SESS_RESP` | RX to TX | session response carrying `nonce_r` |
 | 9 | `SESS_CFM` | TX to RX | session confirmation, tagged with the new session key |
-| 10 | `CRSF` | both | reliable complete CRSF frame in data24, or empty service acknowledgment |
+| 10 | `SERVICE` | both | reliable opaque message, currently used for CRSF, or empty acknowledgment |
 
 The RC payload is `{model:u8, rc_len:u8, tx_dbm:i8, channels[rc_len], service?}`.
 `rc_len` is 0, 22 or 23. The optional 23rd byte preserves EdgeTX's additional status field;
@@ -99,7 +99,8 @@ while `0x14` and cut failsafe remain available.
 
 ### 2.1 CRSF service transport
 
-An optional service is `{service_seq:u16LE, complete_crsf_frame[4..64]}`. Each direction has
+RF carries `{service_seq:u16LE, message[1..64]}` without a CRSF codec dependency. The current
+CRSF adapter uses complete frames of 4..64 bytes. Each direction has
 its own eight-frame queue, stop-and-wait sequence and receive acknowledgment toggle, separate
 from DATA. RC/TLM carry the service alongside control/statistics. In data24, packet type 10
 uses the same service body and occupies at most one in four DATA opportunities unless a service
@@ -108,7 +109,9 @@ acknowledgment is pending. The DATA stream never contains CRSF bytes.
 An unchanged sequence is a retransmission, delivered only once within the session. The receiver
 advances the toggle only after its application accepts the complete frame; backpressure keeps
 the sender's frame pending. An empty service carrier reports the reverse toggle. Frame length,
-CRSF CRC, ZLRS authentication and replay checks precede acknowledgment processing. A new session
+ZLRS authentication and replay checks precede acknowledgment processing. CRSF CRC validation
+belongs to the adapter: malformed messages are counted and discarded without occupying its queue.
+A new session
 restarts service sequences while retaining queued frames; delivery spanning a session reset
 may repeat an accepted frame whose acknowledgment was lost. Application commands therefore
 set state rather than toggle it, and MSP retains its own transaction sequencing.
@@ -210,6 +213,8 @@ message costs a single `SYNC` period.
 
 - **SEARCHING**: `SYNC` goes out every 100-600 ms depending on the modulation (faster rates
   tolerate a tighter cadence), each one carrying the hop index the sender is on.
+- **Direction**: only TX sends `SYNC`, on both CONTROL and DATA. RX never sends it, and TX
+  never adopts an incoming `SYNC` as a session request.
 - **CONNECTED**: a sparse `SYNC` at `ZLRS_APP_RESYNC_PERIOD_MS` (default 5 s, converted to
   frames and capped at 255 frames; the actual interval may be shorter)
   wipes out the hop-index error that crystal drift accumulates and spots a peer that changed

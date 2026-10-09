@@ -50,6 +50,7 @@ void zlrs_crsf_device_init(zlrs_crsf_device_t *d, uint8_t address,
 	d->values[ZLRS_CRSF_PARAM_POWER] = 10;
 	d->values[ZLRS_CRSF_PARAM_TELEMETRY] = 1;
 	d->max_power_dbm = 33;
+	d->min_power_dbm = -17;
 	d->ops = *ops;
 }
 
@@ -127,8 +128,9 @@ static uint16_t parameter(zlrs_crsf_device_t *d, uint8_t id, uint8_t *out)
 		out[len++] = id == ZLRS_CRSF_PARAM_TELEMETRY ? 1U : 0U;
 		out[len++] = 0U; /* empty unit */
 	} else {
-		const int32_t minimum =
-			id == ZLRS_CRSF_PARAM_POWER ? -17 : (id == ZLRS_CRSF_PARAM_RATE ? 4 : 0);
+		const int32_t minimum = id == ZLRS_CRSF_PARAM_POWER
+						? d->min_power_dbm
+						: (id == ZLRS_CRSF_PARAM_RATE ? 4 : 0);
 		const int32_t maximum = id == ZLRS_CRSF_PARAM_POWER
 						? d->max_power_dbm
 						: (id == ZLRS_CRSF_PARAM_RATE ? 1000 : 255);
@@ -186,26 +188,6 @@ static bool command_reply(zlrs_crsf_device_t *d, uint8_t destination, uint8_t gr
 	return emit(d, ZLRS_CRSF_TYPE_COMMAND, payload, (uint8_t)(5U + len));
 }
 
-static bool value_valid(uint8_t id, int32_t value)
-{
-	switch (id) {
-	case ZLRS_CRSF_PARAM_RATE:
-		return value >= 4 && value <= 1000;
-	case ZLRS_CRSF_PARAM_POWER:
-		return value >= -17 && value <= 33;
-	case ZLRS_CRSF_PARAM_MODEL:
-		return value >= 0 && value <= 255;
-	case ZLRS_CRSF_PARAM_REGION:
-		return value >= 0 && value <= 3;
-	case ZLRS_CRSF_PARAM_MODEL_MATCH:
-	case ZLRS_CRSF_PARAM_TELEMETRY:
-	case ZLRS_CRSF_PARAM_MODE:
-		return value == 0 || value == 1;
-	default:
-		return false;
-	}
-}
-
 static bool write_parameter(zlrs_crsf_device_t *d, const uint8_t *p, uint8_t len)
 {
 	const uint8_t id = p[2];
@@ -239,7 +221,7 @@ static bool write_parameter(zlrs_crsf_device_t *d, const uint8_t *p, uint8_t len
 	}
 	const int32_t value = wide ? (int32_t)get32(p + 3U) : p[3];
 
-	if (!value_valid(id, value) || d->ops.write == NULL ||
+	if (id == ZLRS_CRSF_PARAM_ROOT || id >= ZLRS_CRSF_PARAM_VERSION || d->ops.write == NULL ||
 	    !d->ops.write(d->ops.ctx, id, value)) {
 		return entry(d, p[1], id, 0U); /* Return unchanged definition on rejected writes. */
 	}

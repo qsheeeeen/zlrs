@@ -28,7 +28,7 @@ ever received a host byte, otherwise the UART. The second rule exists for USB/IP
 (usbipd) and virtualised setups where `SET_CONTROL_LINE_STATE` may never arrive: trusting DTR
 alone would leave the CDC unselected and host bytes would be dropped silently as "not the
 active endpoint". The ISR records "a byte arrived" **before** checking the active endpoint, so
-the first frame is never lost to that lag (selection is local to `app/src/link/crsf.c` and `app/src/link/data.c`).
+the first frame is never lost to that lag (selection is local to `app/src/crsf/serial.c` and `app/src/data/data.c`).
 
 For CRSF, the USB/IP fallback lasts one second after a **valid frame** instead of permanently
 latching on the first byte. UART becomes active again when USB DTR is off and that interval

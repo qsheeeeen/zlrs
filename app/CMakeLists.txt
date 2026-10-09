@@ -12,35 +12,42 @@ set(zlrs_app_dir "${CMAKE_CURRENT_LIST_DIR}")
 
 target_sources(app PRIVATE
   ${zlrs_app_dir}/src/mgmt/mode.c
-  ${zlrs_app_dir}/src/link/crsf.c
-  ${zlrs_app_dir}/src/link/data.c
-  ${zlrs_app_dir}/src/link/power.c
-  ${zlrs_app_dir}/src/link/rate.c
+  ${zlrs_app_dir}/src/crsf/serial.c
+  ${zlrs_app_dir}/src/crsf/crsf.c
+  ${zlrs_app_dir}/src/data/data.c
+  ${zlrs_app_dir}/src/rf/power.c
+  ${zlrs_app_dir}/src/rf/rate.c
   ${zlrs_app_dir}/src/main.c
+  ${zlrs_app_dir}/src/rf/rf.c
+  ${zlrs_app_dir}/src/config/config.c
   ${zlrs_app_dir}/src/platform/sha256.c
   ${zlrs_app_dir}/src/platform/slot_timer.c
   ${zlrs_app_dir}/src/platform/recovery.c
   ${zlrs_app_dir}/src/platform/watchdog.c
   ${zlrs_app_dir}/src/platform/radio.c
-  ${zlrs_app_dir}/src/state/sys_bus.c
   ${zlrs_app_dir}/src/storage/log.c
-  ${zlrs_app_dir}/src/storage/settings.c
+  ${zlrs_app_dir}/src/config/nvs.c
   ${zlrs_app_dir}/src/ui/button.c
   ${zlrs_app_dir}/src/ui/led.c
+  ${zlrs_app_dir}/src/ui/pattern.c
 )
 
+target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG_SHELL app PRIVATE ${zlrs_app_dir}/src/mgmt/shell.c)
+
 # App-internal headers are included the way they sit on disk: "platform/radio.h",
-# "link/data.h", "platform/caps.h", ... (the layers are described in doc/06-architecture.md 5).
+# "data/data.h", "platform/caps.h", ... (the layers are described in doc/06-architecture.md 5).
 # core/proto supplies the private SHA declaration used by the platform implementation.
 target_include_directories(app PRIVATE "${zlrs_app_dir}/src" "${zlrs_app_dir}/../core/proto")
 
 if(CONFIG_ZLRS_APP_RAM_RADIO)
   set(zlrs_ram_sources
-    ${zlrs_app_dir}/src/main.c
+    ${zlrs_app_dir}/src/rf/rf.c
+    ${zlrs_app_dir}/src/crsf/crsf.c
     ${zlrs_app_dir}/src/platform/sha256.c
     ${zlrs_app_dir}/src/platform/radio.c
-    ${zlrs_app_dir}/src/link/data.c
+    ${zlrs_app_dir}/src/data/data.c
     ${zlrs_app_dir}/../core/link/link.c
+    ${zlrs_app_dir}/../core/link/status.c
     ${zlrs_app_dir}/../core/proto/crypto.c
     ${zlrs_app_dir}/../core/proto/frame.c
     ${zlrs_app_dir}/../core/proto/fhss.c

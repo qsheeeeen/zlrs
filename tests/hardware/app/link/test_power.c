@@ -2,7 +2,7 @@
 
 #include <zephyr/ztest.h>
 
-#include "link/power.h"
+#include "rf/power.h"
 
 static zlrs_link_t control;
 

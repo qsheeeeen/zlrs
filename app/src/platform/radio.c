@@ -53,10 +53,7 @@ static int8_t tx_cfg_power;
 static bool rx_timing_valid;
 static uint32_t rx_done_us;
 static uint32_t rx_airtime_us;
-static uint16_t rx_fifo_used;
 static zlrs_radio_diag_t diag;
-
-#define RX_FIFO_THRESHOLD 128U
 
 /* Rate tiers: since v1.1 the raw rate and bandwidth share one enum, see doc/05-radio.md */
 static ral_flrc_raw_bit_rate_t raw_bit_rate(uint32_t rate_bps)
@@ -332,7 +329,6 @@ static int prepare_request(zlrs_link_t *link, const zlrs_radio_req_t *req)
 	rx_timing_valid = false;
 	owner = link;
 	request = req;
-	rx_fifo_used = 0U;
 	tx_fifo_used = 0U;
 	k_sem_reset(&done_sem);
 	if ((!reuse_fs && ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC) != RAL_STATUS_OK) ||
@@ -645,6 +641,9 @@ int zlrs_radio_launch_at(uint32_t target_us)
 
 int zlrs_radio_init(void)
 {
+	/* RAL enables 1024-byte FIFOs. Every complete zlrs frame fits; intermediate
+	 * RX threshold events must not obscure the RX_DONE edge or its timestamp. */
+	BUILD_ASSERT(ZLRS_FRAME_MAX_LEN <= RAL_LR20XX_MAX_DATA_FIFO_BYTES);
 	idle_in_fs = false;
 	if (!device_is_ready(transceiver)) {
 		return -ENODEV;
@@ -652,14 +651,12 @@ int zlrs_radio_init(void)
 	if (ral_reset(&radio.ral) != RAL_STATUS_OK || ral_init(&radio.ral) != RAL_STATUS_OK ||
 	    ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC) != RAL_STATUS_OK ||
 	    ral_set_rx_tx_fallback_mode(&radio.ral, RAL_FALLBACK_FS) != RAL_STATUS_OK ||
-	    ral_cfg_fifo_irq(&radio.ral, RAL_RADIO_FIFO_FLAG_THRESHOLD_HIGH,
-			     RAL_RADIO_FIFO_FLAG_UNDERFLOW, RX_FIFO_THRESHOLD, 0U, 0U,
-			     0U) != RAL_STATUS_OK ||
+	    ral_cfg_fifo_irq(&radio.ral, RAL_RADIO_FIFO_FLAG_NONE, RAL_RADIO_FIFO_FLAG_UNDERFLOW,
+			     0U, 0U, 0U, 0U) != RAL_STATUS_OK ||
 	    ral_clear_irq_status(&radio.ral, RAL_IRQ_ALL) != RAL_STATUS_OK ||
 	    ral_set_dio_irq_params(&radio.ral, RAL_IRQ_TX_DONE | RAL_IRQ_RX_DONE |
 						       RAL_IRQ_RX_TIMEOUT | RAL_IRQ_RX_HDR_ERROR |
 						       RAL_IRQ_RX_CRC_ERROR |
-						       RAL_IRQ_RX_FIFO_LEVEL |
 						       RAL_IRQ_TX_FIFO_LEVEL) != RAL_STATUS_OK) {
 		return -EIO;
 	}
@@ -684,36 +681,6 @@ bool zlrs_radio_rx_timing(uint32_t *done_us, uint32_t *airtime_us)
 	*done_us = rx_done_us;
 	*airtime_us = rx_airtime_us;
 	return rx_timing_valid;
-}
-
-/* Read decoded bytes while the rest of the packet is still on air. None reach
- * the protocol until RX_DONE confirms the modem CRC and the link verifies its tag. */
-static int drain_rx_fifo(void)
-{
-	uint16_t level;
-	uint16_t take;
-	const uint32_t start_us = zlrs_slot_timer_now_us();
-
-	if (ral_get_rx_fifo_level(&radio.ral, &level) != RAL_STATUS_OK ||
-	    !zlrs_radio_fifo_remaining(request->max_rx_size, rx_fifo_used,
-				       (uint32_t)rx_fifo_used + level, &take)) {
-		return -EIO;
-	}
-	if (take > 0U) {
-		if (ral_get_data_rx_buffer(&radio.ral, request->buf + rx_fifo_used, take) !=
-		    RAL_STATUS_OK) {
-			return -EIO;
-		}
-		rx_fifo_used += take;
-		diag.rx_fifo_chunks++;
-		diag.rx_fifo_bytes += take;
-		diag.rx_fifo_us_last = zlrs_slot_timer_now_us() - start_us;
-		diag.rx_fifo_us_max = MAX(diag.rx_fifo_us_max, diag.rx_fifo_us_last);
-	}
-	return ral_clear_fifo_irq(&radio.ral, RAL_RADIO_FIFO_FLAG_ALL, RAL_RADIO_FIFO_FLAG_NONE) ==
-			       RAL_STATUS_OK
-		       ? 0
-		       : -EIO;
 }
 
 bool zlrs_radio_drain(void)
@@ -772,25 +739,9 @@ bool zlrs_radio_drain(void)
 	 * No timer boundary or protocol completion is moved by this retry. */
 	if (!request->is_tx && (irq & frame_errors) != 0U && (irq & chip_errors) == 0U &&
 	    (!timed_slot || (int32_t)(slot_end_us - zlrs_slot_timer_now_us()) > 0)) {
-		rx_fifo_used = 0U;
 		if (ral_set_rx(&radio.ral, 0U) == RAL_STATUS_OK) {
 			diag.rx_restarted++;
 			return false;
-		}
-	}
-	if (!request->is_tx && request->mod.modulation == ZLRS_MOD_FLRC &&
-	    (irq & RAL_IRQ_RX_FIFO_LEVEL) != 0U &&
-	    (irq & (RAL_IRQ_RX_DONE | RAL_IRQ_RX_TIMEOUT | frame_errors | chip_errors)) == 0U) {
-		if (drain_rx_fifo() != 0) {
-			diag.rx_payload_errors++;
-			rx_fifo_used = 0U;
-			if ((!timed_slot ||
-			     (int32_t)(slot_end_us - zlrs_slot_timer_now_us()) > 0) &&
-			    ral_set_rx(&radio.ral, 0U) == RAL_STATUS_OK) {
-				diag.rx_restarted++;
-				return false;
-			}
-			irq |= RAL_IRQ_ERROR;
 		}
 	}
 	if ((irq & (RAL_IRQ_TX_DONE | RAL_IRQ_RX_DONE | RAL_IRQ_RX_TIMEOUT | frame_errors |
@@ -806,20 +757,21 @@ bool zlrs_radio_drain(void)
 		diag.tx_startup_us_last = diag.tx_us_last > toa_us ? diag.tx_us_last - toa_us : 0U;
 		diag.tx_startup_us_max = MAX(diag.tx_startup_us_max, diag.tx_startup_us_last);
 	} else if (!request->is_tx && (irq & frame_errors) == 0U && (irq & RAL_IRQ_RX_DONE) != 0U) {
-		uint16_t tail;
+		const uint32_t read_us = zlrs_slot_timer_now_us();
 
-		/* FIFO reads consume bytes. Read only the tail after streaming the prefix. */
+		/* Read once after modem CRC validation, then let the link verify its tag. */
 		if (ral_get_pkt_size(&radio.ral, &len) == RAL_STATUS_OK &&
-		    zlrs_radio_fifo_remaining(request->max_rx_size, rx_fifo_used, len, &tail) &&
-		    (tail == 0U || ral_get_data_rx_buffer(&radio.ral, request->buf + rx_fifo_used,
-							  tail) == RAL_STATUS_OK)) {
+		    len <= request->max_rx_size &&
+		    (len == 0U ||
+		     ral_get_data_rx_buffer(&radio.ral, request->buf, len) == RAL_STATUS_OK)) {
 			status = ZLRS_RADIO_OK;
 			diag.rx_packets++;
 			rx_done_us = event_us;
 			rx_airtime_us = zlrs_radio_airtime_us(&request->mod, len);
-			/* A coalesced FIFO IRQ predates RX_DONE, so it cannot set slot phase. */
-			rx_timing_valid = (irq & RAL_IRQ_RX_FIFO_LEVEL) == 0U;
-			diag.rx_done_coalesced += !rx_timing_valid;
+			rx_timing_valid = true;
+			diag.rx_fifo_bytes += len;
+			diag.rx_fifo_us_last = zlrs_slot_timer_now_us() - read_us;
+			diag.rx_fifo_us_max = MAX(diag.rx_fifo_us_max, diag.rx_fifo_us_last);
 		} else {
 			diag.rx_payload_errors++;
 		}
@@ -843,7 +795,6 @@ bool zlrs_radio_drain(void)
 	}
 	/* The configured hardware fallback already returns a completed packet to FS. */
 	pending = false;
-	rx_fifo_used = 0U;
 	tx_fifo_used = 0U;
 	idle_in_fs = status == ZLRS_RADIO_OK && (irq & chip_errors) == 0U;
 	const uint32_t protocol_start_us = zlrs_slot_timer_now_us();
@@ -872,7 +823,6 @@ void zlrs_radio_abort(void)
 	pending = false;
 	irq_pending = false;
 	prepared = false;
-	rx_fifo_used = 0U;
 	tx_fifo_used = 0U;
 	ral_irq_t discarded = 0;
 	(void)ral_get_and_clear_irq_status(&radio.ral, &discarded);

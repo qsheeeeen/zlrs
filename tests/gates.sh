@@ -16,6 +16,7 @@
 #   5. the log ring fits its partition: the file backend's FILE_SIZE × FILES_LIMIT has to equal
 #      the log_partition in the board's flash layout, or the ring either wastes flash or
 #      overwrites the coredump partition next to it (doc/07-firmware.md 7).
+#   6. RF owns link instances; frontends use business interfaces and own their channels.
 #
 # Usage: tests/gates.sh
 
@@ -38,6 +39,21 @@ fi
 if hit=$(grep -rn -E '\b(CONFIG_)?BOARD_[A-Z0-9_]+' app 2>/dev/null); then
 	bad "app/ knows a board name:"
 	echo "$hit"
+fi
+
+if hit=$(rg -n 'zlrs_link_t|zlrs/link/link.h|config/nvs.h|zlrs_storage_settings_' \
+	app/src/crsf app/src/data app/src/mgmt app/src/ui app/src/main.c); then
+	bad "a frontend reaches into RF or private configuration storage:"
+	echo "$hit"
+fi
+
+if hit=$(rg -n 'zlrs/crsf/|zlrs_crsf_' core/link); then
+	bad "RF transport depends on CRSF codecs:"
+	echo "$hit"
+fi
+
+if [ -e app/src/state/sys_bus.c ] || [ -e app/src/state/sys_bus.h ]; then
+	bad "centralized module channels returned"
 fi
 
 # Shipped configurations: everything that produces a firmware image. A debug configuration is

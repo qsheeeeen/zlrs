@@ -50,14 +50,7 @@ extern "C" {
 #define ZLRS_SLOT_DATA_A   2U /* first half of the data window: TX -> RX */
 #define ZLRS_SLOT_DATA_B   3U /* second half of the data window: RX -> TX */
 
-/* Link states, see doc/08-protocol.md 3.2 */
-typedef enum {
-	ZLRS_STATE_UNCONFIGURED = 0,
-	ZLRS_STATE_UNPAIRED,
-	ZLRS_STATE_PAIRING,
-	ZLRS_STATE_SEARCHING,
-	ZLRS_STATE_CONNECTED,
-} zlrs_link_state_t;
+#include "zlrs/link/state.h"
 
 /* Completion status: the port layer folds the radio result into these two */
 #define ZLRS_RADIO_OK   0
@@ -135,9 +128,10 @@ typedef struct {
 typedef struct {
 	void (*on_rc)(void *ctx, const uint8_t *payload, uint16_t len);
 	void (*on_tlm)(void *ctx, const uint8_t *payload, uint16_t len);
-	void (*on_data)(void *ctx, const uint8_t *data, uint16_t len);
+	/* True only after the entire packet has been accepted; false keeps its ACK unchanged. */
+	bool (*on_data)(void *ctx, const uint8_t *data, uint16_t len);
 	/* false retains the peer's frame for retry instead of acknowledging a dropped frame. */
-	bool (*on_crsf)(void *ctx, const uint8_t *frame, uint8_t len);
+	bool (*on_service)(void *ctx, const uint8_t *frame, uint8_t len);
 	void (*on_state)(void *ctx, uint8_t state);
 	void *ctx;
 } zlrs_link_events_t;
@@ -209,9 +203,10 @@ typedef struct {
  * hands over in the meantime; at 512 a single 512-byte write filled it and everything after that
  * was dropped before it ever reached the air.
  */
-#define ZLRS_LINK_TX_QUEUE_LEN   4096U
-#define ZLRS_LINK_TLM_MAX_LEN    32U
-#define ZLRS_LINK_CRSF_QUEUE_LEN 8U
+#define ZLRS_LINK_TX_QUEUE_LEN      4096U
+#define ZLRS_LINK_TLM_MAX_LEN       32U
+#define ZLRS_LINK_SERVICE_MAX_LEN   64U
+#define ZLRS_LINK_SERVICE_QUEUE_LEN 8U
 
 /* Stop-and-wait ARQ: one outstanding DATA packet in each direction. */
 #define ZLRS_ARQ_TIMEOUT_MS  30U
@@ -341,17 +336,17 @@ typedef struct {
 	bool arq_rx_started;
 	bool arq_ack_pending;
 
-	/* Complete CRSF frames; their stop-and-wait service never consumes user DATA bytes. */
-	uint8_t crsf_queue[ZLRS_LINK_CRSF_QUEUE_LEN][64];
-	uint8_t crsf_sizes[ZLRS_LINK_CRSF_QUEUE_LEN];
-	uint8_t crsf_head;
-	uint8_t crsf_count;
-	uint16_t crsf_tx_seq;
-	uint16_t crsf_rx_seq;
-	bool crsf_rx_started;
-	bool crsf_inflight;
-	bool crsf_ack_pending;
-	uint32_t crsf_sent_ms;
+	/* Opaque reliable messages; independent of the user DATA byte stream. */
+	uint8_t service_queue[ZLRS_LINK_SERVICE_QUEUE_LEN][ZLRS_LINK_SERVICE_MAX_LEN];
+	uint8_t service_sizes[ZLRS_LINK_SERVICE_QUEUE_LEN];
+	uint8_t service_head;
+	uint8_t service_count;
+	uint16_t service_tx_seq;
+	uint16_t service_rx_seq;
+	bool service_rx_started;
+	bool service_inflight;
+	bool service_ack_pending;
+	uint32_t service_sent_ms;
 	int8_t peer_power_dbm;
 	uint32_t last_rc_ms;
 
@@ -368,6 +363,49 @@ typedef struct {
 	uint8_t slot; /* ZLRS_SLOT_*: the slot the pending transaction serves (stats and logs) */
 	uint32_t slot_ms; /* Current slot time, used for the session-confirm uplink window. */
 } zlrs_link_t;
+
+/* Storage layout above allows static allocation. Consumers use the functions below;
+ * mutable protocol state belongs to core/link, not application service modules. */
+typedef struct {
+	zlrs_link_state_t state;
+	bool configured;
+	bool paired;
+	bool session_valid;
+	int8_t peer_power_dbm;
+	uint32_t last_rc_ms;
+	uint8_t dev_id[ZLRS_DEV_ID_LEN];
+	uint8_t peer_id[ZLRS_DEV_ID_LEN];
+} zlrs_link_info_t;
+
+/* Diagnostic values, without borrowed protocol buffers or key material. */
+typedef struct {
+	uint32_t frequency_hz;
+	uint32_t frame_index;
+	uint16_t hop_index;
+	uint16_t queue_count;
+	uint16_t arq_used;
+	uint16_t arq_seq;
+	uint16_t arq_rx_seq;
+	bool arq_ack_pending;
+	bool pair_wait_cfm;
+	bool pair_cfm_pending;
+	uint8_t pair_cfm_sent;
+	uint32_t pair_nonce;
+	uint32_t pair_nonce_b;
+	uint32_t root_fingerprint;
+	uint32_t pair_fingerprint;
+	uint32_t sync_fingerprint;
+} zlrs_link_diagnostics_t;
+
+/* Read-only views are valid on the link owner thread; do not retain across async work. */
+const zlrs_link_cfg_t *zlrs_link_get_config(const zlrs_link_t *link);
+const zlrs_link_stats_t *zlrs_link_get_stats(const zlrs_link_t *link);
+zlrs_link_state_t zlrs_link_get_state(const zlrs_link_t *link);
+bool zlrs_link_is_busy(const zlrs_link_t *link);
+zlrs_link_info_t zlrs_link_get_info(const zlrs_link_t *link);
+zlrs_link_diagnostics_t zlrs_link_get_diagnostics(const zlrs_link_t *link);
+bool zlrs_link_get_pairing(const zlrs_link_t *link, uint8_t peer_id[ZLRS_DEV_ID_LEN],
+			   uint8_t pair_salt[ZLRS_PAIR_SALT_LEN]);
 
 /* Only nonce generation is injected; the caller executes each returned radio request. */
 void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg, uint32_t (*random)(void *ctx),
@@ -407,6 +445,10 @@ void zlrs_link_set_mix(zlrs_link_t *link, uint8_t mix);
 
 /* Change TX power at runtime (dynamic power); effective with the next transaction */
 void zlrs_link_set_power(zlrs_link_t *link, int8_t tx_power_dbm);
+
+/* Change model policy; the application invalidates its pending serial samples separately. */
+void zlrs_link_set_model(zlrs_link_t *link, uint8_t model_id);
+void zlrs_link_set_model_match(zlrs_link_t *link, bool enabled);
 
 /*
  * Restore pairing from the stored record (no re-pairing after a reboot). pair_salt has to
@@ -450,7 +492,7 @@ uint16_t zlrs_link_write(zlrs_link_t *link, const uint8_t *data, uint16_t len);
 /* Control link payloads: the TX side sets RC, the RX side sets TLM */
 void zlrs_link_set_rc(zlrs_link_t *link, const uint8_t *channels, uint16_t len);
 void zlrs_link_set_tlm(zlrs_link_t *link, const uint8_t *payload, uint16_t len);
-bool zlrs_link_write_crsf(zlrs_link_t *link, const uint8_t *frame, uint8_t len);
+bool zlrs_link_write_service(zlrs_link_t *link, const uint8_t *frame, uint8_t len);
 bool zlrs_link_cancel_pair(zlrs_link_t *link, uint32_t now_ms);
 
 #ifdef __cplusplus

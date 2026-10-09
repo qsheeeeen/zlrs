@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "storage/settings.h"
+#include "config/nvs.h"
 
 #include <string.h>
 
@@ -205,38 +205,4 @@ bool zlrs_storage_settings_new_dev_id(uint8_t out[ZLRS_DEV_ID_LEN])
 	}
 
 	return true;
-}
-
-static int hex_nibble(char c)
-{
-	if (c >= '0' && c <= '9') {
-		return c - '0';
-	}
-	if (c >= 'a' && c <= 'f') {
-		return c - 'a' + 10;
-	}
-	if (c >= 'A' && c <= 'F') {
-		return c - 'A' + 10;
-	}
-
-	return -1;
-}
-
-int zlrs_storage_settings_parse_hex_key(const char *hex, uint8_t out[ZLRS_KEY_LEN])
-{
-	if (strlen(hex) != ZLRS_KEY_LEN * 2U) {
-		return -1;
-	}
-
-	for (size_t i = 0; i < ZLRS_KEY_LEN; i++) {
-		const int hi = hex_nibble(hex[i * 2U]);
-		const int lo = hex_nibble(hex[i * 2U + 1U]);
-
-		if (hi < 0 || lo < 0) {
-			return -1;
-		}
-		out[i] = (uint8_t)((hi << 4) | lo);
-	}
-
-	return 0;
 }

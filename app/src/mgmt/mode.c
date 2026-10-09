@@ -1,8 +1,7 @@
 /*
  * Management mode, see mgmt/mode.h: the session the management protocol runs in, and the device
  * commands it carries. The protocol itself (framing, dispatch) is core/mgmt; this is what each
- * command does to *this* device, and the context it works on comes from the application when a
- * session opens.
+ * command decodes wire arguments and calls the configuration/RF business owner.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -20,23 +19,42 @@
 #include <zephyr/logging/log_ctrl.h>
 #include <zephyr/storage/flash_map.h>
 
+#include <errno.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
-#include "link/data.h"
+#include "data/data.h"
+#include "config/config.h"
+#include "rf/rf.h"
 #include "platform/caps.h"
 #include "platform/recovery.h"
 #include "platform/slot_timer.h"
 #include "platform/watchdog.h"
-#include "state/sys_bus.h"
 #include "storage/log.h"
-#include "storage/settings.h"
 #include "zlrs/mgmt/mgmt.h"
-#include "zlrs/region/region.h"
 
 LOG_MODULE_REGISTER(zlrs_mgmt_mode, CONFIG_APP_LOG_LEVEL);
+
+ZBUS_CHAN_DEFINE(zlrs_mode_chan, struct zlrs_mode, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
+		 ZBUS_MSG_INIT(0));
+
+static struct zlrs_mode mode;
+static bool mode_pending;
+static atomic_t session_requested;
+
+void zlrs_mgmt_request_session(void)
+{
+	atomic_set(&session_requested, 1);
+}
+
+static void publish_mode(void)
+{
+	if (mode_pending && zbus_chan_pub(&zlrs_mode_chan, &mode, K_NO_WAIT) == 0) {
+		mode_pending = false;
+	}
+}
 
 #if IS_ENABLED(CONFIG_ZLRS_MGMT)
 
@@ -60,6 +78,8 @@ static struct cfg_port cfg_port;
 static K_SEM_DEFINE(cfg_rx_ready, 0, 1);
 /* Only a host ENTER needs an ACK; shell entry must not send an unsolicited response. */
 static bool cfg_enter_pending;
+static uint8_t cfg_tx_line[ZLRS_MGMT_FRAME_MAX_LEN];
+static uint8_t cfg_tx_pending;
 
 static void cfg_port_isr(const struct device *dev, void *user_data)
 {
@@ -147,12 +167,23 @@ static uint16_t mgmt_write(const uint8_t *buf, uint16_t len)
 		return 0U;
 	}
 
+	if (ring_buf_space_get(&cfg_port.tx) < len) {
+		return 0U;
+	}
 	written = ring_buf_put(&cfg_port.tx, buf, len);
 	if (written > 0U) {
 		uart_irq_tx_enable(cfg_port.dev);
 	}
 
 	return (uint16_t)written;
+}
+
+/* Keep the completed action's entire reply until the CDC ring admits it. */
+static void flush_reply(void)
+{
+	if (cfg_tx_pending != 0U && mgmt_write(cfg_tx_line, cfg_tx_pending) == cfg_tx_pending) {
+		cfg_tx_pending = 0U;
+	}
 }
 
 static void mgmt_log_flush(void)
@@ -173,6 +204,10 @@ static void mgmt_log_flush(void)
 
 bool zlrs_mgmt_poll_enter(void)
 {
+	publish_mode();
+	if (atomic_cas(&session_requested, 1, 0)) {
+		return true;
+	}
 	static zlrs_mgmt_parser_t parser;
 	static bool parser_ready;
 	uint8_t byte;
@@ -183,13 +218,14 @@ bool zlrs_mgmt_poll_enter(void)
 	}
 
 	/* Stop at ENTER so any following command stays queued for the ready session. */
-	for (uint16_t i = 0U; i < ZLRS_MGMT_CHUNK && mgmt_read(&byte, 1U) == 1U; i++) {
+	flush_reply();
+	for (uint16_t i = 0U;
+	     i < ZLRS_MGMT_CHUNK && cfg_tx_pending == 0U && mgmt_read(&byte, 1U) == 1U; i++) {
 		if (zlrs_mgmt_feed(&parser, byte) != 1) {
 			continue;
 		}
 
 		const uint8_t cmd = parser.cmd;
-		uint8_t reply[ZLRS_MGMT_FRAME_MAX_LEN];
 		uint8_t payload[2];
 		uint8_t len;
 
@@ -202,18 +238,20 @@ bool zlrs_mgmt_poll_enter(void)
 		if (cmd == ZLRS_MGMT_CMD_RECOVERY && zlrs_platform_recovery_enter() == 0) {
 			payload[0] = cmd;
 			payload[1] = ZLRS_MGMT_OK;
-			len = zlrs_mgmt_encode(reply, sizeof(reply), ZLRS_MGMT_CMD_ACK, payload,
-					       sizeof(payload));
-			(void)mgmt_write(reply, len);
+			len = zlrs_mgmt_encode(cfg_tx_line, sizeof(cfg_tx_line), ZLRS_MGMT_CMD_ACK,
+					       payload, sizeof(payload));
+			cfg_tx_pending = len;
+			flush_reply();
 		}
 
 		/* Outside a session everything answers "wrong state"; EXIT is a no-op */
 		payload[0] = cmd;
 		payload[1] = (cmd == ZLRS_MGMT_CMD_EXIT) ? ZLRS_MGMT_OK : ZLRS_MGMT_E_STATE;
 
-		len = zlrs_mgmt_encode(reply, sizeof(reply), ZLRS_MGMT_CMD_ACK, payload,
+		len = zlrs_mgmt_encode(cfg_tx_line, sizeof(cfg_tx_line), ZLRS_MGMT_CMD_ACK, payload,
 				       sizeof(payload));
-		(void)mgmt_write(reply, len);
+		cfg_tx_pending = len;
+		flush_reply();
 	}
 
 	return false;
@@ -230,308 +268,119 @@ bool zlrs_mgmt_mode_image_confirmed(void)
 /* ---- session ------------------------------------------------------------- */
 
 static zlrs_mgmt_parser_t cfg_parser;
-static uint8_t cfg_tx_line[ZLRS_MGMT_FRAME_MAX_LEN];
 /* ---- backend: land commands in NVS and the link layer --------------------- */
 
-/*
- * The simple settings, one row each. Everything else about them is the same: the value is checked,
- * written to its NVS record and (for the two that the running device uses right away) applied. So
- * this table is the only per-setting code in the file, and the storage side has the matching row
- * that says which record it is (app/src/storage/settings.c).
- */
-struct cfg_setting {
-	uint8_t cmd;
-	enum zlrs_setting setting;
-	const char *name;
-	const char *effect; /* what the host should expect after the ACK */
-	int (*check)(const zlrs_mgmt_ctx_t *ctx, const uint8_t *value, uint8_t len);
-	void (*applied)(const zlrs_mgmt_ctx_t *ctx, const uint8_t *value, uint8_t len);
-};
-
-static uint32_t le32(const uint8_t *value)
+/* Wire decoding belongs here; configuration validation and persistence have one owner. */
+static int config_result(int rc)
 {
-	return (uint32_t)value[0] | ((uint32_t)value[1] << 8) | ((uint32_t)value[2] << 16) |
-	       ((uint32_t)value[3] << 24);
-}
-
-static int check_baud(const zlrs_mgmt_ctx_t *ctx, const uint8_t *value, uint8_t len)
-{
-	const uint32_t baud = le32(value);
-
-	ARG_UNUSED(ctx);
-	ARG_UNUSED(len);
-
-	return (baud >= 9600U && baud <= 4000000U) ? ZLRS_MGMT_OK : ZLRS_MGMT_E_PARAM;
-}
-
-static int check_region(const zlrs_mgmt_ctx_t *ctx, const uint8_t *value, uint8_t len)
-{
-	const zlrs_region_t *const want = zlrs_region_get(value[0]);
-
-	ARG_UNUSED(len);
-
-	if (want == NULL) {
+	if (rc == 0) {
+		return ZLRS_MGMT_OK;
+	}
+	if (rc == -EINVAL) {
 		return ZLRS_MGMT_E_PARAM;
 	}
-
-	/* The region's sub-G hardware must match the board (-5 = SKU mismatch); refuse otherwise */
-	return (zlrs_region_validate(want, ZLRS_RF_DESIGN, ctx->tx_power_dbm) == -5)
-		       ? ZLRS_MGMT_E_PARAM
-		       : ZLRS_MGMT_OK;
+	return rc == -EIO ? ZLRS_MGMT_E_STORE : ZLRS_MGMT_E_STATE;
 }
 
-static int check_power(const zlrs_mgmt_ctx_t *ctx, const uint8_t *value, uint8_t len)
+static int cfg_save_setting(void *ctx, uint8_t cmd, const uint8_t *value, uint8_t len)
 {
-	const zlrs_region_t *const region = zlrs_region_get(ctx->region_id);
-
-	ARG_UNUSED(len);
-
-	if (region == NULL) {
-		return ZLRS_MGMT_E_STATE;
-	}
-
-	return ((int8_t)value[0] <= region->max_tx_power_dbm) ? ZLRS_MGMT_OK : ZLRS_MGMT_E_PARAM;
-}
-
-static int check_profile(const zlrs_mgmt_ctx_t *ctx, const uint8_t *value, uint8_t len)
-{
-	ARG_UNUSED(ctx);
-	ARG_UNUSED(len);
-
-	/* P0 is a debug-image move and P2 is not implemented: the image decides, not the host */
-	return zlrs_mgmt_mode_profile_allowed(value[0]) ? ZLRS_MGMT_OK : ZLRS_MGMT_E_PARAM;
-}
-
-static int check_mode(const zlrs_mgmt_ctx_t *ctx, const uint8_t *value, uint8_t len)
-{
-	ARG_UNUSED(ctx);
-	ARG_UNUSED(len);
-
-	if (value[0] == ZLRS_MODE_DATA24) {
-		return IS_ENABLED(CONFIG_ZLRS_APP_LINK_DATA) ? ZLRS_MGMT_OK : ZLRS_MGMT_E_PARAM;
-	}
-	return IS_ENABLED(CONFIG_ZLRS_APP_LINK_CONTROL) ? ZLRS_MGMT_OK : ZLRS_MGMT_E_PARAM;
-}
-
-/* The two settings the running device uses at once, not on the next boot */
-static const struct cfg_setting cfg_settings[] = {
-	{.cmd = ZLRS_MGMT_CMD_SET_MODE,
-	 .setting = ZLRS_SETTING_MODE,
-	 .name = "operating mode",
-	 .effect = "it takes effect on the next boot",
-	 .check = check_mode,
-	 .applied = NULL},
-	{.cmd = ZLRS_MGMT_CMD_SET_BAUD,
-	 .setting = ZLRS_SETTING_BAUD,
-	 .name = "data baud",
-	 .effect = "it takes effect on the next boot",
-	 .check = check_baud,
-	 .applied = NULL},
-	{.cmd = ZLRS_MGMT_CMD_SET_REGION,
-	 .setting = ZLRS_SETTING_REGION,
-	 .name = "region",
-	 .effect = "it takes effect on the next boot",
-	 .check = check_region,
-	 .applied = NULL},
-	{.cmd = ZLRS_MGMT_CMD_SET_POWER,
-	 .setting = ZLRS_SETTING_POWER,
-	 .name = "tx power",
-	 .effect = "it takes effect on the next boot",
-	 .check = check_power,
-	 .applied = NULL},
-	{.cmd = ZLRS_MGMT_CMD_SET_ROLE,
-	 .setting = ZLRS_SETTING_ROLE,
-	 .name = "role",
-	 .effect = "it takes effect on the next boot",
-	 .check = NULL, /* TX and RX are the whole range, and the protocol rejects anything else */
-	 .applied = NULL},
-	{.cmd = ZLRS_MGMT_CMD_SET_PROFILE,
-	 .setting = ZLRS_SETTING_PROFILE,
-	 .name = "security profile",
-	 .effect = "it takes effect on the next boot",
-	 .check = check_profile,
-	 .applied = NULL},
-};
-
-static const struct cfg_setting *setting_row(uint8_t cmd)
-{
-	for (size_t i = 0U; i < ARRAY_SIZE(cfg_settings); i++) {
-		if (cfg_settings[i].cmd == cmd) {
-			return &cfg_settings[i];
-		}
-	}
-
-	return NULL;
-}
-
-/*
- * One path for every simple setting: which row it is, whether the value is usable, the NVS write,
- * and the effect on the running device. The value arrives as the host sent it and is never decoded
- * twice: check() may read it, save() stores it as it is.
- */
-static int cfg_save_setting(void *vctx, uint8_t cmd, const uint8_t *value, uint8_t len)
-{
-	const zlrs_mgmt_ctx_t *ctx = vctx;
-	const struct cfg_setting *const row = setting_row(cmd);
-
-	if (row == NULL) {
+	(void)ctx;
+	enum zlrs_config_key key;
+	int32_t decoded;
+	switch (cmd) {
+	case ZLRS_MGMT_CMD_SET_MODE:
+		key = ZLRS_CONFIG_MODE;
+		break;
+	case ZLRS_MGMT_CMD_SET_BAUD:
+		key = ZLRS_CONFIG_DATA_BAUD;
+		break;
+	case ZLRS_MGMT_CMD_SET_REGION:
+		key = ZLRS_CONFIG_REGION;
+		break;
+	case ZLRS_MGMT_CMD_SET_POWER:
+		key = ZLRS_CONFIG_POWER;
+		break;
+	case ZLRS_MGMT_CMD_SET_ROLE:
+		key = ZLRS_CONFIG_ROLE;
+		break;
+	case ZLRS_MGMT_CMD_SET_PROFILE:
+		key = ZLRS_CONFIG_PROFILE;
+		break;
+	default:
 		return ZLRS_MGMT_E_UNKNOWN;
 	}
-	if (len != zlrs_storage_settings_size(row->setting)) {
+	if (len != (key == ZLRS_CONFIG_DATA_BAUD ? 4U : 1U)) {
 		return ZLRS_MGMT_E_PARAM;
 	}
-
-	if (row->check != NULL) {
-		const int rc = row->check(ctx, value, len);
-
-		if (rc != ZLRS_MGMT_OK) {
-			return rc;
-		}
+	if (key == ZLRS_CONFIG_DATA_BAUD) {
+		decoded = (uint32_t)value[0] | (uint32_t)value[1] << 8 | (uint32_t)value[2] << 16 |
+			  (uint32_t)value[3] << 24;
+	} else {
+		decoded = key == ZLRS_CONFIG_POWER ? (int8_t)value[0] : value[0];
 	}
-
-	if (zlrs_storage_settings_save(row->setting, value, len) != 0) {
-		return ZLRS_MGMT_E_STORE;
-	}
-
-	if (row->applied != NULL) {
-		row->applied(ctx, value, len);
-	}
-
-	LOG_INF("%s written (%s)", row->name, row->effect);
-
-	return ZLRS_MGMT_OK;
+	return config_result(zlrs_config_set(key, decoded, true));
 }
 
-static int cfg_save_root_key(void *vctx, const uint8_t key[ZLRS_KEY_LEN])
+static int cfg_save_root_key(void *ctx, const uint8_t key[ZLRS_KEY_LEN])
 {
-	const zlrs_mgmt_ctx_t *ctx = vctx;
-
-	if (zlrs_storage_settings_save(ZLRS_SETTING_ROOT_KEY, key, ZLRS_KEY_LEN) != 0) {
-		return ZLRS_MGMT_E_STORE;
-	}
-
-	/* Takes effect immediately, no reboot needed */
-	const uint32_t now_ms = zlrs_slot_timer_now_ms();
-
-	zlrs_link_set_root_key(ctx->control, key, now_ms);
-	zlrs_link_set_root_key(ctx->data, key, now_ms);
-
-	LOG_INF("root key written");
-
-	return ZLRS_MGMT_OK;
+	(void)ctx;
+	return config_result(zlrs_config_set_root_key(key));
 }
 
-static int cfg_read_status(void *vctx, zlrs_mgmt_status_t *out)
+static int cfg_read_status(void *ctx, zlrs_mgmt_status_t *out)
 {
-	const zlrs_mgmt_ctx_t *ctx = vctx;
-	const zlrs_link_t *const link = ctx->active;
-	uint8_t stored_region;
-	int8_t stored_power;
-	uint32_t baud;
+	(void)ctx;
+	const zlrs_rf_status_t rf = zlrs_rf_status();
+	const zlrs_config_state_t config = zlrs_config_state();
 
-	out->version = ZLRS_MGMT_VERSION;
-	out->role = link->cfg.role;
-	out->profile = link->cfg.profile;
-	out->state = link->state;
-	out->flags = ctx->mode == ZLRS_MODE_DATA24 ? ZLRS_MGMT_FLAG_DATA24 : 0U;
-	if (link->configured) {
+	*out = (zlrs_mgmt_status_t){
+		.version = ZLRS_MGMT_VERSION,
+		.role = rf.role,
+		.profile = rf.profile,
+		.state = rf.state,
+		.flags = rf.mode == ZLRS_MODE_DATA24 ? ZLRS_MGMT_FLAG_DATA24 : 0U,
+		.lq_percent = rf.lq_percent,
+		.band = ZLRS_RF_BAND,
+		.region = config.saved.region,
+		.tx_power_dbm = config.saved.power_dbm,
+		.data_baud = config.saved.data_baud,
+	};
+	if (rf.configured) {
 		out->flags |= ZLRS_MGMT_FLAG_KEY;
 	}
-	if (link->paired) {
+	if (rf.paired) {
 		out->flags |= ZLRS_MGMT_FLAG_PAIRED;
-		memcpy(out->peer_id, link->peer_id, ZLRS_DEV_ID_LEN);
 	}
-	if (link->session_valid) {
+	if (rf.session_valid) {
 		out->flags |= ZLRS_MGMT_FLAG_SESSION;
 	}
-	memcpy(out->dev_id, link->dev_id, ZLRS_DEV_ID_LEN);
-	out->lq_percent = link->stats.lq_percent;
-	out->band = ZLRS_RF_BAND;
-
-	/* Report the stored value first (just written, not yet live), the live one otherwise */
-	out->region =
-		(zlrs_storage_settings_load(ZLRS_SETTING_REGION, &stored_region,
-					    sizeof(stored_region)) == (int)sizeof(stored_region))
-			? stored_region
-			: ctx->region_id;
-	out->tx_power_dbm =
-		(zlrs_storage_settings_load(ZLRS_SETTING_POWER, &stored_power,
-					    sizeof(stored_power)) == (int)sizeof(stored_power))
-			? stored_power
-			: ctx->tx_power_dbm;
-	if (zlrs_storage_settings_load(ZLRS_SETTING_BAUD, &baud, sizeof(baud)) !=
-	    (int)sizeof(baud)) {
-		baud = 0U;
-	}
-	out->data_baud = baud;
-
+	memcpy(out->dev_id, rf.dev_id, ZLRS_DEV_ID_LEN);
+	memcpy(out->peer_id, rf.peer_id, ZLRS_DEV_ID_LEN);
 	return ZLRS_MGMT_OK;
 }
 
-/*
- * Fresh device id on demand: the id is part of the key derivation, so the pairing record that was
- * built on the old one has to go with it (the peer would reject the new id anyway).
- */
-static int cfg_new_dev_id(void *vctx)
+static int cfg_new_dev_id(void *ctx)
 {
-	const zlrs_mgmt_ctx_t *ctx = vctx;
-	uint8_t fresh[ZLRS_DEV_ID_LEN];
-
-	if (ctx->device_id == NULL || !zlrs_storage_settings_new_dev_id(fresh)) {
-		return ZLRS_MGMT_E_STATE;
-	}
-	if (zlrs_storage_settings_save(ZLRS_SETTING_DEV_ID, fresh, sizeof(fresh)) != 0) {
-		return ZLRS_MGMT_E_STORE;
-	}
-	(void)zlrs_storage_settings_erase(ZLRS_SETTING_PAIRING);
-
-	memcpy(ctx->device_id, fresh, ZLRS_DEV_ID_LEN);
-	zlrs_link_set_dev_id(ctx->control, ctx->device_id);
-	zlrs_link_set_dev_id(ctx->data, ctx->device_id);
-	LOG_INF("dev id %02x%02x%02x%02x (new, pairing dropped)", fresh[0], fresh[1], fresh[2],
-		fresh[3]);
-
-	return ZLRS_MGMT_OK;
+	(void)ctx;
+	return config_result(zlrs_config_new_identity());
 }
 
-static int cfg_pair(void *vctx)
+static int cfg_pair(void *ctx)
 {
-	const zlrs_mgmt_ctx_t *ctx = vctx;
-
-	if (!ctx->active->configured) {
-		return ZLRS_MGMT_E_STATE;
-	}
-
-	zlrs_link_press(ctx->active, zlrs_slot_timer_now_ms());
-	LOG_INF("pairing triggered by management tool");
-
-	return ZLRS_MGMT_OK;
+	(void)ctx;
+	return config_result(zlrs_rf_pair_start());
 }
 
-static int cfg_erase_pair(void *vctx)
+static int cfg_erase_pair(void *ctx)
 {
-	(void)vctx;
-
-	if (zlrs_storage_settings_erase(ZLRS_SETTING_PAIRING) != 0) {
-		return ZLRS_MGMT_E_STORE;
-	}
-
-	LOG_INF("pairing erased (takes effect on next boot)");
-
-	return ZLRS_MGMT_OK;
+	(void)ctx;
+	return config_result(zlrs_config_erase_pairing());
 }
 
-static int cfg_factory_reset(void *vctx)
+static int cfg_factory_reset(void *ctx)
 {
-	(void)vctx;
-
-	if (zlrs_storage_settings_erase_all() != 0) {
-		return ZLRS_MGMT_E_STORE;
-	}
-
-	LOG_WRN("factory reset: NVS cleared (takes effect on next boot)");
-
-	return ZLRS_MGMT_OK;
+	(void)ctx;
+	return config_result(zlrs_config_factory_reset());
 }
 
 static int cfg_enter_recovery(void *vctx)
@@ -682,8 +531,8 @@ static uint8_t cfg_debug_ack(uint8_t cmd, uint8_t status, uint8_t *out, size_t o
 	return zlrs_mgmt_encode(out, out_len, ZLRS_MGMT_CMD_ACK, payload, sizeof(payload));
 }
 
-static uint8_t cfg_debug_report(const zlrs_mgmt_ctx_t *ctx, const uint8_t *request,
-				uint8_t request_len, uint8_t *out, size_t out_len)
+static uint8_t cfg_debug_report(const uint8_t *request, uint8_t request_len, uint8_t *out,
+				size_t out_len)
 {
 	uint8_t body[ZLRS_MGMT_PAYLOAD_MAX_LEN];
 	uint16_t offset;
@@ -693,14 +542,11 @@ static uint8_t cfg_debug_report(const zlrs_mgmt_ctx_t *ctx, const uint8_t *reque
 	if (request_len != ZLRS_MGMT_DEBUG_REPORT_REQ_LEN) {
 		return cfg_debug_ack(ZLRS_MGMT_CMD_DEBUG_REPORT, ZLRS_MGMT_E_PARAM, out, out_len);
 	}
-	if (ctx->debug_report == NULL) {
-		return cfg_debug_ack(ZLRS_MGMT_CMD_DEBUG_REPORT, ZLRS_MGMT_E_STATE, out, out_len);
-	}
 
 	offset = (uint16_t)request[1] | ((uint16_t)request[2] << 8);
 	const int rc =
-		ctx->debug_report(request[0], offset, &body[ZLRS_MGMT_DEBUG_REPORT_HEADER_LEN],
-				  ZLRS_MGMT_DEBUG_REPORT_CHUNK_MAX, &total_len, &written);
+		zlrs_rf_debug_report(request[0], offset, &body[ZLRS_MGMT_DEBUG_REPORT_HEADER_LEN],
+				     ZLRS_MGMT_DEBUG_REPORT_CHUNK_MAX, &total_len, &written);
 
 	if (rc != ZLRS_MGMT_OK) {
 		return cfg_debug_ack(ZLRS_MGMT_CMD_DEBUG_REPORT, (uint8_t)rc, out, out_len);
@@ -723,14 +569,14 @@ static uint8_t cfg_debug_report(const zlrs_mgmt_ctx_t *ctx, const uint8_t *reque
 
 /* ---- session ------------------------------------------------------------- */
 
-int zlrs_mgmt_mode_run(const zlrs_mgmt_ctx_t *ctx)
+int zlrs_mgmt_mode_run(void)
 {
 	const uint32_t timeout_ms = (uint32_t)CONFIG_ZLRS_APP_MGMT_TIMEOUT_S * 1000U;
 	uint32_t last_activity_ms;
 	bool exit_requested = false;
-	/* The commands work on the caller's live state; the table carries it through to each one */
+	/* Protocol callbacks use copied status and common business operations. */
 	const zlrs_mgmt_backend_t backend = {
-		.ctx = (void *)ctx,
+		.ctx = NULL,
 		.save_root_key = cfg_save_root_key,
 		.read_status = cfg_read_status,
 		.save_setting = cfg_save_setting,
@@ -763,7 +609,9 @@ int zlrs_mgmt_mode_run(const zlrs_mgmt_ctx_t *ctx)
 	zlrs_watchdog_disarm();
 
 	/* A mode, not an LED state: the LED thread decides how it looks (app/src/ui/led.c) */
-	zlrs_sys_publish_mode(&(struct zlrs_mode){.session = true});
+	mode.session = true;
+	mode_pending = true;
+	publish_mode();
 
 	/* ENTER acknowledges readiness, including the queued logs. The watchdog is already
 	 * disarmed, and the idle timeout starts only after this synchronous flush. */
@@ -772,26 +620,32 @@ int zlrs_mgmt_mode_run(const zlrs_mgmt_ctx_t *ctx)
 		const uint8_t len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_ENTER, NULL, 0U,
 						       cfg_tx_line, sizeof(cfg_tx_line));
 
-		(void)mgmt_write(cfg_tx_line, len);
+		cfg_tx_pending = len;
+		flush_reply();
 		cfg_enter_pending = false;
 	}
 	last_activity_ms = k_uptime_get_32();
 
 	while (!exit_requested && (uint32_t)(k_uptime_get_32() - last_activity_ms) < timeout_ms) {
-		uint8_t chunk[ZLRS_MGMT_CHUNK];
+		uint8_t byte;
 		bool any = false;
 
 		zlrs_watchdog_feed();
+		publish_mode();
+		zlrs_config_poll();
+		zlrs_link_data_poll();
 		(void)log_process();
 
 		/* Radio stopped in management mode: data port bytes are dropped and counted */
 		zlrs_link_data_discard_rx();
 
-		const uint16_t got = mgmt_read(chunk, sizeof(chunk));
-		for (uint16_t i = 0U; i < got; i++) {
+		flush_reply();
+		for (uint16_t i = 0U;
+		     i < ZLRS_MGMT_CHUNK && cfg_tx_pending == 0U && mgmt_read(&byte, 1U) == 1U;
+		     i++) {
 			any = true;
 
-			const int result = zlrs_mgmt_feed(&cfg_parser, chunk[i]);
+			const int result = zlrs_mgmt_feed(&cfg_parser, byte);
 
 			if (result != 1) {
 				continue;
@@ -813,7 +667,7 @@ int zlrs_mgmt_mode_run(const zlrs_mgmt_ctx_t *ctx)
 
 #if defined(CONFIG_ZLRS_APP_DEBUG)
 			if (cfg_parser.cmd == ZLRS_MGMT_CMD_DEBUG_REPORT) {
-				len = cfg_debug_report(ctx, ZLRS_MGMT_PAYLOAD(&cfg_parser),
+				len = cfg_debug_report(ZLRS_MGMT_PAYLOAD(&cfg_parser),
 						       cfg_parser.payload_len, cfg_tx_line,
 						       sizeof(cfg_tx_line));
 			} else
@@ -825,7 +679,8 @@ int zlrs_mgmt_mode_run(const zlrs_mgmt_ctx_t *ctx)
 			}
 
 			if (len > 0U) {
-				(void)mgmt_write(cfg_tx_line, len);
+				cfg_tx_pending = len;
+				flush_reply();
 			}
 		}
 
@@ -838,7 +693,9 @@ int zlrs_mgmt_mode_run(const zlrs_mgmt_ctx_t *ctx)
 
 	LOG_INF("management mode finished");
 
-	zlrs_sys_publish_mode(&(struct zlrs_mode){.session = false});
+	mode.session = false;
+	mode_pending = true;
+	publish_mode();
 
 	zlrs_watchdog_arm();
 
@@ -847,6 +704,11 @@ int zlrs_mgmt_mode_run(const zlrs_mgmt_ctx_t *ctx)
 
 #else /* !CONFIG_ZLRS_MGMT */
 
+bool zlrs_mgmt_mode_image_confirmed(void)
+{
+	return false;
+}
+
 int zlrs_mgmt_init(void)
 {
 	return -1;
@@ -854,28 +716,14 @@ int zlrs_mgmt_init(void)
 
 bool zlrs_mgmt_poll_enter(void)
 {
+	publish_mode();
 	return false;
 }
 
 /* Management protocol compiled out: the application still calls in, this says "not available" */
-int zlrs_mgmt_mode_run(const zlrs_mgmt_ctx_t *ctx)
+int zlrs_mgmt_mode_run(void)
 {
-	(void)ctx;
-
 	return -1;
 }
 
 #endif /* CONFIG_ZLRS_MGMT */
-
-bool zlrs_mgmt_mode_profile_allowed(uint8_t profile)
-{
-	if (profile == ZLRS_PROFILE_P1) {
-		return true;
-	}
-	if (profile == ZLRS_PROFILE_P0) {
-		/* P0 carries no tag at all, so only a bench image may select it (doc/09-security.md 8) */
-		return IS_ENABLED(CONFIG_ZLRS_APP_DEBUG);
-	}
-
-	return false; /* P2 is not implemented */
-}

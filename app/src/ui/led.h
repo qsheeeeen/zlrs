@@ -10,7 +10,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "zlrs/link/link.h"
+#include "zlrs/link/state.h"
 
 struct zlrs_led_color {
 	uint8_t r;
@@ -27,5 +27,4 @@ struct zlrs_led_frame_input {
 	uint8_t lq_percent;
 };
 
-struct zlrs_led_color zlrs_app_led_frame(const struct zlrs_led_frame_input *in,
-					 uint32_t now_ms);
+struct zlrs_led_color zlrs_app_led_frame(const struct zlrs_led_frame_input *in, uint32_t now_ms);

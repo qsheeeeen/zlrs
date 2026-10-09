@@ -44,6 +44,7 @@ struct node {
 	uint16_t crsf_len;
 	uint16_t crsf_count;
 	bool crsf_blocked;
+	bool data_blocked;
 	uint32_t rc_count;
 	uint8_t tlm[ZLRS_LINK_TLM_MAX_LEN];
 	uint16_t tlm_len;
@@ -150,17 +151,18 @@ static void on_tlm(void *ctx, const uint8_t *payload, uint16_t len)
 	node->tlm_count++;
 }
 
-static void on_data(void *ctx, const uint8_t *data, uint16_t len)
+static bool on_data(void *ctx, const uint8_t *data, uint16_t len)
 {
 	link_ctx_t *lc = ctx;
 	node_t *node = lc->node;
 	const uint32_t room = (uint32_t)sizeof(node->stream) - node->stream_len;
 
-	if (len > room) {
-		len = (uint16_t)room;
+	if (node->data_blocked || len > room) {
+		return false;
 	}
 	memcpy(&node->stream[node->stream_len], data, len);
 	node->stream_len += len;
+	return true;
 }
 
 static bool on_crsf(void *ctx, const uint8_t *frame, uint8_t len)
@@ -213,14 +215,14 @@ static void node_init(node_t *node, uint8_t role, const uint8_t *root_key,
 	};
 	zlrs_link_events_t ctl_ev = {
 		.on_rc = on_rc,
-		.on_crsf = on_crsf,
+		.on_service = on_crsf,
 		.on_tlm = on_tlm,
 		.on_state = on_state,
 		.ctx = &node->ctl_ctx,
 	};
 	zlrs_link_events_t data_ev = {
 		.on_data = on_data,
-		.on_crsf = on_crsf,
+		.on_service = on_crsf,
 		.on_state = on_state,
 		.ctx = &node->data_ctx,
 	};
@@ -1753,6 +1755,31 @@ static void test_queue_copy_wrap(void)
 }
 
 /* ARQ: drops are filled in by retransmits and the receiver dedups on the data sequence */
+static void test_arq_receive_backpressure(void)
+{
+	sim_t sim;
+	const uint8_t payload[] = {1, 2, 3, 4, 5};
+
+	printf("link: DATA ACK waits for whole-packet acceptance\n");
+	sim_init(&sim);
+	sim.tx.data.cfg.arq = sim.rx.data.cfg.arq = 1U;
+	pair_and_connect(&sim);
+	sim.rx.data_blocked = true;
+	CHECK(zlrs_link_write(&sim.tx.data, payload, sizeof(payload)) == sizeof(payload));
+	sim_run(&sim, 40U);
+	CHECK(sim.rx.stream_len == 0U);
+	CHECK(!sim.rx.data.arq_rx_started);
+	CHECK(sim.tx.data.queue_count != 0U);
+	CHECK(sim.tx.data.stats.tx_retries != 0U);
+	sim.rx.data_blocked = false;
+	SIM_UNTIL(&sim, sim.tx.data.queue_count == 0U, 400);
+	CHECK(sim.tx.data.queue_count == 0U);
+	CHECK(sim.rx.stream_len == sizeof(payload));
+	CHECK(memcmp(sim.rx.stream, payload, sizeof(payload)) == 0);
+	sim_run(&sim, 20U);
+	CHECK(sim.rx.stream_len == sizeof(payload));
+}
+
 static void test_arq_retransmit(void)
 {
 	sim_t sim;
@@ -2928,6 +2955,33 @@ static void test_peer_restart(void)
 	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
 	SIM_UNTIL(&sim, sim.rx.stream_len >= sizeof(chunk), 400);
 	CHECK(sim.rx.stream_len == sizeof(chunk));
+
+	/* TX reboot while RX keeps an idle DATA session with no peer-loss timeout. */
+	uint8_t tx_id[ZLRS_DEV_ID_LEN];
+
+	memcpy(tx_id, sim.tx.dev_id, sizeof(tx_id));
+	node_init(&sim.tx, ZLRS_ROLE_TX, sim.root_key, tx_id, 0x33333333U);
+	sim.tx.ctl.cfg.resync_every_n = 20U;
+	sim.tx.data.cfg.resync_every_n = 20U;
+	zlrs_link_set_peer(&sim.tx.ctl, sim.rx.dev_id, salt, sim.now_ms);
+	zlrs_link_set_peer(&sim.tx.data, sim.rx.dev_id, salt, sim.now_ms);
+	SIM_UNTIL(&sim,
+		  sim.tx.ctl.state == ZLRS_STATE_CONNECTED &&
+			  sim.rx.ctl.state == ZLRS_STATE_CONNECTED &&
+			  sim.tx.data.state == ZLRS_STATE_CONNECTED &&
+			  sim.rx.data.state == ZLRS_STATE_CONNECTED,
+		  4000);
+	CHECK(sim.tx.data.state == ZLRS_STATE_CONNECTED);
+	CHECK(sim.rx.data.state == ZLRS_STATE_CONNECTED);
+	CHECK(memcmp(sim.tx.data.session_key_out, sim.rx.data.session_key_in, ZLRS_KEY_LEN) == 0);
+	CHECK(zlrs_link_write(&sim.tx.data, chunk, sizeof(chunk)) == sizeof(chunk));
+	CHECK(zlrs_link_write(&sim.rx.data, chunk, sizeof(chunk)) == sizeof(chunk));
+	SIM_UNTIL(&sim,
+		  sim.rx.stream_len == 2U * sizeof(chunk) && sim.tx.stream_len == sizeof(chunk),
+		  400);
+	CHECK(sim.rx.stream_len == 2U * sizeof(chunk));
+	CHECK(sim.tx.stream_len == sizeof(chunk));
+	CHECK(sim.rx.data.stats.tx_syncs == 0U);
 }
 
 /*
@@ -3253,15 +3307,15 @@ static void test_crsf_relay(void)
 		zlrs_link_t *tx = data_only ? &sim.tx.data : &sim.tx.ctl;
 		zlrs_link_t *rx = data_only ? &sim.rx.data : &sim.rx.ctl;
 		sim.rx.crsf_blocked = true;
-		CHECK(zlrs_link_write_crsf(tx, frame, size));
+		CHECK(zlrs_link_write_service(tx, frame, size));
 		sim_run(&sim, 32);
-		CHECK(sim.rx.crsf_count == 0 && tx->crsf_count == 1 && tx->crsf_inflight);
+		CHECK(sim.rx.crsf_count == 0 && tx->service_count == 1 && tx->service_inflight);
 		sim.rx.crsf_blocked = false;
 		sim.drop_down = 2;
 		sim.drop_up = 2;
-		CHECK(zlrs_link_write_crsf(rx, frame, size));
-		SIM_UNTIL(&sim, tx->crsf_count == 0 && rx->crsf_count == 0, 400);
-		CHECK(tx->crsf_count == 0 && rx->crsf_count == 0);
+		CHECK(zlrs_link_write_service(rx, frame, size));
+		SIM_UNTIL(&sim, tx->service_count == 0 && rx->service_count == 0, 400);
+		CHECK(tx->service_count == 0 && rx->service_count == 0);
 		CHECK(sim.rx.crsf_count == 1 && sim.tx.crsf_count == 1);
 		CHECK(sim.rx.crsf_len == size && memcmp(sim.rx.crsf, frame, size) == 0);
 		const uint8_t user[] = {0xEE, 0x28, 0x7A, 0xBA, 0xC8, 0xD5};
@@ -3272,34 +3326,33 @@ static void test_crsf_relay(void)
 		sim_run(&sim, 40);
 		CHECK(sim.rx.crsf_count == 1 && sim.tx.crsf_count == 1);
 		if (!data_only) {
-			tx->cfg.model_id = 7;
-			rx->cfg.model_id = 8;
-			rx->cfg.model_match = true;
+			zlrs_link_set_model(tx, 7);
+			zlrs_link_set_model(rx, 8);
+			zlrs_link_set_model_match(rx, true);
 			zlrs_link_set_rc(tx, rc, sizeof(rc));
 			const uint32_t before = sim.rx.rc_count;
 			sim_run(&sim, 8);
 			CHECK(sim.rx.rc_count == before);
-			rx->cfg.model_id = 7;
+			zlrs_link_set_model(rx, 7);
 			sim_run(&sim, 8);
 			CHECK(sim.rx.rc_count > before && sim.rx.rc_len == 23);
 			CHECK(memcmp(sim.rx.rc, rc, sizeof(rc)) == 0);
 			CHECK(rx->peer_power_dbm == tx->cfg.tx_power_dbm);
 			zlrs_link_set_rc(tx, NULL, 0);
 			const uint32_t cut = sim.rx.rc_count;
-			CHECK(zlrs_link_write_crsf(tx, frame, size));
-			SIM_UNTIL(&sim, tx->crsf_count == 0, 200);
+			CHECK(zlrs_link_write_service(tx, frame, size));
+			SIM_UNTIL(&sim, tx->service_count == 0, 200);
 			CHECK(sim.rx.rc_count == cut && sim.rx.crsf_count == 2);
 		}
 	}
-	/* Queue rejection is atomic and invalid CRCs never occupy a service slot. */
+	/* RF transports opaque messages; queue rejection is atomic. */
 	sim_init(&sim);
-	frame[size - 1] ^= 1;
-	CHECK(!zlrs_link_write_crsf(&sim.tx.ctl, frame, size));
-	frame[size - 1] ^= 1;
-	for (uint8_t i = 0; i < ZLRS_LINK_CRSF_QUEUE_LEN; i++) {
-		CHECK(zlrs_link_write_crsf(&sim.tx.ctl, frame, size));
+	CHECK(!zlrs_link_write_service(&sim.tx.ctl, frame, 0));
+	CHECK(!zlrs_link_write_service(&sim.tx.ctl, frame, 65));
+	for (uint8_t i = 0; i < ZLRS_LINK_SERVICE_QUEUE_LEN; i++) {
+		CHECK(zlrs_link_write_service(&sim.tx.ctl, frame, size));
 	}
-	CHECK(!zlrs_link_write_crsf(&sim.tx.ctl, frame, size));
+	CHECK(!zlrs_link_write_service(&sim.tx.ctl, frame, size));
 }
 
 void test_link(void)
@@ -3309,17 +3362,32 @@ void test_link(void)
 
 	sim_init(&signal);
 	zlrs_link_t *measured = &signal.rx.ctl;
+	zlrs_link_t unconfigured;
+
+	/* Queries also serve fault recovery before a key or hop table has been installed. */
+	zlrs_link_init(&unconfigured, zlrs_link_get_config(measured), NULL, NULL, NULL);
+	CHECK(zlrs_link_get_state(&unconfigured) == ZLRS_STATE_UNCONFIGURED);
+	CHECK(!zlrs_link_get_info(&unconfigured).configured);
+	CHECK(zlrs_link_get_diagnostics(&unconfigured).frequency_hz == 0U);
+	uint8_t peer[ZLRS_DEV_ID_LEN] = {0xA5};
+	uint8_t salt[ZLRS_PAIR_SALT_LEN] = {0x5A};
+
+	CHECK(!zlrs_link_get_pairing(&unconfigured, peer, salt));
+	CHECK(peer[0] == 0xA5 && salt[0] == 0x5A);
 
 	measured->stats.last_rssi = -71;
 	measured->stats.last_snr = -4;
 	measured->req_is_tx = true;
 	zlrs_link_complete(measured, ZLRS_RADIO_OK, 0U, 0, 0, 1U);
-	CHECK(measured->stats.last_rssi == -71 && measured->stats.last_snr == -4);
+	CHECK(zlrs_link_get_stats(measured)->last_rssi == -71 &&
+	      zlrs_link_get_stats(measured)->last_snr == -4);
 	measured->req_is_tx = false;
 	zlrs_link_complete(measured, ZLRS_RADIO_OK, 0U, 0, 0, 2U);
-	CHECK(measured->stats.last_rssi == -71 && measured->stats.last_snr == -4);
+	CHECK(zlrs_link_get_stats(measured)->last_rssi == -71 &&
+	      zlrs_link_get_stats(measured)->last_snr == -4);
 	zlrs_link_complete(measured, ZLRS_RADIO_FAIL, 0U, 0, 0, 3U);
-	CHECK(measured->stats.last_rssi == -71 && measured->stats.last_snr == -4);
+	CHECK(zlrs_link_get_stats(measured)->last_rssi == -71 &&
+	      zlrs_link_get_stats(measured)->last_snr == -4);
 	test_crsf_relay();
 	CHECK(offsetof(zlrs_link_t, tx_buf) % alignof(uint32_t) == 0U);
 	CHECK(offsetof(zlrs_link_t, rx_buf) % alignof(uint32_t) == 0U);
@@ -3360,6 +3428,7 @@ void test_link(void)
 	test_backpressure();
 	test_queue_copy_wrap();
 	test_arq_retransmit();
+	test_arq_receive_backpressure();
 	test_flrc_max_frame_duplex();
 	test_prepared_data();
 	test_prepared_data_invalidation();

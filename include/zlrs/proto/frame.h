@@ -28,7 +28,7 @@ typedef enum {
 	ZLRS_PKT_PAIR_CFM = 7,  /* TX -> RX: pairing */
 	ZLRS_PKT_SESS_RESP = 8, /* RX -> TX: session response carrying its nonce */
 	ZLRS_PKT_SESS_CFM = 9,  /* TX -> RX: session confirm, tagged with the new session key */
-	ZLRS_PKT_CRSF = 10,     /* DATA slots: CRSF service, independent of user DATA */
+	ZLRS_PKT_SERVICE = 10,  /* DATA slots: CRSF service, independent of user DATA */
 } zlrs_pkt_type_t;
 
 /* Header bit 0 is reserved and must be zero. */

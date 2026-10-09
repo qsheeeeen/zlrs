@@ -2,7 +2,7 @@
 
 #include <zephyr/ztest.h>
 
-#include "link/rate.h"
+#include "rf/rate.h"
 
 static zlrs_link_t control;
 

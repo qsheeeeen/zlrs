@@ -16,11 +16,10 @@ target_sources(app PRIVATE
   ../app/link/test_power.c
   ../app/platform/test_slot_timer.c
   ../app/ui/test_led.c
-  "${zlrs_root}/app/src/state/sys_bus.c"
-  "${zlrs_root}/app/src/link/rate.c"
-  "${zlrs_root}/app/src/link/power.c"
+  "${zlrs_root}/app/src/rf/rate.c"
+  "${zlrs_root}/app/src/rf/power.c"
   "${zlrs_root}/app/src/platform/slot_timer.c"
-  "${zlrs_root}/app/src/ui/led.c"
+  "${zlrs_root}/app/src/ui/pattern.c"
   "${zlrs_root}/app/src/platform/sha256.c"
   "${zlrs_root}/app/src/storage/log.c")
 target_include_directories(app PRIVATE "${zlrs_root}/app/src" "${zlrs_root}/core/proto" ..)

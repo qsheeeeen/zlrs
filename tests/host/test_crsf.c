@@ -331,7 +331,7 @@ static void test_device_protocol(void)
 	p[3] = 0;
 	CHECK(zlrs_crsf_device_handle(&d, 0x2C, p, 4) == ZLRS_CRSF_HANDLED);
 	CHECK(c.data[5] == 0x7F);
-	/* Signed big-endian FLOAT value, durable-write rejection and range rejection. */
+	/* Signed big-endian FLOAT value and business-owner rejection. */
 	p[2] = ZLRS_CRSF_PARAM_POWER;
 	p[3] = 0xFF;
 	p[4] = 0xFF;
@@ -344,12 +344,13 @@ static void test_device_protocol(void)
 	p[6] = 0xF7;
 	CHECK(zlrs_crsf_device_handle(&d, 0x2D, p, 7) == ZLRS_CRSF_HANDLED);
 	CHECK(d.values[ZLRS_CRSF_PARAM_POWER] == -10 && c.type == 0x2B);
-	c.reject = false;
+	c.reject = true;
 	const uint32_t writes = c.writes;
 	p[3] = p[4] = p[5] = 0;
 	p[6] = 34;
 	CHECK(zlrs_crsf_device_handle(&d, 0x2D, p, 7) == ZLRS_CRSF_HANDLED);
-	CHECK(c.writes == writes);
+	CHECK(c.writes == writes + 1U && c.type == 0x2B);
+	c.reject = false;
 	/* Device response must not be interpreted as another write or command. */
 	p[0] = 0xEA;
 	CHECK(zlrs_crsf_device_handle(&d, 0x2D, p, 7) == ZLRS_CRSF_ROUTE);

@@ -22,7 +22,9 @@
 
 #include <string.h>
 
-#include "state/sys_bus.h"
+#include "rf/rf.h"
+#include "mgmt/mode.h"
+#include "data/data.h"
 #include "ui/led.h"
 
 LOG_MODULE_REGISTER(zlrs_led, CONFIG_APP_LOG_LEVEL);
@@ -49,77 +51,6 @@ LOG_MODULE_REGISTER(zlrs_led, CONFIG_APP_LOG_LEVEL);
 
 #define LED_PIXELS 1U
 
-static const struct zlrs_led_color off = {0U, 0U, 0U};
-static const struct zlrs_led_color white = {255U, 255U, 255U};
-static const struct zlrs_led_color purple = {160U, 0U, 200U};
-static const struct zlrs_led_color yellow = {255U, 180U, 0U};
-static const struct zlrs_led_color blue = {0U, 90U, 255U};
-static const struct zlrs_led_color green = {0U, 255U, 0U};
-static const struct zlrs_led_color red = {255U, 0U, 0U};
-static const struct zlrs_led_color orange = {255U, 80U, 0U};
-
-static struct zlrs_led_color blink(struct zlrs_led_color color, uint32_t now_ms,
-				   uint32_t period_ms, uint32_t on_ms)
-{
-	return ((now_ms % period_ms) < on_ms) ? color : off;
-}
-
-static struct zlrs_led_color alternate(struct zlrs_led_color first,
-					struct zlrs_led_color second, uint32_t now_ms,
-					uint32_t period_ms)
-{
-	return ((now_ms % period_ms) < (period_ms / 2U)) ? first : second;
-}
-
-static struct zlrs_led_color theme_color(bool role_tx)
-{
-	return role_tx ? blue : green;
-}
-
-static struct zlrs_led_color link_state_frame(const struct zlrs_led_frame_input *in,
-					      uint32_t now_ms)
-{
-	const struct zlrs_led_color theme = theme_color(in->role_tx);
-
-	switch (in->link_state) {
-	case ZLRS_STATE_CONNECTED:
-		if (in->lq_percent >= 80U) {
-			return blink(theme, now_ms, 250U, 200U);
-		}
-		if (in->lq_percent >= 50U) {
-			return blink(theme, now_ms, 250U, 50U);
-		}
-		return blink(theme, now_ms, 500U, 250U);
-	case ZLRS_STATE_PAIRING:
-		return blink(theme, now_ms, 1000U, 300U);
-	case ZLRS_STATE_SEARCHING:
-		return theme;
-	case ZLRS_STATE_UNPAIRED:
-		return alternate(theme, yellow, now_ms, 500U);
-	case ZLRS_STATE_UNCONFIGURED:
-	default:
-		return blink(purple, now_ms, 2000U, 200U);
-	}
-}
-
-struct zlrs_led_color zlrs_app_led_frame(const struct zlrs_led_frame_input *in,
-					 uint32_t now_ms)
-{
-	if (in == NULL) {
-		return off;
-	}
-	if (in->mgmt_mode) {
-		return white;
-	}
-	if (in->failsafe) {
-		return alternate(theme_color(in->role_tx), red, now_ms, 500U);
-	}
-	if (in->drop_recent) {
-		return alternate(theme_color(in->role_tx), orange, now_ms, 500U);
-	}
-	return link_state_frame(in, now_ms);
-}
-
 /*
  * The link and RAC threads are cooperative (doc/06-architecture.md 6), so this one is preemptive:
  * it runs only while the link thread is blocked, and the link thread preempts it again the moment
@@ -134,7 +65,7 @@ struct zlrs_led_color zlrs_app_led_frame(const struct zlrs_led_frame_input *in,
  * the thread drains them on its next pass; zbus logs an error for every notification that does not
  * fit, which is why the depth has headroom rather than the minimum.
  */
-#define LED_SUB_QUEUE_SIZE 4U
+#define LED_SUB_QUEUE_SIZE 8U
 
 ZBUS_SUBSCRIBER_DEFINE(zlrs_led_sub, LED_SUB_QUEUE_SIZE);
 
@@ -142,6 +73,7 @@ ZBUS_SUBSCRIBER_DEFINE(zlrs_led_sub, LED_SUB_QUEUE_SIZE);
 ZBUS_CHAN_ADD_OBS(zlrs_link_chan, zlrs_led_sub, 0);
 ZBUS_CHAN_ADD_OBS(zlrs_alert_chan, zlrs_led_sub, 0);
 ZBUS_CHAN_ADD_OBS(zlrs_mode_chan, zlrs_led_sub, 0);
+ZBUS_CHAN_ADD_OBS(zlrs_data_chan, zlrs_led_sub, 0);
 
 /* The board's status pixel: NULL when this board has no `zlrs-led` alias or the node is off */
 static const struct device *const led_strip = DEVICE_DT_GET_OR_NULL(DT_ALIAS(zlrs_led));
@@ -172,7 +104,8 @@ static int led_write(struct zlrs_led_color color)
 	if (led_strip_update_rgb(led_strip, pixels, LED_PIXELS) != 0) {
 		if (!error_logged) {
 			error_logged = true;
-			LOG_ERR("led strip update failed (%s); status led is stale", led_strip->name);
+			LOG_ERR("led strip update failed (%s); status led is stale",
+				led_strip->name);
 		}
 
 		return -1;
@@ -187,6 +120,7 @@ static void led_thread(void *p1, void *p2, void *p3)
 	struct zlrs_link_status link = {0};
 	struct zlrs_alerts alerts = {0};
 	struct zlrs_mode mode = {0};
+	struct zlrs_data_status data = {0};
 	uint32_t drop_bytes = 0U;
 	uint32_t drop_ms = 0U;
 	uint32_t mgmt_since = 0U;
@@ -224,12 +158,13 @@ static void led_thread(void *p1, void *p2, void *p3)
 		(void)zbus_chan_read(&zlrs_link_chan, &link, K_NO_WAIT);
 		(void)zbus_chan_read(&zlrs_alert_chan, &alerts, K_NO_WAIT);
 		(void)zbus_chan_read(&zlrs_mode_chan, &mode, K_NO_WAIT);
+		(void)zbus_chan_read(&zlrs_data_chan, &data, K_NO_WAIT);
 
 		const uint32_t now_ms = k_uptime_get_32();
 
 		/* A drop is a change in the cumulative counter; how long to show it is our decision */
-		if (alerts.data_drop_bytes != drop_bytes) {
-			drop_bytes = alerts.data_drop_bytes;
+		if (alerts.data_drop_bytes + data.dropped != drop_bytes) {
+			drop_bytes = alerts.data_drop_bytes + data.dropped;
 			drop_ms = now_ms;
 		}
 
@@ -243,11 +178,11 @@ static void led_thread(void *p1, void *p2, void *p3)
 		 * followed by recent drops and the underlying link state. */
 		const bool alarm = alerts.failsafe || alerts.fault;
 		const struct zlrs_led_frame_input in = {
-			.mgmt_mode = mgmt_was &&
-				       (uint32_t)(now_ms - mgmt_since) >= LED_CONFIG_DELAY_MS,
+			.mgmt_mode =
+				mgmt_was && (uint32_t)(now_ms - mgmt_since) >= LED_CONFIG_DELAY_MS,
 			.failsafe = alarm,
-			.drop_recent = drop_bytes > 0U &&
-				       (uint32_t)(now_ms - drop_ms) < LED_DROP_HOLD_MS,
+			.drop_recent =
+				drop_bytes > 0U && (uint32_t)(now_ms - drop_ms) < LED_DROP_HOLD_MS,
 			.role_tx = link.role_tx,
 			.link_state = link.state,
 			.lq_percent = link.lq_percent,
@@ -265,4 +200,4 @@ static void led_thread(void *p1, void *p2, void *p3)
 }
 
 K_THREAD_DEFINE(zlrs_led_tid, LED_THREAD_STACK_SIZE, led_thread, NULL, NULL, NULL,
-	LED_THREAD_PRIORITY, 0, 0);
+		LED_THREAD_PRIORITY, 0, 0);

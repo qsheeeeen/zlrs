@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "link/rate.h"
+#include "rf/rate.h"
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -130,9 +130,10 @@ void zlrs_link_rate_tick(zlrs_link_t *control, uint32_t now_ms)
 #if IS_ENABLED(CONFIG_ZLRS_APP_RATE_ADAPT)
 	uint8_t next = 0U;
 
-	if (rate_update(&rate_ctl, control->stats.lq_percent, now_ms, &next)) {
+	if (rate_update(&rate_ctl, zlrs_link_get_stats(control)->lq_percent, now_ms, &next)) {
 		LOG_INF("rate tier -> %u bps (LQ %u%%)",
-			(unsigned int)rate_tiers[next].mod.rate_bps, control->stats.lq_percent);
+			(unsigned int)rate_tiers[next].mod.rate_bps,
+			zlrs_link_get_stats(control)->lq_percent);
 		zlrs_link_set_mod(control, &rate_tiers[next].mod);
 	}
 #else
