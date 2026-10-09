@@ -19,20 +19,20 @@ LOG_MODULE_REGISTER(zlrs_storage_settings, CONFIG_APP_LOG_LEVEL);
 static const struct {
 	uint16_t nvs_id;
 	uint8_t size;
-} settings[ZLRS_SETTING_COUNT] = {
-	[ZLRS_SETTING_ROOT_KEY] = {1U, ZLRS_KEY_LEN},
-	[ZLRS_SETTING_DEV_ID] = {2U, ZLRS_DEV_ID_LEN},
-	[ZLRS_SETTING_PAIRING] = {6U, sizeof(zlrs_storage_settings_pairing_t)},
-	[ZLRS_SETTING_BAUD] = {5U, sizeof(uint32_t)},
-	[ZLRS_SETTING_REGION] = {7U, sizeof(uint8_t)},
-	[ZLRS_SETTING_POWER] = {8U, sizeof(int8_t)},
-	[ZLRS_SETTING_ROLE] = {9U, sizeof(uint8_t)},
-	[ZLRS_SETTING_PROFILE] = {10U, sizeof(uint8_t)},
-	[ZLRS_SETTING_MODE] = {11U, sizeof(uint8_t)},
-	[ZLRS_SETTING_CONTROL_RATE] = {12U, sizeof(uint32_t)},
-	[ZLRS_SETTING_MODEL] = {13U, sizeof(uint8_t)},
-	[ZLRS_SETTING_MODEL_MATCH] = {14U, sizeof(uint8_t)},
-	[ZLRS_SETTING_CRSF_TELEMETRY] = {15U, sizeof(uint8_t)},
+} settings[ZLRS_CONFIG_KEY_COUNT] = {
+	[ZLRS_CONFIG_MODE] = {11U, sizeof(uint8_t)},
+	[ZLRS_CONFIG_DATA_BAUD] = {5U, sizeof(uint32_t)},
+	[ZLRS_CONFIG_REGION] = {7U, sizeof(uint8_t)},
+	[ZLRS_CONFIG_POWER] = {8U, sizeof(int8_t)},
+	[ZLRS_CONFIG_ROLE] = {9U, sizeof(uint8_t)},
+	[ZLRS_CONFIG_PROFILE] = {10U, sizeof(uint8_t)},
+	[ZLRS_CONFIG_CONTROL_RATE] = {12U, sizeof(uint32_t)},
+	[ZLRS_CONFIG_MODEL] = {13U, sizeof(uint8_t)},
+	[ZLRS_CONFIG_MODEL_MATCH] = {14U, sizeof(uint8_t)},
+	[ZLRS_CONFIG_TELEMETRY] = {15U, sizeof(uint8_t)},
+	[ZLRS_CONFIG_ROOT_KEY] = {1U, ZLRS_KEY_LEN},
+	[ZLRS_CONFIG_DEV_ID] = {2U, ZLRS_DEV_ID_LEN},
+	[ZLRS_CONFIG_PAIRING] = {6U, sizeof(zlrs_storage_settings_pairing_t)},
 };
 
 #define NVS_SECTOR_SIZE 4096U
@@ -111,45 +111,45 @@ static int write_record(uint16_t id, const void *data, size_t len)
 	return (rc < 0) ? (int)rc : -EIO;
 }
 
-size_t zlrs_storage_settings_size(enum zlrs_setting id)
+size_t zlrs_storage_settings_size(enum zlrs_config_key key)
 {
-	if (id >= ZLRS_SETTING_COUNT) {
+	if ((unsigned int)key >= ZLRS_CONFIG_KEY_COUNT) {
 		return 0U;
 	}
 
-	return settings[id].size;
+	return settings[key].size;
 }
 
-int zlrs_storage_settings_load(enum zlrs_setting id, void *out, size_t len)
+int zlrs_storage_settings_load(enum zlrs_config_key key, void *out, size_t len)
 {
-	if (id >= ZLRS_SETTING_COUNT || len != settings[id].size) {
+	if ((unsigned int)key >= ZLRS_CONFIG_KEY_COUNT || len != settings[key].size) {
 		return -EINVAL;
 	}
 
-	return read_record(settings[id].nvs_id, out, len);
+	return read_record(settings[key].nvs_id, out, len);
 }
 
-int zlrs_storage_settings_save(enum zlrs_setting id, const void *value, size_t len)
+int zlrs_storage_settings_save(enum zlrs_config_key key, const void *value, size_t len)
 {
-	if (id >= ZLRS_SETTING_COUNT || len != settings[id].size) {
+	if ((unsigned int)key >= ZLRS_CONFIG_KEY_COUNT || len != settings[key].size) {
 		return -EINVAL;
 	}
 
-	return write_record(settings[id].nvs_id, value, len);
+	return write_record(settings[key].nvs_id, value, len);
 }
 
-int zlrs_storage_settings_erase(enum zlrs_setting id)
+int zlrs_storage_settings_erase(enum zlrs_config_key key)
 {
 	int rc;
 
-	if (id >= ZLRS_SETTING_COUNT) {
+	if ((unsigned int)key >= ZLRS_CONFIG_KEY_COUNT) {
 		return -EINVAL;
 	}
 	if (!ready) {
 		return -1;
 	}
 
-	rc = nvs_delete(&fs, settings[id].nvs_id);
+	rc = nvs_delete(&fs, settings[key].nvs_id);
 
 	/* A missing record counts as success: erasing is what removes it */
 	return (rc == 0 || rc == -ENOENT) ? 0 : rc;
@@ -157,8 +157,8 @@ int zlrs_storage_settings_erase(enum zlrs_setting id)
 
 int zlrs_storage_settings_erase_all(void)
 {
-	for (size_t i = 0U; i < ZLRS_SETTING_COUNT; i++) {
-		const int rc = zlrs_storage_settings_erase((enum zlrs_setting)i);
+	for (size_t i = 0U; i < ZLRS_CONFIG_KEY_COUNT; i++) {
+		const int rc = zlrs_storage_settings_erase((enum zlrs_config_key)i);
 
 		if (rc != 0) {
 			return rc;

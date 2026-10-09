@@ -20,19 +20,6 @@ static zlrs_config_identity_t identity;
 static bool publication_pending;
 static bool identity_reset_pending;
 
-static const enum zlrs_setting records[] = {
-	[ZLRS_CONFIG_MODE] = ZLRS_SETTING_MODE,
-	[ZLRS_CONFIG_DATA_BAUD] = ZLRS_SETTING_BAUD,
-	[ZLRS_CONFIG_REGION] = ZLRS_SETTING_REGION,
-	[ZLRS_CONFIG_POWER] = ZLRS_SETTING_POWER,
-	[ZLRS_CONFIG_ROLE] = ZLRS_SETTING_ROLE,
-	[ZLRS_CONFIG_PROFILE] = ZLRS_SETTING_PROFILE,
-	[ZLRS_CONFIG_CONTROL_RATE] = ZLRS_SETTING_CONTROL_RATE,
-	[ZLRS_CONFIG_MODEL] = ZLRS_SETTING_MODEL,
-	[ZLRS_CONFIG_MODEL_MATCH] = ZLRS_SETTING_MODEL_MATCH,
-	[ZLRS_CONFIG_TELEMETRY] = ZLRS_SETTING_CRSF_TELEMETRY,
-};
-
 bool zlrs_config_profile_allowed(uint8_t profile)
 {
 	return profile == ZLRS_PROFILE_P1 ||
@@ -164,8 +151,8 @@ int zlrs_config_init(void)
 	/* Load the RF combination together, then validate it before any frontend sees it. */
 	uint8_t region = state.saved.region;
 	int8_t power = state.saved.power_dbm;
-	(void)zlrs_storage_settings_load(ZLRS_SETTING_REGION, &region, sizeof(region));
-	(void)zlrs_storage_settings_load(ZLRS_SETTING_POWER, &power, sizeof(power));
+	(void)zlrs_storage_settings_load(ZLRS_CONFIG_REGION, &region, sizeof(region));
+	(void)zlrs_storage_settings_load(ZLRS_CONFIG_POWER, &power, sizeof(power));
 	if (power >= ZLRS_CONFIG_POWER_MIN_DBM && power <= ZLRS_CONFIG_POWER_MAX_DBM &&
 	    zlrs_region_validate(zlrs_region_get(region), ZLRS_RF_DESIGN, power) == 0) {
 		state.saved.region = region;
@@ -177,9 +164,9 @@ int zlrs_config_init(void)
 		}
 		uint32_t wide = 0U;
 		uint8_t byte = 0U;
-		const size_t size = zlrs_storage_settings_size(records[key]);
+		const size_t size = zlrs_storage_settings_size(key);
 		void *out = size == sizeof(wide) ? (void *)&wide : (void *)&byte;
-		if (zlrs_storage_settings_load(records[key], out, size) == (int)size) {
+		if (zlrs_storage_settings_load(key, out, size) == (int)size) {
 			zlrs_config_values_t candidate = state.saved;
 			if (assign(&candidate, key, size == sizeof(wide) ? wide : byte) == 0) {
 				state.saved = candidate;
@@ -188,21 +175,21 @@ int zlrs_config_init(void)
 	}
 	state.active = state.saved;
 	identity.identity_valid =
-		zlrs_storage_settings_load(ZLRS_SETTING_DEV_ID, identity.dev_id,
+		zlrs_storage_settings_load(ZLRS_CONFIG_DEV_ID, identity.dev_id,
 					   sizeof(identity.dev_id)) == sizeof(identity.dev_id) &&
 		zlrs_storage_settings_dev_id_valid(identity.dev_id);
 	if (!identity.identity_valid) {
 		identity.identity_valid = zlrs_storage_settings_new_dev_id(identity.dev_id);
 		if (identity.identity_valid) {
-			(void)zlrs_storage_settings_save(ZLRS_SETTING_DEV_ID, identity.dev_id,
+			(void)zlrs_storage_settings_save(ZLRS_CONFIG_DEV_ID, identity.dev_id,
 							 sizeof(identity.dev_id));
 		}
 	}
 	identity.configured =
-		zlrs_storage_settings_load(ZLRS_SETTING_ROOT_KEY, identity.root_key,
+		zlrs_storage_settings_load(ZLRS_CONFIG_ROOT_KEY, identity.root_key,
 					   sizeof(identity.root_key)) == sizeof(identity.root_key);
 	identity.paired =
-		zlrs_storage_settings_load(ZLRS_SETTING_PAIRING, &identity.pairing,
+		zlrs_storage_settings_load(ZLRS_CONFIG_PAIRING, &identity.pairing,
 					   sizeof(identity.pairing)) == sizeof(identity.pairing);
 	changed();
 	return rc;
@@ -216,15 +203,13 @@ int zlrs_config_set(enum zlrs_config_key key, int32_t value, bool persist)
 		return -EINVAL;
 	}
 	if (persist) {
-		const enum zlrs_setting record = records[key];
 		const uint32_t wide = value;
 		const uint8_t byte = value;
+		const size_t size = zlrs_storage_settings_size(key);
 		zlrs_rf_pause();
 		const int saved = zlrs_storage_settings_save(
-			record,
-			zlrs_storage_settings_size(record) == sizeof(wide) ? (const void *)&wide
-									   : (const void *)&byte,
-			zlrs_storage_settings_size(record));
+			key, size == sizeof(wide) ? (const void *)&wide : (const void *)&byte,
+			size);
 		zlrs_rf_resume();
 		if (saved != 0) {
 			return -EIO;
@@ -244,7 +229,7 @@ int zlrs_config_set(enum zlrs_config_key key, int32_t value, bool persist)
 int zlrs_config_set_root_key(const uint8_t *key)
 {
 	zlrs_rf_pause();
-	const int rc = zlrs_storage_settings_save(ZLRS_SETTING_ROOT_KEY, key, ZLRS_KEY_LEN);
+	const int rc = zlrs_storage_settings_save(ZLRS_CONFIG_ROOT_KEY, key, ZLRS_KEY_LEN);
 	if (rc == 0) {
 		memcpy(identity.root_key, key, ZLRS_KEY_LEN);
 		identity.configured = true;
@@ -261,7 +246,7 @@ int zlrs_config_save_pairing(const zlrs_config_pairing_t *pairing)
 		return 0;
 	}
 	zlrs_rf_pause();
-	const int rc = zlrs_storage_settings_save(ZLRS_SETTING_PAIRING, pairing, sizeof(*pairing));
+	const int rc = zlrs_storage_settings_save(ZLRS_CONFIG_PAIRING, pairing, sizeof(*pairing));
 	zlrs_rf_resume();
 	if (rc == 0) {
 		identity.pairing = *pairing;
@@ -278,9 +263,9 @@ int zlrs_config_new_identity(void)
 		return -ENODEV;
 	}
 	zlrs_rf_pause();
-	int rc = zlrs_storage_settings_save(ZLRS_SETTING_DEV_ID, id, sizeof(id));
+	int rc = zlrs_storage_settings_save(ZLRS_CONFIG_DEV_ID, id, sizeof(id));
 	if (rc == 0) {
-		rc = zlrs_storage_settings_erase(ZLRS_SETTING_PAIRING);
+		rc = zlrs_storage_settings_erase(ZLRS_CONFIG_PAIRING);
 		memcpy(identity.dev_id, id, sizeof(id));
 		identity.identity_valid = true;
 		identity.paired = false;
@@ -294,7 +279,7 @@ int zlrs_config_new_identity(void)
 int zlrs_config_erase_pairing(void)
 {
 	zlrs_rf_pause();
-	const int rc = zlrs_storage_settings_erase(ZLRS_SETTING_PAIRING);
+	const int rc = zlrs_storage_settings_erase(ZLRS_CONFIG_PAIRING);
 	zlrs_rf_resume();
 	if (rc == 0) {
 		identity.paired = false;

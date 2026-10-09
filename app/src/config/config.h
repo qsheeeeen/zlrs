@@ -19,6 +19,11 @@ enum zlrs_config_key {
 	ZLRS_CONFIG_MODEL,
 	ZLRS_CONFIG_MODEL_MATCH,
 	ZLRS_CONFIG_TELEMETRY,
+	/* Identity records use typed operations rather than zlrs_config_set(). */
+	ZLRS_CONFIG_ROOT_KEY,
+	ZLRS_CONFIG_DEV_ID,
+	ZLRS_CONFIG_PAIRING,
+	ZLRS_CONFIG_KEY_COUNT,
 };
 
 typedef struct {
