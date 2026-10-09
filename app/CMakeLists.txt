@@ -18,6 +18,8 @@ target_sources(app PRIVATE
   ${zlrs_app_dir}/src/rf/power.c
   ${zlrs_app_dir}/src/rf/rate.c
   ${zlrs_app_dir}/src/main.c
+  ${zlrs_app_dir}/src/runtime/runtime.c
+  ${zlrs_app_dir}/src/runtime/update.c
   ${zlrs_app_dir}/src/rf/rf.c
   ${zlrs_app_dir}/src/config/config.c
   ${zlrs_app_dir}/src/platform/sha256.c

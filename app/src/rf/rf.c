@@ -11,18 +11,10 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/logging/log_ctrl.h>
 #include <zephyr/random/random.h>
-#include <zephyr/sys/reboot.h>
 
 #include <string.h>
 #include <errno.h>
 
-#if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
-#include <zephyr/retention/bootmode.h>
-#include <zephyr/dfu/mcuboot.h>
-#include <zephyr/storage/flash_map.h>
-#endif
-
-#include "mgmt/mode.h"
 #include "config/config.h"
 #include "config/identity.h"
 #include "crsf/serial.h"
@@ -34,11 +26,9 @@
 #include "rf/rate.h"
 #include "ui/button.h"
 #include "platform/caps.h"
-#include "platform/recovery.h"
 #include "platform/slot_timer.h"
 #include "platform/watchdog.h"
 #include "platform/radio.h"
-#include "storage/log.h"
 #include "zlrs/mgmt/mgmt.h"
 
 #include "zlrs/link/link.h"
@@ -56,7 +46,6 @@ static bool links_ready;
 static bool radio_ready;
 static uint32_t pause_depth;
 static int pause_priority;
-static uint32_t reboot_ms;
 
 /* Control frame plan: derived at boot from Kconfig and the region duty cap, see plan_init() */
 static uint32_t control_rate_hz;
@@ -1145,10 +1134,6 @@ static void report(uint32_t now_ms)
  * RF state publication: the facts other parts of the application render or report
  * (rf/rf.h). Facts only — the LED thread turns them into colours (doc/10-ux.md).
  */
-#if ZLRS_MGMT_ENABLED
-static void enter_management_mode(void);
-#endif
-
 /*
  * State on a fatal configuration error (region vs radio-design mismatch):
  * alarm but stay reachable. The failsafe LED pattern is shown while the management port remains
@@ -1160,21 +1145,14 @@ static void enter_management_mode(void);
  * MCUboot rolls back — a flashable fault state is no reason to keep a broken build running.
  */
 
-static void fault_loop(void)
+static void fault_loop(const zlrs_rf_owner_hooks_t *hooks)
 {
 	const struct zlrs_alerts alerts = {
 		.fault = true,
 		.data_drop_bytes = zlrs_link_get_stats(&link_data)->data_drop_bytes,
 	};
 
-#if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
-	if (!boot_is_img_confirmed()) {
-		/* Give the host 2 s to read the log or step in, then reset to roll back */
-		LOG_ERR("fault on unconfirmed image: rebooting to roll back");
-		k_msleep(2000);
-		sys_reboot(SYS_REBOOT_COLD);
-	}
-#endif
+	(void)hooks->before_frame(true);
 
 	/* The fault outranks link and drop indications and uses the failsafe pattern
 	 * (app/src/ui/led.c). Nothing else is published here — the links stop, so their last
@@ -1189,12 +1167,8 @@ static void fault_loop(void)
 			alert_pending = false;
 		}
 
-#if ZLRS_MGMT_ENABLED
-		/* Management port alive: management mode, the recovery command and reflashing all still work */
-		if (zlrs_mgmt_poll_enter()) {
-			enter_management_mode();
-		}
-#endif
+		/* Management and rollback policy remain on the RF owner thread. */
+		(void)hooks->before_frame(true);
 
 		k_msleep(20);
 	}
@@ -1250,47 +1224,6 @@ static void broadcast_state(void)
 	}
 }
 
-/*
- * Image confirmation: an upgrade counts as successful only when the host really connected,
- * sent the explicit confirm command and got an answer — that flag is the whole test/revert
- * verdict. Upgrades run with test semantics: if the host never confirms, or the image never
- * comes up at all, the reset makes MCUboot roll back. See doc/07-firmware.md 6.
- */
-static void confirm_image(void)
-{
-#if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)
-	static bool confirmed;
-
-	if (confirmed) {
-		return;
-	}
-
-	/* Already confirmed (an ordinary boot, not an upgrade): nothing to do */
-	if (boot_is_img_confirmed()) {
-		confirmed = true;
-		return;
-	}
-
-	if (zlrs_mgmt_mode_image_confirmed()) {
-		zlrs_rf_pause();
-		const int rc = boot_write_img_confirmed();
-		zlrs_rf_resume();
-		if (rc == 0) {
-			confirmed = true;
-			LOG_INF("image confirmed by host: this build stays after a reset");
-		} else {
-			LOG_ERR("image confirm failed; MCUboot will revert on next reset");
-		}
-	} else if (zlrs_slot_timer_now_ms() >=
-		   (uint32_t)CONFIG_ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS) {
-		/* Never confirmed by the host: reset and let MCUboot roll back instead of clinging on */
-		LOG_ERR("upgrade not confirmed by host: rebooting to roll back");
-		sys_reboot(SYS_REBOOT_COLD);
-	}
-#else
-#endif
-}
-
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
 void zlrs_rf_diagnostics_capture(zlrs_rf_diagnostics_t *out)
 {
@@ -1331,12 +1264,8 @@ void zlrs_rf_diagnostics_capture(zlrs_rf_diagnostics_t *out)
 }
 #endif
 
-#if ZLRS_MGMT_ENABLED
-/* Run one management session (ends on EXIT or idle timeout), then resume normal mode. Shared. */
-static void enter_management_mode(void)
+void zlrs_rf_log_snapshot(void)
 {
-	zlrs_rf_pause();
-	LOG_WRN("entering management mode");
 	/* Capture production RF facts only at a safe boundary, before log persistence. */
 	const zlrs_link_stats_t *stats = zlrs_link_get_stats(&link_data);
 	const zlrs_link_diagnostics_t data = zlrs_link_get_diagnostics(&link_data);
@@ -1373,27 +1302,12 @@ static void enter_management_mode(void)
 			endpoints[i].rx_queued, endpoints[i].tx_queued, endpoints[i].rx_dropped);
 	}
 
-	/* 0 = EXIT, 1 = timeout, -1 = no usable port: the log has to tell them apart */
-	{
-		const int rc = zlrs_mgmt_mode_run();
-
-		if (rc != 0) {
-			LOG_WRN("management mode ended without EXIT (rc %d)", rc);
-		}
-	}
-	zlrs_link_crsf_service_reset();
-	TRACE('2');
-
-	LOG_INF("management mode done, back to normal");
-	/* Confirmation and log persistence both write flash; finish them before resuming RF. */
-	confirm_image();
-	log_flush();
-	zlrs_rf_resume();
 }
 
-/* ---- application-side actions the management protocol triggers ----------------- */
-
-#endif /* ZLRS_MGMT_ENABLED */
+void zlrs_rf_management_return(void)
+{
+	TRACE('2');
+}
 
 zlrs_rf_status_t zlrs_rf_status(void)
 {
@@ -1520,16 +1434,6 @@ void zlrs_rf_resume(void)
 		zlrs_link_crsf_service_reset();
 	}
 	k_thread_priority_set(k_current_get(), pause_priority);
-}
-
-void zlrs_rf_request_reboot(uint32_t delay_ms)
-{
-	reboot_ms = zlrs_slot_timer_now_ms() + MAX(delay_ms, 1U);
-}
-
-void zlrs_rf_cancel_reboot(void)
-{
-	reboot_ms = 0U;
 }
 
 int zlrs_rf_init(void)
@@ -1668,10 +1572,10 @@ int zlrs_rf_init(void)
 	return 0;
 }
 
-int zlrs_rf_run(void)
+int zlrs_rf_run(const zlrs_rf_owner_hooks_t *hooks)
 {
 	if (!radio_ready) {
-		fault_loop();
+		fault_loop(hooks);
 	}
 	LOG_INF("entering superframe loop: %u Hz, %s / %s (%s)", (unsigned int)control_rate_hz,
 		ZLRS_CONTROL_ENABLED ? "control on" : "control off",
@@ -1679,7 +1583,7 @@ int zlrs_rf_run(void)
 
 	/*
 	 * Init is done at this point (ports, NVS, links, USB). Image confirmation does not happen
-	 * here: after an upgrade it waits for the host's explicit confirm (see confirm_image).
+	 * here: after an upgrade it waits for the host's explicit confirm in runtime/update.c.
 	 */
 
 	log_flush();
@@ -1737,19 +1641,12 @@ int zlrs_rf_run(void)
 #endif
 
 		zlrs_watchdog_feed();
-		confirm_image();
-
-#if ZLRS_MGMT_ENABLED
-		/* All management-mode entries converge here: management port command, shell, debug magic.
-		 * During the session radio work pauses and the data port drops bytes; the clock continues. */
-		if (zlrs_mgmt_poll_enter()) {
+		/* A management session pauses radio work while the absolute clock continues. */
+		if (hooks->before_frame(false)) {
 			/* This frame has not run any slots; include it in the catch-up after the pause. */
 			consumed_frame--;
-			/* Keep the absolute clock running: catch up hop state after this pause. */
-			enter_management_mode();
 			continue;
 		}
-#endif
 
 		/*
 		 * The timestamp must be re-read after a management session. Anything stamped inside the session
@@ -1799,9 +1696,7 @@ int zlrs_rf_run(void)
 		zlrs_config_poll();
 		zlrs_link_data_poll();
 		report(now_ms);
-		if (reboot_ms != 0U && (int32_t)(now_ms - reboot_ms) >= 0) {
-			sys_reboot(SYS_REBOOT_COLD);
-		}
+		hooks->after_frame(now_ms);
 
 		if (!role_tx) {
 			const zlrs_link_t *const clock_link = active_link();

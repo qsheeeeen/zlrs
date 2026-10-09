@@ -122,7 +122,9 @@ subsys/usb/            USB device stack: usbd context plus every CDC in devicetr
 subsys/bootguard/      bootloader-side watchdog handling
 drivers/entropy/       the RP2350 TRNG driver we own
 app/src/               Zephyr application, one directory per layer:
-  main.c                 startup assembly
+  main.c                 entry point
+  runtime/               startup assembly, management maintenance sessions,
+                         image confirmation/rollback and delayed reboot
   rf/                    links, air transports, superframe, pairing/session, rate/power,
                          maintenance and copied RF diagnostics
   crsf/                  serial.c: UART/CDC parser, queues and single-wire timing
@@ -155,8 +157,10 @@ The application binds directly to Zephyr and RP2350. `crsf/serial.c`, `data/data
 USP RAL / LR20xx driver; `platform/slot_timer.c` uses TIMER1. `rf/rf.c` owns both link instances,
 executes their radio requests and coordinates timing, policies and maintenance.
 
-`main` initializes configuration, management, RF and the serial frontends. It passes copied
-boot capabilities to CRSF. CRSF exchanges latest RC/TLM samples and complete reliable messages
+`main` delegates startup to `runtime/`, which initializes configuration, management, RF and
+the serial frontends. Runtime passes copied boot capabilities to CRSF and owns image confirmation,
+rollback, management sessions and delayed reboot. RF calls runtime hooks only at owner-thread
+boundaries; RF keeps link and superframe timing. CRSF exchanges latest RC/TLM samples and complete reliable messages
 with RF through functions; RF sees opaque service messages and has no CRSF codec dependency.
 The CRSF adapter validates frames, routes them and encodes device/menu responses using the same
 configuration and pairing business operations as management and buttons. All business calls
@@ -310,7 +314,7 @@ the snapshot is captured only on request, outside the radio hot path.
 | 配置 | 配置业务的默认值、组合校验、生效／持久化规则、身份与保存记录、期望值、待生效标记和版本 | 对多个前端提供相同的读取／修改接口，协调所属模块应用设置；发布自己的配置变化与待生效状态 |
 | UI | 按钮 GPIO／消抖／手势、LED GPIO／显示优先级／颜色／节奏 | 按钮发布自己的输入 channel；RF 在 owner 线程接收请求；LED 直接订阅各业务模块的状态 |
 
-`main` 负责初始化与装配。Zephyr／RP2350、USP radio、slot timer、SHA、entropy、
+`runtime/` 负责初始化与装配、管理会话维护窗口、镜像确认／回滚和延迟重启。Zephyr／RP2350、USP radio、slot timer、SHA、entropy、
 watchdog、MCUboot 和日志介质是具体硬件支撑；模块按实际需要直接调用。
 CRSF／DATA 的 UART／USB 和 ISR 队列归各自模块，不重复交给平台层管理。
 配置的 NVS 实现可以作为配置模块的内部文件，不额外增加只转发读写的公共层。

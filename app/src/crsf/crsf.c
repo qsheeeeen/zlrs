@@ -14,6 +14,7 @@
 #include "platform/slot_timer.h"
 #include "config/config.h"
 #include "rf/rf.h"
+#include "runtime/runtime.h"
 #include "zlrs/crsf/device.h"
 #include "zlrs/mgmt/mgmt.h"
 #include "zlrs/region/region.h"
@@ -150,10 +151,10 @@ static bool crsf_command(void *ctx, uint8_t group, uint8_t command, const uint8_
 	case 0x0BU:
 		return zlrs_config_set(ZLRS_CONFIG_TELEMETRY, command == 0x0AU, false) == 0;
 	case 0x80U:
-		zlrs_rf_request_reboot(2000U);
+		zlrs_runtime_request_reboot(2000U);
 		return true;
 	case 0x81U:
-		zlrs_rf_cancel_reboot();
+		zlrs_runtime_cancel_reboot();
 		return true;
 	default:
 		return false;

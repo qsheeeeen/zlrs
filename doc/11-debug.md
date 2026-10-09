@@ -200,7 +200,7 @@ complete data path, including radio scheduling and ARQ, rather than raw PHY fram
   bands — the numbers look like a radio fault and mean nothing.
 - **How a bench board is flashed, and why the image must be confirmed**: `smpmgr upgrade --slot 1
   <img>` writes the secondary slot and marks a test swap, MCUboot swaps it in, and the application
-  only makes that permanent once the host confirms (`confirm_image()` in `app/src/rf/rf.c`). Until
+  only makes that permanent once the host confirms (`zlrs_runtime_update_poll()` in `app/src/runtime/update.c`). Until
   then it reboots itself after `CONFIG_ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS` (60 s) so MCUboot can
   revert — and with nothing valid in the other slot, MCUboot ends up in serial recovery instead of
   booting the application. From the host that reads as "the board reboots every minute and then

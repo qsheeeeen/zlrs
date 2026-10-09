@@ -55,8 +55,13 @@ typedef struct {
 /* These functions execute on the RF owner thread, including frontend callbacks. */
 /* Boot once: 0 only when RF is ready, negative errno on failure. */
 int zlrs_rf_init(void);
-/* Also serves the fault/recovery loop when initialization failed. */
-int zlrs_rf_run(void);
+/* Application policy runs at RF owner boundaries, including the fault/recovery loop. */
+typedef struct {
+	/* Return true if a management session consumed this frame. */
+	bool (*before_frame)(bool fault);
+	void (*after_frame)(uint32_t now_ms);
+} zlrs_rf_owner_hooks_t;
+int zlrs_rf_run(const zlrs_rf_owner_hooks_t *hooks);
 zlrs_rf_status_t zlrs_rf_status(void);
 void zlrs_rf_control_input(const uint8_t *payload, uint8_t len);
 void zlrs_rf_telemetry(const uint8_t *payload, uint8_t len);
@@ -69,8 +74,9 @@ void zlrs_rf_root_key(const uint8_t key[ZLRS_KEY_LEN]);
 /* Nestable safe boundary: cancel radio launch and invalidate preloaded/stale control. */
 void zlrs_rf_pause(void);
 void zlrs_rf_resume(void);
-void zlrs_rf_request_reboot(uint32_t delay_ms);
-void zlrs_rf_cancel_reboot(void);
+/* Captured only while paused at a management boundary. */
+void zlrs_rf_log_snapshot(void);
+void zlrs_rf_management_return(void);
 #if defined(CONFIG_ZLRS_APP_DEBUG)
 /* Debug shell receives a copy; all link/configuration APIs above remain owner-thread only. */
 void zlrs_rf_trace(char *out, size_t capacity);
