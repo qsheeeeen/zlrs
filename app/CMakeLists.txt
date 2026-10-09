@@ -33,6 +33,7 @@ target_sources(app PRIVATE
 )
 
 target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG_SHELL app PRIVATE ${zlrs_app_dir}/src/mgmt/shell.c)
+target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG app PRIVATE ${zlrs_app_dir}/src/rf/diagnostics.c)
 
 # App-internal headers are included the way they sit on disk: "platform/radio.h",
 # "data/data.h", "platform/caps.h", ... (the layers are described in doc/06-architecture.md 5).

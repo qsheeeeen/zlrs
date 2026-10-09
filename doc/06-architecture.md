@@ -288,6 +288,11 @@ no CRSF field to travel in, so they are counted and exposed through the manageme
 `STATUS` response instead. Debug images can additionally print a 1 Hz `stats:` / `air:` line
 (`CONFIG_ZLRS_APP_DEBUG_STATS_LOG`).
 
+Management debug reports are formatted in `app/src/rf/diagnostics.c`. At the start of a
+report, the RF owner copies link observations and scheduling measurements into a snapshot;
+subsequent chunks read the cached text. Formatting never borrows mutable link storage, and
+the snapshot is captured only on request, outside the radio hot path.
+
 ## 8. 模块职责与通信
 
 本节描述当前的模块边界和通信契约。
