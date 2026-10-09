@@ -1975,9 +1975,9 @@ int zlrs_rf_init(void)
 	if (!ensure_device_id()) {
 		TRACE('I');
 		LOG_ERR("no device id: staying off the air until one can be made");
-	} else {
-		TRACE('D');
+		return -ENODEV;
 	}
+	TRACE('D');
 
 	/*
 	 * Region and power ceiling are runtime parameters (the management protocol writes them): use the
@@ -1994,7 +1994,7 @@ int zlrs_rf_init(void)
 	region = zlrs_region_get(region_id);
 	if (region == NULL) {
 		LOG_ERR("unknown region %d", region_id);
-		return 0;
+		return -EINVAL;
 	}
 	/* The first two things to look at on the bench: which SKU this board is, which region it runs */
 	LOG_INF("board: sub-G %s (band %d), region %s",
@@ -2029,7 +2029,7 @@ int zlrs_rf_init(void)
 		if (rc == -5) {
 			LOG_ERR("region %s needs another sub-G sku (board band %d)", region->name,
 				ZLRS_RF_BAND);
-			fault_loop();
+			return -EINVAL;
 		}
 		if (rc == -2) {
 			LOG_WRN("region %s caps tx power at %d dBm (configured %d)", region->name,
@@ -2042,9 +2042,10 @@ int zlrs_rf_init(void)
 	/* The status LED comes up on its own thread and reads the state it renders: nothing to
 	 * init here (app/src/ui/led.c, rf/rf.h) */
 
-	if (zlrs_slot_timer_init() != 0) {
-		LOG_ERR("hardware slot timer init failed");
-		return 0;
+	int rc = zlrs_slot_timer_init();
+	if (rc != 0) {
+		LOG_ERR("hardware slot timer init failed (%d)", rc);
+		return rc;
 	}
 
 	TRACE('1');
@@ -2054,10 +2055,11 @@ int zlrs_rf_init(void)
 	load_identity();
 
 	TRACE('c');
-	if (zlrs_radio_init() != 0) {
+	rc = zlrs_radio_init();
+	if (rc != 0) {
 		TRACE('X');
-		LOG_ERR("radio driver init failed");
-		return 0;
+		LOG_ERR("radio driver init failed (%d)", rc);
+		return rc;
 	}
 
 	radio_ready = true;

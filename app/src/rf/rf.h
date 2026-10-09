@@ -53,7 +53,9 @@ typedef struct {
 } zlrs_rf_status_t;
 
 /* These functions execute on the RF owner thread, including frontend callbacks. */
+/* Boot once: 0 only when RF is ready, negative errno on failure. */
 int zlrs_rf_init(void);
+/* Also serves the fault/recovery loop when initialization failed. */
 int zlrs_rf_run(void);
 zlrs_rf_status_t zlrs_rf_status(void);
 void zlrs_rf_control_input(const uint8_t *payload, uint8_t len);
