@@ -28,11 +28,8 @@
 		 * (see the partition table in this directory's README) */
 	};
 	aliases {
-		zlrs-crsf-port = &crsf_port;
 		lora-transceiver = &lora_core2021;
-		zlrs-control-uart = &uart0;
 		zlrs-data-uart = &uart1;
-		zlrs-control-cdc = &cdc_acm_uart0;
 		zlrs-data-cdc = &cdc_acm_uart1;
 		zlrs-mgmt-cdc = &cdc_acm_uart2;
 		zlrs-button = &zlrs_button;
@@ -43,14 +40,6 @@
 		/* The vendor USP samples (packet_error_rate_flrc and friends) expect this alias */
 		smtc-user-button = &zlrs_button;
 	};
-	crsf_port: crsf-port {
-		compatible = "zlrs,crsf-port";
-		release-timer = <&timer0>;
-		tx-gpios = <&gpio0 0 GPIO_ACTIVE_HIGH>;
-		handset-baud = <400000>;
-		fc-baud = <420000>;
-	};
-
 	buttons {
 		compatible = "gpio-keys";
 
@@ -89,14 +78,6 @@
  */
 &wdt0 {
 	status = "okay";
-};
-
-/* CRSF: GP0 = TX / GP1 = RX, to the handset or flight controller; 420000 is CRSF's baud rate */
-&uart0 {
-	status = "okay";
-	current-speed = <420000>;
-	pinctrl-0 = <&uart0_default>;
-	pinctrl-names = "default";
 };
 
 /* Data port: passthrough, GP8 = TX / GP9 = RX */
@@ -151,21 +132,14 @@
 
 /*
  * The CDCs on USB (doc/07-firmware.md 1):
- *   cdc_acm_uart0 = CRSF (alias zlrs-control-cdc)
  *   cdc_acm_uart1 = data port (alias zlrs-data-cdc)
  *   cdc_acm_uart2 = management port (alias zlrs-mgmt-cdc): management protocol, enter management mode
  *   cdc_acm_uart3 = console (kernel log + shell): off by default, the debug overlay enables it
  *
- * The first two are the links' USB endpoints and compete with their UARTs (app/src/ports/serial.c);
- * the management port and console exist on USB only.
+ * The data CDC competes with its UART; management and console exist on USB only.
  */
 zephyr_udc0: &usbd {
 	status = "okay";
-
-	cdc_acm_uart0: cdc_acm_uart0 {
-		compatible = "zephyr,cdc-acm-uart";
-		label = "zlrs CONTROL";
-	};
 
 	cdc_acm_uart1: cdc_acm_uart1 {
 		compatible = "zephyr,cdc-acm-uart";
@@ -436,11 +410,6 @@ zephyr_udc0: &usbd {
 };
 
 /* TIMER1 is dedicated to radio slot boundaries; SysTick remains the kernel clock. */
-/* UART line release uses the public counter API, separately from TIMER1 RF scheduling. */
-&timer0 {
-	status = "okay";
-};
-
 &timer1 {
 	interrupts = <4 0>, <5 0>, <6 0>, <7 0>;
 	compatible = "zlrs,rp2350-slot-timer";

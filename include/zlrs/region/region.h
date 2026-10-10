@@ -122,42 +122,6 @@ uint8_t zlrs_region_mix_level(const zlrs_region_t *region, uint32_t window_ms,
 uint32_t zlrs_region_max_frames_per_s_mod(const zlrs_region_t *region, const zlrs_mod_cfg_t *mod,
 					  uint16_t frame_len);
 
-/*
- * The control link's time plan: frame rate, frame period, per-slot budget and the telemetry
- * and data thinning factors. Two things bound the rate: the regional duty cap, and a frame
- * having to fit one RC frame out plus one telemetry frame in.
- */
-typedef struct {
-	uint32_t rate_hz; /* effective control frame rate */
-	uint32_t frame_period_us;
-	uint32_t slot_budget_us; /* wait budget per slot */
-	uint8_t tlm_every_n;     /* telemetry every n frames */
-	uint8_t data_every_n;    /* data window every n frames */
-	bool clamped_by_duty;    /* the regional duty cap lowered the rate */
-	bool clamped_by_airtime; /* airtime lowered the rate */
-} zlrs_control_plan_t;
-
-/*
- * Inputs to the control time plan. Grouped rather than positional because the modulation and
- * the two frame lengths plus the other link's reservation all change with hardware and region.
- */
-typedef struct {
-	const zlrs_region_t *region;
-	const zlrs_mod_cfg_t *mod; /* control link modulation */
-	uint32_t want_hz;          /* configured tier */
-	uint16_t frame_len;        /* RC frame bytes, header and tag included */
-	uint16_t tlm_len;          /* telemetry frame bytes; 0 = use frame_len */
-	/*
-	 * Reservation for the other link: give it its modulation and frame length and the plan
-	 * amortises it per frame through data_every_n (see zlrs_control_plan_t).
-	 * NULL = no reservation (control only).
-	 */
-	const zlrs_mod_cfg_t *other_mod;
-	uint16_t other_frame_len;
-} zlrs_plan_req_t;
-
-void zlrs_region_control_plan(const zlrs_plan_req_t *req, zlrs_control_plan_t *out);
-
 #ifdef __cplusplus
 }
 #endif

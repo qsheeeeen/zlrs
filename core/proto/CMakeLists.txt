@@ -8,5 +8,4 @@ zephyr_library_sources(
   fhss.c
   frame.c
   mod.c
-  tlm.c
 )

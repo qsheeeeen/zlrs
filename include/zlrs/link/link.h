@@ -23,17 +23,13 @@
 extern "C" {
 #endif
 
-/* Link kinds */
-#define ZLRS_LINK_CONTROL 0U
-#define ZLRS_LINK_DATA    1U
-
 /*
  * Pairing handshake (doc/08-protocol.md 3.3). The two ends share no slot phase while pairing, so
  * a message is heard or missed by luck: every step repeats until the next one shows up. The
  * initiator sends this many PAIR_CFM before it calls the handshake done.
  */
 #define ZLRS_PAIR_CFM_REPEATS    16U
-/* Frames between two listen windows on the pairing channel while SEARCHING (see control_slot) */
+/* Frames between two listen windows on the pairing channel while SEARCHING (see the DATA slot) */
 #define ZLRS_PAIR_SCAN_FRAMES    4U
 /*
  * Session confirm window. Same story as pairing: the two ends only share a slot phase once the
@@ -45,10 +41,8 @@ extern "C" {
 #define ZLRS_DATA_CONFIRM_FRAMES 16U
 
 /* Superframe slots, see doc/08-protocol.md 4.1 */
-#define ZLRS_SLOT_CTL_DOWN 0U /* TX -> RX: RC frame (the RX side is a receive window) */
-#define ZLRS_SLOT_CTL_UP   1U /* RX -> TX: TLM frame (the TX side is a receive window) */
-#define ZLRS_SLOT_DATA_A   2U /* first half of the data window: TX -> RX */
-#define ZLRS_SLOT_DATA_B   3U /* second half of the data window: RX -> TX */
+#define ZLRS_SLOT_DATA_A 2U /* first half of the data window: TX -> RX */
+#define ZLRS_SLOT_DATA_B 3U /* second half of the data window: RX -> TX */
 
 #include "zlrs/link/state.h"
 
@@ -57,7 +51,6 @@ extern "C" {
 #define ZLRS_RADIO_FAIL 1
 
 typedef struct {
-	uint8_t kind;   /* ZLRS_LINK_CONTROL / ZLRS_LINK_DATA */
 	uint8_t role;   /* ZLRS_ROLE_TX / ZLRS_ROLE_RX */
 	uint8_t domain; /* ZLRS_DOMAIN_*: the main hop table */
 	/*
@@ -90,6 +83,7 @@ typedef struct {
 	uint8_t arq;              /* 1 = passthrough uses the ARQ profile, 0 = best-effort */
 	/* ARQ retransmit timeout (ms). 0 = ZLRS_ARQ_TIMEOUT_MS, right for sub-ms FLRC frames */
 	uint16_t arq_timeout_ms;
+	uint16_t feedback_period_ms; /* empty DATA heartbeat while idle; 0 disables it */
 	/*
 	 * Per-frame hopping. 0 = stay on the sync channel (entry 0 of the hop table), which is how
 	 * layer isolation looks at timing and the hop table separately, see doc/11-debug.md 3.
@@ -102,13 +96,7 @@ typedef struct {
 	 * 3.
 	 */
 	uint8_t handshake;
-	/* Uplink telemetry slot on the control link. 0 = send nothing, open no receive window */
-	uint8_t telemetry;
-	/*
-	 * Cadence thinning (1 = every frame): at high control rates the telemetry and data windows
-	 * need not run every frame. Counted inside the link layer, so both ends stay in step.
-	 */
-	uint8_t tlm_every_n;
+	/* Cadence thinning (1 = every frame), counted on both peers. */
 	uint8_t data_every_n;
 	/*
 	 * Sub-band mix (0..3 -> 0/1/2/4 of every 4 slots on sub-G): the initial value, which the TX
@@ -121,17 +109,11 @@ typedef struct {
 	 * correct drift and notice a peer that changed sessions (reboot/re-pair) and re-handshake.
 	 */
 	uint8_t resync_every_n;
-	uint8_t model_id;
-	bool model_match;
 } zlrs_link_cfg_t;
 
 typedef struct {
-	void (*on_rc)(void *ctx, const uint8_t *payload, uint16_t len);
-	void (*on_tlm)(void *ctx, const uint8_t *payload, uint16_t len);
 	/* True only after the entire packet has been accepted; false keeps its ACK unchanged. */
 	bool (*on_data)(void *ctx, const uint8_t *data, uint16_t len);
-	/* false retains the peer's frame for retry instead of acknowledging a dropped frame. */
-	bool (*on_service)(void *ctx, const uint8_t *frame, uint8_t len);
 	void (*on_state)(void *ctx, uint8_t state);
 	void *ctx;
 } zlrs_link_events_t;
@@ -203,10 +185,7 @@ typedef struct {
  * hands over in the meantime; at 512 a single 512-byte write filled it and everything after that
  * was dropped before it ever reached the air.
  */
-#define ZLRS_LINK_TX_QUEUE_LEN      4096U
-#define ZLRS_LINK_TLM_MAX_LEN       32U
-#define ZLRS_LINK_SERVICE_MAX_LEN   64U
-#define ZLRS_LINK_SERVICE_QUEUE_LEN 8U
+#define ZLRS_LINK_TX_QUEUE_LEN 4096U
 
 /* Stop-and-wait ARQ: one outstanding DATA packet in each direction. */
 #define ZLRS_ARQ_TIMEOUT_MS  30U
@@ -303,19 +282,13 @@ typedef struct {
 	uint16_t tx_seq;
 	uint16_t last_rx_seq;
 	uint16_t lq_last_seq;
-	uint32_t frame_index; /* main slots run (CTL_DOWN on control, DATA_A on data) */
+	uint32_t frame_index; /* DATA_A slots run */
 	zlrs_fhss_t fhss;
 	/* Sub-band mix: current level, table version, default level, last-version timestamp */
 	uint8_t sub_mix;
 	uint8_t sub_mix_version;
 	uint8_t sub_mix_default;
 	uint32_t sub_mix_seen_ms;
-
-	/* payloads */
-	uint8_t rc_payload[ZLRS_RC_PAYLOAD_MAX_LEN];
-	uint16_t rc_len;
-	uint8_t tlm_payload[ZLRS_LINK_TLM_MAX_LEN];
-	uint16_t tlm_len;
 
 	/* passthrough queue */
 	uint8_t tx_queue[ZLRS_LINK_TX_QUEUE_LEN];
@@ -331,24 +304,14 @@ typedef struct {
 	uint8_t arq_used;
 	uint8_t arq_retries;
 	uint32_t arq_sent_ms;
+	uint32_t last_feedback_tx_ms;
+	int16_t peer_rssi_dbm;
+	uint8_t peer_lq_percent;
+	uint32_t last_peer_feedback_ms;
 	/* ARQ receiver: last accepted data sequence determines the ACK toggle. */
 	uint16_t arq_rx_seq;
 	bool arq_rx_started;
 	bool arq_ack_pending;
-
-	/* Opaque reliable messages; independent of the user DATA byte stream. */
-	uint8_t service_queue[ZLRS_LINK_SERVICE_QUEUE_LEN][ZLRS_LINK_SERVICE_MAX_LEN];
-	uint8_t service_sizes[ZLRS_LINK_SERVICE_QUEUE_LEN];
-	uint8_t service_head;
-	uint8_t service_count;
-	uint16_t service_tx_seq;
-	uint16_t service_rx_seq;
-	bool service_rx_started;
-	bool service_inflight;
-	bool service_ack_pending;
-	uint32_t service_sent_ms;
-	int8_t peer_power_dbm;
-	uint32_t last_rc_ms;
 
 	/* RX/TX buffers */
 	/* Word alignment keeps the hardware SHA backend on its word-feed path. */
@@ -371,10 +334,11 @@ typedef struct {
 	bool configured;
 	bool paired;
 	bool session_valid;
-	int8_t peer_power_dbm;
-	uint32_t last_rc_ms;
 	uint8_t dev_id[ZLRS_DEV_ID_LEN];
 	uint8_t peer_id[ZLRS_DEV_ID_LEN];
+	int16_t peer_rssi_dbm;
+	uint8_t peer_lq_percent;
+	uint32_t last_peer_feedback_ms;
 } zlrs_link_info_t;
 
 /* Diagnostic values, without borrowed protocol buffers or key material. */
@@ -450,10 +414,6 @@ void zlrs_link_set_mix(zlrs_link_t *link, uint8_t mix);
 /* Change TX power at runtime (dynamic power); effective with the next transaction */
 void zlrs_link_set_power(zlrs_link_t *link, int8_t tx_power_dbm);
 
-/* Change model policy; the application invalidates its pending serial samples separately. */
-void zlrs_link_set_model(zlrs_link_t *link, uint8_t model_id);
-void zlrs_link_set_model_match(zlrs_link_t *link, bool enabled);
-
 /*
  * Restore pairing from the stored record (no re-pairing after a reboot). pair_salt has to
  * match the peer's copy: the two exchanged nonces. Keys are recomputed, never stored.
@@ -496,10 +456,6 @@ void zlrs_link_tick(zlrs_link_t *link, uint32_t now_ms);
 /* Queue passthrough data (RX and TX), returns the number of bytes written */
 uint16_t zlrs_link_write(zlrs_link_t *link, const uint8_t *data, uint16_t len);
 
-/* Control link payloads: the TX side sets RC, the RX side sets TLM */
-void zlrs_link_set_rc(zlrs_link_t *link, const uint8_t *channels, uint16_t len);
-void zlrs_link_set_tlm(zlrs_link_t *link, const uint8_t *payload, uint16_t len);
-bool zlrs_link_write_service(zlrs_link_t *link, const uint8_t *frame, uint8_t len);
 bool zlrs_link_cancel_pair(zlrs_link_t *link, uint32_t now_ms);
 
 #ifdef __cplusplus

@@ -1,5 +1,5 @@
 /*
- * Dynamic TX power policy and application wiring.
+ * Dynamic DATA-link TX power policy and application wiring.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -22,13 +22,13 @@ struct power_ctl {
 	uint8_t lq_high;
 	uint8_t windows;
 	uint32_t hold_ms;
-	uint32_t tlm_timeout_ms;
+	uint32_t feedback_timeout_ms;
 	int8_t current_dbm;
 	uint8_t good;
 	uint8_t bad;
 	uint32_t last_change_ms;
-	uint32_t last_tlm_ms;
-	bool tlm_seen;
+	uint32_t last_feedback_ms;
+	bool feedback_seen;
 	uint32_t raises;
 	uint32_t lowers;
 	uint32_t fallbacks;
@@ -59,13 +59,13 @@ static void power_init(struct power_ctl *ctl, int8_t configured_dbm, int8_t floo
 	ctl->lq_high = 98U;
 	ctl->windows = 3U;
 	ctl->hold_ms = 2000U;
-	ctl->tlm_timeout_ms = 1000U;
+	ctl->feedback_timeout_ms = 1000U;
 	ctl->current_dbm = configured_dbm;
 	ctl->good = 0U;
 	ctl->bad = 0U;
 	ctl->last_change_ms = now_ms;
-	ctl->last_tlm_ms = now_ms;
-	ctl->tlm_seen = false;
+	ctl->last_feedback_ms = now_ms;
+	ctl->feedback_seen = false;
 	ctl->raises = 0U;
 	ctl->lowers = 0U;
 	ctl->fallbacks = 0U;
@@ -75,11 +75,12 @@ static bool power_update(struct power_ctl *ctl, bool valid, int16_t rssi_dbm, ui
 			 uint32_t now_ms, int8_t *out_dbm)
 {
 	if (valid) {
-		/* Fresh telemetry judges quality; only the polling path checks the timeout. */
-		ctl->tlm_seen = true;
-		ctl->last_tlm_ms = now_ms;
+		/* Fresh peer feedback judges quality; only the polling path checks the timeout. */
+		ctl->feedback_seen = true;
+		ctl->last_feedback_ms = now_ms;
 	} else {
-		if (!ctl->tlm_seen || (uint32_t)(now_ms - ctl->last_tlm_ms) < ctl->tlm_timeout_ms) {
+		if (!ctl->feedback_seen ||
+		    (uint32_t)(now_ms - ctl->last_feedback_ms) < ctl->feedback_timeout_ms) {
 			return false;
 		}
 
@@ -89,7 +90,7 @@ static bool power_update(struct power_ctl *ctl, bool valid, int16_t rssi_dbm, ui
 			return false;
 		}
 
-		/* Without telemetry, prefer link margin over power savings. */
+		/* Without feedback, prefer link margin over power savings. */
 		ctl->current_dbm = ctl->max_dbm;
 		ctl->fallbacks++;
 		ctl->last_change_ms = now_ms;
@@ -151,12 +152,12 @@ static bool power_update(struct power_ctl *ctl, bool valid, int16_t rssi_dbm, ui
 }
 static struct power_ctl power_ctl;
 
-/* Uplink quality from the latest telemetry; the verdict runs at 1 Hz, so stash it here */
+/* Peer quality from the latest DATA feedback; the verdict runs at 1 Hz, so stash it here */
 static struct {
 	int16_t rssi_dbm;
 	uint8_t lq;
 	bool fresh;
-} tlm_latest;
+} feedback_latest;
 #endif
 
 void zlrs_link_power_init(int8_t ceiling_dbm, int8_t floor_dbm)
@@ -169,38 +170,38 @@ void zlrs_link_power_init(int8_t ceiling_dbm, int8_t floor_dbm)
 #endif
 }
 
-void zlrs_link_power_telemetry(uint8_t rssi_neg_dbm, uint8_t lq_percent)
+void zlrs_link_power_feedback(int16_t rssi_dbm, uint8_t lq_percent)
 {
 #if IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)
-	/* The frame carries the RSSI as a positive magnitude; the policy works in dBm */
-	tlm_latest.rssi_dbm = -(int16_t)rssi_neg_dbm;
-	tlm_latest.lq = lq_percent;
-	tlm_latest.fresh = true;
+	feedback_latest.rssi_dbm = rssi_dbm;
+	feedback_latest.lq = lq_percent;
+	feedback_latest.fresh = true;
 #else
-	ARG_UNUSED(rssi_neg_dbm);
+	ARG_UNUSED(rssi_dbm);
 	ARG_UNUSED(lq_percent);
 #endif
 }
 
-void zlrs_link_power_tick(zlrs_link_t *control, uint32_t now_ms)
+void zlrs_link_power_tick(zlrs_link_t *data_link, uint32_t now_ms)
 {
 #if IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)
 	int8_t next = 0;
-	const bool fresh = tlm_latest.fresh;
+	const bool fresh = feedback_latest.fresh;
 
-	tlm_latest.fresh = false;
+	feedback_latest.fresh = false;
 
 	/*
-	 * If telemetry arrived, judge quality from its RSSI/LQ; otherwise take the valid=false
+	 * If peer feedback arrived, judge quality from its RSSI/LQ; otherwise take the valid=false
 	 * timeout path, which goes back to the ceiling.
 	 */
-	if (power_update(&power_ctl, fresh, tlm_latest.rssi_dbm, tlm_latest.lq, now_ms, &next)) {
-		zlrs_link_set_power(control, next);
-		LOG_INF("tx power -> %d dBm (rssi %d dBm, lq %u%%)", next, tlm_latest.rssi_dbm,
-			tlm_latest.lq);
+	if (power_update(&power_ctl, fresh, feedback_latest.rssi_dbm, feedback_latest.lq, now_ms,
+			 &next)) {
+		zlrs_link_set_power(data_link, next);
+		LOG_INF("tx power -> %d dBm (rssi %d dBm, lq %u%%)", next, feedback_latest.rssi_dbm,
+			feedback_latest.lq);
 	}
 #else
-	ARG_UNUSED(control);
+	ARG_UNUSED(data_link);
 	ARG_UNUSED(now_ms);
 #endif
 }

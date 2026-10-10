@@ -20,16 +20,12 @@ static const struct {
 	uint16_t nvs_id;
 	uint8_t size;
 } settings[ZLRS_CONFIG_KEY_COUNT] = {
-	[ZLRS_CONFIG_MODE] = {11U, sizeof(uint8_t)},
+	[ZLRS_CONFIG_BAND] = {11U, sizeof(uint8_t)},
 	[ZLRS_CONFIG_DATA_BAUD] = {5U, sizeof(uint32_t)},
 	[ZLRS_CONFIG_REGION] = {7U, sizeof(uint8_t)},
 	[ZLRS_CONFIG_POWER] = {8U, sizeof(int8_t)},
 	[ZLRS_CONFIG_ROLE] = {9U, sizeof(uint8_t)},
 	[ZLRS_CONFIG_PROFILE] = {10U, sizeof(uint8_t)},
-	[ZLRS_CONFIG_CONTROL_RATE] = {12U, sizeof(uint32_t)},
-	[ZLRS_CONFIG_MODEL] = {13U, sizeof(uint8_t)},
-	[ZLRS_CONFIG_MODEL_MATCH] = {14U, sizeof(uint8_t)},
-	[ZLRS_CONFIG_TELEMETRY] = {15U, sizeof(uint8_t)},
 	[ZLRS_CONFIG_ROOT_KEY] = {1U, ZLRS_KEY_LEN},
 	[ZLRS_CONFIG_DEV_ID] = {2U, ZLRS_DEV_ID_LEN},
 	[ZLRS_CONFIG_PAIRING] = {6U, sizeof(zlrs_storage_settings_pairing_t)},

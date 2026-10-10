@@ -39,7 +39,7 @@ extern "C" {
 #define ZLRS_MGMT_CMD_SET_POWER     0x23U /* 1-byte signed dBm */
 #define ZLRS_MGMT_CMD_SET_ROLE      0x24U /* 1-byte role (0 = TX, 1 = RX) */
 #define ZLRS_MGMT_CMD_SET_PROFILE   0x25U /* 1-byte profile (0 = P0, 1 = P1, 2 = P2) */
-#define ZLRS_MGMT_CMD_SET_MODE      0x27U /* 0 = mixed, 1 = data24; effective after reboot */
+#define ZLRS_MGMT_CMD_SET_BAND      0x27U /* 1 = 2.4 GHz, 2 = sub-G; effective after reboot */
 #define ZLRS_MGMT_CMD_NEW_DEV_ID    0x26U /* make a fresh device id (drops the pairing record) */
 #define ZLRS_MGMT_CMD_EXIT          0x30U /* leave management mode */
 #define ZLRS_MGMT_CMD_FACTORY_RESET 0x40U /* wipe NVS */
@@ -98,13 +98,14 @@ typedef struct {
 	uint32_t data_baud;  /* data port baud rate (effective on the next boot) */
 } zlrs_mgmt_status_t;
 
-#define ZLRS_MGMT_FLAG_KEY     0x01U
-#define ZLRS_MGMT_FLAG_PAIRED  0x02U
-#define ZLRS_MGMT_FLAG_SESSION 0x04U
-#define ZLRS_MGMT_FLAG_DATA24  0x08U /* active mode: data only, exclusively 2.4 GHz */
+#define ZLRS_MGMT_FLAG_KEY       0x01U
+#define ZLRS_MGMT_FLAG_PAIRED    0x02U
+#define ZLRS_MGMT_FLAG_SESSION   0x04U
+#define ZLRS_MGMT_FLAG_DATA24    0x08U /* DATA currently uses 2.4 GHz */
+#define ZLRS_MGMT_FLAG_DATA_SUBG 0x10U /* DATA currently uses sub-GHz */
 
-#define ZLRS_MODE_MIXED  0U
-#define ZLRS_MODE_DATA24 1U
+#define ZLRS_DATA_BAND_24   1U
+#define ZLRS_DATA_BAND_SUBG 2U
 
 /*
  * What the log store holds: how many files, which one is being appended to (the export walks them

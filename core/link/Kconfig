@@ -4,10 +4,8 @@
 config ZLRS_LINK
 	bool "Link state machine, pairing and sessions"
 	select ZLRS_PROTO
-	select ZLRS_CRSF
 	help
-	  Link state machine, pairing, session handling and the reliable CRSF frame service,
-	  and the radio abstraction the
+	  Data link state machine, pairing, session handling and the radio abstraction the
 	  application implements on top of USP/RAC. Pure C, see tests/host.
 
 module = ZLRS_LINK

@@ -42,13 +42,8 @@ if hit=$(grep -rn -E '\b(CONFIG_)?BOARD_[A-Z0-9_]+' app 2>/dev/null); then
 fi
 
 if hit=$(rg -n 'zlrs_link_t|zlrs/link/link.h|config/nvs.h|zlrs_storage_settings_' \
-	app/src/crsf app/src/data app/src/mgmt app/src/ui app/src/main.c); then
+	app/src/data app/src/mgmt app/src/ui app/src/main.c); then
 	bad "a frontend reaches into RF or private configuration storage:"
-	echo "$hit"
-fi
-
-if hit=$(rg -n 'zlrs/crsf/|zlrs_crsf_' core/link); then
-	bad "RF transport depends on CRSF codecs:"
 	echo "$hit"
 fi
 

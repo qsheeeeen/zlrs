@@ -27,16 +27,26 @@ class EntryTests(unittest.TestCase):
         self.assertEqual(entry.mgmt.decode(talk.call_args_list[0].args[2]),
                          (entry.mgmt.CMD_SET_BAUD, (420000).to_bytes(4, "little")))
 
-    def test_data24_mode_command(self):
+    def test_24_band_command(self):
         with patch.object(entry.mgmt, "talk", return_value=0) as talk:
-            rc, _ = invoke(entry, "set-mode", "data24", "--port", "fake")
+            rc, _ = invoke(entry, "set-band", "2.4", "--port", "fake")
         self.assertEqual(rc, 0)
         self.assertEqual(entry.mgmt.decode(talk.call_args_list[0].args[2]),
-                         (entry.mgmt.CMD_SET_MODE, b"\x01"))
-        self.assertEqual(invoke(entry, "set-mode", "invalid")[0], 2)
+                         (entry.mgmt.CMD_SET_BAND, b"\x01"))
+        self.assertEqual(invoke(entry, "set-band", "invalid")[0], 2)
         status = bytearray(21)
         status[3] = 0x08
-        self.assertIn("data24 (2.4 GHz data only)", entry.mgmt.status_text(status))
+        self.assertIn("2.4 GHz", entry.mgmt.status_text(status))
+
+    def test_subg_band_command(self):
+        with patch.object(entry.mgmt, "talk", return_value=0) as talk:
+            rc, _ = invoke(entry, "set-band", "subg", "--port", "fake")
+        self.assertEqual(rc, 0)
+        self.assertEqual(entry.mgmt.decode(talk.call_args_list[0].args[2]),
+                         (entry.mgmt.CMD_SET_BAND, b"\x02"))
+        status = bytearray(21)
+        status[3] = 0x10
+        self.assertIn("sub-GHz", entry.mgmt.status_text(status))
 
     def test_subcommand_help_uses_public_name(self):
         for command in ("status", "update", "recovery"):
@@ -46,9 +56,9 @@ class EntryTests(unittest.TestCase):
                 self.assertIn("zlrs.py " + command, output)
 
     def test_list_does_not_open_serial_port(self):
-        with patch.object(entry.mgmt, "app_ports", return_value=["fake-if04"]), \
+        with patch.object(entry.mgmt, "app_ports", return_value=["fake-if02"]), \
                 patch.object(entry.mgmt, "talk") as talk:
             rc, output = invoke(entry, "list")
         self.assertEqual(rc, 0)
-        self.assertIn("fake-if04", output)
+        self.assertIn("fake-if02", output)
         talk.assert_not_called()

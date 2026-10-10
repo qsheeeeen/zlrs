@@ -7,9 +7,9 @@
 #
 # Usage:
 #   python3 tests/hardware/app/link/test_data.py --tx-port <TX serial> --rx-port <RX serial>
-#   python3 tests/hardware/app/link/test_data.py --tx-port /dev/ttyACM2 --rx-port /dev/ttyACM5
+#   python3 tests/hardware/app/link/test_data.py --tx-port /dev/ttyACM0 --rx-port /dev/ttyACM2
 #
-# Serial fragments are resolved against /dev/serial/by-id/*-if02. The test sends distinct
+# Serial fragments are resolved against /dev/serial/by-id/*-if00. The test sends distinct
 # deterministic payloads in both directions, checks every received byte and reports JSON
 # throughput. It needs pyserial and devices already running a paired data-link firmware.
 
@@ -24,7 +24,7 @@ import time
 from pathlib import Path
 
 BY_ID_DIR = "/dev/serial/by-id"
-DATA_INTERFACE = "-if02"
+DATA_INTERFACE = "-if00"
 DEFAULT_BAUD = 115200
 
 

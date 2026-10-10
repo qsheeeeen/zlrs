@@ -80,10 +80,10 @@ def find_by_id(hint: str, exclude: str | None = None, serial: str | None = None)
 
 
 def app_mgmt_ports(serial: str | None = None) -> list[str]:
-    """Application management ports (the third CDC, ...-if04), optionally of one module only."""
+    """Application management ports (the second CDC, ...-if02), optionally of one module only."""
     return [
         p for p in find_by_id(APP_PORT_HINT, exclude=RECOVERY_PORT_HINT, serial=serial)
-        if p.endswith("-if04")
+        if p.endswith("-if02")
     ]
 
 
@@ -93,7 +93,7 @@ def wait_for_by_id(hint: str, timeout_s: float, exclude: str | None = None,
     deadline = time.monotonic() + timeout_s
     while True:
         found = find_by_id(hint, exclude, serial)
-        suffix = "-if00" if hint == RECOVERY_PORT_HINT else "-if04"
+        suffix = "-if00" if hint == RECOVERY_PORT_HINT else "-if02"
         found = [p for p in found if p.lower().endswith(suffix)]
         if exact_serial:
             found = [p for p in found if (serial_of_port(p) or "").upper() == serial.upper()]
@@ -330,7 +330,7 @@ def main(args=None, parser=None) -> int:
       %(prog)s --dry-run --image <signed.bin>
 
     A single connected module is selected automatically. With multiple devices, use --serial.
-    Application management: ...-if04; MCUboot recovery: ...-if00.
+    Application management: ...-if02; MCUboot recovery: ...-if00.
     Default image follows ZLRS_WS and ZLRS_BUILD_DIR. BOOTSEL installs only the bootloader UF2.
     Success means the running image hash matches and the device accepted confirmation.
     """)

@@ -9,7 +9,6 @@ ZTEST(link, test_pair_key_rederivation)
 {
 	static zlrs_link_t link;
 	zlrs_link_cfg_t cfg = {
-		.kind = ZLRS_LINK_DATA,
 		.role = ZLRS_ROLE_TX,
 		.domain = ZLRS_DOMAIN_ISM2400,
 		.second_domain = 0xffU,

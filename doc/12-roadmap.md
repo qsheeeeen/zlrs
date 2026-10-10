@@ -1,85 +1,14 @@
 # Roadmap
 
-只记录未完成工作、待决策事项和验收条件；完成后删除对应项。
-产品要求见 [01-product](01-product.md)，架构与重构方案见
-[06-architecture](06-architecture.md#8-模块职责与通信)，
-协议见 [08-protocol](08-protocol.md)，验证方法见 [11-debug](11-debug.md)。
-提交历史保留实现变化，测试产物保留镜像、环境和测量记录。
+ZLRS currently implements one bidirectional DATA link on a selected 2.4 GHz or sub-GHz band. The near-term work is to measure the data service under real RF conditions and calibrate the dynamic power policy. The DATA port and management protocol should remain stable while the radio scheduler evolves.
 
-## 1. 待决策的产品规格
-
-已确定的通道精度、主／辅助通道分工、统计刷新率和默认选档策略以产品文档为准。
-以下阈值在对应方案实施前确定，或明确该阶段的适用范围。
-
-| 编号 | 待决策事项 |
-| --- | --- |
-| Q01 | 并发模式 DATA 500 Hz 是双向总计还是每方向各 500 Hz |
-| Q02 | 单 CRSF 1000 Hz、并发 500 Hz 新主控制样本交付的测试条件、允许丢失、维护占用与最大间隔 |
-| Q03 | 低速档辅助通道更新率，以及各档最大更新间隔和样本年龄 |
-| Q04 | 链路统计的输出延迟／最大间隔；外部遥测的容量、延迟、丢失和拥塞规则 |
-| Q05 | 三种模式各自的最小吞吐、最大延迟、抖动和丢失上限 |
-| Q06 | 各模式高速／远距档的频段、PHY、功率、作用距离和服务量 |
-| Q07 | 当前版本的认证威胁目标、可接受伪造预算及加密是否必需 |
-| Q08 | 失联保护、缓存、重启恢复和长期运行的数值边界 |
-| Q09 | 配置工具必须开放的模式、频段、频率、速率及遥测参数，以及生效方式 |
-| Q10 | 必验硬件／端点、干扰条件及测试时长 |
-| Q11 | 自动选档使能的持久化、生效规则、双端协调、触发条件、控制空窗与失败恢复阈值 |
-
-## 2. 功能与性能
-
-| 优先级 | 未完成工作 | 验收条件 |
+| Priority | Work | Acceptance |
 | --- | --- | --- |
-| 高 | 三种产品模式的完整运行时配置 | 单控制＋遥测、单 DATA、并发模式都能配置、查询、保存和恢复，构建裁剪有明确能力反馈 |
-| 高 | 高速控制与并发调度 | 满足单 CRSF 1000 Hz／并发 500 Hz 的新样本交付目标，同时满足辅助通道和遥测指标；当前 LF mixed 约 24 Hz，目标尚未达成 |
-| 高 | DATA24 整体吞吐设计 | 比较帧开销、单 bit ACK 时效、预装／流式 FIFO、MTU、聚合、换向和队列；按同一负载测得双向有效吞吐及延迟，逐字节正确交付 |
-| 高 | 无线重捕获与冷启动恢复 | 优化低刷新率下的相位扫描；分别测量 RF 重捕获与从断联／重启到业务恢复的完整时延，覆盖单端及双端重启、物理断电、管理暂停和空闲跳频 |
-| 中 | 自动选档 | 首版固定最快档；后续默认关闭、配置可保存；实测阈值与迟滞，两端一致切换，控制空窗和 DATA 连续性交付满足规格 |
-| 中 | 动态功率与跨子频段混合 | 用实测 RSSI／SNR 校准阈值和迟滞；测量换频成本、干扰收益及区域 duty 限制下的行为 |
+| High | Characterize throughput and loss on LF/HF boards | Repeated bidirectional byte-exact transfers, under clean and impaired RF conditions. |
+| High | Calibrate dynamic DATA TX power | Measure RSSI/LQ against packet loss and confirm the 3 dB steps, hold time, floor and feedback-loss fallback. |
+| High | Validate sub-G duty behavior | Confirm deferred transmission and recovery under each supported region. |
+| Medium | Improve band use | Evaluate automatic DATA switching or parallel operation on 2.4 GHz and sub-G without changing serial semantics. |
+| Medium | Complete encrypted profile | Implement and validate P2 with interoperable host and hardware tests. |
+| Medium | Reliability and serviceability | Exercise brownout, watchdog, update rollback, log recovery and long-running transfers. |
 
-性能设计先逐模式、逐方向列出空口、SPI、认证、启动、换向、队列和 USB／UART 成本，
-区分可重叠与串行部分。板内流量与端到端流量分别测量；缩短 guard、定时器频率达标
-或达到当前时隙上限，都不能替代新样本交付和有效吞吐验收。
-
-## 3. CRSF 互操作验收
-
-| 功能／帧 | 尚需验收 |
-| --- | --- |
-| 发现 `0x28/0x29`、参数 `0x2B/0x2C/0x2D`、命令 `0x32.0x10` | 实际 EdgeTX 初始化、菜单分块、配对／取消、模型切换和遥测开关 |
-| 模块仓单线 UART | GP0／GP1 单线连接、TX 高阻释放、完整帧回复窗口、端点切换与背压 |
-| 速率协商 `0x32.0x0A.0x70/0x71` | 真 UART 双端在支持速率下协商、旧速率完成回复、一秒回退及高刷新率预算 |
-| 通道 `0x16`、统计 `0x14/0x1C/0x1D`、失联 cut | 实际飞控解析、OSD／日志、断联停止有效 RC 输出；RSSI／天线校准及非标准 RF 帧率的实际显示 |
-| CRSF Shot `0x3A.0x10` | EdgeTX 使用偏移后的样本年龄、端到端交付延迟和抖动 |
-| 外部遥测与 MSP `0x7A/0x7B/0x7C` | 实际 FC 请求／响应、业务分块及超时；遥控器显示；与 DATA 并发及拥塞容量／延迟 |
-
-未知遥测／MSP 保持完整帧透传；新增本机协议功能以产品需要和硬件能力为依据。
-
-## 4. 硬件与可靠性验收
-
-| 范围 | 尚需验收 |
-| --- | --- |
-| HF／真实 UART | HF 双板无线交付、配对／会话与配置恢复；LF／HF UART 接线、回环和端点切换 |
-| 射频 | RSSI、发射功率、天线与 PA 校准；LoRa 灵敏度／误包率／空口模型；距离、干扰和混合跳频 |
-| 长期运行 | 持续双向负载、队列满、丢包／丢 ACK、断联重连；控制最大间隔、ARQ 延迟、抖动、丢字节、看门狗误复位和管理 PBKDF2 最长喂狗间隔 |
-| 硬件模块测试 | 独立测试镜像中的 SHA／标签向量、TRNG 健康／错误路径、存储、定时器和 radio 用例在当前集成下上机验收 |
-| 无线故障 | USP HAL BUSY 超时当前会复位；验证故障可观测性和复位恢复，评估是否可通过公开 API／现有配置实现可恢复处理 |
-| 固件更新 | 用当前工具验证首次安装、跨版本升级、未确认回滚和挂起回滚；核对运行镜像及确认状态，身份／配对记录保留 |
-
-主机仿真、固件构建、板上协议正确性与外部设备互操作分别报告。
-短时 LF／USB 验证不能替代生产配置、HF、真实 UART 和长期运行验收。
-
-## 5. 安全
-
-| 优先级 | 未完成工作 | 验收条件 |
-| --- | --- | --- |
-| 高 | 序号回绕与防重放边界 | 避免会话推进半个 16 bit 序号空间后旧认证帧重新被接受；覆盖回绕、旧会话和重放 |
-| 高 | 32 bit 标签的安全预算 | 明确可接受伪造概率、攻击尝试约束和会话寿命，与 Q07 一致 |
-| 高 | 密钥派生错误与敏感数据清理 | 非法参数明确返回错误，失败结果不可用于协议；密钥和临时缓冲区清理规则一致 |
-| 后续 | P2 加密配置 | 按安全规格实现密文认证及加密；P1 认证不能视为保密，是否纳入当前版本由 Q07 决定 |
-
-## 6. 后续范围
-
-| 项目 | 开始条件／完成条件 |
-| --- | --- |
-| 载板迭代 | 按 [04-carrier](04-carrier.md) 完成制造与接口、射频验收 |
-| 无 USB 单 UART 型号 | 确认是否纳入产品；用 devicetree 能力和业务角色配置实现，验证角色切换与两端交付 |
-| 应用内／空中固件更新 | 先确定产品需要；验证镜像写入、断电恢复、认证及 MCUboot 安装／回滚 |
+Any band-switching design needs explicit coordination between peers, hysteresis, regulatory accounting and a way to recover when the new band is unavailable. The current persisted `set-band` choice is the baseline until that behavior is tested.

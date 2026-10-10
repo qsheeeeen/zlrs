@@ -117,7 +117,7 @@ static int fake_save_setting(void *ctx, uint8_t cmd, const uint8_t *value, uint8
 		dev->role = value[0];
 		dev->role_saved = true;
 		return ZLRS_MGMT_OK;
-	case ZLRS_MGMT_CMD_SET_MODE:
+	case ZLRS_MGMT_CMD_SET_BAND:
 		dev->mode = value[0];
 		return ZLRS_MGMT_OK;
 	case ZLRS_MGMT_CMD_SET_PROFILE:
@@ -418,19 +418,19 @@ static void test_dispatch(void)
 	CHECK(ZLRS_MGMT_PAYLOAD(&parser)[1] == ZLRS_MGMT_E_PARAM);
 
 	/* Mode selection validates both length and enum before writing. */
-	for (uint8_t mode = 0U; mode < 2U; mode++) {
+	for (uint8_t mode = ZLRS_DATA_BAND_24; mode <= ZLRS_DATA_BAND_SUBG; mode++) {
 		payload[0] = mode;
-		len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_SET_MODE, payload, 1U, resp,
+		len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_SET_BAND, payload, 1U, resp,
 					 sizeof(resp));
 		CHECK(parse_response(resp, len, &parser));
 		CHECK(ZLRS_MGMT_PAYLOAD(&parser)[1] == ZLRS_MGMT_OK);
 		CHECK(fake.mode == mode);
 	}
-	payload[0] = 2U;
-	len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_SET_MODE, payload, 1U, resp, sizeof(resp));
+	payload[0] = ZLRS_DATA_BAND_SUBG + 1U;
+	len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_SET_BAND, payload, 1U, resp, sizeof(resp));
 	CHECK(parse_response(resp, len, &parser));
 	CHECK(ZLRS_MGMT_PAYLOAD(&parser)[1] == ZLRS_MGMT_E_PARAM);
-	len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_SET_MODE, payload, 0U, resp, sizeof(resp));
+	len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_SET_BAND, payload, 0U, resp, sizeof(resp));
 	CHECK(parse_response(resp, len, &parser));
 	CHECK(ZLRS_MGMT_PAYLOAD(&parser)[1] == ZLRS_MGMT_E_PARAM);
 

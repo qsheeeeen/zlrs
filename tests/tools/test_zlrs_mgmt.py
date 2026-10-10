@@ -186,6 +186,6 @@ class FramingTests(unittest.TestCase):
 
     def test_single_module_is_a_target_list(self):
         args = argparse.Namespace(port=None, serial=None, all=False)
-        with patch.object(mgmt, "app_ports", return_value=["/dev/serial/by-id/usb-fake-if04"]):
+        with patch.object(mgmt, "app_ports", return_value=["/dev/serial/by-id/usb-fake-if02"]):
             self.assertEqual(mgmt.pick_targets(args, argparse.ArgumentParser()),
-                             ["/dev/serial/by-id/usb-fake-if04"])
+                             ["/dev/serial/by-id/usb-fake-if02"])

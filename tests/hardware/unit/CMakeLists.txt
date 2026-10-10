@@ -12,11 +12,9 @@ target_sources(app PRIVATE
   ../core/proto/test_crypto.c
   ../app/storage/test_log.c
   ../core/link/test_link.c
-  ../app/link/test_rate.c
   ../app/link/test_power.c
   ../app/platform/test_slot_timer.c
   ../app/ui/test_led.c
-  "${zlrs_root}/app/src/rf/rate.c"
   "${zlrs_root}/app/src/rf/power.c"
   "${zlrs_root}/app/src/platform/slot_timer.c"
   "${zlrs_root}/app/src/ui/pattern.c"

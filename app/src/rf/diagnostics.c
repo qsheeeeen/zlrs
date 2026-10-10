@@ -110,8 +110,7 @@ static void mgmt_debug_link(struct mgmt_debug_report_writer *writer, const char 
 	mgmt_debug_append(writer, "\n[%s LINK]\n", name);
 	mgmt_debug_append(writer, "  Hopping bands      : %s\n", mgmt_debug_bands(cfg));
 	mgmt_debug_append(writer, "  Link state / role  : %-12s / %s\n",
-			  link->active ? mgmt_debug_state(info.state) : "unconfigured",
-			  cfg->role == ZLRS_ROLE_TX ? "TX" : "RX");
+			  mgmt_debug_state(info.state), cfg->role == ZLRS_ROLE_TX ? "TX" : "RX");
 	mgmt_debug_append(writer, "  Pairing / session  : %s / %s   Profile: P%u\n",
 			  info.paired ? "paired" : "not paired",
 			  info.session_valid ? "active" : "inactive", (unsigned int)cfg->profile);
@@ -180,37 +179,24 @@ static void mgmt_debug_link(struct mgmt_debug_report_writer *writer, const char 
 	mgmt_debug_append(
 		writer, "  Decode errors      : tag %u   frame %u   hop advances %u   resync %u\n",
 		stats->rx_bad_tag, stats->rx_bad_frame, stats->hop_advances, stats->hop_resync);
-	mgmt_debug_append(writer, "  Cadence            : telemetry 1/%u   data 1/%u   sync 1/%u\n",
-			  (unsigned int)cfg->tlm_every_n, (unsigned int)cfg->data_every_n,
-			  (unsigned int)cfg->resync_every_n);
+	mgmt_debug_append(writer, "  Cadence            : data 1/%u   sync 1/%u\n",
+			  (unsigned int)cfg->data_every_n, (unsigned int)cfg->resync_every_n);
 }
 
 static void mgmt_debug_rate(struct mgmt_debug_report_writer *writer)
 {
-	static const char *const names[2] = {"Control", "Data"};
-
+	const zlrs_rf_rate_sample_t *const sample = &snapshot.rate;
+	const uint32_t span = sample->span_ms != 0U ? sample->span_ms : 1U;
+	const uint32_t windows_x10 = (sample->wins * 10000U + span / 2U) / span;
+	const uint32_t heard_x10 = (sample->hits * 10000U + span / 2U) / span;
+	const uint32_t hit_x10 =
+		sample->wins != 0U ? (sample->hits * 1000U + sample->wins / 2U) / sample->wins : 0U;
+	const uint32_t tx_x10 = (sample->tx * 10000U + span / 2U) / span;
 	mgmt_debug_append(writer, "Link      Windows/s  Heard/s  Hit rate    TX/s  State\n");
-	mgmt_debug_append(writer, "--------- ---------- -------- --------- ------- -----------\n");
-	for (uint8_t i = 0U; i < ARRAY_SIZE(snapshot.rate); i++) {
-		const uint32_t span =
-			(snapshot.rate[i].span_ms != 0U) ? snapshot.rate[i].span_ms : 1U;
-		const uint32_t windows_x10 = (snapshot.rate[i].wins * 10000U + span / 2U) / span;
-		const uint32_t heard_x10 = (snapshot.rate[i].hits * 10000U + span / 2U) / span;
-		const uint32_t hit_x10 =
-			(snapshot.rate[i].wins != 0U)
-				? (snapshot.rate[i].hits * 1000U + snapshot.rate[i].wins / 2U) /
-					  snapshot.rate[i].wins
-				: 0U;
-		const uint32_t tx_x10 = (snapshot.rate[i].tx * 10000U + span / 2U) / span;
-
-		mgmt_debug_append(writer, "%-9s %6u.%u %6u.%u %7u.%u%% %5u.%u %s\n", names[i],
-				  windows_x10 / 10U, windows_x10 % 10U, heard_x10 / 10U,
-				  heard_x10 % 10U, hit_x10 / 10U, hit_x10 % 10U, tx_x10 / 10U,
-				  tx_x10 % 10U, mgmt_debug_state(snapshot.rate[i].state));
-	}
-	mgmt_debug_append(writer, "\nHit rate = heard frames / listen windows. Rates use the "
-				  "latest sample interval.\n"
-				  "TX counts successful RF frames.\n");
+	mgmt_debug_append(writer, "Data      %6u.%u %6u.%u %7u.%u%% %5u.%u %s\n", windows_x10 / 10U,
+			  windows_x10 % 10U, heard_x10 / 10U, heard_x10 % 10U, hit_x10 / 10U,
+			  hit_x10 % 10U, tx_x10 / 10U, tx_x10 % 10U,
+			  mgmt_debug_state(sample->state));
 }
 
 static void mgmt_debug_radio(struct mgmt_debug_report_writer *writer)
@@ -339,8 +325,7 @@ static int mgmt_debug_render(uint8_t report_id, struct mgmt_debug_report_writer 
 {
 	switch (report_id) {
 	case ZLRS_MGMT_DEBUG_REPORT_LINK:
-		mgmt_debug_link(writer, "CONTROL", &snapshot.links[0]);
-		mgmt_debug_link(writer, "DATA", &snapshot.links[1]);
+		mgmt_debug_link(writer, "DATA", &snapshot.link);
 		return ZLRS_MGMT_OK;
 	case ZLRS_MGMT_DEBUG_REPORT_RATE:
 		mgmt_debug_rate(writer);
@@ -349,63 +334,29 @@ static int mgmt_debug_render(uint8_t report_id, struct mgmt_debug_report_writer 
 		mgmt_debug_radio(writer);
 		return ZLRS_MGMT_OK;
 	case ZLRS_MGMT_DEBUG_REPORT_POWER: {
-		int8_t current_dbm = 0;
-		uint32_t raises = 0U;
-		uint32_t lowers = 0U;
-		uint32_t fallbacks = 0U;
-		const int8_t subg_ceiling =
-			(snapshot.region != NULL)
-				? MIN(snapshot.tx_power_dbm, snapshot.region->max_tx_power_dbm)
-				: snapshot.tx_power_dbm;
-
-		mgmt_debug_append(writer, "[POWER LIMITS]\n");
-		mgmt_debug_append(writer, "  Configured target      : %+d dBm\n",
-				  (int)snapshot.tx_power_dbm);
-		mgmt_debug_append(writer, "  Sub-G region cap       : %s / %+d dBm\n",
-				  (snapshot.region != NULL) ? snapshot.region->name : "unknown",
-				  (snapshot.region != NULL) ? (int)snapshot.region->max_tx_power_dbm
-							    : 0);
-		mgmt_debug_append(writer, "  Sub-G link ceiling     : %+d dBm\n",
-				  (int)subg_ceiling);
-
-		mgmt_debug_append(writer, "\n[PER-LINK TX SETPOINTS]\n");
-		mgmt_debug_append(writer, "  %-8s %-20s %-12s %s\n", "Link", "RF bands", "Mode",
-				  "LR2021 target");
-		mgmt_debug_append(writer, "  %-8s %-20s %-12s %s\n", "--------",
-				  "--------------------", "------------", "-------------");
-		mgmt_debug_append(writer, "  %-8s %-20s %-12s %+4d dBm\n", "Control",
-				  mgmt_debug_bands(&snapshot.links[0].config),
-				  snapshot.links[0].active ? "enabled" : "unconfigured",
-				  (int)snapshot.links[0].config.tx_power_dbm);
-		mgmt_debug_append(writer, "  %-8s %-20s %-12s %+4d dBm\n", "Data",
-				  mgmt_debug_bands(&snapshot.links[1].config),
-				  snapshot.links[1].active ? "enabled" : "unconfigured",
-				  (int)snapshot.links[1].config.tx_power_dbm);
-#if IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)
+		int8_t current_dbm;
+		uint32_t raises;
+		uint32_t lowers;
+		uint32_t fallbacks;
 		zlrs_link_power_stats(&current_dbm, &raises, &lowers, &fallbacks);
-		const int8_t floor_dbm = (int8_t)MIN((int)CONFIG_ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM,
-						     (int)subg_ceiling);
-
-		mgmt_debug_append(writer, "\n[ADAPTIVE CONTROL POWER]\n");
-		if (snapshot.links[0].active) {
-			mgmt_debug_append(writer,
-					  "  Current / range      : %+d dBm / %+d..%+d dBm\n",
-					  (int)current_dbm, (int)floor_dbm, (int)subg_ceiling);
-			mgmt_debug_append(writer,
-					  "  Changes up / down    : %u / %u   Fallbacks: %u\n",
-					  raises, lowers, fallbacks);
-		} else {
-			mgmt_debug_append(
-				writer,
-				"  Status               : unconfigured (control link disabled)\n");
-		}
-#else
-		mgmt_debug_append(writer, "\n[ADAPTIVE CONTROL POWER]\n  Disabled\n");
-#endif
-		mgmt_debug_append(
-			writer, "\nSub-G control is clamped to its regional ceiling; 2.4 GHz data "
-				"uses the configured target.\n"
-				"These are LR2021 setpoints; RF output is not measured.\n");
+		mgmt_debug_append(writer, "[POWER LIMITS]\n");
+		mgmt_debug_append(writer, "  Configured target  : %+d dBm\n",
+				  (int)snapshot.tx_power_dbm);
+		mgmt_debug_append(writer, "  Active data band   : %s\n",
+				  mgmt_debug_bands(&snapshot.link.config));
+		mgmt_debug_append(writer, "  Radio setpoint     : %+d dBm\n",
+				  (int)snapshot.link.config.tx_power_dbm);
+		mgmt_debug_append(writer,
+				  "  Dynamic power      : %+d dBm (up %u, down %u, fallback %u)\n",
+				  (int)current_dbm, raises, lowers, fallbacks);
+		mgmt_debug_append(writer, "  Peer feedback      : RSSI %d dBm, LQ %u%%\n",
+				  (int)snapshot.link.info.peer_rssi_dbm,
+				  (unsigned int)snapshot.link.info.peer_lq_percent);
+		mgmt_debug_append(writer, "  Region cap         : %s / %+d dBm\n",
+				  snapshot.region != NULL ? snapshot.region->name : "unknown",
+				  snapshot.region != NULL ? (int)snapshot.region->max_tx_power_dbm
+							  : 0);
+		mgmt_debug_append(writer, "  RF output is not measured.\n");
 		return ZLRS_MGMT_OK;
 	}
 	default:

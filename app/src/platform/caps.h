@@ -17,9 +17,7 @@
 
 #include "zlrs/region/region.h"
 
-/* ---- ports: one UART plus one CDC per logical port, both optional ---- */
-#define ZLRS_PORT_CTRL_FIXED                                                                       \
-	(DT_NODE_EXISTS(DT_ALIAS(zlrs_control_uart)) || DT_NODE_EXISTS(DT_ALIAS(zlrs_control_cdc)))
+/* ---- ports: one UART plus one CDC for data, USB CDC for management ---- */
 #define ZLRS_PORT_DATA_FIXED                                                                       \
 	(DT_NODE_EXISTS(DT_ALIAS(zlrs_data_uart)) || DT_NODE_EXISTS(DT_ALIAS(zlrs_data_cdc)))
 #define ZLRS_PORT_MGMT DT_NODE_EXISTS(DT_ALIAS(zlrs_mgmt_cdc))
@@ -46,12 +44,8 @@
 #error "zlrs keeps keys and pairing in NVS; a board without NVS is not supported"
 #endif
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_LINK_CONTROL) && !ZLRS_PORT_CTRL_FIXED
-#error "control link enabled but this board has no control port (zlrs-control-uart/-cdc)"
-#endif
-
-#if IS_ENABLED(CONFIG_ZLRS_APP_LINK_DATA) && !ZLRS_PORT_DATA_FIXED
-#error "data link enabled but this board has no data port (zlrs-data-uart/-cdc)"
+#if !ZLRS_PORT_DATA_FIXED
+#error "this board has no data port (zlrs-data-uart/-cdc)"
 #endif
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_WATCHDOG) && !ZLRS_HAS_WDT

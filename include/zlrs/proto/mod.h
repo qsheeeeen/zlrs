@@ -35,7 +35,7 @@ typedef struct {
 	uint8_t reserved[3];
 } zlrs_mod_cfg_t;
 
-/* Are two tiers identical (rate adaptation uses it to decide whether to change) */
+/* Are two tiers identical (used when comparing modem configurations) */
 bool zlrs_mod_equal(const zlrs_mod_cfg_t *a, const zlrs_mod_cfg_t *b);
 
 /* FLRC tier: only the rate means anything */

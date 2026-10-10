@@ -12,11 +12,8 @@ set(zlrs_app_dir "${CMAKE_CURRENT_LIST_DIR}")
 
 target_sources(app PRIVATE
   ${zlrs_app_dir}/src/mgmt/mode.c
-  ${zlrs_app_dir}/src/crsf/serial.c
-  ${zlrs_app_dir}/src/crsf/crsf.c
   ${zlrs_app_dir}/src/data/data.c
   ${zlrs_app_dir}/src/rf/power.c
-  ${zlrs_app_dir}/src/rf/rate.c
   ${zlrs_app_dir}/src/main.c
   ${zlrs_app_dir}/src/runtime/runtime.c
   ${zlrs_app_dir}/src/runtime/update.c
@@ -45,10 +42,10 @@ target_include_directories(app PRIVATE "${zlrs_app_dir}/src" "${zlrs_app_dir}/..
 if(CONFIG_ZLRS_APP_RAM_RADIO)
   set(zlrs_ram_sources
     ${zlrs_app_dir}/src/rf/rf.c
-    ${zlrs_app_dir}/src/crsf/crsf.c
     ${zlrs_app_dir}/src/platform/sha256.c
     ${zlrs_app_dir}/src/platform/radio.c
     ${zlrs_app_dir}/src/data/data.c
+  ${zlrs_app_dir}/src/rf/power.c
     ${zlrs_app_dir}/../core/link/link.c
     ${zlrs_app_dir}/../core/link/status.c
     ${zlrs_app_dir}/../core/proto/crypto.c

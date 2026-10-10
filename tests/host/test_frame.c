@@ -13,11 +13,11 @@
 void test_frame(void)
 {
 	uint8_t buf[ZLRS_FRAME_MAX_LEN];
-	uint8_t payload[ZLRS_RC_PAYLOAD_LEN];
+	uint8_t payload[48U];
 	uint8_t tag[ZLRS_TAG_LEN] = {0xde, 0xad, 0xbe, 0xef};
 	zlrs_frame_t out;
 	zlrs_frame_t in = {
-		.type = ZLRS_PKT_RC,
+		.type = ZLRS_PKT_DATA_UP,
 		.flags = ZLRS_FLAG_ACK,
 		.seq = 0x0102U,
 		.payload = payload,
@@ -35,7 +35,7 @@ void test_frame(void)
 
 	len = zlrs_frame_encode(&in, buf, sizeof(buf));
 	CHECK(len == ZLRS_FRAME_HDR_LEN + sizeof(payload) + ZLRS_TAG_LEN);
-	CHECK(buf[0] == (uint8_t)((ZLRS_PKT_RC << 2) | ZLRS_FLAG_ACK));
+	CHECK(buf[0] == (uint8_t)((ZLRS_PKT_DATA_UP << 2) | ZLRS_FLAG_ACK));
 	CHECK(buf[1] == 0x02U && buf[2] == 0x01U); /* little-endian */
 	CHECK(buf[3] == 0x5aU);
 	CHECK(memcmp(&buf[ZLRS_FRAME_HDR_LEN + sizeof(payload)], tag, sizeof(tag)) == 0);

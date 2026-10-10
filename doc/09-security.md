@@ -49,8 +49,7 @@ root_key ── KDF "zlrs/auth" ────────────────
          └─ KDF "zlrs/pair", ordered_ids || salt ─────► pair_key
                                                           ├─ KDF "zlrs/link-auth", ids ────► link_auth_out / link_auth_in
                                                           ├─ KDF "zlrs/fhss" ─────────────► hop-table seed
-                                                          ├─ KDF "zlrs/sync/control" ─────► control sync word (4 B)
-                                                          ├─ KDF "zlrs/sync/data" ────────► data sync word (4 B)
+                                                                                                                    ├─ KDF "zlrs/sync/data" ────────► data sync word (4 B)
                                                           ├─ KDF "zlrs/sync/lora/*" ──────► LoRa sync byte (bit 7 = private)
                                                           └─ KDF "zlrs/session", nonces ──► session keys (per direction)
 ```
@@ -71,8 +70,7 @@ configuration protocol hands the root key straight to NVS.
 
 Pairing decides **who** we talk to; the session decides **which key** this conversation uses.
 
-- Mixed mode pairs on the control link; `data24` pairs on the 2.4 GHz data link, with the
-  same authenticated exchange and persisted pairing record.
+- Pairing runs on the selected DATA band and stores one peer record.
 - The window is opened by a 1 s button hold or by the `pair` command and lasts 30 s; `PAIR_REQ`
   repeats every 100 ms.
 - The three messages carry `dev_a`, `dev_b` and the two 4-byte nonces. They are tagged with

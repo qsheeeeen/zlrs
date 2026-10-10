@@ -9,11 +9,11 @@ Ports and operating modes are in [07-firmware](07-firmware.md); the physical bui
 | Shape | What it is |
 | --- | --- |
 | **Prototype** | a Waveshare RP2350-Zero and a Waveshare Core2021 wired together, exposing USB-C only; see [03-prototype](03-prototype.md) |
-| **Carrier board** | the same wiring turned into a PCB exposing USB-C, a button and two 6P serial ports; see [04-carrier](04-carrier.md) |
-| **Single-port** | a smaller board with one UART port, no native USB; its link role is configuration |
+| **Carrier board** | the same wiring turned into a PCB exposing USB-C, a button and one 6P DATA port; see [04-carrier](04-carrier.md) |
+| **Single-port** | a smaller board with one DATA UART and no native USB; a future variant |
 
 All three shapes share one firmware. What differs is devicetree (which ports and peripherals
-exist) and, for deliberate cuts like "no data link", Kconfig.
+exist) and Kconfig choices.
 
 ## 2. Board
 
@@ -43,21 +43,12 @@ hardware = MCU (A) × radio chip (B) × radio design (LF/HF, band, coverage, cal
 | Radio design | frequency coverage, matching network, power and calibration tables, default region | properties on the `zlrs_rf` node of the board |
 | Ports | how many logical ports exist and what each is wired to | aliases and nodes in the board devicetree |
 
-A **port is a logical port**: one UART endpoint plus one USB CDC endpoint, used as a pair (the
-application picks whichever endpoint the host is using). Control traffic and data traffic never
-share a port: a port carries one link.
+The DATA port can have a UART endpoint, a USB CDC endpoint, or both. The management CDC is independent and never carries application bytes. The radio band is selected at runtime configuration and is unrelated to which serial endpoint is active.
 
-| Port form | Aliases (UART / CDC) | Link | Decided by |
-| --- | --- | --- | --- |
-| Control port | `zlrs-control-uart` / `zlrs-control-cdc` | control | devicetree (build time) |
-| Data port | `zlrs-data-uart` / `zlrs-data-cdc` | data | devicetree (build time) |
-| Link port *(design, no board yet)* | `zlrs-link-uart` / `zlrs-link-cdc` | control or data | configuration, default from devicetree |
-| Management channel | `zlrs-mgmt-cdc` | configuration protocol | fixed; never carries link traffic |
-
-Rules: a board has either fixed-role ports or one link port, never both; `*-uart` and `*-cdc` are
-the two endpoints of one port, and either may be missing (the port then has a single endpoint);
-a link port requires a default role (`zlrs,default-role = "control" | "data"`) so the first boot
-after flashing is defined.
+| Port | Devicetree aliases | Purpose |
+| --- | --- | --- |
+| DATA | `zlrs-data-uart` / `zlrs-data-cdc` | Bidirectional byte stream. |
+| Management | `zlrs-mgmt-cdc` | Configuration, status and update commands. |
 
 ## 3. Build targets
 
@@ -87,7 +78,7 @@ swaps (`swap using offset` goes in but never comes back on this board) and rollb
 upgrade.
 
 NVS keeps the root key, device id, pairing record, baud rate, region, power
-ceiling, role and security profile — nine keys, under 100 B in total, which is why NVS is small
+ceiling, role, security profile and DATA band — ten keys, under 100 B in total, which is why NVS is small
 and the flash around it goes to the log store ([07-firmware](07-firmware.md) 7).
 
 Offsets and sizes: [board README]
@@ -122,7 +113,7 @@ list is in the [README](../README.md).
 python3 tools/zlrs.py update --serial <serial> \
   --recovery-port /dev/serial/by-id/usb-zlrs_ZLRS_MCUBOOT_<serial>-if00 --no-trigger \
   --image build/app/zephyr/zephyr.signed.bin        # first flash
-python3 tools/zlrs.py update --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04
+python3 tools/zlrs.py update --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if02
 # later updates
 ```
 

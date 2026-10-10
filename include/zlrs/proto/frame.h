@@ -18,17 +18,14 @@ extern "C" {
 
 /* Packet types (a 6-bit space, see doc/08-protocol.md 2.2) */
 typedef enum {
-	ZLRS_PKT_RC = 0,        /* TX -> RX: RC channels */
-	ZLRS_PKT_TLM = 1,       /* RX -> TX: telemetry */
-	ZLRS_PKT_DATA_UP = 2,   /* TX -> RX: passthrough data */
-	ZLRS_PKT_DATA_DOWN = 3, /* RX -> TX: passthrough data */
-	ZLRS_PKT_SYNC = 4,      /* TX -> RX: session setup */
-	ZLRS_PKT_PAIR_REQ = 5,  /* TX -> RX: pairing */
-	ZLRS_PKT_PAIR_RESP = 6, /* RX -> TX: pairing */
-	ZLRS_PKT_PAIR_CFM = 7,  /* TX -> RX: pairing */
-	ZLRS_PKT_SESS_RESP = 8, /* RX -> TX: session response carrying its nonce */
-	ZLRS_PKT_SESS_CFM = 9,  /* TX -> RX: session confirm, tagged with the new session key */
-	ZLRS_PKT_SERVICE = 10,  /* DATA slots: CRSF service, independent of user DATA */
+	ZLRS_PKT_DATA_UP = 0,   /* TX -> RX: passthrough data */
+	ZLRS_PKT_DATA_DOWN = 1, /* RX -> TX: passthrough data */
+	ZLRS_PKT_SYNC = 2,      /* TX -> RX: session setup */
+	ZLRS_PKT_PAIR_REQ = 3,  /* TX -> RX: pairing */
+	ZLRS_PKT_PAIR_RESP = 4, /* RX -> TX: pairing */
+	ZLRS_PKT_PAIR_CFM = 5,  /* TX -> RX: pairing */
+	ZLRS_PKT_SESS_RESP = 6, /* RX -> TX: session response carrying its nonce */
+	ZLRS_PKT_SESS_CFM = 7,  /* TX -> RX: session confirm, tagged with the new session key */
 } zlrs_pkt_type_t;
 
 /* Header bit 0 is reserved and must be zero. */

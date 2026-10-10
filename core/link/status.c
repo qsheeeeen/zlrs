@@ -34,8 +34,9 @@ zlrs_link_info_t zlrs_link_get_info(const zlrs_link_t *link)
 		.configured = link->configured,
 		.paired = link->paired,
 		.session_valid = link->session_valid,
-		.peer_power_dbm = link->peer_power_dbm,
-		.last_rc_ms = link->last_rc_ms,
+		.peer_rssi_dbm = link->peer_rssi_dbm,
+		.peer_lq_percent = link->peer_lq_percent,
+		.last_peer_feedback_ms = link->last_peer_feedback_ms,
 	};
 
 	memcpy(info.dev_id, link->dev_id, sizeof(info.dev_id));

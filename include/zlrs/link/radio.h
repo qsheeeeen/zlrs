@@ -24,7 +24,7 @@ typedef struct {
 	 * doc/06-architecture.md 3. The application configures the corresponding RAL parameters.
 	 */
 	zlrs_mod_cfg_t mod;
-	uint8_t sync_slot; /* sync word slot: 1 control, 2 data, 3 pairing */
+	uint8_t sync_slot; /* sync word slot: 2 DATA, 3 pairing */
 	uint8_t sync_word[ZLRS_SYNC_WORD_LEN];
 	bool is_tx;
 	int8_t tx_power_dbm;

@@ -8,7 +8,6 @@ menu "zlrs core"
 
 rsource "proto/Kconfig"
 rsource "link/Kconfig"
-rsource "crsf/Kconfig"
 rsource "mgmt/Kconfig"
 rsource "region/Kconfig"
 

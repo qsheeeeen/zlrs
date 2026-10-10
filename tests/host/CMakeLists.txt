@@ -19,18 +19,14 @@ add_executable(zlrs_host_tests
   test_crypto.c
   test_frame.c
   test_fhss.c
-  test_tlm.c
   test_link.c
   test_data_pattern.c
   test_radio.c
-  test_crsf.c
   test_mgmt.c
   test_region.c
   test_mod.c
   test_fuzz.c
   sha256_soft.c
-  ../../core/crsf/crsf.c
-  ../../core/crsf/device.c
   ../../core/mgmt/mgmt.c
   ../../core/region/region.c
   ../../core/proto/crypto.c
@@ -38,7 +34,6 @@ add_executable(zlrs_host_tests
   ../../core/proto/fhss.c
   ../../core/proto/frame.c
   ../../core/proto/mod.c
-  ../../core/proto/tlm.c
   ../../core/link/link.c
   ../../core/link/status.c
 )

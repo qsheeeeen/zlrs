@@ -23,15 +23,15 @@ static void test_kdf(void)
 	memset(key, 0x42, sizeof(key));
 
 	/* Fixed vectors computed independently with Python hashlib/hmac (empty HKDF salt) */
-	zlrs_kdf(key, sizeof(key), "zlrs/sync/control", NULL, 0U, a, sizeof(a));
-	CHECK(zlrs_test_hex_eq(a, sizeof(a), "c7f3da8b"));
+	zlrs_kdf(key, sizeof(key), "zlrs/sync/data", NULL, 0U, a, sizeof(a));
+	CHECK(zlrs_test_hex_eq(a, sizeof(a), "0b5e02f8"));
 	zlrs_kdf(key, sizeof(key), "zlrs/session", ctx, sizeof(ctx), b, sizeof(b));
 	CHECK(zlrs_test_hex_eq(b, sizeof(b), "89e0e3e0"));
 
 	/* Repeatable for the same input; changing label/context gives domain separation. */
-	zlrs_kdf(key, sizeof(key), "zlrs/sync/control", NULL, 0U, b, sizeof(b));
-	CHECK(memcmp(a, b, sizeof(a)) == 0);
 	zlrs_kdf(key, sizeof(key), "zlrs/sync/data", NULL, 0U, b, sizeof(b));
+	CHECK(memcmp(a, b, sizeof(a)) == 0);
+	zlrs_kdf(key, sizeof(key), "zlrs/sync/lora/data", NULL, 0U, b, sizeof(b));
 	CHECK(memcmp(a, b, sizeof(a)) != 0);
 	zlrs_kdf(key, sizeof(key), "zlrs/session", ctx, sizeof(ctx), a, sizeof(a));
 	zlrs_kdf(key, sizeof(key), "zlrs/session", NULL, 0U, b, sizeof(b));

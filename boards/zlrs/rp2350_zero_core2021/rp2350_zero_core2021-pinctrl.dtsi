@@ -7,22 +7,6 @@
 #include <zephyr/dt-bindings/pinctrl/rpi-pico-rp2350a-pinctrl.h>
 
 &pinctrl {
-	/* CRSF: the pair that is Pico's default on the RP2350-Zero, wired to handset or FC */
-	uart0_default: uart0_default {
-		group1 {
-			pinmux = <UART0_TX_P0>;
-		};
-
-		group2 {
-			pinmux = <UART0_RX_P1>;
-			input-enable;
-			/* Unconnected RX must idle high: a floating pin produces phantom bytes,
-			 * and one phantom byte is enough to make the port layer pick this UART
-			 * over the USB CDC (app/src/ports/serial.c, zlrs_port_serial_rx_seen). */
-			bias-pull-up;
-		};
-	};
-
 	/* Radio SPI0: stays clear of GP16, the on-board WS2812B data pin */
 	zlrs_spi0_default: zlrs_spi0_default {
 		group1 {
@@ -44,7 +28,7 @@
 		group2 {
 			pinmux = <UART1_RX_P9>;
 			input-enable;
-			/* Same as the CRSF UART: idle high when nothing is attached */
+			/* Idle high when no data source is attached. */
 			bias-pull-up;
 		};
 	};

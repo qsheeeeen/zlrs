@@ -47,11 +47,9 @@ int main(void)
 	test_crypto();
 	test_frame();
 	test_fhss();
-	test_tlm();
 	test_data_pattern();
 	test_radio();
 	test_link();
-	test_crsf();
 	test_mgmt();
 	test_region();
 	test_mod();

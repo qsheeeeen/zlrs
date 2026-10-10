@@ -358,8 +358,9 @@ uint8_t zlrs_mgmt_dispatch(const zlrs_mgmt_backend_t *backend, uint8_t cmd, cons
 			return ack_frame(out, out_len, cmd, ZLRS_MGMT_E_PARAM);
 		}
 		return handle_setting(backend, cmd, payload, payload_len, 1U, out, out_len);
-	case ZLRS_MGMT_CMD_SET_MODE:
-		if (payload_len == 1U && payload[0] > ZLRS_MODE_DATA24) {
+	case ZLRS_MGMT_CMD_SET_BAND:
+		if (payload_len == 1U &&
+		    (payload[0] < ZLRS_DATA_BAND_24 || payload[0] > ZLRS_DATA_BAND_SUBG)) {
 			return ack_frame(out, out_len, cmd, ZLRS_MGMT_E_PARAM);
 		}
 		return handle_setting(backend, cmd, payload, payload_len, 1U, out, out_len);

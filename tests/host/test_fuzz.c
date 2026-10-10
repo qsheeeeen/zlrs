@@ -2,7 +2,7 @@
  * Copyright (c) 2026 zlrs contributors
  * SPDX-License-Identifier: Apache-2.0
  *
- * Malformed input: feed three stateful parsers (air frame, management frame, CRSF) random bytes and
+ * Malformed input: feed two stateful parsers (air frame and management frame) random bytes and
  * near-legal variants, and assert they only reject, never overrun or run away. Seeds are fixed.
  *
  * On its own it checks the logic invariants; the host tests carry ASan + UBSan by default
@@ -15,7 +15,6 @@
 #include <string.h>
 
 #include "zlrs/mgmt/mgmt.h"
-#include "zlrs/crsf/crsf.h"
 #include "zlrs/link/link.h"
 #include "zlrs/proto/crypto.h"
 #include "zlrs/proto/frame.h"
@@ -98,20 +97,6 @@ static void fuzz_frame_decode(rng_t *rng)
 
 /* ---- link entry: random bytes plus near-legal frames (tag included) ---- */
 
-static void fx_on_rc(void *ctx, const uint8_t *payload, uint16_t len)
-{
-	(void)ctx;
-	(void)payload;
-	(void)len;
-}
-
-static void fx_on_tlm(void *ctx, const uint8_t *payload, uint16_t len)
-{
-	(void)ctx;
-	(void)payload;
-	(void)len;
-}
-
 static bool fx_on_data(void *ctx, const uint8_t *data, uint16_t len)
 {
 	(void)ctx;
@@ -144,7 +129,6 @@ static void fx_link_init(zlrs_link_t *link, uint8_t arq)
 	static const uint8_t peer_id[ZLRS_DEV_ID_LEN] = {0xaa, 0xbb, 0xcc, 0xdd};
 	static const uint8_t salt[ZLRS_PAIR_SALT_LEN] = {1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U};
 	const zlrs_link_cfg_t cfg = {
-		.kind = ZLRS_LINK_DATA,
 		.role = ZLRS_ROLE_TX,
 		.domain = ZLRS_DOMAIN_ISM2400,
 		.sync_slot = ZLRS_SYNC_SLOT_DATA,
@@ -160,13 +144,9 @@ static void fx_link_init(zlrs_link_t *link, uint8_t arq)
 		.arq = arq,
 		.hopping = 1U,
 		.handshake = 1U,
-		.telemetry = 1U,
-		.tlm_every_n = 1U,
 		.data_every_n = 1U,
 	};
 	const zlrs_link_events_t ev = {
-		.on_rc = fx_on_rc,
-		.on_tlm = fx_on_tlm,
 		.on_data = fx_on_data,
 		.on_state = fx_on_state,
 		.ctx = NULL,
@@ -251,28 +231,23 @@ static void fuzz_link_rx(rng_t *rng)
 	CHECK(best_effort.stats.rx_bad_frame + best_effort.stats.rx_bad_tag +
 		      arq.stats.rx_bad_frame + arq.stats.rx_bad_tag >
 	      0U);
-	CHECK(best_effort.stats.rx_frames + arq.stats.rx_frames > 0U);
 }
 
-/* ---- management frames and CRSF: random streams fed byte by byte ---- */
+/* ---- management frames: random streams fed byte by byte ---- */
 
 static void fuzz_byte_parsers(rng_t *rng)
 {
 	zlrs_mgmt_parser_t cfg;
-	zlrs_crsf_parser_t crsf;
 	uint32_t cfg_frames = 0U;
-	uint32_t crsf_frames = 0U;
 	uint32_t violations = 0U;
 
 	zlrs_mgmt_parser_init(&cfg);
-	zlrs_crsf_parser_init(&crsf);
 
 	for (uint32_t i = 0; i < FUZZ_ITERS; i++) {
 		if ((rng_next(rng) % 64U) == 0U) {
 			zlrs_mgmt_parser_init(&cfg); /* resynchronise now and then */
 		}
 		if ((rng_next(rng) % 64U) == 0U) {
-			zlrs_crsf_parser_init(&crsf);
 		}
 
 		switch (zlrs_mgmt_feed(&cfg, (uint8_t)rng_next(rng))) {
@@ -291,20 +266,10 @@ static void fuzz_byte_parsers(rng_t *rng)
 			violations++;
 			break;
 		}
-
-		if (zlrs_crsf_feed(&crsf, (uint8_t)rng_next(rng)) == ZLRS_CRSF_FRAME) {
-			crsf_frames++;
-			if (crsf.payload_len > sizeof(crsf.buf) ||
-			    ZLRS_CRSF_PAYLOAD(&crsf) + crsf.payload_len >
-				    crsf.buf + sizeof(crsf.buf)) {
-				violations++;
-			}
-		}
 	}
 
 	CHECK(violations == 0U);
 	CHECK(cfg_frames < FUZZ_ITERS); /* a random stream must not produce frame after frame */
-	CHECK(crsf_frames < FUZZ_ITERS);
 }
 
 void test_fuzz(void)
@@ -317,6 +282,6 @@ void test_fuzz(void)
 	printf("fuzz: link rx\n");
 	fuzz_link_rx(&rng);
 
-	printf("fuzz: mgmt / crsf parsers\n");
+	printf("fuzz: management parser\n");
 	fuzz_byte_parsers(&rng);
 }

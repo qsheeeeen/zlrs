@@ -34,30 +34,17 @@ config ZLRS_APP_CORE
 	select ZLRS_PROTO
 	select ZLRS_LINK
 	select ZLRS_REGION
-	select ZLRS_CRSF
 	select ZLRS_MGMT
 	help
-	  The protocol, link, region, CRSF and management modules every image carries. Optional ports
+	  The protocol, data link, region and management modules every image carries. Optional ports
 	  and LEDs are described by devicetree (app/src/platform/caps.h); USB is selected by the board.
 
 config ZLRS_APP_ROLE_TX
 	bool "Build as the TX role"
 	default y
 	help
-	  The TX sends control frames and receives telemetry, the RX does the opposite. Both ends run
+	  The TX initiates pairing and sessions. Both roles send and receive data.
 
-config ZLRS_APP_LINK_CONTROL
-	bool "Control link (RC + telemetry + pairing)"
-	default y
-	help
-	  Off: only the 2.4 GHz data link runs, including pairing. With both links built,
-	  the management tool can select this mode at runtime (effective after reboot).
-
-config ZLRS_APP_LINK_DATA
-	bool "Data link (serial passthrough)"
-	default y
-	help
-	  Off: only the control link runs, which is how RC and telemetry get proven on their own.
 
 # The only knob on the upgrade path: how long the host has to confirm. The mechanism itself
 # (an image under MCUboot stays unconfirmed until the host says so, then either becomes
@@ -98,72 +85,6 @@ config ZLRS_APP_SECURITY_PROFILE_P1
 
 endchoice
 
-choice ZLRS_APP_BAND_ROLE
-	prompt "Band role"
-	default ZLRS_APP_BAND_ROLE_SUBG_CONTROL
-	help
-	  Long-range mode (default): control owns sub-G (distance), data owns 2.4G (throughput).
-	  Racing mode swaps them: control takes 2.4G alone (short airtime, high frame rate) and data
-	  moves to sub-G under the regional rules (or is turned off). See doc/06-architecture.md 2.
-
-config ZLRS_APP_BAND_ROLE_SUBG_CONTROL
-	bool "Long range: control on sub-G, data on 2.4G"
-
-config ZLRS_APP_BAND_ROLE_SUBG_DATA
-	bool "Racing: control on 2.4G, data on sub-G"
-
-endchoice
-
-choice ZLRS_APP_CONTROL_MODULATION
-	prompt "Control link modulation"
-	default ZLRS_APP_CONTROL_MODULATION_FLRC
-	depends on ZLRS_APP_BAND_ROLE_SUBG_CONTROL
-	help
-	  Modulation is per link (doc/06-architecture.md 3): data always runs FLRC on 2.4G, while
-	  control can move to the LoRa long-range tier, the way out when the narrow band
-	  (868/470/433) cannot fit wide FLRC. The superframe period follows the slower link.
-
-config ZLRS_APP_CONTROL_MODULATION_FLRC
-	bool "FLRC (wideband, default)"
-
-config ZLRS_APP_CONTROL_MODULATION_LORA
-	bool "LoRa (narrow-band long range)"
-
-endchoice
-
-config ZLRS_APP_RACING_CONTROL_RATE_BPS
-	int "Racing mode control rate (bps)"
-	default 2600000
-	depends on ZLRS_APP_BAND_ROLE_SUBG_DATA
-	help
-	  In racing mode control owns 2.4G: this is a plain FLRC rate tier, not limited by the
-	  sub-G region's rate cap.
-
-config ZLRS_APP_RACING_CONTROL_RATE_HZ
-	int "Racing mode control frame rate (Hz)"
-	default 500
-	range 50 500
-	depends on ZLRS_APP_BAND_ROLE_SUBG_DATA
-	help
-	  2.4G frames can be denser (500 by default), but the superframe still has to fit the two
-	  data windows that moved to sub-G (see doc/06-architecture.md 2).
-
-config ZLRS_APP_CONTROL_RATE_BPS
-	int "Control link rate (bps)"
-	default 1300000
-	depends on ZLRS_APP_CONTROL_MODULATION_FLRC
-
-config ZLRS_APP_CONTROL_RATE_HZ
-	int "Control link frame rate (Hz)"
-	default 150
-	range 50 500
-	depends on ZLRS_APP_CONTROL_MODULATION_FLRC
-	help
-	  150 = general tier (long range, default), 500 = close-in racing.
-	  At 500 Hz each slot has only a few hundred microseconds and only unlimited-duty regions
-	  can sustain it; the effective rate is clamped by the duty cap (core/region, 09-protocol 4.1).
-	  The hardware slot budget also clamps this request to fit packet preparation and airtime.
-
 config ZLRS_APP_DATA_RATE_BPS
 	int "Data link rate (bps)"
 	default 2600000
@@ -186,14 +107,13 @@ config ZLRS_APP_PREPARE_US
 	  Packet construction, authentication, modem setup and FIFO loading run in this window.
 	  DMA needs a larger reservation for per-command setup/completion and thread wakeups.
 
-config ZLRS_APP_DATA24_PREPARE_US
+config ZLRS_APP_DATA_24_PREPARE_US
 	int "Preparation time for exclusive 2.4 GHz data slots (us)"
 	default 1500
 	range 100 10000
 	help
-	  Data24 uses one modem and band. Reserve this time for packet construction,
-	  authentication and FIFO loading; size the slot around the maximum data frame.
-	  Mixed mode keeps its separate preparation time and regional control plan.
+	  The 2.4 GHz data mode reserves this time for packet construction,
+	  authentication and FIFO loading.
 
 config ZLRS_APP_TX_GUARD_US
 	int "Time from slot boundary to TX launch (us)"
@@ -207,42 +127,6 @@ config ZLRS_APP_FLRC_PREAMBLE_BITS
 	int "FLRC preamble length (bits)"
 	default 24
 
-config ZLRS_APP_LORA_CONTROL_RATE_HZ
-	int "LoRa control frame rate (Hz)"
-	default 10
-	range 1 50
-	depends on ZLRS_APP_CONTROL_MODULATION_LORA
-	help
-	  A LoRa frame takes tens of ms, so 10 Hz already means ~100 ms per second on air; the
-	  effective value is clamped by airtime (SF7/BW125 with a 31 B frame tops out near 9 Hz).
-
-config ZLRS_APP_CONTROL_LORA_SF
-	int "LoRa spreading factor (5-12)"
-	default 7
-	range 5 12
-	depends on ZLRS_APP_CONTROL_MODULATION_LORA
-
-config ZLRS_APP_CONTROL_LORA_BW_HZ
-	int "LoRa bandwidth (Hz: 125000 / 250000 / 500000)"
-	default 125000
-	depends on ZLRS_APP_CONTROL_MODULATION_LORA
-
-config ZLRS_APP_CONTROL_LORA_CR
-	int "LoRa coding rate (1-4 means 4/5-4/8)"
-	default 1
-	range 1 4
-	depends on ZLRS_APP_CONTROL_MODULATION_LORA
-
-config ZLRS_APP_CONTROL_LORA_PREAMBLE
-	int "LoRa preamble length (symbols)"
-	default 8
-	range 4 32
-	depends on ZLRS_APP_CONTROL_MODULATION_LORA
-
-config ZLRS_APP_TLM_PERIOD_MS
-	int "RX telemetry period (ms)"
-	default 100
-
 config ZLRS_APP_RESYNC_PERIOD_MS
 	int "Periodic SYNC interval while connected (ms, 0 = off)"
 	default 5000
@@ -251,13 +135,6 @@ config ZLRS_APP_RESYNC_PERIOD_MS
 	  Once connected, send a SYNC on the sync channel this often: the peer re-aligns its hop
 	  index (crystal drift accumulates into missed hops) and spots a peer reboot or re-pair.
 	  See doc/08-protocol.md 3.6. Converted to frames, at least one.
-
-config ZLRS_APP_CRSF_TIMEOUT_MS
-	int "Timeout before the TX cuts RC output (ms)"
-	default 100
-	help
-	  With the handset unplugged or powered off, the TX stops sending RC frames when no RC
-	  frame arrives within this window. The flight controller applies its own failsafe policy.
 
 config ZLRS_APP_MGMT_TIMEOUT_S
 	int "Management mode idle timeout (s)"
@@ -272,18 +149,12 @@ config ZLRS_APP_PAIR_HOLD_MS
 	  The button has exactly one action: holding it this long starts pairing (doc/10-ux.md).
 	  There is no press-and-hold-at-boot gesture; management mode comes from the management port.
 
-config ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM
-	int "Dynamic power floor (dBm)"
-	default 0
-	range -10 22
-	depends on ZLRS_APP_DYNAMIC_POWER
-
 endmenu
 
 menu "Pending acceptance (see doc/12-roadmap.md)"
 
 config ZLRS_APP_FHSS
-	# These five features are on in any image that goes on air; a debug image may switch one
+	# These features are on in any image that goes on air; a debug image may switch one
 	# off to isolate a layer (doc/11-debug.md 3), a production configuration cannot.
 	bool "Per-frame frequency hopping" if ZLRS_APP_DEBUG
 	default y
@@ -301,14 +172,6 @@ config ZLRS_APP_SESSION_HANDSHAKE
 	  The cost is no per-session key rotation: recorded frames stay replayable across sessions.
 	  Debug images only, see doc/09-security.md 3.
 
-config ZLRS_APP_TELEMETRY
-	bool "Uplink telemetry on the control link" if ZLRS_APP_DEBUG
-	default y
-	help
-	  Off: the RX sends no telemetry in the uplink slot and the TX opens no receive window, so
-	  the control link degrades to downlink RC only, which is how the RC path gets proven
-	  first. The TX peer-loss check goes with it, or it would rebuild the session with nothing to hear.
-
 config ZLRS_APP_DATA_ARQ
 	bool "Reliable data transfer (ARQ)" if ZLRS_APP_DEBUG
 	default y
@@ -318,31 +181,18 @@ config ZLRS_APP_DATA_ARQ
 	  Off means best-effort (drop when full, count it).
 	  See doc/08-protocol.md 4.3.
 
-config ZLRS_APP_SUB_BAND_MIX
-	bool "Sub-band mixing (move slots between 2.4G and sub-G by LQ)" if ZLRS_APP_DEBUG
-	default y
-	help
-	  When LQ drops, telemetry slots move to sub-G first, then the data link, and only then the
-	  RC downlink; recovery moves them back in reverse. The duty cap bounds it; see
-	  doc/08-protocol.md 5.1.
-
-config ZLRS_APP_RATE_ADAPT
-	bool "Adapt the rate tier to link quality"
-	default n
-	depends on ZLRS_APP_CONTROL_MODULATION_FLRC
-	help
-	  Thresholds need measured curves (see doc/12-roadmap.md), so this is off by default;
-	  turn it on and the tier table and hysteresis in app/src/rf/rate.c take over.
-
 config ZLRS_APP_DYNAMIC_POWER
-	bool "Adapt TX power to the quality the peer reports"
+	bool "Adapt DATA transmit power to quality reported by the peer"
 	default y
-	depends on ZLRS_APP_TELEMETRY
 	help
-	  With signal to spare, drop power (saves energy, less interference); when it gets tight, come
-	  back up. Losing telemetry means the ceiling (the other end is probably gone). Applied once a
-	  second from app/src/rf/power.c; thresholds and hysteresis are in that file and wait for
-	  measurements.
+	  DATA and ACK frames carry the receiver's RSSI and link quality. The transmitter
+	  adjusts its own power once per second and returns to the configured ceiling if
+	  feedback stops.
+
+config ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM
+	int "Dynamic DATA power floor (dBm)"
+	default 0
+	range -10 22
 
 config ZLRS_APP_WATCHDOG
 	bool "Watchdog: reset on a crash or a stuck loop (helps rollback, is not rollback)"
@@ -382,8 +232,8 @@ config ZLRS_APP_DEBUG_STATS_LOG
 	bool "Status lines once a second on the console (bench debugging)"
 	default n
 	help
-	  A few lines a second: frame counters, air-side counters and transaction failures, CRSF and
-	  data port drops, LQ, region and duty, dynamic power. On for the bench, off in production
+	  A few lines a second: frame counters, air-side failures, data drops, LQ,
+	  region and duty. On for the bench, off in production
 	  (it is noise). Logging only: the 1 Hz rate and power verdicts are unaffected.
 
 config ZLRS_APP_DEBUG_BOOT_DELAY_MS

@@ -1,18 +1,17 @@
 # ZLRS
 
-**CRSF control and telemetry, bidirectional UART data, or both over one wireless link.**
+**Bidirectional serial data over a secure, frequency-hopping wireless link.**
 
-ZLRS supports control, telemetry and bidirectional UART data on the Semtech LR2021. Both ends use
-the same firmware: choose TX or RX in configuration, connect over USB or UART, and pair your devices.
+ZLRS carries bidirectional UART/USB data on the Semtech LR2021. Both ends use the same firmware:
+choose TX or RX, select 2.4 GHz or sub-GHz, and pair your devices.
 
 ## Features
 
-- **Flexible operation** — use CRSF control and telemetry, bidirectional UART data, or both together.
 - **Two-way data transfer** — ARQ acknowledgements, retransmissions and reassembly for reliable delivery.
 - **Link security** — authenticated pairing, fresh session keys, packet authentication and
   replay protection.
-- **Dual-band operation** — sub-GHz and 2.4 GHz, with frequency hopping and configurable band roles.
-- **Standalone data mode** — use 2.4 GHz exclusively for pairing and bidirectional serial data.
+- **Dual-band operation** — select 2.4 GHz or the board's sub-GHz band; frequency hopping works on either.
+- **Dynamic power** — peer quality feedback adjusts DATA transmit power within the configured ceiling.
 - **One firmware, two roles** — select TX or RX without rebuilding; settings and pairing survive reboot.
 - **Simple pairing** — a shared binding phrase, with pairing available through the button or device tool.
 - **USB management and updates** — discover devices, inspect status, change settings and upgrade from one CLI;
@@ -78,6 +77,7 @@ python3 tools/zlrs.py list
 python3 tools/zlrs.py status --serial <serial>
 python3 tools/zlrs.py set-role rx --serial <serial>
 python3 tools/zlrs.py set-phrase "my binding phrase" --serial <serial>
+python3 tools/zlrs.py set-band 2.4 --serial <serial>
 ```
 
 Set the same phrase on both devices, choose their TX/RX roles and reboot. Pair them with the

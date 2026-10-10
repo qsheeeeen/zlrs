@@ -10,7 +10,6 @@ typedef struct {
 	zlrs_link_info_t info;
 	zlrs_link_stats_t stats;
 	zlrs_link_diagnostics_t diagnostics;
-	bool active;
 } zlrs_rf_link_snapshot_t;
 
 typedef struct {
@@ -22,8 +21,8 @@ typedef struct {
 } zlrs_rf_rate_sample_t;
 
 typedef struct {
-	zlrs_rf_link_snapshot_t links[2];
-	zlrs_rf_rate_sample_t rate[2];
+	zlrs_rf_link_snapshot_t link;
+	zlrs_rf_rate_sample_t rate;
 	zlrs_mod_cfg_t data_mod;
 	const zlrs_region_t *region; /* immutable region table */
 	uint32_t frame_period_us;

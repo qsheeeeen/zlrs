@@ -33,15 +33,13 @@ void __real_zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, i
 			       int8_t snr, uint32_t now_ms);
 
 void __wrap_zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
-			  uint32_t (*random)(void *ctx), void *random_ctx,
-			  const zlrs_link_events_t *events)
+			   uint32_t (*random)(void *ctx), void *random_ctx,
+			   const zlrs_link_events_t *events)
 {
 	__real_zlrs_link_init(link, cfg, random, random_ctx, events);
-	if (cfg->kind == ZLRS_LINK_DATA) {
-		data_link = link;
-		default_rx_ms = cfg->rx_timeout_ms;
-		default_acq_ms = cfg->acq_timeout_ms;
-	}
+	data_link = link;
+	default_rx_ms = cfg->rx_timeout_ms;
+	default_acq_ms = cfg->acq_timeout_ms;
 }
 
 void zlrs_test_radio_poll(zlrs_link_t *link)
@@ -130,7 +128,7 @@ int __wrap_zlrs_radio_init(void)
 }
 
 void __wrap_zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t rssi,
-			      int8_t snr, uint32_t now_ms)
+			       int8_t snr, uint32_t now_ms)
 {
 	if (link == &raw_link) {
 		link->req_pending = false;

@@ -1,19 +1,19 @@
 # Prototype
 
 Today's hardware is **two modules wired together**: a Waveshare RP2350-Zero and a Waveshare
-Core2021. The only interface it exposes is **USB-C** (power, data, management, flashing); CRSF and
-data are two UARTs on the module pads and need wires of your own. No button is fitted: a jumper
+Core2021. Its assembled interface is **USB-C** (power, data, management, flashing); the DATA
+UART is available on the module pads for external wiring. No button is fitted: a jumper
 wire from GP12 to GND stands in for it.
 
 Pins and aliases are defined in the [board README](../boards/zlrs/rp2350_zero_core2021/README.md);
-ports and modes in [07-firmware](07-firmware.md) 1 and 2.
+port behavior in [07-firmware](07-firmware.md).
 
 ## 1. What it is made of
 
 | Part | Spec | Notes |
 | --- | --- | --- |
 | MCU | Waveshare RP2350-Zero: RP2350A (Cortex-M33), 4 MB QSPI flash, native USB-C, on-board WS2812B | BOOTSEL and RESET live on the module |
-| Radio | Waveshare Core2021 (Semtech LR2021), LF SKU | one chip, time-sharing two bands: sub-G and 2.4G |
+| Radio | Waveshare Core2021 (Semtech LR2021), LF SKU | one chip supporting sub-G and 2.4G DATA operation |
 | Antenna | 433 MHz on the module's connector | check the 2.4G path against the module drawing once it is on a board |
 | Power | USB-C | the Zero feeds 3V3 to the Core2021 and the two share ground |
 | Button | none fitted: short GP12 to GND with a wire | the devicetree enables the internal pull-up |
@@ -35,30 +35,18 @@ Only used by the radio: SPI and its three control lines.
 All seven wires stay at **GP15 or below** (SPI on GP4-GP7, control lines on GP13-GP15): GP16
 drives the on-board WS2812B and the pins above it are awkward to reach on the prototype.
 
-The two UARTs (GP0/GP1 for the control port, GP8/GP9 for the data port) stay on the module pads
-and are unconnected here; the console never uses pins, only USB.
+The DATA UART (GP8/GP9) stays on the module pads and is unconnected here; the console uses USB only.
 
-## 3. Interfaces and modes
+## 3. Interfaces
 
-One USB-C port that shows up differently depending on the mode:
-
-| Mode | What USB shows |
+| State | USB interfaces |
 | --- | --- |
-| Application | three CDCs: control, data, management |
-| Debug (application + overlay) | the same plus a console CDC (logs and shell), see [11-debug](11-debug.md) |
-| Serial recovery | two CDCs: recovery and console |
-| ROM BOOTSEL | an `RPI-RP2` mass-storage volume (drag a UF2 onto it) |
+| Application | DATA CDC (`if00`) and management CDC (`if02`). |
+| Debug application | The same plus a console CDC. |
+| MCUboot recovery | Recovery CDC (`if00`) and console CDC. |
+| ROM BOOTSEL | `RPI-RP2` mass-storage volume for the bootloader UF2. |
 
-| Interface | Application | Management mode | Serial recovery | ROM BOOTSEL |
-| --- | --- | --- | --- | --- |
-| USB-C | three CDCs | the management CDC speaks the management protocol, radio stopped | two CDCs | `RPI-RP2` |
-| UART0 GP0/1 | control port, CRSF at 420000 | not forwarded (radio stopped) | not initialised | no firmware |
-| UART1 GP8/9 | data port, passthrough | incoming bytes are dropped and counted | unused | no firmware |
-| Button (jumper) | hold 1 s or more to pair | ignored once management mode is up | unused | BOOTSEL is the chip-level button |
-| Status LED | see [10-ux](10-ux.md) | steady white after half a second | white at 2 Hz | not driven |
-
-Management mode is entered by a command the tool sends on the management CDC; details in
-[07-firmware](07-firmware.md) 2.
+The DATA UART uses GP8/GP9. A button jumper from GP12 to GND starts pairing. During a management session the radio is paused and incoming DATA bytes are dropped and counted. See [firmware behaviour](07-firmware.md).
 
 ## 4. Flashing
 
@@ -70,8 +58,8 @@ Management mode is entered by a command the tool sends on the management CDC; de
 ```shell
 python3 tools/zlrs.py update --serial <serial> \
   --recovery-port /dev/serial/by-id/usb-zlrs_ZLRS_MCUBOOT_<serial>-if00 --no-trigger \
-  --image build/app/zephyr/zephyr.signed.bin        # first flash
-python3 tools/zlrs.py update --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04
+  --image ../build/app/zephyr/zephyr.signed.bin        # first flash
+python3 tools/zlrs.py update --serial <serial>
 # later updates
 ```
 

@@ -61,25 +61,25 @@ static void test_mod_lora_reference(void)
 	const zlrs_mod_cfg_t sf7_cr8 = zlrs_mod_lora(7U, 125000U, 4U, 8U);
 	const zlrs_mod_cfg_t no_bw = zlrs_mod_lora(7U, 0U, 1U, 8U);
 	const zlrs_mod_cfg_t bad_sf = zlrs_mod_lora(13U, 125000U, 1U, 8U);
-	uint32_t rc_us;
-	uint32_t tlm_us;
+	uint32_t packet_us;
+	uint32_t short_us;
 
 	printf("mod: lora airtime reference values\n");
 
-	rc_us = zlrs_mod_airtime_us(&sf7, 31U);
-	tlm_us = zlrs_mod_airtime_us(&sf7, 7U);
-	CHECK(rc_us == 71936U);
-	CHECK(tlm_us == 36096U);
+	packet_us = zlrs_mod_airtime_us(&sf7, 31U);
+	short_us = zlrs_mod_airtime_us(&sf7, 7U);
+	CHECK(packet_us == 71936U);
+	CHECK(short_us == 36096U);
 	CHECK(zlrs_mod_airtime_ms(&sf7, 31U) == 72U);
 
 	/* Double the bandwidth halves the time (integer rounding allows a 1 us difference) */
-	CHECK(zlrs_mod_airtime_us(&sf7_250, 31U) == rc_us / 2U);
+	CHECK(zlrs_mod_airtime_us(&sf7_250, 31U) == packet_us / 2U);
 
 	/* CR 4/8 is slower than 4/5 but never slower than a full preamble: monotonic is enough */
-	CHECK(zlrs_mod_airtime_us(&sf7_cr8, 31U) > rc_us);
+	CHECK(zlrs_mod_airtime_us(&sf7_cr8, 31U) > packet_us);
 
 	/* Higher SF is slower: SF12 is an order of magnitude behind SF7 */
-	CHECK(zlrs_mod_airtime_us(&sf12, 31U) > 10U * rc_us);
+	CHECK(zlrs_mod_airtime_us(&sf12, 31U) > 10U * packet_us);
 
 	/* Longer payloads take longer (one smooth curve, no knees) */
 	CHECK(zlrs_mod_airtime_us(&sf7, 64U) > zlrs_mod_airtime_us(&sf7, 32U));
@@ -90,29 +90,8 @@ static void test_mod_lora_reference(void)
 	CHECK(zlrs_mod_airtime_us(NULL, 31U) == 0U);
 }
 
-/*
- * The 10 Hz LoRa tier has to fit one RC frame out plus one telemetry frame in: the quantitative
- * version of "the superframe period follows the slower link" (doc/06-architecture.md 3).
- */
-static void test_mod_lora_control_budget(void)
-{
-	const zlrs_mod_cfg_t sf7 = zlrs_mod_lora(7U, 125000U, 1U, 8U);
-	const uint32_t rc_us = zlrs_mod_airtime_us(&sf7, 31U);
-	const uint32_t tlm_us = zlrs_mod_airtime_us(&sf7, 7U);
-	const uint32_t period_us = 100000U; /* 10 Hz */
-
-	printf("mod: lora control-link budget\n");
-
-	/* A 100 ms period fits a 72 ms RC frame but not 72 + 36 */
-	CHECK(rc_us < period_us);
-	CHECK(rc_us + tlm_us > period_us);
-	/* So telemetry thins out at 10 Hz: once every 2 frames just fits */
-	CHECK(rc_us + tlm_us / 2U < period_us);
-}
-
 void test_mod(void)
 {
 	test_mod_flrc_matches_region();
 	test_mod_lora_reference();
-	test_mod_lora_control_budget();
 }

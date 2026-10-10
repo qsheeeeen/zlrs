@@ -4,12 +4,12 @@
 #
 # zlrs management tool: talks to the device over the dedicated management CDC.
 #
-#   tools/zlrs.py status --port /dev/ttyACM2
-#   tools/zlrs.py set-phrase --port /dev/ttyACM2 "correct horse battery staple"
+#   tools/zlrs.py status --port /dev/ttyACM1
+#   tools/zlrs.py set-phrase --port /dev/ttyACM1 "correct horse battery staple"
 #   python3 tests/tools/run.py --module zlrs_mgmt   # no device: check management framing
 #
 # Except for `enter`, every command first sends enter-management-mode and waits for the ACK.
-# The three USB CDCs are CRSF, data port and management port (/dev/ttyACM0/1/2).
+# The two USB CDCs are data and management (/dev/ttyACM0/1).
 # Framing and the command table: doc/09-security.md 9 and include/zlrs/mgmt/mgmt.h.
 #
 # Standard library only; talking to a device needs pyserial (pip install pyserial).
@@ -35,7 +35,7 @@ CMD_SET_POWER = 0x23
 CMD_SET_ROLE = 0x24
 CMD_SET_PROFILE = 0x25
 CMD_NEW_DEV_ID = 0x26
-CMD_SET_MODE = 0x27
+CMD_SET_BAND = 0x27
 CMD_EXIT = 0x30
 CMD_FACTORY_RESET = 0x40
 CMD_RECOVERY = 0x41
@@ -68,7 +68,7 @@ COMMAND_MESSAGES = {
     CMD_SET_POWER: "TX power ceiling saved",
     CMD_SET_ROLE: "Role saved",
     CMD_SET_PROFILE: "Security profile saved",
-    CMD_SET_MODE: "Operating mode saved; reboot to apply",
+    CMD_SET_BAND: "Data band saved; reboot to apply",
     CMD_NEW_DEV_ID: "New device ID saved; pairing record cleared",
     CMD_FACTORY_RESET: "Factory settings restored",
     CMD_CONFIRM: "Running firmware confirmed",
@@ -134,7 +134,7 @@ def status_text(payload: bytes) -> str:
         ("Device", [("Role", "TX" if payload[1] == 0 else "RX"),
                     ("Hardware", "HF (868/915 MHz)" if payload[13] else "LF (470/433 MHz)"),
                     ("Device ID", dev), ("Peer ID", peer)]),
-        ("Link", [("Mode", "data24 (2.4 GHz data only)" if flags & 0x08 else "mixed"),
+        ("Link", [("Data band", "sub-GHz" if flags & 0x10 else "2.4 GHz"),
                   ("State", STATE_NAMES.get(payload[2], str(payload[2]))),
                   ("Quality", f"{payload[12]}%"),
                   ("Paired", "yes" if flags & 0x02 else "no"),
@@ -421,8 +421,8 @@ def app_ports() -> list[str]:
 
         if "ZLRS" not in name or "MCUBOOT" in name:
             continue
-        # Each module has several CDCs; the tool only talks to the management port (if04)
-        if not name.endswith("-IF04"):
+        # Each module has several CDCs; the tool only talks to the management port (if02)
+        if not name.endswith("-IF02"):
             continue
         out.append(path)
 
@@ -462,7 +462,7 @@ def pick_targets(args, parser) -> list[str]:
 def add_options(parser, include_list=True):
     target = parser.add_mutually_exclusive_group()
 
-    target.add_argument("--port", help="management port device (third CDC in application mode, e.g. /dev/ttyACM2)")
+    target.add_argument("--port", help="management port device (second CDC in application mode, e.g. /dev/ttyACM1)")
     target.add_argument("--serial", help="pick a module by USB serial substring (with several plugged in)")
     target.add_argument("--all", action="store_true",
                         help="run this command on every ZLRS module (with several plugged in)")
@@ -513,10 +513,10 @@ def add_commands(sub, parents=()):
     profile.add_argument("profile", choices=["p0", "p1", "p2"],
                          help="P0 has no tag (debug images only), P1 is the production profile, "
                               "P2 is not implemented yet")
-    mode = command("set-mode", help="select mixed or exclusive 2.4 GHz data mode (reboot required)",
-                   description="Save the operating mode. Reboot both peers to apply; data24 pairs on 2.4 GHz.")
-    mode.add_argument("mode", choices=["mixed", "data24"],
-                      help="mixed=control and data; data24=data and pairing exclusively on 2.4 GHz")
+    band = command("set-band", help="select 2.4 GHz or sub-GHz data (reboot required)",
+                   description="Save the data band; reboot both peers to apply.")
+    band.add_argument("band", choices=["2.4", "subg"],
+                      help="select the data frequency band")
     command("new-dev-id",
                    help="make a fresh device id (drops the pairing record; read status for the new one)")
     command("factory-reset", help="erase configuration and pairing", description="erase configuration and pairing")
@@ -617,8 +617,8 @@ def main(args=None, parser=None) -> int:
     elif args.command == "set-profile":
         frame = encode(CMD_SET_PROFILE, bytes([int(args.profile[1])]))
         expect = True
-    elif args.command == "set-mode":
-        frame = encode(CMD_SET_MODE, bytes([1 if args.mode == "data24" else 0]))
+    elif args.command == "set-band":
+        frame = encode(CMD_SET_BAND, bytes([{"2.4": 1, "subg": 2}[args.band]]))
         expect = True
     elif args.command == "new-dev-id":
         frame = encode(CMD_NEW_DEV_ID, b"")

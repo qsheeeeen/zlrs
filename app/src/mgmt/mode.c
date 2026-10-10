@@ -288,8 +288,8 @@ static int cfg_save_setting(void *ctx, uint8_t cmd, const uint8_t *value, uint8_
 	enum zlrs_config_key key;
 	int32_t decoded;
 	switch (cmd) {
-	case ZLRS_MGMT_CMD_SET_MODE:
-		key = ZLRS_CONFIG_MODE;
+	case ZLRS_MGMT_CMD_SET_BAND:
+		key = ZLRS_CONFIG_BAND;
 		break;
 	case ZLRS_MGMT_CMD_SET_BAUD:
 		key = ZLRS_CONFIG_DATA_BAUD;
@@ -318,7 +318,7 @@ static int cfg_save_setting(void *ctx, uint8_t cmd, const uint8_t *value, uint8_
 	} else {
 		decoded = key == ZLRS_CONFIG_POWER ? (int8_t)value[0] : value[0];
 	}
-	return config_result(zlrs_config_set(key, decoded, true));
+	return config_result(zlrs_config_set(key, decoded));
 }
 
 static int cfg_save_root_key(void *ctx, const uint8_t key[ZLRS_KEY_LEN])
@@ -338,13 +338,16 @@ static int cfg_read_status(void *ctx, zlrs_mgmt_status_t *out)
 		.role = rf.role,
 		.profile = rf.profile,
 		.state = rf.state,
-		.flags = rf.mode == ZLRS_MODE_DATA24 ? ZLRS_MGMT_FLAG_DATA24 : 0U,
+		.flags = rf.data_band == ZLRS_DATA_BAND_24 ? ZLRS_MGMT_FLAG_DATA24 : 0U,
 		.lq_percent = rf.lq_percent,
 		.band = ZLRS_RF_BAND,
 		.region = config.saved.region,
 		.tx_power_dbm = config.saved.power_dbm,
 		.data_baud = config.saved.data_baud,
 	};
+	if (rf.data_band == ZLRS_DATA_BAND_SUBG) {
+		out->flags |= ZLRS_MGMT_FLAG_DATA_SUBG;
+	}
 	if (rf.configured) {
 		out->flags |= ZLRS_MGMT_FLAG_KEY;
 	}

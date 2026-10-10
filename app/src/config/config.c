@@ -29,13 +29,11 @@ bool zlrs_config_profile_allowed(uint8_t profile)
 static int assign(zlrs_config_values_t *values, enum zlrs_config_key key, int32_t value)
 {
 	switch (key) {
-	case ZLRS_CONFIG_MODE:
-		if ((value != ZLRS_MODE_MIXED && value != ZLRS_MODE_DATA24) ||
-		    (value == ZLRS_MODE_MIXED && !IS_ENABLED(CONFIG_ZLRS_APP_LINK_CONTROL)) ||
-		    (value == ZLRS_MODE_DATA24 && !IS_ENABLED(CONFIG_ZLRS_APP_LINK_DATA))) {
+	case ZLRS_CONFIG_BAND:
+		if (value != ZLRS_DATA_BAND_24 && value != ZLRS_DATA_BAND_SUBG) {
 			return -EINVAL;
 		}
-		values->mode = value;
+		values->band = value;
 		break;
 	case ZLRS_CONFIG_DATA_BAUD:
 		if (value < 9600 || value > 4000000) {
@@ -67,29 +65,6 @@ static int assign(zlrs_config_values_t *values, enum zlrs_config_key key, int32_
 		}
 		values->profile = value;
 		break;
-	case ZLRS_CONFIG_CONTROL_RATE:
-		if (value < 4 || value > 1000) {
-			return -EINVAL;
-		}
-		values->control_rate = value;
-		break;
-	case ZLRS_CONFIG_MODEL:
-		if (value < 0 || value > UINT8_MAX) {
-			return -EINVAL;
-		}
-		values->model = value;
-		break;
-	case ZLRS_CONFIG_MODEL_MATCH:
-	case ZLRS_CONFIG_TELEMETRY:
-		if (value != 0 && value != 1) {
-			return -EINVAL;
-		}
-		if (key == ZLRS_CONFIG_MODEL_MATCH) {
-			values->model_match = value;
-		} else {
-			values->telemetry = value;
-		}
-		break;
 	default:
 		return -EINVAL;
 	}
@@ -109,13 +84,12 @@ void zlrs_config_poll(void)
 static void changed(void)
 {
 	state.revision++;
-	state.reboot_required = identity_reset_pending || state.saved.mode != state.active.mode ||
+	state.reboot_required = identity_reset_pending || state.saved.band != state.active.band ||
 				state.saved.region != state.active.region ||
 				state.saved.power_dbm != state.active.power_dbm ||
 				state.saved.role != state.active.role ||
 				state.saved.profile != state.active.profile ||
-				state.saved.data_baud != state.active.data_baud ||
-				state.saved.control_rate != state.active.control_rate;
+				state.saved.data_baud != state.active.data_baud;
 	publication_pending = true;
 	zlrs_config_poll();
 }
@@ -133,14 +107,12 @@ zlrs_config_identity_t zlrs_config_identity(void)
 static zlrs_config_values_t defaults(void)
 {
 	return (zlrs_config_values_t){
-		.mode = IS_ENABLED(CONFIG_ZLRS_APP_LINK_CONTROL) ? ZLRS_MODE_MIXED
-								 : ZLRS_MODE_DATA24,
+		.band = ZLRS_DATA_BAND_24,
 		.region = ZLRS_DEFAULT_REGION,
 		.power_dbm = CONFIG_ZLRS_APP_TX_POWER_DBM,
 		.role = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? ZLRS_ROLE_TX : ZLRS_ROLE_RX,
 		.profile = IS_ENABLED(CONFIG_ZLRS_APP_SECURITY_PROFILE_P0) ? ZLRS_PROFILE_P0
 									   : ZLRS_PROFILE_P1,
-		.telemetry = true,
 	};
 }
 
@@ -158,7 +130,7 @@ int zlrs_config_init(void)
 		state.saved.region = region;
 		state.saved.power_dbm = power;
 	}
-	for (enum zlrs_config_key key = ZLRS_CONFIG_MODE; key <= ZLRS_CONFIG_TELEMETRY; key++) {
+	for (enum zlrs_config_key key = ZLRS_CONFIG_BAND; key <= ZLRS_CONFIG_PROFILE; key++) {
 		if (key == ZLRS_CONFIG_REGION || key == ZLRS_CONFIG_POWER) {
 			continue;
 		}
@@ -195,33 +167,23 @@ int zlrs_config_init(void)
 	return rc;
 }
 
-int zlrs_config_set(enum zlrs_config_key key, int32_t value, bool persist)
+int zlrs_config_set(enum zlrs_config_key key, int32_t value)
 {
-	zlrs_config_values_t candidate = persist ? state.saved : state.active;
-	const int rc = assign(&candidate, key, value);
-	if (rc != 0 || (!persist && key < ZLRS_CONFIG_MODEL)) {
+	zlrs_config_values_t candidate = state.saved;
+	if (assign(&candidate, key, value) != 0) {
 		return -EINVAL;
 	}
-	if (persist) {
-		const uint32_t wide = value;
-		const uint8_t byte = value;
-		const size_t size = zlrs_storage_settings_size(key);
-		zlrs_rf_pause();
-		const int saved = zlrs_storage_settings_save(
-			key, size == sizeof(wide) ? (const void *)&wide : (const void *)&byte,
-			size);
-		zlrs_rf_resume();
-		if (saved != 0) {
-			return -EIO;
-		}
-		state.saved = candidate;
+	const uint32_t wide = value;
+	const uint8_t byte = value;
+	const size_t size = zlrs_storage_settings_size(key);
+	zlrs_rf_pause();
+	const int rc = zlrs_storage_settings_save(
+		key, size == sizeof(wide) ? (const void *)&wide : (const void *)&byte, size);
+	zlrs_rf_resume();
+	if (rc != 0) {
+		return -EIO;
 	}
-	if (key >= ZLRS_CONFIG_MODEL) {
-		(void)assign(&state.active, key, value);
-		if (key == ZLRS_CONFIG_MODEL || key == ZLRS_CONFIG_MODEL_MATCH) {
-			zlrs_rf_model(state.active.model, state.active.model_match);
-		}
-	}
+	state.saved = candidate;
 	changed();
 	return 0;
 }

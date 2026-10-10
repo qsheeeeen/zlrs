@@ -1,7 +1,7 @@
 # Carrier board
 
 Target shape: fix the wiring between the RP2350-Zero and the Core2021 onto one PCB, exposing
-USB-C, a button and two 6P serial ports, powered from 5 V. Two layers, with no RF layout
+USB-C, a button and one 6P DATA serial port, powered from 5 V. Two layers, with no RF layout
 constraints (the module carries its own matching network and antenna connector).
 
 The prototype (two modules wired directly) is in [03-prototype](03-prototype.md); pins and
@@ -11,28 +11,25 @@ aliases are defined in the [board README](../boards/zlrs/rp2350_zero_core2021/RE
 
 | Port | Part | Carries |
 | --- | --- | --- |
-| J1 (control) | JST-GH 1.25 mm, 6P, right-angle | Pixhawk telemetry port order: `5V_IN` + CRSF |
-| J2 (data) | JST-GH 1.25 mm, 6P, right-angle | same order: `5V_IN` + the data port |
-| USB-C | on the RP2350-Zero module | control, data, management, flashing; not routed on the PCB |
+| J2 (DATA) | JST-GH 1.25 mm, 6P, right-angle | `5V_IN` + bidirectional UART DATA |
+| USB-C | on the RP2350-Zero module | DATA, management and flashing |
 | SW1 button | SMD tactile 3x4 mm | GP12 to GND: hold to pair |
 | Status LED | WS2812 on the module (GP16) | not routed on the PCB |
 
-### 1.1 6P pin order (DS-009 telemetry port, seen from the peripheral)
+### 1.1 J2 6P pin order (seen from this board)
 
-The cable is 1:1 and **the crossover happens at the peripheral** (the FC's pin 2 is a TX
-output, so pin 2 here is an RX input). No hardware flow control: CTS and RTS stay unconnected.
+The cable is 1:1 with a compatible host UART header: pin 2 is host TX / board RX, pin 3 is host RX / board TX. CTS and RTS are unconnected.
 
-| pin | Flight controller side | This board | Wired to |
+| pin | Host side | This board | Wired to |
 | --- | --- | --- | --- |
 | 1 (red) | VCC +5V | `5V_IN` | the module's 5 V pin |
-| 2 | TX (FC output) | RX | UART0_RX = GP1 (GP9 on J2) |
-| 3 | RX (FC input) | TX | UART0_TX = GP0 (GP8 on J2) |
+| 2 | TX output | RX | UART1_RX = GP9 |
+| 3 | RX input | TX | UART1_TX = GP8 |
 | 4 | CTS | unconnected | no flow control |
 | 5 | RTS | unconnected | no flow control |
 | 6 | GND | GND | GND |
 
-Each port's `5V_IN` goes through its own Schottky (SS14 / BAT54) before joining the 5 V rail:
-either port can power the board and feeding both does not back-feed.
+J2 `5V_IN` goes through input protection before joining the 5 V rail.
 
 ## 2. Nets
 
@@ -48,10 +45,9 @@ To the outside:
 
 | Net | Connection |
 | --- | --- |
-| `5V_IN` | J1 / J2 pin 1 -> its own diode -> input protection -> the Zero's 5 V pin |
-| `CTRL_TX` / `CTRL_RX` | J1 pins 3 / 2 to GP0 / GP1 |
+| `5V_IN` | J2 pin 1 -> diode -> input protection -> the Zero's 5 V pin |
 | `DATA_TX` / `DATA_RX` | J2 pins 3 / 2 to GP8 / GP9 |
-| `GND` | J1, J2, both modules, the copper pour |
+| `GND` | J2, both modules, the copper pour |
 
 ## 3. Power
 
@@ -72,5 +68,5 @@ To the outside:
   least 0.5 mm wide
 - Castellation pads follow the module drawing (0.3 mm extension, 0.2 mm assembly margin all
   round)
-- J1 and J2 are right-angle, on the same long edge away from the antenna clearance,
+- J2 is right-angle, on the long edge away from the antenna clearance,
   silkscreened `5V/GND` and `TX/RX`

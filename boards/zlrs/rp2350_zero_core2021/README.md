@@ -1,7 +1,7 @@
 # Waveshare RP2350-Zero + Core2021 (board definition)
 
 A Waveshare RP2350-Zero (RP2350A, 4 MB flash, Cortex-M33) carrying a Waveshare Core2021
-(Semtech LR2021). The board definition fixes the radio wiring, both UARTs, the USB CDCs, the
+(Semtech LR2021). The board definition fixes the radio wiring, DATA UART, USB CDCs, the
 button, the status LED and the flash partitions into devicetree; the application only knows
 `zlrs-*` aliases and never pin numbers.
 
@@ -10,7 +10,7 @@ already has `waveshare/rp2350_zero` (the bare board, no radio) and board names h
 unique; the difference here is a Core2021 plus a full wiring set, so the vendor is our own
 `zlrs`.
 
-**The physical build and how it behaves in each mode are in
+**The physical build and USB interfaces are in
 [doc/03-prototype.md](../../../doc/03-prototype.md)**; this document covers the board definition
 only: pins and aliases, SKUs and calibration, partitions, build targets and board defaults.
 
@@ -23,28 +23,19 @@ only: pins and aliases, SKUs and calibration, partitions, build targets and boar
 | BUSY | GP13 | same node (`busy-gpios`) | module busy, active high, internal pull-up |
 | NRESET | GP14 | same node (`reset-gpios`) | reset, active low |
 | DIO8 | GP15 | same node (`dios/dio@8`) | IRQ, active high, internal pull-down |
-| UART0 TX / RX | GP0 / GP1 | `zlrs-control-uart` = `uart0` | CRSF: TX role 400000, RX role 420000 |
 | UART1 TX / RX | GP8 / GP9 | `zlrs-data-uart` = `uart1` | the data port, 115200 by default (changeable in NVS) |
 | Button | GP12 | `zlrs-button`, `smtc-user-button` | to ground with an internal pull-up; none fitted, for your own switch |
 | WS2812B | GP16 | `zlrs-led`, `led-strip` | on the module, driven through PIO0; semantics in [doc/10-ux.md](../../../doc/10-ux.md) |
 | Watchdog | - | `watchdog0` = `wdt0` | armed only when `CONFIG_ZLRS_APP_WATCHDOG` is on |
 
-In the TX role, a handset module bay uses one CRSF signal: connect GP0 and GP1 to that signal
-and share ground. GP0 is high impedance while receiving; firmware enables it for one reply
-that fits between handset frames. TIMER0's Zephyr counter releases the line after the UART
-shifter completes, separately from TIMER1 radio scheduling. The default electrical signal is
-non-inverted 3.3 V; an inverted module-bay signal requires a suitable external adapter.
-In the RX role, use ordinary crossed TX/RX wiring to the FC at 420000 baud.
-These electrical and reply-window paths still need verification with an actual handset and FC.
-
-The USB device exposes four CDC nodes; three are enabled by default:
+The DATA UART uses crossed TX/RX wiring at 3.3 V. Its baud rate is stored in NVS.
+The USB device exposes two CDCs in the application and a third in a debug build:
 
 | Node | Alias | Purpose |
 | --- | --- | --- |
-| `cdc_acm_uart0` | `zlrs-control-cdc` | the control port's USB endpoint |
-| `cdc_acm_uart1` | `zlrs-data-cdc` | the data port's USB endpoint |
-| `cdc_acm_uart2` | `zlrs-mgmt-cdc` | the management protocol |
-| `cdc_acm_uart3` | - | console (kernel log + shell); **disabled**, only `app/debug.overlay` enables it |
+| `cdc_acm_uart1` | `zlrs-data-cdc` | DATA (`if00`) |
+| `cdc_acm_uart2` | `zlrs-mgmt-cdc` | management (`if02`) |
+| `cdc_acm_uart3` | - | console; enabled only by `app/debug.overlay` |
 
 The radio bus and the three control lines all sit at **GP15 or below**: GP16 drives the
 RP2350-Zero's on-board WS2812B (kept for the status LED) and the pins above it are awkward to
@@ -65,7 +56,7 @@ in the board devicetree. The one-pixel PIO status LED writes directly to the PIO
 | --- | --- |
 | SPI0 / LR2021 | TX channel 0, RX channel 1; upstream PL022 DMA handles every SPI transaction |
 | PIO0 / WS2812 status LED | No DMA; one pixel is written synchronously to the PIO FIFO |
-| UART0 / CRSF, UART1 / data | Hardware has DMA request sources, but the current upstream PL011 driver has no DMA/async implementation; retain interrupt-driven FIFO I/O |
+| UART1 / DATA | Hardware has DMA request sources, but the current upstream PL011 driver has no DMA/async implementation; retain interrupt-driven FIFO I/O |
 | USB / CDC | Upstream RP2350 UDC uses USB DPRAM and interrupts; no system-DMA configuration path |
 | Flash | Upstream driver uses ROM programming/erase operations; no DMA configuration path |
 | TRNG | Application entropy driver reads registers into its pool; no DMA request path |
@@ -157,12 +148,12 @@ disagree about where a slot lives.
 | image-1 (slot1) | 0x0F0000 | 832 KB | where upgrade images land and MCUboot swaps |
 | log | 0x1C0000 | 1 MB | log store: LittleFS, eight 128 KB files, the oldest overwritten |
 | coredump | 0x2C0000 | 128 KB | coredump backend target for the fault case |
-| storage | 0x2E0000 | 32 KB | the same NVS as above (nine keys, under 100 B of payload) |
+| storage | 0x2E0000 | 32 KB | the same NVS as above (ten keys, under 100 B of payload) |
 
 Boot chain: RP2350 bootrom, MCUboot (checking slot0's signature), the application. Slot swaps
 use `swap using move` (no scratch partition needed, rollback works; `swap using offset` goes in
 but never comes back on this board). Image confirmation and recovery entries are described in
-[doc/07-firmware.md](../../../doc/07-firmware.md) 5, the log store in section 7.
+[doc/07-firmware.md](../../../doc/07-firmware.md) 5, the log store in that guide.
 
 BOOTSEL carries the **bootloader image only**; the application is always installed and updated
 through the bootloader:
@@ -177,11 +168,8 @@ west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33/hf app
    application, the same command is aimed at its management port instead:
 
 ```shell
-python3 tools/zlrs-update.py --serial <serial> \
-  --recovery-port /dev/serial/by-id/usb-zlrs_ZLRS_MCUBOOT_<serial>-if00 --no-trigger \
-  --image build/app/zephyr/zephyr.signed.bin        # first flash
-python3 tools/zlrs-update.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04
-# later updates
+python3 tools/zlrs.py update --no-trigger --serial <serial> --image ../build/app/zephyr/zephyr.signed.bin
+python3 tools/zlrs.py update --serial <serial> --image ../build/app/zephyr/zephyr.signed.bin
 ```
 
 **The application is never dragged on as a UF2**: an image written that way lands in slot0 with
@@ -189,17 +177,7 @@ an empty trailer, which MCUboot treats as the initial image — no confirmation,
 the bootloader image goes through BOOTSEL. (The `zephyr.uf2` in an application build directory is
 the unsigned image based at the flash start: MCUboot rejects it.)
 
-Later upgrades go through MCUboot serial recovery and **USB only**, triggered from the
-application's management port:
-
-```shell
-python3 tools/zlrs-recovery.py --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04   # trigger only
-python3 tools/zlrs-update.py  --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if04   # trigger, upload, wait, confirm
-```
-
-In bootloader mode USB shows two CDCs (recovery first, console second) and
-`app/sysbuild/mcuboot.overlay` removes the link CDCs, so scripts find the recovery port under
-`/dev/serial/by-id/...MCUBOOT...` and cannot confuse it with the application's.
+Later upgrades use the application's management CDC at `if02`. In bootloader mode USB exposes recovery at `if00` and a console. `app/sysbuild/mcuboot.overlay` removes the management CDC, so the updater can identify the recovery port by its `MCUBOOT` USB name.
 
 ## 5. Board defaults
 

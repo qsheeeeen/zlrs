@@ -58,7 +58,7 @@ class UpdateTests(unittest.TestCase):
                              Path("/workspace/build-lf/app/zephyr/zephyr.signed.bin"))
 
     def test_usb_serial_survives_modes(self):
-        app = "/dev/serial/by-id/usb-zlrs_ZLRS_AbCd-if04"
+        app = "/dev/serial/by-id/usb-zlrs_ZLRS_AbCd-if02"
         recovery = "/dev/serial/by-id/usb-zlrs_ZLRS_MCUBOOT_AbCd-if00"
         with patch.object(update, "find_by_id", return_value=[]):
             self.assertEqual(update.serial_of_port(app), "AbCd")
@@ -66,7 +66,7 @@ class UpdateTests(unittest.TestCase):
 
     def test_wait_uses_management_and_recovery_cdc_only(self):
         for hint, ports, wanted in [
-            (update.APP_PORT_HINT, ["app-if00", "app-if02", "app-if04"], "app-if04"),
+            (update.APP_PORT_HINT, ["app-if00", "app-if02"], "app-if02"),
             (update.RECOVERY_PORT_HINT, ["boot-if00", "boot-if02"], "boot-if00"),
         ]:
             with patch.object(update, "find_by_id", return_value=ports):
@@ -94,7 +94,7 @@ class UpdateTests(unittest.TestCase):
                 digest = self.image.read_bytes()[-32:].hex() if matching else "0" * 64
                 with patch.object(update, "find_client", return_value="smpmgr"), \
                         patch.object(update, "inactive_slot", return_value=1), \
-                        patch.object(update, "wait_for_by_id", return_value="app-if04"), \
+                        patch.object(update, "wait_for_by_id", return_value="app-if02"), \
                         patch.object(update.subprocess, "run", return_value=Mock(returncode=0)), \
                         patch.object(update, "run_mgmt_subcmd_retry", side_effect=[(0, digest), (0, "ok")]) as mgmt_call:
                     options = self.options + ["--no-trigger", "--recovery-port", "fake"]

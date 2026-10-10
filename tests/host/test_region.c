@@ -11,19 +11,16 @@
 #include "zlrs/region/region.h"
 
 /* The two radio designs the prototype ships with (see the boards directory) */
-static const zlrs_rf_design_t rf_lf = { .band = ZLRS_BAND_SUBG_LF,
-					.low_hz = 410000000U,
-					.high_hz = 510000000U };
-static const zlrs_rf_design_t rf_hf = { .band = ZLRS_BAND_SUBG_HF,
-					.low_hz = 850000000U,
-					.high_hz = 930000000U };
+static const zlrs_rf_design_t rf_lf = {
+	.band = ZLRS_BAND_SUBG_LF, .low_hz = 410000000U, .high_hz = 510000000U};
+static const zlrs_rf_design_t rf_hf = {
+	.band = ZLRS_BAND_SUBG_HF, .low_hz = 850000000U, .high_hz = 930000000U};
 
 static void test_tables(void)
 {
 	for (uint8_t i = 0U; i < ZLRS_REGION_COUNT; i++) {
 		const zlrs_region_t *region = zlrs_region_get(i);
-		const zlrs_rf_design_t *rf =
-			(region->band == ZLRS_BAND_SUBG_HF) ? &rf_hf : &rf_lf;
+		const zlrs_rf_design_t *rf = (region->band == ZLRS_BAND_SUBG_HF) ? &rf_hf : &rf_lf;
 
 		CHECK(region != NULL);
 		CHECK(region->name != NULL);
@@ -35,18 +32,17 @@ static void test_tables(void)
 						   (int8_t)(region->max_tx_power_dbm + 1)) != 0);
 		}
 		/* A band mismatch has to be refused: an LF board cannot do 915, an HF one cannot do 470/433 */
-		CHECK(zlrs_region_validate(
-			      region,
-			      (region->band == ZLRS_BAND_SUBG_HF) ? &rf_lf : &rf_hf,
-			      region->max_tx_power_dbm) == -5);
+		CHECK(zlrs_region_validate(region,
+					   (region->band == ZLRS_BAND_SUBG_HF) ? &rf_lf : &rf_hf,
+					   region->max_tx_power_dbm) == -5);
 		/* Right band but a design that does not cover the region's edges: also refused */
 		{
-			const zlrs_rf_design_t narrow = { .band = rf->band,
-							  .low_hz = region->high_hz,
-							  .high_hz = region->high_hz };
+			const zlrs_rf_design_t narrow = {.band = rf->band,
+							 .low_hz = region->high_hz,
+							 .high_hz = region->high_hz};
 
-			CHECK(zlrs_region_validate(region, &narrow,
-						   region->max_tx_power_dbm) == -6);
+			CHECK(zlrs_region_validate(region, &narrow, region->max_tx_power_dbm) ==
+			      -6);
 		}
 	}
 
@@ -95,11 +91,11 @@ static void test_airtime(void)
 	CHECK(zlrs_airtime_us(128U, 0U) == 0U);
 }
 
-/* Region duty -> control rate ceiling: EU868's 1% cannot feed 150 Hz, FCC/CN are unlimited */
+/* Region duty limits maximum DATA frame cadence in constrained bands */
 static void test_max_frames(void)
 {
-	/* 31-byte control frame at 1.3 Mbps: (31+4)*8/1.3e6 = 215.4 us, rounded up to 216 us */
-	printf("region: max control rate\n");
+	/* 31-byte data frame at 1.3 Mbps: (31+4)*8/1.3e6 = 215.4 us, rounded up to 216 us */
+	printf("region: max frame rate\n");
 
 	CHECK(zlrs_airtime_us(31U, 1300000U) == 216U);
 
@@ -160,172 +156,6 @@ static void test_duty(void)
 	CHECK(duty.denied == 0U);
 }
 
-/* Control plan: rate is bounded by duty and airtime, the cadence factors follow the rate */
-static void test_control_plan(void)
-{
-	zlrs_control_plan_t plan;
-	const zlrs_mod_cfg_t fast = zlrs_mod_flrc(1300000U);
-	const zlrs_mod_cfg_t narrow = zlrs_mod_flrc(325000U);
-	zlrs_plan_req_t req = {
-		.mod = &fast,
-		.frame_len = 31U,
-	};
-
-	printf("region: control plan\n");
-
-	/* Default tier: FCC915 at 1.3 Mbps runs 150 Hz unchanged */
-	req.region = zlrs_region_get(ZLRS_REGION_FCC915);
-	req.want_hz = 150U;
-	zlrs_region_control_plan(&req, &plan);
-	CHECK(plan.rate_hz == 150U);
-	CHECK(plan.frame_period_us == 6666U);
-	CHECK(plan.slot_budget_us == 1666U);
-	CHECK(plan.tlm_every_n == 1U);
-	CHECK(plan.data_every_n == 1U);
-	CHECK(!plan.clamped_by_duty && !plan.clamped_by_airtime);
-
-	/* 500 Hz tier: FCC915 has no duty limit and 1.3 Mbps airtime keeps up */
-	req.want_hz = 500U;
-	zlrs_region_control_plan(&req, &plan);
-	CHECK(plan.rate_hz == 500U);
-	CHECK(plan.frame_period_us == 2000U);
-	CHECK(plan.slot_budget_us == 500U);
-	CHECK(plan.tlm_every_n == 3U);  /* about 167 times per second */
-	CHECK(plan.data_every_n == 5U); /* 100 times per second */
-	CHECK(!plan.clamped_by_duty && !plan.clamped_by_airtime);
-
-	/* EU868's 1% duty pulls 500 Hz down to 46 Hz */
-	req.region = zlrs_region_get(ZLRS_REGION_EU868);
-	zlrs_region_control_plan(&req, &plan);
-	CHECK(plan.rate_hz == 46U);
-	CHECK(plan.clamped_by_duty);
-	CHECK(!plan.clamped_by_airtime);
-	CHECK(plan.tlm_every_n ==
-	      1U); /* the rate is below the target, so every frame carries telemetry */
-
-	/* At the narrow-band rate (CN470 clamps to 0.325 Mbps) airtime bounds the frame rate */
-	req.region = zlrs_region_get(ZLRS_REGION_CN470);
-	req.mod = &narrow;
-	zlrs_region_control_plan(&req, &plan);
-	CHECK(plan.clamped_by_airtime);
-	/* Airtime 862 us plus 200 us of headroom -> two control slots per frame ~ 470 Hz */
-	CHECK(plan.rate_hz == 470U);
-	/* A quarter frame (531 us) cannot hold a 1062 us slot, so the budget follows the real need */
-	CHECK(plan.slot_budget_us == 1062U);
-}
-
-/*
- * LoRa long-range tier (doc/06-architecture.md 3): a frame is tens of ms, so airtime decides
- * the frame rate, not the configured number.
- */
-static void test_lora_plan(void)
-{
-	const zlrs_mod_cfg_t lora = zlrs_mod_lora(7U, 125000U, 1U, 8U);
-	const zlrs_mod_cfg_t sub_g_slow = zlrs_mod_flrc(325000U);
-	zlrs_control_plan_t plan;
-	zlrs_plan_req_t req = {
-		.region = NULL, /* FCC915: no duty limit */
-		.mod = &lora,
-		.want_hz = 10U,
-		.frame_len = 31U,
-		.tlm_len = 7U,
-	};
-
-	printf("region: lora control plan\n");
-
-	req.region = zlrs_region_get(ZLRS_REGION_FCC915);
-	zlrs_region_control_plan(&req, &plan);
-
-	/* 10 Hz does not fit (72 + 36 + headroom = 108 ms), so it clamps to 9 Hz */
-	CHECK(plan.clamped_by_airtime);
-	CHECK(!plan.clamped_by_duty);
-	CHECK(plan.rate_hz == 9U);
-	CHECK(plan.frame_period_us == 111111U);
-	/* The slot budget has to hold a 72 ms RC frame: FLRC's 2 ms ceiling does not apply here */
-	CHECK(plan.slot_budget_us >= 71936U + 200U);
-
-	/* The data link runs narrow-band on sub-G: two 135 B windows amortise in and trim the rate */
-	req.other_mod = &sub_g_slow;
-	req.other_frame_len = 135U;
-	zlrs_region_control_plan(&req, &plan);
-	CHECK(plan.rate_hz == 8U);
-	CHECK(plan.frame_period_us >= 108432U + 2U * 3622U);
-
-	/* EU868's 1% duty cannot feed LoRa: it warns and the rate falls back to 1 Hz */
-	req.region = zlrs_region_get(ZLRS_REGION_EU868);
-	req.other_mod = NULL;
-	req.other_frame_len = 0U;
-	zlrs_region_control_plan(&req, &plan);
-	CHECK(plan.clamped_by_duty);
-	CHECK(plan.rate_hz == 1U);
-}
-
-/*
- * Racing mode (doc/06-architecture.md 2): control owns 2.4G, has no region table and the duty
- * gate does not touch it; the link that moved to sub-G (data) is the regulated one, and its
- * windows amortise into the superframe through data_every_n, trimming the peak rate.
- */
-static void test_racing_plan(void)
-{
-	const zlrs_mod_cfg_t ctl = zlrs_mod_flrc(2600000U);
-	const zlrs_mod_cfg_t sub_g_slow = zlrs_mod_flrc(325000U);
-	zlrs_control_plan_t plan;
-	zlrs_plan_req_t req = {
-		.region = NULL, /* 2.4G: no region table */
-		.mod = &ctl,
-		.want_hz = 500U,
-		.frame_len = 31U,
-		.tlm_len = 15U,
-		.other_mod = &sub_g_slow,
-		.other_frame_len = 135U,
-	};
-
-	printf("region: racing plan (control on 2.4g, data on sub-g)\n");
-
-	zlrs_region_control_plan(&req, &plan);
-
-	/* No duty limit, but the sub-G data window reservation pulls the peak to 420 Hz */
-	CHECK(!plan.clamped_by_duty);
-	CHECK(plan.clamped_by_airtime);
-	CHECK(plan.rate_hz == 420U);
-	/* Data every 4 frames: 7204 us of reservation spreads to 1811 us per frame, which is consistent */
-	CHECK(plan.data_every_n == 4U);
-	CHECK(plan.frame_period_us == 2380U);
-}
-
-/*
- * 1000 Hz timing budget (doc/08-protocol.md 4.1): at 2.6 Mbps a 31 B RC frame takes 108 us and
- * a frame is 1000 us, so the four slots separate cleanly. The protocol side is fine; whether it
- * runs depends on driving the radio directly (RAC schedules in whole milliseconds).
- */
-static void test_plan_1000hz(void)
-{
-	const zlrs_mod_cfg_t fast = zlrs_mod_flrc(2600000U);
-	zlrs_control_plan_t plan;
-	zlrs_plan_req_t req = {
-		.region = NULL, /* FCC915: no duty limit */
-		.mod = &fast,
-		.want_hz = 1000U,
-		.frame_len = 31U,
-		.tlm_len = 15U,
-		.other_mod = &fast,
-		.other_frame_len = 135U,
-	};
-
-	printf("region: 1000 Hz plan\n");
-
-	req.region = zlrs_region_get(ZLRS_REGION_FCC915);
-	zlrs_region_control_plan(&req, &plan);
-
-	CHECK(plan.rate_hz == 1000U);
-	CHECK(plan.frame_period_us == 1000U);
-	/* Slot budget = 108 us of airtime plus 200 us of headroom */
-	CHECK(plan.slot_budget_us == 308U);
-	CHECK(plan.tlm_every_n == 6U);   /* about 167 times per second */
-	CHECK(plan.data_every_n == 10U); /* 100 times per second */
-	CHECK(!plan.clamped_by_airtime && !plan.clamped_by_duty);
-}
-
 static void test_mix_limit(void)
 {
 	const zlrs_region_t *eu = zlrs_region_get(ZLRS_REGION_EU868);
@@ -359,10 +189,6 @@ void test_region(void)
 	test_rate_limit();
 	test_airtime();
 	test_max_frames();
-	test_control_plan();
-	test_lora_plan();
-	test_racing_plan();
 	test_mix_limit();
-	test_plan_1000hz();
 	test_duty();
 }

@@ -9,13 +9,13 @@
 # device sets the boot-mode flag and reboots into MCUboot recovery (doc/09-security.md 9).
 #
 # Usage:
-#   python3 tools/zlrs.py recovery --port /dev/ttyACM2   # management port (third CDC in app mode)
+#   python3 tools/zlrs.py recovery --port /dev/ttyACM1   # management port (second CDC in app mode)
 #   python3 tests/tools/run.py --module zlrs_recovery   # no device: check recovery framing
 #
 # Then upload a signed image with an mcumgr client:
 #   smpmgr --port <recovery port> upgrade zephyr.signed.bin
 #
-# The ports change: three CDCs in application mode (management port is ttyACM2), two in bootloader
+# The ports change: two CDCs in application mode (management port is ttyACM1), two in bootloader
 # mode (recovery first, console second). Find recovery by /dev/serial/by-id/...MCUBOOT...-if00.
 
 SOF = b"\xa5\x5a"

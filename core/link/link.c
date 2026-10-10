@@ -10,15 +10,13 @@
 static const uint8_t pairing_sync_word[ZLRS_SYNC_WORD_LEN] = {'Z', 'L', 'R', 'S'};
 
 /* Derivation labels */
-#define LABEL_PAIR              "zlrs/pair"
-#define LABEL_AUTH              "zlrs/auth"
-#define LABEL_FHSS              "zlrs/fhss"
-#define LABEL_SYNC_CONTROL      "zlrs/sync/control"
-#define LABEL_SYNC_DATA         "zlrs/sync/data"
-#define LABEL_SYNC_LORA_CONTROL "zlrs/sync/lora/control"
-#define LABEL_SYNC_LORA_DATA    "zlrs/sync/lora/data"
-#define LABEL_LINK_AUTH         "zlrs/link-auth"
-#define LABEL_SESSION           "zlrs/session"
+#define LABEL_PAIR           "zlrs/pair"
+#define LABEL_AUTH           "zlrs/auth"
+#define LABEL_FHSS           "zlrs/fhss"
+#define LABEL_SYNC_DATA      "zlrs/sync/data"
+#define LABEL_SYNC_LORA_DATA "zlrs/sync/lora/data"
+#define LABEL_LINK_AUTH      "zlrs/link-auth"
+#define LABEL_SESSION        "zlrs/session"
 
 #define PAIR_PAYLOAD_LEN ZLRS_PAIR_PAYLOAD_LEN
 
@@ -78,54 +76,29 @@ static bool sync_frame(const zlrs_link_t *link)
  * Which frequency this frame uses: resync frames and frames that still owe a session
  * confirm fall back to the sync channel, everything else follows the hop table.
  */
-/* Slot kinds, used to order sub-band moves (telemetry, then data, then RC; 08-protocol 5.1) */
-enum slot_kind {
-	SLOT_RC = 0,
-	SLOT_TLM,
-	SLOT_DATA,
-};
-
-/*
- * Should this slot land on sub-G? Four mix levels move 0/1/2/4 of every 4 slots, always in
- * the same order: telemetry first, then data, the RC downlink last.
- */
-static bool slot_in_subg(const zlrs_link_t *link, uint8_t kind)
+/* Data can move between the main and second frequency domains. */
+static bool slot_in_subg(const zlrs_link_t *link)
 {
-	const uint8_t k = zlrs_fhss_mix_slots(link->sub_mix);
-
-	if (k == 0U || !zlrs_fhss_sub_ready(&link->fhss)) {
-		return false;
-	}
-	if (k >= 4U) {
-		return true; /* 100%: the whole link falls back to sub-G */
-	}
-	if (kind == SLOT_TLM) {
-		return true; /* 25%: telemetry moves first */
-	}
-	if (k >= 2U && kind == SLOT_DATA) {
-		return true; /* 50%: data moves next */
-	}
-
-	return false; /* the RC downlink only moves at 100% */
+	return zlrs_fhss_sub_ready(&link->fhss) && zlrs_fhss_mix_slots(link->sub_mix) >= 2U;
 }
 
-static uint32_t slot_freq_hz(const zlrs_link_t *link, uint8_t kind)
+static uint32_t slot_freq_hz(const zlrs_link_t *link)
 {
 	if (sync_frame(link) || link->sess_cfm_due || link->sess_ack_due) {
 		return sync_freq_hz(link);
 	}
 	/* Both ends count from the confirmed frame, including repeated confirms after lost ACKs.
 	 * Keep initial DATA on the same channel where the peer is waiting for confirmation. */
-	if (link->cfg.kind == ZLRS_LINK_DATA && link->cfg.handshake && link->session_valid &&
+	if (link->cfg.handshake && link->session_valid &&
 	    (uint32_t)(link->frame_index - link->sess_sync_frame) < ZLRS_DATA_CONFIRM_FRAMES) {
 		return sync_freq_hz(link);
 	}
 	/* Both ends keep the fresh-session uplink on the confirmation channel. */
-	if ((kind == SLOT_TLM || (kind == SLOT_DATA && link->slot == ZLRS_SLOT_DATA_B)) &&
+	if ((link->slot == ZLRS_SLOT_DATA_B) &&
 	    (uint32_t)(link->slot_ms - link->state_ms) < ZLRS_SESS_CONFIRM_MS) {
 		return sync_freq_hz(link);
 	}
-	if (slot_in_subg(link, kind)) {
+	if (slot_in_subg(link)) {
 		return zlrs_fhss_sub_current_hz(&link->fhss);
 	}
 
@@ -254,7 +227,6 @@ static void derive_pair(zlrs_link_t *link)
 {
 	uint8_t ctx[ZLRS_PAIR_CTX_LEN];
 	uint8_t seed[4];
-	uint8_t ctrl_word[ZLRS_SYNC_WORD_LEN];
 	uint8_t data_word[ZLRS_SYNC_WORD_LEN];
 	uint32_t hop_seed;
 
@@ -278,13 +250,10 @@ static void derive_pair(zlrs_link_t *link)
 		zlrs_fhss_init(&link->fhss, link->cfg.domain, hop_seed);
 	}
 
-	zlrs_kdf(link->pair_key, ZLRS_KEY_LEN, LABEL_SYNC_CONTROL, NULL, 0U, ctrl_word,
-		 sizeof(ctrl_word));
 	zlrs_kdf(link->pair_key, ZLRS_KEY_LEN, LABEL_SYNC_DATA, NULL, 0U, data_word,
 		 sizeof(data_word));
 
-	memcpy(link->sync_word, (link->cfg.kind == ZLRS_LINK_CONTROL) ? ctrl_word : data_word,
-	       ZLRS_SYNC_WORD_LEN);
+	memcpy(link->sync_word, data_word, ZLRS_SYNC_WORD_LEN);
 
 	/*
 	 * LoRa sync words are one byte plus a private bit, so the 4-byte one above cannot be
@@ -292,8 +261,7 @@ static void derive_pair(zlrs_link_t *link)
 	 * is the private bit separating our group from public sync words (08-protocol 5.3).
 	 */
 	{
-		const char *label = (link->cfg.kind == ZLRS_LINK_CONTROL) ? LABEL_SYNC_LORA_CONTROL
-									  : LABEL_SYNC_LORA_DATA;
+		const char *label = LABEL_SYNC_LORA_DATA;
 		uint8_t byte = 0U;
 
 		zlrs_kdf(link->pair_key, ZLRS_KEY_LEN, label, NULL, 0U, &byte, sizeof(byte));
@@ -356,11 +324,6 @@ static void session_activate(zlrs_link_t *link, uint16_t hop_index)
 	link->arq_seq = 0U;
 	link->arq_rx_started = false;
 	link->arq_ack_pending = false;
-	link->service_tx_seq = 0U;
-	link->service_rx_started = false;
-	link->service_inflight = false;
-	link->service_ack_pending = false;
-	link->last_rc_ms = 0U;
 	zlrs_fhss_set_index(&link->fhss, hop_index);
 }
 
@@ -563,144 +526,9 @@ static const zlrs_radio_req_t *send_sess_cfm(zlrs_link_t *link)
 			  tag_key_for(link, ZLRS_PKT_SESS_CFM, true));
 	/* DATA confirmation remains due until the peer proves that it has this session key.
 	 * Building or even transmitting the confirm does not establish that it arrived. */
-	if (link->cfg.kind != ZLRS_LINK_DATA) {
-		link->sess_cfm_due = false;
-	}
 	link->stats.sess_cfm_tx++;
 
 	return submit_tx(link, len, sync_freq_hz(link), link->cfg.sync_slot, link->sync_word);
-}
-
-static bool service_ack_bit(const zlrs_link_t *link)
-{
-	return link->service_rx_started && ((link->service_rx_seq + 1U) & 1U) != 0U;
-}
-
-static uint16_t service_append(zlrs_link_t *link, uint8_t *payload, uint16_t offset)
-{
-	if (link->service_count == 0U) {
-		return offset;
-	}
-	const uint8_t len = link->service_sizes[link->service_head];
-
-	payload[offset++] = (uint8_t)link->service_tx_seq;
-	payload[offset++] = (uint8_t)(link->service_tx_seq >> 8);
-	memcpy(payload + offset, link->service_queue[link->service_head], len);
-	return offset + len;
-}
-
-static void service_sent(zlrs_link_t *link, uint32_t now_ms)
-{
-	link->service_ack_pending = false;
-	if (link->service_count != 0U) {
-		link->service_inflight = true;
-		link->service_sent_ms = now_ms;
-	}
-}
-
-static const zlrs_radio_req_t *send_rc(zlrs_link_t *link, uint32_t now_ms)
-{
-	uint8_t payload[3U + ZLRS_RC_PAYLOAD_MAX_LEN + 2U + 64U];
-
-	/* A zero-length control sample keeps RF discovery and telemetry alive without
-	 * fabricating a CRSF channel frame on the flight-controller port. */
-	payload[0] = link->cfg.model_id;
-	payload[1] = (uint8_t)link->rc_len;
-	payload[2] = (uint8_t)link->cfg.tx_power_dbm;
-	memcpy(payload + 3U, link->rc_payload, link->rc_len);
-	const uint16_t size = service_append(link, payload, 3U + link->rc_len);
-	const uint16_t len =
-		build_frame(link, ZLRS_PKT_RC, service_ack_bit(link) ? ZLRS_FLAG_ACK : 0U, payload,
-			    size, tag_key_for(link, ZLRS_PKT_RC, true));
-	const zlrs_radio_req_t *req = submit_tx(link, len, slot_freq_hz(link, SLOT_RC),
-						link->cfg.sync_slot, link->sync_word);
-
-	if (req != NULL) {
-		service_sent(link, now_ms);
-	}
-	return req;
-}
-
-static const zlrs_radio_req_t *send_tlm(zlrs_link_t *link, uint32_t now_ms)
-{
-	uint8_t payload[2U + ZLRS_LINK_TLM_MAX_LEN + 2U + 64U];
-
-	payload[0] = (uint8_t)link->tlm_len;
-	payload[1] = (uint8_t)link->cfg.tx_power_dbm;
-	memcpy(payload + 2U, link->tlm_payload, link->tlm_len);
-	const uint16_t size = service_append(link, payload, 2U + link->tlm_len);
-	const uint16_t len =
-		build_frame(link, ZLRS_PKT_TLM, service_ack_bit(link) ? ZLRS_FLAG_ACK : 0U, payload,
-			    size, tag_key_for(link, ZLRS_PKT_TLM, true));
-	const zlrs_radio_req_t *req = submit_tx(link, len, slot_freq_hz(link, SLOT_TLM),
-						link->cfg.sync_slot, link->sync_word);
-
-	if (req != NULL) {
-		service_sent(link, now_ms);
-	}
-	return req;
-}
-
-static bool service_shape(uint16_t len)
-{
-	return len == 0U || (len >= 3U && len <= 2U + ZLRS_LINK_SERVICE_MAX_LEN);
-}
-
-static void service_receive(zlrs_link_t *link, const zlrs_frame_t *frame, uint16_t offset)
-{
-	const bool bit = (frame->flags & ZLRS_FLAG_ACK) != 0U;
-
-	if (link->service_inflight && bit == (((link->service_tx_seq + 1U) & 1U) != 0U)) {
-		link->service_head =
-			(uint8_t)((link->service_head + 1U) % ZLRS_LINK_SERVICE_QUEUE_LEN);
-		link->service_count--;
-		link->service_tx_seq++;
-		link->service_inflight = false;
-	}
-	if (frame->payload_len == offset) {
-		return;
-	}
-	const uint8_t *payload = frame->payload + offset;
-	const uint16_t seq = (uint16_t)(payload[0] | (uint16_t)payload[1] << 8);
-	const uint16_t next = link->service_rx_started ? (uint16_t)(link->service_rx_seq + 1U) : 0U;
-
-	link->service_ack_pending = true;
-	if (seq != next) {
-		return; /* Retransmissions retain their service sequence, never redeliver. */
-	}
-	const uint8_t len = (uint8_t)(frame->payload_len - offset - 2U);
-
-	if (link->ev.on_service != NULL && link->ev.on_service(link->ev.ctx, payload + 2U, len)) {
-		link->service_rx_seq = seq;
-		link->service_rx_started = true;
-	}
-}
-
-static const zlrs_radio_req_t *send_service(zlrs_link_t *link, uint32_t now_ms)
-{
-	uint8_t payload[66];
-	const uint32_t timeout =
-		link->cfg.arq_timeout_ms != 0U ? link->cfg.arq_timeout_ms : ZLRS_ARQ_TIMEOUT_MS;
-
-	/* At most one in four DATA opportunities, unless only an ACK is pending. */
-	if (!link->service_ack_pending &&
-	    (link->service_count == 0U || (link->frame_index & 3U) != 0U ||
-	     (link->service_inflight &&
-	      (int32_t)(now_ms - link->service_sent_ms) < (int32_t)timeout))) {
-		return NULL;
-	}
-	const uint16_t size = service_append(link, payload, 0U);
-	const uint16_t len =
-		build_frame(link, ZLRS_PKT_SERVICE, service_ack_bit(link) ? ZLRS_FLAG_ACK : 0U,
-			    payload, size, tag_key_for(link, ZLRS_PKT_SERVICE, true));
-	const zlrs_radio_req_t *req = submit_tx(link, len, slot_freq_hz(link, SLOT_DATA),
-						link->cfg.sync_slot, link->sync_word);
-
-	if (req != NULL) {
-		link->prepared_data.valid = false;
-		service_sent(link, now_ms);
-	}
-	return req;
 }
 
 /* ---- ARQ (optional data-link mode, see doc/08-protocol.md 4.3) ------------- */
@@ -730,6 +558,16 @@ static void queue_copy(const zlrs_link_t *link, uint16_t offset, uint8_t *out, u
 	memcpy(out + first, link->tx_queue, len - first);
 }
 
+#define DATA_FEEDBACK_LEN   2U
+#define DATA_ARQ_HEADER_LEN 4U
+
+static void write_feedback(const zlrs_link_t *link, uint8_t out[DATA_FEEDBACK_LEN])
+{
+	const int16_t rssi = link->stats.last_rssi;
+	out[0] = rssi < 0 ? (uint8_t)(-rssi > 255 ? 255 : -rssi) : 0U;
+	out[1] = link->stats.lq_percent;
+}
+
 /* Send the outstanding packet: data sequence is retained across retransmissions. */
 static const zlrs_radio_req_t *arq_send_slot(zlrs_link_t *link, uint16_t seq, uint16_t len)
 {
@@ -740,10 +578,12 @@ static const zlrs_radio_req_t *arq_send_slot(zlrs_link_t *link, uint16_t seq, ui
 
 	payload[0] = (uint8_t)(seq & 0xFFU);
 	payload[1] = (uint8_t)(seq >> 8);
-	queue_copy(link, 0U, payload + 2U, len);
+	write_feedback(link, payload + 2U);
+	queue_copy(link, 0U, payload + DATA_ARQ_HEADER_LEN, len);
 
-	frame_len = build_frame(link, type, receive_ack_bit(link) ? ZLRS_FLAG_ACK : 0U, payload,
-				(uint16_t)(len + 2U), tag_key_for(link, type, true));
+	frame_len =
+		build_frame(link, type, receive_ack_bit(link) ? ZLRS_FLAG_ACK : 0U, payload,
+			    (uint16_t)(len + DATA_ARQ_HEADER_LEN), tag_key_for(link, type, true));
 	if (frame_len == 0U) {
 		return NULL;
 	}
@@ -752,8 +592,7 @@ static const zlrs_radio_req_t *arq_send_slot(zlrs_link_t *link, uint16_t seq, ui
 	link->pending_data_len = 0U;
 	link->arq_ack_pending = false;
 
-	return submit_tx(link, frame_len, slot_freq_hz(link, SLOT_DATA), link->cfg.sync_slot,
-			 link->sync_word);
+	return submit_tx(link, frame_len, slot_freq_hz(link), link->cfg.sync_slot, link->sync_word);
 }
 
 static bool arq_timed_out(const zlrs_link_t *link, uint32_t now_ms)
@@ -803,9 +642,9 @@ const uint8_t *zlrs_link_prepare_data(zlrs_link_t *link, uint8_t slot, uint32_t 
 		return NULL;
 	}
 	packet->valid = false;
-	if (link->cfg.kind != ZLRS_LINK_DATA || !link->cfg.arq ||
-	    link->cfg.mod.modulation != ZLRS_MOD_FLRC || link->cfg.data_mtu == 0U ||
-	    link->state != ZLRS_STATE_CONNECTED || !link->session_valid ||
+	if (!link->cfg.arq || link->cfg.mod.modulation != ZLRS_MOD_FLRC ||
+	    link->cfg.data_mtu == 0U || link->state != ZLRS_STATE_CONNECTED ||
+	    !link->session_valid ||
 	    slot != (link->cfg.role == ZLRS_ROLE_TX ? ZLRS_SLOT_DATA_A : ZLRS_SLOT_DATA_B) ||
 	    link->announce || link->sess_cfm_due ||
 	    (link->cfg.resync_every_n > 0U && frame % link->cfg.resync_every_n == 0U) ||
@@ -827,11 +666,12 @@ const uint8_t *zlrs_link_prepare_data(zlrs_link_t *link, uint8_t slot, uint32_t 
 	payload[1] = (uint8_t)(packet->data_seq >> 8);
 	const uint16_t offset = packet->retry ? 0U : arq_inflight_bytes(link);
 
-	queue_copy(link, offset, payload + 2U, packet->data_len);
+	write_feedback(link, payload + 2U);
+	queue_copy(link, offset, payload + DATA_ARQ_HEADER_LEN, packet->data_len);
 	memcpy(packet->key, tag_key_for(link, type, true), ZLRS_KEY_LEN);
 	packet->size = encode_frame(link, packet->buf, packet->frame_seq, type,
 				    packet->ack_bit ? ZLRS_FLAG_ACK : 0U, payload,
-				    packet->data_len + 2U, packet->key);
+				    packet->data_len + DATA_ARQ_HEADER_LEN, packet->key);
 	if (packet->size == 0U) {
 		return NULL;
 	}
@@ -866,7 +706,7 @@ static const zlrs_radio_req_t *send_prepared_data(zlrs_link_t *link, uint32_t no
 		packet->valid = false;
 		return NULL;
 	}
-	const zlrs_radio_req_t *req = submit_tx(link, packet->size, slot_freq_hz(link, SLOT_DATA),
+	const zlrs_radio_req_t *req = submit_tx(link, packet->size, slot_freq_hz(link),
 						link->cfg.sync_slot, link->sync_word);
 
 	if (req == NULL) {
@@ -932,15 +772,17 @@ static const zlrs_radio_req_t *send_data_arq(zlrs_link_t *link, uint32_t now_ms)
 static const zlrs_radio_req_t *send_empty_data(zlrs_link_t *link)
 {
 	const uint8_t type = link->cfg.role == ZLRS_ROLE_TX ? ZLRS_PKT_DATA_UP : ZLRS_PKT_DATA_DOWN;
+	uint8_t feedback[DATA_FEEDBACK_LEN];
+	write_feedback(link, feedback);
 	const uint16_t len = build_frame(link, type, receive_ack_bit(link) ? ZLRS_FLAG_ACK : 0U,
-					 NULL, 0U, tag_key_for(link, type, true));
+					 feedback, sizeof(feedback), tag_key_for(link, type, true));
 	if (len == 0U) {
 		return NULL;
 	}
 	link->arq_ack_pending = false;
 	link->pending_data_len = 0U;
-	return submit_tx(link, len, slot_freq_hz(link, SLOT_DATA), link->cfg.sync_slot,
-			 link->sync_word);
+	link->last_feedback_tx_ms = link->slot_ms;
+	return submit_tx(link, len, slot_freq_hz(link), link->cfg.sync_slot, link->sync_word);
 }
 
 static void handle_ack_bit(zlrs_link_t *link, bool bit, uint32_t now_ms)
@@ -978,14 +820,15 @@ static const zlrs_radio_req_t *send_data(zlrs_link_t *link, uint32_t now_ms)
 		take = link->cfg.data_mtu;
 	}
 
-	queue_copy(link, 0U, payload, take);
+	write_feedback(link, payload);
+	queue_copy(link, 0U, payload + DATA_FEEDBACK_LEN, take);
 
 	type = (link->cfg.role == ZLRS_ROLE_TX) ? ZLRS_PKT_DATA_UP : ZLRS_PKT_DATA_DOWN;
-	len = build_frame(link, type, 0U, payload, take, tag_key_for(link, type, true));
+	len = build_frame(link, type, 0U, payload, take + DATA_FEEDBACK_LEN,
+			  tag_key_for(link, type, true));
 	link->pending_data_len = take;
 
-	return submit_tx(link, len, slot_freq_hz(link, SLOT_DATA), link->cfg.sync_slot,
-			 link->sync_word);
+	return submit_tx(link, len, slot_freq_hz(link), link->cfg.sync_slot, link->sync_word);
 }
 
 /*
@@ -1058,16 +901,25 @@ static bool deliver_data(zlrs_link_t *link, const zlrs_frame_t *frame)
 
 static void handle_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
 {
-	/* Validate the entire DATA shape before allowing its ACK to release queued bytes. */
-	if (link->cfg.arq && frame->payload_len > 0U && frame->payload_len < 3U) {
+	const uint16_t header_len = link->cfg.arq ? DATA_ARQ_HEADER_LEN : DATA_FEEDBACK_LEN;
+	if (frame->payload_len < DATA_FEEDBACK_LEN ||
+	    (frame->payload_len > DATA_FEEDBACK_LEN && frame->payload_len <= header_len)) {
 		link->stats.rx_bad_frame++;
 		return;
 	}
 	if (link->cfg.arq) {
 		handle_ack_bit(link, (frame->flags & ZLRS_FLAG_ACK) != 0U, now_ms);
 	}
-	if (frame->payload_len == 0U) {
-		return; /* Also proves the session when ARQ is disabled. */
+	const uint8_t *const feedback =
+		frame->payload +
+		(link->cfg.arq && frame->payload_len > DATA_FEEDBACK_LEN ? 2U : 0U);
+	if (feedback[0] != 0U && feedback[1] <= 100U) {
+		link->peer_rssi_dbm = -(int16_t)feedback[0];
+		link->peer_lq_percent = feedback[1];
+		link->last_peer_feedback_ms = now_ms;
+	}
+	if (frame->payload_len == DATA_FEEDBACK_LEN) {
+		return;
 	}
 	if (link->cfg.arq) {
 		const uint16_t seq =
@@ -1081,12 +933,12 @@ static void handle_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 			} else {
 				link->stats.rx_out_of_order++;
 			}
-			return; /* Repeat the existing toggle; duplicates never toggle it again. */
+			return;
 		}
 		zlrs_frame_t inner = *frame;
 		inner.seq = seq;
-		inner.payload = &frame->payload[2];
-		inner.payload_len = frame->payload_len - 2U;
+		inner.payload = &frame->payload[DATA_ARQ_HEADER_LEN];
+		inner.payload_len = frame->payload_len - DATA_ARQ_HEADER_LEN;
 		inner.tag = NULL;
 		if (deliver_data(link, &inner)) {
 			link->arq_rx_started = true;
@@ -1094,8 +946,11 @@ static void handle_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 		}
 		return;
 	}
-	if (!deliver_data(link, frame)) {
-		link->stats.data_drop_bytes += frame->payload_len;
+	zlrs_frame_t inner = *frame;
+	inner.payload = &frame->payload[DATA_FEEDBACK_LEN];
+	inner.payload_len = frame->payload_len - DATA_FEEDBACK_LEN;
+	if (!deliver_data(link, &inner)) {
+		link->stats.data_drop_bytes += inner.payload_len;
 	}
 }
 
@@ -1370,7 +1225,7 @@ static int handle_sess_cfm(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_
 {
 	uint8_t expect[ZLRS_TAG_LEN];
 	const uint8_t tag_len = zlrs_profile_tag_len(link->cfg.profile);
-	const bool repeated = link->cfg.kind == ZLRS_LINK_DATA && link->cfg.role == ZLRS_ROLE_RX &&
+	const bool repeated = link->cfg.role == ZLRS_ROLE_RX &&
 			      link->state == ZLRS_STATE_CONNECTED && link->session_valid;
 
 	if (!repeated && (!link->session_pending || link->state != ZLRS_STATE_SEARCHING)) {
@@ -1415,7 +1270,7 @@ static int handle_sess_cfm(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_
 	link->last_rx_seq = frame->seq; /* the confirm frame itself takes the first slot from 0 */
 	link->last_rx_ms = now_ms;
 	link->last_rx_frame = link->frame_index;
-	link->sess_ack_due = link->cfg.kind == ZLRS_LINK_DATA;
+	link->sess_ack_due = true;
 	link->sess_sync_frame = link->frame_index;
 	set_state(link, ZLRS_STATE_CONNECTED, now_ms);
 
@@ -1472,7 +1327,7 @@ static bool handle_sess_resp(zlrs_link_t *link, const zlrs_frame_t *frame, uint3
 		link->sess_nonce_r = nonce_r;
 		derive_session_keys(link, nonce_t, nonce_r);
 		session_activate(link, link->fhss.index);
-	} else if (link->cfg.kind == ZLRS_LINK_DATA && !link->sess_cfm_due) {
+	} else if (!link->sess_cfm_due) {
 		/* A delayed pairing-level response cannot reopen a confirmed DATA session. */
 		return true;
 	}
@@ -1537,8 +1392,7 @@ static int handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 
 	/* For the initiator any session frame from the peer means the link is up */
 	if (link->state == ZLRS_STATE_SEARCHING && link->cfg.role == ZLRS_ROLE_TX &&
-	    (frame.type == ZLRS_PKT_TLM || frame.type == ZLRS_PKT_SERVICE ||
-	     frame.type == ZLRS_PKT_DATA_UP || frame.type == ZLRS_PKT_DATA_DOWN)) {
+	    (frame.type == ZLRS_PKT_DATA_UP || frame.type == ZLRS_PKT_DATA_DOWN)) {
 		set_state(link, ZLRS_STATE_CONNECTED, now_ms);
 	}
 
@@ -1554,7 +1408,7 @@ static int handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 	link->last_rx_seq = frame.seq;
 	link->last_rx_ms = now_ms;
 	link->last_rx_frame = link->frame_index;
-	if (link->cfg.kind == ZLRS_LINK_DATA && link->cfg.role == ZLRS_ROLE_TX) {
+	if (link->cfg.role == ZLRS_ROLE_TX) {
 		link->sess_cfm_due = false;
 	}
 	/* The peer is alive: stop sending the simplified handshake's "I am here" */
@@ -1562,57 +1416,6 @@ static int handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 	lq_account(link, frame.seq);
 
 	switch (frame.type) {
-	case ZLRS_PKT_RC: {
-		if (link->cfg.role != ZLRS_ROLE_RX || frame.payload_len < 3U) {
-			link->stats.rx_bad_frame++;
-			break;
-		}
-		const uint8_t rc_len = frame.payload[1];
-		const uint16_t offset = 3U + rc_len;
-
-		if ((rc_len != 0U && rc_len != ZLRS_RC_PAYLOAD_LEN &&
-		     rc_len != ZLRS_RC_PAYLOAD_MAX_LEN) ||
-		    offset > frame.payload_len || !service_shape(frame.payload_len - offset)) {
-			link->stats.rx_bad_frame++;
-			break;
-		}
-		link->peer_power_dbm = (int8_t)frame.payload[2];
-		service_receive(link, &frame, offset);
-		if (rc_len != 0U &&
-		    (!link->cfg.model_match || frame.payload[0] == link->cfg.model_id) &&
-		    link->ev.on_rc != NULL) {
-			link->last_rc_ms = now_ms;
-			link->ev.on_rc(link->ev.ctx, frame.payload + 3U, rc_len);
-		}
-		break;
-	}
-	case ZLRS_PKT_TLM: {
-		if (link->cfg.role != ZLRS_ROLE_TX || frame.payload_len < 2U) {
-			link->stats.rx_bad_frame++;
-			break;
-		}
-		const uint8_t tlm_len = frame.payload[0];
-		const uint16_t offset = 2U + tlm_len;
-
-		if (tlm_len > ZLRS_LINK_TLM_MAX_LEN || offset > frame.payload_len ||
-		    !service_shape(frame.payload_len - offset)) {
-			link->stats.rx_bad_frame++;
-			break;
-		}
-		link->peer_power_dbm = (int8_t)frame.payload[1];
-		service_receive(link, &frame, offset);
-		if (link->ev.on_tlm != NULL && tlm_len != 0U) {
-			link->ev.on_tlm(link->ev.ctx, frame.payload + 2U, tlm_len);
-		}
-		break;
-	}
-	case ZLRS_PKT_SERVICE:
-		if (service_shape(frame.payload_len)) {
-			service_receive(link, &frame, 0U);
-		} else {
-			link->stats.rx_bad_frame++;
-		}
-		break;
 	case ZLRS_PKT_DATA_UP:
 	case ZLRS_PKT_DATA_DOWN:
 		handle_data(link, &frame, now_ms);
@@ -1643,16 +1446,13 @@ static void advance_hop(zlrs_link_t *link)
 	}
 }
 
-static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot, uint32_t now_ms)
+static const zlrs_radio_req_t *pair_slot(zlrs_link_t *link, bool down, uint32_t now_ms)
 {
-	const bool down = (slot == ZLRS_SLOT_CTL_DOWN);
-	const bool tx_side = (link->cfg.role == ZLRS_ROLE_TX);
+	const bool tx_side = link->cfg.role == ZLRS_ROLE_TX;
 
-	/* The main (downlink) slot counts once per frame, keeping both ends in step */
 	if (down) {
 		link->frame_index++;
 	}
-
 	if (link->state == ZLRS_STATE_PAIRING) {
 		if (down) {
 			if (tx_side) {
@@ -1706,168 +1506,27 @@ static const zlrs_radio_req_t *control_slot(zlrs_link_t *link, uint8_t slot, uin
 		return pair_rx(link, acq_timeout_ms(link));
 	}
 
-	if (link->state == ZLRS_STATE_SEARCHING) {
-		if (tx_side) {
-			if (down) {
-				/*
-				 * A peer whose confirms were all lost keeps repeating its answer; answering again
-				 * is what unsticks it, and that costs this frame's SYNC at most.
-				 */
-				if (link->pair_cfm_pending) {
-					if (link->pair_cfm_sent >= ZLRS_PAIR_CFM_REPEATS) {
-						link->pair_cfm_pending = false;
-						return NULL;
-					}
-					if ((uint32_t)(now_ms - link->last_pair_tx_ms) >=
-					    link->cfg.pair_period_ms) {
-						const zlrs_radio_req_t *req = send_pair(
-							link, ZLRS_PKT_PAIR_CFM, link->pair_nonce,
-							link->pair_nonce_b, now_ms);
+	if (link->state == ZLRS_STATE_SEARCHING && tx_side && down) {
+		if (link->pair_cfm_pending) {
+			if (link->pair_cfm_sent >= ZLRS_PAIR_CFM_REPEATS) {
+				link->pair_cfm_pending = false;
+				return NULL;
+			}
+			if ((uint32_t)(now_ms - link->last_pair_tx_ms) >=
+			    link->cfg.pair_period_ms) {
+				const zlrs_radio_req_t *req =
+					send_pair(link, ZLRS_PKT_PAIR_CFM, link->pair_nonce,
+						  link->pair_nonce_b, now_ms);
 
-						if (req != NULL) {
-							link->pair_cfm_sent++;
-						}
-						return req;
-					}
-					return NULL;
+				if (req != NULL) {
+					link->pair_cfm_sent++;
 				}
-				if (link->sess_cfm_due) {
-					/*
-					 * Enter CONNECTED as soon as the confirm goes out, so both ends advance the hop table from
-					 * the same frame and the indices cannot drift. The confirm itself is repeated by the
-					 * CONNECTED slot below until the peer is known to have heard one.
-					 */
-					const zlrs_radio_req_t *req = send_sess_cfm(link);
-
-					if (req != NULL) {
-						set_state(link, ZLRS_STATE_CONNECTED, now_ms);
-					}
-					return req;
-				}
-				/*
-				 * Send when the period is up, and add one on every resync frame: a peer that is still
-				 * CONNECTED only opens a window on the sync channel for those, so otherwise it would never
-				 * hear that we changed sessions.
-				 */
-				if ((uint32_t)(now_ms - link->last_sync_ms) <
-					    link->cfg.sync_period_ms &&
-				    !sync_frame(link)) {
-					return NULL;
-				}
-				return send_sync(link, now_ms);
+				return req;
 			}
-
-			/*
-			 * The initiator listens for the peer's telemetry in the uplink slot, but takes the
-			 * pairing channel now and then: a peer that never heard a confirm is still answering
-			 * there, and this window is the only way to hear it and finish its pairing.
-			 */
-			if ((link->frame_index % ZLRS_PAIR_SCAN_FRAMES) ==
-			    (ZLRS_PAIR_SCAN_FRAMES - 1U)) {
-				return pair_rx(link, acq_timeout_ms(link));
-			}
-			return submit_rx(link, sync_freq_hz(link), link->cfg.sync_slot,
-					 link->sync_word, acq_timeout_ms(link));
-		}
-		if (down) {
-			return submit_rx(link, sync_freq_hz(link), link->cfg.sync_slot,
-					 link->sync_word, acq_timeout_ms(link));
-		}
-		/*
-		 * Repeat the answer until the confirm arrives: one shot per SYNC would leave the handshake
-		 * waiting for the next resync frame whenever that single frame is lost.
-		 */
-		if (link->sess_resp_due || link->session_pending) {
-			return send_sess_resp(link);
-		}
-		return NULL;
-	}
-
-	if (link->state != ZLRS_STATE_CONNECTED) {
-		return NULL;
-	}
-
-	if (down) {
-		advance_hop(link);
-		if (tx_side) {
-			/* Owing a confirm: send it, and this whole frame stays on the sync channel */
-			if (link->sess_cfm_due) {
-				return send_sess_cfm(link);
-			}
-			/*
-			 * Resync frame: send a SYNC that states our hop index. The peer uses it to correct drift,
-			 * and if it changed sessions (a reboot) that is how it re-handshakes.
-			 */
-			if (sync_frame(link)) {
-				return send_sync(link, now_ms);
-			}
-			return send_rc(link, now_ms);
-		}
-		return submit_rx(link, slot_freq_hz(link, SLOT_RC), link->cfg.sync_slot,
-				 link->sync_word, link->cfg.rx_timeout_ms);
-	}
-
-	/* Owing a confirm: the peer (in SEARCHING) repeats SESS_RESP on the sync channel */
-	if (link->sess_cfm_due) {
-		if (tx_side) {
-			return submit_rx(link, sync_freq_hz(link), link->cfg.sync_slot,
-					 link->sync_word, acq_timeout_ms(link));
-		}
-		return NULL;
-	}
-
-	/*
-	 * Fresh session: a peer that has not heard the confirm yet is still answering on the sync
-	 * channel, so keep a window there for a moment instead of switching straight to telemetry.
-	 * Without it a single lost confirm strands that peer until the next resync frame.
-	 */
-	if (tx_side && (uint32_t)(now_ms - link->state_ms) < ZLRS_SESS_CONFIRM_MS) {
-		return submit_rx(link, sync_freq_hz(link), link->cfg.sync_slot, link->sync_word,
-				 link->cfg.rx_timeout_ms);
-	}
-
-	/*
-	 * The uplink slot of a resync frame stays on the sync channel too: the TX waits there for a
-	 * possible SESS_RESP (the peer-reboot path), and the RX puts telemetry on it as well.
-	 */
-	if (sync_frame(link)) {
-		if (tx_side) {
-			return submit_rx(link, sync_freq_hz(link), link->cfg.sync_slot,
-					 link->sync_word, acq_timeout_ms(link));
-		}
-		if (link->cfg.telemetry == 0U) {
 			return NULL;
 		}
-		return send_tlm(link, now_ms);
 	}
-
-	/*
-	 * The simplified handshake's report frame wins: the peer may still be in SEARCHING,
-	 * listening on the sync channel. With telemetry off that channel carries nothing else.
-	 */
-	if (link->announce) {
-		if (tx_side) {
-			return submit_rx(link, sync_freq_hz(link), link->cfg.sync_slot,
-					 link->sync_word, acq_timeout_ms(link));
-		}
-		return send_sess_resp(link);
-	}
-
-	if (link->cfg.telemetry == 0U) {
-		return NULL;
-	}
-
-	/* Uplink slot: telemetry is throttled by tlm_every_n (both ends agree, hopping is unaffected) */
-	if ((link->frame_index % link->cfg.tlm_every_n) != 0U) {
-		return NULL;
-	}
-
-	if (tx_side) {
-		return submit_rx(link, slot_freq_hz(link, SLOT_TLM), link->cfg.sync_slot,
-				 link->sync_word, link->cfg.rx_timeout_ms);
-	}
-
-	return send_tlm(link, now_ms);
+	return NULL;
 }
 
 static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32_t now_ms)
@@ -1875,11 +1534,10 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 	const bool a = (slot == ZLRS_SLOT_DATA_A);
 	const bool tx_side = (link->cfg.role == ZLRS_ROLE_TX);
 
-	/* Pairing uses the same exchange on either link, in that link's own two slots.
-	 * SEARCHING also answers repeated responses when a pairing confirm was lost. */
+	/* Pairing uses the data slots; repeat confirms until the responder hears one. */
 	if (link->state == ZLRS_STATE_PAIRING ||
 	    (link->state == ZLRS_STATE_SEARCHING && link->pair_cfm_pending)) {
-		return control_slot(link, a ? ZLRS_SLOT_CTL_DOWN : ZLRS_SLOT_CTL_UP, now_ms);
+		return pair_slot(link, a, now_ms);
 	}
 
 	/* The main slot (A) counts once per frame */
@@ -1927,7 +1585,7 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 			return submit_rx(link, sync_freq_hz(link), link->cfg.sync_slot,
 					 link->sync_word, acq_timeout_ms(link));
 		}
-		/* Same as the control link: keep answering until the confirm arrives */
+		/* Keep answering until the confirm arrives. */
 		if (link->sess_resp_due || link->session_pending) {
 			return send_sess_resp(link);
 		}
@@ -1939,7 +1597,7 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 	}
 
 	/*
-	 * At high control rates the data windows thin out by data_every_n (both ends agree).
+	 * Data windows thin out by data_every_n (both ends agree).
 	 * Resync frames and session confirms stay out of that: their cadence has to divide the
 	 * remaining frames, or (333 frames against 5, say) they would almost never line up.
 	 */
@@ -1988,16 +1646,16 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 	if (tx_side == a) {
 		const zlrs_radio_req_t *req;
 
-		req = send_service(link, now_ms);
-		if (req == NULL) {
-			req = send_data(link, now_ms);
-		}
+		req = send_data(link, now_ms);
 
 		if (req != NULL) {
 			return req;
 		}
 		/* Report the receive toggle in an empty DATA when no user DATA can be sent. */
-		if (link->cfg.arq && link->arq_ack_pending) {
+		if (link->cfg.arq &&
+		    (link->arq_ack_pending || (link->cfg.feedback_period_ms > 0U &&
+					       (uint32_t)(now_ms - link->last_feedback_tx_ms) >=
+						       link->cfg.feedback_period_ms))) {
 			return send_empty_data(link);
 		}
 
@@ -2014,7 +1672,7 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 				 link->cfg.rx_timeout_ms);
 	}
 
-	return submit_rx(link, slot_freq_hz(link, SLOT_DATA), link->cfg.sync_slot, link->sync_word,
+	return submit_rx(link, slot_freq_hz(link), link->cfg.sync_slot, link->sync_word,
 			 link->cfg.rx_timeout_ms);
 }
 
@@ -2024,8 +1682,8 @@ static void limit_data_mtu(zlrs_link_t *link)
 {
 	const uint16_t cap = link->cfg.mod.modulation == ZLRS_MOD_LORA ? ZLRS_LORA_FRAME_MAX_LEN
 								       : ZLRS_FRAME_MAX_LEN;
-	const uint16_t mtu =
-		cap - ZLRS_FRAME_HDR_LEN - zlrs_profile_tag_len(link->cfg.profile) - 2U;
+	const uint16_t mtu = cap - ZLRS_FRAME_HDR_LEN - zlrs_profile_tag_len(link->cfg.profile) -
+			     DATA_ARQ_HEADER_LEN;
 
 	if (link->cfg.data_mtu > mtu) {
 		link->cfg.data_mtu = mtu;
@@ -2039,9 +1697,6 @@ void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg, uint32_t (*ra
 	link->cfg = *cfg;
 	limit_data_mtu(link);
 	/* Cadence fields default to 1 (every frame); 0 is not a legal value */
-	if (link->cfg.tlm_every_n == 0U) {
-		link->cfg.tlm_every_n = 1U;
-	}
 	if (link->cfg.data_every_n == 0U) {
 		link->cfg.data_every_n = 1U;
 	}
@@ -2098,12 +1753,7 @@ const zlrs_radio_req_t *zlrs_link_listen(zlrs_link_t *link)
 		return NULL;
 	}
 
-	if (link->cfg.kind == ZLRS_LINK_CONTROL) {
-		return submit_rx(link, slot_freq_hz(link, SLOT_RC), link->cfg.sync_slot,
-				 link->sync_word, link->cfg.rx_timeout_ms);
-	}
-
-	return submit_rx(link, slot_freq_hz(link, SLOT_DATA), link->cfg.sync_slot, link->sync_word,
+	return submit_rx(link, slot_freq_hz(link), link->cfg.sync_slot, link->sync_word,
 			 link->cfg.rx_timeout_ms);
 }
 
@@ -2135,16 +1785,6 @@ void zlrs_link_set_mod(zlrs_link_t *link, const zlrs_mod_cfg_t *mod)
 void zlrs_link_set_power(zlrs_link_t *link, int8_t tx_power_dbm)
 {
 	link->cfg.tx_power_dbm = tx_power_dbm;
-}
-
-void zlrs_link_set_model(zlrs_link_t *link, uint8_t model_id)
-{
-	link->cfg.model_id = model_id;
-}
-
-void zlrs_link_set_model_match(zlrs_link_t *link, bool enabled)
-{
-	link->cfg.model_match = enabled;
 }
 
 void zlrs_link_set_peer(zlrs_link_t *link, const uint8_t peer_id[ZLRS_DEV_ID_LEN],
@@ -2194,10 +1834,6 @@ const zlrs_radio_req_t *zlrs_link_slot(zlrs_link_t *link, uint8_t slot, uint32_t
 	link->slot = slot;
 	link->slot_ms = now_ms;
 
-	if (link->cfg.kind == ZLRS_LINK_CONTROL) {
-		return control_slot(link, slot, now_ms);
-	}
-
 	return data_slot(link, slot, now_ms);
 }
 
@@ -2205,13 +1841,6 @@ void zlrs_link_skip_slot(zlrs_link_t *link, uint8_t slot)
 {
 	link->prepared_data.valid = false;
 	link->slot = slot;
-	if (link->cfg.kind == ZLRS_LINK_CONTROL) {
-		if (slot == ZLRS_SLOT_CTL_DOWN) {
-			link->frame_index++;
-			advance_hop(link);
-		}
-		return;
-	}
 	if (slot == ZLRS_SLOT_DATA_A) {
 		link->frame_index++;
 	}
@@ -2250,13 +1879,15 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 		if (zlrs_frame_decode(&frame, link->req.buf, link->req.size,
 				      zlrs_profile_tag_len(link->cfg.profile)) &&
 		    (frame.type == ZLRS_PKT_DATA_UP || frame.type == ZLRS_PKT_DATA_DOWN)) {
-			if (frame.payload_len == 0U) {
+			if (frame.payload_len == DATA_FEEDBACK_LEN) {
 				link->stats.tx_ack_only_frames++;
-			} else if (frame.payload_len > (link->cfg.arq ? 2U : 0U)) {
+			} else if (frame.payload_len >
+				   (link->cfg.arq ? DATA_ARQ_HEADER_LEN : DATA_FEEDBACK_LEN)) {
 				link->stats.tx_data_frames++;
 				link->stats.tx_data_ack_frames += link->cfg.arq != 0U;
 				link->stats.tx_data_bytes +=
-					frame.payload_len - (link->cfg.arq ? 2U : 0U);
+					frame.payload_len -
+					(link->cfg.arq ? DATA_ARQ_HEADER_LEN : DATA_FEEDBACK_LEN);
 				const uint16_t cap = link->cfg.mod.modulation == ZLRS_MOD_LORA
 							     ? ZLRS_LORA_FRAME_MAX_LEN
 							     : ZLRS_FRAME_MAX_LEN;
@@ -2274,7 +1905,7 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 	link->stats.slot_rx[slot]++;
 	if (rx_len > 0U) {
 		/* A TX completion or empty RX window has no signal measurement. Preserve the
-		 * last packet rather than overwriting telemetry with their zero placeholders. */
+		 * last packet rather than overwriting received signal information. */
 		link->stats.last_rssi = rssi;
 		link->stats.last_snr = snr;
 	}
@@ -2340,7 +1971,7 @@ void zlrs_link_tick(zlrs_link_t *link, uint32_t now_ms)
 	case ZLRS_STATE_CONNECTED:
 		/*
 		 * Grace after entering CONNECTED: the peer may still be leaving SEARCHING (it needs to
-		 * hear one of our confirms), and its first telemetry cannot arrive until it does. Running
+		 * hear one of our confirms), and its first data frame cannot arrive until it does. Running
 		 * the peer-loss check inside that window would roll a new session and restart the
 		 * handshake before it ever had a chance to finish.
 		 */
@@ -2380,41 +2011,4 @@ uint16_t zlrs_link_write(zlrs_link_t *link, const uint8_t *data, uint16_t len)
 	}
 
 	return written;
-}
-
-void zlrs_link_set_rc(zlrs_link_t *link, const uint8_t *channels, uint16_t len)
-{
-	if (len != ZLRS_RC_PAYLOAD_LEN && len != ZLRS_RC_PAYLOAD_MAX_LEN) {
-		len = 0U;
-	}
-	if (len > 0U && channels != NULL) {
-		memcpy(link->rc_payload, channels, len);
-	} else {
-		len = 0U;
-	}
-	link->rc_len = len;
-}
-
-void zlrs_link_set_tlm(zlrs_link_t *link, const uint8_t *payload, uint16_t len)
-{
-	if (len > sizeof(link->tlm_payload)) {
-		len = sizeof(link->tlm_payload);
-	}
-	memcpy(link->tlm_payload, payload, len);
-	link->tlm_len = len;
-}
-
-bool zlrs_link_write_service(zlrs_link_t *link, const uint8_t *frame, uint8_t len)
-{
-	if (frame == NULL || len == 0U || len > ZLRS_LINK_SERVICE_MAX_LEN ||
-	    link->service_count == ZLRS_LINK_SERVICE_QUEUE_LEN) {
-		return false;
-	}
-	const uint8_t tail =
-		(uint8_t)((link->service_head + link->service_count) % ZLRS_LINK_SERVICE_QUEUE_LEN);
-
-	memcpy(link->service_queue[tail], frame, len);
-	link->service_sizes[tail] = len;
-	link->service_count++;
-	return true;
 }
