@@ -53,7 +53,7 @@ The DATA port can have a UART endpoint, a USB CDC endpoint, or both. The managem
 ## 3. Build targets
 
 Two targets, one per sub-G SKU, and both are bootloader targets (an image that cannot be updated
-through the bootloader has no reason to exist, see [07-firmware](07-firmware.md) 5):
+through the bootloader has no reason to exist, see [07-firmware](07-firmware.md)):
 
 | Target | Notes |
 | --- | --- |
@@ -79,11 +79,11 @@ upgrade.
 
 NVS keeps the root key, device id, pairing record, baud rate, region, power
 ceiling, role, security profile and DATA band — ten keys, under 100 B in total, which is why NVS is small
-and the flash around it goes to the log store ([07-firmware](07-firmware.md) 7).
+and the flash around it goes to the log store ([07-firmware](07-firmware.md)).
 
 Offsets and sizes: [board README]
 (../boards/zlrs/rp2350_zero_core2021/README.md#4-partitions-and-boot).
-Upgrade flow and recovery entries: [07-firmware](07-firmware.md) 5.
+Upgrade flow and recovery entries: [07-firmware](07-firmware.md).
 
 ## 5. Toolchain and build
 
@@ -118,9 +118,9 @@ python3 tools/zlrs.py update --port /dev/serial/by-id/usb-zlrs_ZLRS_<serial>-if0
 ```
 
 The application is never dragged on as a UF2: that path has no rollback
-([07-firmware](07-firmware.md) 5).
+([07-firmware](07-firmware.md)).
 
-Recovery ports, image confirmation and rollback are described in [07-firmware](07-firmware.md) 5.
+Recovery ports, image confirmation and rollback are described in [07-firmware](07-firmware.md).
 
 ## 7. Adding hardware
 

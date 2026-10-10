@@ -98,9 +98,9 @@ static ral_flrc_tx_syncword_t tx_syncword(uint8_t slot)
 {
 	switch (slot) {
 	case ZLRS_SYNC_SLOT_DATA:
-		return RAL_FLRC_TX_SYNCWORD_2;
+		return RAL_FLRC_TX_SYNCWORD_1;
 	case ZLRS_SYNC_SLOT_PAIRING:
-		return RAL_FLRC_TX_SYNCWORD_3;
+		return RAL_FLRC_TX_SYNCWORD_2;
 	default:
 		return RAL_FLRC_TX_SYNCWORD_1;
 	}
@@ -124,9 +124,9 @@ static ral_flrc_rx_match_sync_word_t rx_match_syncword(uint8_t slot)
 {
 	switch (slot) {
 	case ZLRS_SYNC_SLOT_DATA:
-		return RAL_FLRC_RX_MATCH_SYNCWORD_2;
+		return RAL_FLRC_RX_MATCH_SYNCWORD_1;
 	case ZLRS_SYNC_SLOT_PAIRING:
-		return RAL_FLRC_RX_MATCH_SYNCWORD_3;
+		return RAL_FLRC_RX_MATCH_SYNCWORD_2;
 	default:
 		return RAL_FLRC_RX_MATCH_SYNCWORD_1;
 	}

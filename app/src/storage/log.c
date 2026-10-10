@@ -1,6 +1,6 @@
 /*
  * Log storage: mount the LittleFS the logging subsystem's file backend writes to, and report how
- * the last boot ended. See doc/07-firmware.md 7.
+ * the last boot ended. See doc/07-firmware.md.
  *
  * Nothing here implements logging: the messages themselves go through Zephyr's logging subsystem
  * and its file backend (LOG_BACKEND_FS), which also owns the file rotation that makes the store a
@@ -47,7 +47,8 @@ int zlrs_storage_log_info(zlrs_mgmt_log_info_t *out)
 	return ZLRS_MGMT_E_STATE;
 }
 
-int zlrs_storage_log_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *out, uint8_t *out_len)
+int zlrs_storage_log_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *out,
+			  uint8_t *out_len)
 {
 	ARG_UNUSED(index);
 	ARG_UNUSED(offset);
@@ -193,7 +194,8 @@ int zlrs_storage_log_info(zlrs_mgmt_log_info_t *out)
 }
 
 /* One chunk of one file. The caller (management protocol) bounds len; a short tail returns short. */
-int zlrs_storage_log_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *out, uint8_t *out_len)
+int zlrs_storage_log_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *out,
+			  uint8_t *out_len)
 {
 	char path[sizeof(LOG_MOUNT_POINT) + 16U];
 	struct fs_file_t file;
@@ -295,7 +297,7 @@ SYS_INIT(log_store_init, POST_KERNEL, 100);
 /* Log core is up by now, so this report lands in the log and therefore in the log file as well */
 static int log_store_report(void)
 {
-	struct fs_statvfs stat = { 0 };
+	struct fs_statvfs stat = {0};
 
 	if (log_mounted && fs_statvfs(LOG_MOUNT_POINT, &stat) == 0) {
 		LOG_INF("log store: %s, %u KiB of %u KiB free", LOG_MOUNT_POINT,

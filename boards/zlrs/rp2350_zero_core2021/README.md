@@ -33,9 +33,9 @@ The USB device exposes two CDCs in the application and a third in a debug build:
 
 | Node | Alias | Purpose |
 | --- | --- | --- |
-| `cdc_acm_uart1` | `zlrs-data-cdc` | DATA (`if00`) |
-| `cdc_acm_uart2` | `zlrs-mgmt-cdc` | management (`if02`) |
-| `cdc_acm_uart3` | - | console; enabled only by `app/debug.overlay` |
+| `cdc_acm_uart0` | `zlrs-data-cdc` | DATA (`if00`) |
+| `cdc_acm_uart1` | `zlrs-mgmt-cdc` | management (`if02`) |
+| `cdc_acm_uart2` | - | console; enabled only by `app/debug.overlay` |
 
 The radio bus and the three control lines all sit at **GP15 or below**: GP16 drives the
 RP2350-Zero's on-board WS2812B (kept for the status LED) and the pins above it are awkward to
@@ -44,7 +44,7 @@ is the alias the vendor USP samples want; with it in place `usp_zephyr/samples/u
 this board as-is.
 
 Each link has two endpoints (UART and USB CDC); the rule that picks one is in
-[doc/07-firmware.md](../../../doc/07-firmware.md) 1, and the physical interface list is in
+[doc/07-firmware.md](../../../doc/07-firmware.md), and the physical interface list is in
 [doc/03-prototype.md](../../../doc/03-prototype.md) 3.
 
 ### DMA allocation and peripheral support
@@ -118,7 +118,7 @@ calibration tables hang.
 The value must **not** live in `/chosen`: Zephyr's DT macros only export `zephyr,`-prefixed
 chosen properties, a custom prefix reads back as nothing and silently falls back to the HF
 default, so an LF board would never pass the check (exactly what happened on the first
-bring-up, see [doc/11-debug.md](../../../doc/11-debug.md) 5).
+bring-up, see [doc/11-debug.md](../../../doc/11-debug.md)).
 
 ## 3. Core2021 and calibration
 
@@ -153,7 +153,7 @@ disagree about where a slot lives.
 Boot chain: RP2350 bootrom, MCUboot (checking slot0's signature), the application. Slot swaps
 use `swap using move` (no scratch partition needed, rollback works; `swap using offset` goes in
 but never comes back on this board). Image confirmation and recovery entries are described in
-[doc/07-firmware.md](../../../doc/07-firmware.md) 5, the log store in that guide.
+[doc/07-firmware.md](../../../doc/07-firmware.md), the log store in that guide.
 
 BOOTSEL carries the **bootloader image only**; the application is always installed and updated
 through the bootloader:
@@ -189,8 +189,8 @@ Defaults that `Kconfig.defconfig` sets for every variant:
 - `USB_DEVICE_STACK_NEXT` and `USBD_CDC_ACM_CLASS`: the device stack that carries all CDCs.
   **`CDC_ACM_SERIAL_INITIALIZE_AT_BOOT` stays off**: that helper registers only the first CDC,
   while `subsys/usb` builds its own context and registers every one of them
-  (see [doc/07-firmware.md](../../../doc/07-firmware.md) 4).
-- No console by default: the `cdc_acm_uart3` node is disabled and only
+  (see [doc/07-firmware.md](../../../doc/07-firmware.md)).
+- No console by default: the `cdc_acm_uart2` node is disabled and only
   `app/debug.overlay` enables it, so a production image has no shell.
 - Peripherals such as `CONFIG_UART_LINE_CTRL`, `UART_INTERRUPT_DRIVEN`, `GPIO`, `RESET`,
   `CLOCK_CONTROL` and `SERIAL` stay on.

@@ -30,9 +30,9 @@ config RESET
 config SERIAL
 	default y
 
-# No console by default (cdc_acm_uart3 is disabled; chosen points at it but only the debug
+# No console by default (cdc_acm_uart2 is disabled; chosen points at it but only the debug
 # overlay enables it), so the board sets no CONSOLE / UART_CONSOLE default. Debug builds get
-# it from app/debug.conf + app/debug.overlay (doc/11-debug.md 1).
+# it from app/debug.conf + app/debug.overlay (doc/11-debug.md).
 #
 # USB device stack and CDC ACM class on by default: two CDCs in the application (data,
 # data, config) and two in the bootloader (recovery, console).
@@ -53,7 +53,7 @@ config UART_INTERRUPT_DRIVEN
 
 # Flash reads around the XIP cache, or a read after a swap returns a line cached before the write:
 # MCUboot then calls a valid image "signature check failed", and LittleFS mounts "corrupted"
-# (doc/07-firmware.md 7). Both images read flash this way, so it is set once, here.
+# (doc/07-firmware.md). Both images read flash this way, so it is set once, here.
 config FLASH_RPI_PICO_READ_UNTRANSLATED
 	default y
 
@@ -65,7 +65,7 @@ config ENTROPY_RPI_PICO_RNG
 
 # The upgrade machinery every image that runs under MCUboot needs: the boot-mode flag lives in
 # retained RAM, and the application and MCUboot both read it to agree on staying in serial
-# recovery (doc/07-firmware.md 6). The image manager and streamed flash are the application's
+# recovery (doc/07-firmware.md). The image manager and streamed flash are the application's
 # business and live in app/prj.conf.
 config RETAINED_MEM
 	default y

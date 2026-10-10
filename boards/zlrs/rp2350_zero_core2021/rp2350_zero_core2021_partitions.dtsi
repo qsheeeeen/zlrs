@@ -19,11 +19,10 @@
  *   0x0F0000  slot1     832 KB   upgrade images land here, MCUboot swaps
  *   0x1C0000  log         1 MB   log store (LittleFS), ring of 8 x 128 KB files
  *   0x2C0000  coredump  128 KB   Zephyr coredump backend target
- *   0x2E0000  storage    32 KB   NVS: root key, device id, pairing record, failsafe values
+ *   0x2E0000  storage    32 KB   NVS: root key, device id, pairing record, DATA settings
  *
- * The log and coredump partitions cost a third of what used to be NVS space: NVS holds nine keys
- * under 100 B in total, so 32 KB is generous, while a board that reboots on its own needs the
- * lines from before the reset (doc/07-firmware.md 7).
+ * The log and coredump partitions cost a third of what used to be NVS space: NVS holds nine settings and a layout marker, so 32 KB is generous, while a board that reboots on its own needs the
+ * lines from before the reset (doc/07-firmware.md).
  */
 
 &flash0 {

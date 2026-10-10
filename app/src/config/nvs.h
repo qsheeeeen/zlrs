@@ -38,7 +38,7 @@ int zlrs_storage_settings_save(enum zlrs_config_key key, const void *value, size
 /* Erase one record; a record that is not there already counts as erased */
 int zlrs_storage_settings_erase(enum zlrs_config_key key);
 
-/* Factory reset: every record the table knows (keys, pairing, baud, region, role, ...) */
+/* Factory reset: clear the settings partition and initialize its layout marker. */
 int zlrs_storage_settings_erase_all(void);
 
 /* A device id is an identity only when it is not all zero (a failed or lazy entropy read) */

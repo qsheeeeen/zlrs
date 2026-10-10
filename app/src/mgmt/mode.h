@@ -4,7 +4,7 @@
  * The host enters it through the dedicated management CDC; the protocol — framing, command
  * dispatch — is core/mgmt and pure C, so every command lands here as a callback. This file is
  * where a command becomes a device action: an NVS write, a pairing, a reboot into recovery
- * (doc/07-firmware.md 2, doc/09-security.md 9).
+ * (doc/07-firmware.md, doc/09-security.md 9).
  *
  * Call on the RF owner after it grants a maintenance window. Configuration validates and
  * persists settings; RF applies device actions. This frontend owns the session and replies.
@@ -34,7 +34,7 @@ ZBUS_CHAN_DECLARE(zlrs_mode_chan);
 int zlrs_mgmt_mode_run(void);
 
 /*
- * The host confirmed this image (see the upgrade flow in doc/07-firmware.md 6).
+ * The host confirmed this image (see the upgrade flow in doc/07-firmware.md).
  * It is the only verdict on whether this image stays: without a confirm after an upgrade,
  * the next reset lets MCUboot roll back.
  */

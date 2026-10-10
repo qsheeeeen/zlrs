@@ -52,7 +52,7 @@ LOG_MODULE_REGISTER(zlrs_led, CONFIG_APP_LOG_LEVEL);
 #define LED_PIXELS 1U
 
 /*
- * The link and RAC threads are cooperative (doc/06-architecture.md 6), so this one is preemptive:
+ * The link and RAC threads are cooperative (doc/06-architecture.md), so this one is preemptive:
  * it runs only while the link thread is blocked, and the link thread preempts it again the moment
  * it wakes. A strip write therefore never stretches a slot.
  */
@@ -174,13 +174,13 @@ static void led_thread(void *p1, void *p2, void *p3)
 			mgmt_since = now_ms;
 		}
 
-		/* Faults and failsafe share the red/theme pattern. Management mode wins over alarms,
+		/* Faults and link loss share the red/theme pattern. Management mode wins over alarms,
 		 * followed by recent drops and the underlying link state. */
-		const bool alarm = alerts.failsafe || alerts.fault;
+		const bool alarm = alerts.link_lost || alerts.fault;
 		const struct zlrs_led_frame_input in = {
 			.mgmt_mode =
 				mgmt_was && (uint32_t)(now_ms - mgmt_since) >= LED_CONFIG_DELAY_MS,
-			.failsafe = alarm,
+			.link_lost = alarm,
 			.drop_recent =
 				drop_bytes > 0U && (uint32_t)(now_ms - drop_ms) < LED_DROP_HOLD_MS,
 			.role_tx = link.role_tx,

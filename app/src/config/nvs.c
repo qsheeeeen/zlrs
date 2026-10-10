@@ -4,6 +4,7 @@
 
 #include "config/nvs.h"
 
+#include <errno.h>
 #include <string.h>
 
 #include <zephyr/device.h>
@@ -15,20 +16,20 @@
 
 LOG_MODULE_REGISTER(zlrs_storage_settings, CONFIG_APP_LOG_LEVEL);
 
-/* One row per setting: the only place an NVS id and a size are written down */
-static const struct {
-	uint16_t nvs_id;
-	uint8_t size;
-} settings[ZLRS_CONFIG_KEY_COUNT] = {
-	[ZLRS_CONFIG_BAND] = {11U, sizeof(uint8_t)},
-	[ZLRS_CONFIG_DATA_BAUD] = {5U, sizeof(uint32_t)},
-	[ZLRS_CONFIG_REGION] = {7U, sizeof(uint8_t)},
-	[ZLRS_CONFIG_POWER] = {8U, sizeof(int8_t)},
-	[ZLRS_CONFIG_ROLE] = {9U, sizeof(uint8_t)},
-	[ZLRS_CONFIG_PROFILE] = {10U, sizeof(uint8_t)},
-	[ZLRS_CONFIG_ROOT_KEY] = {1U, ZLRS_KEY_LEN},
-	[ZLRS_CONFIG_DEV_ID] = {2U, ZLRS_DEV_ID_LEN},
-	[ZLRS_CONFIG_PAIRING] = {6U, sizeof(zlrs_storage_settings_pairing_t)},
+/* Record 0 identifies the layout; setting records follow the config key order. */
+#define NVS_LAYOUT_ID 0U
+#define NVS_LAYOUT    0x5A4C0001U
+
+static const uint8_t setting_sizes[ZLRS_CONFIG_KEY_COUNT] = {
+	[ZLRS_CONFIG_BAND] = sizeof(uint8_t),
+	[ZLRS_CONFIG_DATA_BAUD] = sizeof(uint32_t),
+	[ZLRS_CONFIG_REGION] = sizeof(uint8_t),
+	[ZLRS_CONFIG_POWER] = sizeof(int8_t),
+	[ZLRS_CONFIG_ROLE] = sizeof(uint8_t),
+	[ZLRS_CONFIG_PROFILE] = sizeof(uint8_t),
+	[ZLRS_CONFIG_ROOT_KEY] = ZLRS_KEY_LEN,
+	[ZLRS_CONFIG_DEV_ID] = ZLRS_DEV_ID_LEN,
+	[ZLRS_CONFIG_PAIRING] = sizeof(zlrs_storage_settings_pairing_t),
 };
 
 #define NVS_SECTOR_SIZE 4096U
@@ -41,10 +42,32 @@ static struct nvs_fs fs = {
 
 static bool ready;
 
+static int reset_layout(void)
+{
+	const uint32_t layout = NVS_LAYOUT;
+
+	ready = false;
+	int rc = nvs_clear(&fs);
+	if (rc == 0) {
+		rc = nvs_mount(&fs);
+	}
+	if (rc == 0) {
+		rc = nvs_write(&fs, NVS_LAYOUT_ID, &layout, sizeof(layout));
+		if (rc == sizeof(layout)) {
+			rc = 0;
+		} else if (rc >= 0) {
+			rc = -EIO;
+		}
+	}
+	ready = rc == 0;
+	return rc;
+}
+
 int zlrs_storage_settings_init(void)
 {
 	int rc;
 
+	ready = false;
 	fs.flash_device = PARTITION_DEVICE(storage_partition);
 	if (fs.flash_device == NULL) {
 		return -1;
@@ -71,8 +94,13 @@ int zlrs_storage_settings_init(void)
 		return rc;
 	}
 
+	uint32_t layout = 0U;
+	if (nvs_read(&fs, NVS_LAYOUT_ID, &layout, sizeof(layout)) != sizeof(layout) ||
+	    layout != NVS_LAYOUT) {
+		LOG_INF("Initializing settings layout");
+		return reset_layout();
+	}
 	ready = true;
-
 	return 0;
 }
 
@@ -113,25 +141,25 @@ size_t zlrs_storage_settings_size(enum zlrs_config_key key)
 		return 0U;
 	}
 
-	return settings[key].size;
+	return setting_sizes[key];
 }
 
 int zlrs_storage_settings_load(enum zlrs_config_key key, void *out, size_t len)
 {
-	if ((unsigned int)key >= ZLRS_CONFIG_KEY_COUNT || len != settings[key].size) {
+	if ((unsigned int)key >= ZLRS_CONFIG_KEY_COUNT || len != setting_sizes[key]) {
 		return -EINVAL;
 	}
 
-	return read_record(settings[key].nvs_id, out, len);
+	return read_record((uint16_t)key + 1U, out, len);
 }
 
 int zlrs_storage_settings_save(enum zlrs_config_key key, const void *value, size_t len)
 {
-	if ((unsigned int)key >= ZLRS_CONFIG_KEY_COUNT || len != settings[key].size) {
+	if ((unsigned int)key >= ZLRS_CONFIG_KEY_COUNT || len != setting_sizes[key]) {
 		return -EINVAL;
 	}
 
-	return write_record(settings[key].nvs_id, value, len);
+	return write_record((uint16_t)key + 1U, value, len);
 }
 
 int zlrs_storage_settings_erase(enum zlrs_config_key key)
@@ -145,7 +173,7 @@ int zlrs_storage_settings_erase(enum zlrs_config_key key)
 		return -1;
 	}
 
-	rc = nvs_delete(&fs, settings[key].nvs_id);
+	rc = nvs_delete(&fs, (uint16_t)key + 1U);
 
 	/* A missing record counts as success: erasing is what removes it */
 	return (rc == 0 || rc == -ENOENT) ? 0 : rc;
@@ -153,15 +181,10 @@ int zlrs_storage_settings_erase(enum zlrs_config_key key)
 
 int zlrs_storage_settings_erase_all(void)
 {
-	for (size_t i = 0U; i < ZLRS_CONFIG_KEY_COUNT; i++) {
-		const int rc = zlrs_storage_settings_erase((enum zlrs_config_key)i);
-
-		if (rc != 0) {
-			return rc;
-		}
+	if (!ready) {
+		return -EIO;
 	}
-
-	return 0;
+	return reset_layout();
 }
 
 bool zlrs_storage_settings_dev_id_valid(const uint8_t id[ZLRS_DEV_ID_LEN])

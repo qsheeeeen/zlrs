@@ -30,18 +30,18 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--serial", required=True, help="exact board USB serial")
     parser.add_argument("--image", type=Path,
-                        default=REPO.parent / "build/unit/zephyr/zephyr.signed.bin")
+                        default=REPO / "build/unit-data-only-sysbuild/unit/zephyr/zephyr.signed.bin")
     parser.add_argument("--log", type=Path, required=True, help="save the complete Ztest output")
     args = parser.parse_args()
     args.log.write_bytes(b"")
     previous = image_hash(args.serial)
-    management = Path("/dev/serial/by-id") / f"usb-zlrs_ZLRS_{args.serial}-if04"
+    management = Path("/dev/serial/by-id") / f"usb-zlrs_ZLRS_{args.serial}-if02"
     subprocess.run(
         [sys.executable, str(CLI), "update", "--serial", args.serial,
          "--image", str(args.image), "--no-wait", "--timeout", "45"],
         check=True,
     )
-    console = Path("/dev/serial/by-id") / f"usb-zlrs_ZLRS_UNIT_TEST_{args.serial}-if06"
+    console = Path("/dev/serial/by-id") / f"usb-zlrs_ZLRS_UNIT_TEST_{args.serial}-if04"
     deadline = time.monotonic() + 120
     while not console.exists():
         if management.exists():

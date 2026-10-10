@@ -4,13 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Devicetree overlay for debug builds: enable the console CDC the board keeps disabled
- * (cdc_acm_uart3; chosen `zephyr,console` / `zephyr,shell-uart` already point at it).
+ * (cdc_acm_uart2; chosen `zephyr,console` / `zephyr,shell-uart` already point at it).
  *
  *   west build ... -- -DEXTRA_CONF_FILE=app/debug.conf \
  *                     -DDTC_OVERLAY_FILE=app/debug.overlay
  */
 
-&cdc_acm_uart3 {
+&cdc_acm_uart2 {
 	status = "okay";
 	/* Hold complete link/ports/radio replies without blocking an unopened console. */
 	tx-fifo-size = <8192>;

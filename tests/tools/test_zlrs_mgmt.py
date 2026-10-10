@@ -153,24 +153,24 @@ class ManagementTests(unittest.TestCase):
 class FramingTests(unittest.TestCase):
     def test_firmware_frame_vectors(self):
         cases = [
-            ("enter", mgmt.CMD_ENTER, b"", "a55a03000050"),
-            ("status", mgmt.CMD_STATUS, b"", "a55a0301005b"),
-            ("pair", mgmt.CMD_PAIR, b"", "a55a03020046"),
-            ("erase-pair", mgmt.CMD_ERASE_PAIR, b"", "a55a0303004d"),
-            ("set-phrase", mgmt.CMD_SET_PHRASE, b"hello", "a55a03110568656c6c6ff7"),
+            ("enter", mgmt.CMD_ENTER, b"", "a55a04000073"),
+            ("status", mgmt.CMD_STATUS, b"", "a55a04010078"),
+            ("pair", mgmt.CMD_PAIR, b"", "a55a04020065"),
+            ("erase-pair", mgmt.CMD_ERASE_PAIR, b"", "a55a0403006e"),
+            ("set-phrase", mgmt.CMD_SET_PHRASE, b"hello", "a55a04050568656c6c6f78"),
             ("set-key-hex", mgmt.CMD_SET_KEY_HEX, b"00" * 32, None),
-            ("set-baud", mgmt.CMD_SET_BAUD, bytes([0x00, 0x25, 0x06, 0x00]), "a55a0321040025060056"),
-            ("set-region", mgmt.CMD_SET_REGION, bytes([3]), "a55a032201038f"),
-            ("set-power", mgmt.CMD_SET_POWER, bytes([20]), "a55a032301140a"),
-            ("set-role", mgmt.CMD_SET_ROLE, bytes([1]), "a55a0324010150"),
-            ("set-profile", mgmt.CMD_SET_PROFILE, bytes([2]), "a55a0325010279"),
-            ("new-dev-id", mgmt.CMD_NEW_DEV_ID, b"", "a55a032600df"),
-            ("factory-reset", mgmt.CMD_FACTORY_RESET, b"", "a55a034000ef"),
-            ("recovery", mgmt.CMD_RECOVERY, b"", "a55a034100e4"),
-            ("build", mgmt.CMD_BUILD, b"", "a55a031200f6"),
-            ("image-hash", mgmt.CMD_IMAGE_HASH, b"", "a55a031300fd"),
-            ("confirm", mgmt.CMD_CONFIRM, b"", "a55a034200f9"),
-            ("exit", mgmt.CMD_EXIT, b"", "a55a03300055"),
+            ("set-baud", mgmt.CMD_SET_BAUD, bytes([0x00, 0x25, 0x06, 0x00]), "a55a040804002506004e"),
+            ("set-region", mgmt.CMD_SET_REGION, bytes([3]), "a55a0409010305"),
+            ("set-power", mgmt.CMD_SET_POWER, bytes([20]), "a55a040a011453"),
+            ("set-role", mgmt.CMD_SET_ROLE, bytes([1]), "a55a040b0101a9"),
+            ("set-profile", mgmt.CMD_SET_PROFILE, bytes([2]), "a55a040c010220"),
+            ("new-dev-id", mgmt.CMD_NEW_DEV_ID, b"", "a55a040e0011"),
+            ("factory-reset", mgmt.CMD_FACTORY_RESET, b"", "a55a041000c3"),
+            ("recovery", mgmt.CMD_RECOVERY, b"", "a55a041100c8"),
+            ("build", mgmt.CMD_BUILD, b"", "a55a04060049"),
+            ("image-hash", mgmt.CMD_IMAGE_HASH, b"", "a55a04070042"),
+            ("confirm", mgmt.CMD_CONFIRM, b"", "a55a041200d5"),
+            ("exit", mgmt.CMD_EXIT, b"", "a55a040f001a"),
         ]
         for name, command, payload, expected in cases:
             with self.subTest(command=name):
@@ -180,7 +180,7 @@ class FramingTests(unittest.TestCase):
                     self.assertEqual(frame.hex(), expected)
 
     def test_known_frame_decode(self):
-        self.assertEqual(mgmt.decode(bytes.fromhex("a55a03110568656c6c6ff7")),
+        self.assertEqual(mgmt.decode(bytes.fromhex("a55a04050568656c6c6f78")),
                          (mgmt.CMD_SET_PHRASE, b"hello"))
 
 

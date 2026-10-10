@@ -16,7 +16,7 @@ config ZLRS_APP_DEBUG
 	  Marks an image built for the bench: it allows the ZLRS_APP_DEBUG_* options below, and
 	  nothing that depends on it belongs in a production image. app/debug.conf sets it; the
 	  configs that produce shipped images (app/prj.conf, boards/) must not mention it (CI gate).
-	  See doc/11-debug.md 1.
+	  See doc/11-debug.md.
 
 menu "Hardware and product shape"
 
@@ -49,7 +49,7 @@ config ZLRS_APP_ROLE_TX
 # The only knob on the upgrade path: how long the host has to confirm. The mechanism itself
 # (an image under MCUboot stays unconfirmed until the host says so, then either becomes
 # permanent or is rolled back) has no switch — the board definition brings the image
-# manager and the boot mode with it. See doc/07-firmware.md 6.
+# manager and the boot mode with it. See doc/07-firmware.md.
 config ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS
 	int "Host confirm timeout (ms)"
 	default 60000
@@ -94,7 +94,7 @@ config ZLRS_APP_PACING_SCALE
 	default 1
 	range 1 8
 	help
-	  Multiplies the hardware timer superframe period. All four slot boundaries and
+	  Multiplies the hardware timer superframe period. Both DATA slot boundaries and
 	  radio deadlines follow the scaled period; radio work never stretches the schedule.
 
 config ZLRS_APP_PREPARE_US
@@ -134,13 +134,13 @@ config ZLRS_APP_RESYNC_PERIOD_MS
 	help
 	  Once connected, send a SYNC on the sync channel this often: the peer re-aligns its hop
 	  index (crystal drift accumulates into missed hops) and spots a peer reboot or re-pair.
-	  See doc/08-protocol.md 3.6. Converted to frames, at least one.
+	  See doc/08-protocol.md. Converted to frames, at least one.
 
 config ZLRS_APP_MGMT_TIMEOUT_S
 	int "Management mode idle timeout (s)"
 	default 300
 	help
-	  Management mode exits after this long without a command, see doc/07-firmware.md 2.
+	  Management mode exits after this long without a command, see doc/07-firmware.md.
 
 config ZLRS_APP_PAIR_HOLD_MS
 	int "Hold time needed to start pairing (ms)"
@@ -155,13 +155,13 @@ menu "Pending acceptance (see doc/12-roadmap.md)"
 
 config ZLRS_APP_FHSS
 	# These features are on in any image that goes on air; a debug image may switch one
-	# off to isolate a layer (doc/11-debug.md 3), a production configuration cannot.
+	# off to isolate a layer (doc/11-debug.md), a production configuration cannot.
 	bool "Per-frame frequency hopping" if ZLRS_APP_DEBUG
 	default y
 	help
 	  With this off every frame stays on the sync channel (entry 0 of the hop table), which is
 	  how layer isolation separates timing from the hop table. A fixed channel does not satisfy the
-	  FCC 15.247 hopping rules: debug images only, see doc/08-protocol.md 5.2.
+	  FCC 15.247 hopping rules: debug images only, see doc/08-protocol.md.
 
 config ZLRS_APP_SESSION_HANDSHAKE
 	bool "Session handshake (fresh key per session)" if ZLRS_APP_DEBUG
@@ -179,7 +179,7 @@ config ZLRS_APP_DATA_ARQ
 	  On by default: the receiver flips a header ACK bit for each accepted data packet.
 	  The sender waits for that flip before sending the next packet and retransmits on timeout.
 	  Off means best-effort (drop when full, count it).
-	  See doc/08-protocol.md 4.3.
+	  See doc/08-protocol.md.
 
 config ZLRS_APP_DYNAMIC_POWER
 	bool "Adapt DATA transmit power to quality reported by the peer"
@@ -201,7 +201,7 @@ config ZLRS_APP_WATCHDOG
 	help
 	  Armed in PRE_KERNEL_1 (app/src/platform/watchdog.c); feeding happens in the blocking
 	  loops, so a stuck main loop counts as dead too. It only turns a hang into a reset; the
-	  rollback verdict is MCUboot's image confirm bit (doc/07-firmware.md 6). This saves
+	  rollback verdict is MCUboot's image confirm bit (doc/07-firmware.md). This saves
 	  reaching for BOOTSEL.
 
 config ZLRS_APP_WATCHDOG_TIMEOUT_MS

@@ -21,7 +21,7 @@ extern "C" {
 
 #define ZLRS_MGMT_SOF0            0xA5U
 #define ZLRS_MGMT_SOF1            0x5AU
-#define ZLRS_MGMT_VERSION         3U
+#define ZLRS_MGMT_VERSION         4U
 #define ZLRS_MGMT_FRAME_MAX_LEN   96U
 #define ZLRS_MGMT_PAYLOAD_MAX_LEN (ZLRS_MGMT_FRAME_MAX_LEN - 6U)
 
@@ -30,38 +30,38 @@ extern "C" {
 #define ZLRS_MGMT_CMD_STATUS        0x01U /* read status */
 #define ZLRS_MGMT_CMD_PAIR          0x02U /* start pairing */
 #define ZLRS_MGMT_CMD_ERASE_PAIR    0x03U /* erase the pairing record */
-#define ZLRS_MGMT_CMD_SET_KEY_HEX   0x10U /* root key as 64 hex characters */
-#define ZLRS_MGMT_CMD_SET_PHRASE    0x11U /* passphrase, derived into a root key on the device */
-#define ZLRS_MGMT_CMD_BUILD         0x12U /* read the build string (which version is running) */
-#define ZLRS_MGMT_CMD_IMAGE_HASH    0x13U /* MCUboot hash of this image (the update verdict) */
-#define ZLRS_MGMT_CMD_SET_BAUD      0x21U /* 4-byte little-endian baud rate */
-#define ZLRS_MGMT_CMD_SET_REGION    0x22U /* 1-byte region id (0..3) */
-#define ZLRS_MGMT_CMD_SET_POWER     0x23U /* 1-byte signed dBm */
-#define ZLRS_MGMT_CMD_SET_ROLE      0x24U /* 1-byte role (0 = TX, 1 = RX) */
-#define ZLRS_MGMT_CMD_SET_PROFILE   0x25U /* 1-byte profile (0 = P0, 1 = P1, 2 = P2) */
-#define ZLRS_MGMT_CMD_SET_BAND      0x27U /* 1 = 2.4 GHz, 2 = sub-G; effective after reboot */
-#define ZLRS_MGMT_CMD_NEW_DEV_ID    0x26U /* make a fresh device id (drops the pairing record) */
-#define ZLRS_MGMT_CMD_EXIT          0x30U /* leave management mode */
-#define ZLRS_MGMT_CMD_FACTORY_RESET 0x40U /* wipe NVS */
-#define ZLRS_MGMT_CMD_RECOVERY      0x41U /* reboot into MCUboot serial recovery */
-#define ZLRS_MGMT_CMD_CONFIRM       0x42U /* host confirms this upgrade (no confirm = rollback) */
-#define ZLRS_MGMT_CMD_LOG_INFO      0x50U /* what the log store holds */
-#define ZLRS_MGMT_CMD_LOG_READ      0x51U /* one chunk: log index (1) + offset (4) + length (1) */
-#define ZLRS_MGMT_CMD_DEBUG_REPORT  0x60U /* debug image only: report id (1) + offset (2) */
+#define ZLRS_MGMT_CMD_SET_KEY_HEX   0x04U /* root key as 64 hex characters */
+#define ZLRS_MGMT_CMD_SET_PHRASE    0x05U /* passphrase, derived into a root key on the device */
+#define ZLRS_MGMT_CMD_BUILD         0x06U /* read the build string (which version is running) */
+#define ZLRS_MGMT_CMD_IMAGE_HASH    0x07U /* MCUboot hash of this image (the update verdict) */
+#define ZLRS_MGMT_CMD_SET_BAUD      0x08U /* 4-byte little-endian baud rate */
+#define ZLRS_MGMT_CMD_SET_REGION    0x09U /* 1-byte region id (0..3) */
+#define ZLRS_MGMT_CMD_SET_POWER     0x0AU /* 1-byte signed dBm */
+#define ZLRS_MGMT_CMD_SET_ROLE      0x0BU /* 1-byte role (0 = TX, 1 = RX) */
+#define ZLRS_MGMT_CMD_SET_PROFILE   0x0CU /* 1-byte profile (0 = P0, 1 = P1, 2 = P2) */
+#define ZLRS_MGMT_CMD_SET_BAND      0x0DU /* 0 = 2.4 GHz, 1 = sub-G; effective after reboot */
+#define ZLRS_MGMT_CMD_NEW_DEV_ID    0x0EU /* make a fresh device id (drops the pairing record) */
+#define ZLRS_MGMT_CMD_EXIT          0x0FU /* leave management mode */
+#define ZLRS_MGMT_CMD_FACTORY_RESET 0x10U /* wipe NVS */
+#define ZLRS_MGMT_CMD_RECOVERY      0x11U /* reboot into MCUboot serial recovery */
+#define ZLRS_MGMT_CMD_CONFIRM       0x12U /* host confirms this upgrade (no confirm = rollback) */
+#define ZLRS_MGMT_CMD_LOG_INFO      0x13U /* what the log store holds */
+#define ZLRS_MGMT_CMD_LOG_READ      0x14U /* one chunk: log index (1) + offset (4) + length (1) */
+#define ZLRS_MGMT_CMD_DEBUG_REPORT  0x15U /* debug image only: report id (1) + offset (2) */
 
 /* device -> host */
 #define ZLRS_MGMT_CMD_ACK               0x80U /* [cmd][status] */
 #define ZLRS_MGMT_CMD_STATUS_RESP       0x81U /* see zlrs_mgmt_status_t */
 #define ZLRS_MGMT_CMD_BUILD_RESP        0x82U /* build string, at most ZLRS_MGMT_BUILD_MAX_LEN */
 #define ZLRS_MGMT_CMD_IMAGE_HASH_RESP   0x83U /* ZLRS_MGMT_IMAGE_HASH_LEN bytes of image hash */
-#define ZLRS_MGMT_CMD_LOG_INFO_RESP     0x90U /* see zlrs_mgmt_log_info_t */
-#define ZLRS_MGMT_CMD_LOG_DATA_RESP     0x91U /* log index (1) + offset (4) + bytes */
-#define ZLRS_MGMT_CMD_DEBUG_REPORT_RESP 0x84U /* report id + offset + total + text chunk */
+#define ZLRS_MGMT_CMD_LOG_INFO_RESP     0x84U /* see zlrs_mgmt_log_info_t */
+#define ZLRS_MGMT_CMD_LOG_DATA_RESP     0x85U /* log index (1) + offset (4) + bytes */
+#define ZLRS_MGMT_CMD_DEBUG_REPORT_RESP 0x86U /* report id + offset + total + text chunk */
 
-#define ZLRS_MGMT_DEBUG_REPORT_LINK       1U
-#define ZLRS_MGMT_DEBUG_REPORT_RATE       2U
-#define ZLRS_MGMT_DEBUG_REPORT_RADIO      3U
-#define ZLRS_MGMT_DEBUG_REPORT_POWER      4U
+#define ZLRS_MGMT_DEBUG_REPORT_LINK       0U
+#define ZLRS_MGMT_DEBUG_REPORT_RATE       1U
+#define ZLRS_MGMT_DEBUG_REPORT_RADIO      2U
+#define ZLRS_MGMT_DEBUG_REPORT_POWER      3U
 #define ZLRS_MGMT_DEBUG_REPORT_REQ_LEN    3U
 #define ZLRS_MGMT_DEBUG_REPORT_HEADER_LEN 5U
 #define ZLRS_MGMT_DEBUG_REPORT_CHUNK_MAX                                                           \
@@ -101,11 +101,10 @@ typedef struct {
 #define ZLRS_MGMT_FLAG_KEY       0x01U
 #define ZLRS_MGMT_FLAG_PAIRED    0x02U
 #define ZLRS_MGMT_FLAG_SESSION   0x04U
-#define ZLRS_MGMT_FLAG_DATA24    0x08U /* DATA currently uses 2.4 GHz */
-#define ZLRS_MGMT_FLAG_DATA_SUBG 0x10U /* DATA currently uses sub-GHz */
+#define ZLRS_MGMT_FLAG_DATA_SUBG 0x08U /* DATA currently uses sub-GHz */
 
-#define ZLRS_DATA_BAND_24   1U
-#define ZLRS_DATA_BAND_SUBG 2U
+#define ZLRS_DATA_BAND_24   0U
+#define ZLRS_DATA_BAND_SUBG 1U
 
 /*
  * What the log store holds: how many files, which one is being appended to (the export walks them
@@ -126,7 +125,7 @@ typedef struct {
 	int (*save_root_key)(void *ctx, const uint8_t key[ZLRS_KEY_LEN]);
 	int (*read_status)(void *ctx, zlrs_mgmt_status_t *out);
 	/*
-	 * Every simple setting arrives here: baud, region, power, role and profile. `value`
+	 * Every simple setting arrives here: band, baud, region, power, role and profile. `value`
 	 * is the payload exactly as the host sent it — this layer checks its length and, for an
 	 * enumerated value, that it is in range — and `cmd` says what it means. Decoding (the baud is
 	 * little-endian), any further validation and everything it does to the device belong to the

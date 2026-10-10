@@ -11,10 +11,12 @@ target_sources(app PRIVATE
   ../drivers/entropy/test_rp2350_trng.c
   ../core/proto/test_crypto.c
   ../app/storage/test_log.c
+  ../app/config/test_nvs.c
   ../core/link/test_link.c
   ../app/link/test_power.c
   ../app/platform/test_slot_timer.c
   ../app/ui/test_led.c
+  "${zlrs_root}/app/src/config/nvs.c"
   "${zlrs_root}/app/src/rf/power.c"
   "${zlrs_root}/app/src/platform/slot_timer.c"
   "${zlrs_root}/app/src/ui/pattern.c"

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
-&cdc_acm_uart3 {
+&cdc_acm_uart2 {
 	status = "okay";
 	tx-fifo-size = <8192>;
 };

@@ -3,7 +3,7 @@
  *
  * Same shape as ui/led.c: the thread owns the hardware and what it learns goes on the bus as a
  * fact (ui/button.h), so the link state machine still only ever runs on the link thread
- * (doc/06-architecture.md 6). What it reports is a counter, not a one-shot event: a consumer that
+ * (doc/06-architecture.md). What it reports is a counter, not a one-shot event: a consumer that
  * reads the channel later still sees that a press happened.
  *
  * Why a thread at all: the hold is a timing measurement the main loop should not have to babysit,
@@ -30,7 +30,7 @@ ZBUS_CHAN_DEFINE(zlrs_input_chan, struct zlrs_input, NULL, NULL, ZBUS_OBSERVERS_
 #define BUTTON_POLL_MS 20U
 
 /*
- * Preemptive like the LED thread (doc/06-architecture.md 6), and below it: a button sample is a
+ * Preemptive like the LED thread (doc/06-architecture.md), and below it: a button sample is a
  * GPIO read, so it can wait for the strip to be written.
  */
 #define BUTTON_THREAD_PRIORITY   K_PRIO_PREEMPT(8)

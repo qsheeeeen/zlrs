@@ -6,9 +6,8 @@
 
 #include <string.h>
 
-#define FRAME_TYPE_SHIFT 2U
-#define FRAME_FLAG_MASK  ZLRS_FLAG_ACK
-#define FRAME_TYPE_MAX   ZLRS_PKT_SESS_CFM
+#define FRAME_FLAG_MASK ZLRS_FLAG_ACK
+#define FRAME_TYPE_MAX  ZLRS_PKT_SESS_CFM
 
 uint8_t zlrs_profile_tag_len(zlrs_profile_t profile)
 {
@@ -35,7 +34,8 @@ uint16_t zlrs_frame_encode(const zlrs_frame_t *frame, uint8_t *buf, uint16_t cap
 		return 0U;
 	}
 
-	buf[0] = (uint8_t)((frame->type << FRAME_TYPE_SHIFT) | (frame->flags & FRAME_FLAG_MASK));
+	buf[0] = (uint8_t)((frame->type << ZLRS_FRAME_TYPE_SHIFT) |
+			   (frame->flags & FRAME_FLAG_MASK));
 	buf[1] = (uint8_t)(frame->seq & 0xFFU);
 	buf[2] = (uint8_t)(frame->seq >> 8);
 
@@ -58,8 +58,8 @@ bool zlrs_frame_decode(zlrs_frame_t *frame, const uint8_t *buf, uint16_t len, ui
 		return false;
 	}
 
-	frame->type = (uint8_t)(buf[0] >> FRAME_TYPE_SHIFT);
-	if (frame->type > FRAME_TYPE_MAX || (buf[0] & 0x01U) != 0U) {
+	frame->type = (uint8_t)(buf[0] >> ZLRS_FRAME_TYPE_SHIFT);
+	if (frame->type > FRAME_TYPE_MAX) {
 		return false;
 	}
 	frame->flags = (uint8_t)(buf[0] & FRAME_FLAG_MASK);

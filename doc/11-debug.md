@@ -34,3 +34,5 @@ The test sends deterministic bytes in both directions and checks exact delivery.
 ## Hardware and recovery
 
 The board definition is [here](../boards/zlrs/rp2350_zero_core2021/README.md). `tests/hardware/core` exercises core code under Zephyr; `tests/hardware/app` exercises application owners; `tests/hardware/radio` provides radio-level fixtures. When an application does not boot, BOOTSEL installs MCUboot and its recovery CDC accepts a signed application image. `python3 tools/zlrs.py logs --serial <serial>` exports the persistent log ring from a running image. See [firmware behaviour](07-firmware.md) for update verification and rollback.
+
+Settings persistence also runs on simulated flash: `west build -b native_sim/native/64 zlrs/tests/simulation/settings -d zlrs/build/settings-simulation`, then run `cd zlrs/build/settings-simulation && ./zephyr/zephyr.exe`. It verifies layout initialization, settings across remounts and complete partition clearing. The same fixture runs in the hardware unit image and resets NVS; use a reset test board and configure it again after the tests.

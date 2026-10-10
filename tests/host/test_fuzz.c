@@ -64,7 +64,7 @@ static void fuzz_frame_decode(rng_t *rng)
 		rng_fill(rng, buf, len);
 		if (len >= ZLRS_FRAME_HDR_LEN && (rng_next(rng) % 4U) == 0U) {
 			/* Use a legal type so the parser goes further */
-			buf[0] = (uint8_t)(((rng_next(rng) % 11U) << 2) | (buf[0] & 0x03U));
+			buf[0] = (uint8_t)(((rng_next(rng) % 11U) << 1) | (buf[0] & ZLRS_FLAG_ACK));
 		}
 
 		if (!zlrs_frame_decode(&frame, buf, len, tag_len)) {
@@ -131,7 +131,6 @@ static void fx_link_init(zlrs_link_t *link, uint8_t arq)
 	const zlrs_link_cfg_t cfg = {
 		.role = ZLRS_ROLE_TX,
 		.domain = ZLRS_DOMAIN_ISM2400,
-		.sync_slot = ZLRS_SYNC_SLOT_DATA,
 		.profile = ZLRS_PROFILE_P1,
 		.mod = {.modulation = ZLRS_MOD_FLRC, .rate_bps = 2600000U},
 		.tx_power_dbm = 10,

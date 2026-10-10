@@ -32,10 +32,10 @@ class EntryTests(unittest.TestCase):
             rc, _ = invoke(entry, "set-band", "2.4", "--port", "fake")
         self.assertEqual(rc, 0)
         self.assertEqual(entry.mgmt.decode(talk.call_args_list[0].args[2]),
-                         (entry.mgmt.CMD_SET_BAND, b"\x01"))
+                         (entry.mgmt.CMD_SET_BAND, b"\x00"))
         self.assertEqual(invoke(entry, "set-band", "invalid")[0], 2)
         status = bytearray(21)
-        status[3] = 0x08
+        status[3] = 0x00
         self.assertIn("2.4 GHz", entry.mgmt.status_text(status))
 
     def test_subg_band_command(self):
@@ -43,9 +43,9 @@ class EntryTests(unittest.TestCase):
             rc, _ = invoke(entry, "set-band", "subg", "--port", "fake")
         self.assertEqual(rc, 0)
         self.assertEqual(entry.mgmt.decode(talk.call_args_list[0].args[2]),
-                         (entry.mgmt.CMD_SET_BAND, b"\x02"))
+                         (entry.mgmt.CMD_SET_BAND, b"\x01"))
         status = bytearray(21)
-        status[3] = 0x10
+        status[3] = 0x08
         self.assertIn("sub-GHz", entry.mgmt.status_text(status))
 
     def test_subcommand_help_uses_public_name(self):

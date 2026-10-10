@@ -11,11 +11,11 @@
 #   3. shipped configurations carry no ZLRS_APP_DEBUG_* option. Those exist for bench images;
 #      the marker symbol CONFIG_ZLRS_APP_DEBUG lives in app/debug.conf only.
 #   4. the application is never installed as a UF2: BOOTSEL carries the bootloader image only,
-#      every application image goes through the bootloader (doc/07-firmware.md 5). A document or
+#      every application image goes through the bootloader (doc/07-firmware.md). A document or
 #      tool that brings the app-UF2 path back fails here.
 #   5. the log ring fits its partition: the file backend's FILE_SIZE × FILES_LIMIT has to equal
 #      the log_partition in the board's flash layout, or the ring either wastes flash or
-#      overwrites the coredump partition next to it (doc/07-firmware.md 7).
+#      overwrites the coredump partition next to it (doc/07-firmware.md).
 #   6. RF owns link instances; frontends use business interfaces and own their channels.
 #
 # Usage: tests/gates.sh
@@ -47,7 +47,7 @@ if hit=$(rg -n 'zlrs_link_t|zlrs/link/link.h|config/nvs.h|zlrs_storage_settings_
 	echo "$hit"
 fi
 
-if hit=$(rg -n 'link_(control|data)\.' app/src/rf); then
+if hit=$(rg -n 'link_data\.' app/src/rf); then
 	bad "RF accesses link storage directly instead of using link operations/views:"
 	echo "$hit"
 fi

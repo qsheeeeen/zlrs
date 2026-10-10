@@ -148,14 +148,13 @@ static void mgmt_debug_link(struct mgmt_debug_report_writer *writer, const char 
 			  stats->tx_ack_delay_ms_last, stats->tx_ack_delay_ms_max);
 	mgmt_debug_append(writer, "  ACK totals         : %u ms across %u entries\n",
 			  stats->tx_ack_delay_ms_sum, stats->tx_ack_entries);
-	mgmt_debug_append(writer, "  Slots TX           : %u / %u / %u / %u\n", stats->slot_tx[0],
-			  stats->slot_tx[1], stats->slot_tx[2], stats->slot_tx[3]);
-	mgmt_debug_append(
-		writer, "  Slots RX / hit     : %u / %u / %u / %u   |   %u / %u / %u / %u\n",
-		stats->slot_rx[0], stats->slot_rx[1], stats->slot_rx[2], stats->slot_rx[3],
-		stats->slot_hit[0], stats->slot_hit[1], stats->slot_hit[2], stats->slot_hit[3]);
-	mgmt_debug_append(writer, "  Slot failures      : %u / %u / %u / %u\n", stats->slot_fail[0],
-			  stats->slot_fail[1], stats->slot_fail[2], stats->slot_fail[3]);
+	mgmt_debug_append(writer, "  DATA slots TX      : %u / %u\n", stats->slot_tx[0],
+			  stats->slot_tx[1]);
+	mgmt_debug_append(writer, "  DATA slots RX/hit  : %u / %u   |   %u / %u\n",
+			  stats->slot_rx[0], stats->slot_rx[1], stats->slot_hit[0],
+			  stats->slot_hit[1]);
+	mgmt_debug_append(writer, "  DATA slot failures : %u / %u\n", stats->slot_fail[0],
+			  stats->slot_fail[1]);
 	mgmt_debug_append(writer, "  Pairing TX/RX      : %u/%u/%u  /  %u/%u/%u   rejected %u\n",
 			  stats->pair_req_tx, stats->pair_resp_tx, stats->pair_cfm_tx,
 			  stats->pair_req_rx, stats->pair_resp_rx, stats->pair_cfm_rx,

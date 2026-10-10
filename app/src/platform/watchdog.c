@@ -3,7 +3,7 @@
  * (CONFIG_ZLRS_APP_WATCHDOG, set in app/prj.conf).
  *
  * - The watchdog turns a hang into a reset. It does not roll back by itself: the rollback verdict
- *   is the image confirm bit (doc/07-firmware.md 6). Armed at PRE_KERNEL_1, so even a hang in the
+ *   is the image confirm bit (doc/07-firmware.md). Armed at PRE_KERNEL_1, so even a hang in the
  *   POST_KERNEL driver init gets reset, and fed from the blocking loops only — a dedicated
  *   feeding thread would defeat the point.
  * - A panic would stop the CPU on this board (Zephyr has no RESET_ON_FATAL_ERROR here), so
@@ -127,7 +127,7 @@ void zlrs_watchdog_disarm(void)
  *
  * Rebooting is also what turns "the radio did not come up after an upgrade" into a failed
  * upgrade: an image the host has not confirmed yet still carries MCUboot's test flag, so a reset
- * before the confirm command makes the bootloader roll it back (doc/07-firmware.md 5). A
+ * before the confirm command makes the bootloader roll it back (doc/07-firmware.md). A
  * confirmed image simply comes back up.
  *
  * z_fatal_error() takes the coredump before calling this handler, so rebooting here does not

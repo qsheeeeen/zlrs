@@ -73,7 +73,7 @@ static uint8_t device_id[ZLRS_DEV_ID_LEN];
 
 /*
  * Role and security profile: runtime settings with a compile-time default (set-role /
- * set-profile, doc/07-firmware.md 3). Loaded once at boot, before the links are built.
+ * set-profile, doc/07-firmware.md). Loaded once at boot, before the links are built.
  */
 static bool role_tx;
 static uint8_t active_profile;
@@ -158,12 +158,12 @@ static void plan_init(void)
 	data_mtu = ZLRS_PAYLOAD_MAX_LEN - 4U;
 	slot_budget_us = slot_prepare_us + CONFIG_ZLRS_APP_TX_GUARD_US + ZLRS_RADIO_STARTUP_US +
 			 zlrs_radio_airtime_us(&data_mod, ZLRS_FRAME_MAX_LEN) + 200U;
-	frame_period_us = 4U * slot_budget_us;
+	frame_period_us = ZLRS_SLOT_COUNT * slot_budget_us;
 	data_rate_hz = 1000000U / frame_period_us;
 	if (CONFIG_ZLRS_APP_RESYNC_PERIOD_MS > 0) {
 		const uint32_t frames =
 			((uint32_t)CONFIG_ZLRS_APP_RESYNC_PERIOD_MS * 1000U) / frame_period_us;
-		resync_every_n = (uint8_t)MIN(MAX(frames * 2U, 1U), 255U);
+		resync_every_n = (uint8_t)MIN(MAX(frames, 1U), 255U);
 	} else {
 		resync_every_n = 0U;
 	}
@@ -185,7 +185,6 @@ static void build_links(void)
 		.role = role_tx ? ZLRS_ROLE_TX : ZLRS_ROLE_RX,
 		.domain = ZLRS_DATA_SUBG ? region->domain : ZLRS_DOMAIN_ISM2400,
 		.second_domain = 0xFFU,
-		.sync_slot = ZLRS_SYNC_SLOT_DATA,
 		.profile = active_profile,
 		.hopping = IS_ENABLED(CONFIG_ZLRS_APP_FHSS) ? 1U : 0U,
 		.handshake = IS_ENABLED(CONFIG_ZLRS_APP_SESSION_HANDSHAKE) ? 1U : 0U,
@@ -272,26 +271,6 @@ static void radio_wait_done(uint32_t budget_us)
 }
 
 /* Debug measurements of the absolute frame clock, slot work and authenticated RX offsets. */
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
-typedef struct {
-	uint32_t frames;
-	uint32_t frame_us_last; /* measured period of the last frame */
-	uint32_t frame_us_min;
-	uint32_t frame_us_max;
-	uint32_t slot_us_last[4];
-	uint32_t slot_us_max[4];
-	uint32_t rx_slot;      /* slot the last frame landed in */
-	uint32_t rx_offset_us; /* where in the frame it landed */
-	uint32_t rx_offset_min;
-	uint32_t rx_offset_max;
-	uint32_t submit_us_last; /* the port's own submit path (radio configuration + enqueue) */
-	uint32_t submit_us_max;
-} bench_t;
-
-static bench_t bench;
-static uint32_t prev_frame_start_us;
-#endif
-
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
 static zlrs_radio_diag_t radio_diag;
 #endif
@@ -300,7 +279,6 @@ static zlrs_radio_diag_t radio_diag;
 #define ZLRS_PHASE_DEADBAND_US  100
 #define ZLRS_PHASE_SCAN_STEP_US 25U
 
-static uint32_t frame_start_us;
 static uint32_t slot_deadline_us;
 static uint32_t slot_nominal_us;
 static uint32_t skipped_frames;
@@ -316,14 +294,13 @@ static uint32_t prepare_wake_us_max;
 static uint32_t late_prepare_entry_us;
 static uint32_t late_prepare_build_us;
 static uint32_t late_prepare_spi_us;
-static uint32_t slot_off_us[4]; /* where the slot's transaction really started in our frame */
 static int32_t phase_adj_us;
 static bool phase_adj_set;    /* one correction per frame: several receptions would fight */
 static int32_t phase_last_us; /* what the last correction was, for the bench log */
 static int32_t phase_err_us;  /* residual the last correction was computed from */
 static uint8_t phase_samples;
 static uint32_t phase_hits;     /* corrections since the last report */
-static uint32_t last_rx_any_ms; /* any successful reception, either link: the scan trigger */
+static uint32_t last_rx_any_ms; /* any verified DATA reception: the scan trigger */
 
 static uint32_t now_us(void)
 {
@@ -372,7 +349,7 @@ static void run_slot(uint8_t slot)
 	/* A completed RX leaves a safe opportunity to build our next TX immediately.
 	 * RX entry still waits for its own window; searching/pairing retain that rule. */
 	const bool early_tx = zlrs_link_get_state(&link_data) == ZLRS_STATE_CONNECTED &&
-			      (role_tx == ((slot & 1U) == 0U));
+			      (role_tx == (slot == ZLRS_SLOT_DATA_A));
 
 	if (early_tx) {
 		timing = (struct zlrs_slot_timer_wait){.wake_us = now_us()};
@@ -391,7 +368,7 @@ static void run_slot(uint8_t slot)
 		}
 	}
 
-	const uint8_t link_slot = (slot & 1U) == 0U ? ZLRS_SLOT_DATA_A : ZLRS_SLOT_DATA_B;
+	const uint8_t link_slot = slot;
 	zlrs_link_t *link = &link_data;
 	const uint32_t slot_start_us = now_us();
 	/* Slot decisions use the planned time even though construction happens before it. */
@@ -454,14 +431,6 @@ static void run_slot(uint8_t slot)
 		return;
 	}
 
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
-	/* How much of a slot goes into the port's own submit path (vs. the air) */
-	bench.submit_us_last = now_us() - slot_start_us;
-	if (bench.submit_us_last > bench.submit_us_max) {
-		bench.submit_us_max = bench.submit_us_last;
-	}
-#endif
-
 	/* Modem, authentication and FIFO prefix are ready. The timer issues SET_TX;
 	 * the owner then appends a fallback FLRC packet's tail while it is on air. */
 	const int launch_rc =
@@ -473,7 +442,6 @@ static void run_slot(uint8_t slot)
 		return;
 	}
 
-	slot_off_us[slot] = slot_nominal_us - frame_start_us;
 	if (!req->is_tx && zlrs_link_get_state(link) == ZLRS_STATE_CONNECTED) {
 		uint16_t size;
 		const uint32_t next_us = slot_nominal_us + slot_budget_us;
@@ -531,29 +499,6 @@ static void run_slot(uint8_t slot)
 			phase_adj_set = true;
 		}
 	}
-
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
-	{
-		const uint32_t took_us = now_us() - slot_start_us;
-
-		bench.slot_us_last[slot] = took_us;
-		if (took_us > bench.slot_us_max[slot]) {
-			bench.slot_us_max[slot] = took_us;
-		}
-		if (zlrs_link_get_stats(link)->slot_hit[link_slot] != hit_before) {
-			const uint32_t offset_us = now_us() - frame_start_us;
-
-			bench.rx_slot = slot;
-			bench.rx_offset_us = offset_us;
-			if (bench.rx_offset_max == 0U || offset_us > bench.rx_offset_max) {
-				bench.rx_offset_max = offset_us;
-			}
-			if (bench.rx_offset_min == 0U || offset_us < bench.rx_offset_min) {
-				bench.rx_offset_min = offset_us;
-			}
-		}
-	}
-#endif
 }
 
 static void pump_serial(void)
@@ -625,10 +570,8 @@ static rate_snap_t rate_snapshot(const zlrs_link_t *link)
 {
 	rate_snap_t s;
 
-	s.wins = zlrs_link_get_stats(link)->slot_rx[0] + zlrs_link_get_stats(link)->slot_rx[1] +
-		 zlrs_link_get_stats(link)->slot_rx[2] + zlrs_link_get_stats(link)->slot_rx[3];
-	s.hits = zlrs_link_get_stats(link)->slot_hit[0] + zlrs_link_get_stats(link)->slot_hit[1] +
-		 zlrs_link_get_stats(link)->slot_hit[2] + zlrs_link_get_stats(link)->slot_hit[3];
+	s.wins = zlrs_link_get_stats(link)->slot_rx[0] + zlrs_link_get_stats(link)->slot_rx[1];
+	s.hits = zlrs_link_get_stats(link)->slot_hit[0] + zlrs_link_get_stats(link)->slot_hit[1];
 	s.tx = zlrs_link_get_stats(link)->tx_frames;
 
 	return s;
@@ -678,14 +621,6 @@ static void report(uint32_t now_ms)
 	rate_before = rate_snapshot(&link_data);
 	rate_ms = now_ms;
 	phase_hits = 0U;
-	bench.frame_us_min = 0U;
-	bench.frame_us_max = 0U;
-	bench.rx_offset_min = 0U;
-	bench.rx_offset_max = 0U;
-	bench.submit_us_max = 0U;
-	for (uint8_t i = 0U; i < 4U; i++) {
-		bench.slot_us_max[i] = 0U;
-	}
 #endif
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
 	const zlrs_link_stats_t *stats = zlrs_link_get_stats(&link_data);
@@ -705,7 +640,7 @@ static void report(uint32_t now_ms)
  */
 /*
  * State on a fatal configuration error (region vs radio-design mismatch):
- * alarm but stay reachable. The failsafe LED pattern is shown while the management port remains
+ * alarm but stay reachable. The link_lost LED pattern is shown while the management port remains
  * up, so the host can enter it,
  * trigger serial recovery and reflash. A regulatory or security problem is worth staying off
  * the air for, but the device must stay flashable — otherwise one bad image means BOOTSEL.
@@ -723,7 +658,7 @@ static void fault_loop(const zlrs_rf_owner_hooks_t *hooks)
 
 	(void)hooks->before_frame(true);
 
-	/* The fault outranks link and drop indications and uses the failsafe pattern
+	/* The fault outranks link and drop indications and uses the link-loss pattern
 	 * (app/src/ui/led.c). Nothing else is published here — the links stop, so their last
 	 * snapshot is also the truth. */
 	bool alert_pending = true;
@@ -761,7 +696,7 @@ static void broadcast_state(void)
 	if (info.state == ZLRS_STATE_CONNECTED) {
 		ever_connected = true;
 	}
-	alerts.failsafe = ever_connected && info.state != ZLRS_STATE_CONNECTED;
+	alerts.link_lost = ever_connected && info.state != ZLRS_STATE_CONNECTED;
 	alerts.fault = false;
 	alerts.data_drop_bytes = drops;
 
@@ -1102,28 +1037,12 @@ int zlrs_rf_run(const zlrs_rf_owner_hooks_t *hooks)
 		/* Dropped frames still advance frame/hop state on the original cadence. */
 		while (++consumed_frame < timer_frame) {
 			skipped_frames++;
-			for (uint8_t slot = 0U; slot < 4U; slot++) {
-				zlrs_link_skip_slot(&link_data, (slot & 1U) == 0U
-									? ZLRS_SLOT_DATA_A
-									: ZLRS_SLOT_DATA_B);
+			for (uint8_t slot = 0U; slot < ZLRS_SLOT_COUNT; slot++) {
+				zlrs_link_skip_slot(&link_data, slot);
 			}
 		}
 
-		frame_start_us = start_us;
 		phase_adj_set = false;
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
-		if (bench.frames > 0U) {
-			bench.frame_us_last = start_us - prev_frame_start_us;
-			if (bench.frame_us_min == 0U || bench.frame_us_last < bench.frame_us_min) {
-				bench.frame_us_min = bench.frame_us_last;
-			}
-			if (bench.frame_us_last > bench.frame_us_max) {
-				bench.frame_us_max = bench.frame_us_last;
-			}
-		}
-		prev_frame_start_us = start_us;
-		bench.frames++;
-#endif
 
 		zlrs_watchdog_feed();
 		/* A management session pauses radio work while the absolute clock continues. */
@@ -1141,12 +1060,14 @@ int zlrs_rf_run(const zlrs_rf_owner_hooks_t *hooks)
 		TRACE('L');
 		const uint32_t period = frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE;
 
-		for (uint8_t slot = 0U; slot < 4U; slot++) {
+		for (uint8_t slot = 0U; slot < ZLRS_SLOT_COUNT; slot++) {
 			zlrs_watchdog_feed();
-			slot_nominal_us = start_us + ((uint64_t)period * slot) / 4U;
+			slot_nominal_us = start_us + ((uint64_t)period * slot) / ZLRS_SLOT_COUNT;
 			const uint32_t next_us =
-				slot == 3U ? zlrs_slot_timer_next_frame_us()
-					   : start_us + ((uint64_t)period * (slot + 1U)) / 4U;
+				slot == ZLRS_SLOT_DATA_B
+					? zlrs_slot_timer_next_frame_us()
+					: start_us + ((uint64_t)period * (slot + 1U)) /
+							     ZLRS_SLOT_COUNT;
 
 			slot_deadline_us = next_us - slot_prepare_us - 100U;
 			run_slot(slot);
@@ -1177,7 +1098,7 @@ int zlrs_rf_run(const zlrs_rf_owner_hooks_t *hooks)
 
 		if (!role_tx) {
 			const zlrs_link_t *const clock_link = &link_data;
-			const uint32_t cadence_us = period / 2U;
+			const uint32_t cadence_us = period;
 			const uint32_t scan_after_ms = zlrs_slot_timer_scan_delay_ms(
 				cadence_us, zlrs_link_get_config(clock_link)->resync_every_n,
 				phase_samples > 0U);

@@ -6,7 +6,7 @@
 
 #include <string.h>
 
-/* Public sync word used while pairing, slot 3 */
+/* Public sync word used while pairing, hardware slot 2 */
 static const uint8_t pairing_sync_word[ZLRS_SYNC_WORD_LEN] = {'Z', 'L', 'R', 'S'};
 
 /* Derivation labels */
@@ -62,7 +62,7 @@ static uint32_t sync_freq_hz(const zlrs_link_t *link)
 }
 
 /*
- * Is this frame a resync frame (doc/08-protocol.md 5.1)? While connected one arrives
+ * Is this frame a resync frame (doc/08-protocol.md)? While connected one arrives
  * every cfg.resync_every_n frames and the whole frame stays on the sync channel: SYNC
  * goes out downlink, the uplink leaves room for a SESS_RESP. Both ends count frame_index.
  */
@@ -131,7 +131,7 @@ static void set_state(zlrs_link_t *link, uint8_t state, uint32_t now_ms)
 
 /*
  * Every time the TX enters SEARCHING it draws a new nonce_t and drops the old session.
- * The session key only exists once the RX answers with nonce_r (doc/08-protocol.md 3.5).
+ * The session key only exists once the RX answers with nonce_r (doc/08-protocol.md).
  */
 static void roll_session(zlrs_link_t *link, uint32_t now_ms)
 {
@@ -258,7 +258,7 @@ static void derive_pair(zlrs_link_t *link)
 	/*
 	 * LoRa sync words are one byte plus a private bit, so the 4-byte one above cannot be
 	 * reused: a separate label derives them (still named by role, not by band). The top bit
-	 * is the private bit separating our group from public sync words (08-protocol 5.3).
+	 * is the private bit separating our group from public sync words (doc/08-protocol.md).
 	 */
 	{
 		const char *label = LABEL_SYNC_LORA_DATA;
@@ -477,7 +477,7 @@ static const zlrs_radio_req_t *send_sync(zlrs_link_t *link, uint32_t now_ms)
 	link->stats.tx_syncs++;
 
 	/* SYNC always goes out on the sync channel */
-	return submit_tx(link, len, sync_freq_hz(link), link->cfg.sync_slot, link->sync_word);
+	return submit_tx(link, len, sync_freq_hz(link), ZLRS_SYNC_SLOT_DATA, link->sync_word);
 }
 
 /*
@@ -500,7 +500,7 @@ static const zlrs_radio_req_t *send_sess_resp(zlrs_link_t *link)
 	link->stats.sess_resp_tx++;
 
 	/* Still on the sync channel: the TX is in SEARCHING and listens there */
-	return submit_tx(link, len, sync_freq_hz(link), link->cfg.sync_slot, link->sync_word);
+	return submit_tx(link, len, sync_freq_hz(link), ZLRS_SYNC_SLOT_DATA, link->sync_word);
 }
 
 /*
@@ -528,10 +528,10 @@ static const zlrs_radio_req_t *send_sess_cfm(zlrs_link_t *link)
 	 * Building or even transmitting the confirm does not establish that it arrived. */
 	link->stats.sess_cfm_tx++;
 
-	return submit_tx(link, len, sync_freq_hz(link), link->cfg.sync_slot, link->sync_word);
+	return submit_tx(link, len, sync_freq_hz(link), ZLRS_SYNC_SLOT_DATA, link->sync_word);
 }
 
-/* ---- ARQ (optional data-link mode, see doc/08-protocol.md 4.3) ------------- */
+/* ---- ARQ (optional data-link mode, see doc/08-protocol.md) ------------- */
 
 static uint16_t arq_inflight_bytes(const zlrs_link_t *link)
 {
@@ -592,7 +592,7 @@ static const zlrs_radio_req_t *arq_send_slot(zlrs_link_t *link, uint16_t seq, ui
 	link->pending_data_len = 0U;
 	link->arq_ack_pending = false;
 
-	return submit_tx(link, frame_len, slot_freq_hz(link), link->cfg.sync_slot, link->sync_word);
+	return submit_tx(link, frame_len, slot_freq_hz(link), ZLRS_SYNC_SLOT_DATA, link->sync_word);
 }
 
 static bool arq_timed_out(const zlrs_link_t *link, uint32_t now_ms)
@@ -701,13 +701,14 @@ static const zlrs_radio_req_t *send_prepared_data(zlrs_link_t *link, uint32_t no
 	if (!packet->valid || packet->retry != retry || !data_valid ||
 	    packet->frame_index != link->frame_index || packet->frame_seq != link->tx_seq ||
 	    packet->data_seq != data_seq || packet->data_mtu != link->cfg.data_mtu ||
-	    packet->profile != link->cfg.profile || (packet->buf[0] >> 2) != type ||
+	    packet->profile != link->cfg.profile ||
+	    (packet->buf[0] >> ZLRS_FRAME_TYPE_SHIFT) != type ||
 	    !zlrs_ct_equal(packet->key, tag_key_for(link, type, true), ZLRS_KEY_LEN)) {
 		packet->valid = false;
 		return NULL;
 	}
 	const zlrs_radio_req_t *req = submit_tx(link, packet->size, slot_freq_hz(link),
-						link->cfg.sync_slot, link->sync_word);
+						ZLRS_SYNC_SLOT_DATA, link->sync_word);
 
 	if (req == NULL) {
 		return NULL;
@@ -782,7 +783,7 @@ static const zlrs_radio_req_t *send_empty_data(zlrs_link_t *link)
 	link->arq_ack_pending = false;
 	link->pending_data_len = 0U;
 	link->last_feedback_tx_ms = link->slot_ms;
-	return submit_tx(link, len, slot_freq_hz(link), link->cfg.sync_slot, link->sync_word);
+	return submit_tx(link, len, slot_freq_hz(link), ZLRS_SYNC_SLOT_DATA, link->sync_word);
 }
 
 static void handle_ack_bit(zlrs_link_t *link, bool bit, uint32_t now_ms)
@@ -828,7 +829,7 @@ static const zlrs_radio_req_t *send_data(zlrs_link_t *link, uint32_t now_ms)
 			  tag_key_for(link, type, true));
 	link->pending_data_len = take;
 
-	return submit_tx(link, len, slot_freq_hz(link), link->cfg.sync_slot, link->sync_word);
+	return submit_tx(link, len, slot_freq_hz(link), ZLRS_SYNC_SLOT_DATA, link->sync_word);
 }
 
 /*
@@ -987,7 +988,7 @@ static void handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 	}
 
 	/*
-	 * Sub-band mix and table version (doc/08-protocol.md 5.1): the TX moves them unilaterally
+	 * Sub-band mix and table version (doc/08-protocol.md): the TX moves them unilaterally
 	 * and the RX adopts them while handling this SYNC — that moment is the frame boundary for
 	 * both ends, so nobody ends up half on the old table.
 	 */
@@ -1008,7 +1009,7 @@ static void handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t n
 
 	if (link->state == ZLRS_STATE_CONNECTED) {
 		/*
-		 * Periodic SYNC while connected (doc/08-protocol.md 5.1).
+		 * Periodic SYNC while connected (doc/08-protocol.md).
 		 */
 		if (link->cfg.resync_every_n == 0U) {
 			/* Periodic resync off: no SYNC is expected once the session is up */
@@ -1578,11 +1579,11 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 				return send_sync(link, now_ms);
 			}
 			/* The initiator waits for the peer's first frame in the uplink slot */
-			return submit_rx(link, sync_freq_hz(link), link->cfg.sync_slot,
+			return submit_rx(link, sync_freq_hz(link), ZLRS_SYNC_SLOT_DATA,
 					 link->sync_word, acq_timeout_ms(link));
 		}
 		if (a) {
-			return submit_rx(link, sync_freq_hz(link), link->cfg.sync_slot,
+			return submit_rx(link, sync_freq_hz(link), ZLRS_SYNC_SLOT_DATA,
 					 link->sync_word, acq_timeout_ms(link));
 		}
 		/* Keep answering until the confirm arrives. */
@@ -1621,7 +1622,7 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 	 * after two missed SYNC periods; the SEARCHING repeat interval is unrelated. */
 	if (!tx_side && a && link->cfg.resync_every_n > 0U &&
 	    (uint32_t)(link->frame_index - link->last_rx_frame) > 2U * link->cfg.resync_every_n) {
-		return submit_rx(link, sync_freq_hz(link), link->cfg.sync_slot, link->sync_word,
+		return submit_rx(link, sync_freq_hz(link), ZLRS_SYNC_SLOT_DATA, link->sync_word,
 				 link->cfg.rx_timeout_ms);
 	}
 
@@ -1668,11 +1669,11 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 	 * missed the confirm is still repeating its answer.
 	 */
 	if (tx_side && (uint32_t)(now_ms - link->state_ms) < ZLRS_SESS_CONFIRM_MS) {
-		return submit_rx(link, sync_freq_hz(link), link->cfg.sync_slot, link->sync_word,
+		return submit_rx(link, sync_freq_hz(link), ZLRS_SYNC_SLOT_DATA, link->sync_word,
 				 link->cfg.rx_timeout_ms);
 	}
 
-	return submit_rx(link, slot_freq_hz(link), link->cfg.sync_slot, link->sync_word,
+	return submit_rx(link, slot_freq_hz(link), ZLRS_SYNC_SLOT_DATA, link->sync_word,
 			 link->cfg.rx_timeout_ms);
 }
 
@@ -1753,7 +1754,7 @@ const zlrs_radio_req_t *zlrs_link_listen(zlrs_link_t *link)
 		return NULL;
 	}
 
-	return submit_rx(link, slot_freq_hz(link), link->cfg.sync_slot, link->sync_word,
+	return submit_rx(link, slot_freq_hz(link), ZLRS_SYNC_SLOT_DATA, link->sync_word,
 			 link->cfg.rx_timeout_ms);
 }
 
@@ -1855,7 +1856,7 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 			uint32_t now_ms)
 {
 	const bool was_tx = link->req_is_tx;
-	const uint8_t slot = (link->slot < 4U) ? link->slot : 0U;
+	const uint8_t slot = (link->slot < ZLRS_SLOT_COUNT) ? link->slot : 0U;
 
 	link->req_pending = false;
 

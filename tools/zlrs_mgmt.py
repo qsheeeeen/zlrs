@@ -21,39 +21,39 @@ import sys
 from zlrs_cli import HelpFormatter, bounded_int, positive_seconds, fields, heading, notice
 
 SOF = b"\xa5\x5a"
-VERSION = 3
+VERSION = 4
 
 CMD_ENTER = 0x00
 CMD_STATUS = 0x01
 CMD_PAIR = 0x02
 CMD_ERASE_PAIR = 0x03
-CMD_SET_KEY_HEX = 0x10
-CMD_SET_PHRASE = 0x11
-CMD_SET_BAUD = 0x21
-CMD_SET_REGION = 0x22
-CMD_SET_POWER = 0x23
-CMD_SET_ROLE = 0x24
-CMD_SET_PROFILE = 0x25
-CMD_NEW_DEV_ID = 0x26
-CMD_SET_BAND = 0x27
-CMD_EXIT = 0x30
-CMD_FACTORY_RESET = 0x40
-CMD_RECOVERY = 0x41
-CMD_CONFIRM = 0x42
-CMD_LOG_INFO = 0x50
-CMD_LOG_READ = 0x51
-CMD_DEBUG_REPORT = 0x60
-CMD_BUILD = 0x12
-CMD_IMAGE_HASH = 0x13
+CMD_SET_KEY_HEX = 0x04
+CMD_SET_PHRASE = 0x05
+CMD_BUILD = 0x06
+CMD_IMAGE_HASH = 0x07
+CMD_SET_BAUD = 0x08
+CMD_SET_REGION = 0x09
+CMD_SET_POWER = 0x0A
+CMD_SET_ROLE = 0x0B
+CMD_SET_PROFILE = 0x0C
+CMD_SET_BAND = 0x0D
+CMD_NEW_DEV_ID = 0x0E
+CMD_EXIT = 0x0F
+CMD_FACTORY_RESET = 0x10
+CMD_RECOVERY = 0x11
+CMD_CONFIRM = 0x12
+CMD_LOG_INFO = 0x13
+CMD_LOG_READ = 0x14
+CMD_DEBUG_REPORT = 0x15
 ACK = 0x80
 STATUS_RESP = 0x81
 BUILD_RESP = 0x82
 IMAGE_HASH_RESP = 0x83
-DEBUG_REPORT_RESP = 0x84
-LOG_INFO_RESP = 0x90
-LOG_DATA_RESP = 0x91
+LOG_INFO_RESP = 0x84
+LOG_DATA_RESP = 0x85
+DEBUG_REPORT_RESP = 0x86
 
-DEBUG_REPORTS = {"link": 1, "rate": 2, "radio": 3, "power": 4}
+DEBUG_REPORTS = {"link": 0, "rate": 1, "radio": 2, "power": 3}
 DEBUG_REPORT_CHUNK_MAX = 85
 DEBUG_REPORT_MAX_LEN = 4096
 
@@ -134,7 +134,7 @@ def status_text(payload: bytes) -> str:
         ("Device", [("Role", "TX" if payload[1] == 0 else "RX"),
                     ("Hardware", "HF (868/915 MHz)" if payload[13] else "LF (470/433 MHz)"),
                     ("Device ID", dev), ("Peer ID", peer)]),
-        ("Link", [("Data band", "sub-GHz" if flags & 0x10 else "2.4 GHz"),
+        ("Link", [("Data band", "sub-GHz" if flags & 0x08 else "2.4 GHz"),
                   ("State", STATE_NAMES.get(payload[2], str(payload[2]))),
                   ("Quality", f"{payload[12]}%"),
                   ("Paired", "yes" if flags & 0x02 else "no"),
@@ -618,7 +618,7 @@ def main(args=None, parser=None) -> int:
         frame = encode(CMD_SET_PROFILE, bytes([int(args.profile[1])]))
         expect = True
     elif args.command == "set-band":
-        frame = encode(CMD_SET_BAND, bytes([{"2.4": 1, "subg": 2}[args.band]]))
+        frame = encode(CMD_SET_BAND, bytes([{"2.4": 0, "subg": 1}[args.band]]))
         expect = True
     elif args.command == "new-dev-id":
         frame = encode(CMD_NEW_DEV_ID, b"")

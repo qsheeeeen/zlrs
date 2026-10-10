@@ -1,5 +1,5 @@
 /*
- * Link layer: one instance per link, running the state machine and superframe slots (08-protocol 3, 4).
+ * Link layer: one instance per link, running the state machine and superframe slots (doc/08-protocol.md).
  *
  * Each superframe: zlrs_link_slot() hands out a transaction, the caller runs it and
  * zlrs_link_complete() closes it; zlrs_link_tick() handles timeouts and state changes. No Zephyr.
@@ -24,7 +24,7 @@ extern "C" {
 #endif
 
 /*
- * Pairing handshake (doc/08-protocol.md 3.3). The two ends share no slot phase while pairing, so
+ * Pairing handshake (doc/08-protocol.md). The two ends share no slot phase while pairing, so
  * a message is heard or missed by luck: every step repeats until the next one shows up. The
  * initiator sends this many PAIR_CFM before it calls the handshake done.
  */
@@ -40,9 +40,11 @@ extern "C" {
 #define ZLRS_SESS_CONFIRM_MS     500U
 #define ZLRS_DATA_CONFIRM_FRAMES 16U
 
-/* Superframe slots, see doc/08-protocol.md 4.1 */
-#define ZLRS_SLOT_DATA_A 2U /* first half of the data window: TX -> RX */
-#define ZLRS_SLOT_DATA_B 3U /* second half of the data window: RX -> TX */
+/* Superframe slots, see doc/08-protocol.md */
+#define ZLRS_SLOT_DATA_A 0U /* first half of the data window: TX -> RX */
+#define ZLRS_SLOT_DATA_B 1U /* second half of the data window: RX -> TX */
+
+#define ZLRS_SLOT_COUNT 2U
 
 #include "zlrs/link/state.h"
 
@@ -54,15 +56,14 @@ typedef struct {
 	uint8_t role;   /* ZLRS_ROLE_TX / ZLRS_ROLE_RX */
 	uint8_t domain; /* ZLRS_DOMAIN_*: the main hop table */
 	/*
-	 * Second table (sub-band mixing, doc/08-protocol.md 5.1): 0xFF = not configured, the link
+	 * Second table (sub-band mixing, doc/08-protocol.md): 0xFF = not configured, the link
 	 * only hops the main table; otherwise each sub-band gets one and sub_mix splits the slots.
 	 */
 	uint8_t second_domain;
-	uint8_t sync_slot; /* ZLRS_SYNC_SLOT_* */
 	zlrs_profile_t profile;
 	/*
 	 * Modulation: an FLRC rate tier or LoRa SF/bandwidth/coding rate/preamble, see
-	 * doc/06-architecture.md 3. LoRa sync words derive from the pairing key, and the link layer
+	 * doc/06-architecture.md. LoRa sync words derive from the pairing key, and the link layer
 	 * fills in mod.sync_byte itself (callers pass 0).
 	 */
 	zlrs_mod_cfg_t mod;
@@ -86,7 +87,7 @@ typedef struct {
 	uint16_t feedback_period_ms; /* empty DATA heartbeat while idle; 0 disables it */
 	/*
 	 * Per-frame hopping. 0 = stay on the sync channel (entry 0 of the hop table), which is how
-	 * layer isolation looks at timing and the hop table separately, see doc/11-debug.md 3.
+	 * layer isolation looks at timing and the hop table separately, see doc/11-debug.md.
 	 */
 	uint8_t hopping;
 	/*
@@ -100,7 +101,7 @@ typedef struct {
 	uint8_t data_every_n;
 	/*
 	 * Sub-band mix (0..3 -> 0/1/2/4 of every 4 slots on sub-G): the initial value, which the TX
-	 * advances at runtime through the SYNC table version, see doc/08-protocol.md 5.1.
+	 * advances at runtime through the SYNC table version, see doc/08-protocol.md.
 	 */
 	uint8_t mix;
 	/*
@@ -137,11 +138,11 @@ typedef struct {
 	uint32_t tx_ack_entries;
 	uint32_t rx_frames;
 	uint32_t rx_bytes;
-	/* Transactions per superframe slot (ZLRS_SLOT_*): sent, listened, heard a frame, failed */
-	uint32_t slot_tx[4];
-	uint32_t slot_rx[4];
-	uint32_t slot_hit[4];
-	uint32_t slot_fail[4];
+	/* Transactions per DATA direction (ZLRS_SLOT_*): sent, listened, heard a frame, failed */
+	uint32_t slot_tx[ZLRS_SLOT_COUNT];
+	uint32_t slot_rx[ZLRS_SLOT_COUNT];
+	uint32_t slot_hit[ZLRS_SLOT_COUNT];
+	uint32_t slot_fail[ZLRS_SLOT_COUNT];
 	uint32_t rx_bad_tag;
 	uint32_t rx_bad_frame;
 	uint32_t rx_dup;
@@ -238,13 +239,13 @@ typedef struct {
 	uint8_t link_auth_out[ZLRS_KEY_LEN];
 	uint8_t link_auth_in[ZLRS_KEY_LEN];
 	uint8_t sync_word[ZLRS_SYNC_WORD_LEN];
-	/* LoRa sync words are one byte plus a private bit, see doc/08-protocol.md 5.3 */
+	/* LoRa sync words are one byte plus a private bit, see doc/08-protocol.md */
 	uint8_t lora_sync;
 	uint8_t session_key_out[ZLRS_KEY_LEN];
 	uint8_t session_key_in[ZLRS_KEY_LEN];
 	bool session_valid;
 	/*
-	 * Session setup mirrors pairing (doc/08-protocol.md 3.5): the initiator offers nonce_t, the
+	 * Session setup mirrors pairing (doc/08-protocol.md): the initiator offers nonce_t, the
 	 * responder answers with nonce_r, both feed the KDF, and the last message carries nonce_r
 	 * to prove the peer derived the same key. The RX only adopts the session after that proof,
 	 * so replaying an old SYNC yields no old session key.

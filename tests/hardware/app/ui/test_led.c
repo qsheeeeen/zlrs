@@ -24,10 +24,10 @@ ZTEST(led_patterns, test_mgmt_mode_wins)
 
 	memset(&in, 0, sizeof(in));
 	in.mgmt_mode = true;
-	in.failsafe = true; /* with both set, the LED only shows management mode */
+	in.link_lost = true; /* with both set, the LED only shows management mode */
 	in.link_state = ZLRS_STATE_SEARCHING;
 
-	/* Management mode is steady white and outranks failsafe. */
+	/* Management mode is steady white and outranks link loss. */
 	{
 		const struct zlrs_led_color white = {255U, 255U, 255U};
 		const struct zlrs_led_color at_start = zlrs_app_led_frame(&in, 0U);
@@ -37,7 +37,7 @@ ZTEST(led_patterns, test_mgmt_mode_wins)
 		CHECK(memcmp(&later, &white, sizeof(white)) == 0);
 	}
 
-	/* Management mode off: failsafe alternates theme and red at 2 Hz. */
+	/* Management mode off: link loss alternates theme and red at 2 Hz. */
 	in.mgmt_mode = false;
 	{
 		const struct zlrs_led_color theme = {0U, 255U, 0U};
@@ -87,15 +87,15 @@ ZTEST(led_patterns, test_link_states)
 	CHECK(!is_off(zlrs_app_led_frame(&in, 2000U)));
 }
 
-ZTEST(led_patterns, test_failsafe_while_connected)
+ZTEST(led_patterns, test_link_lost_while_connected)
 {
 	struct zlrs_led_frame_input in;
 
-	/* A connected unit in failsafe alternates its RX theme and red. */
+	/* A connected unit in link loss alternates its RX theme and red. */
 	memset(&in, 0, sizeof(in));
 	in.link_state = ZLRS_STATE_CONNECTED;
 	in.lq_percent = 100U;
-	in.failsafe = true;
+	in.link_lost = true;
 	{
 		const struct zlrs_led_color f = zlrs_app_led_frame(&in, 0U);
 
@@ -107,7 +107,7 @@ ZTEST(led_patterns, test_failsafe_while_connected)
 		}
 	}
 
-	/* Never connected means no failsafe from the caller: unpaired shows yellow (no blue) */
+	/* Never connected means no link loss from the caller: unpaired shows yellow (no blue) */
 	memset(&in, 0, sizeof(in));
 	in.link_state = ZLRS_STATE_UNPAIRED;
 	{

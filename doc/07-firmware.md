@@ -17,7 +17,7 @@ python3 tools/zlrs.py pair --serial <TX-serial>
 python3 tools/zlrs.py pair --serial <RX-serial>
 ```
 
-`set-band 2.4|subg` selects the DATA radio band; set the same value on both devices and reboot. `set-region` must match the board's LF/HF sub-G SKU. `set-power` stores the regional TX power ceiling. The DATA link adjusts its active power from peer RSSI and link quality while feedback is fresh, then returns to the ceiling on feedback loss. `set-baud`, `set-profile`, `erase-pair`, `new-dev-id` and `factory-reset` are also available. Settings are persistent; `status` reports if a reboot is needed for an active value to change.
+`set-band 2.4|subg` selects the DATA radio band; set the same value on both devices and reboot. `set-region` must match the board's LF/HF sub-G SKU. `set-power` stores the regional TX power ceiling. The DATA link adjusts its active power from peer RSSI and link quality while feedback is fresh, then returns to the ceiling on feedback loss. `set-baud`, `set-profile`, `erase-pair`, `new-dev-id` and `factory-reset` are also available. Settings are persistent; band, role, region, power ceiling, profile and UART baud changes take effect after reboot.
 
 The button starts pairing. A management session pauses radio operation; it exits on command or idle timeout. During that session DATA bytes cannot cross the radio.
 
@@ -37,3 +37,5 @@ The updater triggers recovery, uploads to the inactive slot, verifies the runnin
 `app/Kconfig` controls the data rate, slot preparation, hopping, session handshake, ARQ, dynamic power and its floor, watchdog and debug features. Production defaults enable authentication, ARQ and dynamic DATA power. `app/debug.conf` and `app/debug.overlay` add console and bench diagnostics. RF capabilities are selected from the board devicetree; an absent endpoint remains absent rather than acquiring a software substitute.
 
 See [security](09-security.md), [protocol](08-protocol.md) and [board definition](../boards/zlrs/rp2350_zero_core2021/README.md).
+
+NVS record 0 stores the layout marker; records 1–9 follow `zlrs_config_key`. A missing or incompatible marker clears the settings area before loading defaults. Installing this layout on an existing device requires configuring its binding phrase, role and DATA settings again, then pairing both endpoints. Factory reset erases the whole settings area and writes a fresh marker.

@@ -18,9 +18,9 @@
 		zephyr,sram = &sram0;
 		zephyr,flash = &flash0;
 		zephyr,flash-controller = &qmi;
-		/* Console off by default: it only exists once the debug overlay enables cdc_acm_uart3 */
-		zephyr,console = &cdc_acm_uart3;
-		zephyr,shell-uart = &cdc_acm_uart3;
+		/* Console off by default: it only exists once the debug overlay enables cdc_acm_uart2 */
+		zephyr,console = &cdc_acm_uart2;
+		zephyr,shell-uart = &cdc_acm_uart2;
 		zephyr,lorawan-transceiver = &lora_core2021;
 		/* Entropy comes from the zlrs TRNG driver (bounded waits, no interrupt masking; drivers/entropy) */
 		zephyr,entropy = &rng;
@@ -30,8 +30,8 @@
 	aliases {
 		lora-transceiver = &lora_core2021;
 		zlrs-data-uart = &uart1;
-		zlrs-data-cdc = &cdc_acm_uart1;
-		zlrs-mgmt-cdc = &cdc_acm_uart2;
+		zlrs-data-cdc = &cdc_acm_uart0;
+		zlrs-mgmt-cdc = &cdc_acm_uart1;
 		zlrs-button = &zlrs_button;
 		zlrs-led = &zlrs_led;
 		led-strip = &zlrs_led;
@@ -74,7 +74,7 @@
  * Hardware watchdog (RP2350 wdt0): armed when the application starts and fed from the main
  * loop. A crash or a stuck thread resets the chip, which MCUboot's test/revert turns into a
  * rollback, and with nothing left to boot it stops in serial recovery: no BOOTSEL needed.
- * See doc/07-firmware.md 6.
+ * See doc/07-firmware.md.
  */
 &wdt0 {
 	status = "okay";
@@ -131,27 +131,27 @@
 };
 
 /*
- * The CDCs on USB (doc/07-firmware.md 1):
- *   cdc_acm_uart1 = data port (alias zlrs-data-cdc)
- *   cdc_acm_uart2 = management port (alias zlrs-mgmt-cdc): management protocol, enter management mode
- *   cdc_acm_uart3 = console (kernel log + shell): off by default, the debug overlay enables it
+ * The CDCs on USB (doc/07-firmware.md):
+ *   cdc_acm_uart0 = data port (alias zlrs-data-cdc)
+ *   cdc_acm_uart1 = management port (alias zlrs-mgmt-cdc): management protocol, enter management mode
+ *   cdc_acm_uart2 = console (kernel log + shell): off by default, the debug overlay enables it
  *
  * The data CDC competes with its UART; management and console exist on USB only.
  */
 zephyr_udc0: &usbd {
 	status = "okay";
 
-	cdc_acm_uart1: cdc_acm_uart1 {
+	cdc_acm_uart0: cdc_acm_uart0 {
 		compatible = "zephyr,cdc-acm-uart";
 		label = "zlrs DATA";
 	};
 
-	cdc_acm_uart2: cdc_acm_uart2 {
+	cdc_acm_uart1: cdc_acm_uart1 {
 		compatible = "zephyr,cdc-acm-uart";
 		label = "zlrs CONFIG";
 	};
 
-	cdc_acm_uart3: cdc_acm_uart3 {
+	cdc_acm_uart2: cdc_acm_uart2 {
 		compatible = "zephyr,cdc-acm-uart";
 		label = "zlrs CONSOLE";
 		status = "disabled";

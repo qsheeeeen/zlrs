@@ -85,7 +85,7 @@ def main():
                 wait_image(identity, expected)
         with contextlib.ExitStack() as stack, ThreadPoolExecutor(2) as pool:
             for identity in identities:
-                path = Path("/dev/serial/by-id") / f"usb-zlrs_ZLRS_{identity}-if06"
+                path = Path("/dev/serial/by-id") / f"usb-zlrs_ZLRS_{identity}-if04"
                 deadline = time.monotonic() + 45
                 while not path.exists():
                     if time.monotonic() > deadline:
@@ -158,7 +158,7 @@ def main():
         # A failed test still requests rollback; the app confirmation timer is the fallback.
         for identity in installed:
             try:
-                path = f"/dev/serial/by-id/usb-zlrs_ZLRS_{identity}-if06"
+                path = f"/dev/serial/by-id/usb-zlrs_ZLRS_{identity}-if04"
                 with serial.Serial(path, 115200, timeout=0.02, write_timeout=2) as port:
                     command(port, "test_radio restore")
             except (OSError, serial.SerialException):

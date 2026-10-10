@@ -21,7 +21,7 @@ typedef struct {
 	uint32_t pair_count;
 	uint8_t role;
 	bool role_saved;
-	uint8_t mode;
+	uint8_t band;
 	uint8_t profile;
 	bool profile_saved;
 	uint32_t new_dev_id_count;
@@ -118,7 +118,7 @@ static int fake_save_setting(void *ctx, uint8_t cmd, const uint8_t *value, uint8
 		dev->role_saved = true;
 		return ZLRS_MGMT_OK;
 	case ZLRS_MGMT_CMD_SET_BAND:
-		dev->mode = value[0];
+		dev->band = value[0];
 		return ZLRS_MGMT_OK;
 	case ZLRS_MGMT_CMD_SET_PROFILE:
 		/* Pretend this build is production-shaped: P0 is refused, like the application does */
@@ -417,14 +417,14 @@ static void test_dispatch(void)
 	CHECK(parse_response(resp, len, &parser));
 	CHECK(ZLRS_MGMT_PAYLOAD(&parser)[1] == ZLRS_MGMT_E_PARAM);
 
-	/* Mode selection validates both length and enum before writing. */
-	for (uint8_t mode = ZLRS_DATA_BAND_24; mode <= ZLRS_DATA_BAND_SUBG; mode++) {
-		payload[0] = mode;
+	/* Band selection validates both length and enum before writing. */
+	for (uint8_t band = ZLRS_DATA_BAND_24; band <= ZLRS_DATA_BAND_SUBG; band++) {
+		payload[0] = band;
 		len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_SET_BAND, payload, 1U, resp,
 					 sizeof(resp));
 		CHECK(parse_response(resp, len, &parser));
 		CHECK(ZLRS_MGMT_PAYLOAD(&parser)[1] == ZLRS_MGMT_OK);
-		CHECK(fake.mode == mode);
+		CHECK(fake.band == band);
 	}
 	payload[0] = ZLRS_DATA_BAND_SUBG + 1U;
 	len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_SET_BAND, payload, 1U, resp, sizeof(resp));

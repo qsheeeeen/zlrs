@@ -6,10 +6,10 @@
  * Devicetree overlay for the mcuboot image only (sysbuild picks up app/sysbuild/<image>.overlay).
  *
  * The application has data and management CDCs; the bootloader keeps two:
- *   - cdc_acm_uart1 = data port -> serial recovery (mcumgr frames; `zephyr,uart-mcumgr`
+ *   - cdc_acm_uart0 = data port -> serial recovery (mcumgr frames; `zephyr,uart-mcumgr`
  *     points at it in the board dts)
- *   - cdc_acm_uart3 = console -> kernel log (disabled by default, enabled here)
- *   - cdc_acm_uart2 (management) is deleted in the bootloader
+ *   - cdc_acm_uart2 = console -> kernel log (disabled by default, enabled here)
+ *   - cdc_acm_uart1 (management) is deleted in the bootloader
  * In upgrade mode the host then sees two MCUBOOT ports: recovery first, log second.
  *
  * This overlay also has to set `zephyr,code-partition = &boot_partition` itself: Zephyr only
@@ -30,9 +30,9 @@
 };
 
 &usbd {
-	/delete-node/ cdc_acm_uart2;
+	/delete-node/ cdc_acm_uart1;
 };
 
-&cdc_acm_uart3 {
+&cdc_acm_uart2 {
 	status = "okay";
 };

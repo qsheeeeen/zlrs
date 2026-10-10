@@ -76,7 +76,7 @@ Pairing decides **who** we talk to; the session decides **which key** this conve
 - The three messages carry `dev_a`, `dev_b` and the two 4-byte nonces. They are tagged with
   `auth_key` and use the pairing sync word.
 - **No key is transferred**: pairing authenticates the two device ids and exchanges the nonces
-  from which both ends derive `pair_key` ([08-protocol](08-protocol.md) 3.3).
+  from which both ends derive `pair_key` ([08-protocol](08-protocol.md)).
 - Both nonces are covered by every message, so a recorded handshake cannot be replayed into a
   new pairing.
 
@@ -160,7 +160,7 @@ Host tests replace only the SHA operation with `tests/host/sha256_soft.c`, linki
 protocol algorithms. The separate Zephyr Ztest application in `tests/hardware/unit` checks
 the real driver and shared algorithms, including multipart SHA-256, wire tags and multi-block
 derivation. Test vectors and timing code are excluded from production sources; see
-[hardware tests](11-debug.md#7-tests-organized-by-module).
+[hardware tests](11-debug.md).
 
 The 16-bit sequence comparison across long sessions, the 32-bit tag budget and explicit
 failure reporting for invalid derivation parameters need further work. The current code review
@@ -169,12 +169,12 @@ and acceptance gaps are tracked in [12-roadmap](12-roadmap.md).
 ## 9. Management protocol
 
 The management protocol runs on the **management CDC only**, on a local USB connection; physical
-access is the boundary. It is a small framed protocol (`0xA5 0x5A`, version 3, CRC8) with request
+access is the boundary. It is a small framed protocol (`0xA5 0x5A`, version 4, CRC8) with request
 and response frames, documented by `include/zlrs/mgmt/mgmt.h` and implemented in `core/mgmt/`.
 
 | Host command | Effect |
 | --- | --- |
-| read status | role, link state, flags (bit 3: active data24 mode), `dev_id`, `peer_id`, LQ, radio design band, region, security profile, power ceiling, data baud |
+| read status | role, link state, flags (bit 3: DATA uses sub-GHz), `dev_id`, `peer_id`, LQ, radio design band, region, security profile, power ceiling, data baud |
 | enter management mode | pauses radio work; ACK follows session setup and synchronous log flushing |
 | start pairing | opens the pairing window at once |
 | erase pairing | effective on the next boot |
@@ -184,7 +184,7 @@ and response frames, documented by `include/zlrs/mgmt/mgmt.h` and implemented in
 | set region | validated against the board's radio design, refused on mismatch, next boot |
 | set power ceiling | never above the chosen region's limit, next boot |
 | set role | `tx` or `rx`, next boot |
-| set mode | `mixed` or `data24` (exclusive 2.4 GHz data and pairing), next boot |
+| set DATA band | `2.4` or `subg` for data and pairing, next boot |
 | set profile | `p0` (debug images only), `p1`, `p2` (not implemented), next boot |
 | new device id | makes a fresh device id from the TRNG and stores it; the pairing record is erased with it (the peer knows the old id) |
 | factory reset | wipes NVS, next boot |
@@ -200,4 +200,4 @@ The idle timeout starts after this flush.
 Sending `ENTER` again in an active session flushes pending logs before acknowledging it.
 
 The tool that speaks it is `tools/zlrs.py`; the update flow built on top is in
-[07-firmware](07-firmware.md) 5.
+[07-firmware](07-firmware.md).

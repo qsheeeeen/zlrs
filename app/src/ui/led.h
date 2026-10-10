@@ -20,7 +20,7 @@ struct zlrs_led_color {
 
 struct zlrs_led_frame_input {
 	bool mgmt_mode;
-	bool failsafe;
+	bool link_lost;
 	bool drop_recent;
 	bool role_tx;
 	uint8_t link_state;

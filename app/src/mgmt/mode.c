@@ -338,7 +338,6 @@ static int cfg_read_status(void *ctx, zlrs_mgmt_status_t *out)
 		.role = rf.role,
 		.profile = rf.profile,
 		.state = rf.state,
-		.flags = rf.data_band == ZLRS_DATA_BAND_24 ? ZLRS_MGMT_FLAG_DATA24 : 0U,
 		.lq_percent = rf.lq_percent,
 		.band = ZLRS_RF_BAND,
 		.region = config.saved.region,
@@ -394,7 +393,7 @@ static int cfg_enter_recovery(void *vctx)
 	return (zlrs_platform_recovery_enter() == 0) ? ZLRS_MGMT_OK : ZLRS_MGMT_E_STATE;
 }
 
-/* Host confirms this upgrade; the whole flow depends on it (see doc/07-firmware.md 6) */
+/* Host confirms this upgrade; the whole flow depends on it (see doc/07-firmware.md) */
 static int cfg_confirm_image(void *ctx)
 {
 	(void)ctx;

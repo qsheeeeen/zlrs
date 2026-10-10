@@ -102,7 +102,7 @@ going low.
 | `TSTXRX` | Tx to Rx | 91 us |
 | `TSRXTX` | Rx to Tx | 107 us |
 
-How the superframe uses these numbers: [06-architecture](06-architecture.md) 4.
+How the superframe uses these numbers: [06-architecture](06-architecture.md).
 
 ## SPI and the host interface
 

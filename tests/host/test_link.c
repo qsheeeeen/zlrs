@@ -48,7 +48,6 @@ static void init_node(node_t *node, uint8_t role, const uint8_t dev_id[4], const
 		.role = role,
 		.domain = ZLRS_DOMAIN_ISM2400,
 		.second_domain = 0xFFU,
-		.sync_slot = ZLRS_SYNC_SLOT_DATA,
 		.profile = ZLRS_PROFILE_P1,
 		.mod = {.modulation = ZLRS_MOD_FLRC, .rate_bps = 2600000U},
 		.tx_power_dbm = 10,
@@ -91,6 +90,9 @@ static void sim_slot(sim_t *sim, uint8_t slot)
 {
 	zlrs_link_t *const tx = &sim->tx.link;
 	zlrs_link_t *const rx = &sim->rx.link;
+	uint16_t prepared_len;
+	(void)zlrs_link_prepare_data(tx, slot, sim->now_ms, &prepared_len);
+	(void)zlrs_link_prepare_data(rx, slot, sim->now_ms, &prepared_len);
 	const zlrs_radio_req_t *const a = zlrs_link_slot(tx, slot, sim->now_ms);
 	const zlrs_radio_req_t *const b = zlrs_link_slot(rx, slot, sim->now_ms);
 	if (a != NULL && b != NULL && a->is_tx != b->is_tx && a->freq_hz == b->freq_hz &&
@@ -121,8 +123,8 @@ static void sim_slot(sim_t *sim, uint8_t slot)
 
 static void sim_frame(sim_t *sim)
 {
-	for (uint8_t slot = 0U; slot < 4U; slot++) {
-		sim_slot(sim, (slot & 1U) == 0U ? ZLRS_SLOT_DATA_A : ZLRS_SLOT_DATA_B);
+	for (uint8_t slot = 0U; slot < ZLRS_SLOT_COUNT; slot++) {
+		sim_slot(sim, slot);
 		sim->now_ms += 3U;
 	}
 	zlrs_link_tick(&sim->tx.link, sim->now_ms);
@@ -178,10 +180,8 @@ void test_link(void)
 	CHECK(memcmp(sim.tx.received, rx_data, sizeof(rx_data)) == 0);
 	CHECK(zlrs_link_get_stats(&sim.tx.link)->tx_retries > 0U);
 	CHECK(zlrs_link_get_stats(&sim.rx.link)->tx_retries > 0U);
-	const uint32_t tx_feedback_before =
-		zlrs_link_get_info(&sim.tx.link).last_peer_feedback_ms;
-	const uint32_t rx_feedback_before =
-		zlrs_link_get_info(&sim.rx.link).last_peer_feedback_ms;
+	const uint32_t tx_feedback_before = zlrs_link_get_info(&sim.tx.link).last_peer_feedback_ms;
+	const uint32_t rx_feedback_before = zlrs_link_get_info(&sim.rx.link).last_peer_feedback_ms;
 	for (uint32_t i = 0U; i < 100U; i++) {
 		sim_frame(&sim);
 	}

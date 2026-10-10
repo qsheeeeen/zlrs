@@ -6,6 +6,7 @@
  * command from RAM without kernel interaction, then pends an ordinary notification.
  */
 #include "platform/slot_timer.h"
+#include "zlrs/link/link.h"
 
 #include <hardware/structs/timer.h>
 #include <hardware/ticks.h>
@@ -30,7 +31,7 @@ struct slot_clock {
 
 static uint32_t slot_clock_offset(uint32_t period_us, uint8_t slot)
 {
-	return (uint32_t)(((uint64_t)period_us * slot) / 4U);
+	return (uint32_t)(((uint64_t)period_us * slot) / ZLRS_SLOT_COUNT);
 }
 
 static bool slot_clock_due(const struct slot_clock *clock, uint32_t now_us)
@@ -53,7 +54,7 @@ static uint32_t slot_clock_advance(struct slot_clock *clock, uint32_t now_us)
 			clock->published_origin_us = clock->origin_us;
 			clock->frame++;
 		}
-		if (++clock->slot == 4U) {
+		if (++clock->slot == ZLRS_SLOT_COUNT) {
 			clock->slot = 0U;
 			clock->origin_us += clock->period_us + (uint32_t)clock->shift_us;
 			clock->shift_us = 0;
@@ -74,7 +75,7 @@ static void slot_clock_shift(struct slot_clock *clock, int32_t shift_us)
 
 static uint32_t slot_clock_next_origin(const struct slot_clock *clock)
 {
-	/* Slot 3 already installs the next origin, including the queued phase correction. */
+	/* The last slot already installs the next origin, including the queued phase correction. */
 	return clock->slot == 0U ? clock->origin_us
 				 : clock->origin_us + clock->period_us + (uint32_t)clock->shift_us;
 }
@@ -322,7 +323,7 @@ void zlrs_slot_timer_start(uint32_t period_us, uint32_t prepare_us, void (*wake)
 	const uint32_t origin_us = zlrs_slot_timer_now_us() + 1000U;
 
 	slot_clock = (struct slot_clock){
-		.period_us = period_us < 4U ? 4U : period_us,
+		.period_us = period_us < ZLRS_SLOT_COUNT ? ZLRS_SLOT_COUNT : period_us,
 		.origin_us = origin_us,
 		.next_us = origin_us,
 	};

@@ -23,6 +23,6 @@
 	chosen {
 		zephyr,code-partition = &slot0_partition;
 		/* Serial recovery is USB only (the data port CDC), same as hf/mcuboot */
-		zephyr,uart-mcumgr = &cdc_acm_uart1;
+		zephyr,uart-mcumgr = &cdc_acm_uart0;
 	};
 };

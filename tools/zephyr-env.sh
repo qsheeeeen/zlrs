@@ -19,7 +19,7 @@ ZLRS_SDK_DIR="${ZLRS_SDK_DIR:-${HOME}/zephyr-sdk-1.0.0}"
 # Board: Waveshare RP2350-Zero plus Core2021, defined under boards/ in this repository.
 # sub-G has two SKUs: hf = 850-930 MHz (868/915) and lf = 410-510 MHz (470/433); each SKU has one
 # buildable variant, the one with MCUboot (every image is installed and updated through the
-# bootloader, see doc/07-firmware.md 5). The default follows the HF module on hand.
+# bootloader, see doc/07-firmware.md). The default follows the HF module on hand.
 ZLRS_BOARD="${ZLRS_BOARD:-rp2350_zero_core2021/rp2350a/m33/hf}"
 ZLRS_APP="${ZLRS_APP:-${ZLRS_REPO_ROOT}/app}"
 

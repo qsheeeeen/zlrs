@@ -65,7 +65,7 @@ python3 tools/zlrs.py update --serial <serial>
 
 **The application is never installed as a UF2**: BOOTSEL is the bootloader's door, and everything
 with an application in it goes through the bootloader so that signature checks, confirmation and
-rollback apply ([07-firmware](07-firmware.md) 5).
+rollback apply ([07-firmware](07-firmware.md)).
 
 ## 5. Wiring and placement
 

@@ -60,18 +60,6 @@ jobs:
           cd zephyr-sdk-1.0.0
           ./setup.sh -t arm-zephyr-eabi -h -c
 
-      - name: build (hf sku)
-        run: |
-          set -x
-          . zlrs/tools/zephyr-env.sh
-          zlrs-build
-
-      - name: build (lf sku)
-        run: |
-          set -x
-          . zlrs/tools/zephyr-env.sh
-          ZLRS_BOARD=rp2350_zero_core2021/rp2350a/m33/lf zlrs-build -d build-lf
-
       # Debug image: the overlay is the only place that sets CONFIG_ZLRS_APP_DEBUG, so this step
       # is what keeps the debug-only options (shell, stats log, boot delay) compiling.
       - name: build (debug overlay, hf sku)
@@ -81,45 +69,6 @@ jobs:
           zlrs-build -d build-debug -- \
             -DEXTRA_CONF_FILE="$ZLRS_REPO_ROOT/app/debug.conf" \
             -DDTC_OVERLAY_FILE="$ZLRS_REPO_ROOT/app/debug.overlay"
-
-      # Single-link cut: the data link alone (control link, CRSF port, management mode, button and LED
-      # all off).
-      # One switch is enough: the CRSF port belongs to the control link, and management mode, button
-      # and LED follow devicetree (app/src/platform/caps.h), so cutting the control link takes
-      # the CRSF port with it and the rest stays available on a board that has the hardware.
-      - name: build (data link only, both skus)
-        run: |
-          set -x
-          . zlrs/tools/zephyr-env.sh
-          for board in rp2350_zero_core2021/rp2350a/m33/hf rp2350_zero_core2021/rp2350a/m33/lf; do
-            sku="${board##*/}"
-            ZLRS_BOARD="$board" zlrs-build -d "build-dataonly-${sku}" -- \
-              -DCONFIG_ZLRS_APP_LINK_CONTROL=n
-          done
-
-      # LoRa long-range control link: radio_params.lora on the device side can only be compile-checked
-      - name: build (lora control link, both skus)
-        run: |
-          set -x
-          . zlrs/tools/zephyr-env.sh
-          for board in rp2350_zero_core2021/rp2350a/m33/hf rp2350_zero_core2021/rp2350a/m33/lf; do
-            sku="${board##*/}"
-            ZLRS_BOARD="$board" zlrs-build -d "build-lora-${sku}" -- \
-              -DCONFIG_ZLRS_APP_CONTROL_MODULATION_LORA=y \
-              -DCONFIG_ZLRS_APP_CONTROL_MODULATION_FLRC=n
-          done
-
-      # Racing mode: control owns 2.4G and the data link moves to sub-G
-      - name: build (racing band role, both skus)
-        run: |
-          set -x
-          . zlrs/tools/zephyr-env.sh
-          for board in rp2350_zero_core2021/rp2350a/m33/hf rp2350_zero_core2021/rp2350a/m33/lf; do
-            sku="${board##*/}"
-            ZLRS_BOARD="$board" zlrs-build -d "build-racing-${sku}" -- \
-              -DCONFIG_ZLRS_APP_BAND_ROLE_SUBG_DATA=y \
-              -DCONFIG_ZLRS_APP_BAND_ROLE_SUBG_CONTROL=n
-          done
 
       # Every board target is a bootloader target (there is no bare variant), so the signed image
       # and the bootloader are always built together. The application is installed and updated

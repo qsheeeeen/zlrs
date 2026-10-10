@@ -62,7 +62,7 @@ struct zlrs_led_color zlrs_app_led_frame(const struct zlrs_led_frame_input *in, 
 	if (in->mgmt_mode) {
 		return white;
 	}
-	if (in->failsafe) {
+	if (in->link_lost) {
 		return alternate(theme_color(in->role_tx), red, now_ms, 500U);
 	}
 	if (in->drop_recent) {

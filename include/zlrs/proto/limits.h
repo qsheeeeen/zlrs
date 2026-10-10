@@ -9,7 +9,7 @@
 #pragma once
 
 /* Current wire format only; SYNC must declare this exact version. */
-#define ZLRS_PROTO_VERSION 7U
+#define ZLRS_PROTO_VERSION 8U
 
 /* Frame: common header(1) + seq(2) + payload + tag(0/4). */
 #define ZLRS_FRAME_HDR_LEN      3U
@@ -18,10 +18,10 @@
 #define ZLRS_FRAME_MAX_LEN      511U
 #define ZLRS_PAYLOAD_MAX_LEN    (ZLRS_FRAME_MAX_LEN - ZLRS_FRAME_HDR_LEN - ZLRS_TAG_LEN)
 
-/* Sync words: 4 bytes, slot 2 data link, slot 3 pairing */
+/* Sync words: 4 bytes, hardware slot 1 DATA, slot 2 pairing */
 #define ZLRS_SYNC_WORD_LEN     4U
-#define ZLRS_SYNC_SLOT_DATA    2U
-#define ZLRS_SYNC_SLOT_PAIRING 3U
+#define ZLRS_SYNC_SLOT_DATA    1U
+#define ZLRS_SYNC_SLOT_PAIRING 2U
 
 /* Hop table length, must be a multiple of the channel count */
 #define ZLRS_FHSS_SEQUENCE_LEN 256U

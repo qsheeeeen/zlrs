@@ -1,12 +1,12 @@
 # Over-the-air protocol
 
-Protocol version `7` carries one bidirectional DATA service. Both peers must use this version. A `SYNC` with another version is rejected. The LR2021 supplies preamble, sync word, length and physical CRC; the ZLRS frame below is the radio payload.
+Protocol version `8` carries one bidirectional DATA service. Both peers must use this version. A `SYNC` with another version is rejected. The LR2021 supplies preamble, sync word, length and physical CRC; the ZLRS frame below is the radio payload.
 
 ## Frame
 
 | Field | Size | Meaning |
 | --- | --- | --- |
-| Header | 1 B | Six-bit packet type, ACK toggle in bit 1, bit 0 reserved. |
+| Header | 1 B | Packet type in bits 1–7, ACK toggle in bit 0. |
 | Frame sequence | 2 B | Little-endian counter for authenticated replay rejection. |
 | Payload | Variable | Packet-specific fields; DATA includes peer-quality feedback. |
 | Authentication tag | 0 or 4 B | Truncated HMAC-SHA256 over header, sequence and payload; absent only in debug P0. |
@@ -36,4 +36,4 @@ A device with no root key remains off air. A configured device without a peer is
 
 ## Slots, hopping and regulation
 
-The RF owner schedules alternating DATA A and DATA B opportunities for TX and RX. Pairing uses its own sync slot; connected traffic uses the DATA sync slot. A selected frequency band supplies its channel table and modem timing. FHSS derives a deterministic hop sequence from pairing material. The sub-G band uses its board SKU and region's channel, TX-power and duty rules; when the duty budget is exhausted, transmission is deferred. The active TX power never exceeds the configured/regional ceiling. Current firmware runs DATA on one selected band at a time.
+Each frame contains two slots: DATA A (0, TX → RX) and DATA B (1, RX → TX). The LR2021 uses hardware sync word 1 for DATA and 2 for pairing. Pairing uses its own sync slot; connected traffic uses the DATA sync slot. A selected frequency band supplies its channel table and modem timing. FHSS derives a deterministic hop sequence from pairing material. The sub-G band uses its board SKU and region's channel, TX-power and duty rules; when the duty budget is exhausted, transmission is deferred. The active TX power never exceeds the configured/regional ceiling. Current firmware runs DATA on one selected band at a time.

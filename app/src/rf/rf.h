@@ -19,7 +19,7 @@ struct zlrs_link_status {
 };
 
 struct zlrs_alerts {
-	bool failsafe;
+	bool link_lost;
 	bool fault;
 	uint32_t data_drop_bytes;
 };
