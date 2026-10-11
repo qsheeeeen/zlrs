@@ -44,6 +44,8 @@ Each frame contains two slots: DATA A (0, TX → RX) and DATA B (1, RX → TX). 
 
 The default 2.4 GHz preparation reservation is 2.5 ms. It includes the previous RX window's cleanup, authentication, radio configuration and FIFO loading before the timer's fixed TX launch. The frame period is derived from this reservation and the maximum packet airtime, so both peers must use the same timing configuration. Increasing this reservation trades nominal slot rate for fewer aborted preparations; it does not allow packets to transmit late.
 
+FLRC uses a 24-bit preamble, a 32-bit hardware sync word and a 16-bit physical CRC with coding rate 3/4. DATA matches the full sync word derived from pairing material; pairing uses `ZLRS`. Full sync matching limits noise packets reaching the CRC decoder. Packet airtime and the slot plan are computed from these same modem settings.
+
 ## Management status
 
 Management version `4` uses a fixed 72-byte `STATUS_RESP`. Multibyte integers are little endian; RSSI and temperature are signed 16-bit values, and power values are signed 8-bit dBm.
