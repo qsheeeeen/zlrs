@@ -2,7 +2,6 @@
 #pragma once
 
 #include <stdbool.h>
-#include <stddef.h>
 #include <stdint.h>
 #include <zephyr/zbus/zbus.h>
 
@@ -54,8 +53,3 @@ void zlrs_rf_pause(void);
 void zlrs_rf_resume(void);
 /* Captured only while paused at a management boundary. */
 void zlrs_rf_log_snapshot(void);
-void zlrs_rf_management_return(void);
-#if defined(CONFIG_ZLRS_APP_DEBUG)
-/* Debug shell receives a copy; all link/configuration APIs above remain owner-thread only. */
-void zlrs_rf_trace(char *out, size_t capacity);
-#endif

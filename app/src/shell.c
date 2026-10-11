@@ -13,17 +13,6 @@
 #endif
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_SHELL)
-/* Bench: print the init breadcrumbs (see trace_add) */
-static int cmd_trace(const struct shell *sh, size_t argc, char **argv)
-{
-	char trace[25];
-	ARG_UNUSED(argc);
-	ARG_UNUSED(argv);
-	zlrs_rf_trace(trace, sizeof(trace));
-	shell_print(sh, "init trace: [%s]", trace);
-	return 0;
-}
-
 static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 {
 	zlrs_rf_status_t link = {0};
@@ -182,7 +171,6 @@ static int cmd_bootsel(const struct shell *sh, size_t argc, char **argv)
 SHELL_STATIC_SUBCMD_SET_CREATE(
 	zlrs_cmds, SHELL_CMD(status, NULL, "role / SKU / region / link state", cmd_status),
 	SHELL_CMD(ports, NULL, "state of both data port endpoints", cmd_ports),
-	SHELL_CMD(trace, NULL, "print the init breadcrumbs", cmd_trace),
 #if DT_NODE_EXISTS(DT_ALIAS(zlrs_mgmt_cdc))
 	SHELL_CMD(mgmt, NULL, "enter management mode (EXIT returns)", cmd_mgmt),
 #endif

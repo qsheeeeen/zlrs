@@ -169,10 +169,6 @@ void zlrs_rf_log_snapshot(void)
 {
 	zassert_equal(pause_depth, 1U);
 }
-void zlrs_rf_management_return(void)
-{
-	zassert_equal(pause_depth, 1U);
-}
 void zlrs_rf_pause(void)
 {
 	pause_depth++;

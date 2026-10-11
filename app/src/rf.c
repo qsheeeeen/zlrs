@@ -307,38 +307,6 @@ static uint32_t now_us(void)
 	return zlrs_slot_timer_now_us();
 }
 
-/*
- * Init breadcrumbs. The main thread can be stuck in a place where the console, the shell and the
- * logging thread all still work, so the only way to see how far init got is memory the other
- * threads can read: no console I/O on this path (printk on a USB CDC console can block precisely
- * when the host is not draining it, which is what made the first attempt at this useless).
- */
-static volatile uint8_t init_trace[24];
-static volatile uint8_t init_trace_len;
-
-static void trace_add(char c)
-{
-	if (init_trace_len < sizeof(init_trace)) {
-		init_trace[init_trace_len++] = (uint8_t)c;
-	}
-}
-
-void zlrs_rf_trace(char *out, size_t capacity)
-{
-	if (capacity == 0U) {
-		return;
-	}
-	const unsigned int key = irq_lock();
-	const size_t len = MIN(init_trace_len, capacity - 1U);
-	for (size_t i = 0U; i < len; i++) {
-		out[i] = init_trace[i];
-	}
-	out[len] = '\0';
-	irq_unlock(key);
-}
-
-#define TRACE(c) trace_add(c)
-
 static void run_slot(uint8_t slot)
 {
 	/* An idle or early-completed predecessor must not open RX in an earlier slot.
@@ -730,11 +698,6 @@ void zlrs_rf_log_snapshot(void)
 	}
 }
 
-void zlrs_rf_management_return(void)
-{
-	TRACE('2');
-}
-
 zlrs_rf_status_t zlrs_rf_status(void)
 {
 	const zlrs_link_info_t info = zlrs_link_get_info(&link_data);
@@ -824,7 +787,6 @@ void zlrs_rf_resume(void)
 
 int zlrs_rf_init(void)
 {
-	TRACE('0');
 	/* Debug image only (gated in Kconfig, so the symbol does not exist in production builds):
 	 * USB is up, so wait for the host to open the console port — otherwise a panic log lands
 	 * on a port nobody has open. */
@@ -841,9 +803,7 @@ int zlrs_rf_init(void)
 	}
 #endif
 
-	TRACE('M');
 	LOG_INF("ZLRS %s", APP_VERSION_STRING);
-	TRACE('V');
 
 	/* Optional ports come directly from the board's devicetree aliases. */
 	if (!DT_NODE_EXISTS(DT_ALIAS(zlrs_mgmt_cdc))) {
@@ -853,11 +813,9 @@ int zlrs_rf_init(void)
 
 	/* Identity comes before anything that could use it; without one, stay off the air */
 	if (!zlrs_persist_get_device_id(device_id)) {
-		TRACE('I');
 		LOG_ERR("no device id: staying off the air until one can be made");
 		return -ENODEV;
 	}
-	TRACE('D');
 
 	/*
 	 * Persist loads settings or board defaults and validates each frontend's requested
@@ -928,22 +886,18 @@ int zlrs_rf_init(void)
 		return rc;
 	}
 
-	TRACE('1');
 	plan_init();
 	build_links();
 	links_ready = true;
 	load_identity();
 
-	TRACE('c');
 	rc = zlrs_lr2021_init();
 	if (rc != 0) {
-		TRACE('X');
 		LOG_ERR("radio driver init failed (%d)", rc);
 		return rc;
 	}
 
 	radio_ready = true;
-	TRACE('d');
 	return 0;
 }
 
@@ -975,7 +929,6 @@ void zlrs_rf_frame(void)
 		}
 	}
 	phase_adj_set = false;
-	TRACE('L');
 	const uint32_t period = frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE;
 
 	for (uint8_t slot = 0U; slot < ZLRS_SLOT_COUNT; slot++) {

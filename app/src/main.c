@@ -25,7 +25,6 @@ static void enter_management_mode(void)
 	if (rc != 0) {
 		LOG_WRN("management mode ended without EXIT (rc %d)", rc);
 	}
-	zlrs_rf_management_return();
 	LOG_INF("management mode done, back to normal");
 	log_flush();
 	zlrs_rf_resume();
