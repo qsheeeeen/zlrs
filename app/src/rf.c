@@ -19,7 +19,6 @@
 #include "rf.h"
 #include "diagnostics.h"
 #include "power.h"
-#include "platform/caps.h"
 #include "platform/slot_timer.h"
 #include "platform/watchdog.h"
 #include "platform/lr2021.h"
@@ -53,6 +52,12 @@ static zlrs_data_band_t data_band = ZLRS_DATA_BAND_24;
 
 static zlrs_link_t link_data;
 static zlrs_mod_cfg_t data_mod;
+
+static const zlrs_rf_design_t rf_design = {
+	.band = DT_PROP(DT_NODELABEL(zlrs_rf), band),
+	.low_hz = DT_PROP(DT_NODELABEL(zlrs_rf), low_hz),
+	.high_hz = DT_PROP(DT_NODELABEL(zlrs_rf), high_hz),
+};
 
 /* Region: picks the band, the power ceiling and the duty accounting */
 static const zlrs_region_t *region;
@@ -840,9 +845,8 @@ int zlrs_rf_init(void)
 	LOG_INF("ZLRS %s", APP_VERSION_STRING);
 	TRACE('V');
 
-	/* What the build is, and what this board has: ports and peripherals come from devicetree,
-	 * so a missing one is reported without being an error (app/src/platform/caps.h) */
-	if (!ZLRS_PORT_MGMT) {
+	/* Optional ports come directly from the board's devicetree aliases. */
+	if (!DT_NODE_EXISTS(DT_ALIAS(zlrs_mgmt_cdc))) {
 		LOG_WRN("no management port on this board, parameters can only come from the "
 			"defaults");
 	}
@@ -856,9 +860,8 @@ int zlrs_rf_init(void)
 	TRACE('D');
 
 	/*
-	 * Region and power ceiling are runtime parameters (the management protocol writes them): use the
-	 * stored value when present, the board's own default otherwise (app/src/platform/caps.h).
-	 * The configuration owner validates every frontend's requested combination.
+	 * Persist loads settings or board defaults and validates each frontend's requested
+	 * region/power combination. RF owns the parameters adopted for this boot.
 	 */
 	const zlrs_persist_settings_t *const settings = zlrs_persist_settings();
 	data_band = settings->band;
@@ -874,13 +877,18 @@ int zlrs_rf_init(void)
 	}
 	/* The first two things to look at on the bench: which SKU this board is, which region it runs */
 	LOG_INF("board: sub-G %s (band %d), region %s",
-		ZLRS_RF_BAND == ZLRS_BAND_SUBG_LF ? "LF" : "HF", ZLRS_RF_BAND, region->name);
-	/* What the build believes the hardware is, derived from devicetree (app/src/platform/caps.h) */
-	LOG_INF("caps: ports=%s%s usb=%c btn=%c led=%c wdt=%c rf=%s(%u-%u MHz)",
-		ZLRS_PORT_DATA_FIXED ? "data" : "", ZLRS_PORT_MGMT ? ",cfg" : "",
-		ZLRS_HAS_USB ? 'y' : 'n', ZLRS_HAS_BUTTON ? 'y' : 'n', ZLRS_HAS_LED ? 'y' : 'n',
-		ZLRS_HAS_WDT ? 'y' : 'n', ZLRS_RF_BAND == ZLRS_BAND_SUBG_LF ? "LF" : "HF",
-		ZLRS_RF_LOW_HZ / 1000000U, ZLRS_RF_HIGH_HZ / 1000000U);
+		rf_design.band == ZLRS_BAND_SUBG_LF ? "LF" : "HF", rf_design.band, region->name);
+	LOG_INF("hardware: ports=%s%s usb=%c btn=%c led=%c wdt=%c rf=%s(%u-%u MHz)",
+		DT_NODE_EXISTS(DT_ALIAS(zlrs_data_uart)) || DT_NODE_EXISTS(DT_ALIAS(zlrs_data_cdc))
+			? "data"
+			: "",
+		DT_NODE_EXISTS(DT_ALIAS(zlrs_mgmt_cdc)) ? ",cfg" : "",
+		IS_ENABLED(CONFIG_ZLRS_USB) ? 'y' : 'n',
+		DT_NODE_EXISTS(DT_ALIAS(zlrs_button)) ? 'y' : 'n',
+		DT_NODE_EXISTS(DT_ALIAS(zlrs_led)) ? 'y' : 'n',
+		DT_NODE_EXISTS(DT_ALIAS(watchdog0)) ? 'y' : 'n',
+		rf_design.band == ZLRS_BAND_SUBG_LF ? "LF" : "HF", rf_design.low_hz / 1000000U,
+		rf_design.high_hz / 1000000U);
 
 	LOG_INF("role %s, profile P%u", role_tx ? "TX" : "RX", (unsigned int)active_profile);
 
@@ -895,12 +903,12 @@ int zlrs_rf_init(void)
 		LOG_WRN("isolation: session handshake off, pairing keys are session keys");
 	}
 	{
-		const int rc = zlrs_region_validate(region, ZLRS_RF_DESIGN, tx_power_dbm);
+		const int rc = zlrs_region_validate(region, &rf_design, tx_power_dbm);
 
 		/* -5: the region wants different sub-G hardware than this board has, so stay off the air */
 		if (rc == -5) {
 			LOG_ERR("region %s needs another sub-G sku (board band %d)", region->name,
-				ZLRS_RF_BAND);
+				rf_design.band);
 			return -EINVAL;
 		}
 		if (rc == -2) {

@@ -31,7 +31,6 @@
 #if defined(CONFIG_ZLRS_APP_DEBUG)
 #include "diagnostics.h"
 #endif
-#include "platform/caps.h"
 #include "boot.h"
 #include "platform/slot_timer.h"
 #include "platform/watchdog.h"
@@ -122,7 +121,7 @@ static void cfg_port_isr(const struct device *dev, void *user_data)
 
 int zlrs_mgmt_init(void)
 {
-#if ZLRS_PORT_MGMT
+#if DT_NODE_EXISTS(DT_ALIAS(zlrs_mgmt_cdc))
 	const struct device *const dev = DEVICE_DT_GET(DT_ALIAS(zlrs_mgmt_cdc));
 
 	if (!device_is_ready(dev)) {
@@ -325,7 +324,7 @@ static void read_status(zlrs_mgmt_status_t *out)
 		.profile = rf.profile,
 		.state = rf.state,
 		.lq_percent = rf.lq_percent,
-		.band = ZLRS_RF_BAND,
+		.band = DT_PROP(DT_NODELABEL(zlrs_rf), band),
 		.region = settings->region,
 		.tx_power_dbm = settings->power_dbm,
 		.data_baud = settings->data_baud,

@@ -22,9 +22,13 @@
 #if IS_ENABLED(CONFIG_ZLRS_APP_WATCHDOG)
 
 #include <zephyr/device.h>
+#include <zephyr/devicetree.h>
 #include <zephyr/drivers/watchdog.h>
 #include <zephyr/init.h>
 #include <zephyr/logging/log.h>
+
+BUILD_ASSERT(DT_NODE_EXISTS(DT_ALIAS(watchdog0)),
+	     "watchdog enabled but this board has no watchdog device");
 
 LOG_MODULE_REGISTER(zlrs_wdt, CONFIG_APP_LOG_LEVEL);
 

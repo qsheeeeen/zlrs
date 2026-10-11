@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include <errno.h>
 #include <string.h>
+#include <zephyr/devicetree.h>
 #include <zephyr/kvss/nvs.h>
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/ztest.h>
 #include "persist.h"
-#include "platform/caps.h"
 
 /* Preserve the entire real partition, including NVS metadata, before destructive fixture cases. */
 static uint8_t backup[PARTITION_SIZE(storage_partition)];
@@ -66,7 +66,7 @@ ZTEST(settings, test_layout_and_persistence)
 	zassert_equal(nvs_read(&inspect, 65000, raw, 1), -ENOENT);
 	/* Populate the existing 1..9 layout directly, with the original byte format. */
 	const uint8_t band = ZLRS_DATA_BAND_SUBG;
-	const uint8_t region = ZLRS_DEFAULT_REGION;
+	const uint8_t region = DT_PROP(DT_NODELABEL(zlrs_rf), default_region);
 	const uint8_t power = (uint8_t)-10;
 	const uint8_t role = ZLRS_ROLE_RX;
 	const uint8_t profile = ZLRS_PROFILE_P1;

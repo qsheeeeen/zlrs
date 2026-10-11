@@ -37,7 +37,7 @@ config ZLRS_APP_CORE
 	select ZLRS_MGMT
 	help
 	  The protocol, data link, region and management modules every image carries. Optional ports
-	  and LEDs are described by devicetree (app/src/platform/caps.h); USB is selected by the board.
+	  and LEDs are described by devicetree; USB is selected by the board.
 
 config ZLRS_APP_ROLE_TX
 	bool "Build as the TX role"

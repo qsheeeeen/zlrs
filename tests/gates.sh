@@ -6,8 +6,8 @@
 #
 #   1. core/ and its public headers stay free of Zephyr. They compile on the host; that is
 #      what makes the protocol testable and keeps the platform out of the link layer.
-#   2. app/ never branches on a board. What the hardware is comes from devicetree through
-#      app/src/platform/caps.h, so supporting a board is a devicetree job, not a code change.
+#   2. app/ never branches on a board. Modules read hardware properties and aliases directly
+#      from devicetree, so supporting a board is a devicetree job, not a code change.
 #   3. shipped configurations carry no ZLRS_APP_DEBUG_* option. Those exist for bench images;
 #      the marker symbol CONFIG_ZLRS_APP_DEBUG lives in app/debug.conf only.
 #   4. the application is never installed as a UF2: BOOTSEL carries the bootloader image only,
@@ -56,7 +56,8 @@ if [ -e app/src/state/sys_bus.c ] || [ -e app/src/state/sys_bus.h ]; then
 	bad "centralized module channels returned"
 fi
 
-if hit=$(rg -n '"rf.h"|zlrs_rf_|zbus' app/src/persist.c app/src/persist.h); then
+# The core region's RF design value is allowed; application RF APIs/state are not.
+if hit=$(rg -n --pcre2 '"rf.h"|zlrs_rf_(?!design_t\b)|zbus' app/src/persist.c app/src/persist.h); then
  bad "persist depends on RF or state publication:"
  echo "$hit"
 fi

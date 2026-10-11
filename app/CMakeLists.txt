@@ -29,8 +29,8 @@ target_sources(app PRIVATE
 target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG_SHELL app PRIVATE ${zlrs_app_dir}/src/shell.c)
 target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG app PRIVATE ${zlrs_app_dir}/src/diagnostics.c)
 
-# App-internal headers are included the way they sit on disk: "platform/lr2021.h",
-# "serial.h", "platform/caps.h", ... (the layers are described in doc/06-architecture.md).
+# App-internal headers use their paths on disk, such as "platform/lr2021.h" and "serial.h"
+# (the layers are described in doc/06-architecture.md).
 # core/proto supplies the private SHA declaration used by the platform implementation.
 target_include_directories(app PRIVATE "${zlrs_app_dir}/src" "${zlrs_app_dir}/../core/proto")
 

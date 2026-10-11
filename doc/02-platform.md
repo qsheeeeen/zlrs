@@ -134,5 +134,7 @@ Recovery ports, image confirmation and rollback are described in [07-firmware](0
 5. If the radio chip or the MCU is new, add the driver and binding it needs; `core/` does not
    change.
 
-No application code is expected to change. If it does, a capability is missing from the
-[capability macros](07-firmware.md#4-build-time-choices-and-trimming) and belongs there.
+For the existing MCU/radio, describe hardware differences in devicetree. Application modules
+read their own properties and aliases directly, and assemble the domain values they need.
+Add a new property to the relevant binding if a module needs another hardware fact;
+keep required-device checks with the module that uses that device.

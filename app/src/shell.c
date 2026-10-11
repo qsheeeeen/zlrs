@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include <zephyr/kernel.h>
+#include <zephyr/devicetree.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/dfu/mcuboot.h>
 #include <zephyr/storage/flash_map.h>
 #include "serial.h"
 #include "mgmt.h"
-#include "platform/caps.h"
 #include "boot.h"
 #include "rf.h"
 #ifdef PICO_RP2350
@@ -32,7 +32,8 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 	(void)zbus_chan_read(&zlrs_rf_chan, &link, K_MSEC(10));
 	const zlrs_region_t *region = zlrs_region_get(link.region);
 	shell_print(sh, "role   : %s", link.role == ZLRS_ROLE_TX ? "TX" : "RX");
-	shell_print(sh, "sub-G  : %s", ZLRS_RF_BAND == ZLRS_BAND_SUBG_LF ? "LF" : "HF");
+	shell_print(sh, "sub-G  : %s",
+		    DT_PROP(DT_NODELABEL(zlrs_rf), band) == ZLRS_BAND_SUBG_LF ? "LF" : "HF");
 	shell_print(sh, "region : %s", region != NULL ? region->name : "?");
 	shell_print(sh, "link   : state %u, lq %u%%, paired %d", link.state, link.lq_percent,
 		    link.paired);
@@ -40,7 +41,7 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
-#if ZLRS_PORT_MGMT
+#if DT_NODE_EXISTS(DT_ALIAS(zlrs_mgmt_cdc))
 static int cmd_mgmt(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(argc);
@@ -182,7 +183,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 	zlrs_cmds, SHELL_CMD(status, NULL, "role / SKU / region / link state", cmd_status),
 	SHELL_CMD(ports, NULL, "state of both data port endpoints", cmd_ports),
 	SHELL_CMD(trace, NULL, "print the init breadcrumbs", cmd_trace),
-#if ZLRS_PORT_MGMT
+#if DT_NODE_EXISTS(DT_ALIAS(zlrs_mgmt_cdc))
 	SHELL_CMD(mgmt, NULL, "enter management mode (EXIT returns)", cmd_mgmt),
 #endif
 #if IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT)

@@ -17,6 +17,9 @@
 #include <stddef.h>
 #include <string.h>
 
+BUILD_ASSERT(DT_NODE_EXISTS(DT_ALIAS(zlrs_data_uart)) || DT_NODE_EXISTS(DT_ALIAS(zlrs_data_cdc)),
+	     "this board has no data port (zlrs-data-uart/-cdc)");
+
 LOG_MODULE_REGISTER(zlrs_serial, CONFIG_APP_LOG_LEVEL);
 
 ZBUS_CHAN_DEFINE(zlrs_serial_chan, struct zlrs_serial_status, NULL, NULL, ZBUS_OBSERVERS_EMPTY,

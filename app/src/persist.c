@@ -1,14 +1,17 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "persist.h"
-#include "platform/caps.h"
 
 #include <errno.h>
 #include <string.h>
+#include <zephyr/devicetree.h>
 #include <zephyr/drivers/entropy.h>
 #include <zephyr/kvss/nvs.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/util.h>
+
+BUILD_ASSERT(IS_ENABLED(CONFIG_NVS), "zlrs keeps keys and pairing in NVS");
 
 LOG_MODULE_REGISTER(zlrs_persist, CONFIG_APP_LOG_LEVEL);
 
@@ -46,6 +49,12 @@ static struct {
 } state;
 static bool ready;
 
+static const zlrs_rf_design_t rf_design = {
+	.band = DT_PROP(DT_NODELABEL(zlrs_rf), band),
+	.low_hz = DT_PROP(DT_NODELABEL(zlrs_rf), low_hz),
+	.high_hz = DT_PROP(DT_NODELABEL(zlrs_rf), high_hz),
+};
+
 const zlrs_persist_settings_t *zlrs_persist_settings(void)
 {
 	return &state.settings;
@@ -82,7 +91,7 @@ static zlrs_persist_settings_t default_settings(void)
 {
 	return (zlrs_persist_settings_t){
 		.band = ZLRS_DATA_BAND_24,
-		.region = ZLRS_DEFAULT_REGION,
+		.region = DT_PROP(DT_NODELABEL(zlrs_rf), default_region),
 		.power_dbm = CONFIG_ZLRS_APP_TX_POWER_DBM,
 		.role = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? ZLRS_ROLE_TX : ZLRS_ROLE_RX,
 		.profile = IS_ENABLED(CONFIG_ZLRS_APP_SECURITY_PROFILE_P0) ? ZLRS_PROFILE_P0
@@ -99,7 +108,7 @@ static bool settings_valid(const zlrs_persist_settings_t *s)
 		(s->profile == ZLRS_PROFILE_P0 && IS_ENABLED(CONFIG_ZLRS_APP_DEBUG))) &&
 	       s->data_baud >= 9600U && s->data_baud <= 4000000U &&
 	       s->power_dbm >= ZLRS_POWER_MIN_DBM && s->power_dbm <= ZLRS_POWER_MAX_DBM &&
-	       zlrs_region_validate(zlrs_region_get(s->region), ZLRS_RF_DESIGN, s->power_dbm) == 0;
+	       zlrs_region_validate(zlrs_region_get(s->region), &rf_design, s->power_dbm) == 0;
 }
 
 static int write_record(enum record_id id, const void *bytes, size_t size)
