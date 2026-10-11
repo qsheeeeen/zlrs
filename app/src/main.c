@@ -83,7 +83,7 @@ int main(void)
 		zlrs_watchdog_feed();
 		zlrs_rf_publish_state();
 		zlrs_serial_publish_state();
-		zlrs_boot_poll(!rf_ready);
+		zlrs_boot_check_rollback(!rf_ready);
 		if (zlrs_mgmt_poll_enter()) {
 			enter_management_mode();
 			continue;

@@ -26,7 +26,7 @@ int zlrs_boot_confirm(void)
 	return rc;
 }
 
-void zlrs_boot_poll(bool fault)
+void zlrs_boot_check_rollback(bool fault)
 {
 	if (confirmed) {
 		return;

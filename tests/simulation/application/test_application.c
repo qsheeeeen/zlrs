@@ -69,8 +69,8 @@ void sys_reboot(int type)
 }
 
 enum action {
-	POLL_FAULT,
-	POLL_TIMEOUT,
+	CHECK_FAULT_ROLLBACK,
+	CHECK_TIMEOUT_ROLLBACK,
 	RECOVER,
 	RUN_APPLICATION
 };
@@ -80,11 +80,11 @@ static void owner(void *arg, void *unused1, void *unused2)
 	ARG_UNUSED(unused1);
 	ARG_UNUSED(unused2);
 	switch (action) {
-	case POLL_FAULT:
-		zlrs_boot_poll(true);
+	case CHECK_FAULT_ROLLBACK:
+		zlrs_boot_check_rollback(true);
 		break;
-	case POLL_TIMEOUT:
-		zlrs_boot_poll(false);
+	case CHECK_TIMEOUT_ROLLBACK:
+		zlrs_boot_check_rollback(false);
 		break;
 	case RECOVER:
 		(void)zlrs_boot_recovery();
@@ -220,10 +220,10 @@ ZTEST(application, test_lifecycle)
 	confirm_result = -EIO;
 	zassert_equal(zlrs_boot_confirm(), -EIO);
 	zassert_false(image_confirmed);
-	run(POLL_FAULT);
+	run(CHECK_FAULT_ROLLBACK);
 	zassert_equal(reboots, 1U);
 	/* The fault wait has also passed the ordinary confirmation deadline. */
-	run(POLL_TIMEOUT);
+	run(CHECK_TIMEOUT_ROLLBACK);
 	zassert_equal(reboots, 2U);
 	/* Failed retention must keep watchdog protection; recovery success hands off to MCUboot. */
 	retention_result = -EIO;
@@ -236,7 +236,7 @@ ZTEST(application, test_lifecycle)
 	confirm_result = 0;
 	zassert_equal(zlrs_boot_confirm(), 0);
 	zassert_equal(confirm_writes, 2U);
-	zlrs_boot_poll(true);
+	zlrs_boot_check_rollback(true);
 	zassert_equal(reboots, 3U, "confirmed firmware must remain reachable on an RF fault");
 
 	const struct zlrs_input input = {.button_holds = 1U};
