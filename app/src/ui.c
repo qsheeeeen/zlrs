@@ -10,8 +10,8 @@
 #include <string.h>
 
 #include "rf/rf.h"
-#include "mgmt/mode.h"
-#include "data/data.h"
+#include "mgmt.h"
+#include "serial.h"
 #include "ui_pattern.h"
 #include "ui.h"
 
@@ -68,7 +68,7 @@ ZBUS_SUBSCRIBER_DEFINE(zlrs_ui_sub, UI_SUB_QUEUE_SIZE);
 /* The LED thread is the consumer of the system state; the channels themselves have no observers */
 ZBUS_CHAN_ADD_OBS(zlrs_rf_chan, zlrs_ui_sub, 0);
 ZBUS_CHAN_ADD_OBS(zlrs_mode_chan, zlrs_ui_sub, 0);
-ZBUS_CHAN_ADD_OBS(zlrs_data_chan, zlrs_ui_sub, 0);
+ZBUS_CHAN_ADD_OBS(zlrs_serial_chan, zlrs_ui_sub, 0);
 
 /* The board's status pixel: NULL when this board has no `zlrs-led` alias or the node is off */
 static const struct device *const led_strip = DEVICE_DT_GET_OR_NULL(DT_ALIAS(zlrs_led));
@@ -114,7 +114,7 @@ static void ui_thread(void *p1, void *p2, void *p3)
 	const struct zbus_channel *chan;
 	zlrs_rf_status_t link = {0};
 	struct zlrs_mode mode = {0};
-	struct zlrs_data_status data = {0};
+	struct zlrs_serial_status data = {0};
 	uint32_t drop_bytes = 0U;
 	uint32_t drop_ms = 0U;
 	uint32_t mgmt_since = 0U;
@@ -177,7 +177,7 @@ static void ui_thread(void *p1, void *p2, void *p3)
 		render_ms = now_ms;
 		(void)zbus_chan_read(&zlrs_rf_chan, &link, K_NO_WAIT);
 		(void)zbus_chan_read(&zlrs_mode_chan, &mode, K_NO_WAIT);
-		(void)zbus_chan_read(&zlrs_data_chan, &data, K_NO_WAIT);
+		(void)zbus_chan_read(&zlrs_serial_chan, &data, K_NO_WAIT);
 		/* Polling also recovers a missed initial notification. */
 		if (link.frame_period_us == 0U && !link.fault) {
 			continue;

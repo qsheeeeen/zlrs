@@ -26,29 +26,24 @@
 #include <zephyr/drivers/hwinfo.h>
 #endif
 
-#include "zlrs/mgmt/mgmt.h"
+#include "log.h"
+#include <errno.h>
 
 /*
  * Only boards whose partition table has a log partition get this: the whole file is about that
  * partition, and one without it keeps logging to the console only.
  */
 #if !DT_NODE_EXISTS(DT_NODELABEL(log_partition))
-LOG_MODULE_REGISTER(zlrs_storage_log, CONFIG_APP_LOG_LEVEL);
+LOG_MODULE_REGISTER(zlrs_log, CONFIG_APP_LOG_LEVEL);
 
-void zlrs_storage_log_absent(void)
-{
-	LOG_WRN("no log partition on this board, logs are not kept across reboots");
-}
-
-int zlrs_storage_log_info(zlrs_mgmt_log_info_t *out)
+int zlrs_log_info(zlrs_log_info_t *out)
 {
 	ARG_UNUSED(out);
 
-	return ZLRS_MGMT_E_STATE;
+	return -ENODEV;
 }
 
-int zlrs_storage_log_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *out,
-			  uint8_t *out_len)
+int zlrs_log_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *out, uint8_t *out_len)
 {
 	ARG_UNUSED(index);
 	ARG_UNUSED(offset);
@@ -56,11 +51,11 @@ int zlrs_storage_log_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *
 	ARG_UNUSED(out);
 	ARG_UNUSED(out_len);
 
-	return ZLRS_MGMT_E_STATE;
+	return -ENODEV;
 }
 #else
 
-LOG_MODULE_REGISTER(zlrs_storage_log, CONFIG_APP_LOG_LEVEL);
+LOG_MODULE_REGISTER(zlrs_log, CONFIG_APP_LOG_LEVEL);
 
 #define LOG_MOUNT_POINT "/lfs"
 
@@ -83,7 +78,7 @@ struct log_file {
 	uint32_t size;
 };
 
-static struct log_file log_files[ZLRS_MGMT_LOG_FILES_MAX];
+static struct log_file log_files[ZLRS_LOG_FILES_MAX];
 static uint8_t log_file_count;
 
 /* List the store, smallest file number first: the backend names files `<prefix><0000>` upward and
@@ -100,14 +95,14 @@ static int log_store_scan(void)
 	if (!log_mounted) {
 		rc = log_store_mount();
 		if (rc != 0) {
-			return ZLRS_MGMT_E_STATE;
+			return rc;
 		}
 	}
 
 	fs_dir_t_init(&dir);
 	rc = fs_opendir(&dir, LOG_MOUNT_POINT);
 	if (rc != 0) {
-		return ZLRS_MGMT_E_STATE;
+		return rc;
 	}
 
 	for (;;) {
@@ -136,7 +131,7 @@ static int log_store_scan(void)
 			continue;
 		}
 
-		if (found < ZLRS_MGMT_LOG_FILES_MAX) {
+		if (found < ZLRS_LOG_FILES_MAX) {
 			/* Insert sorted: at most a handful of files, an insertion sort is plenty */
 			uint8_t at = found;
 
@@ -150,7 +145,10 @@ static int log_store_scan(void)
 		}
 	}
 
-	(void)fs_closedir(&dir);
+	const int close_rc = fs_closedir(&dir);
+	if (rc != 0 || close_rc != 0) {
+		return rc != 0 ? rc : close_rc;
+	}
 	log_file_count = found;
 
 	/*
@@ -163,21 +161,17 @@ static int log_store_scan(void)
 		LOG_INF("log store: %u file(s), newest log.%04u", found, log_files[found - 1U].num);
 	}
 
-	return ZLRS_MGMT_OK;
+	return 0;
 }
 
 /* What the export needs: how many files, which is newest, and each size. No store on this board is
- * E_STATE, not an empty list — "nothing logged yet" and "no store here" are different answers. */
-int zlrs_storage_log_info(zlrs_mgmt_log_info_t *out)
+ * -ENODEV, not an empty list — "nothing logged yet" and "no store here" are different answers. */
+int zlrs_log_info(zlrs_log_info_t *out)
 {
 	int rc;
 
-	if (out == NULL) {
-		return ZLRS_MGMT_E_PARAM;
-	}
-
 	rc = log_store_scan();
-	if (rc != ZLRS_MGMT_OK) {
+	if (rc != 0) {
 		return rc;
 	}
 
@@ -190,20 +184,19 @@ int zlrs_storage_log_info(zlrs_mgmt_log_info_t *out)
 		out->size[i] = log_files[i].size;
 	}
 
-	return ZLRS_MGMT_OK;
+	return 0;
 }
 
 /* One chunk of one file. The caller (management protocol) bounds len; a short tail returns short. */
-int zlrs_storage_log_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *out,
-			  uint8_t *out_len)
+int zlrs_log_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *out, uint8_t *out_len)
 {
 	char path[sizeof(LOG_MOUNT_POINT) + 16U];
 	struct fs_file_t file;
 	ssize_t got;
 	int rc;
 
-	if (out == NULL || out_len == NULL || index >= log_file_count || len == 0U) {
-		return ZLRS_MGMT_E_PARAM;
+	if (index >= log_file_count || len == 0U) {
+		return -EINVAL;
 	}
 
 	(void)snprintf(path, sizeof(path), "%s/%s%04u", LOG_MOUNT_POINT,
@@ -212,24 +205,27 @@ int zlrs_storage_log_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *
 	fs_file_t_init(&file);
 	rc = fs_open(&file, path, FS_O_READ);
 	if (rc != 0) {
-		return ZLRS_MGMT_E_STATE;
+		return rc;
 	}
 
 	rc = fs_seek(&file, (off_t)offset, FS_SEEK_SET);
 	if (rc != 0) {
 		(void)fs_close(&file);
-		return ZLRS_MGMT_E_PARAM;
+		return -EINVAL;
 	}
 
 	got = fs_read(&file, out, len);
-	(void)fs_close(&file);
+	const int close_rc = fs_close(&file);
 	if (got < 0) {
-		return ZLRS_MGMT_E_STATE;
+		return (int)got;
 	}
 
+	if (close_rc != 0) {
+		return close_rc;
+	}
 	*out_len = (uint8_t)got;
 
-	return ZLRS_MGMT_OK;
+	return 0;
 }
 
 /* Retry before erasing: a reset during a write leaves LittleFS work to do on the next mount, and

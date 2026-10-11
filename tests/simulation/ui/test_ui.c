@@ -3,13 +3,13 @@
 #include <zephyr/drivers/gpio/gpio_emul.h>
 #include "ui.h"
 #include "rf/rf.h"
-#include "mgmt/mode.h"
-#include "data/data.h"
+#include "mgmt.h"
+#include "serial.h"
 ZBUS_CHAN_DEFINE(zlrs_rf_chan, zlrs_rf_status_t, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
 		 ZBUS_MSG_INIT(0));
 ZBUS_CHAN_DEFINE(zlrs_mode_chan, struct zlrs_mode, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
 		 ZBUS_MSG_INIT(0));
-ZBUS_CHAN_DEFINE(zlrs_data_chan, struct zlrs_data_status, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
+ZBUS_CHAN_DEFINE(zlrs_serial_chan, struct zlrs_serial_status, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
 		 ZBUS_MSG_INIT(0));
 static uint32_t holds(void)
 {

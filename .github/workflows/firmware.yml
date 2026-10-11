@@ -72,6 +72,12 @@ jobs:
           west build -b native_sim/native/64 zlrs/tests/simulation/settings -d build-settings-simulation
           ./build-settings-simulation/zephyr/zephyr.exe --flash_in_ram
 
+      - name: management command simulation
+        run: |
+          source zlrs/tools/zephyr-env.sh
+          west build -b native_sim/native/64 zlrs/tests/simulation/mgmt -d build-mgmt-simulation
+          ./build-mgmt-simulation/zephyr/zephyr.exe --flash_in_ram
+
       - name: UI simulation
         run: |
           source zlrs/tools/zephyr-env.sh

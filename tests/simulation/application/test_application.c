@@ -9,8 +9,8 @@
 
 #include "boot.h"
 #include "persist.h"
-#include "data/data.h"
-#include "mgmt/mode.h"
+#include "serial.h"
+#include "mgmt.h"
 #include "platform/watchdog.h"
 #include "rf/rf.h"
 #include "ui.h"
@@ -144,7 +144,7 @@ bool zlrs_mgmt_poll_enter(void)
 {
 	return ++polls == 1U;
 }
-int zlrs_mgmt_mode_run(void)
+int zlrs_mgmt_run(void)
 {
 	zassert_equal(pause_depth, 1U);
 	sessions++;
@@ -202,12 +202,12 @@ void zlrs_rf_frame(void)
 		identity.paired = false;
 	}
 }
-int zlrs_link_data_init(uint32_t baud)
+int zlrs_serial_init(uint32_t baud)
 {
 	zassert_equal(baud, 115200U);
 	return 0;
 }
-void zlrs_link_data_poll(void)
+void zlrs_serial_poll(void)
 {
 	if (rf_fault && polls == 3U) {
 		finish();

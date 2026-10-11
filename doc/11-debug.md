@@ -67,3 +67,5 @@ build/ui-simulation/zephyr/zephyr.exe
 It covers LED priority/cadence, short and long holds, cumulative requests, and recovery after a channel write-lock failure.
 
 The persist fixture backs up the entire settings partition and restores it in suite teardown. It exercises the original record bytes, enum validation, identity and pairing, factory reset, and an injected NVS write error. Native runs can use `--flash_in_ram` to avoid leaving a flash file.
+
+Management commands run with the real app command switch and real NVS in `tests/simulation/mgmt` (native simulator, `--flash_in_ram`). The hardware counterpart `tests/hardware/mgmt` uses the real app, USB, RF and flash. Its fixture snapshots NVS before main; recovery restores that snapshot and MCUboot rolls back the unconfirmed fixture. Never confirm or ship this fixture. Confirmation and one NVS write are explicitly fault-injected; the normal upgrade/confirmation path is separately verified on product images.

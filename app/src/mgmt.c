@@ -1,12 +1,11 @@
 /*
- * Management mode, see mgmt/mode.h: the session the management protocol runs in, and the device
- * commands it carries. The protocol itself (framing, dispatch) is core/mgmt; this is what each
- * command decodes wire arguments and calls the configuration/RF business owner.
+ * Management mode, see mgmt.h: the session the management protocol runs in, and the device
+ * commands it carries. core/mgmt supplies the wire codecs. This module decodes and executes device commands.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "mgmt/mode.h"
+#include "mgmt.h"
 
 #include <zephyr/app_version.h>
 #include <zephyr/device.h>
@@ -18,6 +17,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/logging/log_ctrl.h>
 #include <zephyr/storage/flash_map.h>
+#include <zephyr/sys/byteorder.h>
 
 #include <errno.h>
 #include <stdbool.h>
@@ -25,17 +25,18 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "data/data.h"
+#include "serial.h"
 #include "persist.h"
 #include "rf/rf.h"
 #include "platform/caps.h"
 #include "boot.h"
 #include "platform/slot_timer.h"
 #include "platform/watchdog.h"
-#include "storage/log.h"
+#include "log.h"
 #include "zlrs/mgmt/mgmt.h"
+#include "zlrs/proto/crypto.h"
 
-LOG_MODULE_REGISTER(zlrs_mgmt_mode, CONFIG_APP_LOG_LEVEL);
+LOG_MODULE_REGISTER(zlrs_mgmt, CONFIG_APP_LOG_LEVEL);
 
 ZBUS_CHAN_DEFINE(zlrs_mode_chan, struct zlrs_mode, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
 		 ZBUS_MSG_INIT(0));
@@ -255,10 +256,10 @@ bool zlrs_mgmt_poll_enter(void)
 /* ---- session ------------------------------------------------------------- */
 
 static zlrs_mgmt_parser_t cfg_parser;
-/* ---- backend: land commands in NVS and the link layer --------------------- */
+/* Device commands: decode wire values at this boundary. */
 
 /* Wire decoding belongs here; configuration validation and persistence have one owner. */
-static int config_result(int rc)
+static int persist_result(int rc)
 {
 	if (rc == 0) {
 		return ZLRS_MGMT_OK;
@@ -269,9 +270,8 @@ static int config_result(int rc)
 	return ZLRS_MGMT_E_STORE;
 }
 
-static int cfg_save_setting(void *ctx, uint8_t cmd, const uint8_t *value, uint8_t len)
+static int save_setting(uint8_t cmd, const uint8_t *value, uint8_t len)
 {
-	(void)ctx;
 	if (len != (cmd == ZLRS_MGMT_CMD_SET_BAUD ? 4U : 1U)) {
 		return ZLRS_MGMT_E_PARAM;
 	}
@@ -299,24 +299,22 @@ static int cfg_save_setting(void *ctx, uint8_t cmd, const uint8_t *value, uint8_
 	default:
 		return ZLRS_MGMT_E_UNKNOWN;
 	}
-	return config_result(zlrs_persist_save_settings(&settings));
+	return persist_result(zlrs_persist_save_settings(&settings));
 }
 
-static int cfg_save_root_key(void *ctx, const uint8_t key[ZLRS_KEY_LEN])
+static int save_root_key(const uint8_t key[ZLRS_KEY_LEN])
 {
-	(void)ctx;
 	const int rc = zlrs_persist_set_root_key(key);
 	if (rc == 0) {
 		zlrs_rf_credentials(zlrs_persist_state());
 	}
-	return config_result(rc);
+	return persist_result(rc);
 }
 
-static int cfg_read_status(void *ctx, zlrs_mgmt_status_t *out)
+static void read_status(zlrs_mgmt_status_t *out)
 {
-	(void)ctx;
 	const zlrs_rf_status_t rf = zlrs_rf_status();
-	const zlrs_persist_settings_t *const config = &zlrs_persist_state()->settings;
+	const zlrs_persist_settings_t *const settings = &zlrs_persist_state()->settings;
 
 	*out = (zlrs_mgmt_status_t){
 		.version = ZLRS_MGMT_VERSION,
@@ -325,9 +323,9 @@ static int cfg_read_status(void *ctx, zlrs_mgmt_status_t *out)
 		.state = rf.state,
 		.lq_percent = rf.lq_percent,
 		.band = ZLRS_RF_BAND,
-		.region = config->region,
-		.tx_power_dbm = config->power_dbm,
-		.data_baud = config->data_baud,
+		.region = settings->region,
+		.tx_power_dbm = settings->power_dbm,
+		.data_baud = settings->data_baud,
 	};
 	if (rf.data_band == ZLRS_DATA_BAND_SUBG) {
 		out->flags |= ZLRS_MGMT_FLAG_DATA_SUBG;
@@ -343,71 +341,6 @@ static int cfg_read_status(void *ctx, zlrs_mgmt_status_t *out)
 	}
 	memcpy(out->dev_id, rf.dev_id, ZLRS_DEV_ID_LEN);
 	memcpy(out->peer_id, rf.peer_id, ZLRS_DEV_ID_LEN);
-	return ZLRS_MGMT_OK;
-}
-
-static int cfg_new_dev_id(void *ctx)
-{
-	(void)ctx;
-	const int rc = zlrs_persist_new_identity();
-	zlrs_rf_credentials(zlrs_persist_state());
-	return config_result(rc);
-}
-
-static int cfg_pair(void *ctx)
-{
-	(void)ctx;
-	return config_result(zlrs_rf_pair_start());
-}
-
-static int cfg_erase_pair(void *ctx)
-{
-	(void)ctx;
-	const int rc = zlrs_persist_erase_pairing();
-	if (rc == 0) {
-		zlrs_rf_credentials(zlrs_persist_state());
-	}
-	return config_result(rc);
-}
-
-static int cfg_factory_reset(void *ctx)
-{
-	(void)ctx;
-	const int rc = zlrs_persist_factory_reset();
-	if (rc == 0) {
-		zlrs_rf_credentials(zlrs_persist_state());
-	}
-	return config_result(rc);
-}
-
-static int cfg_enter_recovery(void *vctx)
-{
-	(void)vctx;
-
-	/* Recovery returns only if the boot-mode flag could not be written. */
-	return (zlrs_boot_recovery() == 0) ? ZLRS_MGMT_OK : ZLRS_MGMT_E_STATE;
-}
-
-/* Host confirms this upgrade; the whole flow depends on it (see doc/07-firmware.md) */
-static int cfg_confirm_image(void *ctx)
-{
-	(void)ctx;
-
-	return zlrs_boot_confirm() == 0 ? ZLRS_MGMT_OK : ZLRS_MGMT_E_STORE;
-}
-
-/* Hand the build string to the host so it can check which version is running */
-static int cfg_read_build(void *ctx, char *out, size_t out_len)
-{
-	(void)ctx;
-
-	if (out == NULL || out_len == 0U) {
-		return ZLRS_MGMT_E_PARAM;
-	}
-
-	(void)snprintf(out, out_len, "%s", APP_VERSION_STRING);
-
-	return ZLRS_MGMT_OK;
 }
 
 /*
@@ -415,9 +348,8 @@ static int cfg_read_build(void *ctx, char *out, size_t out_len)
  * The update tool tells "the image I just sent" from "already rolled back": build strings
  * can match, hashes cannot. Only MCUboot's public format is used, no internal headers.
  */
-static int cfg_read_image_hash(void *ctx, uint8_t out[ZLRS_MGMT_IMAGE_HASH_LEN])
+static int read_image_hash(uint8_t out[ZLRS_MGMT_IMAGE_HASH_LEN])
 {
-	(void)ctx;
 
 #ifdef CONFIG_BOOTLOADER_MCUBOOT
 #define MCUBOOT_IMAGE_MAGIC    0x96f3b83dU
@@ -498,25 +430,6 @@ static int cfg_read_image_hash(void *ctx, uint8_t out[ZLRS_MGMT_IMAGE_HASH_LEN])
 	return ZLRS_MGMT_E_STATE;
 }
 
-/*
- * The log store lives in its own file (app/src/storage/log.c): it is the part of the management
- * protocol that touches flash, and it works on boards without a log partition too (E_STATE).
- */
-static int cfg_log_info(void *ctx, zlrs_mgmt_log_info_t *out)
-{
-	ARG_UNUSED(ctx);
-
-	return zlrs_storage_log_info(out);
-}
-
-static int cfg_log_read(void *ctx, uint8_t index, uint32_t offset, uint8_t len, uint8_t *out,
-			uint8_t *out_len)
-{
-	ARG_UNUSED(ctx);
-
-	return zlrs_storage_log_read(index, offset, len, out, out_len);
-}
-
 #if defined(CONFIG_ZLRS_APP_DEBUG)
 static uint8_t cfg_debug_ack(uint8_t cmd, uint8_t status, uint8_t *out, size_t out_len)
 {
@@ -561,30 +474,174 @@ static uint8_t cfg_debug_report(const uint8_t *request, uint8_t request_len, uin
 }
 #endif
 
+static uint8_t hex_nibble(char c, bool *ok)
+{
+	if (c >= '0' && c <= '9') {
+		return (uint8_t)(c - '0');
+	}
+	if (c >= 'a' && c <= 'f') {
+		return (uint8_t)(c - 'a' + 10);
+	}
+	if (c >= 'A' && c <= 'F') {
+		return (uint8_t)(c - 'A' + 10);
+	}
+
+	*ok = false;
+	return 0U;
+}
+
+static uint8_t ack_frame(uint8_t *out, size_t cap, uint8_t cmd, uint8_t status)
+{
+	const uint8_t body[2] = {cmd, status};
+	return zlrs_mgmt_encode(out, cap, ZLRS_MGMT_CMD_ACK, body, sizeof(body));
+}
+
+static uint8_t log_result(int rc)
+{
+	return rc == 0 ? ZLRS_MGMT_OK : rc == -EINVAL ? ZLRS_MGMT_E_PARAM : ZLRS_MGMT_E_STATE;
+}
+
+/* Called by the application owner inside its management maintenance window. */
+uint8_t zlrs_mgmt_command(uint8_t cmd, const uint8_t *payload, uint8_t len, uint8_t *out,
+			  size_t cap)
+{
+	int rc;
+	switch (cmd) {
+	case ZLRS_MGMT_CMD_ENTER:
+	case ZLRS_MGMT_CMD_EXIT:
+		return ack_frame(out, cap, cmd, ZLRS_MGMT_OK);
+	case ZLRS_MGMT_CMD_STATUS: {
+		zlrs_mgmt_status_t status;
+		uint8_t body[ZLRS_MGMT_STATUS_LEN];
+		read_status(&status);
+		zlrs_mgmt_status_encode(body, &status);
+		return zlrs_mgmt_encode(out, cap, ZLRS_MGMT_CMD_STATUS_RESP, body, sizeof(body));
+	}
+	case ZLRS_MGMT_CMD_BUILD: {
+		char build[ZLRS_MGMT_BUILD_MAX_LEN];
+		(void)snprintf(build, sizeof(build), "%s", APP_VERSION_STRING);
+		return zlrs_mgmt_encode(out, cap, ZLRS_MGMT_CMD_BUILD_RESP, (const uint8_t *)build,
+					strlen(build));
+	}
+	case ZLRS_MGMT_CMD_IMAGE_HASH: {
+		uint8_t hash[ZLRS_MGMT_IMAGE_HASH_LEN];
+		rc = read_image_hash(hash);
+		return rc == ZLRS_MGMT_OK
+			       ? zlrs_mgmt_encode(out, cap, ZLRS_MGMT_CMD_IMAGE_HASH_RESP, hash,
+						  sizeof(hash))
+			       : ack_frame(out, cap, cmd, rc);
+	}
+	case ZLRS_MGMT_CMD_CONFIRM:
+		return ack_frame(out, cap, cmd,
+				 zlrs_boot_confirm() == 0 ? ZLRS_MGMT_OK : ZLRS_MGMT_E_STORE);
+	case ZLRS_MGMT_CMD_RECOVERY:
+		(void)zlrs_boot_recovery(); /* Success reboots. */
+		return ack_frame(out, cap, cmd, ZLRS_MGMT_E_STATE);
+	case ZLRS_MGMT_CMD_PAIR:
+		return ack_frame(out, cap, cmd,
+				 zlrs_rf_pair_start() == 0 ? ZLRS_MGMT_OK : ZLRS_MGMT_E_STATE);
+	case ZLRS_MGMT_CMD_NEW_DEV_ID:
+		if (len != 0U) {
+			return ack_frame(out, cap, cmd, ZLRS_MGMT_E_PARAM);
+		}
+		rc = zlrs_persist_new_identity();
+		if (rc != 0) {
+			LOG_ERR("device identity update failed (%d)", rc);
+		}
+		zlrs_rf_credentials(zlrs_persist_state());
+		return ack_frame(out, cap, cmd, persist_result(rc));
+	case ZLRS_MGMT_CMD_ERASE_PAIR:
+		rc = zlrs_persist_erase_pairing();
+		if (rc == 0) {
+			zlrs_rf_credentials(zlrs_persist_state());
+		}
+		return ack_frame(out, cap, cmd, persist_result(rc));
+	case ZLRS_MGMT_CMD_FACTORY_RESET:
+		rc = zlrs_persist_factory_reset();
+		if (rc == 0) {
+			zlrs_rf_credentials(zlrs_persist_state());
+		}
+		return ack_frame(out, cap, cmd, persist_result(rc));
+	case ZLRS_MGMT_CMD_SET_KEY_HEX:
+	case ZLRS_MGMT_CMD_SET_PHRASE: {
+		uint8_t key[ZLRS_KEY_LEN];
+		if (cmd == ZLRS_MGMT_CMD_SET_KEY_HEX) {
+			if (len != 2U * ZLRS_KEY_LEN) {
+				return ack_frame(out, cap, cmd, ZLRS_MGMT_E_PARAM);
+			}
+			bool valid = true;
+			for (uint8_t i = 0; i < ZLRS_KEY_LEN; i++) {
+				const uint8_t hi = hex_nibble(payload[i * 2U], &valid);
+				const uint8_t lo = hex_nibble(payload[i * 2U + 1U], &valid);
+				key[i] = (hi << 4) | lo;
+			}
+			if (!valid) {
+				memset(key, 0, sizeof(key));
+				return ack_frame(out, cap, cmd, ZLRS_MGMT_E_PARAM);
+			}
+		} else {
+			if (len == 0U || len > ZLRS_MGMT_PHRASE_MAX_LEN) {
+				return ack_frame(out, cap, cmd, ZLRS_MGMT_E_PARAM);
+			}
+			char phrase[ZLRS_MGMT_PHRASE_MAX_LEN + 1U];
+			memcpy(phrase, payload, len);
+			phrase[len] = '\0';
+			zlrs_root_key_from_phrase(phrase, key);
+			memset(phrase, 0, sizeof(phrase));
+		}
+		rc = save_root_key(key);
+		memset(key, 0, sizeof(key));
+		return ack_frame(out, cap, cmd, rc);
+	}
+	case ZLRS_MGMT_CMD_SET_BAND:
+	case ZLRS_MGMT_CMD_SET_BAUD:
+	case ZLRS_MGMT_CMD_SET_REGION:
+	case ZLRS_MGMT_CMD_SET_POWER:
+	case ZLRS_MGMT_CMD_SET_ROLE:
+	case ZLRS_MGMT_CMD_SET_PROFILE:
+		return ack_frame(out, cap, cmd, save_setting(cmd, payload, len));
+	case ZLRS_MGMT_CMD_LOG_INFO: {
+		zlrs_log_info_t info;
+		uint8_t body[2U + 6U * ZLRS_LOG_FILES_MAX];
+		rc = zlrs_log_info(&info);
+		if (rc != 0) {
+			return ack_frame(out, cap, cmd, log_result(rc));
+		}
+		body[0] = info.count;
+		body[1] = info.newest;
+		for (uint8_t i = 0; i < info.count; i++) {
+			sys_put_le16(info.num[i], body + 2U + 6U * i);
+			sys_put_le32(info.size[i], body + 4U + 6U * i);
+		}
+		return zlrs_mgmt_encode(out, cap, ZLRS_MGMT_CMD_LOG_INFO_RESP, body,
+					2U + 6U * info.count);
+	}
+	case ZLRS_MGMT_CMD_LOG_READ: {
+		uint8_t body[5U + ZLRS_MGMT_LOG_CHUNK_MAX];
+		uint8_t got;
+		if (len != 6U || payload[5] > ZLRS_MGMT_LOG_CHUNK_MAX) {
+			return ack_frame(out, cap, cmd, ZLRS_MGMT_E_PARAM);
+		}
+		rc = zlrs_log_read(payload[0], sys_get_le32(payload + 1), payload[5], body + 5,
+				   &got);
+		if (rc != 0) {
+			return ack_frame(out, cap, cmd, log_result(rc));
+		}
+		memcpy(body, payload, 5);
+		return zlrs_mgmt_encode(out, cap, ZLRS_MGMT_CMD_LOG_DATA_RESP, body, 5U + got);
+	}
+	default:
+		return ack_frame(out, cap, cmd, ZLRS_MGMT_E_UNKNOWN);
+	}
+}
+
 /* ---- session ------------------------------------------------------------- */
 
-int zlrs_mgmt_mode_run(void)
+int zlrs_mgmt_run(void)
 {
 	const uint32_t timeout_ms = (uint32_t)CONFIG_ZLRS_APP_MGMT_TIMEOUT_S * 1000U;
 	uint32_t last_activity_ms;
 	bool exit_requested = false;
-	/* Protocol callbacks use copied status and common business operations. */
-	const zlrs_mgmt_backend_t backend = {
-		.ctx = NULL,
-		.save_root_key = cfg_save_root_key,
-		.read_status = cfg_read_status,
-		.save_setting = cfg_save_setting,
-		.new_dev_id = cfg_new_dev_id,
-		.pair = cfg_pair,
-		.erase_pair = cfg_erase_pair,
-		.factory_reset = cfg_factory_reset,
-		.enter_recovery = cfg_enter_recovery,
-		.confirm_image = cfg_confirm_image,
-		.read_build = cfg_read_build,
-		.read_image_hash = cfg_read_image_hash,
-		.log_info = cfg_log_info,
-		.log_read = cfg_log_read,
-	};
 
 	if (!cfg_port.ready) {
 		LOG_WRN("no management port: management mode unavailable");
@@ -611,8 +668,8 @@ int zlrs_mgmt_mode_run(void)
 	 * disarmed, and the idle timeout starts only after this synchronous flush. */
 	mgmt_log_flush();
 	if (cfg_enter_pending) {
-		const uint8_t len = zlrs_mgmt_dispatch(&backend, ZLRS_MGMT_CMD_ENTER, NULL, 0U,
-						       cfg_tx_line, sizeof(cfg_tx_line));
+		const uint8_t len = zlrs_mgmt_command(ZLRS_MGMT_CMD_ENTER, NULL, 0U, cfg_tx_line,
+						      sizeof(cfg_tx_line));
 
 		cfg_tx_pending = len;
 		flush_reply();
@@ -626,11 +683,11 @@ int zlrs_mgmt_mode_run(void)
 
 		zlrs_watchdog_feed();
 		publish_mode();
-		zlrs_link_data_poll();
+		zlrs_serial_poll();
 		(void)log_process();
 
 		/* Radio stopped in management mode: data port bytes are dropped and counted */
-		zlrs_link_data_discard_rx();
+		zlrs_serial_discard_rx();
 
 		flush_reply();
 		for (uint16_t i = 0U;
@@ -666,8 +723,8 @@ int zlrs_mgmt_mode_run(void)
 			} else
 #endif
 			{
-				len = zlrs_mgmt_dispatch(
-					&backend, cfg_parser.cmd, ZLRS_MGMT_PAYLOAD(&cfg_parser),
+				len = zlrs_mgmt_command(
+					cfg_parser.cmd, ZLRS_MGMT_PAYLOAD(&cfg_parser),
 					cfg_parser.payload_len, cfg_tx_line, sizeof(cfg_tx_line));
 			}
 
@@ -709,7 +766,7 @@ bool zlrs_mgmt_poll_enter(void)
 }
 
 /* Management protocol compiled out: the application still calls in, this says "not available" */
-int zlrs_mgmt_mode_run(void)
+int zlrs_mgmt_run(void)
 {
 	return -1;
 }

@@ -112,6 +112,9 @@ static int new_id(uint8_t id[ZLRS_DEV_ID_LEN])
 	if (rc == 0) {
 		memcpy(id, block, ZLRS_DEV_ID_LEN);
 		rc = id_valid(id) ? 0 : -EIO;
+		if (rc != 0) {
+			LOG_ERR("entropy returned an empty device ID");
+		}
 	}
 	memset(block, 0, sizeof(block));
 	return rc;

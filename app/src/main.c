@@ -8,8 +8,8 @@
 
 #include "boot.h"
 #include "persist.h"
-#include "data/data.h"
-#include "mgmt/mode.h"
+#include "serial.h"
+#include "mgmt.h"
 #include "platform/watchdog.h"
 #include "rf/rf.h"
 #include "ui.h"
@@ -25,7 +25,7 @@ static void enter_management_mode(void)
 	zlrs_rf_pause();
 	LOG_WRN("entering management mode");
 	zlrs_rf_log_snapshot();
-	const int rc = zlrs_mgmt_mode_run();
+	const int rc = zlrs_mgmt_run();
 	if (rc != 0) {
 		LOG_WRN("management mode ended without EXIT (rc %d)", rc);
 	}
@@ -68,7 +68,7 @@ int main(void)
 	pairing_saved = saved->paired;
 	const bool rf_ready = persist_rc == 0 && zlrs_rf_init(saved) == 0;
 	if (rf_ready) {
-		(void)zlrs_link_data_init(saved->settings.data_baud);
+		(void)zlrs_serial_init(saved->settings.data_baud);
 	} else {
 		LOG_ERR("fault state: not transmitting; management port stays available for "
 			"flashing");
@@ -82,7 +82,7 @@ int main(void)
 	for (;;) {
 		zlrs_watchdog_feed();
 		zlrs_rf_publish_state();
-		zlrs_link_data_poll();
+		zlrs_serial_poll();
 		zlrs_boot_poll(!rf_ready);
 		if (zlrs_mgmt_poll_enter()) {
 			enter_management_mode();

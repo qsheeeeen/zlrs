@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+source "Kconfig.zephyr"
+config ZLRS_APP_TX_POWER_DBM
+ int
+ default -10
+config ZLRS_APP_MGMT_TIMEOUT_S
+ int
+ default 10
+module = APP
+module-str = app
+source "subsys/logging/Kconfig.template.log_config"

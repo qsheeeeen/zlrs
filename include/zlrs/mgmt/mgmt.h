@@ -1,8 +1,6 @@
 /*
  * Management protocol: runs on the management CDC while in management mode
- * (table: doc/09-security.md 9). Pure C framing and dispatch: persistence and link actions go to
- * the application through backend callbacks, so the host tests can run every command against a
- * fake one.
+ * (table: doc/09-security.md 9). Pure C frame and fixed status codecs. The application executes device commands.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -55,7 +53,7 @@ extern "C" {
 #define ZLRS_MGMT_CMD_STATUS_RESP       0x81U /* see zlrs_mgmt_status_t */
 #define ZLRS_MGMT_CMD_BUILD_RESP        0x82U /* build string, at most ZLRS_MGMT_BUILD_MAX_LEN */
 #define ZLRS_MGMT_CMD_IMAGE_HASH_RESP   0x83U /* ZLRS_MGMT_IMAGE_HASH_LEN bytes of image hash */
-#define ZLRS_MGMT_CMD_LOG_INFO_RESP     0x84U /* see zlrs_mgmt_log_info_t */
+#define ZLRS_MGMT_CMD_LOG_INFO_RESP     0x84U /* count, newest, then file number/size pairs */
 #define ZLRS_MGMT_CMD_LOG_DATA_RESP     0x85U /* log index (1) + offset (4) + bytes */
 #define ZLRS_MGMT_CMD_DEBUG_REPORT_RESP 0x86U /* report id + offset + total + text chunk */
 
@@ -81,7 +79,6 @@ extern "C" {
 #define ZLRS_MGMT_BUILD_MAX_LEN  32U
 #define ZLRS_MGMT_IMAGE_HASH_LEN 32U
 /* Log store: at most this many files, and this many bytes back per read (one frame's payload) */
-#define ZLRS_MGMT_LOG_FILES_MAX  8U
 #define ZLRS_MGMT_LOG_CHUNK_MAX  80U
 
 typedef struct {
@@ -104,54 +101,6 @@ typedef struct {
 #define ZLRS_MGMT_FLAG_SESSION   0x04U
 #define ZLRS_MGMT_FLAG_DATA_SUBG 0x08U /* DATA currently uses sub-GHz */
 
-/*
- * What the log store holds: how many files, which one is being appended to (the export walks them
- * oldest first, so the host needs to know where the ring starts) and the size of each.
- */
-typedef struct {
-	uint8_t count;  /* files present, 0 when there is no store on this board */
-	uint8_t newest; /* index of the file the backend appends to */
-	uint16_t num[ZLRS_MGMT_LOG_FILES_MAX]; /* the number in the file's name, oldest first */
-	uint32_t size[ZLRS_MGMT_LOG_FILES_MAX];
-} zlrs_mgmt_log_info_t;
-
-/*
- * Device-side actions. Each callback returns ZLRS_MGMT_OK or ZLRS_MGMT_E_*; ctx comes from
- * the caller and can be a real NVS write or a fake in the host tests.
- */
-typedef struct {
-	int (*save_root_key)(void *ctx, const uint8_t key[ZLRS_KEY_LEN]);
-	int (*read_status)(void *ctx, zlrs_mgmt_status_t *out);
-	/*
-	 * Every simple setting arrives here: band, baud, region, power, role and profile. `value`
-	 * is the payload exactly as the host sent it — this layer checks its length and, for an
-	 * enumerated value, that it is in range — and `cmd` says what it means. Decoding (the baud is
-	 * little-endian), any further validation and everything it does to the device belong to the
-	 * backend: that keeps all six in one table on the application side.
-	 */
-	int (*save_setting)(void *ctx, uint8_t cmd, const uint8_t *value, uint8_t len);
-	/* Replace the device id with a fresh one (the pairing record goes with it) */
-	int (*new_dev_id)(void *ctx);
-	int (*pair)(void *ctx);
-	int (*erase_pair)(void *ctx);
-	int (*factory_reset)(void *ctx);
-	int (*enter_recovery)(void *ctx);
-	/* Host confirms this image: OK means it is recorded (the upgrade flow depends on it) */
-	int (*confirm_image)(void *ctx);
-	/* build string; E_STATE when unimplemented */
-	int (*read_build)(void *ctx, char *out, size_t out_len);
-	/* MCUboot hash of the running image (new build or rolled back one, the tool decides) */
-	int (*read_image_hash)(void *ctx, uint8_t out[ZLRS_MGMT_IMAGE_HASH_LEN]);
-	/*
-	 * Log store over the management port: the device only serves bytes here, the host decides what to
-	 * do with them. E_STATE when the board has no store to read.
-	 */
-	int (*log_info)(void *ctx, zlrs_mgmt_log_info_t *out);
-	int (*log_read)(void *ctx, uint8_t index, uint32_t offset, uint8_t len, uint8_t *out,
-			uint8_t *out_len);
-	void *ctx;
-} zlrs_mgmt_backend_t;
-
 /* Byte-at-a-time management frame parser */
 typedef struct {
 	uint8_t buf[ZLRS_MGMT_FRAME_MAX_LEN];
@@ -173,13 +122,6 @@ int zlrs_mgmt_feed(zlrs_mgmt_parser_t *p, uint8_t byte);
 /* Build a frame; returns its length, or 0 for invalid arguments */
 uint8_t zlrs_mgmt_encode(uint8_t *out, size_t out_len, uint8_t cmd, const uint8_t *payload,
 			 uint8_t payload_len);
-
-/*
- * Handle one command and write the response frame into out (SOF and CRC included).
- * Returns the response length; 0 means this command needs no response.
- */
-uint8_t zlrs_mgmt_dispatch(const zlrs_mgmt_backend_t *backend, uint8_t cmd, const uint8_t *payload,
-			   uint8_t payload_len, uint8_t *out, size_t out_len);
 
 /* status struct <-> fixed-size bytes */
 void zlrs_mgmt_status_encode(uint8_t out[ZLRS_MGMT_STATUS_LEN], const zlrs_mgmt_status_t *status);

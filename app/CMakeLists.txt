@@ -11,8 +11,8 @@ endif()
 set(zlrs_app_dir "${CMAKE_CURRENT_LIST_DIR}")
 
 target_sources(app PRIVATE
-  ${zlrs_app_dir}/src/mgmt/mode.c
-  ${zlrs_app_dir}/src/data/data.c
+  ${zlrs_app_dir}/src/mgmt.c
+  ${zlrs_app_dir}/src/serial.c
   ${zlrs_app_dir}/src/rf/power.c
   ${zlrs_app_dir}/src/main.c
   ${zlrs_app_dir}/src/boot.c
@@ -22,16 +22,16 @@ target_sources(app PRIVATE
   ${zlrs_app_dir}/src/platform/slot_timer.c
   ${zlrs_app_dir}/src/platform/watchdog.c
   ${zlrs_app_dir}/src/platform/radio.c
-  ${zlrs_app_dir}/src/storage/log.c
+  ${zlrs_app_dir}/src/log.c
   ${zlrs_app_dir}/src/ui.c
   ${zlrs_app_dir}/src/ui_pattern.c
 )
 
-target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG_SHELL app PRIVATE ${zlrs_app_dir}/src/mgmt/shell.c)
+target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG_SHELL app PRIVATE ${zlrs_app_dir}/src/shell.c)
 target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG app PRIVATE ${zlrs_app_dir}/src/rf/diagnostics.c)
 
 # App-internal headers are included the way they sit on disk: "platform/radio.h",
-# "data/data.h", "platform/caps.h", ... (the layers are described in doc/06-architecture.md).
+# "serial.h", "platform/caps.h", ... (the layers are described in doc/06-architecture.md).
 # core/proto supplies the private SHA declaration used by the platform implementation.
 target_include_directories(app PRIVATE "${zlrs_app_dir}/src" "${zlrs_app_dir}/../core/proto")
 
@@ -40,8 +40,8 @@ if(CONFIG_ZLRS_APP_RAM_RADIO)
     ${zlrs_app_dir}/src/rf/rf.c
     ${zlrs_app_dir}/src/platform/sha256.c
     ${zlrs_app_dir}/src/platform/radio.c
-    ${zlrs_app_dir}/src/data/data.c
-  ${zlrs_app_dir}/src/rf/power.c
+    ${zlrs_app_dir}/src/serial.c
+    ${zlrs_app_dir}/src/rf/power.c
     ${zlrs_app_dir}/../core/link/link.c
     ${zlrs_app_dir}/../core/link/status.c
     ${zlrs_app_dir}/../core/proto/crypto.c

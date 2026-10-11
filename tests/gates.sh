@@ -42,7 +42,7 @@ if hit=$(grep -rn -E '\b(CONFIG_)?BOARD_[A-Z0-9_]+' app 2>/dev/null); then
 fi
 
 if hit=$(rg -n 'zlrs_link_t|zlrs/link/link.h|zlrs_storage_settings_' \
-	app/src/data app/src/mgmt app/src/ui.c app/src/ui.h app/src/ui_pattern.c app/src/main.c); then
+	app/src/serial.c app/src/mgmt.c app/src/shell.c app/src/ui.c app/src/ui.h app/src/ui_pattern.c app/src/main.c); then
 	bad "a frontend reaches into RF or private configuration storage:"
 	echo "$hit"
 fi
@@ -59,6 +59,11 @@ fi
 if hit=$(rg -n 'rf/rf.h|zlrs_rf_|zbus' app/src/persist.c app/src/persist.h); then
  bad "persist depends on RF or state publication:"
  echo "$hit"
+fi
+
+if hit=$(rg -n 'zlrs/mgmt|ZLRS_MGMT' app/src/log.c app/src/log.h); then
+	bad "log storage depends on the management protocol:"
+	echo "$hit"
 fi
 
 # Shipped configurations: everything that produces a firmware image. A debug configuration is

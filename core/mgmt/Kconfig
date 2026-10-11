@@ -2,14 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 config ZLRS_MGMT
-	bool "Management protocol (framing and dispatch on the management CDC)"
+	bool "Management protocol (frame and status codecs)"
 	select ZLRS_PROTO
 	help
-	  Framing and command dispatch for the management CDC while the device is in management mode
-	  (entries: doc/07-firmware.md, command table: doc/09-security.md 9).
-	  Pure C: commands only touch the device through backend callbacks, so the host tests
-	  can run every one of them against a fake backend, see tests/host.
-
-module = ZLRS_MGMT
-module-str = zlrs_mgmt
-source "subsys/logging/Kconfig.template.log_config"
+	  Pure C management frame and status codecs, tested on the host.

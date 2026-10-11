@@ -43,8 +43,8 @@ static struct {
 } published;
 
 uint16_t __real_zlrs_link_tx_space(const zlrs_link_t *link);
-uint16_t __real_zlrs_link_data_read(uint8_t *buf, uint16_t len);
-bool __real_zlrs_link_data_receive(const uint8_t *buf, uint16_t len);
+uint16_t __real_zlrs_serial_read(uint8_t *buf, uint16_t len);
+bool __real_zlrs_serial_receive(const uint8_t *buf, uint16_t len);
 
 uint16_t __wrap_zlrs_link_tx_space(const zlrs_link_t *link)
 {
@@ -93,10 +93,10 @@ uint16_t __wrap_zlrs_link_tx_space(const zlrs_link_t *link)
 	return __real_zlrs_link_tx_space(link);
 }
 
-uint16_t __wrap_zlrs_link_data_read(uint8_t *buf, uint16_t len)
+uint16_t __wrap_zlrs_serial_read(uint8_t *buf, uint16_t len)
 {
 	if (!stream.active) {
-		return __real_zlrs_link_data_read(buf, len);
+		return __real_zlrs_serial_read(buf, len);
 	}
 	if (!stream.started || stream.generated == stream.target) {
 		return 0U;
@@ -108,10 +108,10 @@ uint16_t __wrap_zlrs_link_data_read(uint8_t *buf, uint16_t len)
 	return len;
 }
 
-bool __wrap_zlrs_link_data_receive(const uint8_t *buf, uint16_t len)
+bool __wrap_zlrs_serial_receive(const uint8_t *buf, uint16_t len)
 {
 	if (!stream.active) {
-		return __real_zlrs_link_data_receive(buf, len);
+		return __real_zlrs_serial_receive(buf, len);
 	}
 	const uint32_t now = zlrs_slot_timer_now_us();
 

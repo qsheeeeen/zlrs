@@ -15,7 +15,7 @@
 #include <errno.h>
 
 #include "persist.h"
-#include "data/data.h"
+#include "serial.h"
 #include "rf/rf.h"
 #include "rf/diagnostics.h"
 #include "rf/power.h"
@@ -89,7 +89,7 @@ static bool on_data(void *ctx, const uint8_t *data, uint16_t len)
 {
 	(void)ctx;
 
-	if (!zlrs_link_data_receive(data, len)) {
+	if (!zlrs_serial_receive(data, len)) {
 		return false;
 	}
 	data_rx_bytes += len;
@@ -495,7 +495,7 @@ static void pump_serial(void)
 			room = (uint16_t)sizeof(chunk);
 		}
 
-		got = zlrs_link_data_read(chunk, room);
+		got = zlrs_serial_read(chunk, room);
 		if (got == 0U) {
 			return;
 		}
@@ -585,7 +585,7 @@ static void report(uint32_t now_ms)
 	zlrs_radio_diag(&radio_diag);
 	LOG_INF("data: bytes=%u air_tx=%u air_rx=%u failed=%u drop=%u lq=%u%%", data_rx_bytes,
 		stats->tx_frames, stats->rx_frames, stats->radio_fail,
-		stats->data_drop_bytes + zlrs_link_data_dropped(), stats->lq_percent);
+		stats->data_drop_bytes + zlrs_serial_dropped(), stats->lq_percent);
 	LOG_INF("radio: transactions=%u late=%u phase=%d/%d duty_denied=%u",
 		radio_diag.transactions, radio_diag.late_starts, phase_err_us, phase_last_us,
 		duty.denied);
@@ -688,8 +688,8 @@ void zlrs_rf_log_snapshot(void)
 	LOG_INF("radio transmit: tails=%u errors=%u underflows=%u ready_max=%u",
 		radio_state.tx_fifo_tails, radio_state.tx_fifo_errors,
 		radio_state.tx_fifo_underflows, radio_state.tx_fifo_ready_us_max);
-	zlrs_link_data_state_t endpoints[2];
-	const size_t count = zlrs_link_data_state(endpoints, ARRAY_SIZE(endpoints));
+	zlrs_serial_state_t endpoints[2];
+	const size_t count = zlrs_serial_state(endpoints, ARRAY_SIZE(endpoints));
 	for (size_t i = 0U; i < count; i++) {
 		LOG_INF("data endpoint: %s active=%u input=%u rx_queue=%u tx_queue=%u drop=%u",
 			endpoints[i].name, endpoints[i].active ? 1U : 0U, endpoints[i].rx_total,

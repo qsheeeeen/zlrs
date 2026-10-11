@@ -1,10 +1,10 @@
 /*
- * Data link I/O, see data/data.h: rings, ISR and counters for the passthrough.
+ * Data link I/O, see serial.h: rings, ISR and counters for the passthrough.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "data/data.h"
+#include "serial.h"
 
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
@@ -17,9 +17,9 @@
 #include <stddef.h>
 #include <string.h>
 
-LOG_MODULE_REGISTER(zlrs_link_data, CONFIG_APP_LOG_LEVEL);
+LOG_MODULE_REGISTER(zlrs_serial, CONFIG_APP_LOG_LEVEL);
 
-ZBUS_CHAN_DEFINE(zlrs_data_chan, struct zlrs_data_status, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
+ZBUS_CHAN_DEFINE(zlrs_serial_chan, struct zlrs_serial_status, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
 		 ZBUS_MSG_INIT(0));
 
 /*
@@ -169,7 +169,7 @@ static void data_ep_drop_rx(struct data_ep *const ep)
 	data_ep_resume_rx(ep);
 }
 
-void zlrs_link_data_discard_rx(void)
+void zlrs_serial_discard_rx(void)
 {
 	for (size_t i = 0U; i < ARRAY_SIZE(data_eps); i++) {
 		if (data_eps[i].ready) {
@@ -178,7 +178,7 @@ void zlrs_link_data_discard_rx(void)
 	}
 }
 
-size_t zlrs_link_data_state(zlrs_link_data_state_t *out, size_t count)
+size_t zlrs_serial_state(zlrs_serial_state_t *out, size_t count)
 {
 	const struct data_ep *const active = data_active();
 	size_t written = 0U;
@@ -202,7 +202,7 @@ size_t zlrs_link_data_state(zlrs_link_data_state_t *out, size_t count)
 	return written;
 }
 
-int zlrs_link_data_init(uint32_t baud)
+int zlrs_serial_init(uint32_t baud)
 {
 	for (size_t i = 0U; i < ARRAY_SIZE(data_eps); i++) {
 		const struct device *const dev = data_eps[i].dev;
@@ -253,7 +253,7 @@ int zlrs_link_data_init(uint32_t baud)
 	return 0;
 }
 
-uint16_t zlrs_link_data_read(uint8_t *buf, uint16_t len)
+uint16_t zlrs_serial_read(uint8_t *buf, uint16_t len)
 {
 	const struct data_ep *const active = data_active();
 	uint16_t got = 0U;
@@ -277,7 +277,7 @@ uint16_t zlrs_link_data_read(uint8_t *buf, uint16_t len)
 	return got;
 }
 
-bool zlrs_link_data_receive(const uint8_t *buf, uint16_t len)
+bool zlrs_serial_receive(const uint8_t *buf, uint16_t len)
 {
 	struct data_ep *const ep = data_active();
 
@@ -295,7 +295,7 @@ bool zlrs_link_data_receive(const uint8_t *buf, uint16_t len)
 	return true;
 }
 
-uint32_t zlrs_link_data_dropped(void)
+uint32_t zlrs_serial_dropped(void)
 {
 	uint32_t dropped = 0U;
 
@@ -306,20 +306,20 @@ uint32_t zlrs_link_data_dropped(void)
 	return dropped;
 }
 
-void zlrs_link_data_poll(void)
+void zlrs_serial_poll(void)
 {
 	const struct data_ep *const ep = data_active();
-	const struct zlrs_data_status status = {
+	const struct zlrs_serial_status status = {
 		.ready = ep != NULL,
 		.usb_active = ep == &data_eps[DATA_USB],
 		.input_paused = ep != NULL && ep->rx_paused,
-		.dropped = zlrs_link_data_dropped(),
+		.dropped = zlrs_serial_dropped(),
 	};
-	static struct zlrs_data_status last;
+	static struct zlrs_serial_status last;
 	static bool published;
 	if ((!published || last.ready != status.ready || last.usb_active != status.usb_active ||
 	     last.input_paused != status.input_paused || last.dropped != status.dropped) &&
-	    zbus_chan_pub(&zlrs_data_chan, &status, K_NO_WAIT) == 0) {
+	    zbus_chan_pub(&zlrs_serial_chan, &status, K_NO_WAIT) == 0) {
 		last = status;
 		published = true;
 	}

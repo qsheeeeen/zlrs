@@ -3,8 +3,8 @@
 #include <zephyr/shell/shell.h>
 #include <zephyr/dfu/mcuboot.h>
 #include <zephyr/storage/flash_map.h>
-#include "data/data.h"
-#include "mgmt/mode.h"
+#include "serial.h"
+#include "mgmt.h"
 #include "platform/caps.h"
 #include "boot.h"
 #include "rf/rf.h"
@@ -61,8 +61,8 @@ static int cmd_mgmt(const struct shell *sh, size_t argc, char **argv)
  */
 static int cmd_ports(const struct shell *sh, size_t argc, char **argv)
 {
-	zlrs_link_data_state_t states[2];
-	const size_t count = zlrs_link_data_state(states, ARRAY_SIZE(states));
+	zlrs_serial_state_t states[2];
+	const size_t count = zlrs_serial_state(states, ARRAY_SIZE(states));
 
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
