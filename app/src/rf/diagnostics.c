@@ -2,7 +2,7 @@
 #include "rf/diagnostics.h"
 #include "rf/rf.h"
 #include "rf/power.h"
-#include "platform/radio.h"
+#include "platform/lr2021.h"
 #include "platform/slot_timer.h"
 #include "zlrs/mgmt/mgmt.h"
 
@@ -200,14 +200,14 @@ static void mgmt_debug_rate(struct mgmt_debug_report_writer *writer)
 
 static void mgmt_debug_radio(struct mgmt_debug_report_writer *writer)
 {
-	zlrs_radio_diag_t diag;
+	zlrs_lr2021_diag_t diag;
 	struct zlrs_slot_timer_stats timer;
 	const uint32_t protocol_ms = zlrs_slot_timer_now_ms();
 	const uint32_t kernel_ms = k_uptime_get_32();
 	const uint32_t max_airtime_us =
-		zlrs_radio_airtime_us(&snapshot.data_mod, ZLRS_FRAME_MAX_LEN);
+		zlrs_lr2021_airtime_us(&snapshot.data_mod, ZLRS_FRAME_MAX_LEN);
 
-	zlrs_radio_diag(&diag);
+	zlrs_lr2021_diag(&diag);
 	zlrs_slot_timer_stats(&timer);
 	mgmt_debug_append(writer, "[FRAME PLAN]\n");
 	mgmt_debug_append(writer, "  Frame period       : %u.%03u ms\n",
@@ -293,9 +293,9 @@ static void mgmt_debug_radio(struct mgmt_debug_report_writer *writer)
 			  "  Window outcomes    : expired %u   incomplete %u   restarted %u\n",
 			  diag.rx_expired, diag.rx_incomplete, diag.rx_restarted);
 	mgmt_debug_append(writer, "  RX finish          : last / max %u / %u us\n",
-			  diag.rx_finish_us_last, diag.rx_finish_us_max);
+			  snapshot.rx_finish_us_last, snapshot.rx_finish_us_max);
 	mgmt_debug_append(writer, "  Link processing    : last / max %u / %u us\n",
-			  diag.rx_protocol_us_last, diag.rx_protocol_us_max);
+			  snapshot.rx_protocol_us_last, snapshot.rx_protocol_us_max);
 	mgmt_debug_append(writer, "  FIFO reads         : %u packets   %u B   %u / %u us\n",
 			  diag.rx_packets, diag.rx_fifo_bytes, diag.rx_fifo_us_last,
 			  diag.rx_fifo_us_max);

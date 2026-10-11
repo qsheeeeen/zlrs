@@ -3,7 +3,7 @@
 #include <stdbool.h>
 
 /* Simulate a failed LR2021 init while exercising the real app, USB, NVS and management code. */
-int __wrap_zlrs_radio_init(void)
+int __wrap_zlrs_lr2021_init(void)
 {
 	return -EIO;
 }

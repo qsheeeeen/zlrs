@@ -18,7 +18,9 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "tests/hardware"))
 sys.path.insert(0, str(REPO / "tools"))
 from unit.run import image_hash
+from zlrs_cli import positive_seconds
 from zlrs_update import image_hash_of
+import zlrs_mgmt as mgmt
 
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 BENCH = re.compile(r"BENCH active=(\d+) target=(\d+) queued=(\d+) rx=(\d+) bad=(\d+) "
@@ -53,15 +55,33 @@ def command(port, text):
     return ANSI.sub("", output.decode(errors="replace"))
 
 
+def debug_report(identity, name):
+    path = f"/dev/serial/by-id/usb-zlrs_ZLRS_{identity}-if02"
+    with serial.Serial(path, 115200, timeout=2) as port:
+        def request(cmd):
+            port.write(mgmt.encode(cmd))
+            got, reply = mgmt.read_response(port)
+            if got != mgmt.ACK or reply != bytes((cmd, 0)):
+                raise RuntimeError(f"Management command failed on {identity}: {got}, {reply!r}")
+
+        request(mgmt.CMD_ENTER)
+        try:
+            return mgmt.read_debug_report(port, mgmt.DEBUG_REPORTS[name]).decode()
+        finally:
+            request(mgmt.CMD_EXIT)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--serial", required=True, help="first board USB serial")
     parser.add_argument("--peer", required=True, help="second board USB serial")
     parser.add_argument("--image", type=Path,
-                        default=REPO.parent / "build/radio/zephyr/zephyr.signed.bin")
+                        default=REPO / "build/radio/radio/zephyr/zephyr.signed.bin")
     parser.add_argument("--log", type=Path, required=True)
     parser.add_argument("--bytes", type=int, default=262145)
     parser.add_argument("--rounds", type=int, default=3)
+    parser.add_argument("--timeout", type=positive_seconds, default=60,
+                        help="maximum seconds per DATA round (default: 60)")
     parser.add_argument("--raw", action="store_true", help="image must enable ZLRS_TEST_RAW_MS")
     args = parser.parse_args()
     if args.serial == args.peer or not 0 < args.bytes <= 16 * 1024 * 1024 or args.rounds < 1:
@@ -123,7 +143,11 @@ def main():
                 for identity in identities:
                     wait_image(identity, expected)
             else:
-                record["before"] = both("zlrs radio")
+                def reports(name):
+                    return dict(zip(identities, pool.map(
+                        lambda identity: debug_report(identity, name), identities)))
+
+                record["before"] = reports("radio")
                 names = ("active", "target", "queued", "rx", "bad", "duration_us", "goodput_Bps")
                 for number in range(args.rounds):
                     deadline = time.monotonic() + 20
@@ -136,12 +160,21 @@ def main():
                     start = both("test_data start")
                     if not all("BENCH start: 0" in output for output in start.values()):
                         raise RuntimeError("Cannot start both data sources")
-                    deadline = time.monotonic() + 30
+                    deadline = time.monotonic() + args.timeout
                     while True:
                         result = parse("test_data status", BENCH, names)
+                        record["last_round"] = {"round": number + 1, "nodes": result}
                         if all(value["rx"] >= args.bytes for value in result.values()):
                             break
                         if time.monotonic() > deadline:
+                            record["timeout_images"] = {}
+                            for identity in identities:
+                                try:
+                                    record["timeout_images"][identity] = image_hash(identity)
+                                except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                                    record["timeout_images"][identity] = str(error)
+                            record["timeout_radio"] = reports("radio")
+                            record["timeout_link"] = reports("link")
                             raise TimeoutError("RF data delivery timed out")
                     record["rounds"].append({"round": number + 1, "nodes": result})
                     print(json.dumps(record["rounds"][-1]), flush=True)
@@ -151,7 +184,7 @@ def main():
                     stopped = both("test_data stop")
                     if not all("BENCH stop: 0" in output for output in stopped.values()):
                         raise RuntimeError("Radio queue did not drain before stop")
-                record["after"] = both("zlrs radio")
+                record["after"] = reports("radio")
             both("test_radio restore")
             consoles.clear()
     finally:

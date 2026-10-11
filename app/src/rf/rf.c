@@ -22,7 +22,7 @@
 #include "platform/caps.h"
 #include "platform/slot_timer.h"
 #include "platform/watchdog.h"
-#include "platform/radio.h"
+#include "platform/lr2021.h"
 #include "zlrs/mgmt/mgmt.h"
 
 #include "zlrs/link/link.h"
@@ -147,8 +147,8 @@ static void plan_init(void)
 	slot_prepare_us =
 		ZLRS_DATA_SUBG ? CONFIG_ZLRS_APP_PREPARE_US : CONFIG_ZLRS_APP_DATA_24_PREPARE_US;
 	data_mtu = ZLRS_PAYLOAD_MAX_LEN - 4U;
-	slot_budget_us = slot_prepare_us + CONFIG_ZLRS_APP_TX_GUARD_US + ZLRS_RADIO_STARTUP_US +
-			 zlrs_radio_airtime_us(&data_mod, ZLRS_FRAME_MAX_LEN) + 200U;
+	slot_budget_us = slot_prepare_us + CONFIG_ZLRS_APP_TX_GUARD_US + ZLRS_LR2021_STARTUP_US +
+			 zlrs_lr2021_airtime_us(&data_mod, ZLRS_FRAME_MAX_LEN) + 200U;
 	frame_period_us = ZLRS_SLOT_COUNT * slot_budget_us;
 	data_rate_hz = 1000000U / frame_period_us;
 	if (CONFIG_ZLRS_APP_RESYNC_PERIOD_MS > 0) {
@@ -224,14 +224,36 @@ static void load_identity(const zlrs_persist_state_t *saved)
 
 static void pump_serial(void);
 
+static uint32_t rx_finish_us_last, rx_finish_us_max;
+static uint32_t rx_protocol_us_last, rx_protocol_us_max;
+
+/* RF owns protocol completion; the LR2021 adapter only returns hardware facts. */
+static bool poll_radio(zlrs_lr2021_result_t *result)
+{
+	if (!zlrs_lr2021_poll(result)) {
+		return false;
+	}
+	const uint32_t protocol_us = zlrs_slot_timer_now_us();
+	zlrs_link_complete(&link_data, result->status == 0 ? ZLRS_RADIO_OK : ZLRS_RADIO_FAIL,
+			   result->size, result->rssi_dbm, result->snr_db, result->completed_ms);
+	if (result->status == 0 && result->size > 0U) {
+		const uint32_t finish_us = zlrs_slot_timer_now_us();
+		rx_protocol_us_last = finish_us - protocol_us;
+		rx_protocol_us_max = MAX(rx_protocol_us_max, rx_protocol_us_last);
+		rx_finish_us_last = finish_us - result->done_us;
+		rx_finish_us_max = MAX(rx_finish_us_max, rx_finish_us_last);
+	}
+	return true;
+}
+
 /* Wait against real elapsed time. Hardware alarms wake the thread at slot deadlines. */
-static void radio_wait_done(uint32_t budget_us)
+static void radio_wait_done(uint32_t budget_us, zlrs_lr2021_result_t *result)
 {
 	const uint32_t deadline = zlrs_slot_timer_now_us() + budget_us;
 
 	while ((int32_t)(deadline - zlrs_slot_timer_now_us()) > 0) {
-		if (zlrs_radio_irq_pending()) {
-			if (zlrs_radio_drain()) {
+		if (zlrs_lr2021_irq_pending()) {
+			if (poll_radio(result)) {
 				return;
 			}
 		}
@@ -239,14 +261,14 @@ static void radio_wait_done(uint32_t budget_us)
 		const int32_t remain = (int32_t)(deadline - zlrs_slot_timer_now_us());
 
 		if (remain > 0) {
-			(void)zlrs_radio_wait_us((uint32_t)remain);
+			(void)zlrs_lr2021_wait_us((uint32_t)remain);
 		}
 	}
 }
 
 /* Debug measurements of the absolute frame clock, slot work and authenticated RX offsets. */
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
-static zlrs_radio_diag_t radio_diag;
+static zlrs_lr2021_diag_t radio_diag;
 #endif
 
 /* TX owns the absolute clock; RX follows verified IRQ timestamps and scans when deaf. */
@@ -375,7 +397,7 @@ static void run_slot(uint8_t slot)
 		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, now_ms);
 		return;
 	}
-	zlrs_radio_slot(slot_nominal_us + CONFIG_ZLRS_APP_TX_GUARD_US, slot_deadline_us);
+	zlrs_lr2021_slot(slot_nominal_us + CONFIG_ZLRS_APP_TX_GUARD_US, slot_deadline_us);
 
 	if (req->is_tx) {
 		serial_pump_us_last = protocol_at_us - pump_at_us;
@@ -387,7 +409,7 @@ static void run_slot(uint8_t slot)
 	/* Out of duty budget: give the slot up (finish as a radio failure, the link retries next
 	 * round). Only constrains the sub-G link. */
 	if (req->is_tx && on_subg &&
-	    !zlrs_duty_reserve(&duty, (zlrs_radio_airtime_us(&req->mod, req->size) + 999U) / 1000U,
+	    !zlrs_duty_reserve(&duty, (zlrs_lr2021_airtime_us(&req->mod, req->size) + 999U) / 1000U,
 			       now_ms)) {
 		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, now_ms);
 		return;
@@ -395,7 +417,7 @@ static void run_slot(uint8_t slot)
 
 	const uint32_t prepare_started_us = now_us();
 
-	if (zlrs_radio_prepare(link, req) != 0) {
+	if (zlrs_lr2021_prepare(req) != 0) {
 		if (req->is_tx) {
 			late_prepare_entry_us = slot_start_us - prepare_at_us;
 			late_prepare_build_us = prepare_started_us - slot_start_us;
@@ -408,8 +430,8 @@ static void run_slot(uint8_t slot)
 	/* Modem, authentication and FIFO prefix are ready. The timer issues SET_TX;
 	 * the owner then appends a fallback FLRC packet's tail while it is on air. */
 	const int launch_rc =
-		req->is_tx ? zlrs_radio_launch_at(slot_nominal_us + CONFIG_ZLRS_APP_TX_GUARD_US)
-			   : zlrs_radio_launch();
+		req->is_tx ? zlrs_lr2021_launch_at(slot_nominal_us + CONFIG_ZLRS_APP_TX_GUARD_US)
+			   : zlrs_lr2021_launch();
 
 	if (launch_rc != 0) {
 		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_slot_timer_now_ms());
@@ -426,36 +448,35 @@ static void run_slot(uint8_t slot)
 			link, role_tx ? ZLRS_SLOT_DATA_A : ZLRS_SLOT_DATA_B, next_ms, &size);
 
 		if (buf != NULL) {
-			(void)zlrs_radio_preload_tx(buf, size);
+			(void)zlrs_lr2021_preload_tx(buf, size);
 		}
 	}
 	const int32_t remaining_us = (int32_t)(slot_deadline_us - now_us());
 
+	zlrs_lr2021_result_t result = {0};
 	if (remaining_us > 0) {
-		radio_wait_done((uint32_t)remaining_us);
+		radio_wait_done((uint32_t)remaining_us, &result);
 	}
 
-	zlrs_radio_drain();
+	(void)poll_radio(&result);
 
 	/* If completion did not close the request, abort it before the next slot. */
 	if (zlrs_link_is_busy(link)) {
-		zlrs_radio_abort();
+		zlrs_lr2021_abort();
 		zlrs_link_complete(link, req->is_tx ? ZLRS_RADIO_FAIL : ZLRS_RADIO_OK, 0U, 0, 0,
 				   zlrs_slot_timer_now_ms());
 	}
 
 	if (zlrs_link_get_stats(link)->slot_hit[link_slot] != hit_before &&
 	    zlrs_link_get_stats(link)->rx_frames != good_before) {
-		uint32_t done_us;
-		uint32_t airtime_us;
-
 		last_rx_any_ms = zlrs_slot_timer_now_ms();
 		/* TX is the clock master. Only RX follows verified packets, timestamped in the GPIO ISR. */
-		if (!role_tx && !phase_adj_set && zlrs_radio_rx_timing(&done_us, &airtime_us)) {
+		if (!role_tx && !phase_adj_set && result.status == 0 && result.size > 0U) {
 			/* Include SPI command transfer and synthesizer/PA startup in the phase origin. */
 			const uint32_t expected = slot_nominal_us + CONFIG_ZLRS_APP_TX_GUARD_US +
-						  ZLRS_RADIO_PHASE_STARTUP_US;
-			const int32_t err = (int32_t)(done_us - airtime_us - expected);
+						  ZLRS_LR2021_PHASE_STARTUP_US;
+			const int32_t err =
+				(int32_t)(result.done_us - result.airtime_us - expected);
 			const int32_t limit = (int32_t)frame_period_us / 16;
 
 			/* Once acquired, discard delayed IRQ outliers rather than move the clock. */
@@ -582,7 +603,7 @@ static void report(uint32_t now_ms)
 #endif
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
 	const zlrs_link_stats_t *stats = zlrs_link_get_stats(&link_data);
-	zlrs_radio_diag(&radio_diag);
+	zlrs_lr2021_diag(&radio_diag);
 	LOG_INF("data: bytes=%u air_tx=%u air_rx=%u failed=%u drop=%u lq=%u%%", data_rx_bytes,
 		stats->tx_frames, stats->rx_frames, stats->radio_fail,
 		stats->data_drop_bytes + zlrs_serial_dropped(), stats->lq_percent);
@@ -654,6 +675,10 @@ void zlrs_rf_diagnostics_capture(zlrs_rf_diagnostics_t *out)
 	out->protocol_build_us_last = protocol_build_us_last;
 	out->packet_build_us_last = packet_build_us_last;
 	out->packet_build_us_max = packet_build_us_max;
+	out->rx_finish_us_last = rx_finish_us_last;
+	out->rx_finish_us_max = rx_finish_us_max;
+	out->rx_protocol_us_last = rx_protocol_us_last;
+	out->rx_protocol_us_max = rx_protocol_us_max;
 	out->tx_power_dbm = tx_power_dbm;
 }
 #endif
@@ -676,8 +701,8 @@ void zlrs_rf_log_snapshot(void)
 		stats->slot_fail[ZLRS_SLOT_DATA_B], stats->rx_dup, stats->rx_out_of_order,
 		stats->tx_retries, data.arq_seq, data.arq_rx_seq, data.sess_nonce_t,
 		data.sess_nonce_r, data.pair_fingerprint);
-	zlrs_radio_diag_t radio_state;
-	zlrs_radio_diag(&radio_state);
+	zlrs_lr2021_diag_t radio_state;
+	zlrs_lr2021_diag(&radio_state);
 	LOG_INF("radio snapshot: late=%u setup=%u errors=%04x error_freq=%u phase=%d/%d",
 		radio_state.late_starts, radio_state.submit_us_max, radio_state.chip_errors,
 		radio_state.chip_error_freq_hz, phase_err_us, phase_last_us);
@@ -773,7 +798,7 @@ void zlrs_rf_pause(void)
 	k_thread_priority_set(k_current_get(), CONFIG_MAIN_THREAD_PRIORITY);
 	if (radio_ready) {
 		zlrs_slot_timer_cancel_launch();
-		zlrs_radio_abort();
+		zlrs_lr2021_abort();
 	}
 	if (links_ready) {
 		zlrs_link_discard_prepared_data(&link_data);
@@ -897,7 +922,7 @@ int zlrs_rf_init(const zlrs_persist_state_t *saved)
 	load_identity(saved);
 
 	TRACE('c');
-	rc = zlrs_radio_init();
+	rc = zlrs_lr2021_init();
 	if (rc != 0) {
 		TRACE('X');
 		LOG_ERR("radio driver init failed (%d)", rc);
@@ -914,7 +939,7 @@ void zlrs_rf_start(void)
 	LOG_INF("entering data loop: %u Hz (%s)", (unsigned int)data_rate_hz,
 		role_tx ? "TX" : "RX");
 	zlrs_slot_timer_start(frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE, slot_prepare_us,
-			      zlrs_radio_wake);
+			      zlrs_lr2021_wake);
 	consumed_frame = 0U;
 	BUILD_ASSERT(CONFIG_NUM_METAIRQ_PRIORITIES >= 1);
 	k_thread_priority_set(k_current_get(), K_PRIO_COOP(0));

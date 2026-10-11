@@ -1,10 +1,10 @@
 /* Copyright (c) 2026 zlrs contributors
  * SPDX-License-Identifier: Apache-2.0
  *
- * One owner for both links. RAL and the LR20xx HAL are reused; RAC and the
+ * One hardware transaction owned by RF. RAL and the LR20xx HAL are reused; RAC and the
  * radio planner do not participate in initialization, IRQs or transactions.
  */
-#include "platform/radio.h"
+#include "platform/lr2021.h"
 #include "platform/slot_timer.h"
 
 #include <string.h>
@@ -22,13 +22,12 @@
 #include "lr20xx_radio_common.h"
 #include "lr20xx_hal.h"
 
-LOG_MODULE_REGISTER(zlrs_radio, CONFIG_APP_LOG_LEVEL);
+LOG_MODULE_REGISTER(zlrs_lr2021, CONFIG_APP_LOG_LEVEL);
 
 static const struct device *const transceiver =
 	DEVICE_DT_GET(DT_CHOSEN(zephyr_lorawan_transceiver));
 static ralf_t radio = RALF_LR20XX_INSTANTIATE(DEVICE_DT_GET(DT_CHOSEN(zephyr_lorawan_transceiver)));
 static K_SEM_DEFINE(done_sem, 0, 1);
-static zlrs_link_t *owner;
 static const zlrs_radio_req_t *request;
 static volatile bool pending;
 static bool prepared;
@@ -50,10 +49,7 @@ static uint8_t sync_words[3][ZLRS_SYNC_WORD_LEN];
 static bool tx_cfg_valid;
 static uint32_t tx_cfg_freq;
 static int8_t tx_cfg_power;
-static bool rx_timing_valid;
-static uint32_t rx_done_us;
-static uint32_t rx_airtime_us;
-static zlrs_radio_diag_t diag;
+static zlrs_lr2021_diag_t diag;
 
 /* Rate tiers: since v1.1 the raw rate and bandwidth share one enum, see doc/05-radio.md */
 static ral_flrc_raw_bit_rate_t raw_bit_rate(uint32_t rate_bps)
@@ -142,12 +138,12 @@ static void radio_irq(const struct device *dev)
 	k_sem_give(&done_sem);
 }
 
-void zlrs_radio_wake(void)
+void zlrs_lr2021_wake(void)
 {
 	k_sem_give(&done_sem);
 }
 
-void zlrs_radio_slot(uint32_t tx_us, uint32_t end_us)
+void zlrs_lr2021_slot(uint32_t tx_us, uint32_t end_us)
 {
 	tx_at_us = tx_us;
 	slot_end_us = end_us;
@@ -171,7 +167,7 @@ static void make_flrc(const zlrs_mod_cfg_t *mod, uint16_t len, ralf_params_flrc_
 	cfg->pkt_params.crc_type = RAL_FLRC_CRC_2_BYTES;
 }
 
-uint32_t zlrs_radio_airtime_us(const zlrs_mod_cfg_t *mod, uint16_t len)
+uint32_t zlrs_lr2021_airtime_us(const zlrs_mod_cfg_t *mod, uint16_t len)
 {
 	if (mod->modulation == ZLRS_MOD_FLRC) {
 		ralf_params_flrc_t cfg;
@@ -313,21 +309,19 @@ static int late_tx_prepare(uint32_t target_us)
 	return -ETIME;
 }
 
-static int prepare_request(zlrs_link_t *link, const zlrs_radio_req_t *req)
+static int prepare_request(const zlrs_radio_req_t *req)
 {
 	const uint32_t start = zlrs_slot_timer_now_us();
 	uint32_t stages[5] = {start};
 	ral_irq_t stale = 0;
 	int rc;
 
-	if (pending || prepared || req == NULL || link == NULL) {
+	if (pending || prepared) {
 		return -EBUSY;
 	}
 	bool reuse_fs = idle_in_fs && flrc_unchanged(req);
 
 	idle_in_fs = false;
-	rx_timing_valid = false;
-	owner = link;
 	request = req;
 	tx_fifo_used = 0U;
 	k_sem_reset(&done_sem);
@@ -361,7 +355,7 @@ static int prepare_request(zlrs_link_t *link, const zlrs_radio_req_t *req)
 	if (req->is_tx) {
 		const bool preloaded = req->buf == preloaded_buf && req->size == preloaded_size;
 		const uint16_t prefix =
-			zlrs_radio_tx_fifo_prefix(req->mod.modulation == ZLRS_MOD_FLRC, req->size);
+			zlrs_lr2021_tx_fifo_prefix(req->mod.modulation == ZLRS_MOD_FLRC, req->size);
 
 		preloaded_buf = NULL;
 		if (preloaded) {
@@ -396,8 +390,8 @@ static int prepare_request(zlrs_link_t *link, const zlrs_radio_req_t *req)
 							  ZLRS_SLOT_TIMER_LAUNCH_LEAD_US)) {
 				return late_tx_prepare(tx_at_us);
 			}
-			if ((int32_t)(tx_at_us + ZLRS_RADIO_STARTUP_US +
-				      zlrs_radio_airtime_us(&req->mod, req->size) - slot_end_us) >=
+			if ((int32_t)(tx_at_us + ZLRS_LR2021_STARTUP_US +
+				      zlrs_lr2021_airtime_us(&req->mod, req->size) - slot_end_us) >=
 			    0) {
 				return -EMSGSIZE;
 			}
@@ -418,12 +412,12 @@ static int prepare_request(zlrs_link_t *link, const zlrs_radio_req_t *req)
 	return 0;
 }
 
-int zlrs_radio_prepare(zlrs_link_t *link, const zlrs_radio_req_t *req)
+int zlrs_lr2021_prepare(const zlrs_radio_req_t *req)
 {
-	return prepare_request(link, req);
+	return prepare_request(req);
 }
 
-int zlrs_radio_preload_tx(const uint8_t *buf, uint16_t size)
+int zlrs_lr2021_preload_tx(const uint8_t *buf, uint16_t size)
 {
 	const uint32_t start = zlrs_slot_timer_now_us();
 
@@ -456,7 +450,7 @@ static int fill_tx_fifo(void)
 	if (!request->is_tx || tx_fifo_used == request->size) {
 		return 0;
 	}
-	if (!zlrs_radio_fifo_remaining(ZLRS_FRAME_MAX_LEN, tx_fifo_used, request->size, &tail) ||
+	if (!zlrs_lr2021_fifo_remaining(ZLRS_FRAME_MAX_LEN, tx_fifo_used, request->size, &tail) ||
 	    ral_set_pkt_payload(&radio.ral, request->buf + tx_fifo_used, tail) != RAL_STATUS_OK) {
 		diag.tx_fifo_errors++;
 		tx_fifo_used = 0U;
@@ -472,7 +466,7 @@ static int fill_tx_fifo(void)
 	return 0;
 }
 
-int zlrs_radio_launch(void)
+int zlrs_lr2021_launch(void)
 {
 	int rc;
 
@@ -580,7 +574,7 @@ done:
 	launch_mailbox.fired = true;
 }
 
-int zlrs_radio_launch_at(uint32_t target_us)
+int zlrs_lr2021_launch_at(uint32_t target_us)
 {
 	if (!prepared || request == NULL || !request->is_tx) {
 		return -EINVAL;
@@ -639,7 +633,7 @@ int zlrs_radio_launch_at(uint32_t target_us)
 	return launch_mailbox.result == 0 ? fill_tx_fifo() : launch_mailbox.result;
 }
 
-int zlrs_radio_init(void)
+int zlrs_lr2021_init(void)
 {
 	/* RAL enables 1024-byte FIFOs. Every complete zlrs frame fits; intermediate
 	 * RX threshold events must not obscure the RX_DONE edge or its timestamp. */
@@ -666,33 +660,27 @@ int zlrs_radio_init(void)
 	return 0;
 }
 
-int zlrs_radio_wait_us(uint32_t timeout_us)
+int zlrs_lr2021_wait_us(uint32_t timeout_us)
 {
 	return k_sem_take(&done_sem, K_USEC(timeout_us));
 }
 
-bool zlrs_radio_irq_pending(void)
+bool zlrs_lr2021_irq_pending(void)
 {
 	return pending && irq_pending;
 }
 
-bool zlrs_radio_rx_timing(uint32_t *done_us, uint32_t *airtime_us)
-{
-	*done_us = rx_done_us;
-	*airtime_us = rx_airtime_us;
-	return rx_timing_valid;
-}
-
-bool zlrs_radio_drain(void)
+bool zlrs_lr2021_poll(zlrs_lr2021_result_t *out)
 {
 	ral_irq_t irq = 0;
 	uint16_t len = 0U;
 	int16_t rssi = 0;
 	int8_t snr = 0;
-	int status = ZLRS_RADIO_FAIL;
+	int status = -EIO;
+	uint32_t airtime_us = 0U;
 
 	if (!pending || !irq_pending) {
-		return !pending;
+		return false;
 	}
 	const uint32_t event_us = irq_us;
 
@@ -749,10 +737,10 @@ bool zlrs_radio_drain(void)
 		return false; /* FIFO/timestamp activity is not a completed transaction. */
 	}
 	if (request->is_tx && (irq & RAL_IRQ_TX_DONE) != 0U && (irq & chip_errors) == 0U) {
-		status = ZLRS_RADIO_OK;
+		status = 0;
 		diag.tx_done++;
 		diag.tx_us_last = event_us - begin_us;
-		const uint32_t toa_us = zlrs_radio_airtime_us(&request->mod, request->size);
+		const uint32_t toa_us = zlrs_lr2021_airtime_us(&request->mod, request->size);
 
 		diag.tx_startup_us_last = diag.tx_us_last > toa_us ? diag.tx_us_last - toa_us : 0U;
 		diag.tx_startup_us_max = MAX(diag.tx_startup_us_max, diag.tx_startup_us_last);
@@ -764,11 +752,9 @@ bool zlrs_radio_drain(void)
 		    len <= request->max_rx_size &&
 		    (len == 0U ||
 		     ral_get_data_rx_buffer(&radio.ral, request->buf, len) == RAL_STATUS_OK)) {
-			status = ZLRS_RADIO_OK;
+			status = 0;
 			diag.rx_packets++;
-			rx_done_us = event_us;
-			rx_airtime_us = zlrs_radio_airtime_us(&request->mod, len);
-			rx_timing_valid = true;
+			airtime_us = zlrs_lr2021_airtime_us(&request->mod, len);
 			diag.rx_fifo_bytes += len;
 			diag.rx_fifo_us_last = zlrs_slot_timer_now_us() - read_us;
 			diag.rx_fifo_us_max = MAX(diag.rx_fifo_us_max, diag.rx_fifo_us_last);
@@ -796,23 +782,20 @@ bool zlrs_radio_drain(void)
 	/* The configured hardware fallback already returns a completed packet to FS. */
 	pending = false;
 	tx_fifo_used = 0U;
-	idle_in_fs = status == ZLRS_RADIO_OK && (irq & chip_errors) == 0U;
-	const uint32_t protocol_start_us = zlrs_slot_timer_now_us();
-	const bool received = !request->is_tx && status == ZLRS_RADIO_OK && len > 0U;
-
-	zlrs_link_complete(owner, status, len, rssi, snr, zlrs_slot_timer_now_ms());
-	if (received) {
-		const uint32_t finish_us = zlrs_slot_timer_now_us();
-
-		diag.rx_protocol_us_last = finish_us - protocol_start_us;
-		diag.rx_protocol_us_max = MAX(diag.rx_protocol_us_max, diag.rx_protocol_us_last);
-		diag.rx_finish_us_last = finish_us - event_us;
-		diag.rx_finish_us_max = MAX(diag.rx_finish_us_max, diag.rx_finish_us_last);
-	}
+	idle_in_fs = status == 0 && (irq & chip_errors) == 0U;
+	*out = (zlrs_lr2021_result_t){
+		.status = status,
+		.size = len,
+		.rssi_dbm = rssi,
+		.snr_db = snr,
+		.done_us = event_us,
+		.airtime_us = airtime_us,
+		.completed_ms = zlrs_slot_timer_now_ms(),
+	};
 	return true;
 }
 
-void zlrs_radio_abort(void)
+void zlrs_lr2021_abort(void)
 {
 	idle_in_fs = false;
 	preloaded_buf = NULL;
@@ -841,7 +824,7 @@ void zlrs_radio_abort(void)
 	diag.overruns++;
 }
 
-void zlrs_radio_diag(zlrs_radio_diag_t *out)
+void zlrs_lr2021_diag(zlrs_lr2021_diag_t *out)
 {
 	*out = diag;
 }

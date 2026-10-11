@@ -66,6 +66,11 @@ if hit=$(rg -n 'zlrs/mgmt|ZLRS_MGMT' app/src/log.c app/src/log.h); then
 	echo "$hit"
 fi
 
+if hit=$(rg -n 'zlrs_link_t|zlrs_link_complete|zlrs/link/link.h' app/src/platform/lr2021.c app/src/platform/lr2021.h); then
+	bad "LR2021 hardware depends on a protocol context:"
+	echo "$hit"
+fi
+
 # Shipped configurations: everything that produces a firmware image. A debug configuration is
 # the only place allowed to name a bench switch.
 shipped=$(git ls-files 'app' 'boards' | grep -E '\.(conf|defconfig)$' | grep -v -e debug)

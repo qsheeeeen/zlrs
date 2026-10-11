@@ -1,0 +1,11 @@
+/ {
+ aliases { zlrs-data-uart = &uart0; };
+ zlrs_rf: rf-capabilities {
+  compatible = "zlrs,rf-design";
+  band = <0>;
+  low-hz = <410000000>;
+  high-hz = <510000000>;
+  default-region = <3>;
+ };
+};
+&uart0 { current-speed = <115200>; };

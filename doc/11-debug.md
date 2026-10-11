@@ -69,3 +69,23 @@ It covers LED priority/cadence, short and long holds, cumulative requests, and r
 The persist fixture backs up the entire settings partition and restores it in suite teardown. It exercises the original record bytes, enum validation, identity and pairing, factory reset, and an injected NVS write error. Native runs can use `--flash_in_ram` to avoid leaving a flash file.
 
 Management commands run with the real app command switch and real NVS in `tests/simulation/mgmt` (native simulator, `--flash_in_ram`). The hardware counterpart `tests/hardware/mgmt` uses the real app, USB, RF and flash. Its fixture snapshots NVS before main; recovery restores that snapshot and MCUboot rolls back the unconfirmed fixture. Never confirm or ship this fixture. Confirmation and one NVS write are explicitly fault-injected; the normal upgrade/confirmation path is separately verified on product images.
+
+RF result simulation runs real RF scheduling and two real P1/ARQ protocol nodes,
+with only LR2021, clock and serial edges simulated. It covers bidirectional bytes,
+completion failures, preparation/launch failures, absent IRQs and timeout cleanup:
+
+```sh
+west build -b native_sim/native/64 tests/simulation/rf -d build/rf-simulation
+build/rf-simulation/zephyr/zephyr.exe --flash_in_ram
+west build -b native_sim/native/64 tests/simulation/rf -d build/rf-rx-simulation -- -DRF_TEST_ROLE_RX=ON
+build/rf-rx-simulation/zephyr/zephyr.exe --flash_in_ram
+```
+
+The radio fixture fills DATA packets directly, exercising FIFO tails independently of USB pacing:
+
+```sh
+west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33/lf tests/hardware/radio -d build/radio
+python3 tests/hardware/radio/run.py --serial <TX-serial> --peer <RX-serial> --log build/radio.json --timeout 60
+```
+
+The fixture uses the production preparation window; only frequency hopping is disabled for the fixed-channel measurement. The runner reads radio reports through management before and after transfer. A timeout retains the last byte counters, running image hashes and radio/link reports. The unconfirmed fixture allows five minutes for peer upgrade and bounded transfer rounds; the runner requests rollback and verifies both original hashes. For raw radio testing, build with `-DEXTRA_CONF_FILE="$PWD/tests/hardware/radio/raw.conf"` in a separate directory and pass that signed image with `--image ... --raw`.

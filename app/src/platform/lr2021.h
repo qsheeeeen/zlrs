@@ -3,42 +3,50 @@
  */
 #pragma once
 
-#include "zlrs/link/link.h"
+#include "zlrs/link/radio.h"
 
-int zlrs_radio_init(void);
-int zlrs_radio_wait_us(uint32_t timeout_us);
-bool zlrs_radio_irq_pending(void);
-/* Process an IRQ; true only when the transaction is finished (or already idle). */
-bool zlrs_radio_drain(void);
-void zlrs_radio_abort(void);
+int zlrs_lr2021_init(void);
+int zlrs_lr2021_wait_us(uint32_t timeout_us);
+bool zlrs_lr2021_irq_pending(void);
+/* One hardware completion; false means idle, no IRQ, or an unfinished transaction. */
+typedef struct {
+	int status; /* 0 on success, negative errno on failure */
+	uint16_t size;
+	int16_t rssi_dbm;
+	int8_t snr_db;
+	uint32_t done_us; /* GPIO IRQ timestamp */
+	uint32_t airtime_us;
+	uint32_t completed_ms; /* time after FIFO read, before protocol processing */
+} zlrs_lr2021_result_t;
+bool zlrs_lr2021_poll(zlrs_lr2021_result_t *out);
+void zlrs_lr2021_abort(void);
 /* Called by the timer ISR to end waits at a slot boundary. No SPI from the ISR. */
-void zlrs_radio_wake(void);
-void zlrs_radio_slot(uint32_t tx_us, uint32_t end_us);
+void zlrs_lr2021_wake(void);
+void zlrs_lr2021_slot(uint32_t tx_us, uint32_t end_us);
 /* Prepare modem and FIFO before the timer-controlled launch; no TX in prepare(). */
-int zlrs_radio_prepare(zlrs_link_t *link, const zlrs_radio_req_t *req);
+int zlrs_lr2021_prepare(const zlrs_radio_req_t *req);
 /* Fill the separate TX FIFO while RX continues. Bytes must stay immutable until prepare(). */
-int zlrs_radio_preload_tx(const uint8_t *buf, uint16_t size);
-int zlrs_radio_launch(void);
-int zlrs_radio_launch_at(uint32_t target_us);
+int zlrs_lr2021_preload_tx(const uint8_t *buf, uint16_t size);
+int zlrs_lr2021_launch(void);
+int zlrs_lr2021_launch_at(uint32_t target_us);
 /* SET_TX is polled even when FIFO transfers use DMA. */
-#define ZLRS_RADIO_STARTUP_US       500U
-#define ZLRS_RADIO_PHASE_STARTUP_US 250U
+#define ZLRS_LR2021_STARTUP_US       500U
+#define ZLRS_LR2021_PHASE_STARTUP_US 250U
 
-uint32_t zlrs_radio_airtime_us(const zlrs_mod_cfg_t *mod, uint16_t len);
-bool zlrs_radio_rx_timing(uint32_t *done_us, uint32_t *airtime_us);
+uint32_t zlrs_lr2021_airtime_us(const zlrs_mod_cfg_t *mod, uint16_t len);
 
-#define ZLRS_RADIO_TX_FIFO_PREFIX 128U
+#define ZLRS_LR2021_TX_FIFO_PREFIX 128U
 
 /* FLRC consumes this prefix while the owner appends the authenticated tail. */
-static inline uint16_t zlrs_radio_tx_fifo_prefix(bool flrc, uint16_t size)
+static inline uint16_t zlrs_lr2021_tx_fifo_prefix(bool flrc, uint16_t size)
 {
-	return flrc && size > ZLRS_RADIO_TX_FIFO_PREFIX ? ZLRS_RADIO_TX_FIFO_PREFIX : size;
+	return flrc && size > ZLRS_LR2021_TX_FIFO_PREFIX ? ZLRS_LR2021_TX_FIFO_PREFIX : size;
 }
 
 /* FIFO reads consume a prefix. Validate the total before subtracting it or
  * forming the next buffer pointer; leave remaining unchanged on invalid input. */
-static inline bool zlrs_radio_fifo_remaining(uint16_t capacity, uint16_t copied, uint32_t total,
-					     uint16_t *remaining)
+static inline bool zlrs_lr2021_fifo_remaining(uint16_t capacity, uint16_t copied, uint32_t total,
+					      uint16_t *remaining)
 {
 	if (total > capacity || copied > total) {
 		return false;
@@ -47,7 +55,7 @@ static inline bool zlrs_radio_fifo_remaining(uint16_t capacity, uint16_t copied,
 	return true;
 }
 
-struct zlrs_radio_diag {
+struct zlrs_lr2021_diag {
 	uint32_t transactions;
 	uint32_t stale_irq;
 	uint32_t stale_irq_bits;
@@ -97,10 +105,6 @@ struct zlrs_radio_diag {
 	uint32_t launch_wake_us_max;
 	uint32_t late_trigger_irq;
 	uint32_t late_trigger_wake;
-	uint32_t rx_finish_us_last;
-	uint32_t rx_finish_us_max;
-	uint32_t rx_protocol_us_last;
-	uint32_t rx_protocol_us_max;
 	uint32_t rx_fifo_bytes;
 	uint32_t rx_fifo_us_last;
 	uint32_t rx_fifo_us_max;
@@ -113,5 +117,5 @@ struct zlrs_radio_diag {
 	uint16_t chip_errors;
 	uint32_t chip_error_freq_hz;
 };
-typedef struct zlrs_radio_diag zlrs_radio_diag_t;
-void zlrs_radio_diag(zlrs_radio_diag_t *out);
+typedef struct zlrs_lr2021_diag zlrs_lr2021_diag_t;
+void zlrs_lr2021_diag(zlrs_lr2021_diag_t *out);

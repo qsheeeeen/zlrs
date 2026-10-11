@@ -15,7 +15,7 @@ target_include_directories(app PRIVATE .)
 # Replace public interfaces only in the test image; the production firmware has no hooks.
 set(zlrs_test_wrappers zlrs_link_init zlrs_link_tx_space zlrs_serial_read zlrs_serial_receive)
 if(CONFIG_ZLRS_TEST_RAW_MS GREATER 0)
-  list(APPEND zlrs_test_wrappers zlrs_radio_init zlrs_link_complete)
+  list(APPEND zlrs_test_wrappers zlrs_lr2021_init zlrs_link_complete)
 endif()
 foreach(symbol IN LISTS zlrs_test_wrappers)
   target_link_options(app PUBLIC "-Wl,--wrap=${symbol}")

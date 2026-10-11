@@ -10,7 +10,7 @@
 #include <string.h>
 
 #include "fixtures.h"
-#include "platform/radio.h"
+#include "platform/lr2021.h"
 #include "platform/slot_timer.h"
 #include "platform/watchdog.h"
 
@@ -28,7 +28,7 @@ static atomic_t raw_bad;
 void __real_zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
 			   uint32_t (*random)(void *ctx), void *random_ctx,
 			   const zlrs_link_events_t *events);
-int __real_zlrs_radio_init(void);
+int __real_zlrs_lr2021_init(void);
 void __real_zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t rssi,
 			       int8_t snr, uint32_t now_ms);
 
@@ -57,6 +57,7 @@ void zlrs_test_radio_poll(zlrs_link_t *link)
 
 #if CONFIG_ZLRS_TEST_RAW_MS > 0
 static zlrs_link_t raw_link;
+void __wrap_zlrs_link_complete(zlrs_link_t *, int, uint16_t, int16_t, int8_t, uint32_t);
 
 static void raw_run(void)
 {
@@ -83,33 +84,46 @@ static void raw_run(void)
 		raw_link.req_is_tx = tx;
 		raw_link.req_pending = true;
 		const uint32_t deadline = zlrs_slot_timer_now_us() + 120000U;
+		const uint32_t target = zlrs_slot_timer_now_us() +
+					CONFIG_ZLRS_APP_DATA_24_PREPARE_US +
+					CONFIG_ZLRS_APP_TX_GUARD_US;
 
-		zlrs_radio_slot(zlrs_slot_timer_now_us(), deadline);
-		if (zlrs_radio_prepare(&raw_link, &req) == 0 && zlrs_radio_launch() == 0) {
+		/* Prepare before the timer-controlled TX target, as the application does. */
+		zlrs_lr2021_slot(target, deadline);
+		if (zlrs_lr2021_prepare(&req) == 0 &&
+		    (tx ? zlrs_lr2021_launch_at(target) : zlrs_lr2021_launch()) == 0) {
 			while (raw_link.req_pending &&
 			       (int32_t)(deadline - zlrs_slot_timer_now_us()) > 0) {
-				(void)zlrs_radio_drain();
+				zlrs_lr2021_result_t result;
+				if (zlrs_lr2021_poll(&result)) {
+					__wrap_zlrs_link_complete(
+						&raw_link,
+						result.status == 0 ? ZLRS_RADIO_OK
+								   : ZLRS_RADIO_FAIL,
+						result.size, result.rssi_dbm, result.snr_db,
+						result.completed_ms);
+				}
 				const int32_t remaining = deadline - zlrs_slot_timer_now_us();
 
 				if (raw_link.req_pending && remaining > 0) {
-					(void)zlrs_radio_wait_us((uint32_t)remaining);
+					(void)zlrs_lr2021_wait_us((uint32_t)remaining);
 				}
 			}
 		}
 		if (raw_link.req_pending) {
-			zlrs_radio_abort();
+			zlrs_lr2021_abort();
 			raw_link.req_pending = false;
 		}
 		sequence++;
 		zlrs_watchdog_feed();
 	}
 	/* Test startup ends before the production timer/superframe starts. */
-	zlrs_radio_abort();
+	zlrs_lr2021_abort();
 }
 
-int __wrap_zlrs_radio_init(void)
+int __wrap_zlrs_lr2021_init(void)
 {
-	const int rc = __real_zlrs_radio_init();
+	const int rc = __real_zlrs_lr2021_init();
 
 	if (rc == 0 && data_link != NULL) {
 		atomic_set(&raw_ready, 1);

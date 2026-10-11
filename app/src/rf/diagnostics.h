@@ -45,6 +45,10 @@ typedef struct {
 	uint32_t protocol_build_us_last;
 	uint32_t packet_build_us_last;
 	uint32_t packet_build_us_max;
+	uint32_t rx_finish_us_last;
+	uint32_t rx_finish_us_max;
+	uint32_t rx_protocol_us_last;
+	uint32_t rx_protocol_us_max;
 	int8_t tx_power_dbm;
 } zlrs_rf_diagnostics_t;
 
