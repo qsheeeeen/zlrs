@@ -49,7 +49,7 @@ bool __real_zlrs_serial_receive(const uint8_t *buf, uint16_t len);
 uint16_t __wrap_zlrs_link_tx_space(const zlrs_link_t *link)
 {
 	{
-		zlrs_test_radio_poll((zlrs_link_t *)link);
+		zlrs_test_radio_apply_window_request((zlrs_link_t *)link);
 		const int request = atomic_set(&command, 0);
 		int rc = 0;
 

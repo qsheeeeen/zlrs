@@ -225,9 +225,9 @@ static uint32_t rx_finish_us_last, rx_finish_us_max;
 static uint32_t rx_protocol_us_last, rx_protocol_us_max;
 
 /* RF owns protocol completion; the LR2021 adapter only returns hardware facts. */
-static bool poll_radio(zlrs_lr2021_result_t *result)
+static bool complete_radio(zlrs_lr2021_result_t *result)
 {
-	if (!zlrs_lr2021_poll(result)) {
+	if (!zlrs_lr2021_process_irq(result)) {
 		return false;
 	}
 	const uint32_t protocol_us = zlrs_slot_timer_now_us();
@@ -250,7 +250,7 @@ static void radio_wait_done(uint32_t budget_us, zlrs_lr2021_result_t *result)
 
 	while ((int32_t)(deadline - zlrs_slot_timer_now_us()) > 0) {
 		if (zlrs_lr2021_irq_pending()) {
-			if (poll_radio(result)) {
+			if (complete_radio(result)) {
 				return;
 			}
 		}
@@ -455,7 +455,7 @@ static void run_slot(uint8_t slot)
 		radio_wait_done((uint32_t)remaining_us, &result);
 	}
 
-	(void)poll_radio(&result);
+	(void)complete_radio(&result);
 
 	/* If completion did not close the request, abort it before the next slot. */
 	if (zlrs_link_is_busy(link)) {

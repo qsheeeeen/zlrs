@@ -624,7 +624,7 @@ bool zlrs_lr2021_irq_pending(void)
 	return pending && irq_pending;
 }
 
-bool zlrs_lr2021_poll(zlrs_lr2021_result_t *out)
+bool zlrs_lr2021_process_irq(zlrs_lr2021_result_t *out)
 {
 	ral_irq_t irq = 0;
 	uint16_t len = 0U;

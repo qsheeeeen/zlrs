@@ -4,4 +4,4 @@
 #include "zlrs/link/link.h"
 
 /* Test-only fixture access; all live mutations occur on the actual RF owner. */
-void zlrs_test_radio_poll(zlrs_link_t *link);
+void zlrs_test_radio_apply_window_request(zlrs_link_t *link);

@@ -42,7 +42,7 @@ void __wrap_zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
 	default_acq_ms = cfg->acq_timeout_ms;
 }
 
-void zlrs_test_radio_poll(zlrs_link_t *link)
+void zlrs_test_radio_apply_window_request(zlrs_link_t *link)
 {
 	const int request = atomic_set(&window_request, 0);
 
@@ -95,7 +95,7 @@ static void raw_run(void)
 			while (raw_link.req_pending &&
 			       (int32_t)(deadline - zlrs_slot_timer_now_us()) > 0) {
 				zlrs_lr2021_result_t result;
-				if (zlrs_lr2021_poll(&result)) {
+				if (zlrs_lr2021_process_irq(&result)) {
 					__wrap_zlrs_link_complete(
 						&raw_link,
 						result.status == 0 ? ZLRS_RADIO_OK

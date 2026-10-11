@@ -151,7 +151,7 @@ void zlrs_lr2021_abort(void)
 	pending = false;
 	aborts++;
 }
-bool zlrs_lr2021_poll(zlrs_lr2021_result_t *out)
+bool zlrs_lr2021_process_irq(zlrs_lr2021_result_t *out)
 {
 	if (!pending || mode == NO_IRQ) {
 		return false;

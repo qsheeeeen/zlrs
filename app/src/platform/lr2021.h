@@ -8,7 +8,7 @@
 int zlrs_lr2021_init(void);
 int zlrs_lr2021_wait_us(uint32_t timeout_us);
 bool zlrs_lr2021_irq_pending(void);
-/* One hardware completion; false means idle, no IRQ, or an unfinished transaction. */
+/* One hardware completion. */
 typedef struct {
 	int status; /* 0 on success, negative errno on failure */
 	uint16_t size;
@@ -18,7 +18,9 @@ typedef struct {
 	uint32_t airtime_us;
 	uint32_t completed_ms; /* time after FIFO read, before protocol processing */
 } zlrs_lr2021_result_t;
-bool zlrs_lr2021_poll(zlrs_lr2021_result_t *out);
+/* Process pending hardware IRQs; true returns one completed transaction.
+ * false means idle, no IRQ, or an unfinished transaction. */
+bool zlrs_lr2021_process_irq(zlrs_lr2021_result_t *out);
 void zlrs_lr2021_abort(void);
 /* Called by the timer ISR to end waits at a slot boundary. No SPI from the ISR. */
 void zlrs_lr2021_wake(void);
