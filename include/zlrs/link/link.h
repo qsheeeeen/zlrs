@@ -262,6 +262,7 @@ typedef struct {
 	uint16_t tx_seq;
 	uint16_t last_rx_seq;
 	uint16_t lq_last_seq;
+	bool lq_started;
 	uint32_t frame_index; /* DATA_A slots run */
 	zlrs_fhss_t fhss;
 

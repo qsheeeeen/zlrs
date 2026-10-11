@@ -30,6 +30,7 @@ app/src/
   platform/
     lr2021.c/.h          LR2021 收发、FIFO、中断与精确定时发射
     slot_timer.c/.h      硬件时钟、绝对时隙边界、相位修正
+    temperature.c/.h     MCU 内部温度传感器读取
     sha256.c             SHA 外设接入
     watchdog.c/.h        看门狗接入
 

@@ -28,6 +28,8 @@ The FLRC frame limit is 511 bytes. All multi-byte protocol fields are little-end
 
 With ARQ enabled, a data-bearing payload is `{data_seq:u16, rssi_magnitude:u8, lq_percent:u8, bytes[]}`. Without ARQ it is `{rssi_magnitude:u8, lq_percent:u8, bytes[]}`. A feedback-only frame carries just the last two bytes, even when ARQ is enabled. A magnitude of zero means no usable RSSI sample; otherwise the receiver interprets it as a negative dBm value. Quality is 0–100 percent. These values describe the peer's reception of this node's transmissions, so each sender can adjust its own TX power. Feedback-only frames are sent during idle periods, allowing power adaptation without user traffic.
 
+LQ counts authenticated DATA and same-session SYNC packets in nonoverlapping windows of at least 128 expected transmissions. Expected count advances by the authenticated sequence-number gap; received count advances once per accepted packet. The published value is `floor(received * 100 / expected)`: 128/128 gives 100%, 127/128 gives 99%. Sequence tracking continues across window boundaries and restarts only with the session. Idle slots do not count as lost packets. Startup initializes LQ to 100%; measurement updates after a complete window, roughly 30 seconds with idle feedback. Without new packets it retains the last complete window's result.
+
 Each direction has a stop-and-wait ARQ sequence. A receiver changes its ACK toggle only after its serial sink accepts the bytes; if it is full, the sender retains and retransmits the packet. Retransmissions keep the DATA sequence, while new radio frames keep advancing their authenticated frame sequence. A new session resets the ARQ state. Payload bytes remain opaque to the radio protocol.
 
 ## SYNC payload

@@ -372,9 +372,10 @@ void link_lq_account(zlrs_link_t *link, uint16_t seq)
 {
 	uint16_t delta = (uint16_t)(seq - link->lq_last_seq);
 
-	if (link->stats.lq_rx == 0U && link->stats.lq_expected == 0U) {
-		/* First sample: do not charge this run for the gap the last disconnection left */
+	if (!link->lq_started) {
+		/* Only the first sample of a session has no preceding sequence to compare. */
 		delta = 1U;
+		link->lq_started = true;
 	}
 
 	link->lq_last_seq = seq;

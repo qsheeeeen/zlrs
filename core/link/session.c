@@ -59,6 +59,7 @@ static void session_activate(zlrs_link_t *link, uint16_t hop_index)
 	link->sess_sync_frame = link->frame_index;
 	/* Sequence numbers restart per session; the LQ window must not span sessions */
 	link->lq_last_seq = 0U;
+	link->lq_started = false;
 	link->stats.lq_rx = 0U;
 	link->stats.lq_expected = 0U;
 	/* Session reset releases the outstanding packet; its bytes stay queued for retransmission. */

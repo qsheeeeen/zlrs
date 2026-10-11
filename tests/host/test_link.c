@@ -87,7 +87,7 @@ static void sim_init(sim_t *sim)
 	init_node(&sim->rx, ZLRS_ROLE_RX, rx_id, root);
 }
 
-/* Wire transcript of the existing v8 pairing/session/duplex/loss scenario. */
+/* Fixed v8 pairing/session/duplex/loss wire transcript. */
 static uint64_t wire_hash;
 static uint32_t wire_packets;
 static uint8_t captured[ZLRS_FRAME_MAX_LEN];
@@ -169,6 +169,50 @@ static bool both_connected(const sim_t *sim)
 	       zlrs_link_get_state(&sim->rx.link) == ZLRS_STATE_CONNECTED;
 }
 
+static void finish_quality_window(sim_t *sim)
+{
+	const zlrs_link_stats_t *stats = zlrs_link_get_stats(&sim->rx.link);
+	uint16_t previous = stats->lq_expected;
+	for (unsigned int i = 0; i < 6000U; i++) {
+		sim_frame(sim);
+		if (previous != 0U && stats->lq_expected == 0U) {
+			return;
+		}
+		previous = stats->lq_expected;
+	}
+	CHECK(false);
+}
+
+static void test_quality_window_boundary(void)
+{
+	static sim_t sim;
+	sim_init(&sim);
+	zlrs_link_press(&sim.tx.link, sim.now_ms);
+	zlrs_link_press(&sim.rx.link, sim.now_ms);
+	for (unsigned int i = 0; i < 3000U && !both_connected(&sim); i++) {
+		sim_frame(&sim);
+	}
+	CHECK(both_connected(&sim));
+	const zlrs_link_stats_t *stats = zlrs_link_get_stats(&sim.rx.link);
+	finish_quality_window(&sim);
+	CHECK(stats->lq_percent == 100U);
+
+	/* The first transmission in the next window is lost; its gap belongs to that window. */
+	sim.drop_tx = 1U;
+	for (unsigned int i = 0; i < 1000U && sim.drop_tx != 0U; i++) {
+		sim_frame(&sim);
+	}
+	CHECK(sim.drop_tx == 0U && stats->lq_expected == 0U);
+	for (unsigned int i = 0; i < 1000U && stats->lq_expected == 0U; i++) {
+		sim_frame(&sim);
+	}
+	CHECK(stats->lq_rx == 1U && stats->lq_expected == 2U);
+	finish_quality_window(&sim);
+	CHECK(stats->lq_percent == 99U);
+	finish_quality_window(&sim);
+	CHECK(stats->lq_percent == 100U);
+}
+
 void test_link(void)
 {
 	static sim_t sim;
@@ -222,7 +266,7 @@ void test_link(void)
 	CHECK(zlrs_link_get_info(&sim.rx.link).peer_rssi_dbm == -60);
 	CHECK(zlrs_link_get_info(&sim.tx.link).last_peer_feedback_ms > tx_feedback_before);
 	CHECK(zlrs_link_get_info(&sim.rx.link).last_peer_feedback_ms > rx_feedback_before);
-	/* Captured from the pre-refactor 66a624f implementation with this fixed scenario. */
+	/* Golden bytes for this fixed protocol scenario. */
 	CHECK(wire_packets == 200U);
 	CHECK(wire_hash == UINT64_C(0x9111d88d2488e835));
 	/* An authenticated DATA capture cannot be delivered twice, tampered with or reflected. */
@@ -328,4 +372,5 @@ void test_link(void)
 	const uint32_t old_session_tags = sim.rx.link.stats.rx_bad_tag;
 	zlrs_link_rx(&sim.rx.link, old_capture, old_size, -60, 0, sim.now_ms);
 	CHECK(sim.rx.link.stats.rx_bad_tag == old_session_tags + 1U);
+	test_quality_window_boundary();
 }
