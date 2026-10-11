@@ -29,6 +29,19 @@ typedef struct {
 	int16_t rssi_dbm;
 	int8_t snr_db;
 	uint32_t frame_period_us;
+	int16_t peer_rssi_dbm;
+	uint8_t peer_lq_percent;
+	int8_t power_floor_dbm;
+	int8_t power_ceiling_dbm;
+	uint32_t tx_frames;
+	uint32_t rx_frames;
+	uint32_t rx_crc_errors;
+	uint32_t rx_bad_tag;
+	uint32_t tx_retries;
+	uint32_t missed_slots;
+	uint32_t radio_fail;
+	uint32_t frequency_hz;
+	uint16_t hop_index;
 } zlrs_rf_status_t;
 
 /* Public facts only: no keys or mutable link pointers. */

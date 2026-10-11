@@ -32,7 +32,7 @@ Each direction has a stop-and-wait ARQ sequence. A receiver changes its ACK togg
 
 ## SYNC payload
 
-`SYNC` carries 12 bytes: `{version:u8, profile:u8, hop_index:u16, nonce_t:u32, frame_index:u32}`. The high four bits of `profile` are reserved and must be zero. The current DATA product uses one channel domain at a time; no second-table mix or version is negotiated. These fields and the normal zero reserved bits retain the existing version 8 byte format.
+`SYNC` carries 12 bytes: `{version:u8, profile:u8, hop_index:u16, nonce_t:u32, frame_index:u32}`. The high four bits of `profile` are reserved and must be zero. DATA uses one channel domain at a time.
 
 ## Pairing and sessions
 
@@ -41,3 +41,24 @@ A device with no root key remains off air. A configured device without a peer is
 ## Slots, hopping and regulation
 
 Each frame contains two slots: DATA A (0, TX → RX) and DATA B (1, RX → TX). The LR2021 uses hardware sync word 1 for DATA and 2 for pairing. Pairing uses its own sync slot; connected traffic uses the DATA sync slot. A selected frequency band supplies its channel table and modem timing. FHSS derives a deterministic hop sequence from pairing material. The sub-G band uses its board SKU and region's channel, TX-power and duty rules; when the duty budget is exhausted, transmission is deferred. The active TX power never exceeds the configured/regional ceiling. Current firmware runs DATA on one selected band at a time.
+
+## Management status
+
+Management version `4` uses a fixed 72-byte `STATUS_RESP`. Multibyte integers are little endian; RSSI and temperature are signed 16-bit values, and power values are signed 8-bit dBm.
+
+| Offset | Bytes | Field |
+| --- | --- | --- |
+| 0 | 4 | Management version, role, state, flags |
+| 4 | 8 | Device ID, peer ID |
+| 12 | 4 | Local LQ, sub-G hardware SKU, region, configured TX ceiling |
+| 16 | 4 | Saved DATA UART baud |
+| 20 | 1 | Active security profile |
+| 21 | 4 | Local RSSI, peer RSSI; zero means unavailable |
+| 25 | 3 | Peer LQ, active TX setpoint, effective power floor |
+| 28 | 2 | MCU die temperature in 0.01 °C; `INT16_MIN` means unavailable |
+| 30 | 32 | Eight `u32` counters: TX frames, RX frames, CRC errors, authentication errors, ARQ retries, dropped DATA bytes, missed slots, radio failures |
+| 62 | 4 | FHSS snapshot frequency in Hz |
+| 66 | 2 | FHSS index |
+| 68 | 4 | Frame period in microseconds |
+
+The frequency is the hopping schedule's current channel; periodic SYNC uses the fixed synchronization channel. MCU temperature is the internal die sensor reading, not ambient or LR2021 temperature. FLRC does not supply a LoRa SNR measurement.

@@ -28,6 +28,7 @@
 #include "serial.h"
 #include "persist.h"
 #include "rf.h"
+#include "platform/temperature.h"
 #if defined(CONFIG_ZLRS_APP_DEBUG)
 #include "diagnostics.h"
 #endif
@@ -328,7 +329,25 @@ static void read_status(zlrs_mgmt_status_t *out)
 		.region = settings->region,
 		.tx_power_dbm = settings->power_dbm,
 		.data_baud = settings->data_baud,
+		.rssi_dbm = rf.rssi_dbm,
+		.peer_rssi_dbm = rf.peer_rssi_dbm,
+		.peer_lq_percent = rf.peer_lq_percent,
+		.active_power_dbm = rf.tx_power_dbm,
+		.power_floor_dbm = rf.power_floor_dbm,
+		.temperature_centi_c = ZLRS_MGMT_TEMP_UNAVAILABLE,
+		.tx_frames = rf.tx_frames,
+		.rx_frames = rf.rx_frames,
+		.rx_crc_errors = rf.rx_crc_errors,
+		.rx_bad_tag = rf.rx_bad_tag,
+		.tx_retries = rf.tx_retries,
+		.data_drop_bytes = rf.data_drop_bytes,
+		.missed_slots = rf.missed_slots,
+		.radio_fail = rf.radio_fail,
+		.frequency_hz = rf.frequency_hz,
+		.hop_index = rf.hop_index,
+		.frame_period_us = rf.frame_period_us,
 	};
+	(void)zlrs_temperature_read(&out->temperature_centi_c);
 	if (rf.data_band == ZLRS_DATA_BAND_SUBG) {
 		out->flags |= ZLRS_MGMT_FLAG_DATA_SUBG;
 	}

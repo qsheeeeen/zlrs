@@ -73,13 +73,13 @@ extern "C" {
 #define ZLRS_MGMT_E_STORE   3U
 #define ZLRS_MGMT_E_UNKNOWN 4U
 
-/* Status response: a fixed 21 bytes; changing the field order means bumping the version */
-#define ZLRS_MGMT_STATUS_LEN     21U
-#define ZLRS_MGMT_PHRASE_MAX_LEN 32U
-#define ZLRS_MGMT_BUILD_MAX_LEN  32U
-#define ZLRS_MGMT_IMAGE_HASH_LEN 32U
+#define ZLRS_MGMT_STATUS_LEN       72U
+#define ZLRS_MGMT_TEMP_UNAVAILABLE INT16_MIN
+#define ZLRS_MGMT_PHRASE_MAX_LEN   32U
+#define ZLRS_MGMT_BUILD_MAX_LEN    32U
+#define ZLRS_MGMT_IMAGE_HASH_LEN   32U
 /* Log store: at most this many files, and this many bytes back per read (one frame's payload) */
-#define ZLRS_MGMT_LOG_CHUNK_MAX  80U
+#define ZLRS_MGMT_LOG_CHUNK_MAX    80U
 
 typedef struct {
 	uint8_t version; /* protocol version */
@@ -94,6 +94,23 @@ typedef struct {
 	uint8_t profile;     /* active security profile (ZLRS_PROFILE_*) */
 	int8_t tx_power_dbm; /* current TX power ceiling */
 	uint32_t data_baud;  /* data port baud rate (effective on the next boot) */
+	int16_t rssi_dbm;
+	int16_t peer_rssi_dbm;
+	uint8_t peer_lq_percent;
+	int8_t active_power_dbm;
+	int8_t power_floor_dbm;
+	int16_t temperature_centi_c;
+	uint32_t tx_frames;
+	uint32_t rx_frames;
+	uint32_t rx_crc_errors;
+	uint32_t rx_bad_tag;
+	uint32_t tx_retries;
+	uint32_t data_drop_bytes;
+	uint32_t missed_slots;
+	uint32_t radio_fail;
+	uint32_t frequency_hz;
+	uint16_t hop_index;
+	uint32_t frame_period_us;
 } zlrs_mgmt_status_t;
 
 #define ZLRS_MGMT_FLAG_KEY       0x01U

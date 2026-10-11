@@ -121,7 +121,7 @@ class ManagementTests(unittest.TestCase):
         self.assertIn("commands:", output)
 
     def test_status_groups_fields_and_formats_units(self):
-        payload = bytearray(21)
+        payload = bytearray(mgmt.STATUS_LEN)
         payload[1] = 1
         payload[2] = 4
         payload[3] = 7
@@ -135,6 +135,28 @@ class ManagementTests(unittest.TestCase):
                      "CN470", "-10 dBm", "420000 baud", "Root key   : configured"):
             self.assertIn(text, output)
         self.assertNotIn("\033[", output)
+
+    def test_status_signed_measurements_and_counters(self):
+        payload = bytearray(mgmt.STATUS_LEN)
+        payload[21:23] = (-48).to_bytes(2, "little", signed=True)
+        payload[23:25] = (-51).to_bytes(2, "little", signed=True)
+        payload[25] = 97
+        payload[26] = 7
+        payload[28:30] = (-125).to_bytes(2, "little", signed=True)
+        for offset, value in zip(range(30, 62, 4), (1024, 1000, 24, 1, 3, 0, 2, 4)):
+            payload[offset:offset + 4] = value.to_bytes(4, "little")
+        payload[62:66] = (2478000000).to_bytes(4, "little")
+        payload[66:68] = (236).to_bytes(2, "little")
+        payload[68:72] = (9080).to_bytes(4, "little")
+        output = mgmt.status_text(payload)
+        for text in ("-48 dBm", "-51 dBm", "97%", "7 dBm", "-1.25 C",
+                     "TX 1024, RX 1000", "2478.000 MHz", "9.080 ms"):
+            self.assertIn(text, output)
+        payload[28:30] = (-32768).to_bytes(2, "little", signed=True)
+        self.assertIn("unavailable", mgmt.status_text(payload))
+        for length in (mgmt.STATUS_LEN - 1, mgmt.STATUS_LEN + 1):
+            with self.assertRaises(ValueError):
+                mgmt.status_text(bytes(length))
 
     def test_image_hash_stays_a_plain_value(self):
         digest = bytes(range(32))

@@ -33,6 +33,8 @@ This executes the real `main.c` and `boot.c`. It checks confirmation failure and
 
 ## Two-board validation
 
+Management `status` includes local and peer RSSI/LQ, configured and active TX power, effective floor, MCU die temperature, hopping position, frame period and frame/error counters. RSSI zero and temperature `INT16_MIN` mean unavailable. Debug shell `zlrs status` reads the zbus snapshot without pausing RF; RF refreshes this snapshot once per second and on state changes. Use the shell for continuous link-quality observation: entering management mode pauses the local RF service and can lower the peer's LQ.
+
 Flash the signed LF or HF image appropriate for both radios. Set the same phrase, the opposite TX/RX roles and the same DATA band. Pair both devices, then confirm `status` reports `connected` and an active session on each. Run:
 
 ```shell

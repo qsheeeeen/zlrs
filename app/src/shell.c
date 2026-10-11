@@ -8,6 +8,7 @@
 #include "mgmt.h"
 #include "boot.h"
 #include "rf.h"
+#include "platform/temperature.h"
 #ifdef PICO_RP2350
 #include <pico/bootrom.h>
 #endif
@@ -24,8 +25,36 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "sub-G  : %s",
 		    DT_PROP(DT_NODELABEL(zlrs_rf), band) == ZLRS_BAND_SUBG_LF ? "LF" : "HF");
 	shell_print(sh, "region : %s", region != NULL ? region->name : "?");
+	shell_print(sh, "band   : %s", link.data_band == ZLRS_DATA_BAND_SUBG ? "sub-G" : "2.4 GHz");
 	shell_print(sh, "link   : state %u, lq %u%%, paired %d", link.state, link.lq_percent,
 		    link.paired);
+	if (link.rssi_dbm != 0) {
+		shell_print(sh, "signal : RSSI %d dBm", link.rssi_dbm);
+	} else {
+		shell_print(sh, "signal : RSSI unavailable");
+	}
+	if (link.peer_rssi_dbm != 0) {
+		shell_print(sh, "peer   : RSSI %d dBm, lq %u%%", link.peer_rssi_dbm,
+			    link.peer_lq_percent);
+	} else {
+		shell_print(sh, "peer   : feedback unavailable");
+	}
+	shell_print(sh, "power  : %d dBm, range %d..%d dBm", link.tx_power_dbm,
+		    link.power_floor_dbm, link.power_ceiling_dbm);
+	int16_t temperature;
+	if (zlrs_temperature_read(&temperature) == 0) {
+		const int magnitude = temperature < 0 ? -temperature : temperature;
+		shell_print(sh, "temp   : MCU %s%d.%02d C", temperature < 0 ? "-" : "",
+			    magnitude / 100, magnitude % 100);
+	} else {
+		shell_print(sh, "temp   : MCU unavailable");
+	}
+	shell_print(sh, "hop    : %u.%03u MHz, index %u, frame %u us", link.frequency_hz / 1000000U,
+		    (link.frequency_hz % 1000000U) / 1000U, link.hop_index, link.frame_period_us);
+	shell_print(sh, "frames : TX %u, RX %u, retry %u", link.tx_frames, link.rx_frames,
+		    link.tx_retries);
+	shell_print(sh, "errors : CRC %u, tag %u, radio %u, missed slots %u", link.rx_crc_errors,
+		    link.rx_bad_tag, link.radio_fail, link.missed_slots);
 	shell_print(sh, "data   : RF drop %u B", link.data_drop_bytes);
 	return 0;
 }
@@ -169,7 +198,8 @@ static int cmd_bootsel(const struct shell *sh, size_t argc, char **argv)
 #endif
 
 SHELL_STATIC_SUBCMD_SET_CREATE(
-	zlrs_cmds, SHELL_CMD(status, NULL, "role / SKU / region / link state", cmd_status),
+	zlrs_cmds,
+	SHELL_CMD(status, NULL, "link, signal, power, temperature and error counters", cmd_status),
 	SHELL_CMD(ports, NULL, "state of both data port endpoints", cmd_ports),
 #if DT_NODE_EXISTS(DT_ALIAS(zlrs_mgmt_cdc))
 	SHELL_CMD(mgmt, NULL, "enter management mode (EXIT returns)", cmd_mgmt),

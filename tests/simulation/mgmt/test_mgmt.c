@@ -10,10 +10,29 @@
 #include "zlrs/mgmt/mgmt.h"
 #include "zlrs/proto/crypto.h"
 
-static zlrs_rf_status_t rf = {.role = ZLRS_ROLE_TX, .profile = ZLRS_PROFILE_P1};
+static zlrs_rf_status_t rf = {
+	.role = ZLRS_ROLE_TX,
+	.profile = ZLRS_PROFILE_P1,
+	.rssi_dbm = -48,
+	.peer_rssi_dbm = -51,
+	.peer_lq_percent = 97,
+	.tx_power_dbm = -9,
+	.power_floor_dbm = -9,
+	.tx_frames = 1024,
+	.rx_frames = 1000,
+	.rx_crc_errors = 24,
+	.frequency_hz = 2478000000U,
+	.hop_index = 236,
+	.frame_period_us = 9080,
+};
 static unsigned int credential_applies, pairs, confirms;
 static int confirm_rc;
 static bool fail_write;
+int zlrs_temperature_read(int16_t *centidegrees)
+{
+	*centidegrees = 2675;
+	return 0;
+}
 ssize_t __real_nvs_write(struct nvs_fs *, uint16_t, const void *, size_t);
 ssize_t __wrap_nvs_write(struct nvs_fs *fs, uint16_t id, const void *bytes, size_t len)
 {
@@ -146,10 +165,19 @@ ZTEST(commands, test_device_commands)
 	zlrs_mgmt_parser_t p = request(ZLRS_MGMT_CMD_STATUS, NULL, 0);
 	zlrs_mgmt_status_t status;
 	zassert_true(zlrs_mgmt_status_decode(ZLRS_MGMT_PAYLOAD(&p), p.payload_len, &status));
-	zassert_equal(p.payload_len, 21);
+	zassert_equal(p.payload_len, ZLRS_MGMT_STATUS_LEN);
 	zassert_equal(status.role, ZLRS_ROLE_TX); /* Running role; saved role is RX until reboot. */
 	zassert_equal(status.data_baud, 230400);
 	zassert_equal(status.tx_power_dbm, -9);
+	zassert_equal(status.temperature_centi_c, 2675);
+	zassert_equal(status.rssi_dbm, -48);
+	zassert_equal(status.peer_rssi_dbm, -51);
+	zassert_equal(status.peer_lq_percent, 97);
+	zassert_equal(status.active_power_dbm, -9);
+	zassert_equal(status.tx_frames, 1024);
+	zassert_equal(status.rx_crc_errors, 24);
+	zassert_equal(status.frequency_hz, 2478000000U);
+	zassert_equal(status.hop_index, 236);
 	p = request(ZLRS_MGMT_CMD_BUILD, NULL, 0);
 	zassert_equal(p.cmd, ZLRS_MGMT_CMD_BUILD_RESP);
 	confirm_rc = -EIO;

@@ -22,6 +22,7 @@ from zlrs_cli import HelpFormatter, bounded_int, positive_seconds, fields, headi
 
 SOF = b"\xa5\x5a"
 VERSION = 4
+STATUS_LEN = 72
 
 CMD_ENTER = 0x00
 CMD_STATUS = 0x01
@@ -123,8 +124,8 @@ def decode(frame: bytes):
 
 
 def status_text(payload: bytes) -> str:
-    if len(payload) < 21:
-        raise ValueError(f"status payload too short: {payload.hex()}")
+    if len(payload) != STATUS_LEN:
+        raise ValueError(f"status payload must contain {STATUS_LEN} bytes")
     flags = payload[3]
     dev = payload[4:8].hex()
     peer = payload[8:12].hex()
@@ -145,6 +146,40 @@ def status_text(payload: bytes) -> str:
                            ("Profile", f"P{payload[20]}"),
                            ("Root key", "configured" if flags & 0x01 else "missing")]),
     ]
+    rssi = int.from_bytes(payload[21:23], "little", signed=True)
+    peer_rssi = int.from_bytes(payload[23:25], "little", signed=True)
+    active_power = int.from_bytes(payload[26:27], "little", signed=True)
+    floor = int.from_bytes(payload[27:28], "little", signed=True)
+    temperature = int.from_bytes(payload[28:30], "little", signed=True)
+    counters = [int.from_bytes(payload[offset:offset + 4], "little")
+                for offset in range(30, 62, 4)]
+    tx, rx, crc, tag, retry, dropped, missed, failed = counters
+    frequency = int.from_bytes(payload[62:66], "little")
+    hop = int.from_bytes(payload[66:68], "little")
+    period = int.from_bytes(payload[68:72], "little")
+    sections.extend([
+        ("Measurements", [
+            ("RSSI", f"{rssi} dBm" if rssi else "unavailable"),
+            ("Peer RSSI", f"{peer_rssi} dBm" if peer_rssi else "unavailable"),
+            ("Peer LQ", f"{payload[25]}%" if peer_rssi else "unavailable"),
+            ("TX setpoint", f"{active_power} dBm"),
+            ("Power floor", f"{floor} dBm"),
+            ("MCU temperature", "unavailable" if temperature == -32768
+             else f"{temperature / 100:.2f} C"),
+            ("Hop frequency", f"{frequency / 1000000:.3f} MHz"),
+            ("Hop index", str(hop)),
+            ("Frame period", f"{period / 1000:.3f} ms"),
+        ]),
+        ("Counters", [
+            ("RF frames", f"TX {tx}, RX {rx}"),
+            ("ARQ retries", str(retry)),
+            ("CRC errors", str(crc)),
+            ("Auth errors", str(tag)),
+            ("Radio failures", str(failed)),
+            ("Missed slots", str(missed)),
+            ("Dropped data", f"{dropped} bytes"),
+        ]),
+    ])
     return "\n\n".join(title + "\n" + fields(rows) for title, rows in sections)
 
 

@@ -21,6 +21,7 @@ target_sources(app PRIVATE
   ${zlrs_app_dir}/src/platform/sha256.c
   ${zlrs_app_dir}/src/platform/slot_timer.c
   ${zlrs_app_dir}/src/platform/watchdog.c
+  ${zlrs_app_dir}/src/platform/temperature.c
   ${zlrs_app_dir}/src/platform/lr2021.c
   ${zlrs_app_dir}/src/log.c
   ${zlrs_app_dir}/src/ui.c

@@ -70,6 +70,22 @@
 	status = "okay";
 };
 
+&adc {
+	status = "okay";
+	/* The internal die sensor needs no GPIO mux, but the ADC driver needs a default state. */
+	pinctrl-0 = <&zlrs_adc_default>;
+	pinctrl-names = "default";
+};
+
+&pinctrl {
+	zlrs_adc_default: zlrs_adc_default {};
+};
+
+&die_temp {
+	status = "okay";
+	io-channels = <&adc 4>;
+};
+
 /*
  * Hardware watchdog (RP2350 wdt0): armed when the application starts and fed from the main
  * loop. A crash or a stuck thread resets the chip, which MCUboot's test/revert turns into a

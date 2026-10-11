@@ -118,6 +118,28 @@ uint8_t zlrs_mgmt_encode(uint8_t *out, size_t out_len, uint8_t cmd, const uint8_
 	return total;
 }
 
+static void put_u16(uint8_t *out, uint16_t value)
+{
+	out[0] = (uint8_t)value;
+	out[1] = (uint8_t)(value >> 8);
+}
+
+static void put_u32(uint8_t *out, uint32_t value)
+{
+	put_u16(out, (uint16_t)value);
+	put_u16(out + 2, (uint16_t)(value >> 16));
+}
+
+static uint16_t get_u16(const uint8_t *in)
+{
+	return (uint16_t)in[0] | ((uint16_t)in[1] << 8);
+}
+
+static uint32_t get_u32(const uint8_t *in)
+{
+	return (uint32_t)get_u16(in) | ((uint32_t)get_u16(in + 2) << 16);
+}
+
 void zlrs_mgmt_status_encode(uint8_t out[ZLRS_MGMT_STATUS_LEN], const zlrs_mgmt_status_t *status)
 {
 	out[0] = status->version;
@@ -130,16 +152,30 @@ void zlrs_mgmt_status_encode(uint8_t out[ZLRS_MGMT_STATUS_LEN], const zlrs_mgmt_
 	out[13] = status->band;
 	out[14] = status->region;
 	out[15] = (uint8_t)status->tx_power_dbm;
-	out[16] = (uint8_t)(status->data_baud & 0xFFU);
-	out[17] = (uint8_t)((status->data_baud >> 8) & 0xFFU);
-	out[18] = (uint8_t)((status->data_baud >> 16) & 0xFFU);
-	out[19] = (uint8_t)((status->data_baud >> 24) & 0xFFU);
+	put_u32(out + 16, status->data_baud);
 	out[20] = status->profile;
+	put_u16(out + 21, (uint16_t)status->rssi_dbm);
+	put_u16(out + 23, (uint16_t)status->peer_rssi_dbm);
+	out[25] = status->peer_lq_percent;
+	out[26] = (uint8_t)status->active_power_dbm;
+	out[27] = (uint8_t)status->power_floor_dbm;
+	put_u16(out + 28, (uint16_t)status->temperature_centi_c);
+	put_u32(out + 30, status->tx_frames);
+	put_u32(out + 34, status->rx_frames);
+	put_u32(out + 38, status->rx_crc_errors);
+	put_u32(out + 42, status->rx_bad_tag);
+	put_u32(out + 46, status->tx_retries);
+	put_u32(out + 50, status->data_drop_bytes);
+	put_u32(out + 54, status->missed_slots);
+	put_u32(out + 58, status->radio_fail);
+	put_u32(out + 62, status->frequency_hz);
+	put_u16(out + 66, status->hop_index);
+	put_u32(out + 68, status->frame_period_us);
 }
 
 bool zlrs_mgmt_status_decode(const uint8_t *in, uint8_t len, zlrs_mgmt_status_t *status)
 {
-	if (in == NULL || status == NULL || len < ZLRS_MGMT_STATUS_LEN) {
+	if (in == NULL || status == NULL || len != ZLRS_MGMT_STATUS_LEN) {
 		return false;
 	}
 
@@ -153,9 +189,24 @@ bool zlrs_mgmt_status_decode(const uint8_t *in, uint8_t len, zlrs_mgmt_status_t 
 	status->band = in[13];
 	status->region = in[14];
 	status->tx_power_dbm = (int8_t)in[15];
-	status->data_baud = (uint32_t)in[16] | ((uint32_t)in[17] << 8) | ((uint32_t)in[18] << 16) |
-			    ((uint32_t)in[19] << 24);
+	status->data_baud = get_u32(in + 16);
 	status->profile = in[20];
-
+	status->rssi_dbm = (int16_t)get_u16(in + 21);
+	status->peer_rssi_dbm = (int16_t)get_u16(in + 23);
+	status->peer_lq_percent = in[25];
+	status->active_power_dbm = (int8_t)in[26];
+	status->power_floor_dbm = (int8_t)in[27];
+	status->temperature_centi_c = (int16_t)get_u16(in + 28);
+	status->tx_frames = get_u32(in + 30);
+	status->rx_frames = get_u32(in + 34);
+	status->rx_crc_errors = get_u32(in + 38);
+	status->rx_bad_tag = get_u32(in + 42);
+	status->tx_retries = get_u32(in + 46);
+	status->data_drop_bytes = get_u32(in + 50);
+	status->missed_slots = get_u32(in + 54);
+	status->radio_fail = get_u32(in + 58);
+	status->frequency_hz = get_u32(in + 62);
+	status->hop_index = get_u16(in + 66);
+	status->frame_period_us = get_u32(in + 68);
 	return true;
 }

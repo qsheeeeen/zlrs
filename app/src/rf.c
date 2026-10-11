@@ -597,6 +597,7 @@ void zlrs_rf_publish_state(void)
 	const zlrs_rf_status_t state = zlrs_rf_status();
 	static zlrs_rf_status_t published;
 	static bool have_state;
+	static uint32_t published_ms;
 	const bool same =
 		published.role == state.role && published.profile == state.profile &&
 		published.data_band == state.data_band && published.region == state.region &&
@@ -612,9 +613,14 @@ void zlrs_rf_publish_state(void)
 		published.frame_period_us == state.frame_period_us &&
 		memcmp(published.dev_id, state.dev_id, sizeof(state.dev_id)) == 0 &&
 		memcmp(published.peer_id, state.peer_id, sizeof(state.peer_id)) == 0;
-	if ((!have_state || !same) && zbus_chan_pub(&zlrs_rf_chan, &state, K_NO_WAIT) == 0) {
+	/* Keep changing packet/hop counters readable without waking UI for every packet. */
+	const uint32_t now_ms = k_uptime_get_32();
+	const bool metrics_due = (uint32_t)(now_ms - published_ms) >= REPORT_PERIOD_MS;
+	if ((!have_state || !same || metrics_due) &&
+	    zbus_chan_pub(&zlrs_rf_chan, &state, K_NO_WAIT) == 0) {
 		published = state;
 		have_state = true;
+		published_ms = now_ms;
 	}
 }
 
@@ -702,6 +708,9 @@ zlrs_rf_status_t zlrs_rf_status(void)
 {
 	const zlrs_link_info_t info = zlrs_link_get_info(&link_data);
 	const zlrs_link_stats_t *stats = zlrs_link_get_stats(&link_data);
+	const zlrs_link_diagnostics_t diagnostics = zlrs_link_get_diagnostics(&link_data);
+	zlrs_lr2021_diag_t radio;
+	zlrs_lr2021_diag(&radio);
 	zlrs_rf_status_t out = {
 		.role = role_tx ? ZLRS_ROLE_TX : ZLRS_ROLE_RX,
 		.profile = active_profile,
@@ -721,6 +730,19 @@ zlrs_rf_status_t zlrs_rf_status(void)
 		.rssi_dbm = stats->last_rssi,
 		.snr_db = stats->last_snr,
 		.frame_period_us = frame_period_us,
+		.peer_rssi_dbm = info.peer_rssi_dbm,
+		.peer_lq_percent = info.peer_lq_percent,
+		.power_floor_dbm = power.floor_dbm,
+		.power_ceiling_dbm = power.ceiling_dbm,
+		.tx_frames = stats->tx_frames,
+		.rx_frames = stats->rx_frames,
+		.rx_crc_errors = radio.rx_crc_errors,
+		.rx_bad_tag = stats->rx_bad_tag,
+		.tx_retries = stats->tx_retries,
+		.missed_slots = missed_slots,
+		.radio_fail = stats->radio_fail,
+		.frequency_hz = diagnostics.frequency_hz,
+		.hop_index = diagnostics.hop_index,
 	};
 	memcpy(out.dev_id, device_id, sizeof(out.dev_id));
 	memcpy(out.peer_id, info.peer_id, sizeof(out.peer_id));
