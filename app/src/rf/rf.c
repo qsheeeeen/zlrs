@@ -18,7 +18,7 @@
 #include "serial.h"
 #include "rf/rf.h"
 #include "rf/diagnostics.h"
-#include "rf/power.h"
+#include "power.h"
 #include "platform/caps.h"
 #include "platform/slot_timer.h"
 #include "platform/watchdog.h"
@@ -60,6 +60,7 @@ static zlrs_mod_cfg_t data_mod;
 static const zlrs_region_t *region;
 static zlrs_region_id_t region_id;
 static int8_t tx_power_dbm;
+static zlrs_power_t power;
 static zlrs_duty_t duty;
 /* Identity: read or generated once at boot, before anything that could use it (doc/09-security.md 1) */
 static uint8_t device_id[ZLRS_DEV_ID_LEN];
@@ -202,7 +203,8 @@ static void build_links(void)
 		.on_state = on_state,
 	};
 	zlrs_link_init(&link_data, &cfg, random_u32, NULL, &events);
-	zlrs_link_power_init(cfg.tx_power_dbm, CONFIG_ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM);
+	zlrs_power_init(&power, cfg.tx_power_dbm, CONFIG_ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM,
+			zlrs_slot_timer_now_ms());
 }
 
 static void load_identity(const zlrs_persist_state_t *saved)
@@ -587,14 +589,17 @@ static void report(uint32_t now_ms)
 		return;
 	}
 	last_report_ms = now_ms;
+#if IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)
 	const zlrs_link_info_t info = zlrs_link_get_info(&link_data);
-	static uint32_t last_power_feedback_ms;
-	if (info.last_peer_feedback_ms != last_power_feedback_ms &&
-	    (uint32_t)(now_ms - info.last_peer_feedback_ms) <= 1000U) {
-		last_power_feedback_ms = info.last_peer_feedback_ms;
-		zlrs_link_power_feedback(info.peer_rssi_dbm, info.peer_lq_percent);
+	const int8_t before = power.current_dbm;
+	const int8_t next = zlrs_power_update(&power, info.peer_rssi_dbm, info.peer_lq_percent,
+					      info.last_peer_feedback_ms, now_ms);
+	if (next != before) {
+		zlrs_link_set_power(&link_data, next);
+		LOG_INF("tx power -> %d dBm (rssi %d dBm, lq %u%%)", next, info.peer_rssi_dbm,
+			info.peer_lq_percent);
 	}
-	zlrs_link_power_tick(&link_data, now_ms);
+#endif
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
 	rate_update(&link_data, &rate_before, rate_ms != 0U ? now_ms - rate_ms : REPORT_PERIOD_MS);
 	rate_before = rate_snapshot(&link_data);
@@ -680,6 +685,7 @@ void zlrs_rf_diagnostics_capture(zlrs_rf_diagnostics_t *out)
 	out->rx_protocol_us_last = rx_protocol_us_last;
 	out->rx_protocol_us_max = rx_protocol_us_max;
 	out->tx_power_dbm = tx_power_dbm;
+	out->power = power;
 }
 #endif
 

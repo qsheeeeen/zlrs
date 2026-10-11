@@ -71,6 +71,11 @@ if hit=$(rg -n 'zlrs_link_t|zlrs_link_complete|zlrs/link/link.h' app/src/platfor
 	echo "$hit"
 fi
 
+if hit=$(rg -n 'zephyr/|zlrs/link|LOG_|CONFIG_' app/src/power.c app/src/power.h); then
+	bad "power policy depends on application wiring:"
+	echo "$hit"
+fi
+
 # Shipped configurations: everything that produces a firmware image. A debug configuration is
 # the only place allowed to name a bench switch.
 shipped=$(git ls-files 'app' 'boards' | grep -E '\.(conf|defconfig)$' | grep -v -e debug)

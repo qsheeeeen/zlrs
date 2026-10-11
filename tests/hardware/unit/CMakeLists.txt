@@ -17,7 +17,7 @@ target_sources(app PRIVATE
   ../app/platform/test_slot_timer.c
   ../app/ui/test_led.c
   "${zlrs_root}/app/src/persist.c"
-  "${zlrs_root}/app/src/rf/power.c"
+  "${zlrs_root}/app/src/power.c"
   "${zlrs_root}/app/src/platform/slot_timer.c"
   "${zlrs_root}/app/src/ui_pattern.c"
   "${zlrs_root}/app/src/platform/sha256.c"

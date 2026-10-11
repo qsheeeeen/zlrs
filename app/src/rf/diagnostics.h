@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #pragma once
 
+#include "power.h"
 #include "zlrs/link/link.h"
 #include "zlrs/region/region.h"
 
@@ -50,6 +51,7 @@ typedef struct {
 	uint32_t rx_protocol_us_last;
 	uint32_t rx_protocol_us_max;
 	int8_t tx_power_dbm;
+	zlrs_power_t power;
 } zlrs_rf_diagnostics_t;
 
 /* Called by management diagnostics at a safe boundary; no work on the RF hot path. */

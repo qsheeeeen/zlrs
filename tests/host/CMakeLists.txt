@@ -24,6 +24,8 @@ add_executable(zlrs_host_tests
   test_radio.c
   test_mgmt.c
   test_region.c
+  test_power.c
+  ../../app/src/power.c
   test_mod.c
   test_fuzz.c
   sha256_soft.c
@@ -45,6 +47,7 @@ set_target_properties(zlrs_host_tests PROPERTIES
 )
 target_compile_definitions(zlrs_host_tests PRIVATE FUZZ_ITERS=${ZLRS_HOST_FUZZ_ITERS})
 target_include_directories(zlrs_host_tests PRIVATE
+  ../../app/src
   ../../include
   ../../core/proto
 )

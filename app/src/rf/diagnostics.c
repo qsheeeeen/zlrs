@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "rf/diagnostics.h"
 #include "rf/rf.h"
-#include "rf/power.h"
+#include "power.h"
 #include "platform/lr2021.h"
 #include "platform/slot_timer.h"
 #include "zlrs/mgmt/mgmt.h"
@@ -333,11 +333,6 @@ static int mgmt_debug_render(uint8_t report_id, struct mgmt_debug_report_writer 
 		mgmt_debug_radio(writer);
 		return ZLRS_MGMT_OK;
 	case ZLRS_MGMT_DEBUG_REPORT_POWER: {
-		int8_t current_dbm;
-		uint32_t raises;
-		uint32_t lowers;
-		uint32_t fallbacks;
-		zlrs_link_power_stats(&current_dbm, &raises, &lowers, &fallbacks);
 		mgmt_debug_append(writer, "[POWER LIMITS]\n");
 		mgmt_debug_append(writer, "  Configured target  : %+d dBm\n",
 				  (int)snapshot.tx_power_dbm);
@@ -347,7 +342,8 @@ static int mgmt_debug_render(uint8_t report_id, struct mgmt_debug_report_writer 
 				  (int)snapshot.link.config.tx_power_dbm);
 		mgmt_debug_append(writer,
 				  "  Dynamic power      : %+d dBm (up %u, down %u, fallback %u)\n",
-				  (int)current_dbm, raises, lowers, fallbacks);
+				  (int)snapshot.power.current_dbm, snapshot.power.raises,
+				  snapshot.power.lowers, snapshot.power.fallbacks);
 		mgmt_debug_append(writer, "  Peer feedback      : RSSI %d dBm, LQ %u%%\n",
 				  (int)snapshot.link.info.peer_rssi_dbm,
 				  (unsigned int)snapshot.link.info.peer_lq_percent);

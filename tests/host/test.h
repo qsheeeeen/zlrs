@@ -35,3 +35,5 @@ void test_mgmt(void);
 void test_region(void);
 void test_mod(void);
 void test_fuzz(void);
+
+void test_power(void);
