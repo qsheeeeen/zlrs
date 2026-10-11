@@ -46,6 +46,8 @@ The default 2.4 GHz preparation reservation is 2.5 ms. It includes the previous 
 
 FLRC uses a 24-bit preamble, a 32-bit hardware sync word and a 16-bit physical CRC with coding rate 3/4. DATA matches the full sync word derived from pairing material; pairing uses `ZLRS`. Full sync matching limits noise packets reaching the CRC decoder. Packet airtime and the slot plan are computed from these same modem settings.
 
+Periodic SYNC defaults to 5 seconds, converted to a whole number of actual frames. With the default 2.4 GHz timing this is 450 frames (4.991 seconds). The frame count is 16 bits and includes debug pacing when deriving the interval. Each DATA slot advances the hop index even if idle or skipped. The 2.4 GHz table contains three 79-channel blocks (237 entries); CN433 contains 51 five-channel blocks (255 entries). Each block visits every channel once and reserves its first position for the synchronization channel; the other positions are shuffled from the pairing seed.
+
 ## Management status
 
 Management version `4` uses a fixed 72-byte `STATUS_RESP`. Multibyte integers are little endian; RSSI and temperature are signed 16-bit values, and power values are signed 8-bit dBm.

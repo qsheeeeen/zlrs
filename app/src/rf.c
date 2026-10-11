@@ -41,7 +41,7 @@ static uint32_t data_rate_hz;
 static uint32_t frame_period_us;
 static uint32_t slot_budget_us;
 static uint32_t slot_prepare_us = CONFIG_ZLRS_APP_PREPARE_US;
-static uint8_t resync_every_n;
+static uint16_t resync_every_n;
 static uint16_t data_mtu;
 static zlrs_data_band_t data_band = ZLRS_DATA_BAND_24;
 #define ZLRS_DATA_SUBG (data_band == ZLRS_DATA_BAND_SUBG)
@@ -153,9 +153,9 @@ static void plan_init(void)
 	frame_period_us = ZLRS_SLOT_COUNT * slot_budget_us;
 	data_rate_hz = 1000000U / frame_period_us;
 	if (CONFIG_ZLRS_APP_RESYNC_PERIOD_MS > 0) {
-		const uint32_t frames =
-			((uint32_t)CONFIG_ZLRS_APP_RESYNC_PERIOD_MS * 1000U) / frame_period_us;
-		resync_every_n = (uint8_t)MIN(MAX(frames, 1U), 255U);
+		const uint32_t frames = ((uint32_t)CONFIG_ZLRS_APP_RESYNC_PERIOD_MS * 1000U) /
+					(frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE);
+		resync_every_n = (uint16_t)MAX(frames, 1U);
 	} else {
 		resync_every_n = 0U;
 	}

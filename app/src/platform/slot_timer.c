@@ -80,7 +80,7 @@ static uint32_t slot_clock_next_origin(const struct slot_clock *clock)
 				 : clock->origin_us + clock->period_us + (uint32_t)clock->shift_us;
 }
 
-uint32_t zlrs_slot_timer_scan_delay_ms(uint32_t cadence_us, uint8_t sync_every_n, bool acquired)
+uint32_t zlrs_slot_timer_scan_delay_ms(uint32_t cadence_us, uint16_t sync_every_n, bool acquired)
 {
 	const uint32_t minimum_ms = 300U;
 

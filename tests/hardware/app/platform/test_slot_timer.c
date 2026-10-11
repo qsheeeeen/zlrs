@@ -19,6 +19,7 @@ ZTEST(slot_timer, test_scan_delay)
 {
 	zassert_equal(zlrs_slot_timer_scan_delay_ms(14580U, 255U, false), 300U);
 	zassert_equal(zlrs_slot_timer_scan_delay_ms(14580U, 255U, true), 7451U);
+	zassert_equal(zlrs_slot_timer_scan_delay_ms(11092U, 300U, true), 6667U);
 	zassert_equal(zlrs_slot_timer_scan_delay_ms(100000U, 5U, true), 1100U);
 	zassert_equal(zlrs_slot_timer_scan_delay_ms(1000U, 5U, true), 300U);
 	zassert_equal(zlrs_slot_timer_scan_delay_ms(100000U, 0U, true), 300U);

@@ -131,7 +131,7 @@ void zlrs_slot_timer_cancel_launch(void)
 void zlrs_slot_timer_shift(int32_t us)
 {
 }
-uint32_t zlrs_slot_timer_scan_delay_ms(uint32_t us, uint8_t sync, bool acquired)
+uint32_t zlrs_slot_timer_scan_delay_ms(uint32_t us, uint16_t sync, bool acquired)
 {
 	return 2000;
 }
@@ -289,6 +289,16 @@ ZTEST(rf_results, test_protocol_completion_and_timeouts)
 	frames(150);
 	zassert_equal(zlrs_link_get_state(local), ZLRS_STATE_CONNECTED);
 	zassert_equal(zlrs_link_get_state(&peer), ZLRS_STATE_CONNECTED);
+	/* A five-second SYNC cadence must remain five seconds above 255 frames. */
+	if (!RF_TEST_BAND_SUBG && CONFIG_ZLRS_APP_PACING_SCALE == 1) {
+		zassert_true(cfg.resync_every_n > UINT8_MAX);
+	}
+	zlrs_link_t *const master = RF_TEST_ROLE_RX ? &peer : local;
+	const uint32_t syncs = zlrs_link_get_stats(master)->tx_syncs;
+	frames(12000000U / period_us);
+	const uint32_t periodic = zlrs_link_get_stats(master)->tx_syncs - syncs;
+	zassert_true(periodic == 2U || periodic == 3U);
+
 	source_left = sizeof(outgoing) - 1U;
 	zassert_equal(zlrs_link_write(&peer, incoming, sizeof(incoming) - 1U),
 		      sizeof(incoming) - 1U);

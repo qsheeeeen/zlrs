@@ -92,7 +92,7 @@ typedef struct {
 	 * is only aligned when the link comes up); >0 = a SYNC every this many frames lets the peer
 	 * correct drift and notice a peer that changed sessions (reboot/re-pair) and re-handshake.
 	 */
-	uint8_t resync_every_n;
+	uint16_t resync_every_n;
 } zlrs_link_cfg_t;
 
 typedef struct {
