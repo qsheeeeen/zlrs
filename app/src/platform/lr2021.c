@@ -41,7 +41,6 @@ static uint32_t begin_us;
 static uint32_t slot_end_us;
 static uint32_t tx_at_us;
 static bool timed_slot;
-static ral_pkt_type_t configured_type;
 static bool cfg_valid;
 static ralf_params_flrc_t flrc_cfg;
 static bool sync_valid[3];
@@ -103,18 +102,6 @@ static ral_flrc_tx_syncword_t tx_syncword(uint8_t slot)
 }
 
 /* Bandwidth is given in Hz, RAC/RAL takes an enum */
-static ral_lora_bw_t lora_bw(uint32_t bw_hz)
-{
-	switch (bw_hz) {
-	case 250000U:
-		return RAL_LORA_BW_250_KHZ;
-	case 500000U:
-		return RAL_LORA_BW_500_KHZ;
-	case 125000U:
-	default:
-		return RAL_LORA_BW_125_KHZ;
-	}
-}
 
 static ral_flrc_rx_match_sync_word_t rx_match_syncword(uint8_t slot)
 {
@@ -169,13 +156,9 @@ static void make_flrc(const zlrs_mod_cfg_t *mod, uint16_t len, ralf_params_flrc_
 
 uint32_t zlrs_lr2021_airtime_us(const zlrs_mod_cfg_t *mod, uint16_t len)
 {
-	if (mod->modulation == ZLRS_MOD_FLRC) {
-		ralf_params_flrc_t cfg;
-
-		make_flrc(mod, len, &cfg);
-		return ral_get_flrc_time_on_air_in_us(&radio.ral, &cfg.pkt_params, &cfg.mod_params);
-	}
-	return zlrs_mod_airtime_us(mod, len);
+	ralf_params_flrc_t cfg;
+	make_flrc(mod, len, &cfg);
+	return ral_get_flrc_time_on_air_in_us(&radio.ral, &cfg.pkt_params, &cfg.mod_params);
 }
 
 static int setup_tx_power(const zlrs_radio_req_t *req)
@@ -209,7 +192,7 @@ static int setup_frequency(uint32_t freq_hz)
 static int setup_flrc(const zlrs_radio_req_t *req)
 {
 	ralf_params_flrc_t cfg;
-	const bool full = !cfg_valid || configured_type != RAL_PKT_TYPE_FLRC;
+	const bool full = !cfg_valid;
 
 	make_flrc(&req->mod, req->is_tx ? req->size : req->max_rx_size, &cfg);
 	cfg.rf_freq_in_hz = req->freq_hz;
@@ -254,30 +237,8 @@ static int setup_flrc(const zlrs_radio_req_t *req)
 	memcpy(sync_words[id], req->sync_word, ZLRS_SYNC_WORD_LEN);
 	sync_valid[id] = true;
 	flrc_cfg = cfg;
-	configured_type = RAL_PKT_TYPE_FLRC;
 	cfg_valid = true;
 	return setup_tx_power(req);
-}
-
-static int setup_lora(const zlrs_radio_req_t *req)
-{
-	ralf_params_lora_t cfg = {0};
-
-	cfg.mod_params.sf = (ral_lora_sf_t)req->mod.sf;
-	cfg.mod_params.bw = lora_bw(req->mod.bw_hz);
-	cfg.mod_params.cr = (ral_lora_cr_t)req->mod.cr;
-	cfg.pkt_params.preamble_len_in_symb = req->mod.preamble;
-	cfg.pkt_params.header_type = RAL_LORA_PKT_EXPLICIT;
-	cfg.pkt_params.pld_len_in_bytes = req->is_tx ? req->size : req->max_rx_size;
-	cfg.pkt_params.crc_is_on = true;
-	cfg.rf_freq_in_hz = req->freq_hz;
-	cfg.output_pwr_in_dbm = req->tx_power_dbm;
-	cfg.sync_word = req->mod.sync_byte != 0U && req->sync_slot != ZLRS_SYNC_SLOT_PAIRING
-				? req->mod.sync_byte
-				: 0x12U;
-	cfg_valid = false;
-	tx_cfg_valid = false;
-	return ralf_setup_lora(&radio, &cfg) == RAL_STATUS_OK ? 0 : -EIO;
 }
 
 static bool flrc_unchanged(const zlrs_radio_req_t *req)
@@ -285,9 +246,8 @@ static bool flrc_unchanged(const zlrs_radio_req_t *req)
 	ralf_params_flrc_t cfg;
 	const uint8_t id = (uint8_t)req->sync_slot - 1U;
 
-	if (req->mod.modulation != ZLRS_MOD_FLRC || !cfg_valid ||
-	    configured_type != RAL_PKT_TYPE_FLRC || !tx_cfg_valid ||
-	    tx_cfg_power != req->tx_power_dbm || id >= ARRAY_SIZE(sync_valid) || !sync_valid[id] ||
+	if (!cfg_valid || !tx_cfg_valid || tx_cfg_power != req->tx_power_dbm ||
+	    id >= ARRAY_SIZE(sync_valid) || !sync_valid[id] ||
 	    req->freq_hz != flrc_cfg.rf_freq_in_hz ||
 	    memcmp(sync_words[id], req->sync_word, ZLRS_SYNC_WORD_LEN) != 0) {
 		return false;
@@ -309,7 +269,7 @@ static int late_tx_prepare(uint32_t target_us)
 	return -ETIME;
 }
 
-static int prepare_request(const zlrs_radio_req_t *req)
+int zlrs_lr2021_prepare(const zlrs_radio_req_t *req)
 {
 	const uint32_t start = zlrs_slot_timer_now_us();
 	uint32_t stages[5] = {start};
@@ -344,7 +304,7 @@ static int prepare_request(const zlrs_radio_req_t *req)
 		diag.stale_irq_bits = stale;
 	}
 	stages[1] = zlrs_slot_timer_now_us();
-	rc = req->mod.modulation == ZLRS_MOD_FLRC ? setup_flrc(req) : setup_lora(req);
+	rc = setup_flrc(req);
 	if (rc != 0) {
 		return rc;
 	}
@@ -354,8 +314,7 @@ static int prepare_request(const zlrs_radio_req_t *req)
 	 * start with a fresh FIFO, including retries and packets left by an abort. */
 	if (req->is_tx) {
 		const bool preloaded = req->buf == preloaded_buf && req->size == preloaded_size;
-		const uint16_t prefix =
-			zlrs_lr2021_tx_fifo_prefix(req->mod.modulation == ZLRS_MOD_FLRC, req->size);
+		const uint16_t prefix = zlrs_lr2021_tx_fifo_prefix(req->size);
 
 		preloaded_buf = NULL;
 		if (preloaded) {
@@ -410,11 +369,6 @@ static int prepare_request(const zlrs_radio_req_t *req)
 			timed_slot && (int32_t)(tx_at_us - ready_us) > 0 ? tx_at_us - ready_us : 0U;
 	}
 	return 0;
-}
-
-int zlrs_lr2021_prepare(const zlrs_radio_req_t *req)
-{
-	return prepare_request(req);
 }
 
 int zlrs_lr2021_preload_tx(const uint8_t *buf, uint16_t size)
@@ -761,21 +715,12 @@ bool zlrs_lr2021_poll(zlrs_lr2021_result_t *out)
 		} else {
 			diag.rx_payload_errors++;
 		}
-		if (request->mod.modulation == ZLRS_MOD_FLRC) {
-			ral_flrc_rx_pkt_status_t pkt;
-
-			if (ral_get_flrc_rx_pkt_status(&radio.ral, &pkt) == RAL_STATUS_OK) {
-				/* RX_DONE makes the whole-packet measurement available. */
-				rssi = pkt.rssi_avg_in_dbm;
-			}
-		} else {
-			ral_lora_rx_pkt_status_t pkt;
-
-			if (ral_get_lora_rx_pkt_status(&radio.ral, &pkt) == RAL_STATUS_OK) {
-				rssi = pkt.rssi_pkt_in_dbm;
-				snr = pkt.snr_pkt_in_db;
-			}
+		ral_flrc_rx_pkt_status_t pkt;
+		if (ral_get_flrc_rx_pkt_status(&radio.ral, &pkt) == RAL_STATUS_OK) {
+			/* RX_DONE makes the whole-packet measurement available. */
+			rssi = pkt.rssi_avg_in_dbm;
 		}
+
 		diag.rx_us_last = event_us - begin_us;
 		diag.rx_windows++;
 	}

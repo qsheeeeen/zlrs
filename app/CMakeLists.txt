@@ -16,7 +16,7 @@ target_sources(app PRIVATE
   ${zlrs_app_dir}/src/power.c
   ${zlrs_app_dir}/src/main.c
   ${zlrs_app_dir}/src/boot.c
-  ${zlrs_app_dir}/src/rf/rf.c
+  ${zlrs_app_dir}/src/rf.c
   ${zlrs_app_dir}/src/persist.c
   ${zlrs_app_dir}/src/platform/sha256.c
   ${zlrs_app_dir}/src/platform/slot_timer.c
@@ -28,7 +28,7 @@ target_sources(app PRIVATE
 )
 
 target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG_SHELL app PRIVATE ${zlrs_app_dir}/src/shell.c)
-target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG app PRIVATE ${zlrs_app_dir}/src/rf/diagnostics.c)
+target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG app PRIVATE ${zlrs_app_dir}/src/diagnostics.c)
 
 # App-internal headers are included the way they sit on disk: "platform/lr2021.h",
 # "serial.h", "platform/caps.h", ... (the layers are described in doc/06-architecture.md).
@@ -37,13 +37,15 @@ target_include_directories(app PRIVATE "${zlrs_app_dir}/src" "${zlrs_app_dir}/..
 
 if(CONFIG_ZLRS_APP_RAM_RADIO)
   set(zlrs_ram_sources
-    ${zlrs_app_dir}/src/rf/rf.c
+    ${zlrs_app_dir}/src/rf.c
     ${zlrs_app_dir}/src/platform/sha256.c
     ${zlrs_app_dir}/src/platform/lr2021.c
     ${zlrs_app_dir}/src/serial.c
     ${zlrs_app_dir}/src/power.c
     ${zlrs_app_dir}/../core/link/link.c
-    ${zlrs_app_dir}/../core/link/status.c
+    ${zlrs_app_dir}/../core/link/pairing.c
+    ${zlrs_app_dir}/../core/link/session.c
+    ${zlrs_app_dir}/../core/link/data.c
     ${zlrs_app_dir}/../core/proto/crypto.c
     ${zlrs_app_dir}/../core/proto/frame.c
     ${zlrs_app_dir}/../core/proto/fhss.c

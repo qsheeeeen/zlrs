@@ -6,7 +6,7 @@
 #include "mgmt.h"
 #include "log.h"
 #include "persist.h"
-#include "rf/rf.h"
+#include "rf.h"
 #include "zlrs/mgmt/mgmt.h"
 #include "zlrs/proto/crypto.h"
 

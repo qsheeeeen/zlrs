@@ -38,9 +38,9 @@ uint32_t zlrs_lr2021_airtime_us(const zlrs_mod_cfg_t *mod, uint16_t len);
 #define ZLRS_LR2021_TX_FIFO_PREFIX 128U
 
 /* FLRC consumes this prefix while the owner appends the authenticated tail. */
-static inline uint16_t zlrs_lr2021_tx_fifo_prefix(bool flrc, uint16_t size)
+static inline uint16_t zlrs_lr2021_tx_fifo_prefix(uint16_t size)
 {
-	return flrc && size > ZLRS_LR2021_TX_FIFO_PREFIX ? ZLRS_LR2021_TX_FIFO_PREFIX : size;
+	return size > ZLRS_LR2021_TX_FIFO_PREFIX ? ZLRS_LR2021_TX_FIFO_PREFIX : size;
 }
 
 /* FIFO reads consume a prefix. Validate the total before subtracting it or

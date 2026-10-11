@@ -1,0 +1,410 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+#include "internal.h"
+
+/* Identity, pairing key derivation and the repeated pairing handshake. */
+static const uint8_t pairing_sync_word[ZLRS_SYNC_WORD_LEN] = {'Z', 'L', 'R', 'S'};
+#define LABEL_PAIR       "zlrs/pair"
+#define LABEL_AUTH       "zlrs/auth"
+#define LABEL_FHSS       "zlrs/fhss"
+#define LABEL_SYNC_DATA  "zlrs/sync/data"
+#define LABEL_LINK_AUTH  "zlrs/link-auth"
+#define PAIR_PAYLOAD_LEN ZLRS_PAIR_PAYLOAD_LEN
+
+static void ordered_ids(const zlrs_link_t *link, uint8_t out[2U * ZLRS_DEV_ID_LEN])
+{
+	const uint8_t *a = link->dev_id;
+	const uint8_t *b = link->peer_id;
+	bool swap = false;
+
+	/*
+	 * Lexicographic, first differing byte decides. Stopping at the first byte that is *greater*
+	 * instead (a later byte can then flip the order) makes the result depend on which end asks:
+	 * the two ends would concatenate the ids in opposite orders, derive different pair keys from
+	 * the same record and strand the handshake in SEARCHING.
+	 */
+	for (uint8_t i = 0; i < ZLRS_DEV_ID_LEN; i++) {
+		if (a[i] != b[i]) {
+			swap = a[i] > b[i];
+			break;
+		}
+	}
+
+	if (swap) {
+		memcpy(out, b, ZLRS_DEV_ID_LEN);
+		memcpy(&out[ZLRS_DEV_ID_LEN], a, ZLRS_DEV_ID_LEN);
+	} else {
+		memcpy(out, a, ZLRS_DEV_ID_LEN);
+		memcpy(&out[ZLRS_DEV_ID_LEN], b, ZLRS_DEV_ID_LEN);
+	}
+}
+
+static void ordered_pair_salt(const zlrs_link_t *link, uint8_t out[ZLRS_PAIR_SALT_LEN])
+{
+	uint32_t a = rd32(&link->pair_salt[0]);
+	uint32_t b = rd32(&link->pair_salt[4]);
+
+	if (a > b) {
+		const uint32_t tmp = a;
+
+		a = b;
+		b = tmp;
+	}
+	wr32(&out[0], a);
+	wr32(&out[4], b);
+}
+
+static void derive_auth(zlrs_link_t *link)
+{
+	zlrs_kdf(link->root_key, ZLRS_KEY_LEN, LABEL_AUTH, NULL, 0U, link->auth_key, ZLRS_KEY_LEN);
+}
+
+static void derive_pair(zlrs_link_t *link)
+{
+	uint8_t ctx[ZLRS_PAIR_CTX_LEN];
+	uint8_t seed[4];
+	uint8_t data_word[ZLRS_SYNC_WORD_LEN];
+	uint32_t hop_seed;
+
+	/*
+	 * Both ids plus the two pairing nonces, sorted and concatenated: both ends get the same
+	 * pair_key, and re-pairing changes the nonces, which replaces the whole subtree below
+	 * (see doc/09-security.md 3).
+	 */
+	zlrs_link_pair_ctx(link, ctx);
+	zlrs_kdf(link->root_key, ZLRS_KEY_LEN, LABEL_PAIR, ctx, sizeof(ctx), link->pair_key,
+		 ZLRS_KEY_LEN);
+	link_derive_by_endpoints(link, LABEL_LINK_AUTH, NULL, 0U, link->link_auth_out,
+				 link->link_auth_in);
+
+	zlrs_kdf(link->pair_key, ZLRS_KEY_LEN, LABEL_FHSS, NULL, 0U, seed, sizeof(seed));
+	hop_seed = rd32(seed);
+	zlrs_fhss_init(&link->fhss, link->cfg.domain, hop_seed);
+
+	zlrs_kdf(link->pair_key, ZLRS_KEY_LEN, LABEL_SYNC_DATA, NULL, 0U, data_word,
+		 sizeof(data_word));
+
+	memcpy(link->sync_word, data_word, ZLRS_SYNC_WORD_LEN);
+
+	link->session_valid = false;
+	link->session_pending = false;
+	link->sess_resp_due = false;
+	link->sess_cfm_due = false;
+	link->sess_ack_due = false;
+	/*
+	 * Simplified handshake (only disabled for bench work): no session key is derived, the
+	 * pairing-level link_auth is the session key and one SESS_RESP answers a SYNC (09-security 3).
+	 */
+	if (link->cfg.handshake == 0U) {
+		memcpy(link->session_key_out, link->link_auth_out, ZLRS_KEY_LEN);
+		memcpy(link->session_key_in, link->link_auth_in, ZLRS_KEY_LEN);
+		link->session_valid = true;
+	}
+	link->last_rx_seq = 0xFFFFU;
+	link->fhss.index = 0U;
+}
+
+static void pair_payload_fill(const zlrs_link_t *link, uint8_t out[PAIR_PAYLOAD_LEN],
+			      uint32_t nonce_a, uint32_t nonce_b)
+{
+	const bool initiator = (link->cfg.role == ZLRS_ROLE_TX);
+	const uint8_t *dev_a = initiator ? link->dev_id : link->peer_id;
+	const uint8_t *dev_b = initiator ? link->peer_id : link->dev_id;
+
+	memset(out, 0, PAIR_PAYLOAD_LEN);
+	memcpy(out, dev_a, ZLRS_DEV_ID_LEN);
+	memcpy(&out[ZLRS_DEV_ID_LEN], dev_b, ZLRS_DEV_ID_LEN);
+	wr32(&out[2U * ZLRS_DEV_ID_LEN], nonce_a);
+	wr32(&out[2U * ZLRS_DEV_ID_LEN + 4U], nonce_b);
+}
+
+static const zlrs_radio_req_t *send_pair(zlrs_link_t *link, uint8_t type, uint32_t nonce_a,
+					 uint32_t nonce_b, uint32_t now_ms)
+{
+	uint8_t payload[PAIR_PAYLOAD_LEN];
+	uint16_t len;
+
+	switch (type) {
+	case ZLRS_PKT_PAIR_REQ:
+		link->stats.pair_req_tx++;
+		break;
+	case ZLRS_PKT_PAIR_RESP:
+		link->stats.pair_resp_tx++;
+		break;
+	case ZLRS_PKT_PAIR_CFM:
+		link->stats.pair_cfm_tx++;
+		break;
+	default:
+		break;
+	}
+
+	pair_payload_fill(link, payload, nonce_a, nonce_b);
+	len = link_build_frame(link, type, 0U, payload, sizeof(payload),
+			       link_tag_key_for(link, type, true));
+	link->last_pair_tx_ms = now_ms;
+
+	return link_submit_tx(link, len, link_sync_freq_hz(link), ZLRS_SYNC_SLOT_PAIRING,
+			      pairing_sync_word);
+}
+
+static const zlrs_radio_req_t *pair_rx(zlrs_link_t *link, uint16_t timeout_ms)
+{
+	return link_submit_rx(link, link_sync_freq_hz(link), ZLRS_SYNC_SLOT_PAIRING,
+			      pairing_sync_word, timeout_ms);
+}
+
+static void pairing_complete(zlrs_link_t *link, uint32_t now_ms)
+{
+	/* The two handshake nonces are this pair's material: keep them to recompute pair_key */
+	wr32(&link->pair_salt[0], link->pair_nonce);   /* nonce_a: initiator */
+	wr32(&link->pair_salt[4], link->pair_nonce_b); /* nonce_b: responder */
+
+	derive_pair(link);
+	link->paired = true;
+	link->pair_cfm_pending = false;
+	link->pair_cfm_sent = 0U;
+	link->pair_wait_cfm = false;
+	link_set_state(link, ZLRS_STATE_SEARCHING, now_ms);
+	link->last_rx_ms = now_ms;
+}
+
+static bool pair_reject(zlrs_link_t *link)
+{
+	link->stats.pair_rejects++;
+
+	return false;
+}
+
+bool link_handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
+{
+	const uint8_t *dev_a = frame->payload;
+	const uint8_t *dev_b = &frame->payload[ZLRS_DEV_ID_LEN];
+	uint32_t nonce_a;
+	uint32_t nonce_b;
+	const bool initiator = (link->cfg.role == ZLRS_ROLE_TX);
+
+	if (frame->payload_len != PAIR_PAYLOAD_LEN) {
+		return pair_reject(link);
+	}
+
+	nonce_a = rd32(&frame->payload[2U * ZLRS_DEV_ID_LEN]);
+	nonce_b = rd32(&frame->payload[2U * ZLRS_DEV_ID_LEN + 4U]);
+
+	switch (frame->type) {
+	case ZLRS_PKT_PAIR_REQ:
+		link->stats.pair_req_rx++;
+		break;
+	case ZLRS_PKT_PAIR_RESP:
+		link->stats.pair_resp_rx++;
+		break;
+	case ZLRS_PKT_PAIR_CFM:
+		link->stats.pair_cfm_rx++;
+		break;
+	default:
+		break;
+	}
+
+	switch (frame->type) {
+	case ZLRS_PKT_PAIR_REQ:
+		/*
+		 * Responder: remember the initiator's id and nonce, answer PAIR_RESP next slot. The
+		 * responder nonce is only drawn once per handshake: the initiator repeats PAIR_REQ until
+		 * it hears the response, and a fresh nonce per repeat would make the confirmation it
+		 * finally sends fail the check below (the reply it answered had another nonce).
+		 */
+		if (initiator) {
+			return pair_reject(link);
+		}
+		memcpy(link->peer_id, dev_a, ZLRS_DEV_ID_LEN);
+		/* Only a different initiator nonce starts a new handshake (repeats keep this answer) */
+		if (link->pair_nonce != nonce_a) {
+			link->pair_nonce = nonce_a;
+			link->pair_nonce_b = link_random(link, now_ms);
+		}
+		link->pair_wait_cfm = true;
+
+		return true;
+
+	case ZLRS_PKT_PAIR_RESP:
+		/* Initiator: confirm both its id and its nonce came back */
+		if (!initiator) {
+			return pair_reject(link);
+		}
+		if (!zlrs_ct_equal(dev_a, link->dev_id, ZLRS_DEV_ID_LEN) ||
+		    nonce_a != link->pair_nonce) {
+			return pair_reject(link);
+		}
+		memcpy(link->peer_id, dev_b, ZLRS_DEV_ID_LEN);
+		link->pair_nonce_b = nonce_b;
+		link->last_pair_rx_ms = now_ms;
+		link->pair_cfm_pending = true;
+		return true;
+
+	case ZLRS_PKT_PAIR_CFM:
+		/* Responder: both nonces are back, pairing is done */
+		if (initiator) {
+			return pair_reject(link);
+		}
+		if (!zlrs_ct_equal(dev_a, link->peer_id, ZLRS_DEV_ID_LEN) ||
+		    !zlrs_ct_equal(dev_b, link->dev_id, ZLRS_DEV_ID_LEN) ||
+		    nonce_a != link->pair_nonce || nonce_b != link->pair_nonce_b) {
+			return pair_reject(link);
+		}
+		link->pair_wait_cfm = false;
+		pairing_complete(link, now_ms);
+		return true;
+
+	default:
+		return pair_reject(link);
+	}
+}
+
+const zlrs_radio_req_t *link_pair_slot(zlrs_link_t *link, bool down, uint32_t now_ms)
+{
+	const bool tx_side = link->cfg.role == ZLRS_ROLE_TX;
+
+	if (down) {
+		link->frame_index++;
+	}
+	if (link->state == ZLRS_STATE_PAIRING) {
+		if (down) {
+			if (tx_side) {
+				if (link->pair_cfm_pending) {
+					/*
+					 * Confirmation repeats: the two ends share no slot phase while pairing, so
+					 * a single one is a coin flip. The responder repeats its answer until it
+					 * hears a confirm, and the confirm is repeated here for the same reason.
+					 */
+					if (link->pair_cfm_sent >= ZLRS_PAIR_CFM_REPEATS) {
+						pairing_complete(link, now_ms);
+						return NULL;
+					}
+					if ((uint32_t)(now_ms - link->last_pair_tx_ms) <
+					    link->cfg.pair_period_ms) {
+						return NULL;
+					}
+					const zlrs_radio_req_t *req =
+						send_pair(link, ZLRS_PKT_PAIR_CFM, link->pair_nonce,
+							  link->pair_nonce_b, now_ms);
+
+					if (req != NULL) {
+						link->pair_cfm_sent++;
+					}
+					return req;
+				}
+				if ((uint32_t)(now_ms - link->last_pair_tx_ms) <
+				    link->cfg.pair_period_ms) {
+					/* Nothing to send this slot: listen instead. The peer's phase is unknown, so
+					 * every extra window is another chance to hear it. */
+					return pair_rx(link, link_acq_timeout_ms(link));
+				}
+				return send_pair(link, ZLRS_PKT_PAIR_REQ, link->pair_nonce, 0U,
+						 now_ms);
+			}
+			return pair_rx(link, link_acq_timeout_ms(link));
+		}
+
+		if (tx_side) {
+			return pair_rx(link, link_acq_timeout_ms(link));
+		}
+		if (link->pair_wait_cfm) {
+			if ((uint32_t)(now_ms - link->last_pair_tx_ms) >=
+			    link->cfg.pair_period_ms) {
+				return send_pair(link, ZLRS_PKT_PAIR_RESP, link->pair_nonce,
+						 link->pair_nonce_b, now_ms);
+			}
+			/* Between repeats: listen, for the same reason as the initiator above */
+			return pair_rx(link, link_acq_timeout_ms(link));
+		}
+		return pair_rx(link, link_acq_timeout_ms(link));
+	}
+
+	if (link->state == ZLRS_STATE_SEARCHING && tx_side && down) {
+		if (link->pair_cfm_pending) {
+			if (link->pair_cfm_sent >= ZLRS_PAIR_CFM_REPEATS) {
+				link->pair_cfm_pending = false;
+				return NULL;
+			}
+			if ((uint32_t)(now_ms - link->last_pair_tx_ms) >=
+			    link->cfg.pair_period_ms) {
+				const zlrs_radio_req_t *req =
+					send_pair(link, ZLRS_PKT_PAIR_CFM, link->pair_nonce,
+						  link->pair_nonce_b, now_ms);
+
+				if (req != NULL) {
+					link->pair_cfm_sent++;
+				}
+				return req;
+			}
+			return NULL;
+		}
+	}
+	return NULL;
+}
+
+void zlrs_link_set_root_key(zlrs_link_t *link, const uint8_t root_key[ZLRS_KEY_LEN],
+			    uint32_t now_ms)
+{
+	memcpy(link->root_key, root_key, ZLRS_KEY_LEN);
+	link->configured = true;
+	derive_auth(link);
+
+	if (link->paired) {
+		derive_pair(link);
+		link_set_state(link, ZLRS_STATE_SEARCHING, now_ms);
+	} else {
+		link_set_state(link, ZLRS_STATE_UNPAIRED, now_ms);
+	}
+}
+
+void zlrs_link_set_dev_id(zlrs_link_t *link, const uint8_t dev_id[ZLRS_DEV_ID_LEN])
+{
+	memcpy(link->dev_id, dev_id, ZLRS_DEV_ID_LEN);
+}
+
+void zlrs_link_pair_ctx(const zlrs_link_t *link, uint8_t out[ZLRS_PAIR_CTX_LEN])
+{
+	ordered_ids(link, out);
+	ordered_pair_salt(link, &out[2U * ZLRS_DEV_ID_LEN]);
+}
+
+void zlrs_link_set_peer(zlrs_link_t *link, const uint8_t peer_id[ZLRS_DEV_ID_LEN],
+			const uint8_t pair_salt[ZLRS_PAIR_SALT_LEN], uint32_t now_ms)
+{
+	memcpy(link->peer_id, peer_id, ZLRS_DEV_ID_LEN);
+	memcpy(link->pair_salt, pair_salt, ZLRS_PAIR_SALT_LEN);
+	link->paired = true;
+
+	if (link->configured) {
+		derive_pair(link);
+		link_set_state(link, ZLRS_STATE_SEARCHING, now_ms);
+	}
+}
+
+void zlrs_link_press(zlrs_link_t *link, uint32_t now_ms)
+{
+	if (!link->configured) {
+		return;
+	}
+
+	link->pair_nonce = link_random(link, now_ms);
+	link->pair_nonce_b = link_random(link, link->pair_nonce);
+	link->pair_cfm_pending = false;
+	link->pair_cfm_sent = 0U;
+	link->pair_wait_cfm = false;
+	link_set_state(link, ZLRS_STATE_PAIRING, now_ms);
+}
+
+bool zlrs_link_cancel_pair(zlrs_link_t *link, uint32_t now_ms)
+{
+	if (link->state != ZLRS_STATE_PAIRING) {
+		return false;
+	}
+	link->pair_cfm_pending = false;
+	link->pair_wait_cfm = false;
+	link->session_valid = false;
+	link->session_pending = false;
+	link->sess_resp_due = false;
+	link->sess_cfm_due = false;
+	link_set_state(link, link->paired ? ZLRS_STATE_SEARCHING : ZLRS_STATE_UNPAIRED, now_ms);
+	return true;
+}

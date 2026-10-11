@@ -18,7 +18,7 @@ typedef struct {
 	uint32_t hits;
 	uint32_t tx;
 	uint32_t span_ms;
-	uint8_t state;
+	zlrs_link_state_t state;
 } zlrs_rf_rate_sample_t;
 
 typedef struct {
@@ -56,3 +56,17 @@ typedef struct {
 
 /* Called by management diagnostics at a safe boundary; no work on the RF hot path. */
 void zlrs_rf_diagnostics_capture(zlrs_rf_diagnostics_t *out);
+
+/* Diagnostic IDs belong to the application; management converts their wire representation. */
+typedef enum {
+	ZLRS_DIAGNOSTIC_LINK = 0,
+	ZLRS_DIAGNOSTIC_RATE,
+	ZLRS_DIAGNOSTIC_RADIO,
+	ZLRS_DIAGNOSTIC_POWER,
+} zlrs_diagnostic_report_t;
+
+/* Begin a snapshot with offset 0, then read its chunks on the owner thread.
+ * Returns 0, -EINVAL for an invalid report/offset/capacity, or -ENOSPC for report overflow.
+ */
+int zlrs_diagnostics_read(zlrs_diagnostic_report_t report, uint16_t offset, uint8_t *out,
+			  uint8_t capacity, uint16_t *total, uint8_t *written);

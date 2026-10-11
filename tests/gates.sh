@@ -47,7 +47,7 @@ if hit=$(rg -n 'zlrs_link_t|zlrs/link/link.h|zlrs_storage_settings_' \
 	echo "$hit"
 fi
 
-if hit=$(rg -n 'link_data\.' app/src/rf); then
+if hit=$(rg -n 'link_data\.' app/src/rf.c); then
 	bad "RF accesses link storage directly instead of using link operations/views:"
 	echo "$hit"
 fi
@@ -56,7 +56,7 @@ if [ -e app/src/state/sys_bus.c ] || [ -e app/src/state/sys_bus.h ]; then
 	bad "centralized module channels returned"
 fi
 
-if hit=$(rg -n 'rf/rf.h|zlrs_rf_|zbus' app/src/persist.c app/src/persist.h); then
+if hit=$(rg -n '"rf.h"|zlrs_rf_|zbus' app/src/persist.c app/src/persist.h); then
  bad "persist depends on RF or state publication:"
  echo "$hit"
 fi
@@ -73,6 +73,11 @@ fi
 
 if hit=$(rg -n 'zephyr/|zlrs/link|LOG_|CONFIG_' app/src/power.c app/src/power.h); then
 	bad "power policy depends on application wiring:"
+	echo "$hit"
+fi
+
+if hit=$(rg -n 'zlrs/mgmt|ZLRS_MGMT' app/src/rf.c app/src/diagnostics.c app/src/diagnostics.h); then
+	bad "RF or diagnostics depends on the management wire protocol:"
 	echo "$hit"
 fi
 

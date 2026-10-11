@@ -74,7 +74,7 @@ and the pins. How those numbers are used: [06-architecture](06-architecture.md) 
 | 12 | -132.5 dBm | -137.5 dBm |
 
 LoRa symbol rate = `BW / 2^SF`. The datasheet suggests at least 12 preamble symbols for SF5/SF6
-and at least 8 otherwise; the firmware's LoRa tier defaults to SF7 / BW125 / CR 4/5 / 8 symbols.
+and at least 8 otherwise. These are chip capabilities; the DATA firmware uses FLRC.
 
 ## Mode switch times (Table 3-23, typical)
 

@@ -11,7 +11,7 @@ Protocol version `8` carries one bidirectional DATA service. Both peers must use
 | Payload | Variable | Packet-specific fields; DATA includes peer-quality feedback. |
 | Authentication tag | 0 or 4 B | Truncated HMAC-SHA256 over header, sequence and payload; absent only in debug P0. |
 
-The FLRC frame limit is 511 bytes; LoRa has a 255-byte radio limit. All multi-byte protocol fields are little-endian. The application sets a DATA MTU that leaves room for the four-byte ARQ/feedback header and authentication tag.
+The FLRC frame limit is 511 bytes. All multi-byte protocol fields are little-endian. The application sets a DATA MTU that leaves room for the four-byte ARQ/feedback header and authentication tag.
 
 | Type | Value | Direction | Use |
 | --- | --- | --- | --- |
@@ -29,6 +29,10 @@ The FLRC frame limit is 511 bytes; LoRa has a 255-byte radio limit. All multi-by
 With ARQ enabled, a data-bearing payload is `{data_seq:u16, rssi_magnitude:u8, lq_percent:u8, bytes[]}`. Without ARQ it is `{rssi_magnitude:u8, lq_percent:u8, bytes[]}`. A feedback-only frame carries just the last two bytes, even when ARQ is enabled. A magnitude of zero means no usable RSSI sample; otherwise the receiver interprets it as a negative dBm value. Quality is 0–100 percent. These values describe the peer's reception of this node's transmissions, so each sender can adjust its own TX power. Feedback-only frames are sent during idle periods, allowing power adaptation without user traffic.
 
 Each direction has a stop-and-wait ARQ sequence. A receiver changes its ACK toggle only after its serial sink accepts the bytes; if it is full, the sender retains and retransmits the packet. Retransmissions keep the DATA sequence, while new radio frames keep advancing their authenticated frame sequence. A new session resets the ARQ state. Payload bytes remain opaque to the radio protocol.
+
+## SYNC payload
+
+`SYNC` carries 12 bytes: `{version:u8, profile:u8, hop_index:u16, nonce_t:u32, frame_index:u32}`. The high four bits of `profile` are reserved and must be zero. The current DATA product uses one channel domain at a time; no second-table mix or version is negotiated. These fields and the normal zero reserved bits retain the existing version 8 byte format.
 
 ## Pairing and sessions
 

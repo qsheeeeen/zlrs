@@ -7,7 +7,7 @@
 #include "mgmt.h"
 #include "platform/caps.h"
 #include "boot.h"
-#include "rf/rf.h"
+#include "rf.h"
 #ifdef PICO_RP2350
 #include <pico/bootrom.h>
 #endif

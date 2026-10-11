@@ -53,19 +53,9 @@ extern "C" {
 #define ZLRS_RADIO_FAIL 1
 
 typedef struct {
-	uint8_t role;   /* ZLRS_ROLE_TX / ZLRS_ROLE_RX */
-	uint8_t domain; /* ZLRS_DOMAIN_*: the main hop table */
-	/*
-	 * Second table (sub-band mixing, doc/08-protocol.md): 0xFF = not configured, the link
-	 * only hops the main table; otherwise each sub-band gets one and sub_mix splits the slots.
-	 */
-	uint8_t second_domain;
+	zlrs_role_t role;
+	zlrs_fhss_domain_id_t domain;
 	zlrs_profile_t profile;
-	/*
-	 * Modulation: an FLRC rate tier or LoRa SF/bandwidth/coding rate/preamble, see
-	 * doc/06-architecture.md. LoRa sync words derive from the pairing key, and the link layer
-	 * fills in mod.sync_byte itself (callers pass 0).
-	 */
 	zlrs_mod_cfg_t mod;
 	int8_t tx_power_dbm;
 	uint16_t rx_timeout_ms; /* one receive window */
@@ -97,13 +87,6 @@ typedef struct {
 	 * 3.
 	 */
 	uint8_t handshake;
-	/* Cadence thinning (1 = every frame), counted on both peers. */
-	uint8_t data_every_n;
-	/*
-	 * Sub-band mix (0..3 -> 0/1/2/4 of every 4 slots on sub-G): the initial value, which the TX
-	 * advances at runtime through the SYNC table version, see doc/08-protocol.md.
-	 */
-	uint8_t mix;
 	/*
 	 * Periodic SYNC interval while connected, in frames. 0 = no periodic resync (the hop index
 	 * is only aligned when the link comes up); >0 = a SYNC every this many frames lets the peer
@@ -115,7 +98,7 @@ typedef struct {
 typedef struct {
 	/* True only after the entire packet has been accepted; false keeps its ACK unchanged. */
 	bool (*on_data)(void *ctx, const uint8_t *data, uint16_t len);
-	void (*on_state)(void *ctx, uint8_t state);
+	void (*on_state)(void *ctx, zlrs_link_state_t state);
 	void *ctx;
 } zlrs_link_events_t;
 
@@ -155,10 +138,8 @@ typedef struct {
 	uint32_t sess_resp_tx;      /* RX: answered a SYNC */
 	uint32_t sess_cfm_rx;       /* RX: session confirmed */
 	uint32_t sess_cfm_tx;       /* TX: confirmations sent */
-	uint32_t mix_changes;       /* how often a new sub-band mix was adopted */
-	uint32_t mix_fallbacks; /* fallbacks to the default mix after missing new SYNC versions */
-	uint32_t hop_resync;    /* hop-index corrections received through SYNC */
-	uint32_t hop_advances;  /* times this link moved its hop index by itself */
+	uint32_t hop_resync;        /* hop-index corrections received through SYNC */
+	uint32_t hop_advances;      /* times this link moved its hop index by itself */
 	/* Pairing handshake frames sent and received, per message type: this handshake loses frames */
 	uint32_t pair_req_tx;
 	uint32_t pair_resp_tx;
@@ -239,8 +220,6 @@ typedef struct {
 	uint8_t link_auth_out[ZLRS_KEY_LEN];
 	uint8_t link_auth_in[ZLRS_KEY_LEN];
 	uint8_t sync_word[ZLRS_SYNC_WORD_LEN];
-	/* LoRa sync words are one byte plus a private bit, see doc/08-protocol.md */
-	uint8_t lora_sync;
 	uint8_t session_key_out[ZLRS_KEY_LEN];
 	uint8_t session_key_in[ZLRS_KEY_LEN];
 	bool session_valid;
@@ -262,7 +241,7 @@ typedef struct {
 	uint32_t pair_nonce_b;    /* pairing: responder nonce_b */
 
 	/* state and timing */
-	uint8_t state;
+	zlrs_link_state_t state;
 	uint32_t state_ms;
 	uint32_t last_rx_ms;
 	uint32_t last_rx_frame; /* Authenticated DATA hop epoch, for sparse-SYNC reacquisition. */
@@ -285,11 +264,6 @@ typedef struct {
 	uint16_t lq_last_seq;
 	uint32_t frame_index; /* DATA_A slots run */
 	zlrs_fhss_t fhss;
-	/* Sub-band mix: current level, table version, default level, last-version timestamp */
-	uint8_t sub_mix;
-	uint8_t sub_mix_version;
-	uint8_t sub_mix_default;
-	uint32_t sub_mix_seen_ms;
 
 	/* passthrough queue */
 	uint8_t tx_queue[ZLRS_LINK_TX_QUEUE_LEN];
@@ -395,23 +369,6 @@ uint16_t zlrs_link_tx_space(const zlrs_link_t *link);
 #define ZLRS_PAIR_CTX_LEN (2U * ZLRS_DEV_ID_LEN + ZLRS_PAIR_SALT_LEN)
 void zlrs_link_pair_ctx(const zlrs_link_t *link, uint8_t out[ZLRS_PAIR_CTX_LEN]);
 
-/*
- * Open one receive window on this link's own channel, outside the superframe's own slot. A build
- * with one link has slots the other one does not use, and listening there is free air time for the
- * side that is only receiving: on the bench it takes the receive duty from about 40% to nearly
- * always, which is what a weak peer needs.
- */
-const zlrs_radio_req_t *zlrs_link_listen(zlrs_link_t *link);
-
-/* Change modulation at runtime (rate adaptation); effective with the next transaction */
-void zlrs_link_set_mod(zlrs_link_t *link, const zlrs_mod_cfg_t *mod);
-
-/*
- * Set the sub-band mix: on the TX the next SYNC carries it (table version +1); on the RX it
- * only moves the default (fallback) level, the TX's SYNC still drives the current one.
- */
-void zlrs_link_set_mix(zlrs_link_t *link, uint8_t mix);
-
 /* Change TX power at runtime (dynamic power); effective with the next transaction */
 void zlrs_link_set_power(zlrs_link_t *link, int8_t tx_power_dbm);
 
@@ -430,7 +387,7 @@ const zlrs_radio_req_t *zlrs_link_slot(zlrs_link_t *link, uint8_t slot, uint32_t
 
 /* Encode new ARQ DATA for the next assigned TX slot without advancing sender/hop state.
  * Safe while RX is pending. Returned bytes stay immutable through the resulting TX request;
- * NULL means that handshake, recovery, cadence or backpressure requires the normal path. */
+ * NULL means that handshake, recovery or backpressure requires the normal path. */
 const uint8_t *zlrs_link_prepare_data(zlrs_link_t *link, uint8_t slot, uint32_t now_ms,
 				      uint16_t *size);
 

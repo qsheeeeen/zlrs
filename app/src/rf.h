@@ -58,6 +58,4 @@ void zlrs_rf_management_return(void);
 #if defined(CONFIG_ZLRS_APP_DEBUG)
 /* Debug shell receives a copy; all link/configuration APIs above remain owner-thread only. */
 void zlrs_rf_trace(char *out, size_t capacity);
-int zlrs_rf_debug_report(uint8_t id, uint16_t offset, uint8_t *out, uint8_t capacity,
-			 uint16_t *total, uint8_t *written);
 #endif

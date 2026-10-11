@@ -27,7 +27,10 @@
 
 #include "serial.h"
 #include "persist.h"
-#include "rf/rf.h"
+#include "rf.h"
+#if defined(CONFIG_ZLRS_APP_DEBUG)
+#include "diagnostics.h"
+#endif
 #include "platform/caps.h"
 #include "boot.h"
 #include "platform/slot_timer.h"
@@ -430,13 +433,13 @@ static int read_image_hash(uint8_t out[ZLRS_MGMT_IMAGE_HASH_LEN])
 	return ZLRS_MGMT_E_STATE;
 }
 
-#if defined(CONFIG_ZLRS_APP_DEBUG)
-static uint8_t cfg_debug_ack(uint8_t cmd, uint8_t status, uint8_t *out, size_t out_len)
+static uint8_t ack_frame(uint8_t *out, size_t cap, uint8_t cmd, uint8_t status)
 {
-	const uint8_t payload[2] = {cmd, status};
-
-	return zlrs_mgmt_encode(out, out_len, ZLRS_MGMT_CMD_ACK, payload, sizeof(payload));
+	const uint8_t body[2] = {cmd, status};
+	return zlrs_mgmt_encode(out, cap, ZLRS_MGMT_CMD_ACK, body, sizeof(body));
 }
+
+#if defined(CONFIG_ZLRS_APP_DEBUG)
 
 static uint8_t cfg_debug_report(const uint8_t *request, uint8_t request_len, uint8_t *out,
 				size_t out_len)
@@ -447,20 +450,18 @@ static uint8_t cfg_debug_report(const uint8_t *request, uint8_t request_len, uin
 	uint8_t written = 0U;
 
 	if (request_len != ZLRS_MGMT_DEBUG_REPORT_REQ_LEN) {
-		return cfg_debug_ack(ZLRS_MGMT_CMD_DEBUG_REPORT, ZLRS_MGMT_E_PARAM, out, out_len);
+		return ack_frame(out, out_len, ZLRS_MGMT_CMD_DEBUG_REPORT, ZLRS_MGMT_E_PARAM);
 	}
 
 	offset = (uint16_t)request[1] | ((uint16_t)request[2] << 8);
 	const int rc =
-		zlrs_rf_debug_report(request[0], offset, &body[ZLRS_MGMT_DEBUG_REPORT_HEADER_LEN],
-				     ZLRS_MGMT_DEBUG_REPORT_CHUNK_MAX, &total_len, &written);
+		zlrs_diagnostics_read((zlrs_diagnostic_report_t)request[0], offset,
+				      &body[ZLRS_MGMT_DEBUG_REPORT_HEADER_LEN],
+				      ZLRS_MGMT_DEBUG_REPORT_CHUNK_MAX, &total_len, &written);
 
-	if (rc != ZLRS_MGMT_OK) {
-		return cfg_debug_ack(ZLRS_MGMT_CMD_DEBUG_REPORT, (uint8_t)rc, out, out_len);
-	}
-	if (written > ZLRS_MGMT_DEBUG_REPORT_CHUNK_MAX || offset > total_len ||
-	    (uint32_t)offset + written > total_len || (offset < total_len && written == 0U)) {
-		return cfg_debug_ack(ZLRS_MGMT_CMD_DEBUG_REPORT, ZLRS_MGMT_E_STATE, out, out_len);
+	if (rc != 0) {
+		return ack_frame(out, out_len, ZLRS_MGMT_CMD_DEBUG_REPORT,
+				 rc == -EINVAL ? ZLRS_MGMT_E_PARAM : ZLRS_MGMT_E_STATE);
 	}
 
 	body[0] = request[0];
@@ -490,12 +491,6 @@ static uint8_t hex_nibble(char c, bool *ok)
 	return 0U;
 }
 
-static uint8_t ack_frame(uint8_t *out, size_t cap, uint8_t cmd, uint8_t status)
-{
-	const uint8_t body[2] = {cmd, status};
-	return zlrs_mgmt_encode(out, cap, ZLRS_MGMT_CMD_ACK, body, sizeof(body));
-}
-
 static uint8_t log_result(int rc)
 {
 	return rc == 0 ? ZLRS_MGMT_OK : rc == -EINVAL ? ZLRS_MGMT_E_PARAM : ZLRS_MGMT_E_STATE;
@@ -507,6 +502,10 @@ uint8_t zlrs_mgmt_command(uint8_t cmd, const uint8_t *payload, uint8_t len, uint
 {
 	int rc;
 	switch (cmd) {
+#if defined(CONFIG_ZLRS_APP_DEBUG)
+	case ZLRS_MGMT_CMD_DEBUG_REPORT:
+		return cfg_debug_report(payload, len, out, cap);
+#endif
 	case ZLRS_MGMT_CMD_ENTER:
 	case ZLRS_MGMT_CMD_EXIT:
 		return ack_frame(out, cap, cmd, ZLRS_MGMT_OK);
@@ -713,20 +712,9 @@ int zlrs_mgmt_run(void)
 				last_activity_ms = k_uptime_get_32();
 			}
 
-			uint8_t len;
-
-#if defined(CONFIG_ZLRS_APP_DEBUG)
-			if (cfg_parser.cmd == ZLRS_MGMT_CMD_DEBUG_REPORT) {
-				len = cfg_debug_report(ZLRS_MGMT_PAYLOAD(&cfg_parser),
-						       cfg_parser.payload_len, cfg_tx_line,
-						       sizeof(cfg_tx_line));
-			} else
-#endif
-			{
-				len = zlrs_mgmt_command(
-					cfg_parser.cmd, ZLRS_MGMT_PAYLOAD(&cfg_parser),
-					cfg_parser.payload_len, cfg_tx_line, sizeof(cfg_tx_line));
-			}
+			const uint8_t len = zlrs_mgmt_command(
+				cfg_parser.cmd, ZLRS_MGMT_PAYLOAD(&cfg_parser),
+				cfg_parser.payload_len, cfg_tx_line, sizeof(cfg_tx_line));
 
 			if (len > 0U) {
 				cfg_tx_pending = len;

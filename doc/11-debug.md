@@ -71,15 +71,25 @@ The persist fixture backs up the entire settings partition and restores it in su
 Management commands run with the real app command switch and real NVS in `tests/simulation/mgmt` (native simulator, `--flash_in_ram`). The hardware counterpart `tests/hardware/mgmt` uses the real app, USB, RF and flash. Its fixture snapshots NVS before main; recovery restores that snapshot and MCUboot rolls back the unconfirmed fixture. Never confirm or ship this fixture. Confirmation and one NVS write are explicitly fault-injected; the normal upgrade/confirmation path is separately verified on product images.
 
 RF result simulation runs real RF scheduling and two real P1/ARQ protocol nodes,
-with only LR2021, clock and serial edges simulated. It covers bidirectional bytes,
-completion failures, preparation/launch failures, absent IRQs and timeout cleanup:
+with only LR2021, clock and serial edges simulated. Run both roles on each band.
+It covers bidirectional bytes,
+completion failures, preparation/launch failures, absent IRQs, timeout cleanup,
+strong-link power reductions, feedback-loss fallback and diagnostic pagination:
 
 ```sh
-west build -b native_sim/native/64 tests/simulation/rf -d build/rf-simulation
-build/rf-simulation/zephyr/zephyr.exe --flash_in_ram
-west build -b native_sim/native/64 tests/simulation/rf -d build/rf-rx-simulation -- -DRF_TEST_ROLE_RX=ON
-build/rf-rx-simulation/zephyr/zephyr.exe --flash_in_ram
+for role in OFF ON; do
+  for subg in OFF ON; do
+    build_dir="build/rf-${role}-${subg}"
+    west build -b native_sim/native/64 tests/simulation/rf -d "$build_dir" -- -DRF_TEST_ROLE_RX="$role" -DRF_TEST_BAND_SUBG="$subg"
+    "$build_dir/zephyr/zephyr.exe" --flash_in_ram
+  done
+done
 ```
+
+The host link regression includes a fixed version 8 wire transcript from the pre-refactor
+implementation, plus tampering, reflection, duplicate DATA, session renewal and
+prepared-ACK follow-up checks. It keeps the FIFO preparation timing policy: a prepared
+ACK snapshot can lag, but new DATA leaves an ACK pending until a later frame carries it.
 
 The radio fixture fills DATA packets directly, exercising FIFO tails independently of USB pacing:
 

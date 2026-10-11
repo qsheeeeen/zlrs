@@ -19,10 +19,7 @@ extern "C" {
 
 typedef struct {
 	uint32_t freq_hz; /* carrier frequency */
-	/*
-	 * Modulation: an FLRC rate or LoRa SF/bandwidth/coding rate/preamble, see
-	 * doc/06-architecture.md. The application configures the corresponding RAL parameters.
-	 */
+	/* FLRC rate selected for this DATA link. */
 	zlrs_mod_cfg_t mod;
 	uint8_t sync_slot; /* hardware sync word slot (1-based): 1 DATA, 2 pairing */
 	uint8_t sync_word[ZLRS_SYNC_WORD_LEN];

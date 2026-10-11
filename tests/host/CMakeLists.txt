@@ -37,7 +37,9 @@ add_executable(zlrs_host_tests
   ../../core/proto/frame.c
   ../../core/proto/mod.c
   ../../core/link/link.c
-  ../../core/link/status.c
+  ../../core/link/pairing.c
+  ../../core/link/session.c
+  ../../core/link/data.c
 )
 
 set_target_properties(zlrs_host_tests PROPERTIES

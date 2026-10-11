@@ -105,7 +105,7 @@ static bool fx_on_data(void *ctx, const uint8_t *data, uint16_t len)
 	return true;
 }
 
-static void fx_on_state(void *ctx, uint8_t state)
+static void fx_on_state(void *ctx, zlrs_link_state_t state)
 {
 	(void)ctx;
 	(void)state;
@@ -132,7 +132,7 @@ static void fx_link_init(zlrs_link_t *link, uint8_t arq)
 		.role = ZLRS_ROLE_TX,
 		.domain = ZLRS_DOMAIN_ISM2400,
 		.profile = ZLRS_PROFILE_P1,
-		.mod = {.modulation = ZLRS_MOD_FLRC, .rate_bps = 2600000U},
+		.mod = {.rate_bps = 2600000U},
 		.tx_power_dbm = 10,
 		.rx_timeout_ms = 2U,
 		.sync_period_ms = 2000U,
@@ -143,7 +143,7 @@ static void fx_link_init(zlrs_link_t *link, uint8_t arq)
 		.arq = arq,
 		.hopping = 1U,
 		.handshake = 1U,
-		.data_every_n = 1U,
+
 	};
 	const zlrs_link_events_t ev = {
 		.on_data = fx_on_data,

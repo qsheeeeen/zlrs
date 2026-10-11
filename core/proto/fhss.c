@@ -23,8 +23,7 @@ const zlrs_fhss_domain_t zlrs_fhss_domains[ZLRS_DOMAIN_COUNT] = {
 			       .channel_count = 13U},
 	/*
 	 * 470-510 MHz: the main band of the Core2021 LF variant. A 300 kHz step matches the FLRC
-	 * bandwidth (0.325 Mbps DSB is 300 kHz wide); the 200 kHz plan belongs to LoRa and would
-	 * squeeze neighbouring channels if used for hopping.
+	 * bandwidth (0.325 Mbps DSB is 300 kHz wide).
 	 */
 	[ZLRS_DOMAIN_CN470] = {.name = "CN470",
 			       .start_hz = 470300000U,
@@ -44,29 +43,14 @@ const zlrs_fhss_domain_t zlrs_fhss_domains[ZLRS_DOMAIN_COUNT] = {
 				 .channel_count = 79U},
 };
 
-static uint32_t rng_state = 0x12345678U;
-
-static void rng_seed(uint32_t seed)
+static uint32_t rng_next(uint32_t *state)
 {
-	/* Zero is a fixed point of xorshift32, so avoid it */
-	rng_state = (seed != 0U) ? seed : 0x12345678U;
-}
-
-static uint32_t rng_next(void)
-{
-	uint32_t x = rng_state;
-
+	uint32_t x = *state;
 	x ^= x << 13;
 	x ^= x >> 17;
 	x ^= x << 5;
-	rng_state = x;
-
+	*state = x;
 	return x;
-}
-
-static uint8_t rng_n(uint8_t max)
-{
-	return (max == 0U) ? 0U : (uint8_t)(rng_next() % max);
 }
 
 static uint16_t build_sequence(uint32_t seed, uint8_t channel_count, uint8_t sync_channel,
@@ -82,7 +66,7 @@ static uint16_t build_sequence(uint32_t seed, uint8_t channel_count, uint8_t syn
 	}
 
 	count = (uint16_t)((ZLRS_FHSS_SEQUENCE_LEN / channel_count) * channel_count);
-	rng_seed(seed);
+	uint32_t rng = seed != 0U ? seed : 0x12345678U;
 
 	/*
 	 * Slot 0 of every block holds the sync channel and the channel that would have been there gets
@@ -111,7 +95,7 @@ static uint16_t build_sequence(uint32_t seed, uint8_t channel_count, uint8_t syn
 		}
 
 		base = (uint16_t)((i / channel_count) * channel_count);
-		pick = (uint8_t)(1U + rng_n((uint8_t)(channel_count - 1U)));
+		pick = (uint8_t)(1U + (rng_next(&rng) % (channel_count - 1U)));
 		tmp = sequence[i];
 		sequence[i] = sequence[base + pick];
 		sequence[base + pick] = tmp;
@@ -120,9 +104,9 @@ static uint16_t build_sequence(uint32_t seed, uint8_t channel_count, uint8_t syn
 	return count;
 }
 
-void zlrs_fhss_init(zlrs_fhss_t *fhss, uint8_t domain_id, uint32_t seed)
+void zlrs_fhss_init(zlrs_fhss_t *fhss, zlrs_fhss_domain_id_t domain_id, uint32_t seed)
 {
-	if (domain_id >= ZLRS_DOMAIN_COUNT) {
+	if ((unsigned int)domain_id >= ZLRS_DOMAIN_COUNT) {
 		domain_id = ZLRS_DOMAIN_ISM2400;
 	}
 
@@ -132,65 +116,6 @@ void zlrs_fhss_init(zlrs_fhss_t *fhss, uint8_t domain_id, uint32_t seed)
 	fhss->index = 0U;
 	fhss->sequence_count = build_sequence(seed, fhss->domain->channel_count, fhss->sync_channel,
 					      fhss->sequence);
-}
-
-void zlrs_fhss_init_dual(zlrs_fhss_t *fhss, uint8_t main_domain_id, uint8_t sub_domain_id,
-			 uint32_t seed)
-{
-	zlrs_fhss_init(fhss, main_domain_id, seed);
-
-	if (sub_domain_id >= ZLRS_DOMAIN_COUNT) {
-		return;
-	}
-
-	fhss->sub_domain = &zlrs_fhss_domains[sub_domain_id];
-	fhss->sub_sync_channel = (uint8_t)(fhss->sub_domain->channel_count / 2U);
-	fhss->sub_index = 0U;
-	/* The sub-table seed differs from the main one: one pair must not hop twice on the same table */
-	fhss->sub_count = build_sequence(seed ^ 0x9E3779B9U, fhss->sub_domain->channel_count,
-					 fhss->sub_sync_channel, fhss->sub_sequence);
-}
-
-uint8_t zlrs_fhss_mix_slots(uint8_t mix)
-{
-	static const uint8_t slots[4] = {0U, 1U, 2U, 4U};
-
-	return slots[mix & 0x03U];
-}
-
-bool zlrs_fhss_sub_ready(const zlrs_fhss_t *fhss)
-{
-	return fhss->sub_domain != NULL && fhss->sub_count > 0U;
-}
-
-uint32_t zlrs_fhss_sub_current_hz(const zlrs_fhss_t *fhss)
-{
-	if (!zlrs_fhss_sub_ready(fhss)) {
-		return 0U;
-	}
-
-	return fhss->sub_domain->start_hz +
-	       (uint32_t)fhss->sub_sequence[fhss->sub_index] * fhss->sub_domain->step_hz;
-}
-
-uint32_t zlrs_fhss_sub_next_hz(zlrs_fhss_t *fhss)
-{
-	if (!zlrs_fhss_sub_ready(fhss)) {
-		return 0U;
-	}
-
-	fhss->sub_index = (uint16_t)((fhss->sub_index + 1U) % fhss->sub_count);
-
-	return zlrs_fhss_sub_current_hz(fhss);
-}
-
-void zlrs_fhss_set_sub_index(zlrs_fhss_t *fhss, uint16_t index)
-{
-	if (!zlrs_fhss_sub_ready(fhss)) {
-		return;
-	}
-
-	fhss->sub_index = (uint16_t)(index % fhss->sub_count);
 }
 
 static uint32_t freq_hz(const zlrs_fhss_t *fhss, uint8_t channel)

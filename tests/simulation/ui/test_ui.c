@@ -2,7 +2,7 @@
 #include <zephyr/ztest.h>
 #include <zephyr/drivers/gpio/gpio_emul.h>
 #include "ui.h"
-#include "rf/rf.h"
+#include "rf.h"
 #include "mgmt.h"
 #include "serial.h"
 ZBUS_CHAN_DEFINE(zlrs_rf_chan, zlrs_rf_status_t, NULL, NULL, ZBUS_OBSERVERS_EMPTY,

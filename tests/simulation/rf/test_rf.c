@@ -2,7 +2,8 @@
 #include <errno.h>
 #include <string.h>
 #include <zephyr/ztest.h>
-#include "rf/rf.h"
+#include "rf.h"
+#include "diagnostics.h"
 #include "serial.h"
 #include "platform/lr2021.h"
 #include "platform/slot_timer.h"
@@ -91,6 +92,14 @@ uint32_t zlrs_slot_timer_scan_delay_ms(uint32_t us, uint8_t sync, bool acquired)
 }
 void zlrs_watchdog_feed(void)
 {
+}
+void zlrs_slot_timer_stats(struct zlrs_slot_timer_stats *out)
+{
+	*out = (struct zlrs_slot_timer_stats){.boundaries = frame};
+}
+void zlrs_lr2021_diag(zlrs_lr2021_diag_t *out)
+{
+	*out = (zlrs_lr2021_diag_t){0};
 }
 int zlrs_lr2021_init(void)
 {
@@ -222,11 +231,11 @@ static void frames(unsigned int count)
 ZTEST(rf_results, test_protocol_completion_and_timeouts)
 {
 	zlrs_persist_state_t saved = {
-		.settings = {.band = ZLRS_DATA_BAND_24,
+		.settings = {.band = RF_TEST_BAND_SUBG ? ZLRS_DATA_BAND_SUBG : ZLRS_DATA_BAND_24,
 			     .region = ZLRS_REGION_CN433,
 			     .role = RF_TEST_ROLE_RX ? ZLRS_ROLE_RX : ZLRS_ROLE_TX,
 			     .profile = ZLRS_PROFILE_P1,
-			     .power_dbm = -10},
+			     .power_dbm = 10},
 		.dev_id = {1, 2, 3, 4},
 		.root_key = {0x42},
 		.configured = true,
@@ -257,8 +266,13 @@ ZTEST(rf_results, test_protocol_completion_and_timeouts)
 	zassert_equal(zlrs_link_get_stats(local)->slot_rx[0] +
 			      zlrs_link_get_stats(local)->slot_rx[1],
 		      rx_ok);
+	for (unsigned int i = 0U; i < 5000U && zlrs_rf_status().tx_power_dbm == 10; ++i) {
+		frames(1);
+	}
+	zassert_true(zlrs_rf_status().tx_power_dbm < 10);
 	mode = RX_FAIL;
-	frames(30);
+	frames(1000);
+	zassert_equal(zlrs_rf_status().tx_power_dbm, 10);
 	zassert_true(rx_fail > 0);
 	zassert_equal(zlrs_link_get_stats(local)->radio_fail, rx_fail);
 	mode = TX_FAIL;
@@ -274,6 +288,30 @@ ZTEST(rf_results, test_protocol_completion_and_timeouts)
 	mode = NO_IRQ;
 	frames(30);
 	zassert_true(aborts > 0);
+	zlrs_rf_pause();
+	uint8_t chunk[80];
+	uint16_t total;
+	uint8_t written;
+	for (unsigned int report = ZLRS_DIAGNOSTIC_LINK; report <= ZLRS_DIAGNOSTIC_POWER;
+	     ++report) {
+		uint16_t offset = 0U;
+		do {
+			zassert_ok(zlrs_diagnostics_read((zlrs_diagnostic_report_t)report, offset,
+							 chunk, sizeof(chunk), &total, &written));
+			zassert_true(written > 0U);
+			offset += written;
+		} while (offset < total);
+		zassert_equal(offset, total);
+		zassert_ok(zlrs_diagnostics_read((zlrs_diagnostic_report_t)report, total, chunk,
+						 sizeof(chunk), &total, &written));
+		zassert_equal(written, 0U);
+	}
+	zassert_equal(zlrs_diagnostics_read(ZLRS_DIAGNOSTIC_LINK, 1U, chunk, sizeof(chunk), &total,
+					    &written),
+		      -EINVAL);
+	zassert_equal(zlrs_diagnostics_read((zlrs_diagnostic_report_t)255, 0U, chunk, sizeof(chunk),
+					    &total, &written),
+		      -EINVAL);
 	k_thread_priority_set(k_current_get(), 0);
 }
 ZTEST_SUITE(rf_results, NULL, NULL, NULL, NULL, NULL);

@@ -40,10 +40,9 @@ void test_radio(void)
 		packet[i] = (uint8_t)(i ^ (i >> 8));
 	}
 	for (uint16_t size = 0U; size <= sizeof(packet); size++) {
-		const uint16_t prefix = zlrs_lr2021_tx_fifo_prefix(true, size);
+		const uint16_t prefix = zlrs_lr2021_tx_fifo_prefix(size);
 
 		CHECK(prefix == (size > 128U ? 128U : size));
-		CHECK(zlrs_lr2021_tx_fifo_prefix(false, size) == size);
 		CHECK(zlrs_lr2021_fifo_remaining(sizeof(packet), prefix, size, &remaining));
 		CHECK((uint32_t)prefix + remaining == size);
 		memcpy(fifo, packet, prefix);

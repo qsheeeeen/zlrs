@@ -12,7 +12,7 @@
 #include "serial.h"
 #include "mgmt.h"
 #include "platform/watchdog.h"
-#include "rf/rf.h"
+#include "rf.h"
 #include "ui.h"
 
 int zlrs_application_main(void);

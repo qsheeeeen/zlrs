@@ -11,7 +11,7 @@ ZTEST(link, test_pair_key_rederivation)
 	zlrs_link_cfg_t cfg = {
 		.role = ZLRS_ROLE_TX,
 		.domain = ZLRS_DOMAIN_ISM2400,
-		.second_domain = 0xffU,
+
 		.profile = ZLRS_PROFILE_P1,
 		.data_mtu = 502U,
 	};

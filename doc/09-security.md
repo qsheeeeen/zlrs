@@ -49,8 +49,7 @@ root_key ── KDF "zlrs/auth" ────────────────
          └─ KDF "zlrs/pair", ordered_ids || salt ─────► pair_key
                                                           ├─ KDF "zlrs/link-auth", ids ────► link_auth_out / link_auth_in
                                                           ├─ KDF "zlrs/fhss" ─────────────► hop-table seed
-                                                                                                                    ├─ KDF "zlrs/sync/data" ────────► data sync word (4 B)
-                                                          ├─ KDF "zlrs/sync/lora/*" ──────► LoRa sync byte (bit 7 = private)
+                                                          ├─ KDF "zlrs/sync/data" ────────► data sync word (4 B)
                                                           └─ KDF "zlrs/session", nonces ──► session keys (per direction)
 ```
 
@@ -60,11 +59,9 @@ root_key ── KDF "zlrs/auth" ────────────────
   outgoing frames and peer-then-local for incoming ones. One key for both directions would let
   our own frame, echoed back, pass as the peer's (reflection).
 - Re-pairing produces new nonces, so the whole subtree below `pair_key` changes.
-- LoRa sync words are one byte plus a private bit, derived through their own labels (named after
-  the link, not the band).
 
-The protocol core never sees `root_key`: the link layer derives and holds the subtree, and the
-configuration protocol hands the root key straight to NVS.
+The link instance holds the root key and derives the subtree. The frame codec never receives
+the root key. Management stores the key through persist in a maintenance window.
 
 ## 4. Pairing
 

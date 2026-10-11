@@ -2,4 +2,4 @@
 # SPDX-License-Identifier: Apache-2.0
 
 zephyr_library()
-zephyr_library_sources(link.c status.c)
+zephyr_library_sources(link.c pairing.c session.c data.c)

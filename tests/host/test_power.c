@@ -12,7 +12,7 @@ void test_power(void)
 	zlrs_power_t power;
 	printf("power: fresh feedback, limits, hold, timeout and clock wrap\n");
 	zlrs_power_init(&power, 20, 0, 10000U);
-	CHECK(zlrs_power_update(&power, -60, 100U, 0U, 13000U) == 20);
+	CHECK(zlrs_power_update(&power, -60, 100U, 0U, 11000U) == 20);
 	CHECK(observe(&power, -60, 100U, 11999U) == 20);
 	CHECK(observe(&power, -60, 100U, 12000U) == 20);
 	/* Reading the same feedback repeatedly cannot fill quality windows. */

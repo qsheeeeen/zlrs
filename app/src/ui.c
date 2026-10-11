@@ -9,7 +9,7 @@
 
 #include <string.h>
 
-#include "rf/rf.h"
+#include "rf.h"
 #include "mgmt.h"
 #include "serial.h"
 #include "ui_pattern.h"

@@ -20,35 +20,6 @@ void test_fhss(void)
 
 	printf("fhss\n");
 
-	/* Two tables (main 2.4G plus sub-G) from one seed, identical on both ends */
-	{
-		zlrs_fhss_t dual;
-		zlrs_fhss_t dual2;
-
-		zlrs_fhss_init_dual(&dual, ZLRS_DOMAIN_ISM2400, ZLRS_DOMAIN_CN433, 0x5a5a1234U);
-		zlrs_fhss_init_dual(&dual2, ZLRS_DOMAIN_ISM2400, ZLRS_DOMAIN_CN433, 0x5a5a1234U);
-		CHECK(zlrs_fhss_sub_ready(&dual));
-		CHECK(dual.sub_count == (ZLRS_FHSS_SEQUENCE_LEN / 5U) * 5U);
-		CHECK(zlrs_fhss_sub_current_hz(&dual) == zlrs_fhss_sub_current_hz(&dual2));
-		CHECK(zlrs_fhss_sub_current_hz(&dual) >= 433050000U);
-		CHECK(zlrs_fhss_sub_current_hz(&dual) <= 434790000U);
-		CHECK(zlrs_fhss_sub_next_hz(&dual) == zlrs_fhss_sub_current_hz(&dual));
-		zlrs_fhss_set_sub_index(&dual, 3U);
-		CHECK(zlrs_fhss_sub_current_hz(&dual) == zlrs_fhss_sub_current_hz(&dual2) ||
-		      dual.sub_index == 3U);
-
-		/* Four mix levels map to how many of every 4 slots land on sub-G */
-		CHECK(zlrs_fhss_mix_slots(0U) == 0U);
-		CHECK(zlrs_fhss_mix_slots(1U) == 1U);
-		CHECK(zlrs_fhss_mix_slots(2U) == 2U);
-		CHECK(zlrs_fhss_mix_slots(3U) == 4U);
-
-		/* Without a sub-band the second table is unusable */
-		zlrs_fhss_init(&dual, ZLRS_DOMAIN_ISM2400, 0x1U);
-		CHECK(!zlrs_fhss_sub_ready(&dual));
-		CHECK(zlrs_fhss_sub_current_hz(&dual) == 0U);
-	}
-
 	/* EU868: 13 channels, 256 / 13 = 19 blocks */
 	zlrs_fhss_init(&fhss, ZLRS_DOMAIN_EU868, 0x1234abcdU);
 	CHECK(fhss.domain->channel_count == 13U);
@@ -86,4 +57,23 @@ void test_fhss(void)
 	CHECK(fhss.index == 1U);
 	zlrs_fhss_set_index(&fhss, 0U);
 	CHECK(zlrs_fhss_current_hz(&fhss) == first);
+	/* Each retained single-domain plan is reproducible, balanced and wraps at its own size. */
+	for (zlrs_fhss_domain_id_t domain = ZLRS_DOMAIN_FCC915; domain < ZLRS_DOMAIN_COUNT;
+	     ++domain) {
+		uint16_t counts[96] = {0};
+		zlrs_fhss_init(&fhss, domain, 0x5a5a1234U);
+		zlrs_fhss_init(&again, domain, 0x5a5a1234U);
+		CHECK(memcmp(fhss.sequence, again.sequence, fhss.sequence_count) == 0);
+		first = zlrs_fhss_current_hz(&fhss);
+		for (uint16_t i = 0U; i < fhss.sequence_count; ++i) {
+			CHECK(fhss.sequence[i] < fhss.domain->channel_count);
+			counts[fhss.sequence[i]]++;
+			(void)zlrs_fhss_next_hz(&fhss);
+		}
+		CHECK(fhss.index == 0U);
+		CHECK(zlrs_fhss_current_hz(&fhss) == first);
+		for (uint8_t channel = 0U; channel < fhss.domain->channel_count; ++channel) {
+			CHECK(counts[channel] == fhss.sequence_count / fhss.domain->channel_count);
+		}
+	}
 }

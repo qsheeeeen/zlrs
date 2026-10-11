@@ -14,7 +14,6 @@
 /* Frame: common header(1) + seq(2) + payload + tag(0/4). */
 #define ZLRS_FRAME_HDR_LEN      3U
 #define ZLRS_TAG_LEN            4U
-#define ZLRS_LORA_FRAME_MAX_LEN 255U
 #define ZLRS_FRAME_MAX_LEN      511U
 #define ZLRS_PAYLOAD_MAX_LEN    (ZLRS_FRAME_MAX_LEN - ZLRS_FRAME_HDR_LEN - ZLRS_TAG_LEN)
 

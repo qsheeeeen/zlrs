@@ -6,14 +6,7 @@
  *
  * Where the expected values come from:
  *   - FLRC and zlrs_airtime_us() in core/region must agree (one model, two call sites)
- *   - LoRa timing by hand from Semtech's formula: Ts = 2^SF/BW, preamble (n + 4.25) symbols,
- *     payload symbols n_payload = 8 + ceil((8*PL - 4*SF + 28 + 16) / (4*(SF - 2*DE))) * (CR+4)
  */
-
-#include "test.h"
-
-#include "zlrs/proto/mod.h"
-#include "zlrs/region/region.h"
 
 #include "test.h"
 
@@ -44,54 +37,7 @@ static void test_mod_flrc_matches_region(void)
 	CHECK(zlrs_mod_airtime_us(&no_rate, 31U) == 0U);
 }
 
-/*
- * SF7 / BW125 / CR 4/5 / 8 preamble symbols:
- *   Ts = 128 / 125000 = 1.024 ms
- *   31 B payload: ceil((248 - 28 + 44) / 28) = ceil(9.43) = 10 -> 10 * 5 + 8 = 58 symbols
- *   72.2 ms? No: preamble (8 + 4.25) * 1.024 = 12.544 ms, payload 58 * 1.024 = 59.392 ms,
- *   total 71.936 ms
- *   7 B heartbeat: ceil((56 - 28 + 44) / 28) = 3 -> 3 * 5 + 8 = 23 symbols = 23.552 ms,
- *   total 36.096 ms
- */
-static void test_mod_lora_reference(void)
-{
-	const zlrs_mod_cfg_t sf7 = zlrs_mod_lora(7U, 125000U, 1U, 8U);
-	const zlrs_mod_cfg_t sf12 = zlrs_mod_lora(12U, 125000U, 1U, 8U);
-	const zlrs_mod_cfg_t sf7_250 = zlrs_mod_lora(7U, 250000U, 1U, 8U);
-	const zlrs_mod_cfg_t sf7_cr8 = zlrs_mod_lora(7U, 125000U, 4U, 8U);
-	const zlrs_mod_cfg_t no_bw = zlrs_mod_lora(7U, 0U, 1U, 8U);
-	const zlrs_mod_cfg_t bad_sf = zlrs_mod_lora(13U, 125000U, 1U, 8U);
-	uint32_t packet_us;
-	uint32_t short_us;
-
-	printf("mod: lora airtime reference values\n");
-
-	packet_us = zlrs_mod_airtime_us(&sf7, 31U);
-	short_us = zlrs_mod_airtime_us(&sf7, 7U);
-	CHECK(packet_us == 71936U);
-	CHECK(short_us == 36096U);
-	CHECK(zlrs_mod_airtime_ms(&sf7, 31U) == 72U);
-
-	/* Double the bandwidth halves the time (integer rounding allows a 1 us difference) */
-	CHECK(zlrs_mod_airtime_us(&sf7_250, 31U) == packet_us / 2U);
-
-	/* CR 4/8 is slower than 4/5 but never slower than a full preamble: monotonic is enough */
-	CHECK(zlrs_mod_airtime_us(&sf7_cr8, 31U) > packet_us);
-
-	/* Higher SF is slower: SF12 is an order of magnitude behind SF7 */
-	CHECK(zlrs_mod_airtime_us(&sf12, 31U) > 10U * packet_us);
-
-	/* Longer payloads take longer (one smooth curve, no knees) */
-	CHECK(zlrs_mod_airtime_us(&sf7, 64U) > zlrs_mod_airtime_us(&sf7, 32U));
-
-	/* Invalid parameters give 0 rather than a nonsense number */
-	CHECK(zlrs_mod_airtime_us(&no_bw, 31U) == 0U);
-	CHECK(zlrs_mod_airtime_us(&bad_sf, 31U) == 0U);
-	CHECK(zlrs_mod_airtime_us(NULL, 31U) == 0U);
-}
-
 void test_mod(void)
 {
 	test_mod_flrc_matches_region();
-	test_mod_lora_reference();
 }

@@ -156,32 +156,6 @@ static void test_duty(void)
 	CHECK(duty.denied == 0U);
 }
 
-static void test_mix_limit(void)
-{
-	const zlrs_region_t *eu = zlrs_region_get(ZLRS_REGION_EU868);
-	const zlrs_region_t *fcc = zlrs_region_get(ZLRS_REGION_FCC915);
-
-	printf("region: sub-band mix limit\n");
-
-	/* No duty limit: 100% straight away (level 3 = all 4 slots) */
-	CHECK(zlrs_region_mix_level(fcc, 24U, 1000U) == 3U);
-	CHECK(zlrs_region_mix_level(NULL, 24U, 1000U) == 3U);
-
-	/* EU868 1%: a 24 ms window allows 0.24 ms of sub-G airtime,
-	 * so 1 ms per slot fits none of the levels */
-	CHECK(zlrs_region_mix_level(eu, 24U, 1000U) == 0U);
-	/* Shorter slots (200 us): 0.24 ms allows one -> 25% */
-	CHECK(zlrs_region_mix_level(eu, 24U, 200U) == 1U);
-	/* 100 us per slot: two allowed -> 50% */
-	CHECK(zlrs_region_mix_level(eu, 24U, 100U) == 2U);
-	/* Window stretched to 400 ms: 1% = 4 ms, enough for four 1 ms slots -> 100% */
-	CHECK(zlrs_region_mix_level(eu, 400U, 1000U) == 3U);
-
-	/* Invalid arguments do not crash */
-	CHECK(zlrs_region_mix_level(eu, 0U, 100U) == 3U);
-	CHECK(zlrs_region_mix_level(eu, 24U, 0U) == 3U);
-}
-
 void test_region(void)
 {
 	printf("region: tables\n");
@@ -189,6 +163,5 @@ void test_region(void)
 	test_rate_limit();
 	test_airtime();
 	test_max_frames();
-	test_mix_limit();
 	test_duty();
 }

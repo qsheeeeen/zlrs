@@ -11,7 +11,7 @@
 #include "serial.h"
 #include "mgmt.h"
 #include "platform/watchdog.h"
-#include "rf/rf.h"
+#include "rf.h"
 #include "ui.h"
 
 LOG_MODULE_REGISTER(zlrs_main, CONFIG_APP_LOG_LEVEL);

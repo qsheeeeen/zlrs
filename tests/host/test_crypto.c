@@ -31,7 +31,7 @@ static void test_kdf(void)
 	/* Repeatable for the same input; changing label/context gives domain separation. */
 	zlrs_kdf(key, sizeof(key), "zlrs/sync/data", NULL, 0U, b, sizeof(b));
 	CHECK(memcmp(a, b, sizeof(a)) == 0);
-	zlrs_kdf(key, sizeof(key), "zlrs/sync/lora/data", NULL, 0U, b, sizeof(b));
+	zlrs_kdf(key, sizeof(key), "zlrs/auth", NULL, 0U, b, sizeof(b));
 	CHECK(memcmp(a, b, sizeof(a)) != 0);
 	zlrs_kdf(key, sizeof(key), "zlrs/session", ctx, sizeof(ctx), a, sizeof(a));
 	zlrs_kdf(key, sizeof(key), "zlrs/session", NULL, 0U, b, sizeof(b));

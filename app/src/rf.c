@@ -16,14 +16,13 @@
 
 #include "persist.h"
 #include "serial.h"
-#include "rf/rf.h"
-#include "rf/diagnostics.h"
+#include "rf.h"
+#include "diagnostics.h"
 #include "power.h"
 #include "platform/caps.h"
 #include "platform/slot_timer.h"
 #include "platform/watchdog.h"
 #include "platform/lr2021.h"
-#include "zlrs/mgmt/mgmt.h"
 
 #include "zlrs/link/link.h"
 #include "zlrs/region/region.h"
@@ -46,8 +45,7 @@ static uint32_t slot_prepare_us = CONFIG_ZLRS_APP_PREPARE_US;
 static uint8_t resync_every_n;
 static uint16_t data_mtu;
 static zlrs_data_band_t data_band = ZLRS_DATA_BAND_24;
-#define ZLRS_DATA_SUBG    (data_band == ZLRS_DATA_BAND_SUBG)
-#define ZLRS_MGMT_ENABLED ZLRS_PORT_MGMT
+#define ZLRS_DATA_SUBG (data_band == ZLRS_DATA_BAND_SUBG)
 
 /* Copy batch only; the pump drains until its source or the link queue is empty. */
 #define SERIAL_PUMP_CHUNK_LEN 256U
@@ -97,7 +95,7 @@ static bool on_data(void *ctx, const uint8_t *data, uint16_t len)
 	return true;
 }
 
-static void on_state(void *ctx, uint8_t state)
+static void on_state(void *ctx, zlrs_link_state_t state)
 {
 	const char *name = "?";
 	(void)ctx;
@@ -128,9 +126,6 @@ static void on_state(void *ctx, uint8_t state)
 /* The selected band alone determines modulation, airtime and duty budget. */
 static uint16_t sync_period_for_mod(const zlrs_mod_cfg_t *mod)
 {
-	if (mod->modulation != ZLRS_MOD_FLRC) {
-		return 600U;
-	}
 	if (mod->rate_bps >= 2600000U) {
 		return 100U;
 	}
@@ -176,7 +171,7 @@ static void build_links(void)
 	zlrs_link_cfg_t cfg = {
 		.role = role_tx ? ZLRS_ROLE_TX : ZLRS_ROLE_RX,
 		.domain = ZLRS_DATA_SUBG ? region->domain : ZLRS_DOMAIN_ISM2400,
-		.second_domain = 0xFFU,
+
 		.profile = active_profile,
 		.hopping = IS_ENABLED(CONFIG_ZLRS_APP_FHSS) ? 1U : 0U,
 		.handshake = IS_ENABLED(CONFIG_ZLRS_APP_SESSION_HANDSHAKE) ? 1U : 0U,
@@ -195,7 +190,7 @@ static void build_links(void)
 		.arq_timeout_ms = (uint16_t)MAX(
 			10U, DIV_ROUND_UP((uint64_t)frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE,
 					  1000U)),
-		.data_every_n = 1U,
+
 		.resync_every_n = resync_every_n,
 	};
 	const zlrs_link_events_t events = {
@@ -843,7 +838,7 @@ int zlrs_rf_init(const zlrs_persist_state_t *saved)
 
 	/* What the build is, and what this board has: ports and peripherals come from devicetree,
 	 * so a missing one is reported without being an error (app/src/platform/caps.h) */
-	if (!ZLRS_MGMT_ENABLED) {
+	if (!ZLRS_PORT_MGMT) {
 		LOG_WRN("no management port on this board, parameters can only come from the "
 			"defaults");
 	}
@@ -913,7 +908,7 @@ int zlrs_rf_init(const zlrs_persist_state_t *saved)
 	}
 	zlrs_duty_init(&duty, region, 0U);
 	/* The status LED comes up on its own thread and reads the state it renders: nothing to
-	 * init here (app/src/ui.c, rf/rf.h) */
+	 * init here (app/src/ui.c, rf.h) */
 
 	int rc = zlrs_slot_timer_init();
 	if (rc != 0) {
