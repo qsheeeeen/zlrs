@@ -1,5 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
+/ {
+	aliases {
+		zlrs-led = &led_test;
+	};
+	led_test: led-test {};
+};
+
 &cdc_acm_uart2 {
 	status = "okay";
 	tx-fifo-size = <8192>;

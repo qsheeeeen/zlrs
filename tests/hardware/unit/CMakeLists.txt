@@ -19,7 +19,7 @@ target_sources(app PRIVATE
   "${zlrs_root}/app/src/persist.c"
   "${zlrs_root}/app/src/power.c"
   "${zlrs_root}/app/src/platform/slot_timer.c"
-  "${zlrs_root}/app/src/ui_pattern.c"
+  "${zlrs_root}/app/src/ui.c"
   "${zlrs_root}/app/src/platform/sha256.c"
   "${zlrs_root}/app/src/log.c")
 target_include_directories(app PRIVATE "${zlrs_root}/app/src" "${zlrs_root}/core/proto" ..)

@@ -24,7 +24,6 @@ target_sources(app PRIVATE
   ${zlrs_app_dir}/src/platform/lr2021.c
   ${zlrs_app_dir}/src/log.c
   ${zlrs_app_dir}/src/ui.c
-  ${zlrs_app_dir}/src/ui_pattern.c
 )
 
 target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG_SHELL app PRIVATE ${zlrs_app_dir}/src/shell.c)

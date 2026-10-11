@@ -1,6 +1,7 @@
 #include <zephyr/dt-bindings/gpio/gpio.h>
 / {
- aliases { zlrs-button = &button; };
+ aliases { zlrs-button = &button; zlrs-led = &led_test; };
+ led_test: led-test {};
  gpio_test: gpio-test {
   compatible = "zephyr,gpio-emul";
   gpio-controller;

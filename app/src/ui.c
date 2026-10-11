@@ -7,12 +7,9 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
-#include <string.h>
-
 #include "rf.h"
 #include "mgmt.h"
 #include "serial.h"
-#include "ui_pattern.h"
 #include "ui.h"
 
 LOG_MODULE_REGISTER(zlrs_ui, CONFIG_APP_LOG_LEVEL);
@@ -73,12 +70,68 @@ ZBUS_CHAN_ADD_OBS(zlrs_serial_chan, zlrs_ui_sub, 0);
 /* The board's status pixel: NULL when this board has no `zlrs-led` alias or the node is off */
 static const struct device *const led_strip = DEVICE_DT_GET_OR_NULL(DT_ALIAS(zlrs_led));
 
+static const struct led_rgb off = {0};
+static const struct led_rgb white = {.r = 255U, .g = 255U, .b = 255U};
+static const struct led_rgb purple = {.r = 160U, .b = 200U};
+static const struct led_rgb yellow = {.r = 255U, .g = 180U};
+static const struct led_rgb blue = {.g = 90U, .b = 255U};
+static const struct led_rgb green = {.g = 255U};
+static const struct led_rgb red = {.r = 255U};
+static const struct led_rgb orange = {.r = 255U, .g = 80U};
+
+static struct led_rgb blink(struct led_rgb color, uint32_t now_ms, uint32_t period_ms,
+			    uint32_t on_ms)
+{
+	return now_ms % period_ms < on_ms ? color : off;
+}
+
+static struct led_rgb alternate(struct led_rgb first, struct led_rgb second, uint32_t now_ms,
+				uint32_t period_ms)
+{
+	return now_ms % period_ms < period_ms / 2U ? first : second;
+}
+
+static struct led_rgb led_color(const zlrs_rf_status_t *link, bool mgmt_mode, bool drop_recent,
+				uint32_t now_ms)
+{
+	const struct led_rgb theme = link->role == ZLRS_ROLE_TX ? blue : green;
+
+	if (mgmt_mode) {
+		return white;
+	}
+	if (link->link_lost || link->fault) {
+		return alternate(theme, red, now_ms, 500U);
+	}
+	if (drop_recent) {
+		return alternate(theme, orange, now_ms, 500U);
+	}
+	switch (link->state) {
+	case ZLRS_STATE_CONNECTED:
+		if (link->lq_percent >= 80U) {
+			return blink(theme, now_ms, 250U, 200U);
+		}
+		if (link->lq_percent >= 50U) {
+			return blink(theme, now_ms, 250U, 50U);
+		}
+		return blink(theme, now_ms, 500U, 250U);
+	case ZLRS_STATE_PAIRING:
+		return blink(theme, now_ms, 1000U, 300U);
+	case ZLRS_STATE_SEARCHING:
+		return theme;
+	case ZLRS_STATE_UNPAIRED:
+		return alternate(theme, yellow, now_ms, 500U);
+	case ZLRS_STATE_UNCONFIGURED:
+	default:
+		return blink(purple, now_ms, 2000U, 200U);
+	}
+}
+
 /*
  * Show one frame. The renderer produces one colour (LED_PIXELS); everything about turning it
  * into a signal — colour order, pixel count, reset timing — belongs to the driver behind the strip
  * API and comes from devicetree.
  */
-static int led_write(struct zlrs_led_color color)
+static int led_write(struct led_rgb color)
 {
 	static bool error_logged;
 	static struct led_rgb pixels[LED_PIXELS];
@@ -128,7 +181,7 @@ static void ui_thread(void *p1, void *p2, void *p3)
 	uint32_t sample_ms = 0U;
 	uint32_t render_ms = 0U;
 	bool write_ok = false;
-	struct zlrs_led_color on_strip = {0};
+	struct led_rgb on_strip = {0};
 
 	ARG_UNUSED(p1);
 	ARG_UNUSED(p2);
@@ -144,15 +197,22 @@ static void ui_thread(void *p1, void *p2, void *p3)
 	button_ready = gpio_is_ready_dt(&button) && gpio_pin_configure_dt(&button, GPIO_INPUT) == 0;
 #endif
 	for (;;) {
-		bool changed = zbus_sub_wait(&zlrs_ui_sub, &chan, K_MSEC(UI_POLL_MS)) == 0;
+		const uint32_t before_ms = k_uptime_get_32();
+		const uint32_t sample_age = before_ms - sample_ms;
+		const uint32_t render_age = before_ms - render_ms;
+		/* A fixed poll wait can step over the entire 50 ms connected pulse. */
+		const uint32_t wait_ms =
+			MIN(sample_age < UI_POLL_MS ? UI_POLL_MS - sample_age : 0U,
+			    render_age < LED_REFRESH_MS ? LED_REFRESH_MS - render_age : 0U);
+		bool changed = zbus_sub_wait(&zlrs_ui_sub, &chan, K_MSEC(wait_ms)) == 0;
 		while (zbus_sub_wait(&zlrs_ui_sub, &chan, K_NO_WAIT) == 0) {
 			changed = true;
 		}
 		const uint32_t now_ms = k_uptime_get_32();
-		if (button_ready && (uint32_t)(now_ms - sample_ms) >= UI_POLL_MS) {
+		if ((uint32_t)(now_ms - sample_ms) >= UI_POLL_MS) {
 			sample_ms = now_ms;
 #if DT_NODE_EXISTS(DT_ALIAS(zlrs_button))
-			const int pressed = gpio_pin_get_dt(&button);
+			const int pressed = button_ready ? gpio_pin_get_dt(&button) : -1;
 			if (pressed > 0 && !down) {
 				down = true;
 				fired = false;
@@ -197,23 +257,14 @@ static void ui_thread(void *p1, void *p2, void *p3)
 
 		/* Faults and link loss share the red/theme pattern. Management mode wins over alarms,
 		 * followed by recent drops and the underlying link state. */
-		const bool alarm = link.link_lost || link.fault;
-		const struct zlrs_led_frame_input in = {
-			.mgmt_mode =
-				mgmt_was && (uint32_t)(now_ms - mgmt_since) >= LED_CONFIG_DELAY_MS,
-			.link_lost = alarm,
-			.drop_recent =
-				drop_bytes > 0U && (uint32_t)(now_ms - drop_ms) < LED_DROP_HOLD_MS,
-			.role_tx = link.role == ZLRS_ROLE_TX,
-			.link_state = link.state,
-			.lq_percent = link.lq_percent,
-		};
-
-		const struct zlrs_led_color color = zlrs_app_led_frame(&in, now_ms);
+		const struct led_rgb color = led_color(
+			&link, mgmt_was && (uint32_t)(now_ms - mgmt_since) >= LED_CONFIG_DELAY_MS,
+			drop_bytes > 0U && (uint32_t)(now_ms - drop_ms) < LED_DROP_HOLD_MS, now_ms);
 
 		/* The strip holds the colour it was given, so an unchanged frame is not worth a PIO
 		 * push; a write that failed is retried, or the strip would stay stale for good. */
-		if (!write_ok || memcmp(&color, &on_strip, sizeof(color)) != 0) {
+		if (!write_ok || color.r != on_strip.r || color.g != on_strip.g ||
+		    color.b != on_strip.b) {
 			on_strip = color;
 			write_ok = led_write(color) == 0;
 		}

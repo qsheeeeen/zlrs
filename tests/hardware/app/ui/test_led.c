@@ -1,213 +1,272 @@
-/*
- * Copyright (c) 2026 zlrs contributors
- * SPDX-License-Identifier: Apache-2.0
- *
- * Status LED tests: priorities, color alternation, connected cadence and LQ brightness.
- */
-
-#include <zephyr/ztest.h>
-
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Exercise the real UI thread through its zbus inputs and LED driver output. */
+#include <errno.h>
 #include <string.h>
+#include <zephyr/drivers/led_strip.h>
+#include <zephyr/kernel.h>
+#include <zephyr/ztest.h>
+#include "rf.h"
+#include "mgmt.h"
+#include "serial.h"
 
-#include "ui_pattern.h"
+ZBUS_CHAN_DEFINE(zlrs_rf_chan, zlrs_rf_status_t, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
+		 ZBUS_MSG_INIT(0));
+ZBUS_CHAN_DEFINE(zlrs_mode_chan, struct zlrs_mode, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
+		 ZBUS_MSG_INIT(0));
+ZBUS_CHAN_DEFINE(zlrs_serial_chan, struct zlrs_serial_status, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
+		 ZBUS_MSG_INIT(0));
 
-#define CHECK(condition) zassert_true((condition), #condition)
+struct sample {
+	struct led_rgb color;
+	uint32_t ms;
+};
+static struct k_spinlock capture_lock;
+static struct sample samples[64];
+static size_t sample_count;
+static struct led_rgb last;
+static uint32_t writes;
+static bool reject_next;
+static zlrs_rf_status_t link;
+static struct zlrs_mode mode;
+static struct zlrs_serial_status serial;
 
-static bool is_off(struct zlrs_led_color c)
+static int record_rgb(const struct device *dev, struct led_rgb *pixels, size_t count)
 {
-	return c.r == 0U && c.g == 0U && c.b == 0U;
+	ARG_UNUSED(dev);
+	if (count != 1U) {
+		return -EINVAL;
+	}
+	const k_spinlock_key_t key = k_spin_lock(&capture_lock);
+	writes++;
+	if (reject_next) {
+		reject_next = false;
+		k_spin_unlock(&capture_lock, key);
+		return -EIO;
+	}
+	last = pixels[0];
+	if (sample_count < ARRAY_SIZE(samples)) {
+		samples[sample_count++] = (struct sample){.color = last, .ms = k_uptime_get_32()};
+	}
+	k_spin_unlock(&capture_lock, key);
+	return 0;
+}
+
+static size_t strip_length(const struct device *dev)
+{
+	ARG_UNUSED(dev);
+	return 1U;
+}
+
+static DEVICE_API(led_strip, led_api) = {.update_rgb = record_rgb, .length = strip_length};
+DEVICE_DT_DEFINE(DT_NODELABEL(led_test), NULL, NULL, NULL, NULL, POST_KERNEL,
+		 CONFIG_KERNEL_INIT_PRIORITY_DEFAULT, &led_api);
+
+static const struct led_rgb off = {0};
+static const struct led_rgb white = {.r = 255U, .g = 255U, .b = 255U};
+static const struct led_rgb purple = {.r = 160U, .b = 200U};
+static const struct led_rgb yellow = {.r = 255U, .g = 180U};
+static const struct led_rgb green = {.g = 255U};
+static const struct led_rgb blue = {.g = 90U, .b = 255U};
+static const struct led_rgb red = {.r = 255U};
+static const struct led_rgb orange = {.r = 255U, .g = 80U};
+
+static bool same_color(struct led_rgb a, struct led_rgb b)
+{
+	return a.r == b.r && a.g == b.g && a.b == b.b;
+}
+
+static struct led_rgb color_now(void)
+{
+	const k_spinlock_key_t key = k_spin_lock(&capture_lock);
+	const struct led_rgb color = last;
+	k_spin_unlock(&capture_lock, key);
+	return color;
+}
+
+static uint32_t write_count(void)
+{
+	const k_spinlock_key_t key = k_spin_lock(&capture_lock);
+	const uint32_t count = writes;
+	k_spin_unlock(&capture_lock, key);
+	return count;
+}
+
+static void clear_capture(void)
+{
+	const k_spinlock_key_t key = k_spin_lock(&capture_lock);
+	sample_count = 0U;
+	k_spin_unlock(&capture_lock, key);
+}
+
+static void publish(void)
+{
+	zassert_ok(zbus_chan_pub(&zlrs_rf_chan, &link, K_MSEC(20)));
+	zassert_ok(zbus_chan_pub(&zlrs_mode_chan, &mode, K_MSEC(20)));
+	zassert_ok(zbus_chan_pub(&zlrs_serial_chan, &serial, K_MSEC(20)));
+	k_msleep(80);
+}
+
+static void wait_color(struct led_rgb expected, uint32_t timeout_ms)
+{
+	const int64_t deadline = k_uptime_get() + timeout_ms;
+	while (!same_color(color_now(), expected) && k_uptime_get() < deadline) {
+		k_msleep(10);
+	}
+	zassert_true(same_color(color_now(), expected), "LED did not reach the expected color");
+}
+
+static void expect_steady(struct led_rgb expected, uint32_t duration_ms)
+{
+	wait_color(expected, 100);
+	clear_capture();
+	k_msleep(duration_ms);
+	const k_spinlock_key_t key = k_spin_lock(&capture_lock);
+	bool steady = same_color(last, expected);
+	for (size_t i = 0U; i < sample_count; i++) {
+		steady &= same_color(samples[i].color, expected);
+	}
+	k_spin_unlock(&capture_lock, key);
+	zassert_true(steady, "steady indication changed");
+}
+
+static void expect_pattern(struct led_rgb first, struct led_rgb second, uint32_t period_ms,
+			   uint32_t first_ms, uint32_t duration_ms)
+{
+	clear_capture();
+	k_msleep(duration_ms);
+	struct sample captured[ARRAY_SIZE(samples)];
+	const k_spinlock_key_t key = k_spin_lock(&capture_lock);
+	const size_t count = sample_count;
+	memcpy(captured, samples, count * sizeof(*samples));
+	k_spin_unlock(&capture_lock, key);
+	bool seen_first = false, seen_second = false;
+	for (size_t i = 0U; i < count; i++) {
+		const uint32_t phase = captured[i].ms % period_ms;
+		/* The driver records after rendering, possibly across one clock tick. */
+		const uint32_t prior_phase =
+			(phase + period_ms - k_ticks_to_ms_ceil32(1U)) % period_ms;
+		const bool is_first = same_color(captured[i].color, first);
+		const bool is_second = same_color(captured[i].color, second);
+		zassert_true((phase < first_ms ? is_first : is_second) ||
+				     (prior_phase < first_ms ? is_first : is_second),
+			     "wrong RGB at phase %u/%u", phase, period_ms);
+		seen_first |= is_first;
+		seen_second |= is_second;
+	}
+	if (!seen_first || !seen_second) {
+		for (size_t i = 0U; i < count; i++) {
+			printk("LED %u ms: RGB %u/%u/%u\n", captured[i].ms, captured[i].color.r,
+			       captured[i].color.g, captured[i].color.b);
+		}
+	}
+	zassert_true(seen_first && seen_second,
+		     "both phases must reach the driver: period %u, on %u, writes %zu", period_ms,
+		     first_ms, count);
+}
+
+static void before(void *fixture)
+{
+	ARG_UNUSED(fixture);
+	link = (zlrs_rf_status_t){.role = ZLRS_ROLE_RX,
+				  .state = ZLRS_STATE_CONNECTED,
+				  .lq_percent = 100U,
+				  .frame_period_us = 9080U};
+	mode = (struct zlrs_mode){0};
+	serial = (struct zlrs_serial_status){.ready = true};
+	publish();
 }
 
 ZTEST(led_patterns, test_mgmt_mode_wins)
 {
-	struct zlrs_led_frame_input in;
-
-	memset(&in, 0, sizeof(in));
-	in.mgmt_mode = true;
-	in.link_lost = true; /* with both set, the LED only shows management mode */
-	in.link_state = ZLRS_STATE_SEARCHING;
-
-	/* Management mode is steady white and outranks link loss. */
-	{
-		const struct zlrs_led_color white = {255U, 255U, 255U};
-		const struct zlrs_led_color at_start = zlrs_app_led_frame(&in, 0U);
-		const struct zlrs_led_color later = zlrs_app_led_frame(&in, 500U);
-
-		CHECK(memcmp(&at_start, &white, sizeof(white)) == 0);
-		CHECK(memcmp(&later, &white, sizeof(white)) == 0);
-	}
-
-	/* Management mode off: link loss alternates theme and red at 2 Hz. */
-	in.mgmt_mode = false;
-	{
-		const struct zlrs_led_color theme = {0U, 255U, 0U};
-		const struct zlrs_led_color red = {255U, 0U, 0U};
-		const struct zlrs_led_color at_start = zlrs_app_led_frame(&in, 0U);
-		const struct zlrs_led_color red_phase = zlrs_app_led_frame(&in, 250U);
-		const struct zlrs_led_color next_cycle = zlrs_app_led_frame(&in, 500U);
-
-		CHECK(memcmp(&at_start, &theme, sizeof(theme)) == 0);
-		CHECK(memcmp(&red_phase, &red, sizeof(red)) == 0);
-		CHECK(memcmp(&next_cycle, &theme, sizeof(theme)) == 0);
-	}
+	link.state = ZLRS_STATE_SEARCHING;
+	link.link_lost = true;
+	serial.dropped = 1U;
+	mode.session = true;
+	publish();
+	zassert_false(same_color(color_now(), white), "short management session flashed white");
+	wait_color(white, 700);
+	expect_steady(white, 600);
+	mode.session = false;
+	publish();
+	expect_pattern(green, red, 500U, 250U, 1080U);
 }
 
 ZTEST(led_patterns, test_link_states)
 {
-	struct zlrs_led_frame_input in;
-
-	memset(&in, 0, sizeof(in));
-	in.link_state = ZLRS_STATE_UNCONFIGURED;
-	/* No root key keeps its purple 0.5 Hz pulse. */
-	CHECK(!is_off(zlrs_app_led_frame(&in, 0U)));
-	CHECK(is_off(zlrs_app_led_frame(&in, 500U)));
-	in.link_state = ZLRS_STATE_UNPAIRED;
-	{
-		const struct zlrs_led_color theme = {0U, 255U, 0U};
-		const struct zlrs_led_color yellow = {255U, 180U, 0U};
-		const struct zlrs_led_color at_start = zlrs_app_led_frame(&in, 0U);
-		const struct zlrs_led_color yellow_phase = zlrs_app_led_frame(&in, 250U);
-		const struct zlrs_led_color next_cycle = zlrs_app_led_frame(&in, 500U);
-
-		CHECK(memcmp(&at_start, &theme, sizeof(theme)) == 0);
-		CHECK(memcmp(&yellow_phase, &yellow, sizeof(yellow)) == 0);
-		CHECK(memcmp(&next_cycle, &theme, sizeof(theme)) == 0);
-	}
-
-	/* Pairing keeps its theme pulse. */
-	in.link_state = ZLRS_STATE_PAIRING;
-	CHECK(!is_off(zlrs_app_led_frame(&in, 0U)));
-	CHECK(is_off(zlrs_app_led_frame(&in, 500U)));
-	CHECK(!is_off(zlrs_app_led_frame(&in, 1000U)));
-
-	/* Searching is steady theme colour. */
-	in.link_state = ZLRS_STATE_SEARCHING;
-	CHECK(!is_off(zlrs_app_led_frame(&in, 0U)));
-	CHECK(!is_off(zlrs_app_led_frame(&in, 200U)));
-	CHECK(!is_off(zlrs_app_led_frame(&in, 2000U)));
+	link.state = ZLRS_STATE_UNCONFIGURED;
+	publish();
+	expect_pattern(purple, off, 2000U, 200U, 4080U);
+	link.state = ZLRS_STATE_UNPAIRED;
+	publish();
+	expect_pattern(green, yellow, 500U, 250U, 1080U);
+	link.state = ZLRS_STATE_PAIRING;
+	publish();
+	expect_pattern(green, off, 1000U, 300U, 2080U);
+	link.state = ZLRS_STATE_SEARCHING;
+	publish();
+	expect_steady(green, 200);
+	link.role = ZLRS_ROLE_TX;
+	publish();
+	expect_steady(blue, 200);
 }
 
 ZTEST(led_patterns, test_link_lost_while_connected)
 {
-	struct zlrs_led_frame_input in;
-
-	/* A connected unit in link loss alternates its RX theme and red. */
-	memset(&in, 0, sizeof(in));
-	in.link_state = ZLRS_STATE_CONNECTED;
-	in.lq_percent = 100U;
-	in.link_lost = true;
-	{
-		const struct zlrs_led_color f = zlrs_app_led_frame(&in, 0U);
-
-		CHECK(f.r == 0U && f.g > 0U && f.b == 0U);
-		{
-			const struct zlrs_led_color other = zlrs_app_led_frame(&in, 250U);
-
-			CHECK(other.r > 0U && other.g == 0U && other.b == 0U);
-		}
-	}
-
-	/* Never connected means no link loss from the caller: unpaired shows yellow (no blue) */
-	memset(&in, 0, sizeof(in));
-	in.link_state = ZLRS_STATE_UNPAIRED;
-	{
-		const struct zlrs_led_color f = zlrs_app_led_frame(&in, 250U);
-
-		CHECK(f.r > 0U && f.g > 0U && f.b == 0U);
-	}
+	link.link_lost = true;
+	publish();
+	expect_pattern(green, red, 500U, 250U, 1080U);
+	link.link_lost = false;
+	link.fault = true;
+	publish();
+	expect_pattern(green, red, 500U, 250U, 1080U);
 }
 
 ZTEST(led_patterns, test_connected_lq)
 {
-	struct zlrs_led_frame_input in;
-	struct zlrs_led_color strong;
-	const struct zlrs_led_color rx_green = {0U, 255U, 0U};
-	const struct zlrs_led_color tx_blue = {0U, 90U, 255U};
-
-	memset(&in, 0, sizeof(in));
-	in.link_state = ZLRS_STATE_CONNECTED;
-
-	/* RX (green theme): LQ changes cadence and duty, never brightness */
-	in.lq_percent = 90U;
-	strong = zlrs_app_led_frame(&in, 0U);
-	CHECK(!is_off(strong));
-	CHECK(memcmp(&strong, &rx_green, sizeof(strong)) == 0);
-	{
-		const struct zlrs_led_color later = zlrs_app_led_frame(&in, 200U);
-
-		CHECK(is_off(later));
-		const struct zlrs_led_color next = zlrs_app_led_frame(&in, 250U);
-
-		CHECK(memcmp(&strong, &next, sizeof(strong)) == 0);
-	}
-
-	/* Medium LQ: short 4 Hz pulse, at the same brightness. */
-	in.lq_percent = 60U;
-	{
-		const struct zlrs_led_color medium_on = zlrs_app_led_frame(&in, 0U);
-		const struct zlrs_led_color medium_next = zlrs_app_led_frame(&in, 250U);
-
-		CHECK(memcmp(&medium_on, &rx_green, sizeof(medium_on)) == 0);
-		CHECK(is_off(zlrs_app_led_frame(&in, 50U)));
-		CHECK(memcmp(&medium_on, &medium_next, sizeof(medium_on)) == 0);
-	}
-
-	/* Low LQ: half-on 2 Hz pulse, still at the same brightness. */
-	in.lq_percent = 20U;
-	{
-		const struct zlrs_led_color low_on = zlrs_app_led_frame(&in, 0U);
-		const struct zlrs_led_color low_next = zlrs_app_led_frame(&in, 500U);
-
-		CHECK(memcmp(&low_on, &rx_green, sizeof(low_on)) == 0);
-		CHECK(is_off(zlrs_app_led_frame(&in, 250U)));
-		CHECK(memcmp(&low_on, &low_next, sizeof(low_on)) == 0);
-	}
-
-	/* The TX theme is blue: the same link state comes out in blue */
-	in.role_tx = true;
-	{
-		const struct zlrs_led_color tx_on = zlrs_app_led_frame(&in, 0U);
-
-		CHECK(memcmp(&tx_on, &tx_blue, sizeof(tx_on)) == 0);
-	}
+	link.lq_percent = 90U;
+	publish();
+	expect_pattern(green, off, 250U, 200U, 830U);
+	link.lq_percent = 60U;
+	publish();
+	expect_pattern(green, off, 250U, 50U, 830U);
+	link.lq_percent = 20U;
+	publish();
+	expect_pattern(green, off, 500U, 250U, 1080U);
+	link.role = ZLRS_ROLE_TX;
+	link.lq_percent = 90U;
+	publish();
+	expect_pattern(blue, off, 250U, 200U, 830U);
 }
 
 ZTEST(led_patterns, test_data_drops)
 {
-	struct zlrs_led_frame_input in;
-	struct zlrs_led_color base;
-	struct zlrs_led_color flashed;
-
-	memset(&in, 0, sizeof(in));
-	in.link_state = ZLRS_STATE_CONNECTED;
-	in.lq_percent = 90U;
-	in.drop_recent = true;
-
-	base = zlrs_app_led_frame(&in, 250U);
-	flashed = zlrs_app_led_frame(&in, 0U); /* theme/orange alternation, 250 ms per colour */
-
-	CHECK(!is_off(flashed));
-	CHECK(flashed.r == 0U && flashed.g > 0U);
-	CHECK(base.r > 0U && base.g > 0U);
-
-	/* No drops means no flash */
-	in.drop_recent = false;
-	{
-		const struct zlrs_led_color quiet = zlrs_app_led_frame(&in, 50U);
-
-		CHECK(quiet.r == 0U && quiet.g > 0U && quiet.b == 0U);
-	}
-
-	/* A recent drop uses the same theme/orange indication while searching. */
-	in.role_tx = true;
-	in.link_state = ZLRS_STATE_SEARCHING;
-	in.drop_recent = true;
-	{
-		const struct zlrs_led_color searching = zlrs_app_led_frame(&in, 250U);
-
-		CHECK(searching.r > 0U && searching.g > 0U);
-		CHECK(searching.b == 0U);
-	}
+	link.state = ZLRS_STATE_SEARCHING;
+	serial.dropped++;
+	publish();
+	expect_pattern(green, orange, 500U, 250U, 600U);
+	k_msleep(500);
+	expect_steady(green, 200);
+	link.role = ZLRS_ROLE_TX;
+	link.data_drop_bytes++;
+	publish();
+	expect_pattern(blue, orange, 500U, 250U, 600U);
 }
 
-ZTEST_SUITE(led_patterns, NULL, NULL, NULL, NULL, NULL);
+ZTEST(led_patterns, test_write_retry)
+{
+	link.state = ZLRS_STATE_SEARCHING;
+	publish();
+	expect_steady(green, 100);
+	const uint32_t count = write_count();
+	const k_spinlock_key_t key = k_spin_lock(&capture_lock);
+	reject_next = true;
+	k_spin_unlock(&capture_lock, key);
+	link.role = ZLRS_ROLE_TX;
+	publish();
+	wait_color(blue, 200);
+	zassert_equal(write_count(), count + 2U, "failed output must be retried");
+	k_msleep(200);
+	zassert_equal(write_count(), count + 2U, "unchanged RGB must not be written again");
+}
+
+ZTEST_SUITE(led_patterns, NULL, NULL, before, NULL, NULL);

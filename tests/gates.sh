@@ -42,7 +42,7 @@ if hit=$(grep -rn -E '\b(CONFIG_)?BOARD_[A-Z0-9_]+' app 2>/dev/null); then
 fi
 
 if hit=$(rg -n 'zlrs_link_t|zlrs/link/link.h|zlrs_storage_settings_' \
-	app/src/serial.c app/src/mgmt.c app/src/shell.c app/src/ui.c app/src/ui.h app/src/ui_pattern.c app/src/main.c); then
+	app/src/serial.c app/src/mgmt.c app/src/shell.c app/src/ui.c app/src/ui.h app/src/main.c); then
 	bad "a frontend reaches into RF or private configuration storage:"
 	echo "$hit"
 fi

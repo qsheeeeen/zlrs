@@ -57,14 +57,14 @@ Only LR2021 initialization and the application's confirmed-image verdict are rep
 
 Settings persistence also runs on simulated flash: `west build -b native_sim/native/64 zlrs/tests/simulation/settings -d zlrs/build/settings-simulation`, then run `cd zlrs/build/settings-simulation && ./zephyr/zephyr.exe`. It verifies layout initialization, settings across remounts and complete partition clearing. The same fixture runs in the hardware unit image; it backs up and restores the complete NVS partition.
 
-UI simulation runs the real UI thread with an emulated GPIO button and real zbus:
+UI simulation runs the real UI thread with an emulated GPIO button, real zbus and a test LED driver that records RGB output. Its 1 kHz kernel tick matches the hardware unit image, including the 50 ms connected pulse:
 
 ```sh
 west build -b native_sim/native/64 tests/simulation/ui -d build/ui-simulation
 build/ui-simulation/zephyr/zephyr.exe
 ```
 
-It covers LED priority/cadence, short and long holds, cumulative requests, and recovery after a channel write-lock failure.
+It covers LED priority/cadence, management-display delay, drop-display expiry, LED write retry, short and long holds, cumulative requests, and recovery after a channel write-lock failure. The hardware unit image runs the same LED-output checks on the real UI thread; the test LED replaces the physical strip only in these fixtures.
 
 The persist fixture backs up the entire settings partition and restores it in suite teardown. It exercises the original record bytes, enum validation, identity and pairing, factory reset, and an injected NVS write error. Native runs can use `--flash_in_ram` to avoid leaving a flash file.
 
