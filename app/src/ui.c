@@ -17,7 +17,7 @@ LOG_MODULE_REGISTER(zlrs_ui, CONFIG_APP_LOG_LEVEL);
 ZBUS_CHAN_DEFINE(zlrs_input_chan, struct zlrs_input, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
 		 ZBUS_MSG_INIT(0));
 
-#define UI_POLL_MS 20U
+#define BUTTON_SAMPLE_MS 20U
 #if DT_NODE_EXISTS(DT_ALIAS(zlrs_button))
 static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(DT_ALIAS(zlrs_button), gpios);
 #endif
@@ -200,16 +200,16 @@ static void ui_thread(void *p1, void *p2, void *p3)
 		const uint32_t before_ms = k_uptime_get_32();
 		const uint32_t sample_age = before_ms - sample_ms;
 		const uint32_t render_age = before_ms - render_ms;
-		/* A fixed poll wait can step over the entire 50 ms connected pulse. */
+		/* A fixed wait can step over the entire 50 ms connected pulse. */
 		const uint32_t wait_ms =
-			MIN(sample_age < UI_POLL_MS ? UI_POLL_MS - sample_age : 0U,
+			MIN(sample_age < BUTTON_SAMPLE_MS ? BUTTON_SAMPLE_MS - sample_age : 0U,
 			    render_age < LED_REFRESH_MS ? LED_REFRESH_MS - render_age : 0U);
 		bool changed = zbus_sub_wait(&zlrs_ui_sub, &chan, K_MSEC(wait_ms)) == 0;
 		while (zbus_sub_wait(&zlrs_ui_sub, &chan, K_NO_WAIT) == 0) {
 			changed = true;
 		}
 		const uint32_t now_ms = k_uptime_get_32();
-		if ((uint32_t)(now_ms - sample_ms) >= UI_POLL_MS) {
+		if ((uint32_t)(now_ms - sample_ms) >= BUTTON_SAMPLE_MS) {
 			sample_ms = now_ms;
 #if DT_NODE_EXISTS(DT_ALIAS(zlrs_button))
 			const int pressed = button_ready ? gpio_pin_get_dt(&button) : -1;
@@ -238,7 +238,7 @@ static void ui_thread(void *p1, void *p2, void *p3)
 		(void)zbus_chan_read(&zlrs_rf_chan, &link, K_NO_WAIT);
 		(void)zbus_chan_read(&zlrs_mode_chan, &mode, K_NO_WAIT);
 		(void)zbus_chan_read(&zlrs_serial_chan, &data, K_NO_WAIT);
-		/* Polling also recovers a missed initial notification. */
+		/* Periodic reads also recover a missed initial notification. */
 		if (link.frame_period_us == 0U && !link.fault) {
 			continue;
 		}
