@@ -25,13 +25,14 @@ enum record_id {
 	RECORD_ID,
 	RECORD_PAIR,
 };
-#define NVS_LAYOUT 0x5A4C0001U
-#define PAIR_BYTES (ZLRS_DEV_ID_LEN + ZLRS_PAIR_SALT_LEN)
+#define NVS_LAYOUT      0x5A4C0001U
+#define PAIR_BYTES      (ZLRS_DEV_ID_LEN + ZLRS_PAIR_SALT_LEN)
+#define NVS_SECTOR_SIZE DT_PROP(DT_GPARENT(DT_NODELABEL(storage_partition)), erase_block_size)
 
 static struct nvs_fs fs = {
 	.offset = PARTITION_OFFSET(storage_partition),
-	.sector_size = 4096U,
-	.sector_count = PARTITION_SIZE(storage_partition) / 4096U,
+	.sector_size = NVS_SECTOR_SIZE,
+	.sector_count = PARTITION_SIZE(storage_partition) / NVS_SECTOR_SIZE,
 };
 static zlrs_persist_state_t state;
 static bool ready;

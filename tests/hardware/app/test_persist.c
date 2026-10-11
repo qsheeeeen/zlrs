@@ -37,8 +37,9 @@ static void teardown(void *unused)
 static struct nvs_fs inspect = {
 	.flash_device = PARTITION_DEVICE(storage_partition),
 	.offset = PARTITION_OFFSET(storage_partition),
-	.sector_size = 4096U,
-	.sector_count = PARTITION_SIZE(storage_partition) / 4096U,
+	.sector_size = DT_PROP(DT_GPARENT(DT_NODELABEL(storage_partition)), erase_block_size),
+	.sector_count = PARTITION_SIZE(storage_partition) /
+			DT_PROP(DT_GPARENT(DT_NODELABEL(storage_partition)), erase_block_size),
 };
 ZTEST(settings, test_layout_and_persistence)
 {
