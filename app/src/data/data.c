@@ -317,7 +317,8 @@ void zlrs_link_data_poll(void)
 	};
 	static struct zlrs_data_status last;
 	static bool published;
-	if ((!published || memcmp(&last, &status, sizeof(last)) != 0) &&
+	if ((!published || last.ready != status.ready || last.usb_active != status.usb_active ||
+	     last.input_paused != status.input_paused || last.dropped != status.dropped) &&
 	    zbus_chan_pub(&zlrs_data_chan, &status, K_NO_WAIT) == 0) {
 		last = status;
 		published = true;

@@ -31,9 +31,7 @@
 
 LOG_MODULE_REGISTER(zlrs_rf, CONFIG_APP_LOG_LEVEL);
 
-ZBUS_CHAN_DEFINE(zlrs_link_chan, struct zlrs_link_status, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
-		 ZBUS_MSG_INIT(0));
-ZBUS_CHAN_DEFINE(zlrs_alert_chan, struct zlrs_alerts, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
+ZBUS_CHAN_DEFINE(zlrs_rf_chan, zlrs_rf_status_t, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
 		 ZBUS_MSG_INIT(0));
 
 static bool links_ready;
@@ -614,39 +612,30 @@ static void report(uint32_t now_ms)
 /* RF facts for UI and diagnostics, including failed initialization. */
 void zlrs_rf_publish_state(void)
 {
-	const zlrs_link_t *const active = &link_data;
-
-	const zlrs_link_info_t info = zlrs_link_get_info(active);
-	const uint32_t drops = zlrs_link_get_stats(&link_data)->data_drop_bytes;
-	struct zlrs_link_status link = {0};
-	struct zlrs_alerts alerts = {0};
-
-	link.role_tx = role_tx;
-	link.configured = info.configured;
-	link.paired = info.paired;
-	link.state = info.state;
-	link.lq_percent = zlrs_link_get_stats(active)->lq_percent;
-
-	if (info.state == ZLRS_STATE_CONNECTED) {
+	if (zlrs_link_get_state(&link_data) == ZLRS_STATE_CONNECTED) {
 		ever_connected = true;
 	}
-	alerts.link_lost = ever_connected && info.state != ZLRS_STATE_CONNECTED;
-	alerts.fault = !radio_ready;
-	alerts.data_drop_bytes = drops;
-
-	static struct zlrs_link_status published_link;
-	static struct zlrs_alerts published_alerts;
-	static bool have_link;
-	static bool have_alerts;
-	if ((!have_link || memcmp(&published_link, &link, sizeof(link)) != 0) &&
-	    zbus_chan_pub(&zlrs_link_chan, &link, K_NO_WAIT) == 0) {
-		published_link = link;
-		have_link = true;
-	}
-	if ((!have_alerts || memcmp(&published_alerts, &alerts, sizeof(alerts)) != 0) &&
-	    zbus_chan_pub(&zlrs_alert_chan, &alerts, K_NO_WAIT) == 0) {
-		published_alerts = alerts;
-		have_alerts = true;
+	const zlrs_rf_status_t state = zlrs_rf_status();
+	static zlrs_rf_status_t published;
+	static bool have_state;
+	const bool same =
+		published.role == state.role && published.profile == state.profile &&
+		published.data_band == state.data_band && published.region == state.region &&
+		published.state == state.state && published.configured == state.configured &&
+		published.paired == state.paired &&
+		published.session_valid == state.session_valid &&
+		published.paused == state.paused && published.link_lost == state.link_lost &&
+		published.fault == state.fault &&
+		published.data_drop_bytes == state.data_drop_bytes &&
+		published.lq_percent == state.lq_percent &&
+		published.tx_power_dbm == state.tx_power_dbm &&
+		published.rssi_dbm == state.rssi_dbm && published.snr_db == state.snr_db &&
+		published.frame_period_us == state.frame_period_us &&
+		memcmp(published.dev_id, state.dev_id, sizeof(state.dev_id)) == 0 &&
+		memcmp(published.peer_id, state.peer_id, sizeof(state.peer_id)) == 0;
+	if ((!have_state || !same) && zbus_chan_pub(&zlrs_rf_chan, &state, K_NO_WAIT) == 0) {
+		published = state;
+		have_state = true;
 	}
 }
 
@@ -744,6 +733,9 @@ zlrs_rf_status_t zlrs_rf_status(void)
 		.paired = info.paired,
 		.session_valid = info.session_valid,
 		.paused = pause_depth != 0U,
+		.link_lost = ever_connected && info.state != ZLRS_STATE_CONNECTED,
+		.fault = !radio_ready,
+		.data_drop_bytes = stats->data_drop_bytes,
 		.lq_percent = stats->lq_percent,
 		.tx_power_dbm =
 			links_ready ? zlrs_link_get_config(&link_data)->tx_power_dbm : tx_power_dbm,
@@ -911,7 +903,7 @@ int zlrs_rf_init(void)
 	}
 	zlrs_duty_init(&duty, region, 0U);
 	/* The status LED comes up on its own thread and reads the state it renders: nothing to
-	 * init here (app/src/ui/led.c, rf/rf.h) */
+	 * init here (app/src/ui.c, rf/rf.h) */
 
 	int rc = zlrs_slot_timer_init();
 	if (rc != 0) {
@@ -987,7 +979,8 @@ void zlrs_rf_frame(void)
 
 	if (!role_tx) {
 		const uint32_t scan_after_ms = zlrs_slot_timer_scan_delay_ms(
-			period, zlrs_link_get_config(&link_data)->resync_every_n, phase_samples > 0U);
+			period, zlrs_link_get_config(&link_data)->resync_every_n,
+			phase_samples > 0U);
 		if ((uint32_t)(now_ms - last_rx_any_ms) > scan_after_ms) {
 			phase_samples = 0U;
 			phase_adj_us = ZLRS_PHASE_SCAN_STEP_US;

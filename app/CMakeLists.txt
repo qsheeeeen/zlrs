@@ -24,9 +24,8 @@ target_sources(app PRIVATE
   ${zlrs_app_dir}/src/platform/radio.c
   ${zlrs_app_dir}/src/storage/log.c
   ${zlrs_app_dir}/src/config/nvs.c
-  ${zlrs_app_dir}/src/ui/button.c
-  ${zlrs_app_dir}/src/ui/led.c
-  ${zlrs_app_dir}/src/ui/pattern.c
+  ${zlrs_app_dir}/src/ui.c
+  ${zlrs_app_dir}/src/ui_pattern.c
 )
 
 target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG_SHELL app PRIVATE ${zlrs_app_dir}/src/mgmt/shell.c)

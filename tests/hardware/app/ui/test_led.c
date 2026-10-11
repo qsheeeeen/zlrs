@@ -9,7 +9,7 @@
 
 #include <string.h>
 
-#include "ui/led.h"
+#include "ui_pattern.h"
 
 #define CHECK(condition) zassert_true((condition), #condition)
 

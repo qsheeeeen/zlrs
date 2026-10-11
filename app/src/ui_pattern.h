@@ -23,7 +23,7 @@ struct zlrs_led_frame_input {
 	bool link_lost;
 	bool drop_recent;
 	bool role_tx;
-	uint8_t link_state;
+	zlrs_link_state_t link_state;
 	uint8_t lq_percent;
 };
 

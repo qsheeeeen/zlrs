@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#include "ui/led.h"
+#include "ui_pattern.h"
 #include <stddef.h>
 
 static const struct zlrs_led_color off = {0U, 0U, 0U};

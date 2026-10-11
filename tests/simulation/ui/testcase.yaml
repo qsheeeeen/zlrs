@@ -1,0 +1,5 @@
+common:
+ tags: [ui, zbus]
+ platform_allow: [native_sim/native/64]
+tests:
+ zlrs.ui.state: {}

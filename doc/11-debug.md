@@ -56,3 +56,12 @@ python3 tests/hardware/application/run.py --serial <serial> --log build/applicat
 Only LR2021 initialization and the application's confirmed-image verdict are replaced by test doubles. The fixture stays unconfirmed in flash; the runner reads management status and build information, enters recovery and resets to restore the previous firmware, then verifies its hash. Do not confirm this fixture. Use a normally paired application image for DATA validation and a normal unconfirmed upgrade to validate the actual confirmation timeout.
 
 Settings persistence also runs on simulated flash: `west build -b native_sim/native/64 zlrs/tests/simulation/settings -d zlrs/build/settings-simulation`, then run `cd zlrs/build/settings-simulation && ./zephyr/zephyr.exe`. It verifies layout initialization, settings across remounts and complete partition clearing. The same fixture runs in the hardware unit image and resets NVS; use a reset test board and configure it again after the tests.
+
+UI simulation runs the real UI thread with an emulated GPIO button and real zbus:
+
+```sh
+west build -b native_sim/native/64 tests/simulation/ui -d build/ui-simulation
+build/ui-simulation/zephyr/zephyr.exe
+```
+
+It covers LED priority/cadence, short and long holds, cumulative requests, and recovery after a channel write-lock failure.

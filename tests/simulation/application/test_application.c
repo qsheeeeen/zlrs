@@ -13,7 +13,7 @@
 #include "mgmt/mode.h"
 #include "platform/watchdog.h"
 #include "rf/rf.h"
-#include "ui/button.h"
+#include "ui.h"
 
 int zlrs_application_main(void);
 

@@ -27,21 +27,17 @@ static int cmd_trace(const struct shell *sh, size_t argc, char **argv)
 
 static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 {
-	struct zlrs_link_status link = {0};
-	struct zlrs_alerts alerts = {0};
-	zlrs_config_state_t config = {0};
+	zlrs_rf_status_t link = {0};
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
-	(void)zbus_chan_read(&zlrs_link_chan, &link, K_MSEC(10));
-	(void)zbus_chan_read(&zlrs_alert_chan, &alerts, K_MSEC(10));
-	(void)zbus_chan_read(&zlrs_config_chan, &config, K_MSEC(10));
-	const zlrs_region_t *region = zlrs_region_get(config.active.region);
-	shell_print(sh, "role   : %s", link.role_tx ? "TX" : "RX");
+	(void)zbus_chan_read(&zlrs_rf_chan, &link, K_MSEC(10));
+	const zlrs_region_t *region = zlrs_region_get(link.region);
+	shell_print(sh, "role   : %s", link.role == ZLRS_ROLE_TX ? "TX" : "RX");
 	shell_print(sh, "sub-G  : %s", ZLRS_RF_BAND == ZLRS_BAND_SUBG_LF ? "LF" : "HF");
 	shell_print(sh, "region : %s", region != NULL ? region->name : "?");
 	shell_print(sh, "link   : state %u, lq %u%%, paired %d", link.state, link.lq_percent,
 		    link.paired);
-	shell_print(sh, "data   : RF drop %u B", alerts.data_drop_bytes);
+	shell_print(sh, "data   : RF drop %u B", link.data_drop_bytes);
 	return 0;
 }
 

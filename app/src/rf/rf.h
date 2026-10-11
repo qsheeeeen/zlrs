@@ -9,23 +9,6 @@
 #include "zlrs/proto/limits.h"
 #include "zlrs/link/state.h"
 
-/* Copied facts. Link storage and keys never leave the RF owner. */
-struct zlrs_link_status {
-	bool role_tx;
-	bool configured;
-	bool paired;
-	uint8_t state;
-	uint8_t lq_percent;
-};
-
-struct zlrs_alerts {
-	bool link_lost;
-	bool fault;
-	uint32_t data_drop_bytes;
-};
-
-ZBUS_CHAN_DECLARE(zlrs_link_chan, zlrs_alert_chan);
-
 typedef struct {
 	uint8_t role;
 	uint8_t profile;
@@ -38,12 +21,18 @@ typedef struct {
 	bool paired;
 	bool session_valid;
 	bool paused;
+	bool link_lost;
+	bool fault;
+	uint32_t data_drop_bytes;
 	uint8_t lq_percent;
 	int8_t tx_power_dbm;
 	int16_t rssi_dbm;
 	int8_t snr_db;
 	uint32_t frame_period_us;
 } zlrs_rf_status_t;
+
+/* Public facts only: no keys or mutable link pointers. */
+ZBUS_CHAN_DECLARE(zlrs_rf_chan);
 
 /* These functions execute on the RF owner thread, including frontend callbacks. */
 /* Boot once: 0 only when RF is ready, negative errno on failure. */

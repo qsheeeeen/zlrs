@@ -1,0 +1,14 @@
+#include <zephyr/dt-bindings/gpio/gpio.h>
+/ {
+ aliases { zlrs-button = &button; };
+ gpio_test: gpio-test {
+  compatible = "zephyr,gpio-emul";
+  gpio-controller;
+  #gpio-cells = <2>;
+  ngpios = <1>;
+ };
+ buttons {
+  compatible = "gpio-keys";
+  button: button { gpios = <&gpio_test 0 GPIO_ACTIVE_HIGH>; };
+ };
+};

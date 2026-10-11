@@ -594,7 +594,7 @@ int zlrs_mgmt_mode_run(void)
 	 * re-arm on exit. */
 	zlrs_watchdog_disarm();
 
-	/* A mode, not an LED state: the LED thread decides how it looks (app/src/ui/led.c) */
+	/* A mode, not an LED state: the LED thread decides how it looks (app/src/ui.c) */
 	mode.session = true;
 	mode_pending = true;
 	publish_mode();
