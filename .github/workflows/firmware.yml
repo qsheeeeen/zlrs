@@ -60,6 +60,12 @@ jobs:
           cd zephyr-sdk-1.0.0
           ./setup.sh -t arm-zephyr-eabi -h -c
 
+      - name: application lifecycle simulation
+        run: |
+          source zlrs/tools/zephyr-env.sh
+          west build -b native_sim/native/64 zlrs/tests/simulation/application -d build-application-simulation
+          ./build-application-simulation/zephyr/zephyr.exe
+
       # Debug image: the overlay is the only place that sets CONFIG_ZLRS_APP_DEBUG, so this step
       # is what keeps the debug-only options (shell, stats log, boot delay) compiling.
       - name: build (debug overlay, hf sku)

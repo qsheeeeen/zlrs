@@ -33,13 +33,6 @@ ZBUS_CHAN_DECLARE(zlrs_mode_chan);
  */
 int zlrs_mgmt_mode_run(void);
 
-/*
- * The host confirmed this image (see the upgrade flow in doc/07-firmware.md).
- * It is the only verdict on whether this image stays: without a confirm after an upgrade,
- * the next reset lets MCUboot roll back.
- */
-bool zlrs_mgmt_mode_image_confirmed(void);
-
 /* Dedicated management CDC, initialized and polled directly by the application. */
 int zlrs_mgmt_init(void);
 /* Detect ENTER without acknowledging it; mode_run() replies when the session is ready. */

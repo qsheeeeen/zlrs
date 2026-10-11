@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+common:
+  tags: [application, boot]
+  platform_allow: [native_sim/native/64]
+tests:
+  zlrs.application.lifecycle: {}

@@ -7,7 +7,7 @@
 #include "data/data.h"
 #include "mgmt/mode.h"
 #include "platform/caps.h"
-#include "platform/recovery.h"
+#include "boot.h"
 #include "rf/rf.h"
 #ifdef PICO_RP2350
 #include <pico/bootrom.h>
@@ -95,7 +95,7 @@ static int cmd_recovery(const struct shell *sh, size_t argc, char **argv)
 	ARG_UNUSED(argv);
 
 	shell_print(sh, "rebooting into MCUboot serial recovery");
-	(void)zlrs_platform_recovery_enter(); /* does not return */
+	(void)zlrs_boot_recovery(); /* does not return */
 
 	return 0;
 }
@@ -162,7 +162,6 @@ static int cmd_mcuboot(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "confirmed   : %d", (int)boot_is_img_confirmed());
 	shell_print(sh, "swap type   : %d (0=none 1=test 2=revert 3=fail 4=permanent)",
 		    (int)mcuboot_swap_type());
-	shell_print(sh, "confirmed by host: %d", (int)zlrs_mgmt_mode_image_confirmed());
 	mcuboot_dump_slot(sh, "slot0", PARTITION_ID(slot0_partition));
 	mcuboot_dump_slot(sh, "slot1", PARTITION_ID(slot1_partition));
 

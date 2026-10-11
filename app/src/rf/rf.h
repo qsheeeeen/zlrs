@@ -48,13 +48,12 @@ typedef struct {
 /* These functions execute on the RF owner thread, including frontend callbacks. */
 /* Boot once: 0 only when RF is ready, negative errno on failure. */
 int zlrs_rf_init(void);
-/* Application policy runs at RF owner boundaries, including the fault/recovery loop. */
-typedef struct {
-	/* Return true if a management session consumed this frame. */
-	bool (*before_frame)(bool fault);
-	void (*after_frame)(uint32_t now_ms);
-} zlrs_rf_owner_hooks_t;
-int zlrs_rf_run(const zlrs_rf_owner_hooks_t *hooks);
+/* Start once after successful init. Each frame waits for its absolute boundary and returns. */
+void zlrs_rf_start(void);
+void zlrs_rf_frame(void);
+/* Also publishes an initialization fault while main keeps management reachable. */
+void zlrs_rf_publish_state(void);
+bool zlrs_rf_pairing(uint8_t peer_id[ZLRS_DEV_ID_LEN], uint8_t pair_salt[ZLRS_PAIR_SALT_LEN]);
 zlrs_rf_status_t zlrs_rf_status(void);
 int zlrs_rf_pair_start(void);
 int zlrs_rf_pair_cancel(void);

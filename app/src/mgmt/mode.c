@@ -29,7 +29,7 @@
 #include "config/config.h"
 #include "rf/rf.h"
 #include "platform/caps.h"
-#include "platform/recovery.h"
+#include "boot.h"
 #include "platform/slot_timer.h"
 #include "platform/watchdog.h"
 #include "storage/log.h"
@@ -234,14 +234,9 @@ bool zlrs_mgmt_poll_enter(void)
 			return true;
 		}
 
-		/* Recovery needs no setting up: reboot once acknowledged, the main loop never returns */
-		if (cmd == ZLRS_MGMT_CMD_RECOVERY && zlrs_platform_recovery_enter() == 0) {
-			payload[0] = cmd;
-			payload[1] = ZLRS_MGMT_OK;
-			len = zlrs_mgmt_encode(cfg_tx_line, sizeof(cfg_tx_line), ZLRS_MGMT_CMD_ACK,
-					       payload, sizeof(payload));
-			cfg_tx_pending = len;
-			flush_reply();
+		/* Recovery is available outside a session; success reboots, failure replies below. */
+		if (cmd == ZLRS_MGMT_CMD_RECOVERY) {
+			(void)zlrs_boot_recovery();
 		}
 
 		/* Outside a session everything answers "wrong state"; EXIT is a no-op */
@@ -255,14 +250,6 @@ bool zlrs_mgmt_poll_enter(void)
 	}
 
 	return false;
-}
-
-/* The host sent its confirm command (touched from the link thread only) */
-static bool cfg_image_confirmed;
-
-bool zlrs_mgmt_mode_image_confirmed(void)
-{
-	return cfg_image_confirmed;
 }
 
 /* ---- session ------------------------------------------------------------- */
@@ -389,8 +376,8 @@ static int cfg_enter_recovery(void *vctx)
 {
 	(void)vctx;
 
-	/* Returns only when this image has no bootloader to reboot into */
-	return (zlrs_platform_recovery_enter() == 0) ? ZLRS_MGMT_OK : ZLRS_MGMT_E_STATE;
+	/* Recovery returns only if the boot-mode flag could not be written. */
+	return (zlrs_boot_recovery() == 0) ? ZLRS_MGMT_OK : ZLRS_MGMT_E_STATE;
 }
 
 /* Host confirms this upgrade; the whole flow depends on it (see doc/07-firmware.md) */
@@ -398,10 +385,7 @@ static int cfg_confirm_image(void *ctx)
 {
 	(void)ctx;
 
-	cfg_image_confirmed = true;
-	LOG_INF("host confirmed this build");
-
-	return ZLRS_MGMT_OK;
+	return zlrs_boot_confirm() == 0 ? ZLRS_MGMT_OK : ZLRS_MGMT_E_STORE;
 }
 
 /* Hand the build string to the host so it can check which version is running */
@@ -705,11 +689,6 @@ int zlrs_mgmt_mode_run(void)
 }
 
 #else /* !CONFIG_ZLRS_MGMT */
-
-bool zlrs_mgmt_mode_image_confirmed(void)
-{
-	return false;
-}
 
 int zlrs_mgmt_init(void)
 {

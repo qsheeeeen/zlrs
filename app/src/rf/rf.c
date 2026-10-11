@@ -9,7 +9,6 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
-#include <zephyr/logging/log_ctrl.h>
 #include <zephyr/random/random.h>
 
 #include <string.h>
@@ -21,7 +20,6 @@
 #include "rf/rf.h"
 #include "rf/diagnostics.h"
 #include "rf/power.h"
-#include "ui/button.h"
 #include "platform/caps.h"
 #include "platform/slot_timer.h"
 #include "platform/watchdog.h"
@@ -43,7 +41,7 @@ static bool radio_ready;
 static uint32_t pause_depth;
 static int pause_priority;
 
-/* Four alternating DATA windows per timer frame. */
+/* Two alternating DATA slots per timer frame. */
 static uint32_t data_rate_hz;
 static uint32_t frame_period_us;
 static uint32_t slot_budget_us;
@@ -59,8 +57,6 @@ static uint8_t data_band = ZLRS_DATA_BAND_24;
 #define REPORT_PERIOD_MS      1000U
 
 static zlrs_link_t link_data;
-static zlrs_config_pairing_t saved_pairing;
-static bool pairing_saved;
 static zlrs_mod_cfg_t data_mod;
 
 /* Region: picks the band, the power ceiling and the duty accounting */
@@ -85,8 +81,7 @@ static zlrs_config_values_t runtime_config;
 	(IS_ENABLED(CONFIG_ZLRS_APP_SECURITY_PROFILE_P0) ? ZLRS_PROFILE_P0 : ZLRS_PROFILE_P1)
 
 static uint32_t last_report_ms;
-/* Long presses already turned into a pairing request (app/src/ui/button.c) */
-static uint32_t button_holds_seen;
+static uint32_t consumed_frame;
 /* Link-loss alarm only follows a connection already established. */
 static bool ever_connected;
 
@@ -240,8 +235,6 @@ static void load_identity(void)
 	if (identity.paired) {
 		zlrs_link_set_peer(&link_data, identity.pairing.peer_id, identity.pairing.pair_salt,
 				   now_ms);
-		saved_pairing = identity.pairing;
-		pairing_saved = true;
 		LOG_INF("pairing record restored");
 	}
 }
@@ -533,25 +526,9 @@ static void pump_serial(void)
 	}
 }
 
-static void adopt_pairing(void)
+bool zlrs_rf_pairing(uint8_t peer_id[ZLRS_DEV_ID_LEN], uint8_t pair_salt[ZLRS_PAIR_SALT_LEN])
 {
-	zlrs_link_t *const source = &link_data;
-	zlrs_config_pairing_t pairing;
-
-	if (!zlrs_link_get_pairing(source, pairing.peer_id, pairing.pair_salt)) {
-		return;
-	}
-	if (pairing_saved && memcmp(&pairing, &saved_pairing, sizeof(pairing)) == 0) {
-		return;
-	}
-
-	if (zlrs_config_save_pairing(&pairing) != 0) {
-		return; /* Retry persistence; do not report an unsaved record as saved. */
-	}
-	saved_pairing = pairing;
-	pairing_saved = true;
-	LOG_INF("paired with %02x%02x%02x%02x", pairing.peer_id[0], pairing.peer_id[1],
-		pairing.peer_id[2], pairing.peer_id[3]);
+	return links_ready && zlrs_link_get_pairing(&link_data, peer_id, pair_salt);
 }
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
@@ -634,51 +611,8 @@ static void report(uint32_t now_ms)
 #endif
 }
 
-/*
- * RF state publication: the facts other parts of the application render or report
- * (rf/rf.h). Facts only — the LED thread turns them into colours (doc/10-ux.md).
- */
-/*
- * State on a fatal configuration error (region vs radio-design mismatch):
- * alarm but stay reachable. The link_lost LED pattern is shown while the management port remains
- * up, so the host can enter it,
- * trigger serial recovery and reflash. A regulatory or security problem is worth staying off
- * the air for, but the device must stay flashable — otherwise one bad image means BOOTSEL.
- *
- * Exception: a test image (not yet confirmed by the host) resets on a fatal error so that
- * MCUboot rolls back — a flashable fault state is no reason to keep a broken build running.
- */
-
-static void fault_loop(const zlrs_rf_owner_hooks_t *hooks)
-{
-	const struct zlrs_alerts alerts = {
-		.fault = true,
-		.data_drop_bytes = zlrs_link_get_stats(&link_data)->data_drop_bytes,
-	};
-
-	(void)hooks->before_frame(true);
-
-	/* The fault outranks link and drop indications and uses the link-loss pattern
-	 * (app/src/ui/led.c). Nothing else is published here — the links stop, so their last
-	 * snapshot is also the truth. */
-	bool alert_pending = true;
-
-	LOG_ERR("fault state: not transmitting; management port stays available for flashing");
-
-	for (;;) {
-		zlrs_watchdog_feed();
-		if (alert_pending && zbus_chan_pub(&zlrs_alert_chan, &alerts, K_NO_WAIT) == 0) {
-			alert_pending = false;
-		}
-
-		/* Management and rollback policy remain on the RF owner thread. */
-		(void)hooks->before_frame(true);
-
-		k_msleep(20);
-	}
-}
-
-static void broadcast_state(void)
+/* RF facts for UI and diagnostics, including failed initialization. */
+void zlrs_rf_publish_state(void)
 {
 	const zlrs_link_t *const active = &link_data;
 
@@ -697,7 +631,7 @@ static void broadcast_state(void)
 		ever_connected = true;
 	}
 	alerts.link_lost = ever_connected && info.state != ZLRS_STATE_CONNECTED;
-	alerts.fault = false;
+	alerts.fault = !radio_ready;
 	alerts.data_drop_bytes = drops;
 
 	static struct zlrs_link_status published_link;
@@ -850,7 +784,6 @@ void zlrs_rf_identity(const uint8_t id[ZLRS_DEV_ID_LEN])
 {
 	memcpy(device_id, id, sizeof(device_id));
 	zlrs_link_set_dev_id(&link_data, id);
-	pairing_saved = false;
 }
 
 void zlrs_rf_root_key(const uint8_t key[ZLRS_KEY_LEN])
@@ -1005,112 +938,61 @@ int zlrs_rf_init(void)
 	return 0;
 }
 
-int zlrs_rf_run(const zlrs_rf_owner_hooks_t *hooks)
+void zlrs_rf_start(void)
 {
-	if (!radio_ready) {
-		fault_loop(hooks);
-	}
 	LOG_INF("entering data loop: %u Hz (%s)", (unsigned int)data_rate_hz,
 		role_tx ? "TX" : "RX");
-
-	/*
-	 * Init is done at this point (ports, NVS, links, USB). Image confirmation does not happen
-	 * here: after an upgrade it waits for the host's explicit confirm in runtime/update.c.
-	 */
-
-	log_flush();
 	zlrs_slot_timer_start(frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE, slot_prepare_us,
 			      zlrs_radio_wake);
-	uint32_t consumed_frame = 0U;
-
+	consumed_frame = 0U;
 	BUILD_ASSERT(CONFIG_NUM_METAIRQ_PRIORITIES >= 1);
 	k_thread_priority_set(k_current_get(), K_PRIO_COOP(0));
+}
 
-	for (;;) {
-		uint32_t start_us;
-		uint32_t timer_frame;
+void zlrs_rf_frame(void)
+{
+	uint32_t start_us;
+	uint32_t timer_frame;
 
+	do {
 		zlrs_slot_timer_wait_frame(&start_us, &timer_frame);
-		if ((int32_t)(timer_frame - consumed_frame) <= 0) {
-			continue;
-		}
-		/* Dropped frames still advance frame/hop state on the original cadence. */
-		while (++consumed_frame < timer_frame) {
-			skipped_frames++;
-			for (uint8_t slot = 0U; slot < ZLRS_SLOT_COUNT; slot++) {
-				zlrs_link_skip_slot(&link_data, slot);
-			}
-		}
+	} while ((int32_t)(timer_frame - consumed_frame) <= 0);
 
-		phase_adj_set = false;
-
-		zlrs_watchdog_feed();
-		/* A management session pauses radio work while the absolute clock continues. */
-		if (hooks->before_frame(false)) {
-			/* This frame has not run any slots; include it in the catch-up after the pause. */
-			consumed_frame--;
-			continue;
-		}
-
-		/*
-		 * The timestamp must be re-read after a management session. Anything stamped inside the session
-		 * (a pairing triggered from the management port) is later than the "now" taken before it, so
-		 * unsigned subtraction underflows and the pairing window looks long expired.
-		 */
-		TRACE('L');
-		const uint32_t period = frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE;
-
+	/* Frames elapsed during maintenance still advance the original hop cadence. */
+	while (++consumed_frame < timer_frame) {
+		skipped_frames++;
 		for (uint8_t slot = 0U; slot < ZLRS_SLOT_COUNT; slot++) {
-			zlrs_watchdog_feed();
-			slot_nominal_us = start_us + ((uint64_t)period * slot) / ZLRS_SLOT_COUNT;
-			const uint32_t next_us =
-				slot == ZLRS_SLOT_DATA_B
-					? zlrs_slot_timer_next_frame_us()
-					: start_us + ((uint64_t)period * (slot + 1U)) /
-							     ZLRS_SLOT_COUNT;
-
-			slot_deadline_us = next_us - slot_prepare_us - 100U;
-			run_slot(slot);
+			zlrs_link_skip_slot(&link_data, slot);
 		}
+	}
+	phase_adj_set = false;
+	TRACE('L');
+	const uint32_t period = frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE;
 
-		/* Completions timestamp receptions during the slots; timeout checks need a newer time. */
-		const uint32_t now_ms = zlrs_slot_timer_now_ms();
-
-		zlrs_link_tick(&link_data, now_ms);
-
-		adopt_pairing();
-		/* The button thread reports holds on the bus (app/src/ui/button.c); the pairing request
-		 * itself stays on this thread, where the link state machine lives. */
-		{
-			struct zlrs_input asked;
-
-			if (zbus_chan_read(&zlrs_input_chan, &asked, K_NO_WAIT) == 0 &&
-			    asked.button_holds != button_holds_seen) {
-				button_holds_seen = asked.button_holds;
-				(void)zlrs_rf_pair_start();
-			}
-		}
-		broadcast_state();
-		zlrs_config_poll();
-		zlrs_link_data_poll();
-		report(now_ms);
-		hooks->after_frame(now_ms);
-
-		if (!role_tx) {
-			const zlrs_link_t *const clock_link = &link_data;
-			const uint32_t cadence_us = period;
-			const uint32_t scan_after_ms = zlrs_slot_timer_scan_delay_ms(
-				cadence_us, zlrs_link_get_config(clock_link)->resync_every_n,
-				phase_samples > 0U);
-
-			if ((uint32_t)(now_ms - last_rx_any_ms) > scan_after_ms) {
-				phase_samples = 0U;
-				phase_adj_us = ZLRS_PHASE_SCAN_STEP_US;
-			}
-			zlrs_slot_timer_shift(phase_adj_us);
-		}
-		phase_adj_us = 0;
+	for (uint8_t slot = 0U; slot < ZLRS_SLOT_COUNT; slot++) {
+		zlrs_watchdog_feed();
+		slot_nominal_us = start_us + ((uint64_t)period * slot) / ZLRS_SLOT_COUNT;
+		const uint32_t next_us =
+			slot == ZLRS_SLOT_DATA_B
+				? zlrs_slot_timer_next_frame_us()
+				: start_us + ((uint64_t)period * (slot + 1U)) / ZLRS_SLOT_COUNT;
+		slot_deadline_us = next_us - slot_prepare_us - 100U;
+		run_slot(slot);
 	}
 
-	return 0;
+	/* Re-read time after radio completions and any preceding maintenance window. */
+	const uint32_t now_ms = zlrs_slot_timer_now_ms();
+	zlrs_link_tick(&link_data, now_ms);
+	report(now_ms);
+
+	if (!role_tx) {
+		const uint32_t scan_after_ms = zlrs_slot_timer_scan_delay_ms(
+			period, zlrs_link_get_config(&link_data)->resync_every_n, phase_samples > 0U);
+		if ((uint32_t)(now_ms - last_rx_any_ms) > scan_after_ms) {
+			phase_samples = 0U;
+			phase_adj_us = ZLRS_PHASE_SCAN_STEP_US;
+		}
+		zlrs_slot_timer_shift(phase_adj_us);
+	}
+	phase_adj_us = 0;
 }
