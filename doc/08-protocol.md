@@ -42,6 +42,8 @@ A device with no root key remains off air. A configured device without a peer is
 
 Each frame contains two slots: DATA A (0, TX → RX) and DATA B (1, RX → TX). The LR2021 uses hardware sync word 1 for DATA and 2 for pairing. Pairing uses its own sync slot; connected traffic uses the DATA sync slot. A selected frequency band supplies its channel table and modem timing. FHSS derives a deterministic hop sequence from pairing material. The sub-G band uses its board SKU and region's channel, TX-power and duty rules; when the duty budget is exhausted, transmission is deferred. The active TX power never exceeds the configured/regional ceiling. Current firmware runs DATA on one selected band at a time.
 
+The default 2.4 GHz preparation reservation is 2.5 ms. It includes the previous RX window's cleanup, authentication, radio configuration and FIFO loading before the timer's fixed TX launch. The frame period is derived from this reservation and the maximum packet airtime, so both peers must use the same timing configuration. Increasing this reservation trades nominal slot rate for fewer aborted preparations; it does not allow packets to transmit late.
+
 ## Management status
 
 Management version `4` uses a fixed 72-byte `STATUS_RESP`. Multibyte integers are little endian; RSSI and temperature are signed 16-bit values, and power values are signed 8-bit dBm.

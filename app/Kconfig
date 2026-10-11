@@ -109,11 +109,12 @@ config ZLRS_APP_PREPARE_US
 
 config ZLRS_APP_DATA_24_PREPARE_US
 	int "Preparation time for exclusive 2.4 GHz data slots (us)"
-	default 1500
+	default 2500
 	range 100 10000
 	help
-	  The 2.4 GHz data mode reserves this time for packet construction,
-	  authentication and FIFO loading.
+	  Covers RX cleanup, packet authentication, modem setup and FIFO loading.
+	  Two-board DMA measurements exceed 1.8 ms when RX times out before TX;
+	  2.5 ms leaves room to arm the fixed launch before its deadline.
 
 config ZLRS_APP_TX_GUARD_US
 	int "Time from slot boundary to TX launch (us)"
