@@ -34,8 +34,10 @@
 #define ZLRS_PAIR_SALT_LEN 8U
 
 /* device roles */
-#define ZLRS_ROLE_TX 0U
-#define ZLRS_ROLE_RX 1U
+typedef enum {
+	ZLRS_ROLE_TX = 0,
+	ZLRS_ROLE_RX = 1
+} zlrs_role_t;
 
 /* Pairing payload: endpoint IDs and nonces. */
 #define ZLRS_PAIR_PAYLOAD_LEN 16U

@@ -41,7 +41,7 @@ if hit=$(grep -rn -E '\b(CONFIG_)?BOARD_[A-Z0-9_]+' app 2>/dev/null); then
 	echo "$hit"
 fi
 
-if hit=$(rg -n 'zlrs_link_t|zlrs/link/link.h|config/nvs.h|zlrs_storage_settings_' \
+if hit=$(rg -n 'zlrs_link_t|zlrs/link/link.h|zlrs_storage_settings_' \
 	app/src/data app/src/mgmt app/src/ui.c app/src/ui.h app/src/ui_pattern.c app/src/main.c); then
 	bad "a frontend reaches into RF or private configuration storage:"
 	echo "$hit"
@@ -54,6 +54,11 @@ fi
 
 if [ -e app/src/state/sys_bus.c ] || [ -e app/src/state/sys_bus.h ]; then
 	bad "centralized module channels returned"
+fi
+
+if hit=$(rg -n 'rf/rf.h|zlrs_rf_|zbus' app/src/persist.c app/src/persist.h); then
+ bad "persist depends on RF or state publication:"
+ echo "$hit"
 fi
 
 # Shipped configurations: everything that produces a firmware image. A debug configuration is

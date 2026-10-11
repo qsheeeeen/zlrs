@@ -92,9 +92,9 @@ zlrs_mod_cfg_t zlrs_region_clamp_mod(const zlrs_region_t *region, zlrs_mod_cfg_t
 	return mod;
 }
 
-const zlrs_region_t *zlrs_region_get(uint8_t id)
+const zlrs_region_t *zlrs_region_get(zlrs_region_id_t id)
 {
-	if (id >= ZLRS_REGION_COUNT) {
+	if ((unsigned int)id >= ZLRS_REGION_COUNT) {
 		return NULL;
 	}
 

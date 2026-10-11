@@ -11,12 +11,12 @@ target_sources(app PRIVATE
   ../drivers/entropy/test_rp2350_trng.c
   ../core/proto/test_crypto.c
   ../app/storage/test_log.c
-  ../app/config/test_nvs.c
+  ../app/test_persist.c
   ../core/link/test_link.c
   ../app/link/test_power.c
   ../app/platform/test_slot_timer.c
   ../app/ui/test_led.c
-  "${zlrs_root}/app/src/config/nvs.c"
+  "${zlrs_root}/app/src/persist.c"
   "${zlrs_root}/app/src/rf/power.c"
   "${zlrs_root}/app/src/platform/slot_timer.c"
   "${zlrs_root}/app/src/ui_pattern.c"
@@ -30,3 +30,5 @@ zephyr_code_relocate(FILES
   "${zlrs_root}/core/proto/crypto.c"
   "${zlrs_root}/drivers/crypto/rp2350_sha256.c"
   LOCATION RAM_TEXT)
+
+target_link_options(app PUBLIC "-Wl,--wrap=nvs_write")

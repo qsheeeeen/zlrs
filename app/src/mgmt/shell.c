@@ -3,7 +3,6 @@
 #include <zephyr/shell/shell.h>
 #include <zephyr/dfu/mcuboot.h>
 #include <zephyr/storage/flash_map.h>
-#include "config/config.h"
 #include "data/data.h"
 #include "mgmt/mode.h"
 #include "platform/caps.h"

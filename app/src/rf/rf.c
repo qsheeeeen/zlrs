@@ -14,8 +14,7 @@
 #include <string.h>
 #include <errno.h>
 
-#include "config/config.h"
-#include "config/identity.h"
+#include "persist.h"
 #include "data/data.h"
 #include "rf/rf.h"
 #include "rf/diagnostics.h"
@@ -36,7 +35,7 @@ ZBUS_CHAN_DEFINE(zlrs_rf_chan, zlrs_rf_status_t, NULL, NULL, ZBUS_OBSERVERS_EMPT
 
 static bool links_ready;
 static bool radio_ready;
-static uint32_t pause_depth;
+static bool paused;
 static int pause_priority;
 
 /* Two alternating DATA slots per timer frame. */
@@ -46,7 +45,7 @@ static uint32_t slot_budget_us;
 static uint32_t slot_prepare_us = CONFIG_ZLRS_APP_PREPARE_US;
 static uint8_t resync_every_n;
 static uint16_t data_mtu;
-static uint8_t data_band = ZLRS_DATA_BAND_24;
+static zlrs_data_band_t data_band = ZLRS_DATA_BAND_24;
 #define ZLRS_DATA_SUBG    (data_band == ZLRS_DATA_BAND_SUBG)
 #define ZLRS_MGMT_ENABLED ZLRS_PORT_MGMT
 
@@ -59,7 +58,7 @@ static zlrs_mod_cfg_t data_mod;
 
 /* Region: picks the band, the power ceiling and the duty accounting */
 static const zlrs_region_t *region;
-static uint8_t region_id;
+static zlrs_region_id_t region_id;
 static int8_t tx_power_dbm;
 static zlrs_duty_t duty;
 /* Identity: read or generated once at boot, before anything that could use it (doc/09-security.md 1) */
@@ -70,8 +69,7 @@ static uint8_t device_id[ZLRS_DEV_ID_LEN];
  * set-profile, doc/07-firmware.md). Loaded once at boot, before the links are built.
  */
 static bool role_tx;
-static uint8_t active_profile;
-static zlrs_config_values_t runtime_config;
+static zlrs_profile_t active_profile;
 
 /* The profile a build starts on, and which ones it may run: P1 is the production profile, P0
  * carries no tag at all so only a debug image may select it, P2 is not implemented yet. */
@@ -207,33 +205,18 @@ static void build_links(void)
 	zlrs_link_power_init(cfg.tx_power_dbm, CONFIG_ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM);
 }
 
-static bool ensure_device_id(void)
+static void load_identity(const zlrs_persist_state_t *saved)
 {
-	const zlrs_config_identity_t identity = zlrs_config_identity();
-	memcpy(device_id, identity.dev_id, sizeof(device_id));
-	return identity.identity_valid;
-}
-
-static void load_identity(void)
-{
-	zlrs_config_identity_t identity = zlrs_config_identity();
 	const uint32_t now_ms = zlrs_slot_timer_now_ms();
-
 	zlrs_link_set_dev_id(&link_data, device_id);
-
-	if (!identity.configured) {
-		LOG_WRN("no root key: staying off air until one is written (doc/09-security.md)");
+	if (!saved->configured) {
+		LOG_WRN("no root key: staying off air until one is written");
 		return;
 	}
-
-	zlrs_link_set_root_key(&link_data, identity.root_key, now_ms);
-	memset(identity.root_key, 0, sizeof(identity.root_key));
-
-	/* Pairing record: peer dev_id and the two pairing nonces. */
-	if (identity.paired) {
-		zlrs_link_set_peer(&link_data, identity.pairing.peer_id, identity.pairing.pair_salt,
+	zlrs_link_set_root_key(&link_data, saved->root_key, now_ms);
+	if (saved->paired) {
+		zlrs_link_set_peer(&link_data, saved->pairing.peer_id, saved->pairing.pair_salt,
 				   now_ms);
-		LOG_INF("pairing record restored");
 	}
 }
 
@@ -732,7 +715,7 @@ zlrs_rf_status_t zlrs_rf_status(void)
 		.configured = info.configured,
 		.paired = info.paired,
 		.session_valid = info.session_valid,
-		.paused = pause_depth != 0U,
+		.paused = paused,
 		.link_lost = ever_connected && info.state != ZLRS_STATE_CONNECTED,
 		.fault = !radio_ready,
 		.data_drop_bytes = stats->data_drop_bytes,
@@ -772,23 +755,20 @@ int zlrs_rf_pair_cancel(void)
 	return 0;
 }
 
-void zlrs_rf_identity(const uint8_t id[ZLRS_DEV_ID_LEN])
+void zlrs_rf_credentials(const zlrs_persist_state_t *saved)
 {
-	memcpy(device_id, id, sizeof(device_id));
-	zlrs_link_set_dev_id(&link_data, id);
-}
-
-void zlrs_rf_root_key(const uint8_t key[ZLRS_KEY_LEN])
-{
-	const uint32_t now = zlrs_slot_timer_now_ms();
-	zlrs_link_set_root_key(&link_data, key, now);
+	memcpy(device_id, saved->dev_id, sizeof(device_id));
+	if (links_ready) {
+		build_links();
+		load_identity(saved);
+		ever_connected = false;
+	}
 }
 
 void zlrs_rf_pause(void)
 {
-	if (pause_depth++ != 0U) {
-		return;
-	}
+	__ASSERT_NO_MSG(!paused);
+	paused = true;
 	pause_priority = k_thread_priority_get(k_current_get());
 	k_thread_priority_set(k_current_get(), CONFIG_MAIN_THREAD_PRIORITY);
 	if (radio_ready) {
@@ -802,13 +782,12 @@ void zlrs_rf_pause(void)
 
 void zlrs_rf_resume(void)
 {
-	if (pause_depth == 0U || --pause_depth != 0U) {
-		return;
-	}
+	__ASSERT_NO_MSG(paused);
+	paused = false;
 	k_thread_priority_set(k_current_get(), pause_priority);
 }
 
-int zlrs_rf_init(void)
+int zlrs_rf_init(const zlrs_persist_state_t *saved)
 {
 	TRACE('0');
 	/* Debug image only (gated in Kconfig, so the symbol does not exist in production builds):
@@ -839,7 +818,8 @@ int zlrs_rf_init(void)
 	}
 
 	/* Identity comes before anything that could use it; without one, stay off the air */
-	if (!ensure_device_id()) {
+	memcpy(device_id, saved->dev_id, sizeof(device_id));
+	if (!saved->identity_valid) {
 		TRACE('I');
 		LOG_ERR("no device id: staying off the air until one can be made");
 		return -ENODEV;
@@ -851,12 +831,11 @@ int zlrs_rf_init(void)
 	 * stored value when present, the board's own default otherwise (app/src/platform/caps.h).
 	 * The configuration owner validates every frontend's requested combination.
 	 */
-	runtime_config = zlrs_config_state().active;
-	data_band = runtime_config.band;
-	region_id = runtime_config.region;
-	tx_power_dbm = runtime_config.power_dbm;
-	role_tx = runtime_config.role == ZLRS_ROLE_TX;
-	active_profile = runtime_config.profile;
+	data_band = saved->settings.band;
+	region_id = saved->settings.region;
+	tx_power_dbm = saved->settings.power_dbm;
+	role_tx = saved->settings.role == ZLRS_ROLE_TX;
+	active_profile = saved->settings.profile;
 	LOG_INF("data band: %s", ZLRS_DATA_SUBG ? "sub-G" : "2.4G");
 	region = zlrs_region_get(region_id);
 	if (region == NULL) {
@@ -915,7 +894,7 @@ int zlrs_rf_init(void)
 	plan_init();
 	build_links();
 	links_ready = true;
-	load_identity();
+	load_identity(saved);
 
 	TRACE('c');
 	rc = zlrs_radio_init();

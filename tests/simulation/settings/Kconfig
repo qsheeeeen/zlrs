@@ -3,3 +3,6 @@ source "Kconfig.zephyr"
 module = APP
 module-str = app
 source "subsys/logging/Kconfig.template.log_config"
+config ZLRS_APP_TX_POWER_DBM
+ int
+ default -10

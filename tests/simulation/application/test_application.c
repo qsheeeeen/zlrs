@@ -8,7 +8,7 @@
 #include <zephyr/ztest.h>
 
 #include "boot.h"
-#include "config/identity.h"
+#include "persist.h"
 #include "data/data.h"
 #include "mgmt/mode.h"
 #include "platform/watchdog.h"
@@ -109,28 +109,22 @@ static bool rf_fault;
 static unsigned int starts, frames, polls, sessions, pairing_requests, saves, publications;
 static unsigned int pause_depth;
 static bool fail_first_save;
-static zlrs_config_identity_t identity;
-static const zlrs_config_pairing_t paired = {
+static zlrs_persist_state_t identity;
+static const zlrs_persist_pairing_t paired = {
 	.peer_id = {1, 2, 3, 4},
 	.pair_salt = {5, 6, 7, 8},
 };
 
-int zlrs_config_init(void)
+int zlrs_persist_init(void)
 {
 	return 0;
 }
-zlrs_config_state_t zlrs_config_state(void)
+const zlrs_persist_state_t *zlrs_persist_state(void)
 {
-	return (zlrs_config_state_t){.active.data_baud = 115200U};
+	identity.settings.data_baud = 115200U;
+	return &identity;
 }
-zlrs_config_identity_t zlrs_config_identity(void)
-{
-	return identity;
-}
-void zlrs_config_poll(void)
-{
-}
-int zlrs_config_save_pairing(const zlrs_config_pairing_t *pairing)
+int zlrs_persist_save_pairing(const zlrs_persist_pairing_t *pairing)
 {
 	zassert_equal(pause_depth, 1U,
 		      "pairing must be saved in an application maintenance window");
@@ -173,8 +167,9 @@ void zlrs_rf_resume(void)
 	zassert_equal(pause_depth, 1U);
 	pause_depth--;
 }
-int zlrs_rf_init(void)
+int zlrs_rf_init(const zlrs_persist_state_t *saved)
 {
+	zassert_equal(saved, &identity);
 	return rf_fault ? -ENODEV : 0;
 }
 void zlrs_rf_start(void)

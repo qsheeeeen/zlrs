@@ -26,7 +26,7 @@
 #include <string.h>
 
 #include "data/data.h"
-#include "config/config.h"
+#include "persist.h"
 #include "rf/rf.h"
 #include "platform/caps.h"
 #include "boot.h"
@@ -266,59 +266,57 @@ static int config_result(int rc)
 	if (rc == -EINVAL) {
 		return ZLRS_MGMT_E_PARAM;
 	}
-	return rc == -EIO ? ZLRS_MGMT_E_STORE : ZLRS_MGMT_E_STATE;
+	return ZLRS_MGMT_E_STORE;
 }
 
 static int cfg_save_setting(void *ctx, uint8_t cmd, const uint8_t *value, uint8_t len)
 {
 	(void)ctx;
-	enum zlrs_config_key key;
-	int32_t decoded;
+	if (len != (cmd == ZLRS_MGMT_CMD_SET_BAUD ? 4U : 1U)) {
+		return ZLRS_MGMT_E_PARAM;
+	}
+	zlrs_persist_settings_t settings = zlrs_persist_state()->settings;
 	switch (cmd) {
 	case ZLRS_MGMT_CMD_SET_BAND:
-		key = ZLRS_CONFIG_BAND;
-		break;
-	case ZLRS_MGMT_CMD_SET_BAUD:
-		key = ZLRS_CONFIG_DATA_BAUD;
+		settings.band = (zlrs_data_band_t)value[0];
 		break;
 	case ZLRS_MGMT_CMD_SET_REGION:
-		key = ZLRS_CONFIG_REGION;
+		settings.region = (zlrs_region_id_t)value[0];
 		break;
 	case ZLRS_MGMT_CMD_SET_POWER:
-		key = ZLRS_CONFIG_POWER;
+		settings.power_dbm = (int8_t)value[0];
 		break;
 	case ZLRS_MGMT_CMD_SET_ROLE:
-		key = ZLRS_CONFIG_ROLE;
+		settings.role = (zlrs_role_t)value[0];
 		break;
 	case ZLRS_MGMT_CMD_SET_PROFILE:
-		key = ZLRS_CONFIG_PROFILE;
+		settings.profile = (zlrs_profile_t)value[0];
+		break;
+	case ZLRS_MGMT_CMD_SET_BAUD:
+		settings.data_baud = (uint32_t)value[0] | (uint32_t)value[1] << 8 |
+				     (uint32_t)value[2] << 16 | (uint32_t)value[3] << 24;
 		break;
 	default:
 		return ZLRS_MGMT_E_UNKNOWN;
 	}
-	if (len != (key == ZLRS_CONFIG_DATA_BAUD ? 4U : 1U)) {
-		return ZLRS_MGMT_E_PARAM;
-	}
-	if (key == ZLRS_CONFIG_DATA_BAUD) {
-		decoded = (uint32_t)value[0] | (uint32_t)value[1] << 8 | (uint32_t)value[2] << 16 |
-			  (uint32_t)value[3] << 24;
-	} else {
-		decoded = key == ZLRS_CONFIG_POWER ? (int8_t)value[0] : value[0];
-	}
-	return config_result(zlrs_config_set(key, decoded));
+	return config_result(zlrs_persist_save_settings(&settings));
 }
 
 static int cfg_save_root_key(void *ctx, const uint8_t key[ZLRS_KEY_LEN])
 {
 	(void)ctx;
-	return config_result(zlrs_config_set_root_key(key));
+	const int rc = zlrs_persist_set_root_key(key);
+	if (rc == 0) {
+		zlrs_rf_credentials(zlrs_persist_state());
+	}
+	return config_result(rc);
 }
 
 static int cfg_read_status(void *ctx, zlrs_mgmt_status_t *out)
 {
 	(void)ctx;
 	const zlrs_rf_status_t rf = zlrs_rf_status();
-	const zlrs_config_state_t config = zlrs_config_state();
+	const zlrs_persist_settings_t *const config = &zlrs_persist_state()->settings;
 
 	*out = (zlrs_mgmt_status_t){
 		.version = ZLRS_MGMT_VERSION,
@@ -327,9 +325,9 @@ static int cfg_read_status(void *ctx, zlrs_mgmt_status_t *out)
 		.state = rf.state,
 		.lq_percent = rf.lq_percent,
 		.band = ZLRS_RF_BAND,
-		.region = config.saved.region,
-		.tx_power_dbm = config.saved.power_dbm,
-		.data_baud = config.saved.data_baud,
+		.region = config->region,
+		.tx_power_dbm = config->power_dbm,
+		.data_baud = config->data_baud,
 	};
 	if (rf.data_band == ZLRS_DATA_BAND_SUBG) {
 		out->flags |= ZLRS_MGMT_FLAG_DATA_SUBG;
@@ -351,7 +349,9 @@ static int cfg_read_status(void *ctx, zlrs_mgmt_status_t *out)
 static int cfg_new_dev_id(void *ctx)
 {
 	(void)ctx;
-	return config_result(zlrs_config_new_identity());
+	const int rc = zlrs_persist_new_identity();
+	zlrs_rf_credentials(zlrs_persist_state());
+	return config_result(rc);
 }
 
 static int cfg_pair(void *ctx)
@@ -363,13 +363,21 @@ static int cfg_pair(void *ctx)
 static int cfg_erase_pair(void *ctx)
 {
 	(void)ctx;
-	return config_result(zlrs_config_erase_pairing());
+	const int rc = zlrs_persist_erase_pairing();
+	if (rc == 0) {
+		zlrs_rf_credentials(zlrs_persist_state());
+	}
+	return config_result(rc);
 }
 
 static int cfg_factory_reset(void *ctx)
 {
 	(void)ctx;
-	return config_result(zlrs_config_factory_reset());
+	const int rc = zlrs_persist_factory_reset();
+	if (rc == 0) {
+		zlrs_rf_credentials(zlrs_persist_state());
+	}
+	return config_result(rc);
 }
 
 static int cfg_enter_recovery(void *vctx)
@@ -618,7 +626,6 @@ int zlrs_mgmt_mode_run(void)
 
 		zlrs_watchdog_feed();
 		publish_mode();
-		zlrs_config_poll();
 		zlrs_link_data_poll();
 		(void)log_process();
 

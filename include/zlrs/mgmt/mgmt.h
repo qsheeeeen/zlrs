@@ -14,6 +14,7 @@
 #include <stdint.h>
 
 #include "zlrs/proto/limits.h"
+#include "zlrs/region/region.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -102,9 +103,6 @@ typedef struct {
 #define ZLRS_MGMT_FLAG_PAIRED    0x02U
 #define ZLRS_MGMT_FLAG_SESSION   0x04U
 #define ZLRS_MGMT_FLAG_DATA_SUBG 0x08U /* DATA currently uses sub-GHz */
-
-#define ZLRS_DATA_BAND_24   0U
-#define ZLRS_DATA_BAND_SUBG 1U
 
 /*
  * What the log store holds: how many files, which one is being appended to (the export walks them

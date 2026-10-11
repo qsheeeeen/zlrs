@@ -47,15 +47,20 @@ typedef struct {
 	uint32_t high_hz;
 } zlrs_rf_design_t;
 
-enum {
+typedef enum {
 	ZLRS_REGION_FCC915 = 0,
 	ZLRS_REGION_EU868,
 	ZLRS_REGION_CN470,
 	ZLRS_REGION_CN433,
 	ZLRS_REGION_COUNT
-};
+} zlrs_region_id_t;
 
-const zlrs_region_t *zlrs_region_get(uint8_t id);
+typedef enum {
+	ZLRS_DATA_BAND_24 = 0,
+	ZLRS_DATA_BAND_SUBG = 1
+} zlrs_data_band_t;
+
+const zlrs_region_t *zlrs_region_get(zlrs_region_id_t id);
 
 /*
  * Check that region, radio design, channel plan and TX power agree with each other: the

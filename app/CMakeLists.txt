@@ -17,13 +17,12 @@ target_sources(app PRIVATE
   ${zlrs_app_dir}/src/main.c
   ${zlrs_app_dir}/src/boot.c
   ${zlrs_app_dir}/src/rf/rf.c
-  ${zlrs_app_dir}/src/config/config.c
+  ${zlrs_app_dir}/src/persist.c
   ${zlrs_app_dir}/src/platform/sha256.c
   ${zlrs_app_dir}/src/platform/slot_timer.c
   ${zlrs_app_dir}/src/platform/watchdog.c
   ${zlrs_app_dir}/src/platform/radio.c
   ${zlrs_app_dir}/src/storage/log.c
-  ${zlrs_app_dir}/src/config/nvs.c
   ${zlrs_app_dir}/src/ui.c
   ${zlrs_app_dir}/src/ui_pattern.c
 )
