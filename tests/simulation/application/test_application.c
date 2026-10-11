@@ -207,7 +207,7 @@ int zlrs_serial_init(uint32_t baud)
 	zassert_equal(baud, 115200U);
 	return 0;
 }
-void zlrs_serial_poll(void)
+void zlrs_serial_publish_state(void)
 {
 	if (rf_fault && polls == 3U) {
 		finish();

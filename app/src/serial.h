@@ -22,7 +22,8 @@ struct zlrs_serial_status {
 	uint32_t dropped;
 };
 ZBUS_CHAN_DECLARE(zlrs_serial_chan);
-void zlrs_serial_poll(void);
+/* Publish changed serial status to zbus from the main thread. */
+void zlrs_serial_publish_state(void);
 
 /* For bench debugging: state of one data endpoint (`zlrs ports` prints it) */
 typedef struct {
@@ -38,7 +39,7 @@ typedef struct {
 
 /*
  * Read the state of both data endpoints, returns how many were filled in.
- * The choice itself (DTR, host bytes seen) is implemented locally in data.c.
+ * The choice itself (DTR, host bytes seen) is implemented locally in serial.c.
  */
 size_t zlrs_serial_state(zlrs_serial_state_t *out, size_t count);
 

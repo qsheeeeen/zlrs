@@ -306,7 +306,7 @@ uint32_t zlrs_serial_dropped(void)
 	return dropped;
 }
 
-void zlrs_serial_poll(void)
+void zlrs_serial_publish_state(void)
 {
 	const struct data_ep *const ep = data_active();
 	const struct zlrs_serial_status status = {

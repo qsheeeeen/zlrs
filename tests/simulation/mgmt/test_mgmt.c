@@ -53,7 +53,7 @@ void zlrs_watchdog_disarm(void)
 void zlrs_watchdog_arm(void)
 {
 }
-void zlrs_serial_poll(void)
+void zlrs_serial_publish_state(void)
 {
 }
 void zlrs_serial_discard_rx(void)

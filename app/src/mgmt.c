@@ -682,7 +682,7 @@ int zlrs_mgmt_run(void)
 
 		zlrs_watchdog_feed();
 		publish_mode();
-		zlrs_serial_poll();
+		zlrs_serial_publish_state();
 		(void)log_process();
 
 		/* Radio stopped in management mode: data port bytes are dropped and counted */
