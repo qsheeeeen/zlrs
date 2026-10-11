@@ -310,7 +310,8 @@ ZTEST(rf_results, test_protocol_completion_and_timeouts)
 	zassert_equal(zlrs_link_get_stats(local)->slot_rx[0] +
 			      zlrs_link_get_stats(local)->slot_rx[1],
 		      rx_ok);
-	for (unsigned int i = 0U; i < 5000U && zlrs_rf_status().tx_power_dbm == 10; ++i) {
+	const uint32_t power_wait_frames = 60000000U / period_us;
+	for (uint32_t i = 0U; i < power_wait_frames && zlrs_rf_status().tx_power_dbm == 10; ++i) {
 		frames(1);
 	}
 	zassert_true(zlrs_rf_status().tx_power_dbm < 10);

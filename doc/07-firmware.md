@@ -21,6 +21,8 @@ python3 tools/zlrs.py pair --serial <RX-serial>
 
 The button starts pairing. A management session pauses radio operation; it exits on command or idle timeout. During that session DATA bytes cannot cross the radio.
 
+Dynamic power aims for 99–100% measured LQ. Fresh feedback below 99%, or RSSI below -95 dBm, raises power; 99% holds it. Lowering requires 100% LQ and RSSI above -70 dBm. Three consecutive fresh feedback observations qualify each 3 dB step. Raises wait at least 2 seconds between changes; lowers wait at least 40 seconds, approximately one idle quality-window duration on the shipped bands. The lowering wait starts when feedback becomes available and restarts after feedback loss. Missing feedback for 1 second restores the ceiling. These thresholds are product policy; RF calibration and controlled interference tests remain necessary to characterize performance.
+
 ## Build and updates
 
 Build the matching LF or HF target with `source tools/zephyr-env.sh` and `zlrs-build`. The signed application image is `../build/app/zephyr/zephyr.signed.bin`. Install MCUboot once with its UF2 through BOOTSEL, then send every application image through serial recovery:
