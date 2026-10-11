@@ -202,18 +202,20 @@ static void build_links(void)
 			zlrs_slot_timer_now_ms());
 }
 
-static void load_identity(const zlrs_persist_state_t *saved)
+static void load_identity(void)
 {
 	const uint32_t now_ms = zlrs_slot_timer_now_ms();
 	zlrs_link_set_dev_id(&link_data, device_id);
-	if (!saved->configured) {
+	uint8_t root_key[ZLRS_KEY_LEN];
+	if (!zlrs_persist_get_root_key(root_key)) {
 		LOG_WRN("no root key: staying off air until one is written");
 		return;
 	}
-	zlrs_link_set_root_key(&link_data, saved->root_key, now_ms);
-	if (saved->paired) {
-		zlrs_link_set_peer(&link_data, saved->pairing.peer_id, saved->pairing.pair_salt,
-				   now_ms);
+	zlrs_link_set_root_key(&link_data, root_key, now_ms);
+	memset(root_key, 0, sizeof(root_key));
+	zlrs_persist_pairing_t pairing;
+	if (zlrs_persist_get_pairing(&pairing)) {
+		zlrs_link_set_peer(&link_data, pairing.peer_id, pairing.pair_salt, now_ms);
 	}
 }
 
@@ -781,12 +783,14 @@ int zlrs_rf_pair_cancel(void)
 	return 0;
 }
 
-void zlrs_rf_credentials(const zlrs_persist_state_t *saved)
+void zlrs_rf_credentials(void)
 {
-	memcpy(device_id, saved->dev_id, sizeof(device_id));
+	if (!zlrs_persist_get_device_id(device_id)) {
+		memset(device_id, 0, sizeof(device_id));
+	}
 	if (links_ready) {
 		build_links();
-		load_identity(saved);
+		load_identity();
 		ever_connected = false;
 	}
 }
@@ -813,7 +817,7 @@ void zlrs_rf_resume(void)
 	k_thread_priority_set(k_current_get(), pause_priority);
 }
 
-int zlrs_rf_init(const zlrs_persist_state_t *saved)
+int zlrs_rf_init(void)
 {
 	TRACE('0');
 	/* Debug image only (gated in Kconfig, so the symbol does not exist in production builds):
@@ -844,8 +848,7 @@ int zlrs_rf_init(const zlrs_persist_state_t *saved)
 	}
 
 	/* Identity comes before anything that could use it; without one, stay off the air */
-	memcpy(device_id, saved->dev_id, sizeof(device_id));
-	if (!saved->identity_valid) {
+	if (!zlrs_persist_get_device_id(device_id)) {
 		TRACE('I');
 		LOG_ERR("no device id: staying off the air until one can be made");
 		return -ENODEV;
@@ -857,11 +860,12 @@ int zlrs_rf_init(const zlrs_persist_state_t *saved)
 	 * stored value when present, the board's own default otherwise (app/src/platform/caps.h).
 	 * The configuration owner validates every frontend's requested combination.
 	 */
-	data_band = saved->settings.band;
-	region_id = saved->settings.region;
-	tx_power_dbm = saved->settings.power_dbm;
-	role_tx = saved->settings.role == ZLRS_ROLE_TX;
-	active_profile = saved->settings.profile;
+	const zlrs_persist_settings_t *const settings = zlrs_persist_settings();
+	data_band = settings->band;
+	region_id = settings->region;
+	tx_power_dbm = settings->power_dbm;
+	role_tx = settings->role == ZLRS_ROLE_TX;
+	active_profile = settings->profile;
 	LOG_INF("data band: %s", ZLRS_DATA_SUBG ? "sub-G" : "2.4G");
 	region = zlrs_region_get(region_id);
 	if (region == NULL) {
@@ -920,7 +924,7 @@ int zlrs_rf_init(const zlrs_persist_state_t *saved)
 	plan_init();
 	build_links();
 	links_ready = true;
-	load_identity(saved);
+	load_identity();
 
 	TRACE('c');
 	rc = zlrs_lr2021_init();

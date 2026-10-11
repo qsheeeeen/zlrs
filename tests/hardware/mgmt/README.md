@@ -17,6 +17,8 @@ Never confirm or ship this image. Keep the board powered until the runner restor
 its original partition and firmware.
 
 The runner checks every management command, including invalid values and lengths,
-log reads and debug reports. It repeats identity generation to exercise the real
+log reads and debug reports. It checks that erased pairing stays absent after the
+application loop resumes, preserves the key and ID, and that factory reset clears
+the running credentials. It repeats identity generation to exercise the real
 entropy source. Restoration is reported separately; a failed assertion still
 fails the run even if restoration succeeds.

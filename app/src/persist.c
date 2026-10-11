@@ -34,12 +34,48 @@ static struct nvs_fs fs = {
 	.sector_size = NVS_SECTOR_SIZE,
 	.sector_count = PARTITION_SIZE(storage_partition) / NVS_SECTOR_SIZE,
 };
-static zlrs_persist_state_t state;
+/* RAM copy of saved records/defaults; reads do not access flash. */
+static struct {
+	zlrs_persist_settings_t settings;
+	uint8_t dev_id[ZLRS_DEV_ID_LEN];
+	uint8_t root_key[ZLRS_KEY_LEN];
+	zlrs_persist_pairing_t pairing;
+	bool identity_valid;
+	bool configured;
+	bool paired;
+} state;
 static bool ready;
 
-const zlrs_persist_state_t *zlrs_persist_state(void)
+const zlrs_persist_settings_t *zlrs_persist_settings(void)
 {
-	return &state;
+	return &state.settings;
+}
+
+bool zlrs_persist_get_device_id(uint8_t out[ZLRS_DEV_ID_LEN])
+{
+	if (!state.identity_valid) {
+		return false;
+	}
+	memcpy(out, state.dev_id, ZLRS_DEV_ID_LEN);
+	return true;
+}
+
+bool zlrs_persist_get_root_key(uint8_t out[ZLRS_KEY_LEN])
+{
+	if (!state.configured) {
+		return false;
+	}
+	memcpy(out, state.root_key, ZLRS_KEY_LEN);
+	return true;
+}
+
+bool zlrs_persist_get_pairing(zlrs_persist_pairing_t *out)
+{
+	if (!state.paired) {
+		return false;
+	}
+	*out = state.pairing;
+	return true;
 }
 
 static zlrs_persist_settings_t default_settings(void)

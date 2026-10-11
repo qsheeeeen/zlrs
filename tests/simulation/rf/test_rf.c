@@ -3,6 +3,7 @@
 #include <string.h>
 #include <zephyr/ztest.h>
 #include "rf.h"
+#include "persist.h"
 #include "diagnostics.h"
 #include "serial.h"
 #include "platform/lr2021.h"
@@ -28,6 +29,50 @@ static unsigned int tx_ok, tx_fail, rx_fail, rx_ok, aborts;
 static uint16_t source_left, delivered;
 static const uint8_t outgoing[] = "host bytes";
 static const uint8_t incoming[] = "peer bytes";
+
+static const zlrs_persist_settings_t saved_settings = {
+	.band = RF_TEST_BAND_SUBG ? ZLRS_DATA_BAND_SUBG : ZLRS_DATA_BAND_24,
+	.region = ZLRS_REGION_CN433,
+	.role = RF_TEST_ROLE_RX ? ZLRS_ROLE_RX : ZLRS_ROLE_TX,
+	.profile = ZLRS_PROFILE_P1,
+	.power_dbm = 10,
+};
+static const uint8_t saved_id[ZLRS_DEV_ID_LEN] = {1, 2, 3, 4};
+static const uint8_t saved_key[ZLRS_KEY_LEN] = {0x42};
+static const zlrs_persist_pairing_t saved_pairing = {
+	.peer_id = {5, 6, 7, 8},
+	.pair_salt = {1, 0, 0, 0, 2, 0, 0, 0},
+};
+static bool identity_valid, configured = true, paired = true;
+
+const zlrs_persist_settings_t *zlrs_persist_settings(void)
+{
+	return &saved_settings;
+}
+bool zlrs_persist_get_device_id(uint8_t out[ZLRS_DEV_ID_LEN])
+{
+	if (!identity_valid) {
+		return false;
+	}
+	memcpy(out, saved_id, sizeof(saved_id));
+	return true;
+}
+bool zlrs_persist_get_root_key(uint8_t out[ZLRS_KEY_LEN])
+{
+	if (!configured) {
+		return false;
+	}
+	memcpy(out, saved_key, sizeof(saved_key));
+	return true;
+}
+bool zlrs_persist_get_pairing(zlrs_persist_pairing_t *out)
+{
+	if (!paired) {
+		return false;
+	}
+	*out = saved_pairing;
+	return true;
+}
 
 void __real_zlrs_link_init(zlrs_link_t *, const zlrs_link_cfg_t *, uint32_t (*)(void *), void *,
 			   const zlrs_link_events_t *);
@@ -230,27 +275,16 @@ static void frames(unsigned int count)
 }
 ZTEST(rf_results, test_protocol_completion_and_timeouts)
 {
-	zlrs_persist_state_t saved = {
-		.settings = {.band = RF_TEST_BAND_SUBG ? ZLRS_DATA_BAND_SUBG : ZLRS_DATA_BAND_24,
-			     .region = ZLRS_REGION_CN433,
-			     .role = RF_TEST_ROLE_RX ? ZLRS_ROLE_RX : ZLRS_ROLE_TX,
-			     .profile = ZLRS_PROFILE_P1,
-			     .power_dbm = 10},
-		.dev_id = {1, 2, 3, 4},
-		.root_key = {0x42},
-		.configured = true,
-		.identity_valid = true,
-		.paired = true,
-		.pairing = {.peer_id = {5, 6, 7, 8}, .pair_salt = {1, 0, 0, 0, 2, 0, 0, 0}},
-	};
-	zassert_ok(zlrs_rf_init(&saved));
+	zassert_equal(zlrs_rf_init(), -ENODEV);
+	identity_valid = true;
+	zassert_ok(zlrs_rf_init());
 	zlrs_link_cfg_t cfg = *zlrs_link_get_config(local);
 	cfg.role = RF_TEST_ROLE_RX ? ZLRS_ROLE_TX : ZLRS_ROLE_RX;
 	const zlrs_link_events_t events = {.on_data = receive_peer};
 	__real_zlrs_link_init(&peer, &cfg, NULL, NULL, &events);
-	zlrs_link_set_dev_id(&peer, saved.pairing.peer_id);
-	zlrs_link_set_root_key(&peer, saved.root_key, 0);
-	zlrs_link_set_peer(&peer, saved.dev_id, saved.pairing.pair_salt, 0);
+	zlrs_link_set_dev_id(&peer, saved_pairing.peer_id);
+	zlrs_link_set_root_key(&peer, saved_key, 0);
+	zlrs_link_set_peer(&peer, saved_id, saved_pairing.pair_salt, 0);
 	zlrs_rf_start();
 	frames(150);
 	zassert_equal(zlrs_link_get_state(local), ZLRS_STATE_CONNECTED);
@@ -312,6 +346,20 @@ ZTEST(rf_results, test_protocol_completion_and_timeouts)
 	zassert_equal(zlrs_diagnostics_read((zlrs_diagnostic_report_t)255, 0U, chunk, sizeof(chunk),
 					    &total, &written),
 		      -EINVAL);
+	/* Deleting the saved pairing clears the active peer/session in the same window. */
+	paired = false;
+	zlrs_rf_credentials();
+	uint8_t peer_id[ZLRS_DEV_ID_LEN], salt[ZLRS_PAIR_SALT_LEN];
+	zassert_false(zlrs_rf_pairing(peer_id, salt));
+	zassert_true(zlrs_rf_status().configured);
+	zassert_false(zlrs_rf_status().paired || zlrs_rf_status().session_valid);
+	/* Factory reset removes the key and ID until persist initializes again at boot. */
+	configured = identity_valid = false;
+	zlrs_rf_credentials();
+	zassert_false(zlrs_rf_status().configured);
+	const uint8_t empty_id[ZLRS_DEV_ID_LEN] = {0};
+	zassert_mem_equal(zlrs_rf_status().dev_id, empty_id, sizeof(empty_id));
+	zlrs_rf_resume();
 	k_thread_priority_set(k_current_get(), 0);
 }
 ZTEST_SUITE(rf_results, NULL, NULL, NULL, NULL, NULL);

@@ -23,12 +23,16 @@ zlrs_rf_status_t zlrs_rf_status(void)
 {
 	return rf;
 }
-void zlrs_rf_credentials(const zlrs_persist_state_t *s)
+void zlrs_rf_credentials(void)
 {
 	credential_applies++;
-	rf.configured = s->configured;
-	rf.paired = s->paired;
-	memcpy(rf.dev_id, s->dev_id, sizeof(rf.dev_id));
+	uint8_t key[ZLRS_KEY_LEN];
+	zlrs_persist_pairing_t pairing;
+	rf.configured = zlrs_persist_get_root_key(key);
+	rf.paired = zlrs_persist_get_pairing(&pairing);
+	if (!zlrs_persist_get_device_id(rf.dev_id)) {
+		memset(rf.dev_id, 0, sizeof(rf.dev_id));
+	}
 }
 int zlrs_rf_pair_start(void)
 {
@@ -104,7 +108,7 @@ ZTEST(commands, test_device_commands)
 	ack(ZLRS_MGMT_CMD_PAIR, NULL, 0, ZLRS_MGMT_E_STATE);
 	const uint8_t baud[] = {0, 0x84, 3, 0};
 	ack(ZLRS_MGMT_CMD_SET_BAUD, baud, 4, 0);
-	zassert_equal(zlrs_persist_state()->settings.data_baud, 230400);
+	zassert_equal(zlrs_persist_settings()->data_baud, 230400);
 	ack(ZLRS_MGMT_CMD_SET_BAUD, baud, 3, ZLRS_MGMT_E_PARAM);
 	const uint8_t invalid = 255, subg = ZLRS_DATA_BAND_SUBG, role = ZLRS_ROLE_RX;
 	ack(ZLRS_MGMT_CMD_SET_ROLE, &invalid, 1, ZLRS_MGMT_E_PARAM);
@@ -116,7 +120,7 @@ ZTEST(commands, test_device_commands)
 	const uint8_t power = (uint8_t)-9;
 	fail_write = true;
 	ack(ZLRS_MGMT_CMD_SET_POWER, &power, 1, ZLRS_MGMT_E_STORE);
-	zassert_equal(zlrs_persist_state()->settings.power_dbm, -10);
+	zassert_equal(zlrs_persist_settings()->power_dbm, -10);
 	fail_write = false;
 	ack(ZLRS_MGMT_CMD_SET_POWER, &power, 1, 0);
 	uint8_t hex[64];
@@ -126,13 +130,16 @@ ZTEST(commands, test_device_commands)
 	ack(ZLRS_MGMT_CMD_SET_KEY_HEX, hex, 64, ZLRS_MGMT_E_PARAM);
 	hex[0] = 'a';
 	ack(ZLRS_MGMT_CMD_SET_KEY_HEX, hex, 64, 0);
-	zassert_equal(zlrs_persist_state()->root_key[0], 0xAA);
+	uint8_t key[ZLRS_KEY_LEN];
+	zassert_true(zlrs_persist_get_root_key(key));
+	zassert_equal(key[0], 0xAA);
 	ack(ZLRS_MGMT_CMD_SET_PHRASE, NULL, 0, ZLRS_MGMT_E_PARAM);
 	const uint8_t phrase[] = "mgmt-native";
 	ack(ZLRS_MGMT_CMD_SET_PHRASE, phrase, sizeof(phrase) - 1, 0);
 	uint8_t expected[32];
 	zlrs_root_key_from_phrase((const char *)phrase, expected);
-	zassert_mem_equal(zlrs_persist_state()->root_key, expected, sizeof(expected));
+	zassert_true(zlrs_persist_get_root_key(key));
+	zassert_mem_equal(key, expected, sizeof(expected));
 	zassert_equal(credential_applies, 2);
 	ack(ZLRS_MGMT_CMD_PAIR, NULL, 0, 0);
 	zassert_equal(pairs, 2);
@@ -168,10 +175,12 @@ ZTEST(commands, test_device_commands)
 	ack(ZLRS_MGMT_CMD_LOG_READ, wrong_index, 6, ZLRS_MGMT_E_PARAM);
 	ack(ZLRS_MGMT_CMD_NEW_DEV_ID, read, 1, ZLRS_MGMT_E_PARAM);
 	uint8_t old_id[ZLRS_DEV_ID_LEN];
-	memcpy(old_id, zlrs_persist_state()->dev_id, sizeof(old_id));
+	zassert_true(zlrs_persist_get_device_id(old_id));
 	fail_write = true;
 	ack(ZLRS_MGMT_CMD_NEW_DEV_ID, NULL, 0, ZLRS_MGMT_E_STORE);
-	zassert_mem_equal(zlrs_persist_state()->dev_id, old_id, sizeof(old_id));
+	uint8_t id[ZLRS_DEV_ID_LEN];
+	zassert_true(zlrs_persist_get_device_id(id));
+	zassert_mem_equal(id, old_id, sizeof(old_id));
 	zassert_mem_equal(rf.dev_id, old_id, sizeof(old_id));
 	fail_write = false;
 	const unsigned int before = credential_applies;

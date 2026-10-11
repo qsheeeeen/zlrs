@@ -278,7 +278,7 @@ static int save_setting(uint8_t cmd, const uint8_t *value, uint8_t len)
 	if (len != (cmd == ZLRS_MGMT_CMD_SET_BAUD ? 4U : 1U)) {
 		return ZLRS_MGMT_E_PARAM;
 	}
-	zlrs_persist_settings_t settings = zlrs_persist_state()->settings;
+	zlrs_persist_settings_t settings = *zlrs_persist_settings();
 	switch (cmd) {
 	case ZLRS_MGMT_CMD_SET_BAND:
 		settings.band = (zlrs_data_band_t)value[0];
@@ -309,7 +309,7 @@ static int save_root_key(const uint8_t key[ZLRS_KEY_LEN])
 {
 	const int rc = zlrs_persist_set_root_key(key);
 	if (rc == 0) {
-		zlrs_rf_credentials(zlrs_persist_state());
+		zlrs_rf_credentials();
 	}
 	return persist_result(rc);
 }
@@ -317,7 +317,7 @@ static int save_root_key(const uint8_t key[ZLRS_KEY_LEN])
 static void read_status(zlrs_mgmt_status_t *out)
 {
 	const zlrs_rf_status_t rf = zlrs_rf_status();
-	const zlrs_persist_settings_t *const settings = &zlrs_persist_state()->settings;
+	const zlrs_persist_settings_t *const settings = zlrs_persist_settings();
 
 	*out = (zlrs_mgmt_status_t){
 		.version = ZLRS_MGMT_VERSION,
@@ -547,18 +547,18 @@ uint8_t zlrs_mgmt_command(uint8_t cmd, const uint8_t *payload, uint8_t len, uint
 		if (rc != 0) {
 			LOG_ERR("device identity update failed (%d)", rc);
 		}
-		zlrs_rf_credentials(zlrs_persist_state());
+		zlrs_rf_credentials();
 		return ack_frame(out, cap, cmd, persist_result(rc));
 	case ZLRS_MGMT_CMD_ERASE_PAIR:
 		rc = zlrs_persist_erase_pairing();
 		if (rc == 0) {
-			zlrs_rf_credentials(zlrs_persist_state());
+			zlrs_rf_credentials();
 		}
 		return ack_frame(out, cap, cmd, persist_result(rc));
 	case ZLRS_MGMT_CMD_FACTORY_RESET:
 		rc = zlrs_persist_factory_reset();
 		if (rc == 0) {
-			zlrs_rf_credentials(zlrs_persist_state());
+			zlrs_rf_credentials();
 		}
 		return ack_frame(out, cap, cmd, persist_result(rc));
 	case ZLRS_MGMT_CMD_SET_KEY_HEX:

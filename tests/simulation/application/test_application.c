@@ -109,7 +109,9 @@ static bool rf_fault;
 static unsigned int starts, frames, idle_calls, sessions, pairing_requests, saves, publications;
 static unsigned int pause_depth;
 static bool fail_first_save;
-static zlrs_persist_state_t identity;
+static zlrs_persist_pairing_t saved_pairing;
+static bool pairing_saved, rf_paired;
+static const zlrs_persist_settings_t settings = {.data_baud = 115200U};
 static const zlrs_persist_pairing_t paired = {
 	.peer_id = {1, 2, 3, 4},
 	.pair_salt = {5, 6, 7, 8},
@@ -119,10 +121,17 @@ int zlrs_persist_init(void)
 {
 	return 0;
 }
-const zlrs_persist_state_t *zlrs_persist_state(void)
+const zlrs_persist_settings_t *zlrs_persist_settings(void)
 {
-	identity.settings.data_baud = 115200U;
-	return &identity;
+	return &settings;
+}
+bool zlrs_persist_get_pairing(zlrs_persist_pairing_t *out)
+{
+	if (!pairing_saved) {
+		return false;
+	}
+	*out = saved_pairing;
+	return true;
 }
 int zlrs_persist_save_pairing(const zlrs_persist_pairing_t *pairing)
 {
@@ -132,8 +141,8 @@ int zlrs_persist_save_pairing(const zlrs_persist_pairing_t *pairing)
 	if (fail_first_save && saves == 1U) {
 		return -EIO;
 	}
-	identity.pairing = *pairing;
-	identity.paired = true;
+	saved_pairing = *pairing;
+	pairing_saved = true;
 	return 0;
 }
 int zlrs_mgmt_init(void)
@@ -142,12 +151,18 @@ int zlrs_mgmt_init(void)
 }
 bool zlrs_mgmt_process_idle(void)
 {
-	return ++idle_calls == 1U;
+	return ++idle_calls == 1U || (!rf_fault && frames == 3U && sessions == 1U);
 }
 int zlrs_mgmt_run(void)
 {
 	zassert_equal(pause_depth, 1U);
 	sessions++;
+	if (sessions == 2U) {
+		/* ERASE_PAIR deletes the saved record and reloads RF credentials in this window. */
+		zassert_true(pairing_saved && rf_paired);
+		pairing_saved = false;
+		zlrs_rf_credentials();
+	}
 	return 0;
 }
 void zlrs_rf_log_snapshot(void)
@@ -167,10 +182,16 @@ void zlrs_rf_resume(void)
 	zassert_equal(pause_depth, 1U);
 	pause_depth--;
 }
-int zlrs_rf_init(const zlrs_persist_state_t *saved)
+int zlrs_rf_init(void)
 {
-	zassert_equal(saved, &identity);
+	rf_paired = true;
 	return rf_fault ? -ENODEV : 0;
+}
+void zlrs_rf_credentials(void)
+{
+	zassert_equal(pause_depth, 1U);
+	zlrs_persist_pairing_t pairing;
+	rf_paired = zlrs_persist_get_pairing(&pairing);
 }
 void zlrs_rf_start(void)
 {
@@ -187,6 +208,9 @@ int zlrs_rf_pair_start(void)
 }
 bool zlrs_rf_pairing(uint8_t peer_id[ZLRS_DEV_ID_LEN], uint8_t salt[ZLRS_PAIR_SALT_LEN])
 {
+	if (!rf_paired) {
+		return false;
+	}
 	memcpy(peer_id, paired.peer_id, sizeof(paired.peer_id));
 	memcpy(salt, paired.pair_salt, sizeof(paired.pair_salt));
 	return true;
@@ -194,12 +218,8 @@ bool zlrs_rf_pairing(uint8_t peer_id[ZLRS_DEV_ID_LEN], uint8_t salt[ZLRS_PAIR_SA
 void zlrs_rf_frame(void)
 {
 	zassert_equal(pause_depth, 0U);
-	if (++frames == 4U) {
+	if (++frames == 5U) {
 		finish();
-	}
-	if (frames == 3U) {
-		/* Existing erase-pair semantics leave the active link until reboot. */
-		identity.paired = false;
 	}
 }
 int zlrs_serial_init(uint32_t baud)
@@ -244,12 +264,12 @@ ZTEST(application, test_lifecycle)
 	fail_first_save = true;
 	run(RUN_APPLICATION);
 	zassert_equal(starts, 1U);
-	zassert_equal(frames, 4U);
-	zassert_equal(sessions, 1U);
+	zassert_equal(frames, 5U);
+	zassert_equal(sessions, 2U);
 	zassert_equal(pairing_requests, 1U, "a long press must be consumed once");
 	zassert_equal(saves, 2U, "failed pairing save must retry without rewriting a saved record");
-	zassert_false(identity.paired,
-		      "an erased pairing must not be restored from the active link");
+	zassert_false(pairing_saved || rf_paired,
+		      "erasing pairing must clear both the saved record and the active link");
 	zassert_equal(pause_depth, 0U);
 
 	starts = frames = idle_calls = sessions = pairing_requests = saves = publications = 0U;

@@ -52,7 +52,16 @@ def main():
                 print(f'command {c:02x}: PASS', flush=True)
                 return body
             cmd(m.CMD_ENTER)
-            cmd(m.CMD_STATUS, response=m.STATUS_RESP)
+            before_erase = cmd(m.CMD_STATUS, response=m.STATUS_RESP)
+            cmd(m.CMD_ERASE_PAIR)
+            cmd(m.CMD_EXIT)
+            time.sleep(0.2)  # Let the real main loop attempt to save any remaining RF pairing.
+            cmd(m.CMD_ENTER)
+            after_erase = cmd(m.CMD_STATUS, response=m.STATUS_RESP)
+            assert after_erase[3] & 0x06 == 0, after_erase.hex()  # No pairing/session.
+            assert after_erase[3] & 0x01 == before_erase[3] & 0x01
+            assert after_erase[4:8] == before_erase[4:8]
+            print('Erased pairing stays absent after main resumes; key and ID preserved.', flush=True)
             cmd(m.CMD_BUILD, response=m.BUILD_RESP)
             cmd(m.CMD_IMAGE_HASH, response=m.IMAGE_HASH_RESP)
             cmd(m.CMD_CONFIRM, expected=3)
@@ -79,11 +88,15 @@ def main():
             cmd(m.CMD_SET_PHRASE, b'mgmt-hardware')
             cmd(m.CMD_PAIR)
             cmd(m.CMD_ERASE_PAIR)
+            unpaired = cmd(m.CMD_STATUS, response=m.STATUS_RESP)
+            assert unpaired[3] & 0x07 == 0x01, unpaired.hex()  # Key exists; no pairing/session.
             cmd(m.CMD_NEW_DEV_ID, b'\x01', expected=1)
             for _ in range(10):
                 cmd(m.CMD_NEW_DEV_ID)
             cmd(m.CMD_FACTORY_RESET)
-            cmd(m.CMD_STATUS, response=m.STATUS_RESP)
+            reset = cmd(m.CMD_STATUS, response=m.STATUS_RESP)
+            assert reset[3] & 0x07 == 0, reset.hex()
+            assert reset[4:12] == bytes(8), reset.hex()  # ID and peer cleared until next boot.
             cmd(0x7E, expected=4)
             cmd(m.CMD_EXIT)
     finally:

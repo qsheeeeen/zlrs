@@ -6,9 +6,9 @@
 #include <stdint.h>
 #include <zephyr/zbus/zbus.h>
 
-#include "zlrs/proto/limits.h"
+#include "zlrs/proto/frame.h"
 #include "zlrs/link/state.h"
-#include "persist.h"
+#include "zlrs/region/region.h"
 
 typedef struct {
 	zlrs_role_t role;
@@ -36,8 +36,8 @@ typedef struct {
 ZBUS_CHAN_DECLARE(zlrs_rf_chan);
 
 /* These functions execute on the RF owner thread, including frontend callbacks. */
-/* Boot once: 0 only when RF is ready, negative errno on failure. */
-int zlrs_rf_init(const zlrs_persist_state_t *saved);
+/* Boot once from saved settings/credentials: 0 when ready, negative errno on failure. */
+int zlrs_rf_init(void);
 /* Start once after successful init. Each frame waits for its absolute boundary and returns. */
 void zlrs_rf_start(void);
 void zlrs_rf_frame(void);
@@ -47,8 +47,8 @@ bool zlrs_rf_pairing(uint8_t peer_id[ZLRS_DEV_ID_LEN], uint8_t pair_salt[ZLRS_PA
 zlrs_rf_status_t zlrs_rf_status(void);
 int zlrs_rf_pair_start(void);
 int zlrs_rf_pair_cancel(void);
-/* Apply credentials in a maintenance window; ordinary settings wait for reboot. */
-void zlrs_rf_credentials(const zlrs_persist_state_t *saved);
+/* Reload saved credentials in a maintenance window; ordinary settings wait for reboot. */
+void zlrs_rf_credentials(void);
 /* Safe boundary: cancel radio launch and invalidate preloaded data. */
 void zlrs_rf_pause(void);
 void zlrs_rf_resume(void);
