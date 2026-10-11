@@ -6,7 +6,7 @@
 
 #pragma once
 
-/* Feed the watchdog from the main loop and the management-mode poll loop; empty when disabled */
+/* Feed the watchdog from the main loop and the management loop; empty when disabled */
 void zlrs_watchdog_feed(void);
 
 /* Disarm the watchdog. Required before rebooting into MCUboot serial recovery: on RP2350 it

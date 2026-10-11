@@ -19,11 +19,12 @@ ZBUS_CHAN_DECLARE(zlrs_mode_chan);
  */
 int zlrs_mgmt_run(void);
 
-/* Dedicated management CDC, initialized and polled directly by the application. */
+/* Dedicated management CDC, serviced directly by the application owner. */
 int zlrs_mgmt_init(void);
-/* Detect ENTER without acknowledging it; run() replies when the session is ready. */
-bool zlrs_mgmt_poll_enter(void);
-/* May be called by a shell thread; the RF owner consumes the request in poll_enter(). */
+/* Process idle CDC input and session requests; true asks the owner to run a session.
+ * run() acknowledges host ENTER when ready; RECOVERY may reboot here. */
+bool zlrs_mgmt_process_idle(void);
+/* May be called by a shell thread; the application owner consumes it in process_idle(). */
 void zlrs_mgmt_request_session(void);
 
 /* Execute a parsed command on the owner thread in a maintenance window. */

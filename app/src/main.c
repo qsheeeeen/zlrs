@@ -84,7 +84,7 @@ int main(void)
 		zlrs_rf_publish_state();
 		zlrs_serial_publish_state();
 		zlrs_boot_check_rollback(!rf_ready);
-		if (zlrs_mgmt_poll_enter()) {
+		if (zlrs_mgmt_process_idle()) {
 			enter_management_mode();
 			continue;
 		}

@@ -106,7 +106,7 @@ static void run(enum action action)
 }
 
 static bool rf_fault;
-static unsigned int starts, frames, polls, sessions, pairing_requests, saves, publications;
+static unsigned int starts, frames, idle_calls, sessions, pairing_requests, saves, publications;
 static unsigned int pause_depth;
 static bool fail_first_save;
 static zlrs_persist_state_t identity;
@@ -140,9 +140,9 @@ int zlrs_mgmt_init(void)
 {
 	return 0;
 }
-bool zlrs_mgmt_poll_enter(void)
+bool zlrs_mgmt_process_idle(void)
 {
-	return ++polls == 1U;
+	return ++idle_calls == 1U;
 }
 int zlrs_mgmt_run(void)
 {
@@ -209,7 +209,7 @@ int zlrs_serial_init(uint32_t baud)
 }
 void zlrs_serial_publish_state(void)
 {
-	if (rf_fault && polls == 3U) {
+	if (rf_fault && idle_calls == 3U) {
 		finish();
 	}
 }
@@ -252,7 +252,7 @@ ZTEST(application, test_lifecycle)
 		      "an erased pairing must not be restored from the active link");
 	zassert_equal(pause_depth, 0U);
 
-	starts = frames = polls = sessions = pairing_requests = saves = publications = 0U;
+	starts = frames = idle_calls = sessions = pairing_requests = saves = publications = 0U;
 	rf_fault = true;
 	run(RUN_APPLICATION);
 	zassert_equal(starts, 0U);

@@ -62,8 +62,8 @@ static void publish_mode(void)
 
 #if IS_ENABLED(CONFIG_ZLRS_MGMT)
 
-#define CFG_EXIT_POLL_MS 50U
-#define ZLRS_MGMT_CHUNK  32U
+#define MGMT_IDLE_WAIT_MS 50U
+#define ZLRS_MGMT_CHUNK   32U
 
 #define CFG_PORT_RX_RING_LEN 512U
 #define CFG_PORT_TX_RING_LEN 512U
@@ -206,7 +206,7 @@ static void mgmt_log_flush(void)
 	}
 }
 
-bool zlrs_mgmt_poll_enter(void)
+bool zlrs_mgmt_process_idle(void)
 {
 	publish_mode();
 	if (atomic_cas(&session_requested, 1, 0)) {
@@ -725,7 +725,7 @@ int zlrs_mgmt_run(void)
 		if (!any) {
 			/* Incoming bytes wake this wait immediately; the timeout only bounds
 			 * housekeeping latency when the host is idle. */
-			(void)k_sem_take(&cfg_rx_ready, K_MSEC(CFG_EXIT_POLL_MS));
+			(void)k_sem_take(&cfg_rx_ready, K_MSEC(MGMT_IDLE_WAIT_MS));
 		}
 	}
 
@@ -747,7 +747,7 @@ int zlrs_mgmt_init(void)
 	return -1;
 }
 
-bool zlrs_mgmt_poll_enter(void)
+bool zlrs_mgmt_process_idle(void)
 {
 	publish_mode();
 	return false;
