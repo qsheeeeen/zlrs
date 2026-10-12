@@ -66,14 +66,15 @@ void __wrap_zlrs_link_complete(zlrs_link_t *, int, uint16_t, int16_t, int8_t, ui
 
 static void raw_run(void)
 {
-	const bool tx = data_link->cfg.role == ZLRS_ROLE_TX;
+	const bool tx = (data_link->cfg.role == ZLRS_ROLE_TX) !=
+			IS_ENABLED(CONFIG_ZLRS_TEST_RAW_REVERSE);
 	zlrs_radio_req_t req = {
 		.freq_hz = CONFIG_ZLRS_TEST_RAW_FREQ_MHZ * 1000000U,
 		.mod = data_link->cfg.mod,
 		.sync_slot = ZLRS_SYNC_SLOT_DATA,
 		.is_tx = tx,
 		.tx_power_dbm = data_link->cfg.tx_power_dbm,
-		.size = tx ? 32U : 0U,
+		.size = tx ? CONFIG_ZLRS_TEST_RAW_PAYLOAD_BYTES : 0U,
 		.max_rx_size = tx ? 0U : ZLRS_FRAME_MAX_LEN,
 		.timeout_ms = tx ? 0U : 100U,
 		.buf = tx ? raw_link.tx_buf : raw_link.rx_buf,
@@ -82,9 +83,13 @@ static void raw_run(void)
 	const uint32_t started = zlrs_slot_timer_now_ms();
 	uint32_t sequence = 0U;
 
+	/* RAW runs during radio init, before RF starts its clock. Enable the normal
+	 * launch notification so the owner fills a long packet's FIFO tail at SET_TX,
+	 * rather than sleeping until TX_DONE or a FIFO underflow. */
+	zlrs_slot_timer_start(120000U, 0U, zlrs_lr2021_wake);
 	while (zlrs_slot_timer_now_ms() - started < CONFIG_ZLRS_TEST_RAW_MS) {
 		sys_put_le32(sequence, raw_link.tx_buf);
-		for (uint8_t i = 4U; i < 32U; i++) {
+		for (uint16_t i = 4U; i < CONFIG_ZLRS_TEST_RAW_PAYLOAD_BYTES; i++) {
 			raw_link.tx_buf[i] = (uint8_t)(sequence + i);
 		}
 		raw_link.req_is_tx = tx;
@@ -128,6 +133,7 @@ static void raw_run(void)
 	}
 	/* Test startup ends before the production timer/superframe starts. */
 	zlrs_lr2021_abort();
+	zlrs_slot_timer_stop();
 }
 
 int __wrap_zlrs_lr2021_init(void)
@@ -164,12 +170,12 @@ void __wrap_zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, i
 		if (link->req_is_tx) {
 			atomic_inc(&raw_tx);
 		} else {
-			if (rx_len != 32U) {
+			if (rx_len != CONFIG_ZLRS_TEST_RAW_PAYLOAD_BYTES) {
 				atomic_inc(&raw_bad);
 				return;
 			}
 			const uint32_t sequence = sys_get_le32(link->rx_buf);
-			for (uint8_t i = 4U; i < 32U; i++) {
+			for (uint16_t i = 4U; i < CONFIG_ZLRS_TEST_RAW_PAYLOAD_BYTES; i++) {
 				if (link->rx_buf[i] != (uint8_t)(sequence + i)) {
 					atomic_inc(&raw_bad);
 					return;
@@ -235,11 +241,12 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 	}
 	shell_print(sh,
 		    "RAW ready=%u tx=%u tx_failed=%u rx=%u expected=%u bad=%u "
-		    "frequency_mhz=%u duration_ms=%u",
+		    "frequency_mhz=%u payload_bytes=%u duration_ms=%u",
 		    (unsigned int)atomic_get(&raw_ready), (unsigned int)atomic_get(&raw_tx),
 		    (unsigned int)atomic_get(&raw_tx_failed), (unsigned int)atomic_get(&raw_rx),
 		    (unsigned int)atomic_get(&raw_expected), (unsigned int)atomic_get(&raw_bad),
-		    CONFIG_ZLRS_TEST_RAW_FREQ_MHZ, CONFIG_ZLRS_TEST_RAW_MS);
+		    CONFIG_ZLRS_TEST_RAW_FREQ_MHZ, CONFIG_ZLRS_TEST_RAW_PAYLOAD_BYTES,
+		    CONFIG_ZLRS_TEST_RAW_MS);
 	return 0;
 }
 

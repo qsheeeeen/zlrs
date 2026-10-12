@@ -26,7 +26,7 @@ ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 BENCH = re.compile(r"BENCH active=(\d+) target=(\d+) queued=(\d+) rx=(\d+) bad=(\d+) "
                    r"duration_us=(\d+) goodput_Bps=(\d+)")
 RAW = re.compile(r"RAW ready=(\d+) tx=(\d+) tx_failed=(\d+) rx=(\d+) expected=(\d+) "
-                 r"bad=(\d+) frequency_mhz=(\d+) duration_ms=(\d+)")
+                 r"bad=(\d+) frequency_mhz=(\d+) payload_bytes=(\d+) duration_ms=(\d+)")
 
 
 def wait_image(identity, expected, timeout=45):
@@ -128,9 +128,13 @@ def main():
                     values[identity] = dict(zip(names, map(int, match.groups())))
                 return values
 
+            def reports(name):
+                return dict(zip(identities, pool.map(
+                    lambda identity: debug_report(identity, name), identities)))
+
             if args.raw:
                 names = ("ready", "tx", "tx_failed", "rx", "expected", "bad",
-                         "frequency_mhz", "duration_ms")
+                         "frequency_mhz", "payload_bytes", "duration_ms")
                 ready = parse("test_radio status", RAW, names)
                 if not all(value["ready"] for value in ready.values()):
                     raise RuntimeError("Both boards must wait for raw test start")
@@ -141,6 +145,7 @@ def main():
                     if value["expected"] > 0:
                         value["quality_percent"] = value["rx"] * 100 / value["expected"]
                 record["raw"] = result
+                record["after"] = reports("radio")
                 if (not any(value["tx"] > 0 for value in result.values()) or
                         not any(value["rx"] > 0 for value in result.values()) or
                         any(value["bad"] for value in result.values())):
@@ -148,10 +153,6 @@ def main():
                 for identity in identities:
                     wait_image(identity, expected)
             else:
-                def reports(name):
-                    return dict(zip(identities, pool.map(
-                        lambda identity: debug_report(identity, name), identities)))
-
                 record["before"] = reports("radio")
                 record["before_link"] = reports("link")
                 names = ("active", "target", "queued", "rx", "bad", "duration_us", "goodput_Bps")
