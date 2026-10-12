@@ -49,12 +49,13 @@ Each link has two endpoints (UART and USB CDC); the rule that picks one is in
 
 ### DMA allocation and peripheral support
 
-The application enables `CONFIG_DMA` and `CONFIG_SPI_PL022_DMA`. SPI DMA channels are fixed
-in the board devicetree. The one-pixel PIO status LED writes directly to the PIO FIFO without DMA.
+The application disables `CONFIG_DMA` and `CONFIG_SPI_PL022_DMA`. SPI0 uses polling;
+the board devicetree still describes its hardware DMA channels. The one-pixel PIO
+status LED writes directly to the PIO FIFO without DMA.
 
 | Peripheral | DMA use in this application |
 | --- | --- |
-| SPI0 / LR2021 | TX channel 0, RX channel 1; upstream PL022 DMA handles every SPI transaction |
+| SPI0 / LR2021 | No DMA; upstream PL022 polling handles normal commands and FIFO transfers |
 | PIO0 / WS2812 status LED | No DMA; one pixel is written synchronously to the PIO FIFO |
 | UART1 / DATA | Hardware has DMA request sources, but the current upstream PL011 driver has no DMA/async implementation; retain interrupt-driven FIFO I/O |
 | USB / CDC | Upstream RP2350 UDC uses USB DPRAM and interrupts; no system-DMA configuration path |
@@ -63,14 +64,13 @@ in the board devicetree. The one-pixel PIO status LED writes directly to the PIO
 | Timer, GPIO, watchdog | Register/event operations; no stream transfer to move with DMA |
 | I2C, ADC, other SPI/PIO instances | Not used by this board application; remain disabled |
 
-SPI still uses the synchronous API: DMA moves bytes while the calling thread waits for
-completion. This does not make the SPI API callable from an ISR or bound LR2021 BUSY waits.
-Short command DMA setup and completion overhead must be included in launch timing measurements.
-The DMA configuration reserves 6000 us for preparation (2800 us on the polling path); the
-existing hardware slot budget reduces cadence accordingly. DMA reserves 800 us for command
-transfer plus RF startup and uses a 500 us startup estimate for receiver clock alignment.
-Both peers must use matching timing.
-Upstream module sources remain unchanged.
+SPI uses the synchronous API on the RF owner. Polling avoids short-command DMA setup
+and completion wakeups; it does not make the API callable from an ISR or bound LR2021
+BUSY waits. The prepared SET_TX command is issued by the hardware timer ISR directly,
+after the owner has finished SPI preparation. SubG preparation remains 6000 us and
+exclusive 2.4 GHz preparation remains 2500 us, independent of the SPI transfer engine.
+The launch guard remains 200 us; both peers must use matching timing. Upstream module
+sources remain unchanged.
 
 ## 2. Two SKUs, two build targets
 

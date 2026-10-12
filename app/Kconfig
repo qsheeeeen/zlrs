@@ -99,13 +99,12 @@ config ZLRS_APP_PACING_SCALE
 
 config ZLRS_APP_PREPARE_US
 	int "Preparation time reserved before the next radio slot (us)"
-	default 6000 if SPI_PL022_DMA
-	default 2800
+	default 6000
 	range 100 10000
 	help
 	  Wake before slot 0 and end each radio window early enough to prepare the next slot.
 	  Packet construction, authentication, modem setup and FIFO loading run in this window.
-	  DMA needs a larger reservation for per-command setup/completion and thread wakeups.
+	  Preserve the SubG frame plan independently of the SPI transfer engine.
 
 config ZLRS_APP_DATA_24_PREPARE_US
 	int "Preparation time for exclusive 2.4 GHz data slots (us)"
