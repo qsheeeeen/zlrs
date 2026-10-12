@@ -247,7 +247,7 @@ config ZLRS_APP_DEBUG_BOOT_DELAY_MS
 
 config ZLRS_APP_DEBUG_LED_BRIGHTNESS_PERCENT
 	int "Status LED brightness (percent)"
-	default 10
+	default 1
 	range 1 100
 	help
 	  Scales every status LED frame in a development image. Keep the debug LED dim on the bench;
