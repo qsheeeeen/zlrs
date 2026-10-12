@@ -28,6 +28,17 @@ static atomic_t raw_rx;
 static atomic_t raw_expected;
 static atomic_t raw_bad;
 
+/* Fixed 1 MHz bins for the current 2.4 GHz DATA domain. Empty receive windows
+ * include idle peer slots; they are not a packet-loss denominator. */
+static struct {
+	atomic_t tx;
+	atomic_t tx_failed;
+	atomic_t rx;
+	atomic_t empty;
+	atomic_t crc;
+} channels[79];
+static uint32_t channel_crc_previous;
+
 void __real_zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
 			   uint32_t (*random)(void *ctx), void *random_ctx,
 			   const zlrs_link_events_t *events);
@@ -134,6 +145,9 @@ static void raw_run(void)
 	/* Test startup ends before the production timer/superframe starts. */
 	zlrs_lr2021_abort();
 	zlrs_slot_timer_stop();
+	zlrs_lr2021_diag_t diag;
+	zlrs_lr2021_diag(&diag);
+	channel_crc_previous = diag.rx_crc_errors;
 }
 
 int __wrap_zlrs_lr2021_init(void)
@@ -155,10 +169,12 @@ int __wrap_zlrs_lr2021_init(void)
 	}
 	return rc;
 }
+#endif
 
 void __wrap_zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t rssi,
 			       int8_t snr, uint32_t now_ms)
 {
+#if CONFIG_ZLRS_TEST_RAW_MS > 0
 	if (link == &raw_link) {
 		link->req_pending = false;
 		if (status != ZLRS_RADIO_OK) {
@@ -193,9 +209,29 @@ void __wrap_zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, i
 		}
 		return;
 	}
+#endif
+	zlrs_lr2021_diag_t diag;
+	zlrs_lr2021_diag(&diag);
+	const uint32_t crc = diag.rx_crc_errors - channel_crc_previous;
+	const uint32_t frequency = link->req.freq_hz;
+
+	channel_crc_previous = diag.rx_crc_errors;
+	if (frequency >= 2402000000U && frequency <= 2480000000U &&
+	    frequency % 1000000U == 0U) {
+		const uint8_t index = (uint8_t)(frequency / 1000000U - 2402U);
+
+		atomic_add(&channels[index].crc, crc);
+		if (link->req_is_tx) {
+			atomic_inc(status == ZLRS_RADIO_OK ? &channels[index].tx
+							: &channels[index].tx_failed);
+		} else {
+			atomic_inc(status == ZLRS_RADIO_OK && rx_len > 0U
+					   ? &channels[index].rx
+					   : &channels[index].empty);
+		}
+	}
 	__real_zlrs_link_complete(link, status, rx_len, rssi, snr, now_ms);
 }
-#endif
 
 static void restore(struct k_work *work)
 {
@@ -207,6 +243,18 @@ K_WORK_DELAYABLE_DEFINE(restore_work, restore);
 
 static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 {
+	if (argc == 2U && strcmp(argv[1], "channels") == 0) {
+		for (uint8_t i = 0U; i < ARRAY_SIZE(channels); i++) {
+			shell_print(sh,
+				    "CHANNEL frequency_mhz=%u tx=%u tx_failed=%u rx=%u empty=%u crc=%u",
+				    2402U + i, (unsigned int)atomic_get(&channels[i].tx),
+				    (unsigned int)atomic_get(&channels[i].tx_failed),
+				    (unsigned int)atomic_get(&channels[i].rx),
+				    (unsigned int)atomic_get(&channels[i].empty),
+				    (unsigned int)atomic_get(&channels[i].crc));
+		}
+		return 0;
+	}
 	if (argc == 2U && strcmp(argv[1], "restore") == 0) {
 		shell_print(sh, "restoring previous confirmed firmware");
 		k_work_schedule(&restore_work, K_MSEC(100));
@@ -250,4 +298,5 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
-SHELL_CMD_REGISTER(test_radio, NULL, "Radio test: status, start, rxwin <ms>, restore", cmd_radio);
+SHELL_CMD_REGISTER(test_radio, NULL, "Radio test: status, channels, start, rxwin <ms>, restore",
+		   cmd_radio);

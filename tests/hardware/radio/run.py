@@ -27,6 +27,8 @@ BENCH = re.compile(r"BENCH active=(\d+) target=(\d+) queued=(\d+) rx=(\d+) bad=(
                    r"duration_us=(\d+) goodput_Bps=(\d+)")
 RAW = re.compile(r"RAW ready=(\d+) tx=(\d+) tx_failed=(\d+) rx=(\d+) expected=(\d+) "
                  r"bad=(\d+) frequency_mhz=(\d+) payload_bytes=(\d+) duration_ms=(\d+)")
+CHANNEL = re.compile(r"CHANNEL frequency_mhz=(\d+) tx=(\d+) tx_failed=(\d+) "
+                     r"rx=(\d+) empty=(\d+) crc=(\d+)")
 
 
 def wait_image(identity, expected, timeout=45):
@@ -132,6 +134,17 @@ def main():
                 return dict(zip(identities, pool.map(
                     lambda identity: debug_report(identity, name), identities)))
 
+            def channels():
+                names = ("frequency_mhz", "tx", "tx_failed", "rx", "empty", "crc")
+                result = {}
+                for identity, output in both("test_radio channels").items():
+                    rows = [dict(zip(names, map(int, match.groups())))
+                            for match in CHANNEL.finditer(output)]
+                    if [row["frequency_mhz"] for row in rows] != list(range(2402, 2481)):
+                        raise RuntimeError(f"Incomplete channel report on {identity}: {output!r}")
+                    result[identity] = rows
+                return result
+
             if args.raw:
                 names = ("ready", "tx", "tx_failed", "rx", "expected", "bad",
                          "frequency_mhz", "payload_bytes", "duration_ms")
@@ -155,6 +168,8 @@ def main():
             else:
                 record["before"] = reports("radio")
                 record["before_link"] = reports("link")
+                record["before_channels"] = channels()
+                record["observations"] = []
                 names = ("active", "target", "queued", "rx", "bad", "duration_us", "goodput_Bps")
                 for number in range(args.rounds):
                     deadline = time.monotonic() + 20
@@ -171,9 +186,18 @@ def main():
                     if not all("BENCH start: 0" in output for output in start.values()):
                         raise RuntimeError("Cannot start both data sources")
                     deadline = time.monotonic() + args.timeout
+                    started = time.monotonic()
+                    observe_at = started
                     while True:
                         result = parse("test_data status", BENCH, names)
                         record["last_round"] = {"round": number + 1, "nodes": result}
+                        if time.monotonic() >= observe_at:
+                            record["observations"].append({
+                                "round": number + 1,
+                                "seconds": round(time.monotonic() - started, 3),
+                                "status": both("zlrs status"),
+                            })
+                            observe_at = time.monotonic() + 2
                         if all(value["rx"] >= args.bytes for value in result.values()):
                             break
                         if time.monotonic() > deadline:
@@ -197,6 +221,7 @@ def main():
                         raise RuntimeError("Radio queue did not drain before stop")
                 record["after"] = reports("radio")
                 record["after_link"] = reports("link")
+                record["after_channels"] = channels()
             both("test_radio restore")
             consoles.clear()
     finally:

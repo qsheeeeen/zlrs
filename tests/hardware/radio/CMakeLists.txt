@@ -13,9 +13,10 @@ include("${zlrs_root}/app/CMakeLists.txt")
 target_sources(app PRIVATE ../app/link/test_data.c ../app/platform/test_radio.c)
 target_include_directories(app PRIVATE .)
 # Replace public interfaces only in the test image; the production firmware has no hooks.
-set(zlrs_test_wrappers zlrs_link_init zlrs_link_tx_space zlrs_serial_read zlrs_serial_receive)
+set(zlrs_test_wrappers zlrs_link_init zlrs_link_tx_space zlrs_serial_read zlrs_serial_receive
+  zlrs_link_complete)
 if(CONFIG_ZLRS_TEST_RAW_MS GREATER 0)
-  list(APPEND zlrs_test_wrappers zlrs_lr2021_init zlrs_link_complete)
+  list(APPEND zlrs_test_wrappers zlrs_lr2021_init)
 endif()
 foreach(symbol IN LISTS zlrs_test_wrappers)
   target_link_options(app PUBLIC "-Wl,--wrap=${symbol}")
