@@ -3,6 +3,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/sys/atomic.h>
+#include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/reboot.h>
 
 #include <errno.h>
@@ -22,7 +23,9 @@ K_SEM_DEFINE(window_done, 0, 1);
 K_SEM_DEFINE(raw_start, 0, 1);
 static atomic_t raw_ready;
 static atomic_t raw_tx;
+static atomic_t raw_tx_failed;
 static atomic_t raw_rx;
+static atomic_t raw_expected;
 static atomic_t raw_bad;
 
 void __real_zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
@@ -57,16 +60,17 @@ void zlrs_test_radio_apply_window_request(zlrs_link_t *link)
 
 #if CONFIG_ZLRS_TEST_RAW_MS > 0
 static zlrs_link_t raw_link;
+static uint32_t raw_last_sequence;
+static bool raw_rx_started;
 void __wrap_zlrs_link_complete(zlrs_link_t *, int, uint16_t, int16_t, int8_t, uint32_t);
 
 static void raw_run(void)
 {
 	const bool tx = data_link->cfg.role == ZLRS_ROLE_TX;
 	zlrs_radio_req_t req = {
-		.freq_hz = 2441000000U,
+		.freq_hz = CONFIG_ZLRS_TEST_RAW_FREQ_MHZ * 1000000U,
 		.mod = data_link->cfg.mod,
-		.sync_slot = ZLRS_SYNC_SLOT_PAIRING,
-		.sync_word = {'Z', 'L', 'R', 'S'},
+		.sync_slot = ZLRS_SYNC_SLOT_DATA,
 		.is_tx = tx,
 		.tx_power_dbm = data_link->cfg.tx_power_dbm,
 		.size = tx ? 32U : 0U,
@@ -74,11 +78,13 @@ static void raw_run(void)
 		.timeout_ms = tx ? 0U : 100U,
 		.buf = tx ? raw_link.tx_buf : raw_link.rx_buf,
 	};
+	memcpy(req.sync_word, data_link->sync_word, sizeof(req.sync_word));
 	const uint32_t started = zlrs_slot_timer_now_ms();
 	uint32_t sequence = 0U;
 
 	while (zlrs_slot_timer_now_ms() - started < CONFIG_ZLRS_TEST_RAW_MS) {
-		for (uint8_t i = 0U; i < 32U; i++) {
+		sys_put_le32(sequence, raw_link.tx_buf);
+		for (uint8_t i = 4U; i < 32U; i++) {
 			raw_link.tx_buf[i] = (uint8_t)(sequence + i);
 		}
 		raw_link.req_is_tx = tx;
@@ -113,6 +119,9 @@ static void raw_run(void)
 		if (raw_link.req_pending) {
 			zlrs_lr2021_abort();
 			raw_link.req_pending = false;
+			if (tx) {
+				atomic_inc(&raw_tx_failed);
+			}
 		}
 		sequence++;
 		zlrs_watchdog_feed();
@@ -147,21 +156,34 @@ void __wrap_zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, i
 	if (link == &raw_link) {
 		link->req_pending = false;
 		if (status != ZLRS_RADIO_OK) {
+			if (link->req_is_tx) {
+				atomic_inc(&raw_tx_failed);
+			}
 			return;
 		}
 		if (link->req_is_tx) {
 			atomic_inc(&raw_tx);
 		} else {
-			atomic_inc(&raw_rx);
 			if (rx_len != 32U) {
 				atomic_inc(&raw_bad);
-			} else {
-				for (uint8_t i = 1U; i < 32U; i++) {
-					if (link->rx_buf[i] != (uint8_t)(link->rx_buf[0] + i)) {
-						atomic_inc(&raw_bad);
-					}
+				return;
+			}
+			const uint32_t sequence = sys_get_le32(link->rx_buf);
+			for (uint8_t i = 4U; i < 32U; i++) {
+				if (link->rx_buf[i] != (uint8_t)(sequence + i)) {
+					atomic_inc(&raw_bad);
+					return;
 				}
 			}
+			const uint32_t delta = raw_rx_started ? sequence - raw_last_sequence : 1U;
+			if (delta == 0U) {
+				atomic_inc(&raw_bad);
+				return;
+			}
+			raw_rx_started = true;
+			raw_last_sequence = sequence;
+			atomic_add(&raw_expected, delta);
+			atomic_inc(&raw_rx);
 		}
 		return;
 	}
@@ -211,10 +233,13 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 	if (argc != 1U && !(argc == 2U && strcmp(argv[1], "status") == 0)) {
 		return -EINVAL;
 	}
-	shell_print(sh, "RAW ready=%u tx=%u rx=%u bad=%u duration_ms=%u",
+	shell_print(sh,
+		    "RAW ready=%u tx=%u tx_failed=%u rx=%u expected=%u bad=%u "
+		    "frequency_mhz=%u duration_ms=%u",
 		    (unsigned int)atomic_get(&raw_ready), (unsigned int)atomic_get(&raw_tx),
-		    (unsigned int)atomic_get(&raw_rx), (unsigned int)atomic_get(&raw_bad),
-		    CONFIG_ZLRS_TEST_RAW_MS);
+		    (unsigned int)atomic_get(&raw_tx_failed), (unsigned int)atomic_get(&raw_rx),
+		    (unsigned int)atomic_get(&raw_expected), (unsigned int)atomic_get(&raw_bad),
+		    CONFIG_ZLRS_TEST_RAW_FREQ_MHZ, CONFIG_ZLRS_TEST_RAW_MS);
 	return 0;
 }
 

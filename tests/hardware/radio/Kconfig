@@ -5,3 +5,8 @@ config ZLRS_TEST_RAW_MS
 	int "Raw radio test duration after host start (ms, 0 disables raw mode)"
 	default 0
 	range 0 60000
+
+config ZLRS_TEST_RAW_FREQ_MHZ
+	int "Fixed frequency for raw 2.4 GHz tests (MHz)"
+	default 2441
+	range 2402 2480

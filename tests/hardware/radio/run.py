@@ -25,7 +25,8 @@ import zlrs_mgmt as mgmt
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 BENCH = re.compile(r"BENCH active=(\d+) target=(\d+) queued=(\d+) rx=(\d+) bad=(\d+) "
                    r"duration_us=(\d+) goodput_Bps=(\d+)")
-RAW = re.compile(r"RAW ready=(\d+) tx=(\d+) rx=(\d+) bad=(\d+) duration_ms=(\d+)")
+RAW = re.compile(r"RAW ready=(\d+) tx=(\d+) tx_failed=(\d+) rx=(\d+) expected=(\d+) "
+                 r"bad=(\d+) frequency_mhz=(\d+) duration_ms=(\d+)")
 
 
 def wait_image(identity, expected, timeout=45):
@@ -128,13 +129,17 @@ def main():
                 return values
 
             if args.raw:
-                names = ("ready", "tx", "rx", "bad", "duration_ms")
+                names = ("ready", "tx", "tx_failed", "rx", "expected", "bad",
+                         "frequency_mhz", "duration_ms")
                 ready = parse("test_radio status", RAW, names)
                 if not all(value["ready"] for value in ready.values()):
                     raise RuntimeError("Both boards must wait for raw test start")
                 both("test_radio start")
                 time.sleep(max(value["duration_ms"] for value in ready.values()) / 1000 + 1)
                 result = parse("test_radio status", RAW, names)
+                for value in result.values():
+                    if value["expected"] > 0:
+                        value["quality_percent"] = value["rx"] * 100 / value["expected"]
                 record["raw"] = result
                 if (not any(value["tx"] > 0 for value in result.values()) or
                         not any(value["rx"] > 0 for value in result.values()) or
@@ -148,6 +153,7 @@ def main():
                         lambda identity: debug_report(identity, name), identities)))
 
                 record["before"] = reports("radio")
+                record["before_link"] = reports("link")
                 names = ("active", "target", "queued", "rx", "bad", "duration_us", "goodput_Bps")
                 for number in range(args.rounds):
                     deadline = time.monotonic() + 20
@@ -156,6 +162,9 @@ def main():
                         if all("BENCH arm: 0" in output for output in arm.values()):
                             break
                         if time.monotonic() > deadline:
+                            record["arm"] = arm
+                            record["timeout_radio"] = reports("radio")
+                            record["timeout_link"] = reports("link")
                             raise TimeoutError("Data links did not become ready")
                     start = both("test_data start")
                     if not all("BENCH start: 0" in output for output in start.values()):
@@ -177,6 +186,7 @@ def main():
                             record["timeout_link"] = reports("link")
                             raise TimeoutError("RF data delivery timed out")
                     record["rounds"].append({"round": number + 1, "nodes": result})
+                    record["rounds"][-1]["status"] = both("zlrs status")
                     print(json.dumps(record["rounds"][-1]), flush=True)
                     if not all(value["rx"] == args.bytes and value["queued"] == args.bytes and
                                value["bad"] == 0 for value in result.values()):
@@ -185,6 +195,7 @@ def main():
                     if not all("BENCH stop: 0" in output for output in stopped.values()):
                         raise RuntimeError("Radio queue did not drain before stop")
                 record["after"] = reports("radio")
+                record["after_link"] = reports("link")
             both("test_radio restore")
             consoles.clear()
     finally:
