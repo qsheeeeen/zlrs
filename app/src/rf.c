@@ -277,7 +277,6 @@ static zlrs_lr2021_diag_t radio_diag;
 
 /* TX owns the absolute clock; RX follows verified IRQ timestamps and scans when deaf. */
 #define ZLRS_PHASE_DEADBAND_US  100
-#define ZLRS_PHASE_SCAN_STEP_US 25U
 
 static uint32_t slot_deadline_us;
 static uint32_t slot_nominal_us;
@@ -970,12 +969,18 @@ void zlrs_rf_frame(void)
 	report(now_ms);
 
 	if (!role_tx) {
+		const zlrs_link_cfg_t *const cfg = zlrs_link_get_config(&link_data);
 		const uint32_t scan_after_ms = zlrs_slot_timer_scan_delay_ms(
-			period, zlrs_link_get_config(&link_data)->resync_every_n,
-			phase_samples > 0U);
+			period, cfg->resync_every_n, phase_samples > 0U);
 		if ((uint32_t)(now_ms - last_rx_any_ms) > scan_after_ms) {
 			phase_samples = 0U;
-			phase_adj_us = ZLRS_PHASE_SCAN_STEP_US;
+			const uint16_t sync_frames =
+				cfg->resync_every_n > 0U
+					? cfg->resync_every_n
+					: (uint16_t)MAX(1U, DIV_ROUND_UP(cfg->sync_period_ms * 1000U,
+								       period));
+
+			phase_adj_us = zlrs_slot_timer_scan_step_us(period, sync_frames);
 		}
 		zlrs_slot_timer_shift(phase_adj_us);
 	}

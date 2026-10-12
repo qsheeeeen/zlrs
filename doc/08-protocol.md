@@ -50,6 +50,8 @@ FLRC uses a 24-bit preamble, a 32-bit hardware sync word and a 16-bit physical C
 
 Periodic SYNC defaults to 5 seconds, converted to a whole number of actual frames. With the default 2.4 GHz timing this is 450 frames (4.991 seconds). The frame count is 16 bits and includes debug pacing when deriving the interval. Each DATA slot advances the hop index even if idle or skipped. The 2.4 GHz table contains three 79-channel blocks (237 entries); CN433 contains 51 five-channel blocks (255 entries). Each block visits every channel once and reserves its first position for the synchronization channel; the other positions are shuffled from the pairing seed.
 
+RX follows authenticated packet timestamps. When receptions stop, it scans the frame phase with a step derived from the actual frame length and SYNC interval: approximately one third of a frame between SYNC opportunities. The default steps are 8 us per frame on 2.4 GHz and 155 us on CN433. This lets a searching receiver sample different phases of a quiet peer's periodic SYNC. After acquisition, scanning waits through two SYNC intervals without an authenticated reception.
+
 ## Management status
 
 Management version `4` uses a fixed 72-byte `STATUS_RESP`. Multibyte integers are little endian; RSSI and temperature are signed 16-bit values, and power values are signed 8-bit dBm.
