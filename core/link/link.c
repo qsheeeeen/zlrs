@@ -234,6 +234,7 @@ static int handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 	}
 
 	if (link->state != ZLRS_STATE_CONNECTED || !link->session_valid ||
+	    (link->cfg.role == ZLRS_ROLE_RX && link->radio_acquiring) ||
 	    frame.type != (link->cfg.role == ZLRS_ROLE_TX ? ZLRS_PKT_DATA_DOWN : ZLRS_PKT_DATA_UP)) {
 		return -1;
 	}
@@ -353,6 +354,17 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 
 	advance_hop(link);
 
+	/* A short return packet before RX clock alignment cannot prove DATA readiness. */
+	if (link->radio_acquiring && tx_side == a) {
+		if (!tx_side) {
+			return NULL;
+		}
+		if (!link->sess_cfm_due) {
+			return (uint32_t)(now_ms - link->last_sync_ms) >= link->cfg.sync_period_ms
+				? link_send_sync(link, now_ms) : NULL;
+		}
+	}
+
 	if (link->sess_ack_due && tx_side == a) {
 		const zlrs_radio_req_t *req = link_send_empty_data(link);
 
@@ -443,6 +455,7 @@ void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
 	link->pair_tx_seq = 1U;
 	link->stats.lq_percent = 100U;
 	link->state = ZLRS_STATE_UNCONFIGURED;
+	link->radio_acquiring = cfg->automatic_band;
 }
 
 void zlrs_link_set_power(zlrs_link_t *link, int8_t tx_power_dbm)
@@ -479,7 +492,20 @@ void zlrs_link_acquire_radio(zlrs_link_t *link, uint32_t now_ms)
 		.target_subg = link->cfg.domain != ZLRS_DOMAIN_ISM2400};
 	link->band_announced = false;
 	link->radio_acquiring = true;
+	link->radio_sync_seen = false;
+	link->sess_ack_due = false;
 	link->last_sync_ms = now_ms - link->cfg.sync_period_ms;
+}
+
+bool zlrs_link_radio_captured(zlrs_link_t *link)
+{
+	if (link->cfg.role != ZLRS_ROLE_RX || !link->radio_acquiring ||
+	    !link->radio_sync_seen || !link->session_valid) {
+		return false;
+	}
+	link->radio_acquiring = false;
+	link->sess_ack_due = true;
+	return true;
 }
 
 bool zlrs_link_plan_band(zlrs_link_t *link, bool target_subg, uint32_t switch_frame)
@@ -712,6 +738,7 @@ zlrs_link_info_t zlrs_link_get_info(const zlrs_link_t *link)
 		.frame_index = link->frame_index,
 		.band_plan = link->band_plan,
 		.radio_acquiring = link->radio_acquiring,
+		.radio_sync_seen = link->radio_sync_seen,
 	};
 
 	memcpy(info.dev_id, link->dev_id, sizeof(info.dev_id));

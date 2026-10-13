@@ -40,6 +40,8 @@ static bool radio_ready;
 static zlrs_lr2021_status_t radio_status;
 static bool paused;
 static int pause_priority;
+static uint32_t paused_at_ms;
+static bool pause_had_plan;
 
 /* Two alternating DATA slots per timer frame. */
 static uint32_t data_rate_hz;
@@ -534,7 +536,8 @@ static void run_slot(uint8_t slot)
 			const int32_t limit = (int32_t)frame_period_us / 16;
 
 			/* Once acquired, discard delayed IRQ outliers rather than move the clock. */
-			if (phase_samples >= 8U && (err > limit || err < -limit)) {
+			if (phase_samples >= 8U && !zlrs_link_get_info(link).radio_acquiring &&
+			    (err > limit || err < -limit)) {
 				return;
 			}
 			phase_err_us = err;
@@ -546,6 +549,9 @@ static void run_slot(uint8_t slot)
 			phase_hits++;
 			phase_samples = MIN(phase_samples + 1U, 8U);
 			phase_adj_set = true;
+			if (err <= ZLRS_PHASE_DEADBAND_US && err >= -ZLRS_PHASE_DEADBAND_US) {
+				(void)zlrs_link_radio_captured(link);
+			}
 		}
 	}
 }
@@ -893,6 +899,8 @@ void zlrs_rf_pause(void)
 {
 	__ASSERT_NO_MSG(!paused);
 	paused = true;
+	paused_at_ms = zlrs_slot_timer_now_ms();
+	pause_had_plan = links_ready && zlrs_link_get_info(&link_data).band_plan.switch_frame != 0U;
 	pause_priority = k_thread_priority_get(k_current_get());
 	k_thread_priority_set(k_current_get(), CONFIG_MAIN_THREAD_PRIORITY);
 	if (radio_ready) {
@@ -911,10 +919,12 @@ void zlrs_rf_resume(void)
 	k_thread_priority_set(k_current_get(), pause_priority);
 	if (links_ready && band_mode == ZLRS_DATA_BAND_AUTO) {
 		const uint32_t now_ms = zlrs_slot_timer_now_ms();
-		zlrs_link_acquire_radio(&link_data, now_ms);
-		phase_samples = 0U;
-		zlrs_band_policy_resume(&band_policy, now_ms,
-					zlrs_link_get_info(&link_data).last_rx_ms);
+		if (pause_had_plan || (uint32_t)(now_ms - paused_at_ms) >= band_policy.loss_ms) {
+			zlrs_link_acquire_radio(&link_data, now_ms);
+			phase_samples = 0U;
+			zlrs_band_policy_resume(&band_policy, now_ms,
+						zlrs_link_get_info(&link_data).last_rx_ms);
+		}
 	}
 }
 
@@ -1096,8 +1106,10 @@ void zlrs_rf_frame(void)
 		const zlrs_link_cfg_t *const cfg = zlrs_link_get_config(&link_data);
 		const zlrs_link_info_t info = zlrs_link_get_info(&link_data);
 		const bool acquiring = info.radio_acquiring || info.state == ZLRS_STATE_SEARCHING;
-		const uint32_t scan_after_ms = acquiring ? 300U : zlrs_slot_timer_scan_delay_ms(
-			period, cfg->resync_every_n, phase_samples > 0U);
+		const uint32_t capture_wait_ms = info.radio_sync_seen ?
+			MAX(300U, 2U * cfg->sync_period_ms + DIV_ROUND_UP(period, 1000U)) : 300U;
+		const uint32_t scan_after_ms = acquiring ? capture_wait_ms :
+			zlrs_slot_timer_scan_delay_ms(period, cfg->resync_every_n, phase_samples > 0U);
 		if ((uint32_t)(now_ms - last_rx_any_ms) > scan_after_ms) {
 			phase_samples = 0U;
 			const uint16_t sync_frames =

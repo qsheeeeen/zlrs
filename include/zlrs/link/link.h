@@ -264,6 +264,7 @@ typedef struct {
 	zlrs_band_plan_t band_plan;
 	bool band_announced;
 	bool radio_acquiring;
+	bool radio_sync_seen;
 
 	/* passthrough queue */
 	uint8_t tx_queue[ZLRS_LINK_TX_QUEUE_LEN];
@@ -319,6 +320,7 @@ typedef struct {
 	uint32_t frame_index;
 	zlrs_band_plan_t band_plan;
 	bool radio_acquiring;
+	bool radio_sync_seen;
 } zlrs_link_info_t;
 
 /* Diagnostic values, without borrowed protocol buffers or key material. */
@@ -382,6 +384,8 @@ void zlrs_link_set_power(zlrs_link_t *link, int8_t tx_power_dbm);
 bool zlrs_link_reconfigure_radio(zlrs_link_t *link, const zlrs_link_cfg_t *cfg);
 bool zlrs_link_plan_band(zlrs_link_t *link, bool target_subg, uint32_t switch_frame);
 void zlrs_link_acquire_radio(zlrs_link_t *link, uint32_t now_ms);
+/* RF verifies physical phase after a valid SYNC/confirm, before reverse DATA proof. */
+bool zlrs_link_radio_captured(zlrs_link_t *link);
 
 /*
  * Restore pairing from the stored record (no re-pairing after a reboot). pair_salt has to

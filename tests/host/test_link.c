@@ -26,6 +26,7 @@ typedef struct {
 	bool drop_confirms_only;
 	bool block_24_tx, block_24_rx, lose_band_plans;
 	int16_t rssi_24;
+	bool withhold_phase;
 } sim_t;
 
 static bool random_word(void *ctx, uint32_t *out)
@@ -164,6 +165,8 @@ static void sim_slot(sim_t *sim, uint8_t slot)
 			zlrs_link_complete(receiver, ZLRS_RADIO_OK, source->size,
 					   on_24 && sim->rssi_24 ? sim->rssi_24 : -60, 0,
 					   sim->now_ms);
+			/* The fake radio has zero phase error unless this case withholds proof. */
+			if (!sim->withhold_phase) { (void)zlrs_link_radio_captured(receiver); }
 		}
 		zlrs_link_complete(sender, ZLRS_RADIO_OK, 0U, 0, 0, sim->now_ms);
 	} else {
@@ -621,6 +624,44 @@ static bool captured_band(const sim_t *sim, bool subg)
 		!sim->rx.link.radio_acquiring;
 }
 
+static void test_capture_waits_for_phase(void)
+{
+	static sim_t sim;
+	sim_init(&sim);
+	sim.tx.link.cfg.automatic_band = sim.rx.link.cfg.automatic_band = true;
+	connect_saved(&sim, ZLRS_PROFILE_P1);
+	retune(&sim.tx, true);
+	retune(&sim.rx, true);
+	sim.withhold_phase = true;
+	const uint8_t payload[] = {1, 2, 3};
+	CHECK(zlrs_link_write(&sim.tx.link, payload, sizeof(payload)) == sizeof(payload));
+	CHECK(zlrs_link_write(&sim.rx.link, payload, sizeof(payload)) == sizeof(payload));
+	const zlrs_radio_req_t *req = zlrs_link_slot(&sim.rx.link, ZLRS_SLOT_DATA_B, sim.now_ms);
+	CHECK(req == NULL); /* No SYNC yet: an old-session DATA is not capture proof. */
+	if (req) { zlrs_link_complete(&sim.rx.link, ZLRS_RADIO_OK, 0, 0, 0, sim.now_ms); }
+	const zlrs_radio_req_t *a = zlrs_link_slot(&sim.tx.link, ZLRS_SLOT_DATA_A, sim.now_ms);
+	const zlrs_radio_req_t *b = zlrs_link_slot(&sim.rx.link, ZLRS_SLOT_DATA_A, sim.now_ms);
+	CHECK(a && a->is_tx && b && !b->is_tx);
+	if (!a || !b) { return; }
+	memcpy(b->buf, a->buf, a->size);
+	zlrs_link_complete(&sim.rx.link, ZLRS_RADIO_OK, a->size, -60, 0, sim.now_ms);
+	zlrs_link_complete(&sim.tx.link, ZLRS_RADIO_OK, 0, 0, 0, sim.now_ms);
+	CHECK(sim.rx.link.radio_acquiring); /* Valid SYNC still needs physical phase proof. */
+	req = zlrs_link_slot(&sim.rx.link, ZLRS_SLOT_DATA_B, sim.now_ms);
+	CHECK(req == NULL);
+	if (req) { zlrs_link_complete(&sim.rx.link, ZLRS_RADIO_OK, 0, 0, 0, sim.now_ms); }
+	req = zlrs_link_slot(&sim.tx.link, ZLRS_SLOT_DATA_A, sim.now_ms + 1);
+	if (req) {
+		zlrs_frame_t air;
+		CHECK(zlrs_frame_decode(&air, req->buf, req->size, ZLRS_TAG_LEN));
+		CHECK(air.type == ZLRS_PKT_SYNC);
+		zlrs_link_complete(&sim.tx.link, ZLRS_RADIO_OK, 0, 0, 0, sim.now_ms);
+	}
+	CHECK(sim.tx.link.queue_count == sizeof(payload) && sim.rx.link.queue_count == sizeof(payload));
+	CHECK(zlrs_link_radio_captured(&sim.rx.link));
+	CHECK(!sim.rx.link.radio_acquiring && sim.rx.link.sess_ack_due);
+}
+
 static void test_automatic_bands(void)
 {
 	static sim_t sim;
@@ -892,6 +933,7 @@ void test_link(void)
 	test_entropy_failure();
 	test_nonce_reuse();
 	test_band_plan_security();
+	test_capture_waits_for_phase();
 	test_automatic_bands();
 	test_quality_window_boundary();
 	test_data_sequence_wrap();

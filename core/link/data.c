@@ -99,11 +99,14 @@ static void arq_commit_data(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 const uint8_t *zlrs_link_prepare_data(zlrs_link_t *link, uint8_t slot, uint32_t now_ms,
 				      uint16_t *size)
 {
+	*size = 0U;
+	if (link->radio_acquiring) {
+		return NULL;
+	}
 	zlrs_prepared_data_t *packet = &link->prepared_data;
 	const uint8_t type = link->cfg.role == ZLRS_ROLE_TX ? ZLRS_PKT_DATA_UP : ZLRS_PKT_DATA_DOWN;
 	const uint32_t frame = link->frame_index + (slot == ZLRS_SLOT_DATA_A ? 1U : 0U);
 
-	*size = 0U;
 	/* The TX request may still refer to packet->buf; never overwrite it while on air. */
 	if (link->req_pending && link->req_is_tx) {
 		return NULL;

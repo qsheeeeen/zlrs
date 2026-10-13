@@ -25,6 +25,10 @@ void link_roll_session(zlrs_link_t *link, uint32_t now_ms)
 	link->sess_rx_seq = 0U;
 	link->band_plan.switch_frame = 0U;
 	link->band_announced = false;
+	if (link->cfg.automatic_band) {
+		link->radio_acquiring = true;
+		link->radio_sync_seen = false;
+	}
 	link->last_rx_seq = 0U;
 	if (fresh_nonce(link, link->sess_nonce_t, &link->sess_nonce_t)) {
 		link->tx_seq = 1U;
@@ -162,10 +166,10 @@ bool link_handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now
 			link->last_rx_frame = link->frame_index;
 			if (link->cfg.automatic_band || link->radio_acquiring) {
 				/* The master still waits on the capture channel for proof of return. */
-				link->sess_ack_due = true;
+				link->sess_ack_due = !link->radio_acquiring;
 			}
+			link->radio_sync_seen = true;
 			link_adopt_band_plan(link, &frame->body.sync.band_plan);
-			link->radio_acquiring = false;
 			return true;
 		}
 		if ((uint32_t)(now_ms - link->last_rx_ms) <= link->cfg.sync_period_ms) {
@@ -175,6 +179,10 @@ bool link_handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now
 		link->session_valid = false;
 		link->session_pending = false;
 		link_set_state(link, ZLRS_STATE_SEARCHING, now_ms);
+		if (link->cfg.automatic_band) {
+			link->radio_acquiring = true;
+			link->radio_sync_seen = false;
+		}
 	}
 	if (link->state != ZLRS_STATE_SEARCHING) {
 		return false;
@@ -198,6 +206,7 @@ bool link_handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now
 	}
 	link->sess_rx_seq = frame->seq;
 	link->sess_resp_due = true;
+	link->radio_sync_seen = true;
 	link->stats.rx_syncs++;
 	return true;
 }
@@ -243,10 +252,10 @@ int link_handle_sess_cfm(zlrs_link_t *link, const zlrs_frame_t *frame,
 	link_lq_account(link, frame->seq);
 	link->last_rx_ms = now_ms;
 	link->last_rx_frame = link->frame_index;
-	link->sess_ack_due = true;
+	link->sess_ack_due = !link->radio_acquiring;
 	link->sess_sync_frame = link->frame_index;
 	link_adopt_band_plan(link, &frame->body.sess_cfm.band_plan);
-	link->radio_acquiring = false;
+	link->radio_sync_seen = true;
 	link_set_state(link, ZLRS_STATE_CONNECTED, now_ms);
 	return 0;
 }

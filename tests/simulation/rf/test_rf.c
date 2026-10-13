@@ -327,6 +327,8 @@ bool zlrs_lr2021_process_irq(zlrs_lr2021_result_t *out)
 			memcpy(other->buf, active->buf, active->size);
 			zlrs_link_complete(&peer, ZLRS_RADIO_OK, active->size, -42, 0,
 					   out->completed_ms);
+			/* The other node's fake hardware clock is aligned with its received packet. */
+			(void)zlrs_link_radio_captured(&peer);
 		} else if (other) {
 			zlrs_link_complete(&peer, ZLRS_RADIO_OK, 0, 0, 0, out->completed_ms);
 		}
@@ -337,11 +339,9 @@ bool zlrs_lr2021_process_irq(zlrs_lr2021_result_t *out)
 			out->size = other->size;
 			memcpy(active->buf, other->buf, other->size);
 			out->airtime_us = zlrs_mod_airtime_us(&active->mod, out->size);
-			if (packet_phase_error_us != 0) {
-				out->done_us = boundary_us + period_us * local->slot / ZLRS_SLOT_COUNT +
-					CONFIG_ZLRS_APP_TX_GUARD_US + ZLRS_LR2021_PHASE_STARTUP_US +
-					out->airtime_us + packet_phase_error_us;
-			}
+			out->done_us = boundary_us + period_us * local->slot / ZLRS_SLOT_COUNT +
+				CONFIG_ZLRS_APP_TX_GUARD_US + ZLRS_LR2021_PHASE_STARTUP_US +
+				out->airtime_us + packet_phase_error_us;
 		}
 		if (other) {
 			zlrs_link_complete(&peer, ZLRS_RADIO_OK, 0, 0, 0, out->completed_ms);
@@ -413,6 +413,20 @@ static void automatic_acceptance(void)
 	zlrs_rf_start();
 	frames(150);
 	zassert_true(both_on_band(false));
+	if (RF_TEST_ROLE_RX) {
+		/* A legal SYNC with a large physical phase error is not DATA readiness. */
+		zlrs_rf_pause();
+		zlrs_rf_resume();
+		zlrs_link_acquire_radio(local, clock_us / 1000U);
+		zlrs_link_acquire_radio(&peer, clock_us / 1000U);
+		packet_phase_error_us = period_us / 8U;
+		frames(30);
+		zassert_true(local->radio_sync_seen && local->radio_acquiring);
+		zassert_true(peer.radio_acquiring);
+		packet_phase_error_us = 0;
+		frames(50);
+		zassert_true(both_on_band(false));
+	}
 	const uint32_t nonce = local->sess_nonce_t;
 	block_24 = true;
 	source_left = sizeof(outgoing) - 1U;
