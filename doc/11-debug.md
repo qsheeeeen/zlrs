@@ -94,7 +94,7 @@ for role in OFF ON; do
 done
 ```
 
-Protocol acceptance requires a fixed version 10 wire transcript,
+Protocol acceptance requires a fixed version 11 wire transcript,
 tampering, reflection, duplicate DATA, session renewal, LQ window-boundary loss and
 prepared-ACK follow-up checks. FIFO preparation must respect the timing policy: a prepared
 ACK snapshot can lag, but new DATA leaves an ACK pending until a later frame carries it.
