@@ -172,15 +172,6 @@ static void data_ep_drop_rx(struct data_ep *const ep)
 	data_ep_resume_rx(ep);
 }
 
-void zlrs_serial_discard_rx(void)
-{
-	for (size_t i = 0U; i < ARRAY_SIZE(data_eps); i++) {
-		if (data_eps[i].ready) {
-			data_ep_drop_rx(&data_eps[i]);
-		}
-	}
-}
-
 size_t zlrs_serial_state(zlrs_serial_state_t *out, size_t count)
 {
 	const struct data_ep *const active = data_active();

@@ -96,9 +96,6 @@ void zlrs_watchdog_arm(void)
 void zlrs_serial_publish_state(void)
 {
 }
-void zlrs_serial_discard_rx(void)
-{
-}
 int zlrs_log_info(zlrs_log_info_t *out)
 {
 	*out = (zlrs_log_info_t){.count = 1, .newest = 0, .num = {7}, .size = {5}};

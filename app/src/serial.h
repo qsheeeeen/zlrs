@@ -54,6 +54,3 @@ bool zlrs_serial_receive(const uint8_t *buf, uint16_t len);
 
 /* Bytes never delivered: UART overflow plus those received on the inactive endpoint */
 uint32_t zlrs_serial_dropped(void);
-
-/* Used during management mode: drop bytes from both endpoints (counted, never delivered) */
-void zlrs_serial_discard_rx(void);

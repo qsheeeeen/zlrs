@@ -724,8 +724,7 @@ int zlrs_mgmt_run(void)
 		zlrs_serial_publish_state();
 		(void)log_process();
 
-		/* Radio stopped in management mode: data port bytes are dropped and counted */
-		zlrs_serial_discard_rx();
+		/* DATA remains queued while RF is stopped; a full USB ring applies backpressure. */
 
 		flush_reply();
 		for (uint16_t i = 0U;
