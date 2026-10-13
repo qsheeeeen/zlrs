@@ -130,8 +130,16 @@ one.
   but use a new frame sequence.
 - Nonces require a secure random source that reports failure. Missing entropy must
   stop handshake transmission, never trigger a clock fallback. Zero is valid; a
-  new local round must not repeat the preceding local nonce. A32-bit random value
+  new local round must not repeat the preceding local nonce. A 32-bit random value
   has collision risk and is not a globally unique identifier.
+
+The application requires a cryptographic random service backed by the board's
+entropy source. Each request reports success or failure; output from a failed
+request must not be consumed. Entropy waits and retries must be bounded, with
+interrupts enabled so USB and the watchdog remain serviceable. A failed hardware
+health check discards the block. No clock value or noncryptographic generator may
+replace missing entropy. Once the source recovers, a fresh request may resume the
+pending exchange without treating queued DATA as delivered.
 
 ## 8. Parameters and algorithms
 
@@ -162,6 +170,9 @@ or diagnostic output.
 Acceptance includes independent SHA/HMAC/HKDF/PBKDF2 vectors, multipart input, wire
 tags, constant-time tag comparison, sequence boundaries, malformed frames, replay,
 entropy failure and native/hardware execution. Results are recorded separately.
+Random-service acceptance also covers nonce-sized and partial-block reads,
+successive requests, the error path from entropy service to handshake, timeout
+with USB still available, and successful reads after the source is restored.
 
 ## 9. Management protocol
 
