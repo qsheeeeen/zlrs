@@ -22,7 +22,7 @@ from zlrs_cli import HelpFormatter, bounded_int, positive_seconds, fields, headi
 
 SOF = b"\xa5\x5a"
 VERSION = 4
-STATUS_LEN = 72
+STATUS_LEN = 90
 
 CMD_ENTER = 0x00
 CMD_STATUS = 0x01
@@ -180,6 +180,40 @@ def status_text(payload: bytes) -> str:
             ("Dropped data", f"{dropped} bytes"),
         ]),
     ])
+    valid = payload[83]
+    radio_temp = int.from_bytes(payload[72:74], "little", signed=True)
+    xosc_temp = int.from_bytes(payload[74:76], "little", signed=True)
+    vbat = int.from_bytes(payload[76:78], "little")
+    mode, command, reset = payload[80:83]
+    mode_names = {0: "sleep", 1: "standby RC", 2: "standby XOSC",
+                  3: "frequency synthesis", 4: "RX", 5: "TX"}
+    command_names = {0: "failed", 1: "invalid command", 2: "OK", 3: "read data"}
+    reset_names = {0: "cleared", 1: "power-on/brown-out", 2: "reset pin",
+                   5: "NSS wakeup", 6: "RTC wakeup"}
+    errors = int.from_bytes(payload[84:86], "little")
+    error_names = ("HF XOSC start", "LF XOSC start", "PLL lock", "LF RC calibration",
+                   "HF RC calibration", "PLL calibration", "AAF calibration",
+                   "image calibration", "chip busy", "missing front-end calibration",
+                   "measurement ADC calibration", "PA offset calibration",
+                   "PPF calibration", "SRC calibration", "SRC saturation",
+                   "SRC tolerance")
+    error_text = ", ".join(name for bit, name in enumerate(error_names)
+                           if errors & (1 << bit)) or "none"
+    irq = int.from_bytes(payload[86:90], "little")
+    sections.append(("LR2021", [
+        ("Junction temperature", f"{radio_temp / 100:.2f} C" if valid & 0x01 else "unavailable"),
+        ("XOSC temperature", f"{xosc_temp / 100:.2f} C" if valid & 0x02 else "unavailable"),
+        ("Supply voltage", f"{vbat / 1000:.3f} V ({vbat} mV)" if valid & 0x04 else "unavailable"),
+        ("Chip version", f"major 0x{payload[78]:02x}, minor 0x{payload[79]:02x}"
+         if valid & 0x08 else "unavailable"),
+        ("Chip mode", mode_names.get(mode, f"unknown ({mode})") if valid & 0x10 else "unavailable"),
+        ("Last command", command_names.get(command, f"unknown ({command})")
+         if valid & 0x10 else "unavailable"),
+        ("Reset source", reset_names.get(reset, f"unknown ({reset})")
+         if valid & 0x10 else "unavailable"),
+        ("IRQ status", f"0x{irq:08x}" if valid & 0x10 else "unavailable"),
+        ("Chip errors", f"0x{errors:04x} ({error_text})" if valid & 0x20 else "unavailable"),
+    ]))
     return "\n\n".join(title + "\n" + fields(rows) for title, rows in sections)
 
 

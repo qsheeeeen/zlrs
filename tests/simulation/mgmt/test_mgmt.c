@@ -25,7 +25,7 @@ static zlrs_rf_status_t rf = {
 	.hop_index = 236,
 	.frame_period_us = 9080,
 };
-static unsigned int credential_applies, pairs, confirms;
+static unsigned int credential_applies, pairs, confirms, radio_refreshes;
 static int confirm_rc;
 static bool fail_write;
 int zlrs_temperature_read(int16_t *centidegrees)
@@ -41,6 +41,23 @@ ssize_t __wrap_nvs_write(struct nvs_fs *fs, uint16_t id, const void *bytes, size
 zlrs_rf_status_t zlrs_rf_status(void)
 {
 	return rf;
+}
+void zlrs_rf_status_refresh(void)
+{
+	radio_refreshes++;
+	rf.radio = (zlrs_lr2021_status_t){
+		.temperature_centi_c = -125,
+		.xosc_temperature_centi_c = 3125,
+		.vbat_mv = 3301,
+		.version_major = 1,
+		.version_minor = 0x18,
+		.chip_mode = 2,
+		.command_status = 2,
+		.reset_status = 1,
+		.valid = 0x3F,
+		.errors = 0x8401,
+		.irq = 0xFEDCBA98U,
+	};
 }
 void zlrs_rf_credentials(void)
 {
@@ -178,6 +195,18 @@ ZTEST(commands, test_device_commands)
 	zassert_equal(status.rx_crc_errors, 24);
 	zassert_equal(status.frequency_hz, 2478000000U);
 	zassert_equal(status.hop_index, 236);
+	zassert_equal(radio_refreshes, 1);
+	zassert_equal(status.radio_temperature_centi_c, -125);
+	zassert_equal(status.radio_xosc_temperature_centi_c, 3125);
+	zassert_equal(status.radio_vbat_mv, 3301);
+	zassert_equal(status.radio_version_major, 1);
+	zassert_equal(status.radio_version_minor, 0x18);
+	zassert_equal(status.radio_chip_mode, 2);
+	zassert_equal(status.radio_command_status, 2);
+	zassert_equal(status.radio_reset_status, 1);
+	zassert_equal(status.radio_valid, 0x3F);
+	zassert_equal(status.radio_errors, 0x8401);
+	zassert_equal(status.radio_irq, 0xFEDCBA98U);
 	p = request(ZLRS_MGMT_CMD_BUILD, NULL, 0);
 	zassert_equal(p.cmd, ZLRS_MGMT_CMD_BUILD_RESP);
 	confirm_rc = -EIO;

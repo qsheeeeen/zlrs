@@ -33,6 +33,7 @@ ZBUS_CHAN_DEFINE(zlrs_rf_chan, zlrs_rf_status_t, NULL, NULL, ZBUS_OBSERVERS_EMPT
 
 static bool links_ready;
 static bool radio_ready;
+static zlrs_lr2021_status_t radio_status;
 static bool paused;
 static int pause_priority;
 
@@ -610,6 +611,7 @@ void zlrs_rf_publish_state(void)
 		published.tx_power_dbm == state.tx_power_dbm &&
 		published.rssi_dbm == state.rssi_dbm && published.snr_db == state.snr_db &&
 		published.frame_period_us == state.frame_period_us &&
+		published.radio.sampled_ms == state.radio.sampled_ms &&
 		memcmp(published.dev_id, state.dev_id, sizeof(state.dev_id)) == 0 &&
 		memcmp(published.peer_id, state.peer_id, sizeof(state.peer_id)) == 0;
 	/* Keep changing packet/hop counters readable without waking UI for every packet. */
@@ -742,10 +744,20 @@ zlrs_rf_status_t zlrs_rf_status(void)
 		.radio_fail = stats->radio_fail,
 		.frequency_hz = diagnostics.frequency_hz,
 		.hop_index = diagnostics.hop_index,
+		.radio = radio_status,
 	};
 	memcpy(out.dev_id, device_id, sizeof(out.dev_id));
 	memcpy(out.peer_id, info.peer_id, sizeof(out.peer_id));
 	return out;
+}
+
+void zlrs_rf_status_refresh(void)
+{
+	__ASSERT_NO_MSG(paused);
+	if (radio_ready) {
+		zlrs_lr2021_read_status(&radio_status);
+	}
+	zlrs_rf_publish_state();
 }
 
 int zlrs_rf_pair_start(void)
@@ -919,6 +931,8 @@ int zlrs_rf_init(void)
 	}
 
 	radio_ready = true;
+	/* Initial snapshot before the timer starts; later refreshes use management. */
+	zlrs_lr2021_read_status(&radio_status);
 	return 0;
 }
 

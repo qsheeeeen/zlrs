@@ -86,6 +86,17 @@ void test_mgmt(void)
 		.frequency_hz = 2478000000U,
 		.hop_index = 236,
 		.frame_period_us = 9080,
+		.radio_temperature_centi_c = -125,
+		.radio_xosc_temperature_centi_c = 3125,
+		.radio_vbat_mv = 3301,
+		.radio_version_major = 1,
+		.radio_version_minor = 0x18,
+		.radio_chip_mode = 2,
+		.radio_command_status = 2,
+		.radio_reset_status = 1,
+		.radio_valid = 0x3F,
+		.radio_errors = 0x8401,
+		.radio_irq = 0xFEDCBA98U,
 	};
 	uint8_t bytes[ZLRS_MGMT_STATUS_LEN];
 	zlrs_mgmt_status_t received;
@@ -99,6 +110,25 @@ void test_mgmt(void)
 	CHECK(received.rx_crc_errors == 24 && received.tx_retries == 3);
 	CHECK(received.frequency_hz == 2478000000U && received.hop_index == 236);
 	CHECK(received.frame_period_us == 9080);
+	const uint8_t radio_fields[] = {0x83, 0xFF, 0x35, 0x0C, 0xE5, 0x0C, 1, 0x18,
+					2, 2, 1, 0x3F, 1, 0x84, 0x98, 0xBA, 0xDC, 0xFE};
+	CHECK(memcmp(bytes + 72, radio_fields, sizeof(radio_fields)) == 0);
+	CHECK(received.radio_temperature_centi_c == -125);
+	CHECK(received.radio_xosc_temperature_centi_c == 3125);
+	CHECK(received.radio_vbat_mv == 3301);
+	CHECK(received.radio_version_major == 1 && received.radio_version_minor == 0x18);
+	CHECK(received.radio_chip_mode == 2 && received.radio_command_status == 2);
+	CHECK(received.radio_reset_status == 1 && received.radio_valid == 0x3F);
+	CHECK(received.radio_errors == 0x8401 && received.radio_irq == 0xFEDCBA98U);
+	/* The enlarged status exactly fills the maximum management payload. */
+	uint8_t frame[ZLRS_MGMT_FRAME_MAX_LEN];
+	zlrs_mgmt_parser_t parser;
+	const uint8_t len = zlrs_mgmt_encode(frame, sizeof(frame), ZLRS_MGMT_CMD_STATUS_RESP,
+					     bytes, sizeof(bytes));
+	CHECK(len == ZLRS_MGMT_FRAME_MAX_LEN && parse_response(frame, len, &parser));
+	CHECK(parser.payload_len == ZLRS_MGMT_STATUS_LEN);
+	CHECK(memcmp(ZLRS_MGMT_PAYLOAD(&parser), bytes, sizeof(bytes)) == 0);
+	CHECK(!zlrs_mgmt_status_decode(bytes, 72, &received));
 	CHECK(!zlrs_mgmt_status_decode(bytes, sizeof(bytes) - 1, &received));
 	CHECK(!zlrs_mgmt_status_decode(bytes, sizeof(bytes) + 1, &received));
 }

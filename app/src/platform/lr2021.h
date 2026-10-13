@@ -6,6 +6,42 @@
 #include "zlrs/link/radio.h"
 
 int zlrs_lr2021_init(void);
+
+enum {
+	ZLRS_LR2021_STATUS_TEMP = 1U << 0,
+	ZLRS_LR2021_STATUS_XOSC_TEMP = 1U << 1,
+	ZLRS_LR2021_STATUS_VBAT = 1U << 2,
+	ZLRS_LR2021_STATUS_VERSION = 1U << 3,
+	ZLRS_LR2021_STATUS_STATE = 1U << 4,
+	ZLRS_LR2021_STATUS_ERRORS = 1U << 5,
+};
+
+typedef struct {
+	int16_t temperature_centi_c;
+	int16_t xosc_temperature_centi_c;
+	uint16_t vbat_mv;
+	uint8_t version_major;
+	uint8_t version_minor;
+	uint8_t chip_mode;
+	uint8_t command_status;
+	uint8_t reset_status;
+	uint8_t valid;
+	uint16_t errors;
+	uint32_t irq;
+	uint32_t sampled_ms;
+} zlrs_lr2021_status_t;
+
+/* The upstream getter returns a signed 13-bit Q8.5 value in a uint16_t. */
+static inline int16_t zlrs_lr2021_temperature_centi_c(uint16_t q5)
+{
+	const int32_t signed_q5 = (q5 & 0x1000U) != 0U ? (int32_t)q5 - 8192 : q5;
+
+	return (int16_t)(signed_q5 * 100 / 32);
+}
+
+/* RF owner only, after init and while no request/launch is active. Never clears
+ * chip errors, IRQs or reset information. Failed fields have their valid bit clear. */
+void zlrs_lr2021_read_status(zlrs_lr2021_status_t *out);
 int zlrs_lr2021_wait_us(uint32_t timeout_us);
 bool zlrs_lr2021_irq_pending(void);
 /* One hardware completion. */

@@ -42,6 +42,15 @@ static void test_periodic_sync_acquisition(void)
 
 void test_radio(void)
 {
+	/* ADC unit values are signed 13-bit Q8.5, including below-zero temperatures. */
+	CHECK(zlrs_lr2021_temperature_centi_c(0U) == 0);
+	CHECK(zlrs_lr2021_temperature_centi_c(1U) == 3);
+	CHECK(zlrs_lr2021_temperature_centi_c(800U) == 2500);
+	CHECK(zlrs_lr2021_temperature_centi_c(0x1FFFU) == -3);
+	CHECK(zlrs_lr2021_temperature_centi_c(0x1FE0U) == -100);
+	CHECK(zlrs_lr2021_temperature_centi_c(0x0FFFU) == 12796);
+	CHECK(zlrs_lr2021_temperature_centi_c(0x1000U) == -12800);
+
 	const uint16_t lengths[] = {0U, 1U, 127U, 128U, 129U, 255U, 256U, 511U};
 
 	printf("radio: FIFO prefix and final length bounds\n");

@@ -33,7 +33,7 @@ This executes the real `main.c` and `boot.c`. It checks confirmation failure and
 
 ## Two-board validation
 
-Management `status` includes local and peer RSSI/LQ, configured and active TX power, effective floor, MCU die temperature, hopping position, frame period and frame/error counters. RSSI zero and temperature `INT16_MIN` mean unavailable. Debug shell `zlrs status` reads the zbus snapshot without pausing RF; RF refreshes this snapshot once per second and on state changes. Use the shell for continuous link-quality observation: entering management mode pauses the local RF service and can lower the peer's LQ.
+Management `status` includes local and peer RSSI/LQ, configured and active TX power, effective floor, MCU die temperature, hopping position, frame period and frame/error counters. Its LR2021 section adds junction/XOSC temperatures, VBAT supply, chip version, maintenance-boundary mode/command/reset/IRQ and decoded chip errors. Chip sensors refresh at boot and on management `status`, on the RF owner while transmission is stopped; reading them does not clear errors or IRQs. RSSI zero and MCU temperature `INT16_MIN` mean unavailable; LR2021 fields have independent validity bits. Debug shell `zlrs status` reads the zbus snapshot without pausing RF; RF refreshes link facts once per second and on state changes. Chip values remain the latest boot/management sample, with its age printed. Use the shell for continuous link-quality observation: entering management mode pauses the local RF service and can lower the peer's LQ.
 
 Flash the signed LF or HF image appropriate for both radios. Set the same phrase, the opposite TX/RX roles and the same DATA band. Pair both devices, then confirm `status` reports `connected` and an active session on each. Run:
 

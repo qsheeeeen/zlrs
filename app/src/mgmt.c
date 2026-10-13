@@ -316,6 +316,7 @@ static int save_root_key(const uint8_t key[ZLRS_KEY_LEN])
 
 static void read_status(zlrs_mgmt_status_t *out)
 {
+	zlrs_rf_status_refresh();
 	const zlrs_rf_status_t rf = zlrs_rf_status();
 	const zlrs_persist_settings_t *const settings = zlrs_persist_settings();
 
@@ -346,6 +347,17 @@ static void read_status(zlrs_mgmt_status_t *out)
 		.frequency_hz = rf.frequency_hz,
 		.hop_index = rf.hop_index,
 		.frame_period_us = rf.frame_period_us,
+		.radio_temperature_centi_c = rf.radio.temperature_centi_c,
+		.radio_xosc_temperature_centi_c = rf.radio.xosc_temperature_centi_c,
+		.radio_vbat_mv = rf.radio.vbat_mv,
+		.radio_version_major = rf.radio.version_major,
+		.radio_version_minor = rf.radio.version_minor,
+		.radio_chip_mode = rf.radio.chip_mode,
+		.radio_command_status = rf.radio.command_status,
+		.radio_reset_status = rf.radio.reset_status,
+		.radio_valid = rf.radio.valid,
+		.radio_errors = rf.radio.errors,
+		.radio_irq = rf.radio.irq,
 	};
 	(void)zlrs_temperature_read(&out->temperature_centi_c);
 	if (rf.data_band == ZLRS_DATA_BAND_SUBG) {

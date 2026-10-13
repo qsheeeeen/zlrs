@@ -172,6 +172,43 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(output.getvalue(), digest.hex() + "\n")
 
+    def test_status_radio_units_validity_and_error_bits(self):
+        payload = bytearray(mgmt.STATUS_LEN)
+        payload[72:74] = (-125).to_bytes(2, "little", signed=True)
+        payload[74:76] = (3125).to_bytes(2, "little", signed=True)
+        payload[76:78] = (3301).to_bytes(2, "little")
+        payload[78:84] = bytes([1, 0x18, 2, 2, 1, 0x3f])
+        payload[84:86] = (0x8401).to_bytes(2, "little")
+        payload[86:90] = (0xfedcba98).to_bytes(4, "little")
+        output = mgmt.status_text(payload)
+        for text in ("LR2021\n", "-1.25 C", "31.25 C", "3.301 V (3301 mV)",
+                     "major 0x01, minor 0x18", "standby XOSC", "power-on/brown-out",
+                     "0xfedcba98", "0x8401", "HF XOSC start",
+                     "measurement ADC calibration", "SRC tolerance"):
+            self.assertIn(text, output)
+        # Failed measurements must not display stale numeric values as current.
+        payload[83] = 0
+        radio = mgmt.status_text(payload).split("LR2021\n")[1]
+        self.assertEqual(radio.count("unavailable"), 9)
+        self.assertNotIn("3.301", radio)
+        # Individual validity bits work independently; valid zero is a reading.
+        payload[83] = 1
+        payload[72:74] = b"\0\0"
+        radio = mgmt.status_text(payload).split("LR2021\n")[1]
+        self.assertIn("0.00 C", radio)
+        self.assertEqual(radio.count("unavailable"), 8)
+        with self.assertRaises(ValueError):
+            mgmt.status_text(bytes(72))
+
+    def test_status_full_size_serial_response(self):
+        payload = bytes(mgmt.STATUS_LEN)
+        frame = mgmt.encode(mgmt.STATUS_RESP, payload)
+        self.assertEqual(len(frame), 96)
+        link = Mock()
+        response = io.BytesIO(frame)
+        link.read.side_effect = response.read
+        self.assertEqual(mgmt.read_response(link), (mgmt.STATUS_RESP, payload))
+
 class FramingTests(unittest.TestCase):
     def test_firmware_frame_vectors(self):
         cases = [

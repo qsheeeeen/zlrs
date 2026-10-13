@@ -73,7 +73,7 @@ extern "C" {
 #define ZLRS_MGMT_E_STORE   3U
 #define ZLRS_MGMT_E_UNKNOWN 4U
 
-#define ZLRS_MGMT_STATUS_LEN       72U
+#define ZLRS_MGMT_STATUS_LEN       90U
 #define ZLRS_MGMT_TEMP_UNAVAILABLE INT16_MIN
 #define ZLRS_MGMT_PHRASE_MAX_LEN   32U
 #define ZLRS_MGMT_BUILD_MAX_LEN    32U
@@ -111,6 +111,19 @@ typedef struct {
 	uint32_t frequency_hz;
 	uint16_t hop_index;
 	uint32_t frame_period_us;
+	int16_t radio_temperature_centi_c;
+	int16_t radio_xosc_temperature_centi_c;
+	uint16_t radio_vbat_mv;
+	uint8_t radio_version_major;
+	uint8_t radio_version_minor;
+	uint8_t radio_chip_mode;
+	uint8_t radio_command_status;
+	uint8_t radio_reset_status;
+	/* bit0 junction temp, bit1 XOSC temp, bit2 VBAT, bit3 version,
+	 * bit4 mode/command/reset/IRQ, bit5 errors; unset means unavailable. */
+	uint8_t radio_valid;
+	uint16_t radio_errors;
+	uint32_t radio_irq;
 } zlrs_mgmt_status_t;
 
 #define ZLRS_MGMT_FLAG_KEY       0x01U

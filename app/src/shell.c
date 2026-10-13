@@ -14,6 +14,14 @@
 #endif
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_SHELL)
+static void status_temperature(const struct shell *sh, const char *name, int16_t value)
+{
+	const int magnitude = value < 0 ? -value : value;
+
+	shell_print(sh, "%s: %s%d.%02d C", name, value < 0 ? "-" : "",
+		    magnitude / 100, magnitude % 100);
+}
+
 static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 {
 	zlrs_rf_status_t link = {0};
@@ -56,6 +64,44 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "errors : CRC %u, tag %u, radio %u, missed slots %u", link.rx_crc_errors,
 		    link.rx_bad_tag, link.radio_fail, link.missed_slots);
 	shell_print(sh, "data   : RF drop %u B", link.data_drop_bytes);
+	const zlrs_lr2021_status_t *radio = &link.radio;
+	if (radio->valid & ZLRS_LR2021_STATUS_TEMP) {
+		status_temperature(sh, "lr temp", radio->temperature_centi_c);
+	} else {
+		shell_print(sh, "lr temp: unavailable");
+	}
+	if (radio->valid & ZLRS_LR2021_STATUS_XOSC_TEMP) {
+		status_temperature(sh, "lr xosc", radio->xosc_temperature_centi_c);
+	} else {
+		shell_print(sh, "lr xosc: unavailable");
+	}
+	if (radio->valid & ZLRS_LR2021_STATUS_VBAT) {
+		shell_print(sh, "lr vbat: %u mV", radio->vbat_mv);
+	} else {
+		shell_print(sh, "lr vbat: unavailable");
+	}
+	if (radio->valid & ZLRS_LR2021_STATUS_VERSION) {
+		shell_print(sh, "lr ver : major 0x%02x, minor 0x%02x", radio->version_major,
+			    radio->version_minor);
+	} else {
+		shell_print(sh, "lr ver : unavailable");
+	}
+	if (radio->valid & ZLRS_LR2021_STATUS_STATE) {
+		shell_print(sh, "lr stat: mode %u, command %u, reset %u, IRQ 0x%08x",
+			    radio->chip_mode, radio->command_status, radio->reset_status,
+			    radio->irq);
+	} else {
+		shell_print(sh, "lr stat: unavailable");
+	}
+	if (radio->valid & ZLRS_LR2021_STATUS_ERRORS) {
+		shell_print(sh, "lr errs: 0x%04x", radio->errors);
+	} else {
+		shell_print(sh, "lr errs: unavailable");
+	}
+	if (radio->valid != 0U) {
+		shell_print(sh, "lr age : %u ms (boot/management snapshot)",
+			    k_uptime_get_32() - radio->sampled_ms);
+	}
 	return 0;
 }
 
@@ -199,7 +245,7 @@ static int cmd_bootsel(const struct shell *sh, size_t argc, char **argv)
 
 SHELL_STATIC_SUBCMD_SET_CREATE(
 	zlrs_cmds,
-	SHELL_CMD(status, NULL, "link, signal, power, temperature and error counters", cmd_status),
+	SHELL_CMD(status, NULL, "link, MCU temperature, LR2021 snapshot and error counters", cmd_status),
 	SHELL_CMD(ports, NULL, "state of both data port endpoints", cmd_ports),
 #if DT_NODE_EXISTS(DT_ALIAS(zlrs_mgmt_cdc))
 	SHELL_CMD(mgmt, NULL, "enter management mode (EXIT returns)", cmd_mgmt),

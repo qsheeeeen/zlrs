@@ -613,6 +613,68 @@ int zlrs_lr2021_init(void)
 	return 0;
 }
 
+/* The HAL reports SPI transport success, so also check whether the chip accepted
+ * the read. Direct status reads do not clear the chip's reset source or IRQs. */
+static bool status_read_ok(lr20xx_status_t result)
+{
+	lr20xx_system_stat1_t stat;
+
+	return result == LR20XX_STATUS_OK &&
+	       lr20xx_system_get_status(radio.ral.context, &stat, NULL, NULL) ==
+		       LR20XX_STATUS_OK &&
+	       (stat.command_status == LR20XX_SYSTEM_CMD_STATUS_OK ||
+		stat.command_status == LR20XX_SYSTEM_CMD_STATUS_DATA);
+}
+
+void zlrs_lr2021_read_status(zlrs_lr2021_status_t *out)
+{
+	lr20xx_system_stat1_t stat1;
+	lr20xx_system_stat2_t stat2;
+	lr20xx_system_version_t version;
+	lr20xx_system_irq_mask_t irq;
+	uint16_t value;
+
+	__ASSERT_NO_MSG(!pending && !prepared);
+	*out = (zlrs_lr2021_status_t){0};
+	/* Capture the maintenance-boundary state before issuing sensor commands. */
+	if (lr20xx_system_get_status(radio.ral.context, &stat1, &stat2, &irq) ==
+	    LR20XX_STATUS_OK) {
+		out->chip_mode = stat2.chip_mode;
+		out->command_status = stat1.command_status;
+		out->reset_status = stat2.reset_status;
+		out->irq = irq;
+		out->valid |= ZLRS_LR2021_STATUS_STATE;
+	}
+	if (status_read_ok(lr20xx_system_get_version(radio.ral.context, &version))) {
+		out->version_major = version.major;
+		out->version_minor = version.minor;
+		out->valid |= ZLRS_LR2021_STATUS_VERSION;
+	}
+	if (status_read_ok(lr20xx_system_get_temp(
+		    radio.ral.context, LR20XX_SYSTEM_VALUE_FORMAT_UNIT,
+		    LR20XX_SYSTEM_MEAS_RES_13_BITS, LR20XX_SYSTEM_TEMP_SRC_VBE, &value))) {
+		out->temperature_centi_c = zlrs_lr2021_temperature_centi_c(value);
+		out->valid |= ZLRS_LR2021_STATUS_TEMP;
+	}
+	if (status_read_ok(lr20xx_system_get_temp(
+		    radio.ral.context, LR20XX_SYSTEM_VALUE_FORMAT_UNIT,
+		    LR20XX_SYSTEM_MEAS_RES_13_BITS, LR20XX_SYSTEM_TEMP_SRC_XOSC, &value))) {
+		out->xosc_temperature_centi_c = zlrs_lr2021_temperature_centi_c(value);
+		out->valid |= ZLRS_LR2021_STATUS_XOSC_TEMP;
+	}
+	if (status_read_ok(lr20xx_system_get_vbat(radio.ral.context,
+					      LR20XX_SYSTEM_VALUE_FORMAT_UNIT,
+					      LR20XX_SYSTEM_MEAS_RES_13_BITS, &value))) {
+		out->vbat_mv = value;
+		out->valid |= ZLRS_LR2021_STATUS_VBAT;
+	}
+	if (status_read_ok(lr20xx_system_get_errors(radio.ral.context, &value))) {
+		out->errors = value;
+		out->valid |= ZLRS_LR2021_STATUS_ERRORS;
+	}
+	out->sampled_ms = k_uptime_get_32();
+}
+
 int zlrs_lr2021_wait_us(uint32_t timeout_us)
 {
 	return k_sem_take(&done_sem, K_USEC(timeout_us));

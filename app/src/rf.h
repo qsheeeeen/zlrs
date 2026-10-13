@@ -8,6 +8,7 @@
 #include "zlrs/proto/frame.h"
 #include "zlrs/link/state.h"
 #include "zlrs/region/region.h"
+#include "platform/lr2021.h"
 
 typedef struct {
 	zlrs_role_t role;
@@ -42,6 +43,7 @@ typedef struct {
 	uint32_t radio_fail;
 	uint32_t frequency_hz;
 	uint16_t hop_index;
+	zlrs_lr2021_status_t radio;
 } zlrs_rf_status_t;
 
 /* Public facts only: no keys or mutable link pointers. */
@@ -57,6 +59,9 @@ void zlrs_rf_frame(void);
 void zlrs_rf_publish_state(void);
 bool zlrs_rf_pairing(uint8_t peer_id[ZLRS_DEV_ID_LEN], uint8_t pair_salt[ZLRS_PAIR_SALT_LEN]);
 zlrs_rf_status_t zlrs_rf_status(void);
+/* Fresh chip measurements only at a paused management boundary; publishes the
+ * snapshot for shell/UI readers without SPI work on their threads. */
+void zlrs_rf_status_refresh(void);
 int zlrs_rf_pair_start(void);
 int zlrs_rf_pair_cancel(void);
 /* Reload saved credentials in a maintenance window; ordinary settings wait for reboot. */

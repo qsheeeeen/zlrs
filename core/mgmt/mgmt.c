@@ -171,6 +171,17 @@ void zlrs_mgmt_status_encode(uint8_t out[ZLRS_MGMT_STATUS_LEN], const zlrs_mgmt_
 	put_u32(out + 62, status->frequency_hz);
 	put_u16(out + 66, status->hop_index);
 	put_u32(out + 68, status->frame_period_us);
+	put_u16(out + 72, (uint16_t)status->radio_temperature_centi_c);
+	put_u16(out + 74, (uint16_t)status->radio_xosc_temperature_centi_c);
+	put_u16(out + 76, status->radio_vbat_mv);
+	out[78] = status->radio_version_major;
+	out[79] = status->radio_version_minor;
+	out[80] = status->radio_chip_mode;
+	out[81] = status->radio_command_status;
+	out[82] = status->radio_reset_status;
+	out[83] = status->radio_valid;
+	put_u16(out + 84, status->radio_errors);
+	put_u32(out + 86, status->radio_irq);
 }
 
 bool zlrs_mgmt_status_decode(const uint8_t *in, uint8_t len, zlrs_mgmt_status_t *status)
@@ -208,5 +219,16 @@ bool zlrs_mgmt_status_decode(const uint8_t *in, uint8_t len, zlrs_mgmt_status_t 
 	status->frequency_hz = get_u32(in + 62);
 	status->hop_index = get_u16(in + 66);
 	status->frame_period_us = get_u32(in + 68);
+	status->radio_temperature_centi_c = (int16_t)get_u16(in + 72);
+	status->radio_xosc_temperature_centi_c = (int16_t)get_u16(in + 74);
+	status->radio_vbat_mv = get_u16(in + 76);
+	status->radio_version_major = in[78];
+	status->radio_version_minor = in[79];
+	status->radio_chip_mode = in[80];
+	status->radio_command_status = in[81];
+	status->radio_reset_status = in[82];
+	status->radio_valid = in[83];
+	status->radio_errors = get_u16(in + 84);
+	status->radio_irq = get_u32(in + 86);
 	return true;
 }

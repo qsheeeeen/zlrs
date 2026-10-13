@@ -26,6 +26,7 @@ static enum {
 	LAUNCH_FAIL
 } mode;
 static unsigned int tx_ok, tx_fail, rx_fail, rx_ok, aborts;
+static unsigned int radio_reads;
 static uint16_t source_left, delivered;
 static const uint8_t outgoing[] = "host bytes";
 static const uint8_t incoming[] = "peer bytes";
@@ -149,6 +150,16 @@ void zlrs_lr2021_diag(zlrs_lr2021_diag_t *out)
 int zlrs_lr2021_init(void)
 {
 	return 0;
+}
+void zlrs_lr2021_read_status(zlrs_lr2021_status_t *out)
+{
+	zassert_false(pending);
+	radio_reads++;
+	*out = (zlrs_lr2021_status_t){
+		.temperature_centi_c = 2500,
+		.valid = ZLRS_LR2021_STATUS_TEMP,
+		.sampled_ms = radio_reads,
+	};
 }
 uint32_t zlrs_lr2021_airtime_us(const zlrs_mod_cfg_t *mod, uint16_t len)
 {
@@ -276,8 +287,14 @@ static void frames(unsigned int count)
 ZTEST(rf_results, test_protocol_completion_and_timeouts)
 {
 	zassert_equal(zlrs_rf_init(), -ENODEV);
+	zlrs_rf_pause();
+	zlrs_rf_status_refresh();
+	zassert_equal(radio_reads, 0); /* Failed init remains manageable without chip access. */
+	zassert_equal(zlrs_rf_status().radio.valid, 0);
+	zlrs_rf_resume();
 	identity_valid = true;
 	zassert_ok(zlrs_rf_init());
+	zassert_equal(radio_reads, 1);
 	zlrs_link_cfg_t cfg = *zlrs_link_get_config(local);
 	cfg.role = RF_TEST_ROLE_RX ? ZLRS_ROLE_TX : ZLRS_ROLE_RX;
 	const zlrs_link_events_t events = {.on_data = receive_peer};
@@ -333,7 +350,15 @@ ZTEST(rf_results, test_protocol_completion_and_timeouts)
 	mode = NO_IRQ;
 	frames(30);
 	zassert_true(aborts > 0);
+	zassert_equal(radio_reads, 1); /* Ordinary frames/status publication never use SPI. */
 	zlrs_rf_pause();
+	zlrs_rf_status_refresh();
+	zassert_equal(radio_reads, 2);
+	zlrs_rf_status_t published;
+	zassert_ok(zbus_chan_read(&zlrs_rf_chan, &published, K_NO_WAIT));
+	zassert_equal(published.radio.temperature_centi_c, 2500);
+	zassert_equal(published.radio.valid, ZLRS_LR2021_STATUS_TEMP);
+	zassert_equal(published.radio.sampled_ms, 2);
 	uint8_t chunk[80];
 	uint16_t total;
 	uint8_t written;

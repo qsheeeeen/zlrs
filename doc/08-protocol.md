@@ -54,7 +54,7 @@ RX follows authenticated packet timestamps. When receptions stop, it scans the f
 
 ## Management status
 
-Management version `4` uses a fixed 72-byte `STATUS_RESP`. Multibyte integers are little endian; RSSI and temperature are signed 16-bit values, and power values are signed 8-bit dBm.
+Management version `4` uses a fixed 90-byte `STATUS_RESP`, filling one 96-byte management frame. Multibyte integers are little endian; RSSI and temperature are signed 16-bit values, and power values are signed 8-bit dBm. The firmware and host use this one status layout.
 
 | Offset | Bytes | Field |
 | --- | --- | --- |
@@ -70,5 +70,15 @@ Management version `4` uses a fixed 72-byte `STATUS_RESP`. Multibyte integers ar
 | 62 | 4 | FHSS snapshot frequency in Hz |
 | 66 | 2 | FHSS index |
 | 68 | 4 | Frame period in microseconds |
+| 72 | 2 | LR2021 junction temperature in 0.01 °C |
+| 74 | 2 | LR2021 temperature near XOSC in 0.01 °C |
+| 76 | 2 | LR2021 VBAT supply in millivolts |
+| 78 | 2 | LR2021 version major, minor |
+| 80 | 3 | Chip mode, last command status, reset source |
+| 83 | 1 | Validity bits: bit0 junction temperature, bit1 XOSC temperature, bit2 VBAT, bit3 version, bit4 mode/command/reset/IRQ, bit5 chip errors |
+| 84 | 2 | LR2021 latched chip error mask |
+| 86 | 4 | LR2021 IRQ mask at the maintenance boundary |
 
 The frequency is the hopping schedule's current channel; periodic SYNC uses the fixed synchronization channel. MCU temperature is the internal die sensor reading, not ambient or LR2021 temperature. FLRC does not supply a LoRa SNR measurement.
+
+LR2021 measurements run only on the RF owner at boot or during a paused management session. The mode and IRQ are captured after RF has stopped at the maintenance boundary, so standby XOSC is expected; these are not the preceding live RX/TX state. Sensor reads use the chip's unit format at 13-bit ADC resolution; temperatures are signed Q8.5 converted to hundredths of a degree. Validity bits distinguish unavailable values from valid zero readings. Reads do not clear the chip's error/IRQ/reset information. The debug shell reads the same cached observation via the RF zbus channel and prints its age; it does not issue SPI or pause RF to refresh it. Internal sensor readings are not external ambient temperature or calibrated battery-pack voltage. See [LR2021 datasheet Rev. 1.1, sections 6.5 and 6.7](https://www.mouser.com/pdfDocs/61979758LR2021_V1_1_datasheet.pdf).
