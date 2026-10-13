@@ -47,7 +47,7 @@ static void rng_fill(rng_t *rng, uint8_t *out, uint16_t len)
 	}
 }
 
-/* ---- air frames: every decoded view has to stay inside the input buffer ---- */
+/* ---- air frames: decoded bytes belong to the frame, with length from input ---- */
 
 static void fuzz_frame_decode(rng_t *rng)
 {
@@ -64,27 +64,26 @@ static void fuzz_frame_decode(rng_t *rng)
 		rng_fill(rng, buf, len);
 		if (len >= ZLRS_FRAME_HDR_LEN && (rng_next(rng) % 4U) == 0U) {
 			/* Use a legal type so the parser goes further */
-			buf[0] = (uint8_t)(((rng_next(rng) % 11U) << 1) | (buf[0] & ZLRS_FLAG_ACK));
+			buf[0] = (uint8_t)(rng_next(rng) % 11U);
 		}
 
 		if (!zlrs_frame_decode(&frame, buf, len, tag_len)) {
 			continue;
 		}
 		decoded++;
+		const zlrs_data_frame_t *const data = &frame.body.data;
 
-		if (frame.payload_len > 0U &&
-		    (frame.payload < buf || frame.payload + frame.payload_len > buf + len)) {
+		if ((frame.type == ZLRS_PKT_DATA_UP || frame.type == ZLRS_PKT_DATA_DOWN) &&
+		    memcmp(data->bytes, buf + ZLRS_FRAME_HDR_LEN + ZLRS_DATA_PREFIX_LEN,
+			   len - ZLRS_FRAME_HDR_LEN - ZLRS_DATA_PREFIX_LEN - tag_len) != 0) {
 			violations++;
 		}
-		if (tag_len > 0U && (frame.tag < buf || frame.tag + ZLRS_TAG_LEN > buf + len)) {
-			violations++;
-		}
-		if (zlrs_frame_mac_len(&frame) > len) {
+		if (memcmp(frame.tag, buf + len - tag_len, tag_len) != 0) {
 			violations++;
 		}
 
 		/* Decode and encode again: byte-identical, tag included */
-		if (zlrs_frame_encode(&frame, pack, sizeof(pack)) != len) {
+		if (zlrs_frame_encode(&frame, pack, sizeof(pack), len, tag_len) != len) {
 			violations++;
 		} else if (memcmp(pack, buf, len) != 0) {
 			violations++;
@@ -111,11 +110,12 @@ static void fx_on_state(void *ctx, zlrs_link_state_t state)
 	(void)state;
 }
 
-static uint32_t fx_random(void *ctx)
+static bool fx_random(void *ctx, uint32_t *out)
 {
 	(void)ctx;
 
-	return 0x9E3779B9U;
+	*out = 0x9E3779B9U;
+	return true;
 }
 
 static void fx_link_init(zlrs_link_t *link, uint8_t arq)
@@ -142,7 +142,6 @@ static void fx_link_init(zlrs_link_t *link, uint8_t arq)
 		.data_mtu = 128U,
 		.arq = arq,
 		.hopping = 1U,
-		.handshake = 1U,
 
 	};
 	const zlrs_link_events_t ev = {
@@ -160,28 +159,19 @@ static void fx_link_init(zlrs_link_t *link, uint8_t arq)
 /* Build an air frame with a legal shape and tag; the caller then corrupts it at random */
 static uint16_t fx_make_frame(rng_t *rng, uint8_t *out, uint16_t cap, const uint8_t *key)
 {
-	uint8_t payload[ZLRS_PAYLOAD_MAX_LEN];
-	zlrs_frame_t frame = {
-		.type = (uint8_t)(rng_next(rng) % 11U),
-		.flags = (uint8_t)(rng_next(rng) & 0x03U),
-		.seq = (uint16_t)rng_next(rng),
-		.payload = payload,
-		.payload_len = (uint16_t)(rng_next(rng) % 32U),
-	};
-	uint16_t total;
-
-	rng_fill(rng, payload, frame.payload_len);
-	total = zlrs_frame_len(frame.payload_len, ZLRS_TAG_LEN);
+	/* Construct bytes independently of the typed encoder. */
+	const uint8_t type = (uint8_t)(rng_next(rng) % 11U);
+	const uint16_t fixed[] = {0, 0, 9, 8, 16, 16, 8, 9};
+	const uint16_t payload_len = type >= ZLRS_PKT_SYNC && type <= ZLRS_PKT_SESS_CFM
+					    ? fixed[type] : 3U + rng_next(rng) % 32U;
+	const uint16_t mac_len = ZLRS_FRAME_HDR_LEN + payload_len;
+	const uint16_t total = mac_len + ZLRS_TAG_LEN;
 	if (total > cap) {
 		return 0U;
 	}
-	if (zlrs_frame_encode(&frame, out, cap) !=
-	    (uint16_t)(ZLRS_FRAME_HDR_LEN + frame.payload_len)) {
-		return 0U;
-	}
-	zlrs_tag(key, ZLRS_KEY_LEN, out, ZLRS_FRAME_HDR_LEN + frame.payload_len,
-		 &out[ZLRS_FRAME_HDR_LEN + frame.payload_len]);
-
+	rng_fill(rng, out, mac_len);
+	out[0] = type;
+	zlrs_tag(key, ZLRS_KEY_LEN, out, mac_len, out + mac_len);
 	return total;
 }
 

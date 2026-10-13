@@ -1,74 +1,103 @@
-/*
- * Over-the-air frame format, see doc/08-protocol.md. Preamble, sync word, CRC and length
- * belong to the LR2021 hardware and are not repeated in the frame; multi-byte fields are little-endian.
- *
+/* One typed air frame; its codec owns the byte layout.
+ * Preamble, sync word, length and physical CRC belong to LR2021.
  * SPDX-License-Identifier: Apache-2.0
  */
-
 #pragma once
-
 #include <stdbool.h>
 #include <stdint.h>
-
 #include "zlrs/proto/limits.h"
-
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Packet types (a 7-bit space, see doc/08-protocol.md) */
 typedef enum {
-	ZLRS_PKT_DATA_UP = 0,   /* TX -> RX: passthrough data */
-	ZLRS_PKT_DATA_DOWN = 1, /* RX -> TX: passthrough data */
-	ZLRS_PKT_SYNC = 2,      /* TX -> RX: session setup */
-	ZLRS_PKT_PAIR_REQ = 3,  /* TX -> RX: pairing */
-	ZLRS_PKT_PAIR_RESP = 4, /* RX -> TX: pairing */
-	ZLRS_PKT_PAIR_CFM = 5,  /* TX -> RX: pairing */
-	ZLRS_PKT_SESS_RESP = 6, /* RX -> TX: session response carrying its nonce */
-	ZLRS_PKT_SESS_CFM = 7,  /* TX -> RX: session confirm, tagged with the new session key */
+	ZLRS_PKT_DATA_UP = 0,
+	ZLRS_PKT_DATA_DOWN = 1,
+	ZLRS_PKT_SYNC = 2,
+	ZLRS_PKT_PAIR_REQ = 3,
+	ZLRS_PKT_PAIR_RESP = 4,
+	ZLRS_PKT_PAIR_CFM = 5,
+	ZLRS_PKT_SESS_RESP = 6,
+	ZLRS_PKT_SESS_CFM = 7,
 } zlrs_pkt_type_t;
 
-#define ZLRS_FRAME_TYPE_SHIFT 1U
-#define ZLRS_FLAG_ACK         0x01U /* toggles after each accepted packet in this reliable service */
+#define ZLRS_FRAME_TYPE_BITS 3U
+#define ZLRS_FRAME_TYPE_MASK 0x07U
+#define ZLRS_SYNC_PROFILE_SHIFT 3U
+#define ZLRS_SYNC_VERSION_SHIFT 4U
+#define ZLRS_DATA_ACK_MASK 0x01U
+#define ZLRS_DATA_SEQ_SHIFT 1U
+#define ZLRS_DATA_SEQ_MASK 0x7FU
 
-/* Security profiles, see doc/09-security.md 8 */
 typedef enum {
-	ZLRS_PROFILE_P0 = 0, /* no tag, no encryption, debug only */
-	ZLRS_PROFILE_P1 = 1, /* 4 B tag */
-	ZLRS_PROFILE_P2 = 2, /* 4 B tag plus AES-CTR payload encryption */
+	ZLRS_PROFILE_P0 = 0, /* no authentication, debug only */
+	ZLRS_PROFILE_P1 = 1, /* 4-byte authentication tag */
+	ZLRS_PROFILE_P2 = 2, /* payload encryption remains unimplemented */
 } zlrs_profile_t;
 
-/* tag length of that profile */
-uint8_t zlrs_profile_tag_len(zlrs_profile_t profile);
-
-/* Parsed view of a frame; a NULL tag means the frame carries none */
+/* Typed bodies contain only packet-specific fields. DATA owns its bytes; its
+ * used length comes from the radio payload length, never an on-air size field. */
 typedef struct {
-	uint8_t type;
-	uint8_t flags;
-	uint16_t seq;
-	const uint8_t *payload;
-	uint16_t payload_len;
-	const uint8_t *tag;
+	uint8_t ack : 1; /* reverse-direction ACK */
+	uint8_t data_seq : 7;
+	uint8_t rssi_magnitude;
+	uint8_t lq_percent;
+	uint8_t bytes[ZLRS_DATA_MAX_LEN];
+} zlrs_data_frame_t;
+
+typedef struct {
+	uint8_t profile : 1;
+	uint8_t version : 4;
+	uint8_t hop_index;
+	uint32_t nonce_t;
+	uint32_t frame_index; /* shared TDD period count, including idle periods */
+} zlrs_sync_frame_t;
+
+typedef struct {
+	uint8_t dev_a[ZLRS_DEV_ID_LEN];
+	uint32_t nonce_a;
+} zlrs_pair_request_frame_t;
+
+typedef struct {
+	uint8_t dev_a[ZLRS_DEV_ID_LEN];
+	uint8_t dev_b[ZLRS_DEV_ID_LEN];
+	uint32_t nonce_a;
+	uint32_t nonce_b;
+} zlrs_pair_frame_t;
+
+typedef struct {
+	uint32_t nonce_t;
+	uint32_t nonce_r;
+} zlrs_session_response_frame_t;
+
+typedef struct {
+	uint32_t nonce_r;
+	uint8_t hop_index;
+	uint32_t frame_index; /* shared TDD period count */
+} zlrs_session_confirm_frame_t;
+
+typedef struct {
+	uint8_t type : ZLRS_FRAME_TYPE_BITS;
+	union {
+		zlrs_data_frame_t data; /* DATA_UP / DATA_DOWN share this body layout */
+		zlrs_sync_frame_t sync;
+		zlrs_pair_request_frame_t pair_req;
+		zlrs_pair_frame_t pair; /* PAIR_RESP / PAIR_CFM validate all four fields */
+		zlrs_session_response_frame_t sess_resp;
+		zlrs_session_confirm_frame_t sess_cfm;
+	} body;
+	uint32_t seq; /* common per-direction counter; zero is never transmitted */
+	uint8_t tag[ZLRS_TAG_LEN];
 } zlrs_frame_t;
 
-/* How many bytes this payload plus tag length encode to */
+uint8_t zlrs_profile_tag_len(zlrs_profile_t profile);
 uint16_t zlrs_frame_len(uint16_t payload_len, uint8_t tag_len);
-
-/*
- * Encode into buf and return the length written; 0 when the buffer is too small.
- * A NULL frame->tag encodes as tag_len = 0.
- */
-uint16_t zlrs_frame_encode(const zlrs_frame_t *frame, uint8_t *buf, uint16_t cap);
-
-/*
- * Decode. len is what the radio received, tag_len comes from the current profile.
- * Returns false when the length cannot hold header and tag or the type is out of range.
- */
+/* len is the complete radio payload length, including common fields and tag.
+ * Fixed bodies require exact lengths. DATA length is inferred from len.
+ * Only the selected body's used bytes are encoded; unused capacity is omitted. */
+uint16_t zlrs_frame_encode(const zlrs_frame_t *frame, uint8_t *buf, uint16_t cap,
+			   uint16_t len, uint8_t tag_len);
 bool zlrs_frame_decode(zlrs_frame_t *frame, const uint8_t *buf, uint16_t len, uint8_t tag_len);
-
-/* Bytes the tag covers: header + seq + payload */
-uint16_t zlrs_frame_mac_len(const zlrs_frame_t *frame);
-
 #ifdef __cplusplus
 }
 #endif

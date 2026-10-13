@@ -148,7 +148,7 @@ static void plan_init(void)
 			       : CONFIG_ZLRS_APP_DATA_RATE_BPS);
 	slot_prepare_us =
 		ZLRS_DATA_SUBG ? CONFIG_ZLRS_APP_PREPARE_US : CONFIG_ZLRS_APP_DATA_24_PREPARE_US;
-	data_mtu = ZLRS_PAYLOAD_MAX_LEN - 4U;
+	data_mtu = ZLRS_DATA_MAX_LEN - zlrs_profile_tag_len(active_profile);
 	slot_budget_us = slot_prepare_us + CONFIG_ZLRS_APP_TX_GUARD_US + ZLRS_LR2021_STARTUP_US +
 			 zlrs_lr2021_airtime_us(&data_mod, ZLRS_FRAME_MAX_LEN) + 200U;
 	frame_period_us = ZLRS_SLOT_COUNT * slot_budget_us;
@@ -166,10 +166,11 @@ static void plan_init(void)
 
 /* ---- link setup ---------------------------------------------------------- */
 
-static uint32_t random_u32(void *ctx)
+static bool random_u32(void *ctx, uint32_t *out)
 {
 	ARG_UNUSED(ctx);
-	return sys_rand32_get();
+	*out = sys_rand32_get();
+	return true;
 }
 
 static void build_links(void)
@@ -180,7 +181,6 @@ static void build_links(void)
 
 		.profile = active_profile,
 		.hopping = IS_ENABLED(CONFIG_ZLRS_APP_FHSS) ? 1U : 0U,
-		.handshake = IS_ENABLED(CONFIG_ZLRS_APP_SESSION_HANDSHAKE) ? 1U : 0U,
 		.mod = data_mod,
 		.tx_power_dbm =
 			ZLRS_DATA_SUBG ? MIN(tx_power_dbm, region->max_tx_power_dbm) : tx_power_dbm,
@@ -889,9 +889,6 @@ int zlrs_rf_init(void)
 	}
 	if (!IS_ENABLED(CONFIG_ZLRS_APP_FHSS)) {
 		LOG_WRN("isolation: hopping off, every frame stays on the sync channel");
-	}
-	if (!IS_ENABLED(CONFIG_ZLRS_APP_SESSION_HANDSHAKE)) {
-		LOG_WRN("isolation: session handshake off, pairing keys are session keys");
 	}
 	{
 		const int rc = zlrs_region_validate(region, &rf_design, tx_power_dbm);

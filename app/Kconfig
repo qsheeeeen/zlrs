@@ -163,20 +163,11 @@ config ZLRS_APP_FHSS
 	  how layer isolation separates timing from the hop table. A fixed channel does not satisfy the
 	  FCC 15.247 hopping rules: debug images only, see doc/08-protocol.md.
 
-config ZLRS_APP_SESSION_HANDSHAKE
-	bool "Session handshake (fresh key per session)" if ZLRS_APP_DEBUG
-	default y
-	help
-	  Off: the pairing-level link_auth doubles as the session key. The RX counts a SYNC as
-	  established and reports back with SESS_RESP, saving a derivation and one confirm message.
-	  The cost is no per-session key rotation: recorded frames stay replayable across sessions.
-	  Debug images only, see doc/09-security.md 3.
-
 config ZLRS_APP_DATA_ARQ
 	bool "Reliable data transfer (ARQ)" if ZLRS_APP_DEBUG
 	default y
 	help
-	  On by default: the receiver flips a header ACK bit for each accepted data packet.
+	  On by default: the receiver flips the DATA body's ACK bit for each accepted data packet.
 	  The sender waits for that flip before sending the next packet and retransmits on timeout.
 	  Off means best-effort (drop when full, count it).
 	  See doc/08-protocol.md.

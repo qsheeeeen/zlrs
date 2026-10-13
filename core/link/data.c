@@ -20,7 +20,7 @@ static void arq_commit_ack(zlrs_link_t *link)
 	link->queue_head = (uint16_t)((link->queue_head + link->arq_len) % ZLRS_LINK_TX_QUEUE_LEN);
 	link->queue_count -= link->arq_len;
 	link->arq_used = 0U;
-	link->arq_seq++;
+	link->arq_seq = (uint8_t)((link->arq_seq + 1U) & ZLRS_DATA_SEQ_MASK);
 	link->arq_retries = 0U;
 }
 
@@ -34,36 +34,31 @@ static void queue_copy(const zlrs_link_t *link, uint16_t offset, uint8_t *out, u
 	memcpy(out + first, link->tx_queue, len - first);
 }
 
-static void write_feedback(const zlrs_link_t *link, uint8_t out[DATA_FEEDBACK_LEN])
+static zlrs_data_frame_t *data_frame(const zlrs_link_t *link, uint8_t seq, zlrs_frame_t *frame)
 {
 	const int16_t rssi = link->stats.last_rssi;
-	out[0] = rssi < 0 ? (uint8_t)(-rssi > 255 ? 255 : -rssi) : 0U;
-	out[1] = link->stats.lq_percent;
+	const bool ack = link->cfg.arq && receive_ack_bit(link);
+	*frame = (zlrs_frame_t){
+		.type = link->cfg.role == ZLRS_ROLE_TX ? ZLRS_PKT_DATA_UP : ZLRS_PKT_DATA_DOWN,
+	};
+	zlrs_data_frame_t *const data = &frame->body.data;
+	data->data_seq = seq;
+	data->ack = ack;
+	data->rssi_magnitude = rssi < 0 ? (uint8_t)(-rssi > 255 ? 255 : -rssi) : 0U;
+	data->lq_percent = link->stats.lq_percent;
+	return data;
 }
 
-static const zlrs_radio_req_t *arq_send_slot(zlrs_link_t *link, uint16_t seq, uint16_t len)
+static const zlrs_radio_req_t *arq_send_slot(zlrs_link_t *link, uint8_t seq, uint16_t len)
 {
-	uint8_t payload[ZLRS_PAYLOAD_MAX_LEN];
-	const uint8_t type =
-		(link->cfg.role == ZLRS_ROLE_TX) ? ZLRS_PKT_DATA_UP : ZLRS_PKT_DATA_DOWN;
-	uint16_t frame_len;
-
-	payload[0] = (uint8_t)(seq & 0xFFU);
-	payload[1] = (uint8_t)(seq >> 8);
-	write_feedback(link, payload + 2U);
-	queue_copy(link, 0U, payload + DATA_ARQ_HEADER_LEN, len);
-
-	frame_len = link_build_frame(link, type, receive_ack_bit(link) ? ZLRS_FLAG_ACK : 0U,
-				     payload, (uint16_t)(len + DATA_ARQ_HEADER_LEN),
-				     link_tag_key_for(link, type, true));
-	if (frame_len == 0U) {
-		return NULL;
-	}
-
-	/* ARQ bytes are committed on ACK, so keep the completion callback out of the queue */
+	zlrs_frame_t frame;
+	zlrs_data_frame_t *const data = data_frame(link, seq, &frame);
+	queue_copy(link, 0U, data->bytes, len);
+	const uint16_t frame_len = link_build_frame(link, &frame, ZLRS_DATA_PREFIX_LEN + len,
+						  link_tag_key_for(link, frame.type, true));
+	/* Keep bytes queued until ACK, independently of radio completion. */
 	link->pending_data_len = 0U;
 	link->arq_ack_pending = false;
-
 	return link_submit_tx(link, frame_len, link_slot_freq_hz(link), ZLRS_SYNC_SLOT_DATA,
 			      link->sync_word);
 }
@@ -107,7 +102,6 @@ const uint8_t *zlrs_link_prepare_data(zlrs_link_t *link, uint8_t slot, uint32_t 
 	zlrs_prepared_data_t *packet = &link->prepared_data;
 	const uint8_t type = link->cfg.role == ZLRS_ROLE_TX ? ZLRS_PKT_DATA_UP : ZLRS_PKT_DATA_DOWN;
 	const uint32_t frame = link->frame_index + (slot == ZLRS_SLOT_DATA_A ? 1U : 0U);
-	uint8_t payload[ZLRS_PAYLOAD_MAX_LEN];
 
 	*size = 0U;
 	/* The TX request may still refer to packet->buf; never overwrite it while on air. */
@@ -118,7 +112,7 @@ const uint8_t *zlrs_link_prepare_data(zlrs_link_t *link, uint8_t slot, uint32_t 
 	if (!link->cfg.arq || link->cfg.data_mtu == 0U || link->state != ZLRS_STATE_CONNECTED ||
 	    !link->session_valid ||
 	    slot != (link->cfg.role == ZLRS_ROLE_TX ? ZLRS_SLOT_DATA_A : ZLRS_SLOT_DATA_B) ||
-	    link->announce || link->sess_cfm_due ||
+	    link->tx_seq == UINT32_MAX || link->sess_cfm_due ||
 	    (link->cfg.resync_every_n > 0U && frame % link->cfg.resync_every_n == 0U)) {
 		return NULL;
 	}
@@ -132,17 +126,16 @@ const uint8_t *zlrs_link_prepare_data(zlrs_link_t *link, uint8_t slot, uint32_t 
 	}
 	packet->ack_bit = receive_ack_bit(link);
 	packet->frame_seq = link->tx_seq;
-	packet->data_seq = (uint16_t)(link->arq_seq + (packet->retry ? 0U : link->arq_used));
-	payload[0] = (uint8_t)packet->data_seq;
-	payload[1] = (uint8_t)(packet->data_seq >> 8);
+	packet->data_seq = link->arq_seq;
 	const uint16_t offset = packet->retry ? 0U : arq_inflight_bytes(link);
 
-	write_feedback(link, payload + 2U);
-	queue_copy(link, offset, payload + DATA_ARQ_HEADER_LEN, packet->data_len);
+	zlrs_frame_t air_frame;
+	zlrs_data_frame_t *const data = data_frame(link, packet->data_seq, &air_frame);
+	queue_copy(link, offset, data->bytes, packet->data_len);
+	air_frame.seq = packet->frame_seq;
 	memcpy(packet->key, link_tag_key_for(link, type, true), ZLRS_KEY_LEN);
-	packet->size = link_encode_frame(link, packet->buf, packet->frame_seq, type,
-					 packet->ack_bit ? ZLRS_FLAG_ACK : 0U, payload,
-					 packet->data_len + DATA_ARQ_HEADER_LEN, packet->key);
+	packet->size = link_encode_frame(link, packet->buf, &air_frame,
+					ZLRS_DATA_PREFIX_LEN + packet->data_len, packet->key);
 	if (packet->size == 0U) {
 		return NULL;
 	}
@@ -164,7 +157,7 @@ static const zlrs_radio_req_t *send_prepared_data(zlrs_link_t *link, uint32_t no
 	zlrs_prepared_data_t *packet = &link->prepared_data;
 	const uint8_t type = link->cfg.role == ZLRS_ROLE_TX ? ZLRS_PKT_DATA_UP : ZLRS_PKT_DATA_DOWN;
 	const uint16_t inflight = arq_inflight_bytes(link);
-	const uint16_t data_seq = (uint16_t)(link->arq_seq + (retry ? 0U : link->arq_used));
+	const uint8_t data_seq = link->arq_seq;
 	const bool data_valid =
 		retry ? link->arq_used > 0U && packet->data_len == link->arq_len
 		      : link->arq_used == 0U && link->queue_count >= inflight + packet->data_len;
@@ -173,7 +166,7 @@ static const zlrs_radio_req_t *send_prepared_data(zlrs_link_t *link, uint32_t no
 	    packet->frame_index != link->frame_index || packet->frame_seq != link->tx_seq ||
 	    packet->data_seq != data_seq || packet->data_mtu != link->cfg.data_mtu ||
 	    packet->profile != link->cfg.profile ||
-	    (packet->buf[0] >> ZLRS_FRAME_TYPE_SHIFT) != type ||
+	    packet->buf[0] != type ||
 	    !zlrs_ct_equal(packet->key, link_tag_key_for(link, type, true), ZLRS_KEY_LEN)) {
 		packet->valid = false;
 		return NULL;
@@ -242,12 +235,10 @@ static const zlrs_radio_req_t *send_data_arq(zlrs_link_t *link, uint32_t now_ms)
 
 const zlrs_radio_req_t *link_send_empty_data(zlrs_link_t *link)
 {
-	const uint8_t type = link->cfg.role == ZLRS_ROLE_TX ? ZLRS_PKT_DATA_UP : ZLRS_PKT_DATA_DOWN;
-	uint8_t feedback[DATA_FEEDBACK_LEN];
-	write_feedback(link, feedback);
-	const uint16_t len =
-		link_build_frame(link, type, receive_ack_bit(link) ? ZLRS_FLAG_ACK : 0U, feedback,
-				 sizeof(feedback), link_tag_key_for(link, type, true));
+	zlrs_frame_t frame;
+	data_frame(link, link->arq_seq, &frame);
+	const uint16_t len = link_build_frame(link, &frame, ZLRS_DATA_PREFIX_LEN,
+					     link_tag_key_for(link, frame.type, true));
 	if (len == 0U) {
 		return NULL;
 	}
@@ -277,100 +268,74 @@ static void handle_ack_bit(zlrs_link_t *link, bool bit, uint32_t now_ms)
 
 const zlrs_radio_req_t *link_send_data(zlrs_link_t *link, uint32_t now_ms)
 {
-	uint8_t payload[ZLRS_PAYLOAD_MAX_LEN];
-	uint16_t take = link->queue_count;
-	uint16_t len;
-	uint8_t type;
-
 	if (link->cfg.arq) {
 		return send_data_arq(link, now_ms);
 	}
-
+	uint16_t take = link->queue_count;
 	if (take == 0U) {
 		return NULL;
 	}
 	if (take > link->cfg.data_mtu) {
 		take = link->cfg.data_mtu;
 	}
-
-	write_feedback(link, payload);
-	queue_copy(link, 0U, payload + DATA_FEEDBACK_LEN, take);
-
-	type = (link->cfg.role == ZLRS_ROLE_TX) ? ZLRS_PKT_DATA_UP : ZLRS_PKT_DATA_DOWN;
-	len = link_build_frame(link, type, 0U, payload, take + DATA_FEEDBACK_LEN,
-			       link_tag_key_for(link, type, true));
+	zlrs_frame_t frame;
+	zlrs_data_frame_t *const data = data_frame(link, 0U, &frame);
+	queue_copy(link, 0U, data->bytes, take);
+	const uint16_t len = link_build_frame(link, &frame, ZLRS_DATA_PREFIX_LEN + take,
+					     link_tag_key_for(link, frame.type, true));
 	link->pending_data_len = take;
-
 	return link_submit_tx(link, len, link_slot_freq_hz(link), ZLRS_SYNC_SLOT_DATA,
 			      link->sync_word);
 }
 
-static bool deliver_data(zlrs_link_t *link, const zlrs_frame_t *frame)
+static bool deliver_data(zlrs_link_t *link, const zlrs_data_frame_t *data, uint16_t len)
 {
-	if (link->ev.on_data != NULL && frame->payload_len > 0U) {
-		return link->ev.on_data(link->ev.ctx, frame->payload, frame->payload_len);
-	}
-	return false;
+	return link->ev.on_data != NULL && len != 0U &&
+	       link->ev.on_data(link->ev.ctx, data->bytes, len);
 }
 
-void link_handle_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
+void link_handle_data(zlrs_link_t *link, const zlrs_frame_t *frame,
+		      uint16_t data_len, uint32_t now_ms)
 {
-	const uint16_t header_len = link->cfg.arq ? DATA_ARQ_HEADER_LEN : DATA_FEEDBACK_LEN;
-	if (frame->payload_len < DATA_FEEDBACK_LEN ||
-	    (frame->payload_len > DATA_FEEDBACK_LEN && frame->payload_len <= header_len)) {
-		link->stats.rx_bad_frame++;
-		return;
-	}
+	const zlrs_data_frame_t *const data = &frame->body.data;
 	if (link->cfg.arq) {
-		handle_ack_bit(link, (frame->flags & ZLRS_FLAG_ACK) != 0U, now_ms);
+		handle_ack_bit(link, data->ack != 0U, now_ms);
 	}
-	const uint8_t *const feedback =
-		frame->payload +
-		(link->cfg.arq && frame->payload_len > DATA_FEEDBACK_LEN ? 2U : 0U);
-	if (feedback[0] != 0U && feedback[1] <= 100U) {
-		link->peer_rssi_dbm = -(int16_t)feedback[0];
-		link->peer_lq_percent = feedback[1];
+	if (data->rssi_magnitude != 0U && data->lq_percent <= 100U) {
+		link->peer_rssi_dbm = -(int16_t)data->rssi_magnitude;
+		link->peer_lq_percent = data->lq_percent;
 		link->last_peer_feedback_ms = now_ms;
 	}
-	if (frame->payload_len == DATA_FEEDBACK_LEN) {
+	if (data_len == 0U) {
 		return;
 	}
 	if (link->cfg.arq) {
-		const uint16_t seq =
-			(uint16_t)(frame->payload[0] | ((uint16_t)frame->payload[1] << 8));
-		const uint16_t next = link->arq_rx_started ? (uint16_t)(link->arq_rx_seq + 1U) : 0U;
-		const int16_t distance = (int16_t)(seq - next);
+		const uint8_t seq = data->data_seq;
+		const uint8_t next = link->arq_rx_started
+					     ? (link->arq_rx_seq + 1U) & ZLRS_DATA_SEQ_MASK : 0U;
 		link->arq_ack_pending = true;
-		if (distance != 0) {
-			if (distance < 0) {
+		if (seq != next) {
+			if (link->arq_rx_started && seq == link->arq_rx_seq) {
 				link->stats.rx_dup++;
 			} else {
 				link->stats.rx_out_of_order++;
 			}
 			return;
 		}
-		zlrs_frame_t inner = *frame;
-		inner.seq = seq;
-		inner.payload = &frame->payload[DATA_ARQ_HEADER_LEN];
-		inner.payload_len = frame->payload_len - DATA_ARQ_HEADER_LEN;
-		inner.tag = NULL;
-		if (deliver_data(link, &inner)) {
+		if (deliver_data(link, data, data_len)) {
 			link->arq_rx_started = true;
 			link->arq_rx_seq = seq;
 		}
 		return;
 	}
-	zlrs_frame_t inner = *frame;
-	inner.payload = &frame->payload[DATA_FEEDBACK_LEN];
-	inner.payload_len = frame->payload_len - DATA_FEEDBACK_LEN;
-	if (!deliver_data(link, &inner)) {
-		link->stats.data_drop_bytes += inner.payload_len;
+	if (!deliver_data(link, data, data_len)) {
+		link->stats.data_drop_bytes += data_len;
 	}
 }
 
-void link_lq_account(zlrs_link_t *link, uint16_t seq)
+void link_lq_account(zlrs_link_t *link, uint32_t seq)
 {
-	uint16_t delta = (uint16_t)(seq - link->lq_last_seq);
+	uint32_t delta = seq - link->lq_last_seq;
 
 	if (!link->lq_started) {
 		/* Only the first sample of a session has no preceding sequence to compare. */
@@ -380,13 +345,15 @@ void link_lq_account(zlrs_link_t *link, uint16_t seq)
 
 	link->lq_last_seq = seq;
 	link->stats.lq_rx++;
-	link->stats.lq_expected = (uint16_t)(link->stats.lq_expected + delta);
+	const uint64_t expected = (uint64_t)link->stats.lq_expected + delta;
 
-	if (link->stats.lq_expected >= ZLRS_LQ_WINDOW_FRAMES) {
+	if (expected >= ZLRS_LQ_WINDOW_FRAMES) {
 		link->stats.lq_percent =
-			(uint8_t)(((uint32_t)link->stats.lq_rx * 100U) / link->stats.lq_expected);
+			(uint8_t)(((uint64_t)link->stats.lq_rx * 100U) / expected);
 		link->stats.lq_rx = 0U;
 		link->stats.lq_expected = 0U;
+	} else {
+		link->stats.lq_expected = (uint16_t)expected;
 	}
 }
 

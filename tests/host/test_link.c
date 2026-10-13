@@ -10,6 +10,9 @@ typedef struct {
 	uint8_t received[4096];
 	uint16_t received_len;
 	bool blocked;
+	bool random_failed;
+	bool force_random;
+	uint32_t forced_random;
 } node_t;
 
 typedef struct {
@@ -19,16 +22,25 @@ typedef struct {
 	uint32_t frames;
 	uint16_t drop_tx;
 	uint16_t drop_rx;
+	bool drop_confirms_only;
 } sim_t;
 
-static uint32_t random_word(void *ctx)
+static bool random_word(void *ctx, uint32_t *out)
 {
 	node_t *const node = ctx;
+	if (node->random_failed) {
+		return false;
+	}
+	if (node->force_random) {
+		*out = node->forced_random;
+		return true;
+	}
 	uint32_t x = node->rng;
 	x ^= x << 13;
 	x ^= x >> 17;
 	x ^= x << 5;
-	return node->rng = x != 0U ? x : 1U;
+	*out = node->rng = x != 0U ? x : 1U;
+	return true;
 }
 
 static bool receive_data(void *ctx, const uint8_t *data, uint16_t len)
@@ -62,7 +74,6 @@ static void init_node(node_t *node, zlrs_role_t role, const uint8_t dev_id[4],
 		.arq_timeout_ms = 30U,
 
 		.hopping = 1U,
-		.handshake = 1U,
 		.resync_every_n = 20U,
 		.feedback_period_ms = 250U,
 	};
@@ -87,7 +98,7 @@ static void sim_init(sim_t *sim)
 	init_node(&sim->rx, ZLRS_ROLE_RX, rx_id, root);
 }
 
-/* Fixed v8 pairing/session/duplex/loss wire transcript. */
+/* Fixed v10 pairing/session/duplex/loss wire transcript. */
 static uint64_t wire_hash;
 static uint32_t wire_packets;
 static uint8_t captured[ZLRS_FRAME_MAX_LEN];
@@ -109,7 +120,8 @@ static void record_wire(const zlrs_radio_req_t *req, bool from_tx)
 	}
 	zlrs_frame_t frame;
 	if (from_tx && zlrs_frame_decode(&frame, req->buf, req->size, ZLRS_TAG_LEN) &&
-	    frame.type == ZLRS_PKT_DATA_UP && frame.payload_len > 4U) {
+	    frame.type == ZLRS_PKT_DATA_UP &&
+	    req->size > ZLRS_FRAME_HDR_LEN + ZLRS_DATA_PREFIX_LEN + ZLRS_TAG_LEN) {
 		memcpy(captured, req->buf, req->size);
 		captured_len = req->size;
 	}
@@ -133,7 +145,10 @@ static void sim_slot(sim_t *sim, uint8_t slot)
 		zlrs_link_t *const sender = a->is_tx ? tx : rx;
 		zlrs_link_t *const receiver = a->is_tx ? rx : tx;
 		uint16_t *const drops = a->is_tx ? &sim->drop_tx : &sim->drop_rx;
-		if (*drops != 0U) {
+		zlrs_frame_t air;
+		CHECK(zlrs_frame_decode(&air, source->buf, source->size,
+				      zlrs_profile_tag_len(sender->cfg.profile)));
+		if (*drops != 0U && (!sim->drop_confirms_only || air.type == ZLRS_PKT_SESS_CFM)) {
 			(*drops)--;
 			zlrs_link_complete(receiver, ZLRS_RADIO_OK, 0U, 0, 0, sim->now_ms);
 		} else {
@@ -213,6 +228,336 @@ static void test_quality_window_boundary(void)
 	CHECK(stats->lq_percent == 100U);
 }
 
+static void test_data_sequence_wrap(void)
+{
+	static sim_t sim;
+	sim_init(&sim);
+	sim.tx.link.cfg.data_mtu = 1U;
+	sim.rx.link.cfg.data_mtu = 1U;
+	zlrs_link_press(&sim.tx.link, sim.now_ms);
+	zlrs_link_press(&sim.rx.link, sim.now_ms);
+	for (unsigned int i = 0; i < 3000U && !both_connected(&sim); i++) {
+		sim_frame(&sim);
+	}
+	CHECK(both_connected(&sim));
+	for (unsigned int i = 0U; i < 512U; i++) {
+		const uint8_t up = (uint8_t)i;
+		const uint8_t down = (uint8_t)(i ^ 0x5aU);
+		CHECK(zlrs_link_write(&sim.tx.link, &up, 1U) == 1U);
+		CHECK(zlrs_link_write(&sim.rx.link, &down, 1U) == 1U);
+		/* Drop reverse ACKs, and hold the receiver at sequence wrap boundaries. */
+		if (i % 31U == 0U) {
+			sim.drop_rx = 2U;
+		}
+		const bool blocked = (i & 127U) == 127U;
+		sim.rx.blocked = blocked;
+		for (unsigned int wait = 0U; wait < 1000U; wait++) {
+			if (wait == 12U) {
+				sim.rx.blocked = false;
+			}
+			sim_frame(&sim);
+			if (sim.tx.link.queue_count == 0U && sim.rx.link.queue_count == 0U &&
+			    sim.tx.received_len == i + 1U && sim.rx.received_len == i + 1U) {
+				break;
+			}
+		}
+		CHECK(sim.tx.received_len == i + 1U && sim.rx.received_len == i + 1U);
+		CHECK(sim.rx.received[i] == up && sim.tx.received[i] == down);
+		CHECK(sim.tx.link.arq_seq == ((i + 1U) & ZLRS_DATA_SEQ_MASK));
+		CHECK(sim.rx.link.arq_seq == ((i + 1U) & ZLRS_DATA_SEQ_MASK));
+	}
+	CHECK(sim.rx.link.stats.rx_dup > 0U);
+	CHECK(sim.tx.link.stats.tx_retries > 0U);
+}
+
+
+/* Exercise the production RX entry with correctly authenticated attack packets. */
+static void inject(node_t *receiver, const zlrs_frame_t *packet, uint16_t body_len,
+		   const uint8_t *key, uint32_t now_ms, bool bad_tag)
+{
+	uint8_t bytes[ZLRS_FRAME_MAX_LEN];
+	const uint8_t tag_len = zlrs_profile_tag_len(receiver->link.cfg.profile);
+	const uint16_t size = zlrs_frame_len(body_len, tag_len);
+	CHECK(zlrs_frame_encode(packet, bytes, sizeof(bytes), size, tag_len) == size);
+	if (tag_len != 0U) {
+		zlrs_tag(key, ZLRS_KEY_LEN, bytes, size - tag_len, bytes + size - tag_len);
+		if (bad_tag) {
+			bytes[size - 1U] ^= 0x80U;
+		}
+	}
+	zlrs_link_rx(&receiver->link, bytes, size, -60, 0, now_ms);
+}
+
+static void connect_saved(sim_t *sim, zlrs_profile_t profile)
+{
+	const uint8_t salt[ZLRS_PAIR_SALT_LEN] = {1,2,3,4,5,6,7,8};
+	sim->tx.link.cfg.profile = profile;
+	sim->rx.link.cfg.profile = profile;
+	zlrs_link_set_peer(&sim->tx.link, sim->rx.link.dev_id, salt, sim->now_ms);
+	zlrs_link_set_peer(&sim->rx.link, sim->tx.link.dev_id, salt, sim->now_ms);
+	for (unsigned int i = 0U; i < 3000U && !both_connected(sim); i++) {
+		sim_frame(sim);
+	}
+	CHECK(both_connected(sim));
+}
+
+static void test_replay_and_counters(void)
+{
+	static sim_t sim;
+	sim_init(&sim);
+	connect_saved(&sim, ZLRS_PROFILE_P1);
+	zlrs_link_t *tx = &sim.tx.link;
+	zlrs_link_t *rx = &sim.rx.link;
+	const uint8_t byte = 0x5a;
+	CHECK(zlrs_link_write(tx, &byte, 1U) == 1U);
+	tx->arq_used = 1U;
+	tx->arq_len = 1U;
+	tx->arq_seq = 0U;
+	tx->last_rx_seq = 32770U;
+	zlrs_frame_t frame = {.type = ZLRS_PKT_DATA_DOWN, .seq = 1U,
+		.body.data = {.ack = 1U, .lq_percent = 100U}};
+	inject(&sim.tx, &frame, ZLRS_DATA_PREFIX_LEN, tx->session_key_in, sim.now_ms, false);
+	CHECK(tx->last_rx_seq == 32770U && tx->queue_count == 1U && tx->arq_used == 1U);
+	frame.seq = UINT32_MAX;
+	inject(&sim.tx, &frame, ZLRS_DATA_PREFIX_LEN, tx->session_key_in, sim.now_ms, true);
+	CHECK(tx->last_rx_seq == 32770U && tx->queue_count == 1U);
+	frame.type = ZLRS_PKT_DATA_UP;
+	inject(&sim.tx, &frame, ZLRS_DATA_PREFIX_LEN, tx->session_key_in, sim.now_ms, false);
+	CHECK(tx->last_rx_seq == 32770U && tx->queue_count == 1U);
+	frame.type = ZLRS_PKT_DATA_DOWN;
+	frame.seq = 32771U;
+	inject(&sim.tx, &frame, ZLRS_DATA_PREFIX_LEN, tx->session_key_in, sim.now_ms, false);
+	CHECK(tx->last_rx_seq == 32771U && tx->queue_count == 0U && tx->arq_used == 0U);
+	const uint32_t increasing[] = {65535U, 65536U, 0x7fffffffU, 0x80000000U, UINT32_MAX};
+	for (unsigned int i = 0U; i < sizeof(increasing) / sizeof(increasing[0]); i++) {
+		frame.seq = increasing[i];
+		inject(&sim.tx, &frame, ZLRS_DATA_PREFIX_LEN, tx->session_key_in, sim.now_ms, false);
+		CHECK(tx->last_rx_seq == increasing[i]);
+	}
+	frame.seq = 1U;
+	inject(&sim.tx, &frame, ZLRS_DATA_PREFIX_LEN, tx->session_key_in, sim.now_ms, false);
+	CHECK(tx->last_rx_seq == UINT32_MAX);
+
+	/* Correct tags do not authorize wrong nonces, versions or out-of-domain hops. */
+	const uint32_t baseline = rx->last_rx_seq;
+	const uint32_t last_ms = rx->last_rx_ms;
+	const uint32_t index = rx->frame_index;
+	frame = (zlrs_frame_t){.type = ZLRS_PKT_SYNC, .seq = UINT32_MAX,
+		.body.sync = {.version = 9U, .profile = 1U, .nonce_t = rx->sess_nonce_t,
+			      .hop_index = 0U, .frame_index = index + 100U}};
+	inject(&sim.rx, &frame, ZLRS_SYNC_PAYLOAD_LEN, rx->link_auth_in, sim.now_ms, false);
+	CHECK(rx->last_rx_seq == baseline && rx->frame_index == index);
+	frame.body.sync.version = 10U;
+	frame.body.sync.profile = 0U;
+	inject(&sim.rx, &frame, ZLRS_SYNC_PAYLOAD_LEN, rx->link_auth_in, sim.now_ms, false);
+	CHECK(rx->last_rx_seq == baseline && rx->last_rx_ms == last_ms);
+	frame.body.sync.profile = 1U;
+	frame.body.sync.hop_index = rx->fhss.sequence_count;
+	inject(&sim.rx, &frame, ZLRS_SYNC_PAYLOAD_LEN, rx->link_auth_in, sim.now_ms, false);
+	CHECK(rx->last_rx_seq == baseline && rx->frame_index == index);
+	frame = (zlrs_frame_t){.type = ZLRS_PKT_SESS_CFM, .seq = UINT32_MAX,
+		.body.sess_cfm = {.nonce_r = rx->sess_nonce_r ^ 1U, .hop_index = 0U,
+				  .frame_index = index + 100U}};
+	inject(&sim.rx, &frame, ZLRS_SESS_CFM_PAYLOAD_LEN, rx->session_key_in, sim.now_ms, false);
+	CHECK(rx->last_rx_seq == baseline && rx->last_rx_ms == last_ms);
+	CHECK(zlrs_link_write(rx, &byte, 1U) == 1U);
+	rx->arq_used = 1U;
+	rx->arq_len = 1U;
+	rx->arq_seq = 9U;
+	frame.seq = baseline + 1U;
+	frame.body.sess_cfm.nonce_r = rx->sess_nonce_r;
+	inject(&sim.rx, &frame, ZLRS_SESS_CFM_PAYLOAD_LEN, rx->session_key_in, sim.now_ms + 1U, false);
+	CHECK(rx->last_rx_seq == baseline + 1U && rx->frame_index == index + 100U);
+	CHECK(rx->queue_count == 1U && rx->arq_used == 1U && rx->arq_seq == 9U);
+	inject(&sim.rx, &frame, ZLRS_SESS_CFM_PAYLOAD_LEN, rx->session_key_in, sim.now_ms + 2U, false);
+	CHECK(rx->last_rx_ms == sim.now_ms + 1U);
+}
+
+static void test_response_binding(void)
+{
+	static sim_t sim;
+	sim_init(&sim);
+	connect_saved(&sim, ZLRS_PROFILE_P1);
+	zlrs_link_t *tx = &sim.tx.link;
+	const uint32_t completed_nonce = tx->sess_nonce_t;
+	uint8_t old_key[ZLRS_KEY_LEN];
+	memcpy(old_key, tx->session_key_in, sizeof(old_key));
+	const uint32_t old_baseline = tx->last_rx_seq;
+	zlrs_frame_t frame = {.type = ZLRS_PKT_SESS_RESP, .seq = UINT32_MAX,
+		.body.sess_resp = {.nonce_t = completed_nonce, .nonce_r = tx->sess_nonce_r ^ 1U}};
+	tx->last_rx_ms = sim.now_ms;
+	inject(&sim.tx, &frame, ZLRS_SESS_RESP_PAYLOAD_LEN, tx->link_auth_in, sim.now_ms, false);
+	CHECK(tx->state == ZLRS_STATE_CONNECTED && tx->last_rx_seq == old_baseline);
+	CHECK(memcmp(tx->session_key_in, old_key, sizeof(old_key)) == 0);
+	/* Once silent, that hint can request a fresh challenge, never adopt the old answer. */
+	sim.now_ms += tx->cfg.sync_period_ms + 1U;
+	inject(&sim.tx, &frame, ZLRS_SESS_RESP_PAYLOAD_LEN, tx->link_auth_in, sim.now_ms, false);
+	CHECK(tx->state == ZLRS_STATE_SEARCHING && tx->session_pending && !tx->session_valid);
+	CHECK(tx->sess_nonce_t != completed_nonce && tx->sess_rx_seq == 0U);
+	const uint32_t fresh = tx->sess_nonce_t;
+	inject(&sim.tx, &frame, ZLRS_SESS_RESP_PAYLOAD_LEN, tx->link_auth_in, sim.now_ms, false);
+	CHECK(tx->sess_nonce_t == fresh && tx->sess_rx_seq == 0U && !tx->session_valid);
+	frame.body.sess_resp.nonce_t = fresh;
+	frame.seq = 1U;
+	inject(&sim.tx, &frame, ZLRS_SESS_RESP_PAYLOAD_LEN, tx->link_auth_in, sim.now_ms, true);
+	CHECK(tx->sess_rx_seq == 0U && !tx->session_valid);
+	inject(&sim.tx, &frame, ZLRS_SESS_RESP_PAYLOAD_LEN, tx->link_auth_in, sim.now_ms, false);
+	CHECK(tx->session_valid && tx->sess_rx_seq == 1U && tx->last_rx_seq == 1U);
+	memcpy(old_key, tx->session_key_in, sizeof(old_key));
+	tx->arq_seq = 7U;
+	tx->arq_used = 1U;
+	frame.seq = 2U;
+	inject(&sim.tx, &frame, ZLRS_SESS_RESP_PAYLOAD_LEN, tx->link_auth_in, sim.now_ms, false);
+	CHECK(tx->arq_seq == 7U && tx->arq_used == 1U && tx->last_rx_seq == 2U);
+	CHECK(memcmp(tx->session_key_in, old_key, sizeof(old_key)) == 0);
+	frame.body.sess_resp.nonce_r ^= 1U;
+	frame.seq = UINT32_MAX;
+	inject(&sim.tx, &frame, ZLRS_SESS_RESP_PAYLOAD_LEN, tx->link_auth_in, sim.now_ms, false);
+	CHECK(tx->last_rx_seq == 2U && tx->arq_seq == 7U && tx->arq_used == 1U);
+	CHECK(memcmp(tx->session_key_in, old_key, sizeof(old_key)) == 0);
+}
+
+static void test_pairing_context(void)
+{
+	static sim_t sim;
+	sim_init(&sim);
+	zlrs_link_t *rx = &sim.rx.link;
+	zlrs_link_press(rx, 0U);
+	zlrs_frame_t frame = {.type = ZLRS_PKT_PAIR_REQ, .seq = 42U,
+		.body.pair_req = {.dev_a = {1,2,3,4}, .nonce_a = 0U}};
+	inject(&sim.rx, &frame, ZLRS_PAIR_REQ_PAYLOAD_LEN, rx->auth_key, 1U, false);
+	CHECK(rx->pair_request_valid && rx->pair_wait_cfm && rx->pair_nonce == 0U);
+	const uint32_t nonce_b = rx->pair_nonce_b;
+	frame.seq++;
+	inject(&sim.rx, &frame, ZLRS_PAIR_REQ_PAYLOAD_LEN, rx->auth_key, 2U, false);
+	CHECK(rx->pair_nonce_b == nonce_b && rx->pair_rx_seq == 43U);
+	frame.seq--;
+	inject(&sim.rx, &frame, ZLRS_PAIR_REQ_PAYLOAD_LEN, rx->auth_key, 3U, false);
+	CHECK(rx->pair_rx_seq == 43U && rx->pair_nonce_b == nonce_b);
+	/* The same nonce from another ID is a different request, not a retransmission. */
+	frame.body.pair_req.dev_a[0] = 9U;
+	frame.seq = 1U;
+	inject(&sim.rx, &frame, ZLRS_PAIR_REQ_PAYLOAD_LEN, rx->auth_key, 4U, false);
+	CHECK(rx->peer_id[0] == 9U && rx->pair_nonce_b != nonce_b && rx->pair_rx_seq == 1U);
+	frame = (zlrs_frame_t){.type = ZLRS_PKT_PAIR_CFM, .seq = UINT32_MAX,
+		.body.pair = {.dev_a = {9,2,3,4}, .dev_b = {5,6,7,8},
+			      .nonce_a = 0U, .nonce_b = rx->pair_nonce_b ^ 1U}};
+	inject(&sim.rx, &frame, ZLRS_PAIR_PAYLOAD_LEN, rx->auth_key, 5U, false);
+	CHECK(!rx->paired && rx->pair_rx_seq == 1U);
+	frame.body.pair.nonce_b = rx->pair_nonce_b;
+	frame.seq = 2U;
+	inject(&sim.rx, &frame, ZLRS_PAIR_PAYLOAD_LEN, rx->auth_key, 6U, false);
+	CHECK(rx->paired && rx->state == ZLRS_STATE_SEARCHING && rx->pair_rx_seq == 2U);
+	rx->session_pending = true;
+	rx->sess_rx_seq = 77U;
+	rx->fhss.index = 100U;
+	frame.seq = 3U;
+	inject(&sim.rx, &frame, ZLRS_PAIR_PAYLOAD_LEN, rx->auth_key, 7U, false);
+	CHECK(rx->session_pending && rx->sess_rx_seq == 77U && rx->fhss.index == 100U);
+	frame.type = ZLRS_PKT_PAIR_REQ;
+	frame.body.pair_req = (zlrs_pair_request_frame_t){.dev_a = {1,2,3,4}};
+	frame.seq = 4U;
+	inject(&sim.rx, &frame, ZLRS_PAIR_REQ_PAYLOAD_LEN, rx->auth_key, 8U, false);
+	CHECK(rx->peer_id[0] == 9U && rx->pair_rx_seq == 3U);
+	/* Pairing a reflected/local identity is never permitted. */
+	zlrs_link_press(rx, 9U);
+	memcpy(frame.body.pair_req.dev_a, rx->dev_id, ZLRS_DEV_ID_LEN);
+	inject(&sim.rx, &frame, ZLRS_PAIR_REQ_PAYLOAD_LEN, rx->auth_key, 10U, false);
+	CHECK(!rx->pair_request_valid && rx->pair_rx_seq == 0U);
+}
+
+static void test_confirmation_loss_and_exhaustion(void)
+{
+	static sim_t sim;
+	for (zlrs_profile_t profile = ZLRS_PROFILE_P0; profile <= ZLRS_PROFILE_P1; profile++) {
+		sim_init(&sim);
+		sim.drop_confirms_only = true;
+		sim.drop_tx = 3U;
+		connect_saved(&sim, profile);
+		CHECK(sim.drop_tx == 0U && sim.tx.link.stats.sess_cfm_tx >= 4U);
+		CHECK(sim.rx.link.lq_started);
+		const uint8_t byte = 0xa5;
+		CHECK(zlrs_link_write(&sim.tx.link, &byte, 1U) == 1U);
+		const uint32_t nonce = sim.tx.link.sess_nonce_t;
+		sim.tx.link.tx_seq = UINT32_MAX;
+		sim_frame(&sim);
+		CHECK(sim.tx.link.sess_nonce_t != nonce && sim.tx.link.tx_seq != 0U);
+		CHECK(sim.tx.link.queue_count == 1U);
+		for (unsigned int i = 0U; i < 3000U &&
+		     (!both_connected(&sim) || sim.rx.received_len == 0U); i++) {
+			sim_frame(&sim);
+		}
+		CHECK(both_connected(&sim) && sim.rx.received_len == 1U && sim.rx.received[0] == byte);
+		/* Responder exhaustion also stops the old key and requires a fresh challenge. */
+		const uint32_t before = sim.tx.link.sess_nonce_t;
+		sim.rx.link.tx_seq = UINT32_MAX;
+		sim_frame(&sim);
+		for (unsigned int i = 0U; i < 3000U && !both_connected(&sim); i++) {
+			sim_frame(&sim);
+		}
+		CHECK(both_connected(&sim) && sim.tx.link.sess_nonce_t != before);
+	}
+}
+
+static void test_entropy_failure(void)
+{
+	static sim_t sim;
+	sim_init(&sim);
+	const uint8_t salt[ZLRS_PAIR_SALT_LEN] = {1,2,3,4,5,6,7,8};
+	sim.tx.random_failed = true;
+	zlrs_link_press(&sim.tx.link, 0U);
+	CHECK(sim.tx.link.state == ZLRS_STATE_UNPAIRED);
+	zlrs_link_set_peer(&sim.tx.link, sim.rx.link.dev_id, salt, 0U);
+	CHECK(!sim.tx.link.session_pending && !sim.tx.link.session_valid);
+	CHECK(zlrs_link_slot(&sim.tx.link, ZLRS_SLOT_DATA_A, 1U) == NULL);
+	sim.rx.random_failed = true;
+	zlrs_link_set_peer(&sim.rx.link, sim.tx.link.dev_id, salt, 0U);
+	zlrs_frame_t frame = {.type = ZLRS_PKT_SYNC, .seq = 1U,
+		.body.sync = {.version = 10U, .profile = 1U, .nonce_t = 42U}};
+	inject(&sim.rx, &frame, ZLRS_SYNC_PAYLOAD_LEN, sim.rx.link.link_auth_in, 1U, false);
+	CHECK(!sim.rx.link.session_pending && !sim.rx.link.session_valid);
+	CHECK(zlrs_link_slot(&sim.rx.link, ZLRS_SLOT_DATA_B, 2U) == NULL);
+	zlrs_link_press(&sim.rx.link, 3U);
+	frame = (zlrs_frame_t){.type = ZLRS_PKT_PAIR_REQ, .seq = 1U,
+		.body.pair_req = {.dev_a = {1,2,3,4}}};
+	inject(&sim.rx, &frame, ZLRS_PAIR_REQ_PAYLOAD_LEN, sim.rx.link.auth_key, 4U, false);
+	CHECK(!sim.rx.link.pair_request_valid && !sim.rx.link.pair_wait_cfm);
+	sim.tx.random_failed = false;
+	sim.rx.random_failed = false;
+	zlrs_link_cancel_pair(&sim.rx.link, 5U);
+	for (unsigned int i = 0U; i < 3000U && !both_connected(&sim); i++) {
+		sim_frame(&sim);
+	}
+	CHECK(both_connected(&sim));
+}
+
+static void test_nonce_reuse(void)
+{
+	static sim_t sim;
+	sim_init(&sim);
+	/* Zero is valid on the first pairing round, but cannot seed a second one. */
+	sim.tx.force_random = true;
+	sim.tx.forced_random = 0U;
+	zlrs_link_press(&sim.tx.link, 0U);
+	CHECK(sim.tx.link.pair_request_valid && sim.tx.link.pair_nonce == 0U);
+	zlrs_link_cancel_pair(&sim.tx.link, 1U);
+	zlrs_link_press(&sim.tx.link, 2U);
+	CHECK(sim.tx.link.state == ZLRS_STATE_UNPAIRED);
+	sim.tx.force_random = false;
+	connect_saved(&sim, ZLRS_PROFILE_P1);
+	sim.tx.force_random = true;
+	sim.tx.forced_random = sim.tx.link.sess_nonce_t;
+	sim.tx.link.tx_seq = UINT32_MAX;
+	sim_frame(&sim);
+	CHECK(!sim.tx.link.session_pending && !sim.tx.link.session_valid);
+	CHECK(zlrs_link_slot(&sim.tx.link, ZLRS_SLOT_DATA_A, sim.now_ms) == NULL);
+	sim.tx.force_random = false;
+	for (unsigned int i = 0U; i < 3000U && !both_connected(&sim); i++) {
+		sim_frame(&sim);
+	}
+	CHECK(both_connected(&sim));
+}
+
 void test_link(void)
 {
 	static sim_t sim;
@@ -268,7 +613,8 @@ void test_link(void)
 	CHECK(zlrs_link_get_info(&sim.rx.link).last_peer_feedback_ms > rx_feedback_before);
 	/* Golden bytes for this fixed protocol scenario. */
 	CHECK(wire_packets == 200U);
-	CHECK(wire_hash == UINT64_C(0x9111d88d2488e835));
+	printf("wire v10: packets=%u hash=%016llx\n", wire_packets, (unsigned long long)wire_hash);
+	CHECK(wire_hash == UINT64_C(0x926850c2e593c031));
 	/* An authenticated DATA capture cannot be delivered twice, tampered with or reflected. */
 	CHECK(captured_len > 0U);
 	const uint16_t received = sim.rx.received_len;
@@ -304,18 +650,16 @@ void test_link(void)
 	}
 	zlrs_frame_t before;
 	CHECK(zlrs_frame_decode(&before, prepared, prepared_size, ZLRS_TAG_LEN));
-	uint8_t peer_payload[] = {(uint8_t)sim.rx.link.arq_seq, (uint8_t)(sim.rx.link.arq_seq >> 8),
-				  60U, 100U, 0xabU};
 	uint8_t peer_frame[32];
-	const uint8_t placeholder_tag[ZLRS_TAG_LEN] = {0};
 	zlrs_frame_t packet = {.type = ZLRS_PKT_DATA_DOWN,
-			       .seq = sim.rx.link.tx_seq++,
-			       .flags = sim.tx.link.arq_seq & 1U ? ZLRS_FLAG_ACK : 0U,
-			       .payload = peer_payload,
-			       .payload_len = sizeof(peer_payload),
-			       .tag = placeholder_tag};
-	const uint16_t peer_size = zlrs_frame_len(sizeof(peer_payload), ZLRS_TAG_LEN);
-	CHECK(zlrs_frame_encode(&packet, peer_frame, sizeof(peer_frame)) == peer_size);
+		.seq = sim.rx.link.tx_seq++, .body.data = {
+			      .data_seq = sim.rx.link.arq_seq,
+			      .ack = sim.tx.link.arq_seq & 1U,
+			      .rssi_magnitude = 60U, .lq_percent = 100U,
+			      .bytes = {0xabU}}};
+	const uint16_t peer_size = zlrs_frame_len(ZLRS_DATA_PREFIX_LEN + 1U, ZLRS_TAG_LEN);
+	CHECK(zlrs_frame_encode(&packet, peer_frame, sizeof(peer_frame), peer_size, ZLRS_TAG_LEN)
+	      == peer_size);
 	zlrs_tag(sim.rx.link.session_key_out, ZLRS_KEY_LEN, peer_frame, peer_size - ZLRS_TAG_LEN,
 		 &peer_frame[peer_size - ZLRS_TAG_LEN]);
 	const uint16_t delivered_before = sim.tx.received_len;
@@ -329,10 +673,10 @@ void test_link(void)
 		zlrs_frame_t after;
 		CHECK(zlrs_frame_decode(&after, request->buf, request->size, ZLRS_TAG_LEN));
 		CHECK(after.type == ZLRS_PKT_DATA_UP);
-		CHECK((before.flags & ZLRS_FLAG_ACK) == (after.flags & ZLRS_FLAG_ACK));
+		CHECK(before.body.data.ack == after.body.data.ack);
 		CHECK(sim.tx.link.arq_ack_pending);
-		CHECK(after.payload_len == sizeof(queued) + 4U);
-		CHECK(memcmp(after.payload + 4U, queued, sizeof(queued)) == 0);
+		CHECK(request->size == zlrs_frame_len(ZLRS_DATA_PREFIX_LEN + sizeof(queued), ZLRS_TAG_LEN));
+		CHECK(memcmp(after.body.data.bytes, queued, sizeof(queued)) == 0);
 		zlrs_link_complete(&sim.tx.link, ZLRS_RADIO_OK, 0U, 0, 0, sim.now_ms);
 	}
 
@@ -346,8 +690,8 @@ void test_link(void)
 		zlrs_frame_t ack;
 		CHECK(zlrs_frame_decode(&ack, request->buf, request->size, ZLRS_TAG_LEN));
 		if (ack.type == ZLRS_PKT_DATA_UP) {
-			CHECK(ack.payload_len == 2U);
-			CHECK((before.flags & ZLRS_FLAG_ACK) != (ack.flags & ZLRS_FLAG_ACK));
+			CHECK(request->size == zlrs_frame_len(ZLRS_DATA_PREFIX_LEN, ZLRS_TAG_LEN));
+			CHECK(before.body.data.ack != ack.body.data.ack);
 			CHECK(!sim.tx.link.arq_ack_pending);
 			ack_sent = true;
 		}
@@ -372,5 +716,12 @@ void test_link(void)
 	const uint32_t old_session_tags = sim.rx.link.stats.rx_bad_tag;
 	zlrs_link_rx(&sim.rx.link, old_capture, old_size, -60, 0, sim.now_ms);
 	CHECK(sim.rx.link.stats.rx_bad_tag == old_session_tags + 1U);
+	test_replay_and_counters();
+	test_response_binding();
+	test_pairing_context();
+	test_confirmation_loss_and_exhaustion();
+	test_entropy_failure();
+	test_nonce_reuse();
 	test_quality_window_boundary();
+	test_data_sequence_wrap();
 }

@@ -5,8 +5,6 @@
 #include <assert.h>
 #include <string.h>
 
-#define DATA_FEEDBACK_LEN   2U
-#define DATA_ARQ_HEADER_LEN (DATA_FEEDBACK_LEN + 2U)
 
 static inline uint32_t rd32(const uint8_t *p)
 {
@@ -23,20 +21,22 @@ static inline void wr32(uint8_t *p, uint32_t v)
 }
 
 uint16_t link_acq_timeout_ms(const zlrs_link_t *link);
-uint16_t link_build_frame(zlrs_link_t *link, uint8_t type, uint8_t flags, const uint8_t *payload,
-			  uint16_t len, const uint8_t *tag_key);
+uint16_t link_build_frame(zlrs_link_t *link, zlrs_frame_t *frame,
+			  uint16_t payload_len, const uint8_t *tag_key);
 void link_derive_by_endpoints(const zlrs_link_t *link, const char *label, const uint8_t *ctx,
 			      size_t ctx_len, uint8_t out[ZLRS_KEY_LEN], uint8_t in[ZLRS_KEY_LEN]);
-uint16_t link_encode_frame(const zlrs_link_t *link, uint8_t *buf, uint16_t seq, uint8_t type,
-			   uint8_t flags, const uint8_t *payload, uint16_t len,
-			   const uint8_t *tag_key);
-void link_handle_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms);
+uint16_t link_encode_frame(const zlrs_link_t *link, uint8_t *buf,
+			   const zlrs_frame_t *frame, uint16_t payload_len, const uint8_t *tag_key);
+void link_handle_data(zlrs_link_t *link, const zlrs_frame_t *frame,
+		      uint16_t data_len, uint32_t now_ms);
 bool link_handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms);
-int link_handle_sess_cfm(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms);
+int link_handle_sess_cfm(zlrs_link_t *link, const zlrs_frame_t *frame,
+		       uint16_t len, uint32_t now_ms);
 bool link_handle_sess_resp(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms);
 void link_handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms);
-uint32_t link_random(const zlrs_link_t *link, uint32_t salt);
-void link_lq_account(zlrs_link_t *link, uint16_t seq);
+bool link_new_nonce(const zlrs_link_t *link, uint32_t previous, bool have_previous,
+		    uint32_t *out);
+void link_lq_account(zlrs_link_t *link, uint32_t seq);
 const zlrs_radio_req_t *link_pair_slot(zlrs_link_t *link, bool down, uint32_t now_ms);
 void link_roll_session(zlrs_link_t *link, uint32_t now_ms);
 const zlrs_radio_req_t *link_send_data(zlrs_link_t *link, uint32_t now_ms);

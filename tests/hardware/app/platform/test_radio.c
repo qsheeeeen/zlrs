@@ -40,14 +40,14 @@ static struct {
 static uint32_t channel_crc_previous;
 
 void __real_zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
-			   uint32_t (*random)(void *ctx), void *random_ctx,
+			   bool (*random)(void *ctx, uint32_t *out), void *random_ctx,
 			   const zlrs_link_events_t *events);
 int __real_zlrs_lr2021_init(void);
 void __real_zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t rssi,
 			       int8_t snr, uint32_t now_ms);
 
 void __wrap_zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
-			   uint32_t (*random)(void *ctx), void *random_ctx,
+			   bool (*random)(void *ctx, uint32_t *out), void *random_ctx,
 			   const zlrs_link_events_t *events)
 {
 	__real_zlrs_link_init(link, cfg, random, random_ctx, events);

@@ -81,13 +81,6 @@ typedef struct {
 	 */
 	uint8_t hopping;
 	/*
-	 * Session handshake. 0 = the pairing-level link_auth doubles as the session key: after a SYNC
-	 * only a SESS_RESP is needed and the first data frame is the confirmation. Saves a derivation
-	 * and a message, costs per-session key rotation: bench only, see doc/09-security.md
-	 * 3.
-	 */
-	uint8_t handshake;
-	/*
 	 * Periodic SYNC interval while connected, in frames. 0 = no periodic resync (the hop index
 	 * is only aligned when the link comes up); >0 = a SYNC every this many frames lets the peer
 	 * correct drift and notice a peer that changed sessions (reboot/re-pair) and re-handshake.
@@ -180,8 +173,8 @@ typedef struct {
 	uint8_t key[ZLRS_KEY_LEN];
 	uint32_t frame_index;
 	uint16_t size;
-	uint16_t frame_seq;
-	uint16_t data_seq;
+	uint32_t frame_seq;
+	uint8_t data_seq;
 	uint16_t data_len;
 	uint16_t data_mtu;
 	zlrs_profile_t profile;
@@ -192,7 +185,7 @@ typedef struct {
 
 typedef struct {
 	zlrs_link_cfg_t cfg;
-	uint32_t (*random)(void *ctx);
+	bool (*random)(void *ctx, uint32_t *out);
 	void *random_ctx;
 	zlrs_link_events_t ev;
 	zlrs_link_stats_t stats;
@@ -229,7 +222,9 @@ typedef struct {
 	 * to prove the peer derived the same key. The RX only adopts the session after that proof,
 	 * so replaying an old SYNC yields no old session key.
 	 */
-	bool session_pending;     /* RX: answered a SYNC, waiting for the peer's confirm */
+	bool session_pending;     /* TX: waiting for response; RX: waiting for confirm */
+	uint32_t sess_rx_seq;     /* Candidate handshake's receive baseline. */
+	bool sess_nonce_valid;    /* A local nonce has been drawn before, including zero. */
 	bool sess_resp_due;       /* RX: SESS_RESP due in the uplink slot */
 	bool sess_cfm_due;        /* TX: SESS_CFM due in the downlink slot */
 	bool sess_ack_due;        /* DATA RX: session-key authenticated empty ACK due */
@@ -252,16 +247,15 @@ typedef struct {
 	bool pair_cfm_pending;   /* TX got PAIR_RESP: PAIR_CFM due in the downlink slots */
 	uint8_t pair_cfm_sent;   /* PAIR_CFM of this handshake already sent */
 	bool pair_wait_cfm;      /* RX answered PAIR_RESP, waiting for PAIR_CFM */
-	/*
-	 * Simplified handshake (cfg.handshake = 0): the RX enters CONNECTED on a SYNC but keeps
-	 * answering SESS_RESP until the peer's first frame arrives: it may still be SEARCHING.
-	 */
-	bool announce;
+	bool pair_request_valid; /* A responder request exists, including nonce_a == 0. */
+	bool pair_nonce_valid;   /* A local pairing nonce exists independently of pending state. */
+	uint32_t pair_rx_seq;    /* Pairing exchange's receive baseline. */
+	uint32_t pair_tx_seq;    /* Pairing attempts, including delayed confirms after pairing. */
 
 	/* sequence numbers and hopping */
-	uint16_t tx_seq;
-	uint16_t last_rx_seq;
-	uint16_t lq_last_seq;
+	uint32_t tx_seq;         /* Next attempt, starting at one; never wraps. */
+	uint32_t last_rx_seq;
+	uint32_t lq_last_seq;
 	bool lq_started;
 	uint32_t frame_index; /* DATA_A slots run */
 	zlrs_fhss_t fhss;
@@ -273,7 +267,7 @@ typedef struct {
 	uint16_t pending_data_len;
 
 	/* ARQ sender: one packet retained until the peer ACK bit changes. */
-	uint16_t arq_seq;
+	uint8_t arq_seq;
 	uint16_t arq_len;
 	uint32_t arq_first_sent_ms;
 	/* Retransmissions preserve the data sequence and payload. */
@@ -285,7 +279,7 @@ typedef struct {
 	uint8_t peer_lq_percent;
 	uint32_t last_peer_feedback_ms;
 	/* ARQ receiver: last accepted data sequence determines the ACK toggle. */
-	uint16_t arq_rx_seq;
+	uint8_t arq_rx_seq;
 	bool arq_rx_started;
 	bool arq_ack_pending;
 
@@ -352,7 +346,8 @@ bool zlrs_link_get_pairing(const zlrs_link_t *link, uint8_t peer_id[ZLRS_DEV_ID_
 			   uint8_t pair_salt[ZLRS_PAIR_SALT_LEN]);
 
 /* Only nonce generation is injected; the caller executes each returned radio request. */
-void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg, uint32_t (*random)(void *ctx),
+void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
+		    bool (*random)(void *ctx, uint32_t *out),
 		    void *random_ctx, const zlrs_link_events_t *events);
 
 /* The link only joins the air once a root key has been written */

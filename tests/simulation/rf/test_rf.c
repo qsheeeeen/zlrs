@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <string.h>
 #include <zephyr/ztest.h>
+#include <zephyr/random/random.h>
 #include "rf.h"
 #include "persist.h"
 #include "diagnostics.h"
@@ -75,10 +76,10 @@ bool zlrs_persist_get_pairing(zlrs_persist_pairing_t *out)
 	return true;
 }
 
-void __real_zlrs_link_init(zlrs_link_t *, const zlrs_link_cfg_t *, uint32_t (*)(void *), void *,
+void __real_zlrs_link_init(zlrs_link_t *, const zlrs_link_cfg_t *, bool (*)(void *, uint32_t *), void *,
 			   const zlrs_link_events_t *);
 void __wrap_zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
-			   uint32_t (*random)(void *), void *ctx, const zlrs_link_events_t *events)
+			   bool (*random)(void *, uint32_t *), void *ctx, const zlrs_link_events_t *events)
 {
 	__real_zlrs_link_init(link, cfg, random, ctx, events);
 	local = link;
@@ -284,6 +285,12 @@ static void frames(unsigned int count)
 		zassert_false(zlrs_link_is_busy(local));
 	}
 }
+static bool peer_random(void *ctx, uint32_t *out)
+{
+	ARG_UNUSED(ctx);
+	*out = sys_rand32_get();
+	return true;
+}
 ZTEST(rf_results, test_protocol_completion_and_timeouts)
 {
 	zassert_equal(zlrs_rf_init(), -ENODEV);
@@ -298,7 +305,7 @@ ZTEST(rf_results, test_protocol_completion_and_timeouts)
 	zlrs_link_cfg_t cfg = *zlrs_link_get_config(local);
 	cfg.role = RF_TEST_ROLE_RX ? ZLRS_ROLE_TX : ZLRS_ROLE_RX;
 	const zlrs_link_events_t events = {.on_data = receive_peer};
-	__real_zlrs_link_init(&peer, &cfg, NULL, NULL, &events);
+	__real_zlrs_link_init(&peer, &cfg, peer_random, NULL, &events);
 	zlrs_link_set_dev_id(&peer, saved_pairing.peer_id);
 	zlrs_link_set_root_key(&peer, saved_key, 0);
 	zlrs_link_set_peer(&peer, saved_id, saved_pairing.pair_salt, 0);
