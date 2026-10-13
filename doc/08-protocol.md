@@ -1,6 +1,6 @@
 # 空中协议与管理状态
 
-本文定义协议 10 的空中格式、数据模型、收发规则及管理状态契约。各端须选择相同版本、频段和 profile；不兼容其他空中版本。密钥与安全边界见[安全设计](09-security.md)，模块职责见[架构](06-architecture.md)。
+本文定义协议 11 的空中格式、数据模型、收发规则及管理状态契约。各端须选择相同版本、频段模式、SubG 区域和 profile；不兼容其他空中版本。密钥与安全边界见[安全设计](09-security.md)，模块职责见[架构](06-architecture.md)。
 
 ## 1. 总体格式
 
@@ -12,7 +12,7 @@ TYPE / 该类型首字节字段 | SEQ(u32) | 该类型消息体 | TAG
 - DATA、PAIR、SESS_RESP、SESS_CFM 的首字节高 5 bit 为字节对齐位，必须为零。
 - SYNC 的 type 后正好接本类型的 `profile:1` 和 `version:4`，三项共同占首字节：bit3=profile，bit4–7=version。这些值是 SYNC 消息体字段，不是所有帧共有的标志。
 - SYNC 的 version/profile 必须与本地选择一致，否则拒绝该握手。
-- 本格式只编码 P0=0、P1=1；加密 profile 属于未来协议扩展。版本 10 可用 4 bit 表示；版本超过 15 或增加 profile 时需要明确修订格式，编译期检查必须阻止截断。
+- 本格式只编码 P0=0、P1=1；加密 profile 属于未来协议扩展。版本 11 可用 4 bit 表示；版本超过 15 或增加 profile 时需要明确修订格式，编译期检查必须阻止截断。
 - 公共逻辑字段是 type、seq 和 tag。八种帧均携带 seq，在线格式中固定占首字节之后的 4 B；各消息体不再重复定义 seq。不把 ACK、length、身份或会话 nonce 放进公共头。
 - P1 tag 是 4 B 截断 HMAC-SHA256，覆盖实际编码的首字节、公共 seq 和消息体；P0 不发送 tag。接收侧按本地 profile 决定 tag 长度，不根据未经认证的 SYNC profile 降级。
 - LR2021 提供物理前导、同步字、长度和 CRC。它们不重复放进软件帧。多字节整数均为小端。
@@ -23,11 +23,11 @@ TYPE / 该类型首字节字段 | SEQ(u32) | 该类型消息体 | TAG
 | --- | --- |
 | 帧对象 | type:3 bit、body:union、seq:u32、tag:内嵌 4 B 数组 |
 | data | ack:1 bit、data_seq:7 bit、RSSI:u8、LQ:u8、内嵌数据数组容量 503 B |
-| sync | profile:1 bit、version:4 bit、hop:u8、nonce_t:u32、frame_index:u32 |
+| sync | profile:1 bit、version:4 bit、hop:u8、nonce_t:u32、frame_index:u32、band_plan |
 | pair_req | dev_a:4 B、nonce_a:u32 |
 | pair | dev_a:4 B、dev_b:4 B、nonce_a:u32、nonce_b:u32 |
 | sess_resp | nonce_t:u32、nonce_r:u32 |
-| sess_cfm | nonce_r:u32、hop:u8、frame_index:u32 |
+| sess_cfm | nonce_r:u32、hop:u8、frame_index:u32、band_plan |
 
 消息体不得重复公共 seq，公共字段不属于消息体 union。DATA 和 tag 拥有字节数组，不使用数据指针或 size 字段。有效 DATA 长度从整帧长度推导。
 
@@ -41,14 +41,14 @@ TYPE / 该类型首字节字段 | SEQ(u32) | 该类型消息体 | TAG
 | --- | --- | --- | ---: | ---: |
 | DATA_UP | 0 | ack_seq(1), RSSI(1), LQ(1), data(N) | 8+N | 12+N |
 | DATA_DOWN | 1 | 同上 | 8+N | 12+N |
-| SYNC | 2 | hop(1), nonce_t(4), frame_index(4)；profile/version 已在首字节 | 14 | 18 |
+| SYNC | 2 | hop(1), nonce_t(4), frame_index(4), band_plan(5)；profile/version 已在首字节 | 19 | 23 |
 | PAIR_REQ | 3 | dev_a(4), nonce_a(4) | 13 | 17 |
 | PAIR_RESP | 4 | dev_a(4), dev_b(4), nonce_a(4), nonce_b(4) | 21 | 25 |
 | PAIR_CFM | 5 | 同上 | 21 | 25 |
 | SESS_RESP | 6 | nonce_t(4), nonce_r(4) | 13 | 17 |
-| SESS_CFM | 7 | nonce_r(4), hop(1), frame_index(4) | 14 | 18 |
+| SESS_CFM | 7 | nonce_r(4), hop(1), frame_index(4), band_plan(5) | 19 | 23 |
 
-首字节 SYNC 示例：version=10、P1、type=2，编码为 `0xAA`。非 SYNC 首字节就是编号 0–7。
+首字节 SYNC 示例：version=11、P1、type=2，编码为 `0xBA`。非 SYNC 首字节就是编号 0–7。
 
 DATA 的 ack_seq 仍为 bit0=ACK、bit1–7=data_seq。DATA 有效长度：
 
@@ -131,13 +131,27 @@ RX follows authenticated packet timestamps. When receptions stop, it scans the f
 
 对端重启并开始新的会话握手时，接收端须重新采集相位锁定样本；上一轮已锁定的异常值门限不能阻止新时钟相位被采纳，即使停收时间尚未达到扫描期限。相位重新锁定仍依据合法接收时间戳，不改变固定发射边界或允许晚发。重连验收须检查两个方向实际恢复 DATA 交付，不能仅以 CONNECTED 状态或收到单向确认帧作为成功依据。
 
+### 自动跨频段切换
+
+频段模式有固定 `2.4`、固定 `subg` 和 `auto`。新设备默认 `auto`；已有明确保存的固定模式继续有效，启用自动切换须在两端选择 `auto` 并重启。自动模式优先使用 2.4 GHz，SubG 使用双方一致且适配板载 SKU 的区域配置。一次只运行一个 DATA 频段；探测、切换和失联搜索都属于同一自动切换功能。配对在 2.4 GHz 完成，配对期间不搜索其他频段。
+
+TX 是切换计划的唯一发布方。SYNC 与 SESS_CFM 各增加 5 B `band_plan`，其余六种帧及 DATA 容量不变。第一个字节 bit0–2 是当前信道域（0=FCC915、1=EU868、2=CN470、3=CN433、4=ISM2400），bit3 表示自动模式，bit4 表示目标频段（0=2.4 GHz、1=SubG），bit5–7 必须为零；后四字节为小端 u32 `switch_frame`。零表示没有计划，非零表示在该共同帧开始前切换。目标不同于当前频段，计划必须在当前帧之后且不超过 65535 帧；固定模式不得发布计划。SYNC/确认的域和模式必须匹配当前接收配置，认证、nonce 和 seq 检查全部通过后才能采纳计划。旧帧、错误域、非法或已过期的计划不能改变频段、时钟或接收基线。
+
+正常切换提前至少一个周期同步间隔加 2 秒公告；公告首先覆盖双方已知的周期同步窗口，随后在同步频道重复。接收方收到计划后也在同步频道收发，继续处理 DATA 与 ACK。双方完成 `switch_frame-1` 的两个时隙后，在下一帧边界前停止旧无线事务，取消预装帧，换用目标频段的调制、跳频表和功率上限。过渡边界增加共同的 12 ms 保护间隔，新频段重新采集相位，固定发射时刻仍由硬件定时器执行。跳频从新表起点重新对齐；共同 frame_index、发送 seq、接收防重放基线、会话密钥、双向 DATA 序号、接收去重状态、未确认包和串口队列全部保留。旧频段的质量样本与调功观察清除，目标频段从允许的功率上限开始。
+
+2.4 GHz 上任一方向的有效反馈持续 5 秒低于 95% LQ 或 RSSI 低于 -95 dBm 时，TX 安排切至 SubG。单个异常样本不触发切换。SubG 至少稳定运行 60 秒后，TX 安排一次 2.4 GHz 探测；探测须有连续 5 秒的新鲜双向反馈才保留 2.4 GHz，失败则返回 SubG，并重新开始 60 秒等待。这些阈值是初始产品策略，需要后续 RF 校准；瞬时管理暂停不能成为持续质量恶化的证据。
+
+完全失联无法依赖公告成功。默认连续 1.5 秒没有已确认会话的有效对端接收后进入恢复搜索；有效会话在搜索期间保留，不能因搜索重置 ARQ。先尝试另一频段，随后 TX 每个频段停留 20 秒，RX 每个频段停留 4 秒，避免双方同时换频而永久错过。恢复期间 TX 周期发送同步，RX 在同步频道扫描相位；同会话合法 SYNC 恢复共同 frame/hop，接收方以有效同步/确认完成捕获，TX 以有效反向 DATA 完成捕获。丢失全部公告、单向丢包、不同启动时刻或一端重启均须通过这种搜索再次汇合。对端重启仍执行完整的新会话握手；单纯频段切换不建立新会话。
+
+SubG 的占空比预算跨切换保留；探测、同步、确认和 DATA 都计入实际 airtime，换出再换回不能重置预算。受占空比限制的区域将无反馈等待与搜索停留时间延长到至少一个预算窗口加 2 秒，以免把合法等待当作链路故障，也给双方留下合法汇合机会。管理暂停后取消未执行计划并重新捕获；所有队列保持背压，不因切换清空数据。没有可用频段时持续有限停留搜索，管理与看门狗保持可用。
+
 ## 6. 管理状态
 
 Management version `4` uses a fixed 90-byte `STATUS_RESP`, filling one 96-byte management frame. Multibyte integers are little endian; RSSI and temperature are signed 16-bit values, and power values are signed 8-bit dBm. The firmware and host use this one status layout.
 
 | Offset | Bytes | Field |
 | --- | --- | --- |
-| 0 | 4 | Management version, role, state, flags |
+| 0 | 4 | Management version, role, state, flags；bit3 当前 SubG、bit4 自动模式、bit5 捕获中、bit6 有待执行切换计划 |
 | 4 | 8 | Device ID, peer ID |
 | 12 | 4 | Local LQ, sub-G hardware SKU, region, configured TX ceiling |
 | 16 | 4 | Saved DATA UART baud |
@@ -174,5 +188,6 @@ LR2021 measurements run only on the RF owner at boot or during a paused manageme
 - 所有类型在对应接收上下文内校验 seq；握手到 CONNECTED 不回退该轮发送序号，新轮次建立正确基线；seq 初筛只读，错误 nonce/认证和伪造大 seq 均不推进基线或驱动状态。
 - 熵源不可用、有限等待后超时或随机服务报错时，两种角色均不能发送依赖新 nonce 的握手；失败输出不能成为 nonce，不能退回时钟或普通伪随机数。恢复熵源后须能完成新的握手，保留待交付 DATA。
 - LQ 窗口及有效确认的记账、所有区域索引边界、两频段可变长度短包/满包实机、FIFO tail/underflow、固定发射时刻和关键 SRAM 函数。
+- 自动模式：双向质量恶化、完全/单向失联、公告丢失、切换时未确认 DATA 与丢 ACK、背压、探测成功/失败、短时异常、不同启动时刻、对端重启和管理暂停。固定模式不得自动切换；错误认证/seq/nonce/域/模式或非法计划不得触发切换。占空比不得借切换重置，恢复须验证双向实际字节交付及无重复。
 
 seq、ACK、长度、握手和格式的边界分别检查；字段省略不得降低身份/请求绑定或将重发当新用户字节。验证结果与运行记录须独立于设计文档保存。

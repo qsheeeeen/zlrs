@@ -192,7 +192,7 @@ and response frames. Business effects and status fields form the management cont
 | set region | validated against the board's radio design, refused on mismatch, next boot |
 | set power ceiling | never above the chosen region's limit, next boot |
 | set role | `tx` or `rx`, next boot |
-| set DATA band | `2.4` or `subg` for data and pairing, next boot |
+| set DATA band | `auto`, `2.4` or `subg`, next boot; auto pairing uses 2.4 GHz |
 | set profile | `p0` (debug images only), `p1`, `p2` (future extension), next boot |
 | new device id | makes a fresh device id from the TRNG and stores it; the pairing record is erased with it (the peer knows the old id) |
 | factory reset | wipes NVS, next boot |
@@ -209,3 +209,5 @@ Sending `ENTER` again in an active session flushes pending logs before acknowled
 
 The tool that speaks it is `tools/zlrs.py`; the update flow built on top is in
 [07-firmware](07-firmware.md).
+
+Automatic band plans are authenticated as part of SYNC/session confirmation and accepted only in their nonce/sequence context. Changing bands preserves session counters and DATA deduplication; it never rolls keys or resets anti-replay state merely to change frequencies. Both peers must agree on automatic/fixed mode and the active domain.

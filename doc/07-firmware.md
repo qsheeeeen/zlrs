@@ -17,7 +17,7 @@ python3 tools/zlrs.py pair --serial <TX-serial>
 python3 tools/zlrs.py pair --serial <RX-serial>
 ```
 
-`set-band 2.4|subg` selects the DATA radio band; set the same value on both devices and reboot. `set-region` must match the board's LF/HF sub-G SKU. `set-power` stores the regional TX power ceiling. The DATA link adjusts its active power from peer RSSI and link quality while feedback is fresh, then returns to the ceiling on feedback loss. `set-baud`, `set-profile`, `erase-pair`, `new-dev-id` and `factory-reset` are also available. Settings are persistent; band, role, region, power ceiling, profile and UART baud changes take effect after reboot.
+`set-band auto|2.4|subg` selects automatic switching or a fixed DATA band; set the same mode and SubG region on both devices and reboot. New devices default to `auto`; saved fixed-band choices remain valid. Automatic mode prefers 2.4 GHz, falls back to SubG after sustained poor quality or loss, and probes 2.4 GHz after 60 seconds on SubG. DATA queues and the session survive a band change. Switching and recovery timing are specified in [protocol](08-protocol.md#自动跨频段切换). `set-region` must match the board's LF/HF sub-G SKU. `set-power` stores the regional TX power ceiling. The DATA link adjusts its active power from peer RSSI and link quality while feedback is fresh, then returns to the ceiling on feedback loss. `set-baud`, `set-profile`, `erase-pair`, `new-dev-id` and `factory-reset` are also available. Settings are persistent; band, role, region, power ceiling, profile and UART baud changes take effect after reboot.
 
 The button starts pairing. A management session pauses radio operation; it exits on command or idle timeout. During that session DATA bytes cannot cross the radio.
 
