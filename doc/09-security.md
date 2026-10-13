@@ -1,8 +1,8 @@
 # Security
 
 This document defines identity, keys, authenticated exchanges, replay checks and
-the local management trust boundary. Fields and receive rules are specified in
-[air-frame-design](air-frame-design.md); link behavior is in [08-protocol](08-protocol.md).
+the local management trust boundary. Air fields, receive rules and link behavior
+are specified in [08-protocol](08-protocol.md).
 
 ## 1. Identity
 
