@@ -92,8 +92,8 @@ Run `python3 tools/zlrs.py --help` for all commands.
 - [Hardware reference](boards/zlrs/rp2350_zero_core2021/README.md) — boards, pins and peripherals.
 - [Firmware and configuration](doc/07-firmware.md) — device operation and updates.
 - [Architecture](doc/06-architecture.md), [protocol](doc/08-protocol.md) and
-  [security](doc/09-security.md) — implementation details.
+  [security](doc/09-security.md) — design specifications.
 - [Development and debugging](doc/11-debug.md) — developer tools and diagnostics.
-- [Roadmap and hardware validation](doc/12-roadmap.md) — current results and remaining work.
+- [Roadmap and hardware validation](doc/12-roadmap.md) — planned work and acceptance criteria.
 
 ZLRS is under active development and uses its own protocol; it is not compatible with ExpressLRS.

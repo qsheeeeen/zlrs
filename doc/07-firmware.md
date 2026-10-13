@@ -40,4 +40,4 @@ The updater triggers recovery, uploads to the inactive slot, verifies the runnin
 
 See [security](09-security.md), [protocol](08-protocol.md) and [board definition](../boards/zlrs/rp2350_zero_core2021/README.md).
 
-NVS record 0 stores the layout marker; records 1–9 are the explicit band, baud, region, power, role, profile, key, identity and pairing IDs in `persist.c`. A missing or invalid marker clears the settings area before loading defaults. Factory reset erases the whole settings area and writes a fresh marker.
+NVS record 0 stores the layout marker; records 1–9 are the explicit band, baud, region, power, role, profile, key, identity and pairing record IDs in the storage schema. A missing or invalid marker clears the settings area before loading defaults. Factory reset erases the whole settings area and writes a fresh marker.

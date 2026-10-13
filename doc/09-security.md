@@ -1,8 +1,8 @@
 # Security
 
-The identity model, the key tree, pairing and sessions, the security profiles, the threat model
-and the configuration protocol. Frames and states: [08-protocol](08-protocol.md);
-implementation: `core/proto/crypto*.c` and `core/link/link.c`.
+This document defines identity, keys, authenticated exchanges, replay checks and
+the local management trust boundary. Fields and receive rules are specified in
+[air-frame-design](air-frame-design.md); link behavior is in [08-protocol](08-protocol.md).
 
 ## 1. Identity
 
@@ -20,16 +20,14 @@ nonces) in NVS, and re-pairing replaces it.
 
 ## 2. Threat model
 
-The design targets two levels and explicitly not a third:
+P1 must authenticate paired endpoints and reject stale messages within the
+selected exchange. An adversary may record, replay, forge or jam radio traffic.
+P1 exposes plaintext and uses a 32-bit authentication tag, limiting forgery
+resistance; encryption is a future profile extension.
 
-- **L1 - a hostile outsider**: someone with a radio can record, replay, forge or jam. P1 exposes
-  plaintext and a 32-bit authentication tag. Forgery resistance is limited by that tag length;
-  payload encryption requires the unimplemented P2 profile.
-- **L2 - a stolen device or a leaked group key**, mitigated by per-frame authentication, per
-  session keys and replay protection rather than by secrecy of the format.
-- **L3 - an adversary with the root key and physical access** is out of scope: there is no
-  forward secrecy (that would need ephemeral key agreement) and anyone who holds `root_key` can
-  pair with any device in the group and displace the existing pairing.
+Possession of the group root key allows deriving traffic keys and impersonating
+members. Session keys and sequences do not repair that compromise. Physical
+compromise and forward secrecy are outside this design.
 
 Consequences worth stating plainly:
 
@@ -70,12 +68,15 @@ Pairing decides **who** we talk to; the session decides **which key** this conve
 - Pairing runs on the selected DATA band and stores one peer record.
 - The window is opened by a 1 s button hold or by the `pair` command and lasts 30 s; `PAIR_REQ`
   repeats every 100 ms.
-- The three messages carry `dev_a`, `dev_b` and the two 4-byte nonces. They are tagged with
-  `auth_key` and use the pairing sync word.
+- The request carries the initiator's `dev_a` and `nonce_a`. The response and confirmation
+  carry both device IDs and both 4-byte nonces. They are tagged with `auth_key` and use the
+  pairing sync word.
 - **No key is transferred**: pairing authenticates the two device ids and exchanges the nonces
   from which both ends derive `pair_key` ([08-protocol](08-protocol.md)).
-- Both nonces are covered by every message, so a recorded handshake cannot be replayed into a
-  new pairing.
+- The responder contributes a fresh `nonce_b` for a new request; response and confirmation
+  bind both IDs and nonces. The initial request cannot cover a responder nonce that does
+  not yet exist. Repeated requests must retain their pending responder nonce; the reviewed
+  design identifies a request by the initiator ID together with `nonce_a`.
 
 ## 5. Sessions
 
@@ -101,7 +102,7 @@ Properties:
 | --- | --- | --- |
 | `P0` | no tag | debug images only; maximum performance, no authentication |
 | `P1` | 4 B truncated HMAC-SHA256 per frame | production default |
-| `P2` | 4 B tag plus AES-CTR payload encryption (encrypt-then-MAC) | not implemented yet; the last item in [12-roadmap](12-roadmap.md) |
+| `P2` | 4 B tag plus AES-CTR payload encryption (encrypt-then-MAC) | future extension requiring a new agreed format; see [12-roadmap](12-roadmap.md) |
 
 The profile is configuration: `set-profile` stores it, the build carries the default, a
 production image refuses `P0`, and the profile a peer declares in `SYNC` has to match the local
@@ -109,15 +110,28 @@ one.
 
 ## 7. Replay protection
 
-- Every frame carries a `seq` that increases within a session; a frame whose sequence does not
-  move forward is dropped and counted.
-- Sequence numbers restart at 0 with each session, and a session is only adopted after the
-  `SESS_CFM` verifies.
-- A `SYNC` that asks for a session change is believed only after recent total silence, so an old
-  `SYNC` cannot be replayed inside a live session.
-- ARQ retains one outstanding DATA per direction. The authenticated header ACK bit flips on
-  each accepted in-order data packet; duplicates repeat the same bit without duplicate delivery.
-  Retransmissions retain the inner data sequence and use a fresh outer frame sequence.
+- Every frame carries a common u32 sequence. Zero is not transmitted. Within a
+  selected receive context, an accepted frame must have a strictly greater sequence.
+- Each direction's handshake and subsequent traffic share a continuous counter.
+  Adoption must not reset it. Exhaustion requires a fresh nonce context and session.
+- A preliminary sequence check is read-only. Direction, identity, nonce, receive
+  state and P1 authentication must pass before counters or link state change.
+- Pairing, candidate exchanges and confirmed sessions have distinct contexts. A
+  restarted peer's request cannot be judged solely against a previous DATA baseline;
+  a larger sequence alone cannot authorize a session change.
+- SESS_RESP must match a pending local challenge. An old response cannot reinstall
+  a key or reset ARQ. After loss of peer traffic, recovery must issue a new local
+  nonce and complete the full exchange.
+- Replaying an initial request may cause an answer; the responder's fresh challenge
+  and authenticated confirmation must prevent completing the old handshake.
+  Repeated valid messages must preserve confirmed progress.
+- One outstanding DATA is retained per direction. Its one-bit ACK and seven-bit
+  sequence are independent of common frame sequence; retries preserve DATA identity
+  but use a new frame sequence.
+- Nonces require a secure random source that reports failure. Missing entropy must
+  stop handshake transmission, never trigger a clock fallback. Zero is valid; a
+  new local round must not repeat the preceding local nonce. A32-bit random value
+  has collision risk and is not a globally unique identifier.
 
 ## 8. Parameters and algorithms
 
@@ -136,45 +150,31 @@ one.
 | per-frame tag | HMAC-SHA256 truncated to 4 B |
 | P2 encryption (planned) | AES-CTR with the MAC over the ciphertext |
 
-`core/proto/crypto.c` implements HMAC, HKDF, PBKDF2, root-key derivation and tag comparison
-once, without Zephyr headers. Its private `sha256.h` declares the only hash operation it needs:
-SHA-256 over two spans in order. Protocol algorithms and parameters are shared by firmware
-and host tests.
+Cryptographic operations must follow the algorithms and parameters above
+independently of the hardware provider. SHA-256 must support ordered input spans,
+partial words and final padding without changing protocol bytes.
 
-`app/src/platform/sha256.c` implements that operation through Zephyr's Crypto API and the
-SHA peripheral selected by devicetree. Firmware requires ZLRS's driver
-(`drivers/crypto/rp2350_sha256.c`, compatible `zlrs,rp2350-sha256`), based on the upstream
-RP2350 driver with multipart hashing and session ownership added. Each digest uses
-`hash_begin_session()`, `hash_update()`, `hash_compute()` and `hash_free_session()`. HMAC's
-key prefix and frame data stay in their original buffers and are fed without a concatenation
-copy. A mutex protects complete hash sessions and provides priority inheritance; the driver
-rejects access from other contexts while a session owns the accelerator. Pico SDK handles
-partial input words and final SHA padding inside the driver. Hashing leaves interrupts enabled
-and does not allocate DMA channels; reported driver failures stop execution rather than
-producing an authentication tag. There is no PSA protocol backend or runtime backend selection.
+A complete hardware hashing operation requires exclusive ownership, with
+interrupts enabled and no DMA allocation. Provider failure must stop the operation,
+never produce a fabricated digest or tag. Secrets must not enter status channels
+or diagnostic output.
 
-Host tests replace only the SHA operation with `tests/host/sha256_soft.c`, linking the same
-protocol algorithms. The separate Zephyr Ztest application in `tests/hardware/unit` checks
-the real driver and shared algorithms, including multipart SHA-256, wire tags and multi-block
-derivation. Test vectors and timing code are excluded from production sources; see
-[hardware tests](11-debug.md).
-
-The 16-bit sequence comparison across long sessions, the 32-bit tag budget and explicit
-failure reporting for invalid derivation parameters need further work. The current code review
-and acceptance gaps are tracked in [12-roadmap](12-roadmap.md).
+Acceptance includes independent SHA/HMAC/HKDF/PBKDF2 vectors, multipart input, wire
+tags, constant-time tag comparison, sequence boundaries, malformed frames, replay,
+entropy failure and native/hardware execution. Results are recorded separately.
 
 ## 9. Management protocol
 
 The management protocol runs on the **management CDC only**, on a local USB connection; physical
 access is the boundary. It is a small framed protocol (`0xA5 0x5A`, version 4, CRC8) with request
-and response frames, documented by `include/zlrs/mgmt/mgmt.h` and implemented in `core/mgmt/`.
+and response frames. Business effects and status fields form the management contract.
 
 | Host command | Effect |
 | --- | --- |
 | read status | role, link state, flags (bit 3: DATA uses sub-GHz), `dev_id`, `peer_id`, LQ, radio design band, region, security profile, power ceiling, data baud |
 | enter management mode | pauses radio work; ACK follows session setup and synchronous log flushing |
 | start pairing | opens the pairing window at once |
-| erase pairing | effective on the next boot |
+| erase pairing | erase the saved record and invalidate active pairing in the same maintenance window |
 | write passphrase | the device derives the root key with PBKDF2 |
 | write root key | 64 hex characters |
 | set data baud | 9600-4000000, effective on the next boot |
@@ -182,7 +182,7 @@ and response frames, documented by `include/zlrs/mgmt/mgmt.h` and implemented in
 | set power ceiling | never above the chosen region's limit, next boot |
 | set role | `tx` or `rx`, next boot |
 | set DATA band | `2.4` or `subg` for data and pairing, next boot |
-| set profile | `p0` (debug images only), `p1`, `p2` (not implemented), next boot |
+| set profile | `p0` (debug images only), `p1`, `p2` (future extension), next boot |
 | new device id | makes a fresh device id from the TRNG and stores it; the pairing record is erased with it (the peer knows the old id) |
 | factory reset | wipes NVS, next boot |
 | enter recovery | sets the boot-mode flag and reboots into MCUboot serial recovery |

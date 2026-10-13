@@ -1,6 +1,6 @@
 # Roadmap
 
-ZLRS currently implements one bidirectional DATA link on a selected 2.4 GHz or sub-GHz band. The near-term work is to measure the data service under real RF conditions and calibrate the dynamic power policy. The DATA port and management protocol should remain stable while the radio scheduler evolves.
+The baseline design specifies one bidirectional DATA link on a selected 2.4 GHz or sub-GHz band. The near-term work is to measure the data service under real RF conditions and calibrate the dynamic power policy. The DATA port and management protocol should remain stable while the radio scheduler evolves.
 
 | Priority | Work | Acceptance |
 | --- | --- | --- |
@@ -11,4 +11,4 @@ ZLRS currently implements one bidirectional DATA link on a selected 2.4 GHz or s
 | Medium | Complete encrypted profile | Implement and validate P2 with interoperable host and hardware tests. |
 | Medium | Reliability and serviceability | Exercise brownout, watchdog, update rollback, log recovery and long-running transfers. |
 
-Any band-switching design needs explicit coordination between peers, hysteresis, regulatory accounting and a way to recover when the new band is unavailable. The current persisted `set-band` choice is the baseline until that behavior is tested.
+Any band-switching design needs explicit coordination between peers, hysteresis, regulatory accounting and a way to recover when the new band is unavailable. An explicitly configured `set-band` choice remains the baseline for future coordinated switching.

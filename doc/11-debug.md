@@ -19,9 +19,9 @@ python3 tests/tools/run.py
 tests/gates.sh
 ```
 
-The host link test simulates two peers pairing, establishing a session, exchanging DATA in both directions, losing frames and recovering from receive backpressure. The tool tests cover command encoding and update-port discovery. The tree gate checks layering and shipped configurations.
+Host acceptance must cover two peers pairing, establishing a session, exchanging DATA in both directions, losing frames and recovering from receive backpressure. Tool acceptance must cover command encoding and update-port discovery. Tree checks must enforce layering and shipped configuration constraints.
 
-The application loop and boot policy also run under native Zephyr with simulated device operations:
+Application lifecycle acceptance should run under native Zephyr with simulated device operations:
 
 ```shell
 source tools/zephyr-env.sh
@@ -29,7 +29,7 @@ west build -b native_sim/native/64 tests/simulation/application -d build/applica
 ./build/application-simulation/zephyr/zephyr.exe
 ```
 
-This executes the real `main.c` and `boot.c`. It checks confirmation failure and retry, rollback deadlines, recovery handoff, management during RF initialization failure, long-press consumption and pairing-save retry. Deleting a saved pairing must not cause the still-active old pairing to be written back.
+Application lifecycle acceptance must cover confirmation failure and retry, rollback deadlines, recovery handoff, management during RF initialization failure, long-press consumption and pairing-save retry. Deleting a saved pairing must not cause the still-active old pairing to be written back.
 
 ## Two-board validation
 
@@ -45,7 +45,7 @@ The test sends deterministic bytes in both directions and checks exact delivery.
 
 ## Hardware and recovery
 
-The board definition is [here](../boards/zlrs/rp2350_zero_core2021/README.md). `tests/hardware/core` exercises core code under Zephyr; `tests/hardware/app` exercises application owners; `tests/hardware/radio` provides radio-level fixtures. When an application does not boot, BOOTSEL installs MCUboot and its recovery CDC accepts a signed application image. `python3 tools/zlrs.py logs --serial <serial>` exports the persistent log ring from a running image. See [firmware behaviour](07-firmware.md) for update verification and rollback.
+The board definition is [here](../boards/zlrs/rp2350_zero_core2021/README.md). Hardware acceptance is grouped into protocol, application and radio fixtures. When an application does not boot, BOOTSEL installs MCUboot and its recovery CDC accepts a signed application image. `python3 tools/zlrs.py logs --serial <serial>` exports the persistent log ring from a running image. See [firmware behaviour](07-firmware.md) for update verification and rollback.
 
 An application fault fixture checks that the real USB management and recovery paths remain available when RF initialization fails:
 
@@ -55,26 +55,32 @@ west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33/lf tests/hardware/appl
 python3 tests/hardware/application/run.py --serial <serial> --log build/application-fault.log
 ```
 
-Only LR2021 initialization and the application's confirmed-image verdict are replaced by test doubles. The fixture stays unconfirmed in flash; the runner reads management status and build information, enters recovery and resets to restore the previous firmware, then verifies its hash. Do not confirm this fixture. Use a normally paired application image for DATA validation and a normal unconfirmed upgrade to validate the actual confirmation timeout.
+Fault acceptance must cover RF initialization failure while management and recovery
+remain reachable. Fixtures must stay unconfirmed, restore the previous firmware
+and verify its hash. DATA acceptance uses a paired product image; confirmation
+and rollback deadlines require a separate normal upgrade scenario.
 
-Settings persistence also runs on simulated flash: `west build -b native_sim/native/64 zlrs/tests/simulation/settings -d zlrs/build/settings-simulation`, then run `cd zlrs/build/settings-simulation && ./zephyr/zephyr.exe`. It verifies layout initialization, settings across remounts and complete partition clearing. The same fixture runs in the hardware unit image; it backs up and restores the complete NVS partition.
+Settings acceptance must cover initialization, remounts, invalid records, writes,
+identity, pairing and factory reset. Hardware scenarios that modify NVS must first
+snapshot the entire partition and restore it after the scenario.
 
-UI simulation runs the real UI thread with an emulated GPIO button, real zbus and a test LED driver that records RGB output. Its 1 kHz kernel tick matches the hardware unit image, including the 50 ms connected pulse:
+UI acceptance must cover LED priority and cadence, the 500 ms management delay,
+one-second drop display, output retry, short/long presses, cumulative input and
+recovery from channel lock failure. Use the hardware tick rate, including the 50 ms
+connected pulse:
 
-```sh
+~~~sh
 west build -b native_sim/native/64 tests/simulation/ui -d build/ui-simulation
 build/ui-simulation/zephyr/zephyr.exe
-```
+~~~
 
-It covers LED priority/cadence, management-display delay, drop-display expiry, LED write retry, short and long holds, cumulative requests, and recovery after a channel write-lock failure. The hardware unit image runs the same LED-output checks on the real UI thread; the test LED replaces the physical strip only in these fixtures.
+Management acceptance must cover every command and malformed input on native flash
+and USB hardware. Inject settings-write and confirmation failure, require the
+expected error, and independently verify restoration. See
+[management acceptance](../tests/hardware/mgmt/README.md).
 
-The persist fixture backs up the entire settings partition and restores it in suite teardown. It exercises the original record bytes, enum validation, identity and pairing, factory reset, and an injected NVS write error. Native runs can use `--flash_in_ram` to avoid leaving a flash file.
-
-Management commands run with the real app command switch and real NVS in `tests/simulation/mgmt` (native simulator, `--flash_in_ram`). The hardware counterpart `tests/hardware/mgmt` uses the real app, USB, RF and flash. Its fixture snapshots NVS before main; recovery restores that snapshot and MCUboot rolls back the unconfirmed fixture. Never confirm or ship this fixture. Confirmation and one NVS write are explicitly fault-injected; the normal upgrade/confirmation path is separately verified on product images.
-
-RF result simulation runs real RF scheduling and two real P1/ARQ protocol nodes,
-with only LR2021, clock and serial edges simulated. Run both roles on each band.
-It covers bidirectional bytes,
+RF acceptance must use two P1/ARQ protocol nodes with simulated radio, clock
+and serial edges. Run both roles on each band. Required scenarios include bidirectional bytes,
 completion failures, preparation/launch failures, absent IRQs, timeout cleanup,
 strong-link power reductions, feedback-loss fallback and diagnostic pagination:
 
@@ -83,17 +89,20 @@ for role in OFF ON; do
   for subg in OFF ON; do
     build_dir="build/rf-${role}-${subg}"
     west build -b native_sim/native/64 tests/simulation/rf -d "$build_dir" -- -DRF_TEST_ROLE_RX="$role" -DRF_TEST_BAND_SUBG="$subg"
-    "$build_dir/zephyr/zephyr.exe" --flash_in_ram
+    "$build_dir/zephyr/zephyr.exe"
   done
 done
 ```
 
-The host link regression includes a fixed version 8 wire transcript,
+Protocol acceptance requires a fixed version 10 wire transcript,
 tampering, reflection, duplicate DATA, session renewal, LQ window-boundary loss and
-prepared-ACK follow-up checks. It keeps the FIFO preparation timing policy: a prepared
+prepared-ACK follow-up checks. FIFO preparation must respect the timing policy: a prepared
 ACK snapshot can lag, but new DATA leaves an ACK pending until a later frame carries it.
+Independent byte vectors must cover all eight typed bodies and exact lengths. DATA tests
+must cover inline byte ownership, P1 499-byte/P0 503-byte maximum payloads and four 7-bit sequence wraps
+with lost reverse ACKs and receiver backpressure at wrap boundaries.
 
-The radio fixture fills DATA packets directly, exercising FIFO tails independently of USB pacing:
+Radio acceptance must exercise FIFO tails independently of USB pacing:
 
 ```sh
 west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33/lf tests/hardware/radio -d build/radio

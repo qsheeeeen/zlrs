@@ -1,24 +1,21 @@
-# Management command fixture
+# Management acceptance fixture
 
-This image runs the real application command handler, USB, RF and NVS. Before
-`main`, it saves the complete settings partition in RAM. Recovery restores that
-snapshot and MCUboot rolls the unconfirmed fixture back to the previous image.
-The runner checks the previous image hash, settings and identity after rollback.
+Management acceptance must exercise configuration, status, logs, diagnostics and
+recovery over the real USB transport. Before destructive scenarios it must
+snapshot the complete settings partition and verify restoration of settings,
+identity, pairing and the original image hash.
 
-```sh
+~~~sh
 west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33/lf tests/hardware/mgmt -d build/mgmt-hardware
 python3 tests/hardware/mgmt/run.py --serial <board-serial>
-```
+~~~
 
-The fixture injects one failed power-record write and a failed confirmation before
-a successful retry. Its confirmation wrapper deliberately never confirms the
-image; the application sees a confirmed boot to allow the attended command test.
-Never confirm or ship this image. Keep the board powered until the runner restores
-its original partition and firmware.
+Required scenarios include invalid values and lengths, a failed settings write,
+failed image confirmation followed by retry, pairing deletion after the application
+resumes, and factory reset invalidating running credentials. Identity generation
+must exercise the entropy source.
 
-The runner checks every management command, including invalid values and lengths,
-log reads and debug reports. It checks that erased pairing stays absent after the
-application loop resumes, preserves the key and ID, and that factory reset clears
-the running credentials. It repeats identity generation to exercise the real
-entropy source. Restoration is reported separately; a failed assertion still
-fails the run even if restoration succeeds.
+The fixture must remain unconfirmed so recovery can restore the partition and
+roll back to the original firmware. Do not confirm or ship it. Keep power applied
+until restoration is verified. Successful restoration must not hide a failed
+acceptance assertion.
