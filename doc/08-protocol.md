@@ -129,6 +129,8 @@ Periodic SYNC defaults to 5 seconds, converted to a whole number of actual frame
 
 RX follows authenticated packet timestamps. When receptions stop, it scans the frame phase with a step derived from the actual frame length and SYNC interval: approximately one third of a frame between SYNC opportunities. The default steps are 8 us per frame on 2.4 GHz and 155 us on CN433. This lets a searching receiver sample different phases of a quiet peer's periodic SYNC. After acquisition, scanning waits through two SYNC intervals without an authenticated reception.
 
+对端重启并开始新的会话握手时，接收端须重新采集相位锁定样本；上一轮已锁定的异常值门限不能阻止新时钟相位被采纳，即使停收时间尚未达到扫描期限。相位重新锁定仍依据合法接收时间戳，不改变固定发射边界或允许晚发。重连验收须检查两个方向实际恢复 DATA 交付，不能仅以 CONNECTED 状态或收到单向确认帧作为成功依据。
+
 ## 6. 管理状态
 
 Management version `4` uses a fixed 90-byte `STATUS_RESP`, filling one 96-byte management frame. Multibyte integers are little endian; RSSI and temperature are signed 16-bit values, and power values are signed 8-bit dBm. The firmware and host use this one status layout.
