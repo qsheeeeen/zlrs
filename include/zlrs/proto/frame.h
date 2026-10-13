@@ -45,12 +45,21 @@ typedef struct {
 	uint8_t bytes[ZLRS_DATA_MAX_LEN];
 } zlrs_data_frame_t;
 
+/* Present only in authenticated synchronization/confirmation bodies. */
+typedef struct {
+	uint8_t domain : 3;
+	uint8_t automatic : 1;
+	uint8_t target_subg : 1;
+	uint32_t switch_frame; /* zero = no transition; otherwise a future frame */
+} zlrs_band_plan_t;
+
 typedef struct {
 	uint8_t profile : 1;
 	uint8_t version : 4;
 	uint8_t hop_index;
 	uint32_t nonce_t;
 	uint32_t frame_index; /* shared TDD period count, including idle periods */
+	zlrs_band_plan_t band_plan;
 } zlrs_sync_frame_t;
 
 typedef struct {
@@ -74,6 +83,7 @@ typedef struct {
 	uint32_t nonce_r;
 	uint8_t hop_index;
 	uint32_t frame_index; /* shared TDD period count */
+	zlrs_band_plan_t band_plan;
 } zlrs_session_confirm_frame_t;
 
 typedef struct {

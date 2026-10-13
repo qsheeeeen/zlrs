@@ -48,6 +48,18 @@ class EntryTests(unittest.TestCase):
         status[3] = 0x08
         self.assertIn("sub-GHz", entry.mgmt.status_text(status))
 
+    def test_auto_band_command_and_live_status(self):
+        with patch.object(entry.mgmt, "talk", return_value=0) as talk:
+            rc, _ = invoke(entry, "set-band", "auto", "--port", "fake")
+        self.assertEqual(rc, 0)
+        self.assertEqual(entry.mgmt.decode(talk.call_args_list[0].args[2]),
+                         (entry.mgmt.CMD_SET_BAND, b"\x02"))
+        status = bytearray(entry.mgmt.STATUS_LEN)
+        status[3] = 0x78
+        output = entry.mgmt.status_text(status)
+        for value in ("sub-GHz", "auto", "searching", "scheduled"):
+            self.assertIn(value, output)
+
     def test_subcommand_help_uses_public_name(self):
         for command in ("status", "update", "recovery"):
             with self.subTest(command=command):

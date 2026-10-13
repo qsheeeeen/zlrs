@@ -150,6 +150,9 @@ ZTEST(commands, test_device_commands)
 	ack(ZLRS_MGMT_CMD_SET_ROLE, &invalid, 1, ZLRS_MGMT_E_PARAM);
 	ack(ZLRS_MGMT_CMD_SET_REGION, &invalid, 1, ZLRS_MGMT_E_PARAM);
 	ack(ZLRS_MGMT_CMD_SET_BAND, &subg, 1, 0);
+	const uint8_t automatic = ZLRS_DATA_BAND_AUTO;
+	ack(ZLRS_MGMT_CMD_SET_BAND, &automatic, 1, 0);
+	zassert_equal(zlrs_persist_settings()->band, ZLRS_DATA_BAND_AUTO);
 	ack(ZLRS_MGMT_CMD_SET_ROLE, &role, 1, 0);
 	const uint8_t unsupported = ZLRS_PROFILE_P2;
 	ack(ZLRS_MGMT_CMD_SET_PROFILE, &unsupported, 1, ZLRS_MGMT_E_PARAM);

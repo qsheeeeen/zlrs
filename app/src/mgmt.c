@@ -363,6 +363,15 @@ static void read_status(zlrs_mgmt_status_t *out)
 	if (rf.data_band == ZLRS_DATA_BAND_SUBG) {
 		out->flags |= ZLRS_MGMT_FLAG_DATA_SUBG;
 	}
+	if (rf.band_mode == ZLRS_DATA_BAND_AUTO) {
+		out->flags |= ZLRS_MGMT_FLAG_BAND_AUTO;
+	}
+	if (rf.band_acquiring) {
+		out->flags |= ZLRS_MGMT_FLAG_BAND_ACQUIRING;
+	}
+	if (rf.band_planned) {
+		out->flags |= ZLRS_MGMT_FLAG_BAND_PLANNED;
+	}
 	if (rf.configured) {
 		out->flags |= ZLRS_MGMT_FLAG_KEY;
 	}

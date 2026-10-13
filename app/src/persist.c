@@ -90,7 +90,7 @@ bool zlrs_persist_get_pairing(zlrs_persist_pairing_t *out)
 static zlrs_persist_settings_t default_settings(void)
 {
 	return (zlrs_persist_settings_t){
-		.band = ZLRS_DATA_BAND_24,
+		.band = ZLRS_DATA_BAND_AUTO,
 		.region = DT_PROP(DT_NODELABEL(zlrs_rf), default_region),
 		.power_dbm = CONFIG_ZLRS_APP_TX_POWER_DBM,
 		.role = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? ZLRS_ROLE_TX : ZLRS_ROLE_RX,
@@ -102,7 +102,8 @@ static zlrs_persist_settings_t default_settings(void)
 
 static bool settings_valid(const zlrs_persist_settings_t *s)
 {
-	return (s->band == ZLRS_DATA_BAND_24 || s->band == ZLRS_DATA_BAND_SUBG) &&
+	return (s->band == ZLRS_DATA_BAND_24 || s->band == ZLRS_DATA_BAND_SUBG ||
+		s->band == ZLRS_DATA_BAND_AUTO) &&
 	       (s->role == ZLRS_ROLE_TX || s->role == ZLRS_ROLE_RX) &&
 	       (s->profile == ZLRS_PROFILE_P1 ||
 		(s->profile == ZLRS_PROFILE_P0 && IS_ENABLED(CONFIG_ZLRS_APP_DEBUG))) &&

@@ -34,6 +34,9 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 		    DT_PROP(DT_NODELABEL(zlrs_rf), band) == ZLRS_BAND_SUBG_LF ? "LF" : "HF");
 	shell_print(sh, "region : %s", region != NULL ? region->name : "?");
 	shell_print(sh, "band   : %s", link.data_band == ZLRS_DATA_BAND_SUBG ? "sub-G" : "2.4 GHz");
+	shell_print(sh, "switch : %s, capture %d, planned %d, count %u",
+		    link.band_mode == ZLRS_DATA_BAND_AUTO ? "auto" : "fixed",
+		    link.band_acquiring, link.band_planned, link.band_switches);
 	shell_print(sh, "link   : state %u, lq %u%%, paired %d", link.state, link.lq_percent,
 		    link.paired);
 	if (link.rssi_dbm != 0) {

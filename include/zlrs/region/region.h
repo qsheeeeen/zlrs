@@ -57,7 +57,8 @@ typedef enum {
 
 typedef enum {
 	ZLRS_DATA_BAND_24 = 0,
-	ZLRS_DATA_BAND_SUBG = 1
+	ZLRS_DATA_BAND_SUBG = 1,
+	ZLRS_DATA_BAND_AUTO = 2 /* policy choice; active band remains 0 or 1 */
 } zlrs_data_band_t;
 
 const zlrs_region_t *zlrs_region_get(zlrs_region_id_t id);

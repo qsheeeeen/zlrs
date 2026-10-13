@@ -23,6 +23,8 @@ void link_roll_session(zlrs_link_t *link, uint32_t now_ms)
 	link->sess_ack_due = false;
 	link->prepared_data.valid = false;
 	link->sess_rx_seq = 0U;
+	link->band_plan.switch_frame = 0U;
+	link->band_announced = false;
 	link->last_rx_seq = 0U;
 	if (fresh_nonce(link, link->sess_nonce_t, &link->sess_nonce_t)) {
 		link->tx_seq = 1U;
@@ -81,13 +83,16 @@ static void session_activate(zlrs_link_t *link, uint8_t hop_index)
 
 const zlrs_radio_req_t *link_send_sync(zlrs_link_t *link, uint32_t now_ms)
 {
+	link->band_plan.domain = link->cfg.domain;
+	link->band_plan.automatic = link->cfg.automatic_band;
+	link->band_announced = link->band_plan.switch_frame != 0U;
 	zlrs_frame_t frame = {
 		.type = ZLRS_PKT_SYNC,
 		.body.sync = {.version = ZLRS_PROTO_VERSION,
 			      .profile = link->cfg.profile,
 			      .hop_index = link->fhss.index,
 			      .nonce_t = link->sess_nonce_t,
-			      .frame_index = link->frame_index},
+			      .frame_index = link->frame_index, .band_plan = link->band_plan},
 	};
 	const uint16_t len = link_build_frame(link, &frame, ZLRS_SYNC_PAYLOAD_LEN,
 					     link_tag_key_for(link, frame.type, true));
@@ -113,10 +118,12 @@ const zlrs_radio_req_t *link_send_sess_resp(zlrs_link_t *link)
 
 const zlrs_radio_req_t *link_send_sess_cfm(zlrs_link_t *link)
 {
+	link->band_plan.domain = link->cfg.domain;
+	link->band_plan.automatic = link->cfg.automatic_band;
 	zlrs_frame_t frame = {
 		.type = ZLRS_PKT_SESS_CFM,
 		.body.sess_cfm = {.nonce_r = link->sess_nonce_r, .hop_index = link->fhss.index,
-				  .frame_index = link->frame_index},
+				  .frame_index = link->frame_index, .band_plan = link->band_plan},
 	};
 	link->sess_sync_frame = link->frame_index;
 	const uint16_t len = link_build_frame(link, &frame, ZLRS_SESS_CFM_PAYLOAD_LEN,
@@ -126,23 +133,24 @@ const zlrs_radio_req_t *link_send_sess_cfm(zlrs_link_t *link)
 			      link->sync_word);
 }
 
-void link_handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
+bool link_handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
 {
 	const uint32_t nonce = frame->body.sync.nonce_t;
 	const uint8_t hop = frame->body.sync.hop_index;
 	if (!link->paired || link->cfg.role != ZLRS_ROLE_RX ||
 	    frame->body.sync.version != ZLRS_PROTO_VERSION ||
-	    frame->body.sync.profile != link->cfg.profile || hop >= link->fhss.sequence_count) {
-		return;
+	    frame->body.sync.profile != link->cfg.profile || hop >= link->fhss.sequence_count ||
+	    !link_band_plan_valid(link, &frame->body.sync.band_plan, frame->body.sync.frame_index)) {
+		return false;
 	}
 	if (link->state == ZLRS_STATE_CONNECTED) {
 		if (link->cfg.resync_every_n == 0U) {
-			return;
+			return false;
 		}
 		if (link->session_valid && nonce == link->sess_nonce_t) {
 			if (frame->seq <= link->last_rx_seq) {
 				link->stats.rx_dup++;
-				return;
+				return false;
 			}
 			link->last_rx_seq = frame->seq;
 			link_lq_account(link, frame->seq);
@@ -152,28 +160,34 @@ void link_handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now
 			zlrs_fhss_set_index(&link->fhss, hop);
 			link->frame_index = frame->body.sync.frame_index;
 			link->last_rx_frame = link->frame_index;
-			return;
+			if (link->cfg.automatic_band || link->radio_acquiring) {
+				/* The master still waits on the capture channel for proof of return. */
+				link->sess_ack_due = true;
+			}
+			link_adopt_band_plan(link, &frame->body.sync.band_plan);
+			link->radio_acquiring = false;
+			return true;
 		}
 		if ((uint32_t)(now_ms - link->last_rx_ms) <= link->cfg.sync_period_ms) {
 			link->stats.rx_dup++;
-			return;
+			return false;
 		}
 		link->session_valid = false;
 		link->session_pending = false;
 		link_set_state(link, ZLRS_STATE_SEARCHING, now_ms);
 	}
 	if (link->state != ZLRS_STATE_SEARCHING) {
-		return;
+		return false;
 	}
 	if (link->session_pending && nonce == link->sess_nonce_t) {
 		if (frame->seq <= link->sess_rx_seq) {
 			link->stats.rx_dup++;
-			return;
+			return false;
 		}
 	} else {
 		uint32_t nonce_r;
 		if (!fresh_nonce(link, link->sess_nonce_r, &nonce_r)) {
-			return;
+			return false;
 		}
 		link->sess_nonce_t = nonce;
 		link->sess_nonce_r = nonce_r;
@@ -185,6 +199,7 @@ void link_handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now
 	link->sess_rx_seq = frame->seq;
 	link->sess_resp_due = true;
 	link->stats.rx_syncs++;
+	return true;
 }
 
 int link_handle_sess_cfm(zlrs_link_t *link, const zlrs_frame_t *frame,
@@ -194,7 +209,9 @@ int link_handle_sess_cfm(zlrs_link_t *link, const zlrs_frame_t *frame,
 	const bool repeated = link->state == ZLRS_STATE_CONNECTED && link->session_valid;
 	if (link->cfg.role != ZLRS_ROLE_RX ||
 	    (!repeated && (!link->session_pending || link->state != ZLRS_STATE_SEARCHING)) ||
-	    frame->body.sess_cfm.hop_index >= link->fhss.sequence_count) {
+	    frame->body.sess_cfm.hop_index >= link->fhss.sequence_count ||
+	    !link_band_plan_valid(link, &frame->body.sess_cfm.band_plan,
+				  frame->body.sess_cfm.frame_index)) {
 		return -1;
 	}
 	if (tag_len > 0U) {
@@ -228,6 +245,8 @@ int link_handle_sess_cfm(zlrs_link_t *link, const zlrs_frame_t *frame,
 	link->last_rx_frame = link->frame_index;
 	link->sess_ack_due = true;
 	link->sess_sync_frame = link->frame_index;
+	link_adopt_band_plan(link, &frame->body.sess_cfm.band_plan);
+	link->radio_acquiring = false;
 	link_set_state(link, ZLRS_STATE_CONNECTED, now_ms);
 	return 0;
 }

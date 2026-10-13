@@ -14,6 +14,7 @@ target_sources(app PRIVATE
   ${zlrs_app_dir}/src/mgmt.c
   ${zlrs_app_dir}/src/serial.c
   ${zlrs_app_dir}/src/power.c
+  ${zlrs_app_dir}/src/band.c
   ${zlrs_app_dir}/src/main.c
   ${zlrs_app_dir}/src/boot.c
   ${zlrs_app_dir}/src/rf.c
@@ -42,6 +43,7 @@ if(CONFIG_ZLRS_APP_RAM_RADIO)
     ${zlrs_app_dir}/src/platform/lr2021.c
     ${zlrs_app_dir}/src/serial.c
     ${zlrs_app_dir}/src/power.c
+    ${zlrs_app_dir}/src/band.c
     ${zlrs_app_dir}/../core/link/link.c
     ${zlrs_app_dir}/../core/link/pairing.c
     ${zlrs_app_dir}/../core/link/session.c

@@ -27,6 +27,7 @@ struct slot_clock {
 	uint32_t published_origin_us;
 	uint8_t slot;
 	int32_t shift_us;
+	uint32_t guard_us;
 };
 
 static uint32_t slot_clock_offset(uint32_t period_us, uint8_t slot)
@@ -56,8 +57,9 @@ static uint32_t slot_clock_advance(struct slot_clock *clock, uint32_t now_us)
 		}
 		if (++clock->slot == ZLRS_SLOT_COUNT) {
 			clock->slot = 0U;
-			clock->origin_us += clock->period_us + (uint32_t)clock->shift_us;
+			clock->origin_us += clock->period_us + (uint32_t)clock->shift_us + clock->guard_us;
 			clock->shift_us = 0;
+			clock->guard_us = 0U;
 		}
 		clock->next_us =
 			clock->origin_us + slot_clock_offset(clock->period_us, clock->slot);
@@ -77,7 +79,8 @@ static uint32_t slot_clock_next_origin(const struct slot_clock *clock)
 {
 	/* The last slot already installs the next origin, including the queued phase correction. */
 	return clock->slot == 0U ? clock->origin_us
-				 : clock->origin_us + clock->period_us + (uint32_t)clock->shift_us;
+				 : clock->origin_us + clock->period_us + (uint32_t)clock->shift_us +
+				   clock->guard_us;
 }
 
 uint32_t zlrs_slot_timer_scan_delay_ms(uint32_t cadence_us, uint16_t sync_every_n, bool acquired)
@@ -355,6 +358,47 @@ uint32_t zlrs_slot_timer_next_frame_us(void)
 
 	irq_unlock(key);
 	return origin;
+}
+
+void zlrs_slot_timer_reconfigure(uint32_t period_us, uint32_t prepare_us, uint32_t guard_us)
+{
+	zlrs_slot_timer_cancel_launch();
+	const unsigned int key = irq_lock();
+	if (running) {
+		const uint32_t next_rf_us = slot_clock_next_origin(&slot_clock) + prepare_lead_us;
+		uint32_t origin_us = next_rf_us + guard_us - prepare_us;
+		/* A delayed owner cannot arm an old boundary or launch late. Reacquire instead. */
+		if ((int32_t)(origin_us - zlrs_slot_timer_now_us()) < 1000) {
+			origin_us = zlrs_slot_timer_now_us() + 1000U;
+		}
+		slot_clock.period_us = period_us;
+		slot_clock.origin_us = slot_clock.next_us = origin_us;
+		slot_clock.slot = 0U;
+		slot_clock.shift_us = 0;
+		slot_clock.guard_us = 0U;
+		prepare_lead_us = prepare_us;
+		timer->armed = 1U;
+		timer->intr = 1U;
+		hw_clear_bits(&timer->intf, 1U);
+		timer->alarm[0] = origin_us;
+		k_sem_reset(&frame_sem);
+	}
+	irq_unlock(key);
+}
+
+void zlrs_slot_timer_hold_next_frame(uint32_t guard_us)
+{
+	const unsigned int key = irq_lock();
+	if (slot_clock.slot == 0U) {
+		/* The last-slot IRQ has already installed the following origin. */
+		slot_clock.origin_us += guard_us;
+		slot_clock.next_us += guard_us;
+		timer->armed = 1U;
+		timer->alarm[0] = slot_clock.next_us;
+	} else {
+		slot_clock.guard_us = guard_us;
+	}
+	irq_unlock(key);
 }
 
 void zlrs_slot_timer_wait_until(uint32_t deadline_us, struct zlrs_slot_timer_wait *timing)

@@ -3,6 +3,7 @@
 #include "test.h"
 #include <string.h>
 #include "zlrs/link/link.h"
+#include "band.h"
 
 typedef struct {
 	zlrs_link_t link;
@@ -23,6 +24,8 @@ typedef struct {
 	uint16_t drop_tx;
 	uint16_t drop_rx;
 	bool drop_confirms_only;
+	bool block_24_tx, block_24_rx, lose_band_plans;
+	int16_t rssi_24;
 } sim_t;
 
 static bool random_word(void *ctx, uint32_t *out)
@@ -98,7 +101,7 @@ static void sim_init(sim_t *sim)
 	init_node(&sim->rx, ZLRS_ROLE_RX, rx_id, root);
 }
 
-/* Fixed v10 pairing/session/duplex/loss wire transcript. */
+/* Fixed v11 pairing/session/duplex/loss wire transcript. */
 static uint64_t wire_hash;
 static uint32_t wire_packets;
 static uint8_t captured[ZLRS_FRAME_MAX_LEN];
@@ -148,12 +151,18 @@ static void sim_slot(sim_t *sim, uint8_t slot)
 		zlrs_frame_t air;
 		CHECK(zlrs_frame_decode(&air, source->buf, source->size,
 				      zlrs_profile_tag_len(sender->cfg.profile)));
-		if (*drops != 0U && (!sim->drop_confirms_only || air.type == ZLRS_PKT_SESS_CFM)) {
-			(*drops)--;
+		const bool on_24 = source->freq_hz > 1000000000U;
+		const bool blocked = on_24 && (a->is_tx ? sim->block_24_tx : sim->block_24_rx);
+		const bool lost_plan = sim->lose_band_plans && air.type == ZLRS_PKT_SYNC &&
+			air.body.sync.band_plan.switch_frame != 0U;
+		if (blocked || lost_plan || (*drops != 0U &&
+		    (!sim->drop_confirms_only || air.type == ZLRS_PKT_SESS_CFM))) {
+			if (*drops != 0U) { (*drops)--; }
 			zlrs_link_complete(receiver, ZLRS_RADIO_OK, 0U, 0, 0, sim->now_ms);
 		} else {
 			memcpy(dest->buf, source->buf, source->size);
-			zlrs_link_complete(receiver, ZLRS_RADIO_OK, source->size, -60, 0,
+			zlrs_link_complete(receiver, ZLRS_RADIO_OK, source->size,
+					   on_24 && sim->rssi_24 ? sim->rssi_24 : -60, 0,
 					   sim->now_ms);
 		}
 		zlrs_link_complete(sender, ZLRS_RADIO_OK, 0U, 0, 0, sim->now_ms);
@@ -344,10 +353,11 @@ static void test_replay_and_counters(void)
 	const uint32_t index = rx->frame_index;
 	frame = (zlrs_frame_t){.type = ZLRS_PKT_SYNC, .seq = UINT32_MAX,
 		.body.sync = {.version = 9U, .profile = 1U, .nonce_t = rx->sess_nonce_t,
-			      .hop_index = 0U, .frame_index = index + 100U}};
+			      .hop_index = 0U, .frame_index = index + 100U,
+			      .band_plan = {.domain = ZLRS_DOMAIN_ISM2400}}};
 	inject(&sim.rx, &frame, ZLRS_SYNC_PAYLOAD_LEN, rx->link_auth_in, sim.now_ms, false);
 	CHECK(rx->last_rx_seq == baseline && rx->frame_index == index);
-	frame.body.sync.version = 10U;
+	frame.body.sync.version = ZLRS_PROTO_VERSION;
 	frame.body.sync.profile = 0U;
 	inject(&sim.rx, &frame, ZLRS_SYNC_PAYLOAD_LEN, rx->link_auth_in, sim.now_ms, false);
 	CHECK(rx->last_rx_seq == baseline && rx->last_rx_ms == last_ms);
@@ -357,7 +367,8 @@ static void test_replay_and_counters(void)
 	CHECK(rx->last_rx_seq == baseline && rx->frame_index == index);
 	frame = (zlrs_frame_t){.type = ZLRS_PKT_SESS_CFM, .seq = UINT32_MAX,
 		.body.sess_cfm = {.nonce_r = rx->sess_nonce_r ^ 1U, .hop_index = 0U,
-				  .frame_index = index + 100U}};
+				  .frame_index = index + 100U,
+				  .band_plan = {.domain = ZLRS_DOMAIN_ISM2400}}};
 	inject(&sim.rx, &frame, ZLRS_SESS_CFM_PAYLOAD_LEN, rx->session_key_in, sim.now_ms, false);
 	CHECK(rx->last_rx_seq == baseline && rx->last_rx_ms == last_ms);
 	CHECK(zlrs_link_write(rx, &byte, 1U) == 1U);
@@ -513,7 +524,8 @@ static void test_entropy_failure(void)
 	sim.rx.random_failed = true;
 	zlrs_link_set_peer(&sim.rx.link, sim.tx.link.dev_id, salt, 0U);
 	zlrs_frame_t frame = {.type = ZLRS_PKT_SYNC, .seq = 1U,
-		.body.sync = {.version = 10U, .profile = 1U, .nonce_t = 42U}};
+		.body.sync = {.version = ZLRS_PROTO_VERSION, .profile = 1U, .nonce_t = 42U,
+			.band_plan = {.domain = ZLRS_DOMAIN_ISM2400}}};
 	inject(&sim.rx, &frame, ZLRS_SYNC_PAYLOAD_LEN, sim.rx.link.link_auth_in, 1U, false);
 	CHECK(!sim.rx.link.session_pending && !sim.rx.link.session_valid);
 	CHECK(zlrs_link_slot(&sim.rx.link, ZLRS_SLOT_DATA_B, 2U) == NULL);
@@ -556,6 +568,163 @@ static void test_nonce_reuse(void)
 		sim_frame(&sim);
 	}
 	CHECK(both_connected(&sim));
+}
+
+static void retune(node_t *node, bool subg)
+{
+	zlrs_link_cfg_t cfg = node->link.cfg;
+	cfg.domain = subg ? ZLRS_DOMAIN_CN433 : ZLRS_DOMAIN_ISM2400;
+	cfg.mod = zlrs_mod_flrc(subg ? 325000U : 2600000U);
+	cfg.sync_period_ms = subg ? 600U : 100U;
+	CHECK(zlrs_link_reconfigure_radio(&node->link, &cfg));
+}
+
+static void automatic_frame(sim_t *sim, zlrs_band_policy_t policies[2])
+{
+	sim_frame(sim);
+	node_t *nodes[2] = {&sim->tx, &sim->rx};
+	for (unsigned int i = 0; i < 2; i++) {
+		zlrs_link_t *link = &nodes[i]->link;
+		const zlrs_link_info_t info = zlrs_link_get_info(link);
+		bool changed = false, target = false, probe = false;
+		if (info.band_plan.switch_frame && info.frame_index >= info.band_plan.switch_frame - 1) {
+			target = info.band_plan.target_subg; probe = !target; changed = true;
+		} else {
+			zlrs_band_observation_t o = {.now_ms = sim->now_ms,
+				.last_rx_ms = info.last_rx_ms, .feedback_ms = info.last_peer_feedback_ms,
+				.paired = info.paired, .pairing = info.state == ZLRS_STATE_PAIRING,
+				.connected = info.session_valid && info.state == ZLRS_STATE_CONNECTED,
+				.acquiring = info.radio_acquiring, .planned = info.band_plan.switch_frame != 0,
+				.rssi_dbm = link->stats.last_rssi, .peer_rssi_dbm = info.peer_rssi_dbm,
+				.lq_percent = link->stats.lq_percent, .peer_lq_percent = info.peer_lq_percent};
+			const zlrs_band_action_t action = zlrs_band_policy_update(&policies[i], &o);
+			if (action == ZLRS_BAND_SEARCH) {
+				target = link->cfg.domain == ZLRS_DOMAIN_ISM2400; changed = true;
+			} else if (action == ZLRS_BAND_PLAN) {
+				CHECK(zlrs_link_plan_band(link, link->cfg.domain == ZLRS_DOMAIN_ISM2400,
+							 info.frame_index + link->cfg.resync_every_n + 334U));
+			}
+		}
+		if (changed) {
+			retune(nodes[i], target);
+			zlrs_link_acquire_radio(link, sim->now_ms);
+			zlrs_band_policy_changed(&policies[i], target, probe, sim->now_ms, info.last_rx_ms);
+		}
+	}
+}
+
+static bool captured_band(const sim_t *sim, bool subg)
+{
+	const zlrs_fhss_domain_id_t domain = subg ? ZLRS_DOMAIN_CN433 : ZLRS_DOMAIN_ISM2400;
+	return both_connected(sim) && sim->tx.link.cfg.domain == domain &&
+		sim->rx.link.cfg.domain == domain && !sim->tx.link.radio_acquiring &&
+		!sim->rx.link.radio_acquiring;
+}
+
+static void test_automatic_bands(void)
+{
+	static sim_t sim;
+	for (unsigned int scenario = 0; scenario < 4; scenario++) {
+		sim_init(&sim);
+		sim.tx.link.cfg.automatic_band = sim.rx.link.cfg.automatic_band = true;
+		connect_saved(&sim, ZLRS_PROFILE_P1);
+		for (unsigned int i = 0; i < 100; i++) { sim_frame(&sim); }
+		zlrs_band_policy_t policies[2];
+		zlrs_band_policy_init(&policies[0], true, true, false, 0, sim.now_ms);
+		zlrs_band_policy_init(&policies[1], true, false, false, 0, sim.now_ms);
+		const uint32_t nonce = sim.tx.link.sess_nonce_t;
+		const uint32_t seq = sim.tx.link.tx_seq;
+		const uint8_t data[] = {3, 1, 4, 1, 5, 9};
+		/* First payload reaches RX, but its ACK is lost before changing radio. */
+		sim.drop_rx = 100;
+		CHECK(zlrs_link_write(&sim.tx.link, data, sizeof(data)) == sizeof(data));
+		for (unsigned int i = 0; i < 20; i++) { sim_frame(&sim); }
+		CHECK(sim.rx.received_len == sizeof(data) && sim.tx.link.arq_used);
+		sim.drop_rx = 0;
+		CHECK(zlrs_link_write(&sim.rx.link, data, sizeof(data)) == sizeof(data));
+		if (scenario < 2) {
+			sim.block_24_tx = scenario == 0; sim.block_24_rx = true;
+		} else {
+			sim.rssi_24 = -100; sim.lose_band_plans = scenario == 3;
+		}
+		bool reached = false;
+		for (unsigned int i = 0; i < 7000; i++) {
+			automatic_frame(&sim, policies);
+			if (captured_band(&sim, true) && sim.tx.link.queue_count == 0 &&
+			    sim.rx.link.queue_count == 0) { reached = true; break; }
+		}
+		CHECK(reached && sim.tx.link.sess_nonce_t == nonce && sim.tx.link.tx_seq > seq);
+		CHECK(sim.rx.received_len == sizeof(data) && sim.tx.received_len == sizeof(data));
+		CHECK(memcmp(sim.rx.received, data, sizeof(data)) == 0);
+		CHECK(memcmp(sim.tx.received, data, sizeof(data)) == 0);
+		CHECK(sim.tx.link.stats.data_drop_bytes == 0 && sim.rx.link.stats.data_drop_bytes == 0);
+		if (scenario == 0) {
+			/* Blocked 2.4 GHz probe must return to the same SubG session. */
+			bool tried = false, returned = false;
+			for (unsigned int i = 0; i < 16000; i++) {
+				automatic_frame(&sim, policies);
+				tried |= sim.tx.link.cfg.domain == ZLRS_DOMAIN_ISM2400;
+				if (tried && captured_band(&sim, true)) { returned = true; break; }
+			}
+			CHECK(tried && returned && sim.tx.link.sess_nonce_t == nonce);
+			sim.block_24_tx = sim.block_24_rx = false;
+			bool preferred = false;
+			for (unsigned int i = 0; i < 18000; i++) {
+				automatic_frame(&sim, policies);
+				if (captured_band(&sim, false)) { preferred = true; break; }
+			}
+			CHECK(preferred && sim.tx.link.sess_nonce_t == nonce);
+		}
+	}
+}
+
+static void test_band_plan_security(void)
+{
+	static sim_t sim;
+	sim_init(&sim);
+	sim.tx.link.cfg.automatic_band = sim.rx.link.cfg.automatic_band = true;
+	connect_saved(&sim, ZLRS_PROFILE_P1);
+	zlrs_link_t *rx = &sim.rx.link;
+	const uint32_t baseline = rx->last_rx_seq, index = rx->frame_index;
+	const uint32_t events = rx->accepted_rx_events;
+	const int16_t rssi = rx->stats.last_rssi;
+	zlrs_frame_t f = {.type = ZLRS_PKT_SYNC, .seq = baseline + 1,
+		.body.sync = {.version = ZLRS_PROTO_VERSION, .profile = 1,
+			.nonce_t = rx->sess_nonce_t, .hop_index = rx->fhss.index, .frame_index = index,
+			.band_plan = {.domain = ZLRS_DOMAIN_ISM2400, .automatic = 1,
+				.target_subg = 1, .switch_frame = index + 20}}};
+	inject(&sim.rx, &f, ZLRS_SYNC_PAYLOAD_LEN, rx->link_auth_in, sim.now_ms, true);
+	CHECK(rx->last_rx_seq == baseline && rx->band_plan.switch_frame == 0);
+	CHECK(rx->stats.last_rssi == rssi);
+	f.body.sync.band_plan.domain = ZLRS_DOMAIN_CN433;
+	inject(&sim.rx, &f, ZLRS_SYNC_PAYLOAD_LEN, rx->link_auth_in, sim.now_ms, false);
+	CHECK(rx->last_rx_seq == baseline && rx->accepted_rx_events == events);
+	f.body.sync.band_plan.domain = ZLRS_DOMAIN_ISM2400;
+	f.body.sync.band_plan.switch_frame = index;
+	inject(&sim.rx, &f, ZLRS_SYNC_PAYLOAD_LEN, rx->link_auth_in, sim.now_ms, false);
+	CHECK(rx->last_rx_seq == baseline && rx->frame_index == index);
+	f.body.sync.band_plan.switch_frame = index + 65536U;
+	inject(&sim.rx, &f, ZLRS_SYNC_PAYLOAD_LEN, rx->link_auth_in, sim.now_ms, false);
+	CHECK(rx->last_rx_seq == baseline && rx->accepted_rx_events == events);
+	f.body.sync.band_plan.switch_frame = index + 20;
+	f.body.sync.band_plan.target_subg = 0;
+	inject(&sim.rx, &f, ZLRS_SYNC_PAYLOAD_LEN, rx->link_auth_in, sim.now_ms, false);
+	CHECK(rx->last_rx_seq == baseline);
+	f.body.sync.band_plan.target_subg = 1;
+	inject(&sim.rx, &f, ZLRS_SYNC_PAYLOAD_LEN, rx->link_auth_in, sim.now_ms, false);
+	CHECK(rx->last_rx_seq == baseline + 1 && rx->band_plan.switch_frame == index + 20);
+	f.body.sync.band_plan.switch_frame++;
+	inject(&sim.rx, &f, ZLRS_SYNC_PAYLOAD_LEN, rx->link_auth_in, sim.now_ms, false);
+	CHECK(rx->band_plan.switch_frame == index + 20 && rx->accepted_rx_events == events + 1);
+	CHECK(!zlrs_link_plan_band(rx, true, index + 20));
+	CHECK(!zlrs_link_plan_band(&sim.tx.link, true, 0));
+	const zlrs_radio_req_t *req = zlrs_link_slot(rx, ZLRS_SLOT_DATA_A, sim.now_ms);
+	CHECK(req != NULL);
+	zlrs_link_cfg_t cfg = rx->cfg; cfg.domain = ZLRS_DOMAIN_CN433;
+	CHECK(!zlrs_link_reconfigure_radio(rx, &cfg) && rx->cfg.domain == ZLRS_DOMAIN_ISM2400);
+	zlrs_link_complete(rx, ZLRS_RADIO_OK, 0, 0, 0, sim.now_ms);
+	cfg.profile = ZLRS_PROFILE_P0;
+	CHECK(!zlrs_link_reconfigure_radio(rx, &cfg));
 }
 
 void test_link(void)
@@ -613,8 +782,8 @@ void test_link(void)
 	CHECK(zlrs_link_get_info(&sim.rx.link).last_peer_feedback_ms > rx_feedback_before);
 	/* Golden bytes for this fixed protocol scenario. */
 	CHECK(wire_packets == 200U);
-	printf("wire v10: packets=%u hash=%016llx\n", wire_packets, (unsigned long long)wire_hash);
-	CHECK(wire_hash == UINT64_C(0x926850c2e593c031));
+	printf("wire v11: packets=%u hash=%016llx\n", wire_packets, (unsigned long long)wire_hash);
+	CHECK(wire_hash == UINT64_C(0xd472ddab87624f6c));
 	/* An authenticated DATA capture cannot be delivered twice, tampered with or reflected. */
 	CHECK(captured_len > 0U);
 	const uint16_t received = sim.rx.received_len;
@@ -722,6 +891,8 @@ void test_link(void)
 	test_confirmation_loss_and_exhaustion();
 	test_entropy_failure();
 	test_nonce_reuse();
+	test_band_plan_security();
+	test_automatic_bands();
 	test_quality_window_boundary();
 	test_data_sequence_wrap();
 }

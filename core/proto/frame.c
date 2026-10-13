@@ -24,6 +24,23 @@ uint8_t zlrs_profile_tag_len(zlrs_profile_t profile)
 	return profile == ZLRS_PROFILE_P0 ? 0U : ZLRS_TAG_LEN;
 }
 
+static void encode_band_plan(uint8_t *p, const zlrs_band_plan_t *plan)
+{
+	p[0] = plan->domain | (plan->automatic << 3U) | (plan->target_subg << 4U);
+	write32(p + 1U, plan->switch_frame);
+}
+
+static bool decode_band_plan(zlrs_band_plan_t *plan, const uint8_t *p)
+{
+	if ((p[0] & 0xe0U) != 0U || (p[0] & 7U) > 4U) {
+		return false;
+	}
+	*plan = (zlrs_band_plan_t){.domain = p[0] & 7U,
+		.automatic = (p[0] >> 3U) & 1U, .target_subg = (p[0] >> 4U) & 1U,
+		.switch_frame = read32(p + 1U)};
+	return plan->automatic || plan->switch_frame == 0U;
+}
+
 uint16_t zlrs_frame_len(uint16_t payload_len, uint8_t tag_len)
 {
 	return (uint16_t)(ZLRS_FRAME_HDR_LEN + payload_len + tag_len);
@@ -84,6 +101,7 @@ uint16_t zlrs_frame_encode(const zlrs_frame_t *frame, uint8_t *buf, uint16_t cap
 		p[0] = frame->body.sync.hop_index;
 		write32(p + 1U, frame->body.sync.nonce_t);
 		write32(p + 5U, frame->body.sync.frame_index);
+		encode_band_plan(p + 9U, &frame->body.sync.band_plan);
 		break;
 	case ZLRS_PKT_PAIR_REQ:
 		memcpy(p, frame->body.pair_req.dev_a, ZLRS_DEV_ID_LEN);
@@ -107,6 +125,7 @@ uint16_t zlrs_frame_encode(const zlrs_frame_t *frame, uint8_t *buf, uint16_t cap
 		write32(p, frame->body.sess_cfm.nonce_r);
 		p[4] = frame->body.sess_cfm.hop_index;
 		write32(p + 5U, frame->body.sess_cfm.frame_index);
+		encode_band_plan(p + 9U, &frame->body.sess_cfm.band_plan);
 		break;
 	}
 	if (tag_len != 0U) {
@@ -153,6 +172,9 @@ bool zlrs_frame_decode(zlrs_frame_t *frame, const uint8_t *buf, uint16_t len, ui
 		frame->body.sync.hop_index = p[0];
 		frame->body.sync.nonce_t = read32(p + 1U);
 		frame->body.sync.frame_index = read32(p + 5U);
+		if (!decode_band_plan(&frame->body.sync.band_plan, p + 9U)) {
+			return false;
+		}
 		break;
 	case ZLRS_PKT_PAIR_REQ:
 		memcpy(frame->body.pair_req.dev_a, p, ZLRS_DEV_ID_LEN);
@@ -176,6 +198,9 @@ bool zlrs_frame_decode(zlrs_frame_t *frame, const uint8_t *buf, uint16_t len, ui
 		frame->body.sess_cfm.nonce_r = read32(p);
 		frame->body.sess_cfm.hop_index = p[4];
 		frame->body.sess_cfm.frame_index = read32(p + 5U);
+		if (!decode_band_plan(&frame->body.sess_cfm.band_plan, p + 9U)) {
+			return false;
+		}
 		break;
 	}
 	return true;

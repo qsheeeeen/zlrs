@@ -43,3 +43,19 @@ ZTEST(slot_timer, test_timer_advances_and_applies_phase_shift)
 }
 
 ZTEST_SUITE(slot_timer, NULL, NULL, NULL, NULL, NULL);
+
+ZTEST(slot_timer, test_band_transition_preserves_frame_and_physical_guard)
+{
+	uint32_t first_us, next_us, first, next;
+	zassert_ok(zlrs_slot_timer_init());
+	zlrs_slot_timer_start(4000U, 300U, NULL);
+	zlrs_slot_timer_wait_frame(&first_us, &first);
+	zlrs_slot_timer_hold_next_frame(12000U);
+	zlrs_slot_timer_wait_until(first_us + 3000U, NULL);
+	zlrs_slot_timer_reconfigure(20000U, 6000U, 0U);
+	zlrs_slot_timer_wait_frame(&next_us, &next);
+	zassert_equal(next, first + 1U);
+	zassert_equal(next_us - first_us, 16000U);
+	zassert_equal(zlrs_slot_timer_next_frame_us() - next_us, 20000U);
+	zlrs_slot_timer_stop();
+}

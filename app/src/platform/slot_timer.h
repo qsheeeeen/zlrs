@@ -24,6 +24,9 @@ uint32_t zlrs_slot_timer_now_ms(void);
 uint32_t zlrs_slot_timer_uptime_ms(uint32_t deadline_us);
 void zlrs_slot_timer_start(uint32_t period_us, uint32_t prepare_us, void (*wake)(void));
 void zlrs_slot_timer_stop(void);
+/* Preserve frame count and insert a shared guard before the next physical frame. */
+void zlrs_slot_timer_reconfigure(uint32_t period_us, uint32_t prepare_us, uint32_t guard_us);
+void zlrs_slot_timer_hold_next_frame(uint32_t guard_us);
 void zlrs_slot_timer_shift(int32_t shift_us);
 void zlrs_slot_timer_deadline(uint32_t deadline_us);
 void zlrs_slot_timer_wait_frame(uint32_t *start_us, uint32_t *frame);

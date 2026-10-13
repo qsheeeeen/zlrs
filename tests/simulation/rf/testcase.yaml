@@ -3,3 +3,10 @@ common:
  platform_allow: [native_sim/native/64]
 tests:
  zlrs.rf.results: {}
+ zlrs.rf.auto_tx:
+  extra_args:
+   - RF_TEST_BAND_AUTO=ON
+ zlrs.rf.auto_rx:
+  extra_args:
+   - RF_TEST_BAND_AUTO=ON
+   - RF_TEST_ROLE_RX=ON

@@ -14,6 +14,10 @@ typedef struct {
 	zlrs_role_t role;
 	zlrs_profile_t profile;
 	zlrs_data_band_t data_band;
+	zlrs_data_band_t band_mode;
+	bool band_acquiring;
+	bool band_planned;
+	uint32_t band_switches;
 	zlrs_region_id_t region;
 	zlrs_link_state_t state;
 	uint8_t dev_id[ZLRS_DEV_ID_LEN];

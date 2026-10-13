@@ -37,3 +37,4 @@ void test_mod(void);
 void test_fuzz(void);
 
 void test_power(void);
+void test_band(void);

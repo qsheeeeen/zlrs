@@ -98,6 +98,10 @@ ZTEST(settings, test_layout_and_persistence)
 	zassert_mem_equal(saved_pairing.peer_id, pair, ZLRS_DEV_ID_LEN);
 	zassert_mem_equal(saved_pairing.pair_salt, pair + ZLRS_DEV_ID_LEN, ZLRS_PAIR_SALT_LEN);
 	zlrs_persist_settings_t settings = *saved;
+	settings.band = ZLRS_DATA_BAND_AUTO;
+	zassert_ok(zlrs_persist_save_settings(&settings));
+	zassert_ok(zlrs_persist_init());
+	zassert_equal(zlrs_persist_settings()->band, ZLRS_DATA_BAND_AUTO);
 	settings.data_baud = 460800;
 	zassert_ok(zlrs_persist_save_settings(&settings));
 	zassert_ok(zlrs_persist_save_settings(&settings));

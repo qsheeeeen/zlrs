@@ -136,6 +136,9 @@ def status_text(payload: bytes) -> str:
                     ("Hardware", "HF (868/915 MHz)" if payload[13] else "LF (470/433 MHz)"),
                     ("Device ID", dev), ("Peer ID", peer)]),
         ("Link", [("Data band", "sub-GHz" if flags & 0x08 else "2.4 GHz"),
+                  ("Band mode", "auto" if flags & 0x10 else "fixed"),
+                  ("Band acquisition", "searching" if flags & 0x20 else "ready"),
+                  ("Band transition", "scheduled" if flags & 0x40 else "none"),
                   ("State", STATE_NAMES.get(payload[2], str(payload[2]))),
                   ("Quality", f"{payload[12]}%"),
                   ("Paired", "yes" if flags & 0x02 else "no"),
@@ -582,9 +585,9 @@ def add_commands(sub, parents=()):
     profile.add_argument("profile", choices=["p0", "p1", "p2"],
                          help="P0 has no tag (debug images only), P1 is the production profile, "
                               "P2 is not implemented yet")
-    band = command("set-band", help="select 2.4 GHz or sub-GHz data (reboot required)",
+    band = command("set-band", help="select automatic switching or a fixed band (reboot required)",
                    description="Save the data band; reboot both peers to apply.")
-    band.add_argument("band", choices=["2.4", "subg"],
+    band.add_argument("band", choices=["auto", "2.4", "subg"],
                       help="select the data frequency band")
     command("new-dev-id",
                    help="make a fresh device id (drops the pairing record; read status for the new one)")
@@ -687,7 +690,7 @@ def main(args=None, parser=None) -> int:
         frame = encode(CMD_SET_PROFILE, bytes([int(args.profile[1])]))
         expect = True
     elif args.command == "set-band":
-        frame = encode(CMD_SET_BAND, bytes([{"2.4": 0, "subg": 1}[args.band]]))
+        frame = encode(CMD_SET_BAND, bytes([{"2.4": 0, "subg": 1, "auto": 2}[args.band]]))
         expect = True
     elif args.command == "new-dev-id":
         frame = encode(CMD_NEW_DEV_ID, b"")

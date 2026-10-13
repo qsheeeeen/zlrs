@@ -25,7 +25,9 @@ add_executable(zlrs_host_tests
   test_mgmt.c
   test_region.c
   test_power.c
+  test_band.c
   ../../app/src/power.c
+  ../../app/src/band.c
   test_mod.c
   test_fuzz.c
   sha256_soft.c

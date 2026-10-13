@@ -86,6 +86,7 @@ typedef struct {
 	 * correct drift and notice a peer that changed sessions (reboot/re-pair) and re-handshake.
 	 */
 	uint16_t resync_every_n;
+	bool automatic_band;
 } zlrs_link_cfg_t;
 
 typedef struct {
@@ -239,6 +240,7 @@ typedef struct {
 	zlrs_link_state_t state;
 	uint32_t state_ms;
 	uint32_t last_rx_ms;
+	uint32_t accepted_rx_events;
 	uint32_t last_rx_frame; /* Authenticated DATA hop epoch, for sparse-SYNC reacquisition. */
 	uint32_t last_sync_ms;
 	uint32_t last_pair_tx_ms;
@@ -259,6 +261,9 @@ typedef struct {
 	bool lq_started;
 	uint32_t frame_index; /* DATA_A slots run */
 	zlrs_fhss_t fhss;
+	zlrs_band_plan_t band_plan;
+	bool band_announced;
+	bool radio_acquiring;
 
 	/* passthrough queue */
 	uint8_t tx_queue[ZLRS_LINK_TX_QUEUE_LEN];
@@ -309,6 +314,11 @@ typedef struct {
 	int16_t peer_rssi_dbm;
 	uint8_t peer_lq_percent;
 	uint32_t last_peer_feedback_ms;
+	uint32_t last_rx_ms;
+	uint32_t accepted_rx_events;
+	uint32_t frame_index;
+	zlrs_band_plan_t band_plan;
+	bool radio_acquiring;
 } zlrs_link_info_t;
 
 /* Diagnostic values, without borrowed protocol buffers or key material. */
@@ -367,6 +377,11 @@ void zlrs_link_pair_ctx(const zlrs_link_t *link, uint8_t out[ZLRS_PAIR_CTX_LEN])
 
 /* Change TX power at runtime (dynamic power); effective with the next transaction */
 void zlrs_link_set_power(zlrs_link_t *link, int8_t tx_power_dbm);
+
+/* Safe between radio transactions. Retune without resetting session/ARQ/queues. */
+bool zlrs_link_reconfigure_radio(zlrs_link_t *link, const zlrs_link_cfg_t *cfg);
+bool zlrs_link_plan_band(zlrs_link_t *link, bool target_subg, uint32_t switch_frame);
+void zlrs_link_acquire_radio(zlrs_link_t *link, uint32_t now_ms);
 
 /*
  * Restore pairing from the stored record (no re-pairing after a reboot). pair_salt has to

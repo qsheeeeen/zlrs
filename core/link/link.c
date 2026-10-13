@@ -38,7 +38,8 @@ static bool sync_frame(const zlrs_link_t *link)
 
 uint32_t link_slot_freq_hz(const zlrs_link_t *link)
 {
-	if (sync_frame(link) || link->sess_cfm_due || link->sess_ack_due) {
+	if (link->radio_acquiring || link->band_announced || sync_frame(link) ||
+	    link->sess_cfm_due || link->sess_ack_due) {
 		return link_sync_freq_hz(link);
 	}
 	/* Both ends count from the confirmed frame, including repeated confirms after lost ACKs.
@@ -225,8 +226,7 @@ static int handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 	}
 
 	if (frame.type == ZLRS_PKT_SYNC) {
-		link_handle_sync(link, &frame, now_ms);
-		return 0;
+		return link_handle_sync(link, &frame, now_ms) ? 0 : -1;
 	}
 
 	if (frame.type == ZLRS_PKT_SESS_RESP) {
@@ -248,6 +248,7 @@ static int handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 	link->last_rx_frame = link->frame_index;
 	if (link->cfg.role == ZLRS_ROLE_TX) {
 		link->sess_cfm_due = false;
+		link->radio_acquiring = false;
 	}
 	link_lq_account(link, frame.seq);
 
@@ -377,7 +378,8 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 			}
 			return link_send_sess_cfm(link);
 		}
-		if (sync_frame(link)) {
+		if (sync_frame(link) || ((link->radio_acquiring || link->band_announced) &&
+		    (uint32_t)(now_ms - link->last_sync_ms) >= link->cfg.sync_period_ms)) {
 			return link_send_sync(link, now_ms);
 		}
 	}
@@ -446,6 +448,78 @@ void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
 void zlrs_link_set_power(zlrs_link_t *link, int8_t tx_power_dbm)
 {
 	link->cfg.tx_power_dbm = tx_power_dbm;
+}
+
+bool link_band_plan_valid(const zlrs_link_t *link, const zlrs_band_plan_t *plan,
+			  uint32_t frame_index)
+{
+	if (plan->domain != link->cfg.domain || plan->automatic != link->cfg.automatic_band) {
+		return false;
+	}
+	if (plan->switch_frame == 0U) {
+		return true;
+	}
+	return plan->automatic && plan->switch_frame > frame_index &&
+	       plan->switch_frame - frame_index <= UINT16_MAX &&
+	       plan->target_subg != (link->cfg.domain != ZLRS_DOMAIN_ISM2400);
+}
+
+void link_adopt_band_plan(zlrs_link_t *link, const zlrs_band_plan_t *plan)
+{
+	link->band_plan = *plan;
+	link->band_announced = plan->switch_frame != 0U;
+	link->prepared_data.valid = false;
+}
+
+void zlrs_link_acquire_radio(zlrs_link_t *link, uint32_t now_ms)
+{
+	link->prepared_data.valid = false;
+	link->band_plan = (zlrs_band_plan_t){.domain = link->cfg.domain,
+		.automatic = link->cfg.automatic_band,
+		.target_subg = link->cfg.domain != ZLRS_DOMAIN_ISM2400};
+	link->band_announced = false;
+	link->radio_acquiring = true;
+	link->last_sync_ms = now_ms - link->cfg.sync_period_ms;
+}
+
+bool zlrs_link_plan_band(zlrs_link_t *link, bool target_subg, uint32_t switch_frame)
+{
+	zlrs_band_plan_t plan = {.domain = link->cfg.domain, .automatic = 1U,
+		.target_subg = target_subg, .switch_frame = switch_frame};
+	if (link->req_pending || link->cfg.role != ZLRS_ROLE_TX || !link->session_valid ||
+	    !link_band_plan_valid(link, &plan, link->frame_index) || switch_frame == 0U) {
+		return false;
+	}
+	link->prepared_data.valid = false;
+	link->band_plan = plan;
+	/* First announcement uses a periodic SYNC that the hopping peer expects. */
+	link->band_announced = false;
+	return true;
+}
+
+bool zlrs_link_reconfigure_radio(zlrs_link_t *link, const zlrs_link_cfg_t *cfg)
+{
+	if (link->req_pending || cfg->domain >= ZLRS_DOMAIN_COUNT ||
+	    cfg->role != link->cfg.role || cfg->profile != link->cfg.profile ||
+	    cfg->arq != link->cfg.arq || cfg->data_mtu != link->cfg.data_mtu ||
+	    cfg->automatic_band != link->cfg.automatic_band) {
+		return false;
+	}
+	uint8_t seed[4];
+	zlrs_kdf(link->pair_key, ZLRS_KEY_LEN, "zlrs/fhss", NULL, 0U, seed, sizeof(seed));
+	link->cfg = *cfg;
+	zlrs_fhss_init(&link->fhss, cfg->domain, rd32(seed));
+	zlrs_link_acquire_radio(link, link->last_rx_ms);
+	/* Quality/power samples belong to the old RF path; replay/ARQ state does not. */
+	link->lq_started = false;
+	link->stats.lq_rx = 0U;
+	link->stats.lq_expected = 0U;
+	link->stats.lq_percent = 100U;
+	link->stats.last_rssi = 0;
+	link->peer_rssi_dbm = 0;
+	link->peer_lq_percent = 0U;
+	link->last_peer_feedback_ms = 0U;
+	return true;
 }
 
 const zlrs_radio_req_t *zlrs_link_slot(zlrs_link_t *link, uint8_t slot, uint32_t now_ms)
@@ -526,12 +600,6 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 	}
 
 	link->stats.slot_rx[slot]++;
-	if (rx_len > 0U) {
-		/* A TX completion or empty RX window has no signal measurement. Preserve the
-		 * last packet rather than overwriting received signal information. */
-		link->stats.last_rssi = rssi;
-		link->stats.last_snr = snr;
-	}
 	if (rx_len > 0U && rssi != 0) {
 		if (link->stats.rssi_min == 0 || rssi < link->stats.rssi_min) {
 			link->stats.rssi_min = rssi;
@@ -542,7 +610,11 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 	}
 	if (rx_len > 0U) {
 		link->stats.slot_hit[slot]++;
-		(void)handle_rx(link, rx_len, now_ms);
+		if (handle_rx(link, rx_len, now_ms) == 0) {
+			link->stats.last_rssi = rssi;
+			link->stats.last_snr = snr;
+			link->accepted_rx_events++;
+		}
 	}
 }
 
@@ -558,9 +630,11 @@ void zlrs_link_rx(zlrs_link_t *link, const uint8_t *buf, uint16_t len, int16_t r
 
 	memcpy(link->rx_buf, buf, len);
 	link->req_pending = false;
-	link->stats.last_rssi = rssi;
-	link->stats.last_snr = snr;
-	(void)handle_rx(link, len, now_ms);
+	if (handle_rx(link, len, now_ms) == 0) {
+		link->stats.last_rssi = rssi;
+		link->stats.last_snr = snr;
+		link->accepted_rx_events++;
+	}
 }
 
 void zlrs_link_tick(zlrs_link_t *link, uint32_t now_ms)
@@ -633,6 +707,11 @@ zlrs_link_info_t zlrs_link_get_info(const zlrs_link_t *link)
 		.peer_rssi_dbm = link->peer_rssi_dbm,
 		.peer_lq_percent = link->peer_lq_percent,
 		.last_peer_feedback_ms = link->last_peer_feedback_ms,
+		.last_rx_ms = link->last_rx_ms,
+		.accepted_rx_events = link->accepted_rx_events,
+		.frame_index = link->frame_index,
+		.band_plan = link->band_plan,
+		.radio_acquiring = link->radio_acquiring,
 	};
 
 	memcpy(info.dev_id, link->dev_id, sizeof(info.dev_id));

@@ -38,7 +38,7 @@ extern "C" {
 #define ZLRS_MGMT_CMD_SET_POWER     0x0AU /* 1-byte signed dBm */
 #define ZLRS_MGMT_CMD_SET_ROLE      0x0BU /* 1-byte role (0 = TX, 1 = RX) */
 #define ZLRS_MGMT_CMD_SET_PROFILE   0x0CU /* 1-byte profile (0 = P0, 1 = P1, 2 = P2) */
-#define ZLRS_MGMT_CMD_SET_BAND      0x0DU /* 0 = 2.4 GHz, 1 = sub-G; effective after reboot */
+#define ZLRS_MGMT_CMD_SET_BAND      0x0DU /* 0 = 2.4 GHz, 1 = sub-G, 2 = auto; next boot */
 #define ZLRS_MGMT_CMD_NEW_DEV_ID    0x0EU /* make a fresh device id (drops the pairing record) */
 #define ZLRS_MGMT_CMD_EXIT          0x0FU /* leave management mode */
 #define ZLRS_MGMT_CMD_FACTORY_RESET 0x10U /* wipe NVS */
@@ -130,6 +130,9 @@ typedef struct {
 #define ZLRS_MGMT_FLAG_PAIRED    0x02U
 #define ZLRS_MGMT_FLAG_SESSION   0x04U
 #define ZLRS_MGMT_FLAG_DATA_SUBG 0x08U /* DATA currently uses sub-GHz */
+#define ZLRS_MGMT_FLAG_BAND_AUTO 0x10U
+#define ZLRS_MGMT_FLAG_BAND_ACQUIRING 0x20U
+#define ZLRS_MGMT_FLAG_BAND_PLANNED 0x40U
 
 /* Byte-at-a-time management frame parser */
 typedef struct {
