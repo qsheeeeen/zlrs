@@ -28,6 +28,9 @@
 
 LOG_MODULE_REGISTER(zlrs_rf, CONFIG_APP_LOG_LEVEL);
 
+BUILD_ASSERT(IS_ENABLED(CONFIG_CSPRNG_ENABLED), "RF requires a cryptographic entropy source");
+BUILD_ASSERT(!IS_ENABLED(CONFIG_TEST_CSPRNG_GENERATOR), "RF must not use a test CSPRNG");
+
 ZBUS_CHAN_DEFINE(zlrs_rf_chan, zlrs_rf_status_t, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
 		 ZBUS_MSG_INIT(0));
 
@@ -169,8 +172,7 @@ static void plan_init(void)
 static bool random_u32(void *ctx, uint32_t *out)
 {
 	ARG_UNUSED(ctx);
-	*out = sys_rand32_get();
-	return true;
+	return sys_csrand_get(out, sizeof(*out)) == 0;
 }
 
 static void build_links(void)
