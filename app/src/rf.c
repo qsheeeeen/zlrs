@@ -90,6 +90,7 @@ static uint32_t consumed_frame;
 static bool ever_connected;
 
 static uint32_t data_rx_bytes;
+static uint8_t phase_samples;
 
 /* ---- link callbacks (run on the link thread) ------------------------------ */
 
@@ -121,6 +122,8 @@ static void on_state(void *ctx, zlrs_link_state_t state)
 		break;
 	case ZLRS_STATE_SEARCHING:
 		name = "searching";
+		/* A restarted peer has a new clock phase, even before the scan timeout. */
+		phase_samples = 0U;
 		break;
 	case ZLRS_STATE_CONNECTED:
 		name = "connected";
@@ -300,7 +303,6 @@ static int32_t phase_adj_us;
 static bool phase_adj_set;    /* one correction per frame: several receptions would fight */
 static int32_t phase_last_us; /* what the last correction was, for the bench log */
 static int32_t phase_err_us;  /* residual the last correction was computed from */
-static uint8_t phase_samples;
 static uint32_t phase_hits;     /* corrections since the last report */
 static uint32_t last_rx_any_ms; /* any verified DATA reception: the scan trigger */
 

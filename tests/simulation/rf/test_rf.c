@@ -30,6 +30,8 @@ static unsigned int tx_ok, tx_fail, rx_fail, rx_ok, aborts;
 static unsigned int radio_reads;
 static bool entropy_failed;
 static unsigned int secure_random_failures, plain_random_requests;
+static uint32_t scan_delay_override_ms, phase_shift_events;
+static int32_t packet_phase_error_us;
 static uint16_t source_left, delivered;
 static const uint8_t outgoing[] = "host bytes";
 static const uint8_t incoming[] = "peer bytes";
@@ -153,10 +155,11 @@ void zlrs_slot_timer_cancel_launch(void)
 }
 void zlrs_slot_timer_shift(int32_t us)
 {
+	phase_shift_events += us != 0;
 }
 uint32_t zlrs_slot_timer_scan_delay_ms(uint32_t us, uint16_t sync, bool acquired)
 {
-	return 2000;
+	return scan_delay_override_ms != 0U ? scan_delay_override_ms : 2000U;
 }
 void zlrs_watchdog_feed(void)
 {
@@ -268,6 +271,11 @@ bool zlrs_lr2021_process_irq(zlrs_lr2021_result_t *out)
 			out->size = other->size;
 			memcpy(active->buf, other->buf, other->size);
 			out->airtime_us = zlrs_mod_airtime_us(&active->mod, out->size);
+			if (packet_phase_error_us != 0) {
+				out->done_us = boundary_us + period_us * local->slot / ZLRS_SLOT_COUNT +
+					CONFIG_ZLRS_APP_TX_GUARD_US + ZLRS_LR2021_PHASE_STARTUP_US +
+					out->airtime_us + packet_phase_error_us;
+			}
 		}
 		if (other) {
 			zlrs_link_complete(&peer, ZLRS_RADIO_OK, 0, 0, 0, out->completed_ms);
@@ -353,6 +361,32 @@ ZTEST(rf_results, test_protocol_completion_and_timeouts)
 	frames(12000000U / period_us);
 	const uint32_t periodic = zlrs_link_get_stats(master)->tx_syncs - syncs;
 	zassert_true(periodic == 2U || periodic == 3U);
+
+	if (RF_TEST_ROLE_RX) {
+		/* A new master clock can differ beyond the locked outlier limit before
+		 * silence is long enough to enable scanning. Valid new-session packets
+		 * must restart phase acquisition even when they continue arriving. */
+		scan_delay_override_ms = UINT32_MAX;
+		const uint32_t previous_nonce = local->sess_nonce_t;
+		mode = RX_FAIL;
+		frames(DIV_ROUND_UP((cfg.sync_period_ms + 50U) * 1000U, period_us));
+		mode = NORMAL;
+		__real_zlrs_link_init(&peer, &cfg, peer_random, NULL, &events);
+		zlrs_link_set_dev_id(&peer, saved_pairing.peer_id);
+		zlrs_link_set_root_key(&peer, saved_key, clock_us / 1000U);
+		zlrs_link_set_peer(&peer, saved_id, saved_pairing.pair_salt, clock_us / 1000U);
+		peer_next_slot = 0U;
+		packet_phase_error_us = period_us / 8U;
+		const uint32_t shifts_before = phase_shift_events;
+		frames(2000);
+		zassert_equal(local->state, ZLRS_STATE_CONNECTED);
+		zassert_equal(peer.state, ZLRS_STATE_CONNECTED);
+		zassert_not_equal(local->sess_nonce_t, previous_nonce);
+		zassert_true(phase_shift_events > shifts_before,
+			     "new session was rejected by the previous clock's outlier gate");
+		packet_phase_error_us = 0;
+		scan_delay_override_ms = 0U;
+	}
 
 	source_left = sizeof(outgoing) - 1U;
 	zassert_equal(zlrs_link_write(&peer, incoming, sizeof(incoming) - 1U),
