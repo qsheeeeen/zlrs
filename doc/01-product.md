@@ -1,15 +1,52 @@
-# ZLRS
+# Product
 
-ZLRS 是一对双向无线串行数传设备。主机或外部控制器通过 USB CDC 或 UART 发送字节流；设备负责配对、加密传输、确认、重传和交付。应用数据是透明的，ZLRS 不解析上层业务协议。
+ZLRS provides a transparent, bidirectional serial byte stream between two wireless
+endpoints. A host or controller supplies bytes through USB CDC or UART; the devices
+handle pairing, authenticated sessions, retransmission and delivery without
+interpreting the application protocol.
 
-一端配置为 TX，另一端配置为 RX。两端使用相同的固件和绑定密语。DATA 链路可运行在 2.4 GHz 或板载 sub-G SKU 支持的区域频段。自动模式优先使用 2.4 GHz，质量恶化或失联时切至 SubG，并定期探测返回 2.4 GHz。双方协调切换，串口数据、配对和未确认包连续保留；一次只使用一个频段。固定频段模式仍可选择，模式配置在两端重启后生效。
+## Roles and radio operation
 
-## 使用方式
+Both endpoints run the same firmware. One is configured as TX and the other as RX.
+TX owns the radio clock and initiates sessions; both roles send and receive user
+data.
 
-- 通过 USB CDC 连接电脑、单板机或主机程序，作为双向虚拟串口。
-- 通过 UART 连接嵌入式控制器。USB 与 UART 是同一数据端口的两个入口。
-- 通过独立的管理 CDC 配置角色、频段、区域、功率上限和安全参数，查看状态、配对以及更新固件。
+One LR2021 operates on one DATA band at a time. The available modes are fixed
+2.4 GHz, fixed SubG and automatic switching. Automatic mode starts on 2.4 GHz,
+coordinates a move to SubG after sustained poor quality, searches both bands after
+loss of contact and probes a return to 2.4 GHz after sustained healthy SubG
+feedback. Band changes preserve the session and queued, unacknowledged data.
+Transmission pauses while the new radio timing is acquired.
 
-DATA 使用认证帧、会话密钥、重放保护和停止等待 ARQ。空闲时仍定期回传接收质量；两端据此动态调整各自的发射功率，反馈中断时回到配置的功率上限。sub-G 运行遵守所选区域的功率和占空比约束。
+The SubG region must match the module's LF or HF hardware. Both endpoints require
+matching band mode, SubG region, security profile and air protocol version.
 
-当前原型由 Waveshare RP2350-Zero 和 Core2021 组成，提供 LF 与 HF 两种 sub-G 硬件变体。详情见[硬件平台](02-platform.md)、[固件配置](07-firmware.md)、[架构](06-architecture.md)和[空中协议](08-protocol.md)。
+## Interfaces and configuration
+
+USB CDC and UART are alternative endpoints of one DATA service. A separate USB
+management interface provides configuration, status, pairing, logs and firmware
+updates. USB DATA applies backpressure when buffers fill; UART without hardware
+flow control can overflow and reports dropped bytes.
+
+Role, band mode, region, UART baud, power ceiling and security profile are persistent
+settings applied at boot. Identity, a shared root key and one peer pairing record
+also survive reboot. Sessions, queues and radio observations are volatile.
+
+## Security and delivery
+
+Production profile P1 authenticates frames and rejects replays within the selected
+exchange. User data remains plaintext. Each direction uses stop-and-wait ARQ:
+received bytes are acknowledged only after the local DATA endpoint accepts the
+whole packet. Reliability is bounded by finite buffers and device resets; the
+service is not persistent message storage.
+
+Both endpoints report receive quality and adjust their own transmit power within
+the configured ceiling. SubG transmission observes the selected regional power,
+rate and duty policy. These policies require RF qualification on the finished
+hardware.
+
+The prototype consists of a Waveshare RP2350-Zero and Core2021. See
+[prototype hardware](02-prototype.md), [firmware operation](06-firmware.md),
+[architecture](05-architecture.md), [air protocol](07-protocol.md) and
+[security](08-security.md). ZLRS uses its own protocol and is not compatible with
+ExpressLRS.

@@ -10,7 +10,8 @@
 #
 # Except for `enter`, every command first sends enter-management-mode and waits for the ACK.
 # The two USB CDCs are data and management (/dev/ttyACM0/1).
-# Framing and the command table: doc/09-security.md 9 and include/zlrs/mgmt/mgmt.h.
+# Framing and commands: doc/07-protocol.md#usb-management-framing.
+# Public wire definitions: include/zlrs/mgmt/mgmt.h.
 #
 # Standard library only; talking to a device needs pyserial (pip install pyserial).
 

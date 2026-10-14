@@ -6,7 +6,8 @@
 # Put the device into MCUboot serial recovery: no replugging, no reset button.
 #
 # How: the tool sends the recovery command (management protocol 0x11) on the management port; the
-# device sets the boot-mode flag and reboots into MCUboot recovery (doc/09-security.md 9).
+# device sets the boot-mode flag and reboots into MCUboot recovery.
+# See doc/06-firmware.md#installation-updates-and-rollback.
 #
 # Usage:
 #   python3 tools/zlrs.py recovery --port /dev/ttyACM1   # management port (second CDC in app mode)

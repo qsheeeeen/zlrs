@@ -90,7 +90,7 @@
  * Hardware watchdog (RP2350 wdt0): armed when the application starts and fed from the main
  * loop. A crash or a stuck thread resets the chip, which MCUboot's test/revert turns into a
  * rollback, and with nothing left to boot it stops in serial recovery: no BOOTSEL needed.
- * See doc/07-firmware.md.
+ * See doc/06-firmware.md.
  */
 &wdt0 {
 	status = "okay";
@@ -115,7 +115,7 @@
 };
 
 /*
- * The on-board WS2812B (GP16, one pixel) is the status LED, see doc/10-ux.md: driven through
+ * The on-board WS2812B (GP16, one pixel) is the status LED, see doc/09-ux.md: driven through
  * PIO0, wired the same way as upstream waveshare/rp2350_zero.
  */
 &pio0 {
@@ -147,7 +147,7 @@
 };
 
 /*
- * The CDCs on USB (doc/07-firmware.md):
+ * The CDCs on USB (doc/06-firmware.md):
  *   cdc_acm_uart0 = data port (alias zlrs-data-cdc)
  *   cdc_acm_uart1 = management port (alias zlrs-mgmt-cdc): management protocol, enter management mode
  *   cdc_acm_uart2 = console (kernel log + shell): off by default, the debug overlay enables it

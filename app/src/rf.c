@@ -76,12 +76,13 @@ static zlrs_region_id_t region_id;
 static int8_t tx_power_dbm;
 static zlrs_power_t power;
 static zlrs_duty_t duty;
-/* Identity: read or generated once at boot, before anything that could use it (doc/09-security.md 1) */
+/* Identity is read or generated at boot before use.
+ * See doc/08-security.md#identity-and-threat-model. */
 static uint8_t device_id[ZLRS_DEV_ID_LEN];
 
 /*
  * Role and security profile: runtime settings with a compile-time default (set-role /
- * set-profile, doc/07-firmware.md). Loaded once at boot, before the links are built.
+ * set-profile, doc/06-firmware.md). Loaded once at boot, before the links are built.
  */
 static bool role_tx;
 static zlrs_profile_t active_profile;

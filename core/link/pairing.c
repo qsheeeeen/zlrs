@@ -67,7 +67,7 @@ static void derive_pair(zlrs_link_t *link)
 	/*
 	 * Both ids plus the two pairing nonces, sorted and concatenated: both ends get the same
 	 * pair_key, and re-pairing changes the nonces, which replaces the whole subtree below
-	 * (see doc/09-security.md 3).
+	 * (see doc/08-security.md#cryptographic-parameters).
 	 */
 	zlrs_link_pair_ctx(link, ctx);
 	zlrs_kdf(link->root_key, ZLRS_KEY_LEN, LABEL_PAIR, ctx, sizeof(ctx), link->pair_key,

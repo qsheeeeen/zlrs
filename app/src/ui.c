@@ -22,7 +22,7 @@ ZBUS_CHAN_DEFINE(zlrs_input_chan, struct zlrs_input, NULL, NULL, ZBUS_OBSERVERS_
 static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(DT_ALIAS(zlrs_button), gpios);
 #endif
 
-/* 20 Hz looks continuous to the eye and costs nothing on the strip (doc/10-ux.md) */
+/* 20 Hz looks continuous to the eye and costs nothing on the strip (doc/09-ux.md) */
 #define LED_REFRESH_MS 50U
 
 /* Debug images attenuate the complete frame so the bench pixel is not glaring. */
@@ -45,7 +45,7 @@ static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(DT_ALIAS(zlrs_button)
 #define LED_PIXELS 1U
 
 /*
- * The RF owner is cooperative (doc/06-architecture.md), so this one is preemptive:
+ * The RF owner is cooperative (doc/05-architecture.md), so this one is preemptive:
  * it runs only while the link thread is blocked, and the link thread preempts it again the moment
  * it wakes. A strip write therefore never stretches a slot.
  */

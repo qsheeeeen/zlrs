@@ -1,7 +1,7 @@
 /*
  * Protocol authentication and key derivation, implemented once in core/proto/crypto.c.
  * SHA-256 device access lives in app/src/platform/sha256.c; host tests replace only
- * that hash operation. See doc/09-security.md for the key tree and wire rules.
+ * that hash operation. See doc/08-security.md for the key tree and wire rules.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -20,7 +20,8 @@ extern "C" {
 
 /*
  * KDF(key, label[, ctx]): HKDF-SHA256 with an empty salt and info = label || ctx.
- * The derived values map one to one onto the derivation tree in doc/09-security.md 3.
+ * The derived values follow the key derivations in
+ * doc/08-security.md#cryptographic-parameters.
  */
 void zlrs_kdf(const uint8_t *key, size_t key_len, const char *label, const uint8_t *ctx,
 	      size_t ctx_len, uint8_t *out, size_t out_len);
@@ -31,8 +32,9 @@ void zlrs_tag(const uint8_t *key, size_t key_len, const uint8_t *data, size_t le
 
 /*
  * Passphrase -> root key: PBKDF2-HMAC-SHA256.
- * The salt carries the KDF version (doc/09-security.md 8) and the caller passes the iteration
- * count; the derivation rule is fixed on the device and the management tool cannot change it.
+ * The salt carries the KDF version (doc/08-security.md#cryptographic-parameters).
+ * The caller passes the iteration count; the device fixes the derivation rule and the
+ * management tool cannot change it.
  */
 void zlrs_pbkdf2_sha256(const char *phrase, const uint8_t *salt, size_t salt_len,
 			uint32_t iterations, uint8_t out[ZLRS_KEY_LEN]);

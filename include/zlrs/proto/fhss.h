@@ -1,5 +1,5 @@
 /*
- * Hopping sequence, see doc/08-protocol.md: both ends derive the same table from fhss_seed,
+ * Hopping sequence, see doc/07-protocol.md: both ends derive the same table from fhss_seed,
  * slot 0 of every block stays on the sync channel and the rest are shuffled within the block.
  *
  * SPDX-License-Identifier: Apache-2.0

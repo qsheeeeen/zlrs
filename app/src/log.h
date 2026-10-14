@@ -1,6 +1,6 @@
 /*
  * Log store: the flash ring the file logging backend writes to (app/src/log.c,
- * doc/07-firmware.md). Used by management log export.
+ * doc/06-firmware.md). Used by management log export.
  *
  * SPDX-License-Identifier: Apache-2.0
  */

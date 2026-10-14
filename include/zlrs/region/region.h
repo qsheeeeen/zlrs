@@ -1,6 +1,6 @@
 /*
  * Region layer: turns "where is this used" into a channel plan, power ceiling and duty
- * cap (doc/08-protocol.md). Validation at boot and limiting before TX are separate.
+ * cap (doc/07-protocol.md). Validation at boot and limiting before TX are separate.
  *
  * SPDX-License-Identifier: Apache-2.0
  */

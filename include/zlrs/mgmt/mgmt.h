@@ -1,6 +1,7 @@
 /*
  * Management protocol: runs on the management CDC while in management mode
- * (table: doc/09-security.md 9). Pure C frame and fixed status codecs. The application executes device commands.
+ * (table: doc/07-protocol.md#usb-management-framing). Pure C frame and fixed status codecs.
+ * The application executes device commands.
  *
  * SPDX-License-Identifier: Apache-2.0
  */

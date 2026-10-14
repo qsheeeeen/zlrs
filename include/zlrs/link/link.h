@@ -1,5 +1,5 @@
 /*
- * Link layer: one instance per link, running the state machine and superframe slots (doc/08-protocol.md).
+ * Link layer: one instance per link, running the state machine and superframe slots (doc/07-protocol.md).
  *
  * Each superframe: zlrs_link_slot() hands out a transaction, the caller runs it and
  * zlrs_link_complete() closes it; zlrs_link_tick() handles timeouts and state changes. No Zephyr.
@@ -24,7 +24,7 @@ extern "C" {
 #endif
 
 /*
- * Pairing handshake (doc/08-protocol.md). The two ends share no slot phase while pairing, so
+ * Pairing handshake (doc/07-protocol.md). The two ends share no slot phase while pairing, so
  * a message is heard or missed by luck: every step repeats until the next one shows up. The
  * initiator sends this many PAIR_CFM before it calls the handshake done.
  */
@@ -40,7 +40,7 @@ extern "C" {
 #define ZLRS_SESS_CONFIRM_MS     500U
 #define ZLRS_DATA_CONFIRM_FRAMES 16U
 
-/* Superframe slots, see doc/08-protocol.md */
+/* Superframe slots, see doc/07-protocol.md */
 #define ZLRS_SLOT_DATA_A 0U /* first half of the data window: TX -> RX */
 #define ZLRS_SLOT_DATA_B 1U /* second half of the data window: RX -> TX */
 
@@ -77,7 +77,7 @@ typedef struct {
 	uint16_t feedback_period_ms; /* empty DATA heartbeat while idle; 0 disables it */
 	/*
 	 * Per-frame hopping. 0 = stay on the sync channel (entry 0 of the hop table), which is how
-	 * layer isolation looks at timing and the hop table separately, see doc/11-debug.md.
+	 * layer isolation looks at timing and the hop table separately, see doc/10-debug.md.
 	 */
 	uint8_t hopping;
 	/*
@@ -146,7 +146,7 @@ typedef struct {
 	int16_t last_rssi;
 	int16_t rssi_min; /* weakest and strongest frame heard: the bench looks at the spread */
 	int16_t rssi_max;
-	int8_t last_snr; /* the radio stack cannot provide it under FLRC, see doc/05-radio.md */
+	int8_t last_snr; /* the radio stack cannot provide it under FLRC, see doc/04-radio.md */
 	/* Uplink quality: frames really received in the last window vs. what the sequence predicts */
 	uint8_t lq_percent;
 	uint16_t lq_rx;
@@ -201,7 +201,7 @@ typedef struct {
 	/*
 	 * The two nonces exchanged while pairing (initiator first) feed the pair_key derivation and
 	 * are stored with the pairing record: every pairing replaces them, so old captures can no
-	 * longer reproduce a session. See doc/09-security.md 3.
+	 * longer reproduce a session. See doc/08-security.md#cryptographic-parameters.
 	 */
 	uint8_t pair_salt[ZLRS_PAIR_SALT_LEN];
 	uint8_t pair_key[ZLRS_KEY_LEN];
@@ -209,7 +209,7 @@ typedef struct {
 	 * Per-frame tag keys are direction-split (sender -> receiver) with both dev_ids as context:
 	 * out tags our frames (local id first), in verifies the peer's (peer id first).
 	 * Each end derives both with no negotiation and no roles. One shared key would let our own
-	 * frames pass verification when reflected, see doc/09-security.md 3.
+	 * frames pass verification when reflected, see doc/08-security.md#cryptographic-parameters.
 	 */
 	uint8_t link_auth_out[ZLRS_KEY_LEN];
 	uint8_t link_auth_in[ZLRS_KEY_LEN];
@@ -218,7 +218,7 @@ typedef struct {
 	uint8_t session_key_in[ZLRS_KEY_LEN];
 	bool session_valid;
 	/*
-	 * Session setup mirrors pairing (doc/08-protocol.md): the initiator offers nonce_t, the
+	 * Session setup mirrors pairing (doc/07-protocol.md): the initiator offers nonce_t, the
 	 * responder answers with nonce_r, both feed the KDF, and the last message carries nonce_r
 	 * to prove the peer derived the same key. The RX only adopts the session after that proof,
 	 * so replaying an old SYNC yields no old session key.

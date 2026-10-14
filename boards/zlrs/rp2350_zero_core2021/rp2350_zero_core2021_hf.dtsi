@@ -4,7 +4,7 @@
  * Sub-G calibration is per SKU: HF (850-930 MHz) and LF (410-510 MHz) have different PA
  * networks, so power tables and calibration frequencies cannot be shared. The values are
  * references (HF from Semtech's Wio-LR2021 at 902 MHz, LF measured at 470 MHz) and get
- * recalibrated for the Core2021 PA network; the acceptance criteria are in doc/12-roadmap.md.
+ * recalibrated for the Core2021 PA network; the acceptance criteria are in doc/11-roadmap.md.
  *
  * SPDX-License-Identifier: Apache-2.0
  */

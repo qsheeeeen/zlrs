@@ -2,7 +2,7 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# Tree checks that need no build (doc/11-debug.md, "Tests organized by module"):
+# Tree checks that need no build (doc/10-debug.md#host-and-tool-checks):
 #
 #   1. core/ and its public headers stay free of Zephyr. They compile on the host; that is
 #      what makes the protocol testable and keeps the platform out of the link layer.
@@ -11,11 +11,11 @@
 #   3. shipped configurations carry no ZLRS_APP_DEBUG_* option. Those exist for bench images;
 #      the marker symbol CONFIG_ZLRS_APP_DEBUG lives in app/debug.conf only.
 #   4. the application is never installed as a UF2: BOOTSEL carries the bootloader image only,
-#      every application image goes through the bootloader (doc/07-firmware.md). A document or
+#      every application image goes through the bootloader (doc/06-firmware.md). A document or
 #      tool that brings the app-UF2 path back fails here.
 #   5. the log ring fits its partition: the file backend's FILE_SIZE × FILES_LIMIT has to equal
 #      the log_partition in the board's flash layout, or the ring either wastes flash or
-#      overwrites the coredump partition next to it (doc/07-firmware.md).
+#      overwrites the coredump partition next to it (doc/06-firmware.md).
 #   6. RF owns link instances; frontends use business interfaces and own their channels.
 #
 # Usage: tests/gates.sh

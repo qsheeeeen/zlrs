@@ -50,7 +50,7 @@ static uint32_t tx_cfg_freq;
 static int8_t tx_cfg_power;
 static zlrs_lr2021_diag_t diag;
 
-/* Rate tiers: since v1.1 the raw rate and bandwidth share one enum, see doc/05-radio.md */
+/* Rate tiers: since v1.1 the raw rate and bandwidth share one enum, see doc/04-radio.md */
 static ral_flrc_raw_bit_rate_t raw_bit_rate(uint32_t rate_bps)
 {
 	switch (rate_bps) {
