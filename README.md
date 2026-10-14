@@ -2,7 +2,7 @@
 
 ZLRS carries a transparent, bidirectional USB/UART byte stream over an authenticated,
 frequency-hopping LR2021 radio link. Both endpoints run the same firmware: configure
-one as TX, the other as RX, provision the same root key or binding phrase and pair
+one as Leader, the other as Follower, provision the same root key or binding phrase and pair
 them.
 
 ## Capabilities
@@ -70,22 +70,22 @@ build credentials, storage and rollback.
 
 ```sh
 python3 tools/zlrs.py list
-python3 tools/zlrs.py set-role tx --serial <TX-serial>
-python3 tools/zlrs.py set-role rx --serial <RX-serial>
-python3 tools/zlrs.py set-phrase 'shared binding phrase' --serial <TX-serial>
-python3 tools/zlrs.py set-phrase 'shared binding phrase' --serial <RX-serial>
-python3 tools/zlrs.py set-band auto --serial <TX-serial>
-python3 tools/zlrs.py set-band auto --serial <RX-serial>
+python3 tools/zlrs.py set-role leader --serial <Leader-serial>
+python3 tools/zlrs.py set-role follower --serial <Follower-serial>
+python3 tools/zlrs.py set-phrase 'shared binding phrase' --serial <Leader-serial>
+python3 tools/zlrs.py set-phrase 'shared binding phrase' --serial <Follower-serial>
+python3 tools/zlrs.py set-band auto --serial <Leader-serial>
+python3 tools/zlrs.py set-band auto --serial <Follower-serial>
 ```
 
 Set the same compatible SubG region on both devices and reboot to apply ordinary
 settings. Then open pairing on both devices with the button or tool:
 
 ```sh
-python3 tools/zlrs.py pair --serial <TX-serial>
-python3 tools/zlrs.py pair --serial <RX-serial>
-python3 tools/zlrs.py status --serial <TX-serial>
-python3 tools/zlrs.py status --serial <RX-serial>
+python3 tools/zlrs.py pair --serial <Leader-serial>
+python3 tools/zlrs.py pair --serial <Follower-serial>
+python3 tools/zlrs.py status --serial <Leader-serial>
+python3 tools/zlrs.py status --serial <Follower-serial>
 ```
 
 Use the DATA CDC or the 3.3 V UART for application bytes. Management commands pause

@@ -125,8 +125,8 @@ for role in OFF ON; do
   for subg in OFF ON; do
     rf_build="build/sim-rf-${role}-${subg}"
     west build -b native_sim/native/64 tests/simulation/rf -d "$rf_build" -- \
-      -DRF_TEST_ROLE_RX="$role" -DRF_TEST_BAND_SUBG="$subg"
-    "$rf_build/zephyr/zephyr.exe" --flash_in_ram
+      -DRF_TEST_ROLE_FOLLOWER="$role" -DRF_TEST_BAND_SUBG="$subg"
+    "$rf_build/zephyr/zephyr.exe"
   done
 done
 ```
@@ -137,8 +137,8 @@ Run automatic-mode scenarios for each role:
 for role in OFF ON; do
   rf_build="build/sim-auto-${role}"
   west build -b native_sim/native/64 tests/simulation/rf -d "$rf_build" -- \
-    -DRF_TEST_ROLE_RX="$role" -DRF_TEST_BAND_AUTO=ON
-  "$rf_build/zephyr/zephyr.exe" --flash_in_ram
+    -DRF_TEST_ROLE_FOLLOWER="$role" -DRF_TEST_BAND_AUTO=ON
+  "$rf_build/zephyr/zephyr.exe"
 done
 ```
 
@@ -206,7 +206,7 @@ Use paired product images and deterministic bytes:
 
 ```sh
 python3 tests/hardware/app/link/test_data.py \
-  --tx-port <TX-serial> --rx-port <RX-serial> --bytes 8192 --rounds 2
+  --leader-port <Leader-serial> --follower-port <Follower-serial> --bytes 8192 --rounds 2
 ```
 
 Test both fixed bands and automatic mode, with short and maximum-length packets,
@@ -227,7 +227,7 @@ bidirectional recovery.
 ```sh
 west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33/lf \
   tests/hardware/radio -d build/radio
-python3 tests/hardware/radio/run.py --serial <TX-serial> --peer <RX-serial> \
+python3 tests/hardware/radio/run.py --serial <Leader-serial> --peer <Follower-serial> \
   --log build/radio.json --timeout 60
 ```
 

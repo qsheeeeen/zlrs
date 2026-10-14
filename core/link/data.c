@@ -39,7 +39,7 @@ static zlrs_data_frame_t *data_frame(const zlrs_link_t *link, uint8_t seq, zlrs_
 	const int16_t rssi = link->stats.last_rssi;
 	const bool ack = link->cfg.arq && receive_ack_bit(link);
 	*frame = (zlrs_frame_t){
-		.type = link->cfg.role == ZLRS_ROLE_TX ? ZLRS_PKT_DATA_UP : ZLRS_PKT_DATA_DOWN,
+		.type = link->cfg.role == ZLRS_ROLE_LEADER ? ZLRS_PKT_DATA_L2F : ZLRS_PKT_DATA_F2L,
 	};
 	zlrs_data_frame_t *const data = &frame->body.data;
 	data->data_seq = seq;
@@ -104,7 +104,8 @@ const uint8_t *zlrs_link_prepare_data(zlrs_link_t *link, uint8_t slot, uint32_t 
 		return NULL;
 	}
 	zlrs_prepared_data_t *packet = &link->prepared_data;
-	const uint8_t type = link->cfg.role == ZLRS_ROLE_TX ? ZLRS_PKT_DATA_UP : ZLRS_PKT_DATA_DOWN;
+	const uint8_t type =
+		link->cfg.role == ZLRS_ROLE_LEADER ? ZLRS_PKT_DATA_L2F : ZLRS_PKT_DATA_F2L;
 	const uint32_t frame = link->frame_index + (slot == ZLRS_SLOT_DATA_A ? 1U : 0U);
 
 	/* The TX request may still refer to packet->buf; never overwrite it while on air. */
@@ -114,7 +115,7 @@ const uint8_t *zlrs_link_prepare_data(zlrs_link_t *link, uint8_t slot, uint32_t 
 	packet->valid = false;
 	if (!link->cfg.arq || link->cfg.data_mtu == 0U || link->state != ZLRS_STATE_CONNECTED ||
 	    !link->session_valid ||
-	    slot != (link->cfg.role == ZLRS_ROLE_TX ? ZLRS_SLOT_DATA_A : ZLRS_SLOT_DATA_B) ||
+	    slot != (link->cfg.role == ZLRS_ROLE_LEADER ? ZLRS_SLOT_DATA_A : ZLRS_SLOT_DATA_B) ||
 	    link->tx_seq == UINT32_MAX || link->sess_cfm_due ||
 	    (link->cfg.resync_every_n > 0U && frame % link->cfg.resync_every_n == 0U)) {
 		return NULL;
@@ -158,7 +159,8 @@ void zlrs_link_discard_prepared_data(zlrs_link_t *link)
 static const zlrs_radio_req_t *send_prepared_data(zlrs_link_t *link, uint32_t now_ms, bool retry)
 {
 	zlrs_prepared_data_t *packet = &link->prepared_data;
-	const uint8_t type = link->cfg.role == ZLRS_ROLE_TX ? ZLRS_PKT_DATA_UP : ZLRS_PKT_DATA_DOWN;
+	const uint8_t type =
+		link->cfg.role == ZLRS_ROLE_LEADER ? ZLRS_PKT_DATA_L2F : ZLRS_PKT_DATA_F2L;
 	const uint16_t inflight = arq_inflight_bytes(link);
 	const uint8_t data_seq = link->arq_seq;
 	const bool data_valid =

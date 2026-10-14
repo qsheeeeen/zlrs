@@ -6,8 +6,8 @@
 # End-to-end data-port throughput test for two connected ZLRS devices.
 #
 # Usage:
-#   python3 tests/hardware/app/link/test_data.py --tx-port <TX serial> --rx-port <RX serial>
-#   python3 tests/hardware/app/link/test_data.py --tx-port /dev/ttyACM0 --rx-port /dev/ttyACM2
+#   python3 tests/hardware/app/link/test_data.py --leader-port <Leader serial> --follower-port <Follower serial>
+#   python3 tests/hardware/app/link/test_data.py --leader-port /dev/ttyACM0 --follower-port /dev/ttyACM2
 #
 # Serial fragments are resolved against /dev/serial/by-id/*-if00. The test sends distinct
 # deterministic payloads in both directions, checks every received byte and reports JSON
@@ -118,8 +118,8 @@ def run_round(ports, round_no: int, count: int, chunk_size: int, interval_ms: in
               show_progress: bool) -> dict:
     drained, input_quiet = drain_stale_input(ports)
     if show_progress:
-        print(f"  pre-test drain: TX input {format_bytes(drained[0])}, "
-              f"RX input {format_bytes(drained[1])}; "
+        print(f"  pre-test drain: Leader input {format_bytes(drained[0])}, "
+              f"Follower input {format_bytes(drained[1])}; "
               f"{'quiet' if input_quiet else 'still active after 10 sec'}", flush=True)
 
     expected = [random.Random(6000 + round_no * 2 + i).randbytes(count) for i in range(2)]
@@ -147,9 +147,9 @@ def run_round(ports, round_no: int, count: int, chunk_size: int, interval_ms: in
             return
 
         counts = [len(data) for data in received]
-        for name, receive_index in (("TX->RX", 1), ("RX->TX", 0)):
+        for name, receive_index in (("Leader->Follower", 1), ("Follower->Leader", 0)):
             delta = max(counts[receive_index] - last_report_counts[receive_index], 0)
-            print(f"[{name:5}] {last_report_at - start:6.2f}-{now - start:6.2f} sec  "
+            print(f"[{name:19}] {last_report_at - start:6.2f}-{now - start:6.2f} sec  "
                   f"{format_bytes(delta):>12}  {format_rate(delta, elapsed)}", flush=True)
         last_report_at = now
         last_report_counts = counts
@@ -161,7 +161,7 @@ def run_round(ports, round_no: int, count: int, chunk_size: int, interval_ms: in
             chunk_end = min(offset + chunk_size, count)
             for i, port in enumerate(ports):
                 payload = expected[i][offset:chunk_end]
-                endpoint = "TX" if i == 0 else "RX"
+                endpoint = "Leader" if i == 0 else "Follower"
                 try:
                     written = port.write(payload)
                 except Exception as exc:
@@ -200,9 +200,9 @@ def run_round(ports, round_no: int, count: int, chunk_size: int, interval_ms: in
     else:
         end = time.monotonic()
     duration_s = max(end - start, 1e-9)
-    # Data received at TX came from RX, and vice versa.
+    # Data received at Leader came from Follower, and vice versa.
     directions = {}
-    for name, receive_index, send_index in (("tx_to_rx", 1, 0), ("rx_to_tx", 0, 1)):
+    for name, receive_index, send_index in (("leader_to_follower", 1, 0), ("follower_to_leader", 0, 1)):
         actual = bytes(received[receive_index])
         delivered = min(len(actual), count)
         expected_payload = expected[send_index]
@@ -224,7 +224,7 @@ def run_round(ports, round_no: int, count: int, chunk_size: int, interval_ms: in
     return {
         "round": round_no + 1,
         "duration_s": round(duration_s, 3),
-        "discarded_before_start": {"at_tx": drained[0], "at_rx": drained[1]},
+        "discarded_before_start": {"at_leader": drained[0], "at_follower": drained[1]},
         "input_quiet_before_start": input_quiet,
         "directions": directions,
         "timed_out": any(completed_at is None for completed_at in direction_completed_at),
@@ -234,10 +234,10 @@ def run_round(ports, round_no: int, count: int, chunk_size: int, interval_ms: in
 
 
 def configure_parser(parser):
-    parser.add_argument("--tx-port", required=True,
-                        help="TX device data port, path or USB serial-number fragment")
-    parser.add_argument("--rx-port", required=True,
-                        help="RX device data port, path or USB serial-number fragment")
+    parser.add_argument("--leader-port", required=True,
+                        help="Leader device data port, path or USB serial-number fragment")
+    parser.add_argument("--follower-port", required=True,
+                        help="Follower device data port, path or USB serial-number fragment")
     parser.add_argument("--rounds", type=positive_int, default=3)
     parser.add_argument("--bytes", type=positive_int, default=4096, dest="byte_count",
                         help="bytes sent in each direction per round (default: 4096)")
@@ -270,13 +270,13 @@ def main(args=None, parser=None) -> int:
         return 2
 
     try:
-        tx_path = resolve_port(args.tx_port)
-        rx_path = resolve_port(args.rx_port)
-        if tx_path == rx_path:
-            raise ValueError("TX and RX must be different serial ports")
+        leader_path = resolve_port(args.leader_port)
+        follower_path = resolve_port(args.follower_port)
+        if leader_path == follower_path:
+            raise ValueError("Leader and Follower must be different serial ports")
         ports = []
         try:
-            for path in (tx_path, rx_path):
+            for path in (leader_path, follower_path):
                 ports.append(serial.Serial(path, args.baud, timeout=0.05, write_timeout=3))
         except Exception:
             for port in ports:
@@ -306,7 +306,7 @@ def main(args=None, parser=None) -> int:
             else:
                 for name, direction in result["directions"].items():
                     status = "OK" if direction["exact"] else "MISMATCH"
-                    print(f"  {name:7} {format_bytes(direction['received_bytes']):>12} / "
+                    print(f"  {name:19} {format_bytes(direction['received_bytes']):>12} / "
                           f"{format_bytes(direction['sent_bytes'])}  "
                           f"{format_rate(direction['delivered_bytes'], direction['duration_s'])}  "
                           f"{status}")

@@ -43,23 +43,34 @@ static void check_wire(const zlrs_frame_t *view, const uint8_t *expected, uint16
 
 void test_frame(void)
 {
-	zlrs_frame_t frame = {.type = ZLRS_PKT_DATA_UP, .seq = 0x04030102,
-		.tag = {0xde, 0xad, 0xbe, 0xef},
-		.body.data = {.data_seq = 127, .ack = 1,
-			      .rssi_magnitude = 48, .lq_percent = 99,
-			      .bytes = {0x5a, 0xa5}}};
+	zlrs_frame_t frame = {.type = ZLRS_PKT_DATA_L2F,
+			      .seq = 0x04030102,
+			      .tag = {0xde, 0xad, 0xbe, 0xef},
+			      .body.data = {.data_seq = 127,
+					    .ack = 1,
+					    .rssi_magnitude = 48,
+					    .lq_percent = 99,
+					    .bytes = {0x5a, 0xa5}}};
 	const uint8_t data[] = {0,2,1,3,4, 0xff,48,99,0x5a,0xa5, 0xde,0xad,0xbe,0xef};
 	check_wire(&frame, data, sizeof(data));
-	frame = (zlrs_frame_t){.type = ZLRS_PKT_DATA_DOWN, .seq = 0x04030102,
-		.tag = {0xde, 0xad, 0xbe, 0xef}, .body.data = {.data_seq = 1, .lq_percent = 100}};
+	frame = (zlrs_frame_t){.type = ZLRS_PKT_DATA_F2L,
+			       .seq = 0x04030102,
+			       .tag = {0xde, 0xad, 0xbe, 0xef},
+			       .body.data = {.data_seq = 1, .lq_percent = 100}};
 	const uint8_t feedback[] = {1,2,1,3,4, 2,0,100, 0xde,0xad,0xbe,0xef};
 	check_wire(&frame, feedback, sizeof(feedback));
-	frame = (zlrs_frame_t){.type = ZLRS_PKT_SYNC, .seq = 0x04030102,
-		.tag = {0xde, 0xad, 0xbe, 0xef},
-		.body.sync = {.version = 11, .profile = 1, .hop_index = 254,
-			      .nonce_t = 0x11223344, .frame_index = 0x55667788,
-			      .band_plan = {.domain = 4, .automatic = 1, .target_subg = 1,
-				.switch_frame = 0x66778899}}};
+	frame = (zlrs_frame_t){.type = ZLRS_PKT_SYNC,
+			       .seq = 0x04030102,
+			       .tag = {0xde, 0xad, 0xbe, 0xef},
+			       .body.sync = {.version = 11,
+					     .profile = 1,
+					     .hop_index = 254,
+					     .nonce_leader = 0x11223344,
+					     .frame_index = 0x55667788,
+					     .band_plan = {.domain = 4,
+							   .automatic = 1,
+							   .target_subg = 1,
+							   .switch_frame = 0x66778899}}};
 	const uint8_t sync[] = {0xba,2,1,3,4, 254,0x44,0x33,0x22,0x11,
 			       0x88,0x77,0x66,0x55, 0x1c,0x99,0x88,0x77,0x66, 0xde,0xad,0xbe,0xef};
 	check_wire(&frame, sync, sizeof(sync));
@@ -79,24 +90,29 @@ void test_frame(void)
 		frame.body.pair = pair_body;
 		check_wire(&frame, pair, sizeof(pair));
 	}
-	frame = (zlrs_frame_t){.type = ZLRS_PKT_SESS_RESP, .seq = 0x04030102,
+	frame = (zlrs_frame_t){
+		.type = ZLRS_PKT_SESS_RESP,
+		.seq = 0x04030102,
 		.tag = {0xde, 0xad, 0xbe, 0xef},
-		.body.sess_resp = {.nonce_t = 0x11223344, .nonce_r = 0x55667788}};
+		.body.sess_resp = {.nonce_leader = 0x11223344, .nonce_follower = 0x55667788}};
 	const uint8_t resp[] = {6,2,1,3,4, 0x44,0x33,0x22,0x11,0x88,0x77,0x66,0x55,
 			       0xde,0xad,0xbe,0xef};
 	check_wire(&frame, resp, sizeof(resp));
-	frame = (zlrs_frame_t){.type = ZLRS_PKT_SESS_CFM, .seq = 0x04030102,
-		.tag = {0xde, 0xad, 0xbe, 0xef},
-		.body.sess_cfm = {.nonce_r = 0x55667788, .hop_index = 0x44, .frame_index = 0x99aabbcc,
-			.band_plan = {.domain = 4}}};
+	frame = (zlrs_frame_t){.type = ZLRS_PKT_SESS_CFM,
+			       .seq = 0x04030102,
+			       .tag = {0xde, 0xad, 0xbe, 0xef},
+			       .body.sess_cfm = {.nonce_follower = 0x55667788,
+						 .hop_index = 0x44,
+						 .frame_index = 0x99aabbcc,
+						 .band_plan = {.domain = 4}}};
 	const uint8_t cfm[] = {7,2,1,3,4, 0x88,0x77,0x66,0x55,0x44,
 			      0xcc,0xbb,0xaa,0x99, 4,0,0,0,0, 0xde,0xad,0xbe,0xef};
 	check_wire(&frame, cfm, sizeof(cfm));
 
 	/* DATA owns the used bytes; P1 reserves four bytes that P0 can use. */
 	uint8_t buf[ZLRS_FRAME_MAX_LEN];
-	frame = (zlrs_frame_t){.type = ZLRS_PKT_DATA_UP, .seq = 1U,
-		.tag = {0xde, 0xad, 0xbe, 0xef}};
+	frame = (zlrs_frame_t){
+		.type = ZLRS_PKT_DATA_L2F, .seq = 1U, .tag = {0xde, 0xad, 0xbe, 0xef}};
 	memset(frame.body.data.bytes, 0xa5, sizeof(frame.body.data.bytes));
 	zlrs_frame_t out;
 	CHECK(zlrs_frame_encode(&frame, buf, sizeof(buf), 511U, ZLRS_TAG_LEN) == 511U);

@@ -133,7 +133,7 @@ def status_text(payload: bytes) -> str:
     baud = int.from_bytes(payload[16:20], "little")
     power = payload[15] - 256 if payload[15] > 127 else payload[15]
     sections = [
-        ("Device", [("Role", "TX" if payload[1] == 0 else "RX"),
+        ("Device", [("Role", "Leader" if payload[1] == 0 else "Follower"),
                     ("Hardware", "HF (868/915 MHz)" if payload[13] else "LF (470/433 MHz)"),
                     ("Device ID", dev), ("Peer ID", peer)]),
         ("Link", [("Data band", "sub-GHz" if flags & 0x08 else "2.4 GHz"),
@@ -580,8 +580,10 @@ def add_commands(sub, parents=()):
                         help="0=FCC915 1=EU868 2=CN470 3=CN433")
     power = command("set-power", help="set the regional TX power ceiling", description="set the regional TX power ceiling")
     power.add_argument("dbm", type=bounded_int(-128, 127), help="TX power ceiling (dBm)")
-    role = command("set-role", help="select the runtime TX or RX role", description="select the runtime TX or RX role")
-    role.add_argument("role", choices=["tx", "rx"], help="runtime role: tx or rx")
+    role = command("set-role", help="select the Leader or Follower role",
+                   description="Select the timing role; both endpoints send and receive DATA.")
+    role.add_argument("role", choices=["leader", "follower"],
+                      help="leader provides the clock; follower follows it")
     profile = command("set-profile", help="select the authentication profile", description="select the authentication profile")
     profile.add_argument("profile", choices=["p0", "p1", "p2"],
                          help="P0 has no tag (debug images only), P1 is the production profile, "
@@ -685,7 +687,7 @@ def main(args=None, parser=None) -> int:
         frame = encode(CMD_SET_POWER, bytes([args.dbm & 0xFF]))
         expect = True
     elif args.command == "set-role":
-        frame = encode(CMD_SET_ROLE, bytes([0 if args.role == "tx" else 1]))
+        frame = encode(CMD_SET_ROLE, bytes([0 if args.role == "leader" else 1]))
         expect = True
     elif args.command == "set-profile":
         frame = encode(CMD_SET_PROFILE, bytes([int(args.profile[1])]))

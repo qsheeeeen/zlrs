@@ -62,10 +62,10 @@ void __wrap_z_impl_sys_rand_get(void *dst, size_t len)
 }
 
 static const zlrs_persist_settings_t saved_settings = {
-	.band = RF_TEST_BAND_AUTO ? ZLRS_DATA_BAND_AUTO :
-		(RF_TEST_BAND_SUBG ? ZLRS_DATA_BAND_SUBG : ZLRS_DATA_BAND_24),
+	.band = RF_TEST_BAND_AUTO ? ZLRS_DATA_BAND_AUTO
+				  : (RF_TEST_BAND_SUBG ? ZLRS_DATA_BAND_SUBG : ZLRS_DATA_BAND_24),
 	.region = ZLRS_REGION_CN433,
-	.role = RF_TEST_ROLE_RX ? ZLRS_ROLE_RX : ZLRS_ROLE_TX,
+	.role = RF_TEST_ROLE_FOLLOWER ? ZLRS_ROLE_FOLLOWER : ZLRS_ROLE_LEADER,
 	.profile = ZLRS_PROFILE_P1,
 	.power_dbm = 10,
 };
@@ -403,17 +403,17 @@ static void automatic_acceptance(void)
 	identity_valid = true;
 	zassert_ok(zlrs_rf_init());
 	zlrs_link_cfg_t cfg = *zlrs_link_get_config(local);
-	cfg.role = RF_TEST_ROLE_RX ? ZLRS_ROLE_TX : ZLRS_ROLE_RX;
+	cfg.role = RF_TEST_ROLE_FOLLOWER ? ZLRS_ROLE_LEADER : ZLRS_ROLE_FOLLOWER;
 	const zlrs_link_events_t events = {.on_data = receive_peer};
 	__real_zlrs_link_init(&peer, &cfg, peer_random, NULL, &events);
 	zlrs_link_set_dev_id(&peer, saved_pairing.peer_id);
 	zlrs_link_set_root_key(&peer, saved_key, 0);
 	zlrs_link_set_peer(&peer, saved_id, saved_pairing.pair_salt, 0);
-	zlrs_band_policy_init(&peer_band_policy, true, cfg.role == ZLRS_ROLE_TX, false, 0, 0);
+	zlrs_band_policy_init(&peer_band_policy, true, cfg.role == ZLRS_ROLE_LEADER, false, 0, 0);
 	zlrs_rf_start();
 	frames(150);
 	zassert_true(both_on_band(false));
-	if (RF_TEST_ROLE_RX) {
+	if (RF_TEST_ROLE_FOLLOWER) {
 		/* A legal SYNC with a large physical phase error is not DATA readiness. */
 		zlrs_rf_pause();
 		zlrs_rf_resume();
@@ -427,7 +427,7 @@ static void automatic_acceptance(void)
 		frames(50);
 		zassert_true(both_on_band(false));
 	}
-	const uint32_t nonce = local->sess_nonce_t;
+	const uint32_t nonce = local->sess_nonce_leader;
 	block_24 = true;
 	source_left = sizeof(outgoing) - 1U;
 	zassert_equal(zlrs_link_write(&peer, incoming, sizeof(incoming) - 1U), sizeof(incoming) - 1U);
@@ -438,7 +438,7 @@ static void automatic_acceptance(void)
 	zassert_true(both_on_band(true));
 	zassert_equal(delivered, sizeof(incoming) - 1U);
 	zassert_equal(peer_delivered, sizeof(outgoing) - 1U);
-	zassert_equal(local->sess_nonce_t, nonce);
+	zassert_equal(local->sess_nonce_leader, nonce);
 	bool tried = false, returned = false;
 	for (unsigned int i = 0; i < 18000; i++) {
 		frames(1);
@@ -455,7 +455,7 @@ static void automatic_acceptance(void)
 	zassert_true(preferred);
 	frames(600);
 	zassert_true(both_on_band(false));
-	zassert_equal(local->sess_nonce_t, nonce);
+	zassert_equal(local->sess_nonce_leader, nonce);
 	zassert_equal(local->stats.data_drop_bytes, 0);
 	zassert_equal(peer.stats.data_drop_bytes, 0);
 	zassert_true(zlrs_rf_status().band_switches >= 4U);
@@ -482,7 +482,7 @@ ZTEST(rf_results, test_protocol_completion_and_timeouts)
 	zassert_ok(zlrs_rf_init());
 	zassert_equal(radio_reads, 1);
 	zlrs_link_cfg_t cfg = *zlrs_link_get_config(local);
-	cfg.role = RF_TEST_ROLE_RX ? ZLRS_ROLE_TX : ZLRS_ROLE_RX;
+	cfg.role = RF_TEST_ROLE_FOLLOWER ? ZLRS_ROLE_LEADER : ZLRS_ROLE_FOLLOWER;
 	const zlrs_link_events_t events = {.on_data = receive_peer};
 	__real_zlrs_link_init(&peer, &cfg, peer_random, NULL, &events);
 	zlrs_link_set_dev_id(&peer, saved_pairing.peer_id);
@@ -492,8 +492,8 @@ ZTEST(rf_results, test_protocol_completion_and_timeouts)
 	frames(150);
 	zassert_true(secure_random_failures > 0U);
 	zassert_false(local->session_valid || local->session_pending);
-	zassert_equal(local->sess_nonce_t, 0U);
-	zassert_equal(local->sess_nonce_r, 0U);
+	zassert_equal(local->sess_nonce_leader, 0U);
+	zassert_equal(local->sess_nonce_follower, 0U);
 	zassert_equal(tx_ok, 0U, "failed entropy must not produce a handshake transmission");
 	zassert_equal(plain_random_requests, plain_before, "noncryptographic RNG fallback");
 	entropy_failed = false;
@@ -504,18 +504,18 @@ ZTEST(rf_results, test_protocol_completion_and_timeouts)
 	if (!RF_TEST_BAND_SUBG && CONFIG_ZLRS_APP_PACING_SCALE == 1) {
 		zassert_true(cfg.resync_every_n > UINT8_MAX);
 	}
-	zlrs_link_t *const master = RF_TEST_ROLE_RX ? &peer : local;
-	const uint32_t syncs = zlrs_link_get_stats(master)->tx_syncs;
+	zlrs_link_t *const leader = RF_TEST_ROLE_FOLLOWER ? &peer : local;
+	const uint32_t syncs = zlrs_link_get_stats(leader)->tx_syncs;
 	frames(12000000U / period_us);
-	const uint32_t periodic = zlrs_link_get_stats(master)->tx_syncs - syncs;
+	const uint32_t periodic = zlrs_link_get_stats(leader)->tx_syncs - syncs;
 	zassert_true(periodic == 2U || periodic == 3U);
 
-	if (RF_TEST_ROLE_RX) {
-		/* A new master clock can differ beyond the locked outlier limit before
+	if (RF_TEST_ROLE_FOLLOWER) {
+		/* A new leader clock can differ beyond the locked outlier limit before
 		 * silence is long enough to enable scanning. Valid new-session packets
 		 * must restart phase acquisition even when they continue arriving. */
 		scan_delay_override_ms = UINT32_MAX;
-		const uint32_t previous_nonce = local->sess_nonce_t;
+		const uint32_t previous_nonce = local->sess_nonce_leader;
 		mode = RX_FAIL;
 		frames(DIV_ROUND_UP((cfg.sync_period_ms + 50U) * 1000U, period_us));
 		mode = NORMAL;
@@ -529,7 +529,7 @@ ZTEST(rf_results, test_protocol_completion_and_timeouts)
 		frames(2000);
 		zassert_equal(local->state, ZLRS_STATE_CONNECTED);
 		zassert_equal(peer.state, ZLRS_STATE_CONNECTED);
-		zassert_not_equal(local->sess_nonce_t, previous_nonce);
+		zassert_not_equal(local->sess_nonce_leader, previous_nonce);
 		zassert_true(phase_shift_events > shifts_before,
 			     "new session was rejected by the previous clock's outlier gate");
 		packet_phase_error_us = 0;

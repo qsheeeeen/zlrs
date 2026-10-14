@@ -39,11 +39,12 @@ config ZLRS_APP_CORE
 	  The protocol, data link, region and management modules every image carries. Optional ports
 	  and LEDs are described by devicetree; USB is selected by the board.
 
-config ZLRS_APP_ROLE_TX
-	bool "Build as the TX role"
+config ZLRS_APP_ROLE_LEADER
+	bool "Default to the Leader role"
 	default y
 	help
-	  The TX initiates pairing and sessions. Both roles send and receive data.
+	  Leader provides the clock and initiates pairing and sessions. Follower follows
+	  the clock and responds. Both roles send and receive data.
 
 
 # The only knob on the upgrade path: how long the host has to confirm. The mechanism itself

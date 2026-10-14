@@ -77,7 +77,7 @@ void __wrap_zlrs_link_complete(zlrs_link_t *, int, uint16_t, int16_t, int8_t, ui
 
 static void raw_run(void)
 {
-	const bool tx = (data_link->cfg.role == ZLRS_ROLE_TX) !=
+	const bool tx = (data_link->cfg.role == ZLRS_ROLE_LEADER) !=
 			IS_ENABLED(CONFIG_ZLRS_TEST_RAW_REVERSE);
 	zlrs_radio_req_t req = {
 		.freq_hz = CONFIG_ZLRS_TEST_RAW_FREQ_MHZ * 1000000U,

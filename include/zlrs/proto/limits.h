@@ -39,10 +39,10 @@
 /* The two pairing nonces (initiator || responder): feed pair_key and are stored */
 #define ZLRS_PAIR_SALT_LEN 8U
 
-/* device roles */
+/* Timing/coordination roles; both endpoints transmit and receive DATA. */
 typedef enum {
-	ZLRS_ROLE_TX = 0,
-	ZLRS_ROLE_RX = 1
+	ZLRS_ROLE_LEADER = 0,
+	ZLRS_ROLE_FOLLOWER = 1
 } zlrs_role_t;
 
 /* Request sends only the initiator ID/nonce. Response/confirm bind both ends. */

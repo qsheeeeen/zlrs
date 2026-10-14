@@ -27,6 +27,27 @@ class EntryTests(unittest.TestCase):
         self.assertEqual(entry.mgmt.decode(talk.call_args_list[0].args[2]),
                          (entry.mgmt.CMD_SET_BAUD, (420000).to_bytes(4, "little")))
 
+    def test_bidirectional_role_commands_and_status(self):
+        for role, value, label in (("leader", 0, "Leader"), ("follower", 1, "Follower")):
+            with self.subTest(role=role), patch.object(entry.mgmt, "talk", return_value=0) as talk:
+                rc, _ = invoke(entry, "set-role", role, "--port", "fake")
+            self.assertEqual(rc, 0)
+            self.assertEqual(entry.mgmt.decode(talk.call_args_list[0].args[2]),
+                             (entry.mgmt.CMD_SET_ROLE, bytes([value])))
+            status = bytearray(entry.mgmt.STATUS_LEN)
+            status[1] = value
+            output = entry.mgmt.status_text(status)
+            role_line = next(line for line in output.splitlines() if "Role" in line)
+            self.assertIn(label, role_line)
+            self.assertNotIn("TX", role_line)
+            self.assertNotIn("RX", role_line)
+            self.assertIn("TX 0, RX 0", output)
+        rc, help_text = invoke(entry, "set-role", "--help")
+        self.assertEqual(rc, 0)
+        self.assertIn("leader", help_text)
+        self.assertIn("follower", help_text)
+        self.assertIn("both endpoints send and receive DATA", help_text)
+
     def test_24_band_command(self):
         with patch.object(entry.mgmt, "talk", return_value=0) as talk:
             rc, _ = invoke(entry, "set-band", "2.4", "--port", "fake")

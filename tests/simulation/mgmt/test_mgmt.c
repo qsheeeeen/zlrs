@@ -11,7 +11,7 @@
 #include "zlrs/proto/crypto.h"
 
 static zlrs_rf_status_t rf = {
-	.role = ZLRS_ROLE_TX,
+	.role = ZLRS_ROLE_LEADER,
 	.profile = ZLRS_PROFILE_P1,
 	.rssi_dbm = -48,
 	.peer_rssi_dbm = -51,
@@ -143,7 +143,7 @@ ZTEST(commands, test_device_commands)
 	ack(ZLRS_MGMT_CMD_SET_BAUD, baud, 4, 0);
 	zassert_equal(zlrs_persist_settings()->data_baud, 230400);
 	ack(ZLRS_MGMT_CMD_SET_BAUD, baud, 3, ZLRS_MGMT_E_PARAM);
-	const uint8_t invalid = 255, subg = ZLRS_DATA_BAND_SUBG, role = ZLRS_ROLE_RX;
+	const uint8_t invalid = 255, subg = ZLRS_DATA_BAND_SUBG, role = ZLRS_ROLE_FOLLOWER;
 	ack(ZLRS_MGMT_CMD_SET_ROLE, &invalid, 1, ZLRS_MGMT_E_PARAM);
 	ack(ZLRS_MGMT_CMD_SET_REGION, &invalid, 1, ZLRS_MGMT_E_PARAM);
 	ack(ZLRS_MGMT_CMD_SET_BAND, &subg, 1, 0);
@@ -183,7 +183,8 @@ ZTEST(commands, test_device_commands)
 	zlrs_mgmt_status_t status;
 	zassert_true(zlrs_mgmt_status_decode(ZLRS_MGMT_PAYLOAD(&p), p.payload_len, &status));
 	zassert_equal(p.payload_len, ZLRS_MGMT_STATUS_LEN);
-	zassert_equal(status.role, ZLRS_ROLE_TX); /* Running role; saved role is RX until reboot. */
+	zassert_equal(status.role,
+		      ZLRS_ROLE_LEADER); /* Running role; saved role is Follower until reboot. */
 	zassert_equal(status.data_baud, 230400);
 	zassert_equal(status.tx_power_dbm, -9);
 	zassert_equal(status.temperature_centi_c, 2675);

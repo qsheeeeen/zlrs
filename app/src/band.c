@@ -3,19 +3,19 @@
 
 static uint32_t maximum(uint32_t a, uint32_t b) { return a > b ? a : b; }
 
-void zlrs_band_policy_init(zlrs_band_policy_t *p, bool automatic, bool master, bool subg,
+void zlrs_band_policy_init(zlrs_band_policy_t *p, bool automatic, bool leader, bool subg,
 			   uint32_t duty_window_ms, uint32_t now_ms)
 {
 	*p = (zlrs_band_policy_t){
-	    .automatic = automatic,
-	    .master = master,
-	    .subg = subg,
-	    .loss_ms = maximum(1500U, duty_window_ms ? duty_window_ms + 2000U : 0U),
-	    .dwell_ms =
-		maximum(master ? 20000U : 4000U,
-			duty_window_ms ? (master ? 2U : 1U) * (duty_window_ms + 2000U) : 0U),
-	    .entered_ms = now_ms,
-	    .contact_ms = now_ms};
+		.automatic = automatic,
+		.leader = leader,
+		.subg = subg,
+		.loss_ms = maximum(1500U, duty_window_ms ? duty_window_ms + 2000U : 0U),
+		.dwell_ms = maximum(leader ? 20000U : 4000U,
+				    duty_window_ms ? (leader ? 2U : 1U) * (duty_window_ms + 2000U)
+						   : 0U),
+		.entered_ms = now_ms,
+		.contact_ms = now_ms};
 }
 
 void zlrs_band_policy_changed(zlrs_band_policy_t *p, bool subg, bool probe, uint32_t now_ms,
@@ -83,7 +83,7 @@ zlrs_band_action_t zlrs_band_policy_update(zlrs_band_policy_t *p, const zlrs_ban
 	} else {
 		p->bad = false;
 	}
-	if (!p->master) {
+	if (!p->leader) {
 		return ZLRS_BAND_KEEP;
 	}
 	if (!p->subg && p->bad && (uint32_t)(o->now_ms - p->bad_ms) >= 5000U) {

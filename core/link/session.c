@@ -30,7 +30,7 @@ void link_roll_session(zlrs_link_t *link, uint32_t now_ms)
 		link->radio_sync_seen = false;
 	}
 	link->last_rx_seq = 0U;
-	if (fresh_nonce(link, link->sess_nonce_t, &link->sess_nonce_t)) {
+	if (fresh_nonce(link, link->sess_nonce_leader, &link->sess_nonce_leader)) {
 		link->tx_seq = 1U;
 		link->session_pending = true;
 	}
@@ -57,8 +57,8 @@ void link_derive_by_endpoints(const zlrs_link_t *link, const char *label, const 
 static void derive_session_keys(zlrs_link_t *link)
 {
 	uint8_t ctx[2U * sizeof(uint32_t)];
-	wr32(ctx, link->sess_nonce_t);
-	wr32(ctx + 4U, link->sess_nonce_r);
+	wr32(ctx, link->sess_nonce_leader);
+	wr32(ctx + 4U, link->sess_nonce_follower);
 	link_derive_by_endpoints(link, LABEL_SESSION, ctx, sizeof(ctx), link->session_key_out,
 				 link->session_key_in);
 }
@@ -95,8 +95,9 @@ const zlrs_radio_req_t *link_send_sync(zlrs_link_t *link, uint32_t now_ms)
 		.body.sync = {.version = ZLRS_PROTO_VERSION,
 			      .profile = link->cfg.profile,
 			      .hop_index = link->fhss.index,
-			      .nonce_t = link->sess_nonce_t,
-			      .frame_index = link->frame_index, .band_plan = link->band_plan},
+			      .nonce_leader = link->sess_nonce_leader,
+			      .frame_index = link->frame_index,
+			      .band_plan = link->band_plan},
 	};
 	const uint16_t len = link_build_frame(link, &frame, ZLRS_SYNC_PAYLOAD_LEN,
 					     link_tag_key_for(link, frame.type, true));
@@ -110,7 +111,8 @@ const zlrs_radio_req_t *link_send_sess_resp(zlrs_link_t *link)
 {
 	zlrs_frame_t frame = {
 		.type = ZLRS_PKT_SESS_RESP,
-		.body.sess_resp = {.nonce_t = link->sess_nonce_t, .nonce_r = link->sess_nonce_r},
+		.body.sess_resp = {.nonce_leader = link->sess_nonce_leader,
+				   .nonce_follower = link->sess_nonce_follower},
 	};
 	const uint16_t len = link_build_frame(link, &frame, ZLRS_SESS_RESP_PAYLOAD_LEN,
 					     link_tag_key_for(link, frame.type, true));
@@ -126,8 +128,10 @@ const zlrs_radio_req_t *link_send_sess_cfm(zlrs_link_t *link)
 	link->band_plan.automatic = link->cfg.automatic_band;
 	zlrs_frame_t frame = {
 		.type = ZLRS_PKT_SESS_CFM,
-		.body.sess_cfm = {.nonce_r = link->sess_nonce_r, .hop_index = link->fhss.index,
-				  .frame_index = link->frame_index, .band_plan = link->band_plan},
+		.body.sess_cfm = {.nonce_follower = link->sess_nonce_follower,
+				  .hop_index = link->fhss.index,
+				  .frame_index = link->frame_index,
+				  .band_plan = link->band_plan},
 	};
 	link->sess_sync_frame = link->frame_index;
 	const uint16_t len = link_build_frame(link, &frame, ZLRS_SESS_CFM_PAYLOAD_LEN,
@@ -139,19 +143,20 @@ const zlrs_radio_req_t *link_send_sess_cfm(zlrs_link_t *link)
 
 bool link_handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
 {
-	const uint32_t nonce = frame->body.sync.nonce_t;
+	const uint32_t nonce = frame->body.sync.nonce_leader;
 	const uint8_t hop = frame->body.sync.hop_index;
-	if (!link->paired || link->cfg.role != ZLRS_ROLE_RX ||
+	if (!link->paired || link->cfg.role != ZLRS_ROLE_FOLLOWER ||
 	    frame->body.sync.version != ZLRS_PROTO_VERSION ||
 	    frame->body.sync.profile != link->cfg.profile || hop >= link->fhss.sequence_count ||
-	    !link_band_plan_valid(link, &frame->body.sync.band_plan, frame->body.sync.frame_index)) {
+	    !link_band_plan_valid(link, &frame->body.sync.band_plan,
+				  frame->body.sync.frame_index)) {
 		return false;
 	}
 	if (link->state == ZLRS_STATE_CONNECTED) {
 		if (link->cfg.resync_every_n == 0U) {
 			return false;
 		}
-		if (link->session_valid && nonce == link->sess_nonce_t) {
+		if (link->session_valid && nonce == link->sess_nonce_leader) {
 			if (frame->seq <= link->last_rx_seq) {
 				link->stats.rx_dup++;
 				return false;
@@ -165,7 +170,7 @@ bool link_handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now
 			link->frame_index = frame->body.sync.frame_index;
 			link->last_rx_frame = link->frame_index;
 			if (link->cfg.automatic_band || link->radio_acquiring) {
-				/* The master still waits on the capture channel for proof of return. */
+				/* The leader still waits on the capture channel for proof of return. */
 				link->sess_ack_due = !link->radio_acquiring;
 			}
 			link->radio_sync_seen = true;
@@ -187,18 +192,18 @@ bool link_handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now
 	if (link->state != ZLRS_STATE_SEARCHING) {
 		return false;
 	}
-	if (link->session_pending && nonce == link->sess_nonce_t) {
+	if (link->session_pending && nonce == link->sess_nonce_leader) {
 		if (frame->seq <= link->sess_rx_seq) {
 			link->stats.rx_dup++;
 			return false;
 		}
 	} else {
-		uint32_t nonce_r;
-		if (!fresh_nonce(link, link->sess_nonce_r, &nonce_r)) {
+		uint32_t nonce_follower;
+		if (!fresh_nonce(link, link->sess_nonce_follower, &nonce_follower)) {
 			return false;
 		}
-		link->sess_nonce_t = nonce;
-		link->sess_nonce_r = nonce_r;
+		link->sess_nonce_leader = nonce;
+		link->sess_nonce_follower = nonce_follower;
 		link->sess_hop = hop;
 		link->tx_seq = 1U;
 		derive_session_keys(link);
@@ -216,7 +221,7 @@ int link_handle_sess_cfm(zlrs_link_t *link, const zlrs_frame_t *frame,
 {
 	const uint8_t tag_len = zlrs_profile_tag_len(link->cfg.profile);
 	const bool repeated = link->state == ZLRS_STATE_CONNECTED && link->session_valid;
-	if (link->cfg.role != ZLRS_ROLE_RX ||
+	if (link->cfg.role != ZLRS_ROLE_FOLLOWER ||
 	    (!repeated && (!link->session_pending || link->state != ZLRS_STATE_SEARCHING)) ||
 	    frame->body.sess_cfm.hop_index >= link->fhss.sequence_count ||
 	    !link_band_plan_valid(link, &frame->body.sess_cfm.band_plan,
@@ -231,7 +236,7 @@ int link_handle_sess_cfm(zlrs_link_t *link, const zlrs_frame_t *frame,
 			return -1;
 		}
 	}
-	if (frame->body.sess_cfm.nonce_r != link->sess_nonce_r) {
+	if (frame->body.sess_cfm.nonce_follower != link->sess_nonce_follower) {
 		return -1;
 	}
 	const uint32_t baseline = repeated ? link->last_rx_seq : link->sess_rx_seq;
@@ -262,13 +267,13 @@ int link_handle_sess_cfm(zlrs_link_t *link, const zlrs_frame_t *frame,
 
 bool link_handle_sess_resp(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
 {
-	const uint32_t nonce_t = frame->body.sess_resp.nonce_t;
-	const uint32_t nonce_r = frame->body.sess_resp.nonce_r;
-	if (link->cfg.role != ZLRS_ROLE_TX || nonce_t != link->sess_nonce_t) {
+	const uint32_t nonce_leader = frame->body.sess_resp.nonce_leader;
+	const uint32_t nonce_follower = frame->body.sess_resp.nonce_follower;
+	if (link->cfg.role != ZLRS_ROLE_LEADER || nonce_leader != link->sess_nonce_leader) {
 		return false;
 	}
 	if (link->session_valid) {
-		if (nonce_r != link->sess_nonce_r) {
+		if (nonce_follower != link->sess_nonce_follower) {
 			/* A silent/rebooted peer is only a hint to issue a new local challenge.
 			 * Never install the key from a response to an already completed exchange. */
 			if (link->state == ZLRS_STATE_CONNECTED &&
@@ -287,7 +292,7 @@ bool link_handle_sess_resp(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_
 		    frame->seq <= link->sess_rx_seq) {
 			return false;
 		}
-		link->sess_nonce_r = nonce_r;
+		link->sess_nonce_follower = nonce_follower;
 		link->sess_rx_seq = frame->seq;
 		derive_session_keys(link);
 		session_activate(link, (uint8_t)link->fhss.index);

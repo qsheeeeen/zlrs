@@ -44,8 +44,8 @@ void test_band(void)
 	o = good(10300);
 	o.rssi_dbm = -96;
 	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_PLAN);
-	/* RX never originates a quality-driven transition; fixed mode never searches. */
-	p.master = false;
+	/* Follower never originates a quality-driven transition; fixed mode never searches. */
+	p.leader = false;
 	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
 	p.automatic = false;
 	o.now_ms += 100000;

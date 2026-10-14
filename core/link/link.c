@@ -48,7 +48,7 @@ uint32_t link_slot_freq_hz(const zlrs_link_t *link)
 	    (uint32_t)(link->frame_index - link->sess_sync_frame) < ZLRS_DATA_CONFIRM_FRAMES) {
 		return link_sync_freq_hz(link);
 	}
-	/* Both ends keep the fresh-session uplink on the confirmation channel. */
+	/* Both ends keep fresh-session slot B on the confirmation channel. */
 	if ((link->slot == ZLRS_SLOT_DATA_B) &&
 	    (uint32_t)(link->slot_ms - link->state_ms) < ZLRS_SESS_CONFIRM_MS) {
 		return link_sync_freq_hz(link);
@@ -69,8 +69,8 @@ void link_set_state(zlrs_link_t *link, zlrs_link_state_t state, uint32_t now_ms)
 		link->ev.on_state(link->ev.ctx, state);
 	}
 
-	/* The TX is the authority: every return to SEARCHING rolls a new session nonce */
-	if (state == ZLRS_STATE_SEARCHING && link->cfg.role == ZLRS_ROLE_TX) {
+	/* Leader is the authority: every return to SEARCHING rolls a new session nonce. */
+	if (state == ZLRS_STATE_SEARCHING && link->cfg.role == ZLRS_ROLE_LEADER) {
 		link_roll_session(link, now_ms);
 		/* Send a SYNC right away instead of waiting a full period, to shorten the reconnect */
 		link->last_sync_ms = (uint32_t)(now_ms - link->cfg.sync_period_ms);
@@ -234,8 +234,9 @@ static int handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 	}
 
 	if (link->state != ZLRS_STATE_CONNECTED || !link->session_valid ||
-	    (link->cfg.role == ZLRS_ROLE_RX && link->radio_acquiring) ||
-	    frame.type != (link->cfg.role == ZLRS_ROLE_TX ? ZLRS_PKT_DATA_DOWN : ZLRS_PKT_DATA_UP)) {
+	    (link->cfg.role == ZLRS_ROLE_FOLLOWER && link->radio_acquiring) ||
+	    frame.type !=
+		    (link->cfg.role == ZLRS_ROLE_LEADER ? ZLRS_PKT_DATA_F2L : ZLRS_PKT_DATA_L2F)) {
 		return -1;
 	}
 
@@ -247,15 +248,15 @@ static int handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 	link->last_rx_seq = frame.seq;
 	link->last_rx_ms = now_ms;
 	link->last_rx_frame = link->frame_index;
-	if (link->cfg.role == ZLRS_ROLE_TX) {
+	if (link->cfg.role == ZLRS_ROLE_LEADER) {
 		link->sess_cfm_due = false;
 		link->radio_acquiring = false;
 	}
 	link_lq_account(link, frame.seq);
 
 	switch (frame.type) {
-	case ZLRS_PKT_DATA_UP:
-	case ZLRS_PKT_DATA_DOWN:
+	case ZLRS_PKT_DATA_L2F:
+	case ZLRS_PKT_DATA_F2L:
 		link_handle_data(link, &frame,
 				 len - ZLRS_FRAME_HDR_LEN - tag_len - ZLRS_DATA_PREFIX_LEN, now_ms);
 		break;
@@ -282,7 +283,7 @@ static void advance_hop(zlrs_link_t *link)
 static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32_t now_ms)
 {
 	const bool a = (slot == ZLRS_SLOT_DATA_A);
-	const bool tx_side = (link->cfg.role == ZLRS_ROLE_TX);
+	const bool leader_side = (link->cfg.role == ZLRS_ROLE_LEADER);
 
 	/* Pairing uses the data slots; repeat confirms until the responder hears one. */
 	if (link->state == ZLRS_STATE_PAIRING ||
@@ -296,7 +297,7 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 	}
 
 	if (link->state == ZLRS_STATE_SEARCHING) {
-		if (tx_side) {
+		if (leader_side) {
 			if (!link->session_valid && !link->session_pending) {
 				link_roll_session(link, now_ms);
 				if (!link->session_pending) {
@@ -333,7 +334,7 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 				}
 				return link_send_sync(link, now_ms);
 			}
-			/* The initiator waits for the peer's first frame in the uplink slot */
+			/* Leader waits for Follower's first frame in slot B. */
 			return link_submit_rx(link, link_sync_freq_hz(link), ZLRS_SYNC_SLOT_DATA,
 					      link->sync_word, link_acq_timeout_ms(link));
 		}
@@ -354,9 +355,9 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 
 	advance_hop(link);
 
-	/* A short return packet before RX clock alignment cannot prove DATA readiness. */
-	if (link->radio_acquiring && tx_side == a) {
-		if (!tx_side) {
+	/* A short return packet before Follower clock alignment cannot prove DATA readiness. */
+	if (link->radio_acquiring && leader_side == a) {
+		if (!leader_side) {
 			return NULL;
 		}
 		if (!link->sess_cfm_due) {
@@ -365,7 +366,7 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 		}
 	}
 
-	if (link->sess_ack_due && tx_side == a) {
+	if (link->sess_ack_due && leader_side == a) {
 		const zlrs_radio_req_t *req = link_send_empty_data(link);
 
 		if (req != NULL) {
@@ -376,13 +377,13 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 
 	/* Legal idle DATA can stay silent until the next periodic SYNC. Only reacquire
 	 * after two missed SYNC periods; the SEARCHING repeat interval is unrelated. */
-	if (!tx_side && a && link->cfg.resync_every_n > 0U &&
+	if (!leader_side && a && link->cfg.resync_every_n > 0U &&
 	    (uint32_t)(link->frame_index - link->last_rx_frame) > 2U * link->cfg.resync_every_n) {
 		return link_submit_rx(link, link_sync_freq_hz(link), ZLRS_SYNC_SLOT_DATA,
 				      link->sync_word, link->cfg.rx_timeout_ms);
 	}
 
-	if (tx_side && a) {
+	if (leader_side && a) {
 		/* Session confirm first, resync SYNC second (both use the sync channel) */
 		if (link->sess_cfm_due) {
 			if ((uint32_t)(now_ms - link->last_sync_ms) >= link->cfg.sync_period_ms) {
@@ -396,7 +397,7 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 		}
 	}
 
-	if (tx_side == a) {
+	if (leader_side == a) {
 		const zlrs_radio_req_t *req;
 
 		req = link_send_data(link, now_ms);
@@ -420,7 +421,7 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 	 * Fresh session on the data link as well: keep a window on the sync channel where a peer that
 	 * missed the confirm is still repeating its answer.
 	 */
-	if (tx_side && (uint32_t)(now_ms - link->state_ms) < ZLRS_SESS_CONFIRM_MS) {
+	if (leader_side && (uint32_t)(now_ms - link->state_ms) < ZLRS_SESS_CONFIRM_MS) {
 		return link_submit_rx(link, link_sync_freq_hz(link), ZLRS_SYNC_SLOT_DATA,
 				      link->sync_word, link->cfg.rx_timeout_ms);
 	}
@@ -499,7 +500,7 @@ void zlrs_link_acquire_radio(zlrs_link_t *link, uint32_t now_ms)
 
 bool zlrs_link_radio_captured(zlrs_link_t *link)
 {
-	if (link->cfg.role != ZLRS_ROLE_RX || !link->radio_acquiring ||
+	if (link->cfg.role != ZLRS_ROLE_FOLLOWER || !link->radio_acquiring ||
 	    !link->radio_sync_seen || !link->session_valid) {
 		return false;
 	}
@@ -512,7 +513,7 @@ bool zlrs_link_plan_band(zlrs_link_t *link, bool target_subg, uint32_t switch_fr
 {
 	zlrs_band_plan_t plan = {.domain = link->cfg.domain, .automatic = 1U,
 		.target_subg = target_subg, .switch_frame = switch_frame};
-	if (link->req_pending || link->cfg.role != ZLRS_ROLE_TX || !link->session_valid ||
+	if (link->req_pending || link->cfg.role != ZLRS_ROLE_LEADER || !link->session_valid ||
 	    !link_band_plan_valid(link, &plan, link->frame_index) || switch_frame == 0U) {
 		return false;
 	}
@@ -560,7 +561,7 @@ const zlrs_radio_req_t *zlrs_link_slot(zlrs_link_t *link, uint8_t slot, uint32_t
 		link->prepared_data.valid = false;
 		const bool was_searching = link->state == ZLRS_STATE_SEARCHING;
 		link_set_state(link, ZLRS_STATE_SEARCHING, now_ms);
-		if (was_searching && link->cfg.role == ZLRS_ROLE_TX) {
+		if (was_searching && link->cfg.role == ZLRS_ROLE_LEADER) {
 			link_roll_session(link, now_ms);
 		}
 		link->last_sync_ms = now_ms - link->cfg.sync_period_ms;
@@ -606,7 +607,7 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 
 		if (zlrs_frame_decode(&frame, link->req.buf, link->req.size,
 				      zlrs_profile_tag_len(link->cfg.profile)) &&
-		    (frame.type == ZLRS_PKT_DATA_UP || frame.type == ZLRS_PKT_DATA_DOWN)) {
+		    (frame.type == ZLRS_PKT_DATA_L2F || frame.type == ZLRS_PKT_DATA_F2L)) {
 			const uint16_t data_len = link->req.size - ZLRS_FRAME_HDR_LEN -
 				zlrs_profile_tag_len(link->cfg.profile) - ZLRS_DATA_PREFIX_LEN;
 			if (data_len == 0U) {
@@ -773,8 +774,8 @@ zlrs_link_diagnostics_t zlrs_link_get_diagnostics(const zlrs_link_t *link)
 		.frequency_hz = link->fhss.domain != NULL ? zlrs_fhss_current_hz(&link->fhss) : 0U,
 		.frame_index = link->frame_index,
 		.last_rx_frame = link->last_rx_frame,
-		.sess_nonce_t = link->sess_nonce_t,
-		.sess_nonce_r = link->sess_nonce_r,
+		.sess_nonce_leader = link->sess_nonce_leader,
+		.sess_nonce_follower = link->sess_nonce_follower,
 		.sess_cfm_due = link->sess_cfm_due,
 		.hop_index = link->fhss.index,
 		.queue_count = link->queue_count,

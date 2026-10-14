@@ -7,9 +7,12 @@ interpreting the application protocol.
 
 ## Roles and radio operation
 
-Both endpoints run the same firmware. One is configured as TX and the other as RX.
-TX owns the radio clock and initiates sessions; both roles send and receive user
+Both endpoints run the same firmware. One is configured as Leader and the other as Follower.
+Leader owns the radio clock and initiates sessions; both roles send and receive user
 data.
+
+Roles describe timing and coordination, not a data direction. TX and RX describe
+individual radio or serial transmission and reception operations.
 
 One LR2021 operates on one DATA band at a time. The available modes are fixed
 2.4 GHz, fixed SubG and automatic switching. Automatic mode starts on 2.4 GHz,

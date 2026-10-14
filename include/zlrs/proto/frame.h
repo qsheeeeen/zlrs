@@ -11,8 +11,8 @@ extern "C" {
 #endif
 
 typedef enum {
-	ZLRS_PKT_DATA_UP = 0,
-	ZLRS_PKT_DATA_DOWN = 1,
+	ZLRS_PKT_DATA_L2F = 0,
+	ZLRS_PKT_DATA_F2L = 1,
 	ZLRS_PKT_SYNC = 2,
 	ZLRS_PKT_PAIR_REQ = 3,
 	ZLRS_PKT_PAIR_RESP = 4,
@@ -57,7 +57,7 @@ typedef struct {
 	uint8_t profile : 1;
 	uint8_t version : 4;
 	uint8_t hop_index;
-	uint32_t nonce_t;
+	uint32_t nonce_leader;
 	uint32_t frame_index; /* shared TDD period count, including idle periods */
 	zlrs_band_plan_t band_plan;
 } zlrs_sync_frame_t;
@@ -75,12 +75,12 @@ typedef struct {
 } zlrs_pair_frame_t;
 
 typedef struct {
-	uint32_t nonce_t;
-	uint32_t nonce_r;
+	uint32_t nonce_leader;
+	uint32_t nonce_follower;
 } zlrs_session_response_frame_t;
 
 typedef struct {
-	uint32_t nonce_r;
+	uint32_t nonce_follower;
 	uint8_t hop_index;
 	uint32_t frame_index; /* shared TDD period count */
 	zlrs_band_plan_t band_plan;
@@ -89,7 +89,7 @@ typedef struct {
 typedef struct {
 	uint8_t type : ZLRS_FRAME_TYPE_BITS;
 	union {
-		zlrs_data_frame_t data; /* DATA_UP / DATA_DOWN share this body layout */
+		zlrs_data_frame_t data; /* DATA_L2F / DATA_F2L share this body layout */
 		zlrs_sync_frame_t sync;
 		zlrs_pair_request_frame_t pair_req;
 		zlrs_pair_frame_t pair; /* PAIR_RESP / PAIR_CFM validate all four fields */

@@ -29,7 +29,7 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 	ARG_UNUSED(argv);
 	(void)zbus_chan_read(&zlrs_rf_chan, &link, K_MSEC(10));
 	const zlrs_region_t *region = zlrs_region_get(link.region);
-	shell_print(sh, "role   : %s", link.role == ZLRS_ROLE_TX ? "TX" : "RX");
+	shell_print(sh, "role   : %s", link.role == ZLRS_ROLE_LEADER ? "Leader" : "Follower");
 	shell_print(sh, "sub-G  : %s",
 		    DT_PROP(DT_NODELABEL(zlrs_rf), band) == ZLRS_BAND_SUBG_LF ? "LF" : "HF");
 	shell_print(sh, "region : %s", region != NULL ? region->name : "?");

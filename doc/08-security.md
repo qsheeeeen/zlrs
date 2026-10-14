@@ -58,7 +58,7 @@ bytes for SHA-256 extraction. Context integers are little endian.
 | Directional link authentication | Pair key | `zlrs/link-auth` | Sender ID, receiver ID | 32 bytes |
 | FHSS seed | Pair key | `zlrs/fhss` | Empty | 4 bytes |
 | DATA sync word | Pair key | `zlrs/sync/data` | Empty | 4 bytes |
-| Directional session key | Pair key | `zlrs/session` | TX nonce, RX nonce, sender ID, receiver ID | 32 bytes |
+| Directional session key | Pair key | `zlrs/session` | Leader nonce, Follower nonce, sender ID, receiver ID | 32 bytes |
 
 Device IDs are ordered lexicographically by their four bytes. Pairing nonces are
 ordered independently as unsigned 32-bit values, then encoded little endian.
@@ -75,7 +75,7 @@ channels, logs or diagnostic output.
 ## Pairing and session proof
 
 Pairing runs for 30 seconds after a one-second button hold or a management
-request. TX initiates requests every 100 ms. Automatic mode uses 2.4 GHz;
+request. Leader initiates requests every 100 ms. Automatic mode uses 2.4 GHz;
 fixed mode uses its selected band. Pairing messages authenticate explicit IDs
 and nonces using the root-derived pairing authentication key.
 
@@ -85,10 +85,10 @@ that pending nonce. PAIR_RESP and PAIR_CFM both bind the complete two-ID,
 two-nonce tuple. Confirmation is idempotent; re-pairing replaces the peer record
 and derives a new pair subtree. Keys are derived rather than exchanged.
 
-A session uses fresh TX and RX nonces. SYNC and SESS_RESP authenticate with the
-directional link key. SESS_RESP must echo a pending TX challenge. TX confirms
-with the candidate session key; RX adopts the session only after its confirmation
-verifies the expected RX nonce and receive context. Three-step confirmation is
+A session uses fresh Leader and Follower nonces. SYNC and SESS_RESP authenticate with the
+directional link key. SESS_RESP must echo a pending Leader challenge. Leader confirms
+with the candidate session key; Follower adopts the session only after its confirmation
+verifies the expected Follower nonce and receive context. Three-step confirmation is
 required even for P0's unauthenticated debug format.
 
 Repeated valid responses and confirmations preserve confirmed progress. A

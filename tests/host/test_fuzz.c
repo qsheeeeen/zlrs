@@ -73,7 +73,7 @@ static void fuzz_frame_decode(rng_t *rng)
 		decoded++;
 		const zlrs_data_frame_t *const data = &frame.body.data;
 
-		if ((frame.type == ZLRS_PKT_DATA_UP || frame.type == ZLRS_PKT_DATA_DOWN) &&
+		if ((frame.type == ZLRS_PKT_DATA_L2F || frame.type == ZLRS_PKT_DATA_F2L) &&
 		    memcmp(data->bytes, buf + ZLRS_FRAME_HDR_LEN + ZLRS_DATA_PREFIX_LEN,
 			   len - ZLRS_FRAME_HDR_LEN - ZLRS_DATA_PREFIX_LEN - tag_len) != 0) {
 			violations++;
@@ -129,7 +129,7 @@ static void fx_link_init(zlrs_link_t *link, uint8_t arq)
 	static const uint8_t peer_id[ZLRS_DEV_ID_LEN] = {0xaa, 0xbb, 0xcc, 0xdd};
 	static const uint8_t salt[ZLRS_PAIR_SALT_LEN] = {1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U};
 	const zlrs_link_cfg_t cfg = {
-		.role = ZLRS_ROLE_TX,
+		.role = ZLRS_ROLE_LEADER,
 		.domain = ZLRS_DOMAIN_ISM2400,
 		.profile = ZLRS_PROFILE_P1,
 		.mod = {.rate_bps = 2600000U},

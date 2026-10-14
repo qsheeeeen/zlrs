@@ -68,7 +68,7 @@ ZTEST(settings, test_layout_and_persistence)
 	const uint8_t band = ZLRS_DATA_BAND_SUBG;
 	const uint8_t region = DT_PROP(DT_NODELABEL(zlrs_rf), default_region);
 	const uint8_t power = (uint8_t)-10;
-	const uint8_t role = ZLRS_ROLE_RX;
+	const uint8_t role = ZLRS_ROLE_FOLLOWER;
 	const uint8_t profile = ZLRS_PROFILE_P1;
 	const uint8_t baud[4] = {0x00, 0x84, 0x03, 0x00}; /* 230400, little endian */
 	uint8_t key[32];
@@ -89,7 +89,7 @@ ZTEST(settings, test_layout_and_persistence)
 	const zlrs_persist_settings_t *const saved = zlrs_persist_settings();
 	zassert_equal(saved->band, ZLRS_DATA_BAND_SUBG);
 	zassert_equal(saved->data_baud, 230400);
-	zassert_equal(saved->role, ZLRS_ROLE_RX);
+	zassert_equal(saved->role, ZLRS_ROLE_FOLLOWER);
 	zassert_true(zlrs_persist_get_root_key(saved_key));
 	zassert_true(zlrs_persist_get_device_id(saved_id));
 	zassert_true(zlrs_persist_get_pairing(&saved_pairing));

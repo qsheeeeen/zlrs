@@ -20,8 +20,8 @@ static void test_periodic_sync_acquisition(void)
 			zlrs_slot_timer_scan_step_us(cadence, bands[band].sync_frames);
 		const uint32_t sync_us = cadence * bands[band].sync_frames;
 
-		/* Try every initial clock offset: a quiet connected TX only sends periodic
-		 * SYNC. The searching RX must hear one within three such opportunities. */
+		/* Try every initial clock offset: a quiet connected Leader only sends periodic
+		 * SYNC. The searching Follower must hear one within three such opportunities. */
 		for (uint32_t phase = 0U; phase < cadence; phase++) {
 			bool heard = false;
 

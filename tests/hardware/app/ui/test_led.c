@@ -167,7 +167,7 @@ static void expect_pattern(struct led_rgb first, struct led_rgb second, uint32_t
 static void before(void *fixture)
 {
 	ARG_UNUSED(fixture);
-	link = (zlrs_rf_status_t){.role = ZLRS_ROLE_RX,
+	link = (zlrs_rf_status_t){.role = ZLRS_ROLE_FOLLOWER,
 				  .state = ZLRS_STATE_CONNECTED,
 				  .lq_percent = 100U,
 				  .frame_period_us = 9080U};
@@ -205,7 +205,7 @@ ZTEST(led_patterns, test_link_states)
 	link.state = ZLRS_STATE_SEARCHING;
 	publish();
 	expect_steady(green, 200);
-	link.role = ZLRS_ROLE_TX;
+	link.role = ZLRS_ROLE_LEADER;
 	publish();
 	expect_steady(blue, 200);
 }
@@ -232,7 +232,7 @@ ZTEST(led_patterns, test_connected_lq)
 	link.lq_percent = 20U;
 	publish();
 	expect_pattern(green, off, 500U, 250U, 1080U);
-	link.role = ZLRS_ROLE_TX;
+	link.role = ZLRS_ROLE_LEADER;
 	link.lq_percent = 90U;
 	publish();
 	expect_pattern(blue, off, 250U, 200U, 830U);
@@ -246,7 +246,7 @@ ZTEST(led_patterns, test_data_drops)
 	expect_pattern(green, orange, 500U, 250U, 600U);
 	k_msleep(500);
 	expect_steady(green, 200);
-	link.role = ZLRS_ROLE_TX;
+	link.role = ZLRS_ROLE_LEADER;
 	link.data_drop_bytes++;
 	publish();
 	expect_pattern(blue, orange, 500U, 250U, 600U);
@@ -261,7 +261,7 @@ ZTEST(led_patterns, test_write_retry)
 	const k_spinlock_key_t key = k_spin_lock(&capture_lock);
 	reject_next = true;
 	k_spin_unlock(&capture_lock, key);
-	link.role = ZLRS_ROLE_TX;
+	link.role = ZLRS_ROLE_LEADER;
 	publish();
 	wait_color(blue, 200);
 	zassert_equal(write_count(), count + 2U, "failed output must be retried");

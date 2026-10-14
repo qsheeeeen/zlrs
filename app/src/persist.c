@@ -93,7 +93,8 @@ static zlrs_persist_settings_t default_settings(void)
 		.band = ZLRS_DATA_BAND_AUTO,
 		.region = DT_PROP(DT_NODELABEL(zlrs_rf), default_region),
 		.power_dbm = CONFIG_ZLRS_APP_TX_POWER_DBM,
-		.role = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_TX) ? ZLRS_ROLE_TX : ZLRS_ROLE_RX,
+		.role = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_LEADER) ? ZLRS_ROLE_LEADER
+								: ZLRS_ROLE_FOLLOWER,
 		.profile = IS_ENABLED(CONFIG_ZLRS_APP_SECURITY_PROFILE_P0) ? ZLRS_PROFILE_P0
 									   : ZLRS_PROFILE_P1,
 		.data_baud = DT_PROP_OR(DT_ALIAS(zlrs_data_uart), current_speed, 115200U),
@@ -104,7 +105,7 @@ static bool settings_valid(const zlrs_persist_settings_t *s)
 {
 	return (s->band == ZLRS_DATA_BAND_24 || s->band == ZLRS_DATA_BAND_SUBG ||
 		s->band == ZLRS_DATA_BAND_AUTO) &&
-	       (s->role == ZLRS_ROLE_TX || s->role == ZLRS_ROLE_RX) &&
+	       (s->role == ZLRS_ROLE_LEADER || s->role == ZLRS_ROLE_FOLLOWER) &&
 	       (s->profile == ZLRS_PROFILE_P1 ||
 		(s->profile == ZLRS_PROFILE_P0 && IS_ENABLED(CONFIG_ZLRS_APP_DEBUG))) &&
 	       s->data_baud >= 9600U && s->data_baud <= 4000000U &&

@@ -37,7 +37,7 @@ extern "C" {
 #define ZLRS_MGMT_CMD_SET_BAUD      0x08U /* 4-byte little-endian baud rate */
 #define ZLRS_MGMT_CMD_SET_REGION    0x09U /* 1-byte region id (0..3) */
 #define ZLRS_MGMT_CMD_SET_POWER     0x0AU /* 1-byte signed dBm */
-#define ZLRS_MGMT_CMD_SET_ROLE      0x0BU /* 1-byte role (0 = TX, 1 = RX) */
+#define ZLRS_MGMT_CMD_SET_ROLE      0x0BU /* 1-byte role (0 = Leader, 1 = Follower) */
 #define ZLRS_MGMT_CMD_SET_PROFILE   0x0CU /* 1-byte profile (0 = P0, 1 = P1, 2 = P2) */
 #define ZLRS_MGMT_CMD_SET_BAND      0x0DU /* 0 = 2.4 GHz, 1 = sub-G, 2 = auto; next boot */
 #define ZLRS_MGMT_CMD_NEW_DEV_ID    0x0EU /* make a fresh device id (drops the pairing record) */
@@ -84,7 +84,7 @@ extern "C" {
 
 typedef struct {
 	uint8_t version; /* protocol version */
-	uint8_t role;    /* 0 = TX, 1 = RX */
+	uint8_t role;    /* 0 = Leader, 1 = Follower */
 	uint8_t state;   /* ZLRS_STATE_* */
 	uint8_t flags;   /* bit0 root key set, bit1 paired, bit2 session valid */
 	uint8_t dev_id[ZLRS_DEV_ID_LEN];

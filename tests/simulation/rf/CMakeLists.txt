@@ -11,6 +11,6 @@ target_include_directories(app PRIVATE "${zlrs_root}/app/src" "${zlrs_root}/core
 target_link_options(app PUBLIC "-Wl,--wrap=zlrs_link_init"
  "-Wl,--wrap=z_impl_sys_csrand_get" "-Wl,--wrap=z_impl_sys_rand_get")
 target_compile_definitions(app PRIVATE
- RF_TEST_ROLE_RX=$<BOOL:${RF_TEST_ROLE_RX}>
+ RF_TEST_ROLE_FOLLOWER=$<BOOL:${RF_TEST_ROLE_FOLLOWER}>
  RF_TEST_BAND_AUTO=$<BOOL:${RF_TEST_BAND_AUTO}>
  RF_TEST_BAND_SUBG=$<BOOL:${RF_TEST_BAND_SUBG}>)

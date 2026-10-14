@@ -9,7 +9,7 @@ ZTEST(link, test_pair_key_rederivation)
 {
 	static zlrs_link_t link;
 	zlrs_link_cfg_t cfg = {
-		.role = ZLRS_ROLE_TX,
+		.role = ZLRS_ROLE_LEADER,
 		.domain = ZLRS_DOMAIN_ISM2400,
 
 		.profile = ZLRS_PROFILE_P1,

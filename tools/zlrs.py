@@ -17,7 +17,7 @@ def build_parser():
         epilog="""Examples:
   %(prog)s list
   %(prog)s status --serial <serial>
-  %(prog)s set-role rx --serial <serial>
+  %(prog)s set-role follower --serial <serial>
   %(prog)s set-phrase 'my binding phrase' --serial <serial>
   %(prog)s update --serial <serial> --image <signed.bin>
   %(prog)s recovery --serial <serial>

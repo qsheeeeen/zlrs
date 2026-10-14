@@ -99,7 +99,8 @@ static void diagnostic_link(struct diagnostic_report_writer *writer, const char 
 	diagnostic_append(writer, "\n[%s LINK]\n", name);
 	diagnostic_append(writer, "  Hopping bands      : %s\n", diagnostic_bands(cfg));
 	diagnostic_append(writer, "  Link state / role  : %-12s / %s\n",
-			  diagnostic_state(info.state), cfg->role == ZLRS_ROLE_TX ? "TX" : "RX");
+			  diagnostic_state(info.state),
+			  cfg->role == ZLRS_ROLE_LEADER ? "Leader" : "Follower");
 	diagnostic_append(writer, "  Pairing / session  : %s / %s   Profile: P%u\n",
 			  info.paired ? "paired" : "not paired",
 			  info.session_valid ? "active" : "inactive", (unsigned int)cfg->profile);

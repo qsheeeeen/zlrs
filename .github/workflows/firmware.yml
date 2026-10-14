@@ -83,7 +83,7 @@ jobs:
           source zlrs/tools/zephyr-env.sh
           for role in OFF ON; do
             for subg in OFF ON; do
-              west build -b native_sim/native/64 zlrs/tests/simulation/rf -d "build-rf-${role}-${subg}" -- -DRF_TEST_ROLE_RX="${role}" -DRF_TEST_BAND_SUBG="${subg}"
+              west build -b native_sim/native/64 zlrs/tests/simulation/rf -d "build-rf-${role}-${subg}" -- -DRF_TEST_ROLE_FOLLOWER="${role}" -DRF_TEST_BAND_SUBG="${subg}"
               ./build-rf-${role}-${subg}/zephyr/zephyr.exe --flash_in_ram
             done
           done

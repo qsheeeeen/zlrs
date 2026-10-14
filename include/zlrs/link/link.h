@@ -41,8 +41,8 @@ extern "C" {
 #define ZLRS_DATA_CONFIRM_FRAMES 16U
 
 /* Superframe slots, see doc/07-protocol.md */
-#define ZLRS_SLOT_DATA_A 0U /* first half of the data window: TX -> RX */
-#define ZLRS_SLOT_DATA_B 1U /* second half of the data window: RX -> TX */
+#define ZLRS_SLOT_DATA_A 0U /* first half of the data window: Leader -> Follower */
+#define ZLRS_SLOT_DATA_B 1U /* second half of the data window: Follower -> Leader */
 
 #define ZLRS_SLOT_COUNT 2U
 
@@ -128,10 +128,10 @@ typedef struct {
 	uint32_t tx_arq_retry_runs; /* ARQ: long retry runs (bytes are kept) */
 	uint32_t rx_syncs;          /* SYNC frames received */
 	uint32_t tx_syncs;          /* SYNC frames sent */
-	uint32_t sess_resp_rx;      /* TX: peer answered a SYNC */
-	uint32_t sess_resp_tx;      /* RX: answered a SYNC */
-	uint32_t sess_cfm_rx;       /* RX: session confirmed */
-	uint32_t sess_cfm_tx;       /* TX: confirmations sent */
+	uint32_t sess_resp_rx;      /* Leader: peer answered a SYNC */
+	uint32_t sess_resp_tx;      /* Follower: answered a SYNC */
+	uint32_t sess_cfm_rx;       /* Follower: session confirmed */
+	uint32_t sess_cfm_tx;       /* Leader: confirmations sent */
 	uint32_t hop_resync;        /* hop-index corrections received through SYNC */
 	uint32_t hop_advances;      /* times this link moved its hop index by itself */
 	/* Pairing handshake frames sent and received, per message type: this handshake loses frames */
@@ -218,20 +218,20 @@ typedef struct {
 	uint8_t session_key_in[ZLRS_KEY_LEN];
 	bool session_valid;
 	/*
-	 * Session setup mirrors pairing (doc/07-protocol.md): the initiator offers nonce_t, the
-	 * responder answers with nonce_r, both feed the KDF, and the last message carries nonce_r
-	 * to prove the peer derived the same key. The RX only adopts the session after that proof,
+	 * Session setup mirrors pairing (doc/07-protocol.md): the initiator offers nonce_leader, the
+	 * responder answers with nonce_follower, both feed the KDF, and the last message carries nonce_follower
+	 * to prove the peer derived the same key. Follower only adopts the session after that proof,
 	 * so replaying an old SYNC yields no old session key.
 	 */
-	bool session_pending;     /* TX: waiting for response; RX: waiting for confirm */
+	bool session_pending;     /* Leader waits for response; Follower waits for confirm */
 	uint32_t sess_rx_seq;     /* Candidate handshake's receive baseline. */
 	bool sess_nonce_valid;    /* A local nonce has been drawn before, including zero. */
-	bool sess_resp_due;       /* RX: SESS_RESP due in the uplink slot */
-	bool sess_cfm_due;        /* TX: SESS_CFM due in the downlink slot */
-	bool sess_ack_due;        /* DATA RX: session-key authenticated empty ACK due */
+	bool sess_resp_due;       /* Follower: SESS_RESP due in slot B */
+	bool sess_cfm_due;        /* Leader: SESS_CFM due in slot A */
+	bool sess_ack_due;        /* Received DATA: session-key authenticated empty ACK due */
 	uint32_t sess_sync_frame; /* Last DATA confirm's shared frame index. */
-	uint32_t sess_nonce_t;    /* initiator (TX) nonce */
-	uint32_t sess_nonce_r;    /* responder (RX) nonce */
+	uint32_t sess_nonce_leader;   /* Leader nonce */
+	uint32_t sess_nonce_follower; /* Follower nonce */
 	uint16_t sess_hop;        /* hop index of this session */
 	uint32_t pair_nonce;      /* pairing: initiator nonce_a */
 	uint32_t pair_nonce_b;    /* pairing: responder nonce_b */
@@ -246,9 +246,9 @@ typedef struct {
 	uint32_t last_pair_tx_ms;
 	uint32_t
 		last_pair_rx_ms; /* last PAIR_RESP: tells a repeated answer from a silent responder */
-	bool pair_cfm_pending;   /* TX got PAIR_RESP: PAIR_CFM due in the downlink slots */
+	bool pair_cfm_pending;   /* Leader got PAIR_RESP: PAIR_CFM due in slot A */
 	uint8_t pair_cfm_sent;   /* PAIR_CFM of this handshake already sent */
-	bool pair_wait_cfm;      /* RX answered PAIR_RESP, waiting for PAIR_CFM */
+	bool pair_wait_cfm;      /* Follower answered PAIR_RESP, waiting for PAIR_CFM */
 	bool pair_request_valid; /* A responder request exists, including nonce_a == 0. */
 	bool pair_nonce_valid;   /* A local pairing nonce exists independently of pending state. */
 	uint32_t pair_rx_seq;    /* Pairing exchange's receive baseline. */
@@ -300,7 +300,7 @@ typedef struct {
 	bool req_is_tx;
 	bool req_pending;
 	uint8_t slot; /* ZLRS_SLOT_*: the slot the pending transaction serves (stats and logs) */
-	uint32_t slot_ms; /* Current slot time, used for the session-confirm uplink window. */
+	uint32_t slot_ms; /* Current slot time, used for the session-confirm slot B window. */
 } zlrs_link_t;
 
 /* Storage layout above allows static allocation. Consumers use the functions below;
@@ -328,8 +328,8 @@ typedef struct {
 	uint32_t frequency_hz;
 	uint32_t frame_index;
 	uint32_t last_rx_frame;
-	uint32_t sess_nonce_t;
-	uint32_t sess_nonce_r;
+	uint32_t sess_nonce_leader;
+	uint32_t sess_nonce_follower;
 	bool sess_cfm_due;
 	uint16_t hop_index;
 	uint16_t queue_count;

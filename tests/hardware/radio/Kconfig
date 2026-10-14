@@ -17,4 +17,4 @@ config ZLRS_TEST_RAW_PAYLOAD_BYTES
 	range 6 511
 
 config ZLRS_TEST_RAW_REVERSE
-	bool "Transmit raw packets from the configured RX board"
+	bool "Transmit raw packets from the configured Follower board"

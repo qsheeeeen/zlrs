@@ -36,20 +36,20 @@ python3 tools/zlrs.py status --serial <serial>
 Configure both endpoints with a common root key or phrase and opposite roles:
 
 ```sh
-python3 tools/zlrs.py set-role tx --serial <TX-serial>
-python3 tools/zlrs.py set-role rx --serial <RX-serial>
-python3 tools/zlrs.py set-phrase 'shared binding phrase' --serial <TX-serial>
-python3 tools/zlrs.py set-phrase 'shared binding phrase' --serial <RX-serial>
-python3 tools/zlrs.py set-band auto --serial <TX-serial>
-python3 tools/zlrs.py set-band auto --serial <RX-serial>
+python3 tools/zlrs.py set-role leader --serial <Leader-serial>
+python3 tools/zlrs.py set-role follower --serial <Follower-serial>
+python3 tools/zlrs.py set-phrase 'shared binding phrase' --serial <Leader-serial>
+python3 tools/zlrs.py set-phrase 'shared binding phrase' --serial <Follower-serial>
+python3 tools/zlrs.py set-band auto --serial <Leader-serial>
+python3 tools/zlrs.py set-band auto --serial <Follower-serial>
 ```
 
 Reboot both endpoints after changing role, band, region, profile, power ceiling or
 UART baud, then start pairing on both:
 
 ```sh
-python3 tools/zlrs.py pair --serial <TX-serial>
-python3 tools/zlrs.py pair --serial <RX-serial>
+python3 tools/zlrs.py pair --serial <Leader-serial>
+python3 tools/zlrs.py pair --serial <Follower-serial>
 ```
 
 Holding the button for one second opens the same 30-second pairing window. In
@@ -59,7 +59,7 @@ protocol version, band mode, SubG region, profile and timing are required.
 | Setting or command | Accepted value / effect |
 | --- | --- |
 | `set-band` | `auto`, `2.4`, `subg`; default `auto` |
-| `set-role` | `tx`, `rx`; default TX |
+| `set-role` | `leader`, `follower`; default Leader |
 | `set-region` | 0 FCC915, 1 EU868, 2 CN470, 3 CN433; must fit the module SKU |
 | `set-power` | −10 to 22 dBm, bounded by the selected region; default 10 dBm |
 | `set-baud` | 9600–4000000; default 115200 |
@@ -78,7 +78,7 @@ antenna determine achievable RF output.
 
 ## Automatic band operation and power
 
-Automatic mode starts on 2.4 GHz. TX schedules SubG after five seconds of sustained
+Automatic mode starts on 2.4 GHz. Leader schedules SubG after five seconds of sustained
 poor bidirectional quality and schedules a preferred-band probe after 60 seconds
 of continuously healthy SubG feedback. Complete loss invokes asymmetric searches.
 Switches preserve session and DATA progress, with transmission paused during

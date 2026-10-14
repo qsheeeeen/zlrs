@@ -94,7 +94,7 @@ static struct led_rgb alternate(struct led_rgb first, struct led_rgb second, uin
 static struct led_rgb led_color(const zlrs_rf_status_t *link, bool mgmt_mode, bool drop_recent,
 				uint32_t now_ms)
 {
-	const struct led_rgb theme = link->role == ZLRS_ROLE_TX ? blue : green;
+	const struct led_rgb theme = link->role == ZLRS_ROLE_LEADER ? blue : green;
 
 	if (mgmt_mode) {
 		return white;

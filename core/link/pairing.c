@@ -97,7 +97,7 @@ static void derive_pair(zlrs_link_t *link)
 static void pair_payload_fill(const zlrs_link_t *link, zlrs_pair_frame_t *out,
 			      uint32_t nonce_a, uint32_t nonce_b)
 {
-	const bool initiator = (link->cfg.role == ZLRS_ROLE_TX);
+	const bool initiator = (link->cfg.role == ZLRS_ROLE_LEADER);
 	const uint8_t *dev_a = initiator ? link->dev_id : link->peer_id;
 	const uint8_t *dev_b = initiator ? link->peer_id : link->dev_id;
 
@@ -173,7 +173,7 @@ static bool pair_reject(zlrs_link_t *link)
 bool link_handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
 {
 	const zlrs_pair_frame_t *const pair = &frame->body.pair;
-	const bool initiator = (link->cfg.role == ZLRS_ROLE_TX);
+	const bool initiator = (link->cfg.role == ZLRS_ROLE_LEADER);
 
 	switch (frame->type) {
 	case ZLRS_PKT_PAIR_REQ:
@@ -266,16 +266,16 @@ bool link_handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame, uint32
 	}
 }
 
-const zlrs_radio_req_t *link_pair_slot(zlrs_link_t *link, bool down, uint32_t now_ms)
+const zlrs_radio_req_t *link_pair_slot(zlrs_link_t *link, bool leader_slot, uint32_t now_ms)
 {
-	const bool tx_side = link->cfg.role == ZLRS_ROLE_TX;
+	const bool leader_side = link->cfg.role == ZLRS_ROLE_LEADER;
 
-	if (down) {
+	if (leader_slot) {
 		link->frame_index++;
 	}
 	if (link->state == ZLRS_STATE_PAIRING) {
-		if (down) {
-			if (tx_side) {
+		if (leader_slot) {
+			if (leader_side) {
 				if (link->pair_cfm_pending) {
 					/*
 					 * Confirmation repeats: the two ends share no slot phase while pairing, so
@@ -311,7 +311,7 @@ const zlrs_radio_req_t *link_pair_slot(zlrs_link_t *link, bool down, uint32_t no
 			return pair_rx(link, link_acq_timeout_ms(link));
 		}
 
-		if (tx_side) {
+		if (leader_side) {
 			return pair_rx(link, link_acq_timeout_ms(link));
 		}
 		if (link->pair_wait_cfm) {
@@ -326,7 +326,7 @@ const zlrs_radio_req_t *link_pair_slot(zlrs_link_t *link, bool down, uint32_t no
 		return pair_rx(link, link_acq_timeout_ms(link));
 	}
 
-	if (link->state == ZLRS_STATE_SEARCHING && tx_side && down) {
+	if (link->state == ZLRS_STATE_SEARCHING && leader_side && leader_slot) {
 		if (link->pair_cfm_pending) {
 			if (link->pair_cfm_sent >= ZLRS_PAIR_CFM_REPEATS) {
 				link->pair_cfm_pending = false;
@@ -400,7 +400,7 @@ void zlrs_link_press(zlrs_link_t *link, uint32_t now_ms)
 		return;
 	}
 
-	if (link->cfg.role == ZLRS_ROLE_TX) {
+	if (link->cfg.role == ZLRS_ROLE_LEADER) {
 		uint32_t nonce_a;
 		if (!link_new_nonce(link, link->pair_nonce, link->pair_nonce_valid, &nonce_a)) {
 			return;
@@ -411,7 +411,7 @@ void zlrs_link_press(zlrs_link_t *link, uint32_t now_ms)
 	link->pair_cfm_pending = false;
 	link->pair_cfm_sent = 0U;
 	link->pair_wait_cfm = false;
-	link->pair_request_valid = link->cfg.role == ZLRS_ROLE_TX;
+	link->pair_request_valid = link->cfg.role == ZLRS_ROLE_LEADER;
 	link->pair_rx_seq = 0U;
 	link->pair_tx_seq = 1U;
 	link->prepared_data.valid = false;

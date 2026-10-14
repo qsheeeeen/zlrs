@@ -24,7 +24,7 @@ K_SEM_DEFINE(command_done, 0, 1);
 static struct {
 	bool active;
 	bool started;
-	bool role_tx;
+	bool role_leader;
 	uint32_t target;
 	uint32_t generated;
 	uint32_t received;
@@ -60,7 +60,7 @@ uint16_t __wrap_zlrs_link_tx_space(const zlrs_link_t *link)
 			} else {
 				memset(&stream, 0, sizeof(stream));
 				stream.active = true;
-				stream.role_tx = link->cfg.role == ZLRS_ROLE_TX;
+				stream.role_leader = link->cfg.role == ZLRS_ROLE_LEADER;
 				stream.target = (uint32_t)request;
 				atomic_set(&published.active, 1);
 				atomic_set(&published.target, request);
@@ -102,7 +102,7 @@ uint16_t __wrap_zlrs_serial_read(uint8_t *buf, uint16_t len)
 		return 0U;
 	}
 	len = MIN(len, stream.target - stream.generated);
-	zlrs_bench_pattern_fill(buf, len, stream.generated, stream.role_tx);
+	zlrs_bench_pattern_fill(buf, len, stream.generated, stream.role_leader);
 	stream.generated += len;
 	atomic_set(&published.generated, stream.generated);
 	return len;
@@ -123,7 +123,7 @@ bool __wrap_zlrs_serial_receive(const uint8_t *buf, uint16_t len)
 		stream.received < stream.target ? MIN(len, stream.target - stream.received) : 0U;
 
 	stream.bad += len - valid;
-	stream.bad += zlrs_bench_pattern_bad(buf, valid, stream.received, !stream.role_tx);
+	stream.bad += zlrs_bench_pattern_bad(buf, valid, stream.received, !stream.role_leader);
 	stream.received += len;
 	atomic_set(&published.bad, stream.bad);
 	atomic_set(&published.duration_us, now - stream.first_us);

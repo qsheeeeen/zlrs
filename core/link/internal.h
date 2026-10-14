@@ -40,7 +40,7 @@ bool link_handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now
 bool link_new_nonce(const zlrs_link_t *link, uint32_t previous, bool have_previous,
 		    uint32_t *out);
 void link_lq_account(zlrs_link_t *link, uint32_t seq);
-const zlrs_radio_req_t *link_pair_slot(zlrs_link_t *link, bool down, uint32_t now_ms);
+const zlrs_radio_req_t *link_pair_slot(zlrs_link_t *link, bool leader_slot, uint32_t now_ms);
 void link_roll_session(zlrs_link_t *link, uint32_t now_ms);
 const zlrs_radio_req_t *link_send_data(zlrs_link_t *link, uint32_t now_ms);
 const zlrs_radio_req_t *link_send_empty_data(zlrs_link_t *link);

@@ -84,7 +84,7 @@ static uint8_t device_id[ZLRS_DEV_ID_LEN];
  * Role and security profile: runtime settings with a compile-time default (set-role /
  * set-profile, doc/06-firmware.md). Loaded once at boot, before the links are built.
  */
-static bool role_tx;
+static bool role_leader;
 static zlrs_profile_t active_profile;
 
 /* The profile a build starts on, and which ones it may run: P1 is the production profile, P0
@@ -189,7 +189,7 @@ static bool random_u32(void *ctx, uint32_t *out)
 static zlrs_link_cfg_t link_config(void)
 {
 	zlrs_link_cfg_t cfg = {
-		.role = role_tx ? ZLRS_ROLE_TX : ZLRS_ROLE_RX,
+		.role = role_leader ? ZLRS_ROLE_LEADER : ZLRS_ROLE_FOLLOWER,
 		.domain = ZLRS_DATA_SUBG ? region->domain : ZLRS_DOMAIN_ISM2400,
 
 		.profile = active_profile,
@@ -296,7 +296,7 @@ static void radio_wait_done(uint32_t budget_us, zlrs_lr2021_result_t *result)
 static zlrs_lr2021_diag_t radio_diag;
 #endif
 
-/* TX owns the absolute clock; RX follows verified IRQ timestamps and scans when deaf. */
+/* Leader owns the clock; Follower follows verified IRQ timestamps and scans after loss. */
 #define ZLRS_PHASE_DEADBAND_US  100
 
 static uint32_t slot_deadline_us;
@@ -402,7 +402,7 @@ static void run_slot(uint8_t slot)
 	/* A completed RX leaves a safe opportunity to build our next TX immediately.
 	 * RX entry still waits for its own window; searching/pairing retain that rule. */
 	const bool early_tx = zlrs_link_get_state(&link_data) == ZLRS_STATE_CONNECTED &&
-			      (role_tx == (slot == ZLRS_SLOT_DATA_A));
+			      (role_leader == (slot == ZLRS_SLOT_DATA_A));
 
 	if (early_tx) {
 		timing = (struct zlrs_slot_timer_wait){.wake_us = now_us()};
@@ -502,7 +502,7 @@ static void run_slot(uint8_t slot)
 
 		pump_serial();
 		const uint8_t *buf = zlrs_link_prepare_data(
-			link, role_tx ? ZLRS_SLOT_DATA_A : ZLRS_SLOT_DATA_B, next_ms, &size);
+			link, role_leader ? ZLRS_SLOT_DATA_A : ZLRS_SLOT_DATA_B, next_ms, &size);
 
 		if (buf != NULL) {
 			(void)zlrs_lr2021_preload_tx(buf, size);
@@ -527,8 +527,8 @@ static void run_slot(uint8_t slot)
 	if (zlrs_link_get_stats(link)->slot_hit[link_slot] != hit_before &&
 	    zlrs_link_get_info(link).accepted_rx_events != good_before) {
 		last_rx_any_ms = zlrs_slot_timer_now_ms();
-		/* TX is the clock master. Only RX follows verified packets, timestamped in the GPIO ISR. */
-		if (!role_tx && !phase_adj_set && result.status == 0 && result.size > 0U) {
+		/* Only Follower follows verified packets timestamped in the GPIO ISR. */
+		if (!role_leader && !phase_adj_set && result.status == 0 && result.size > 0U) {
 			/* Include SPI command transfer and synthesizer/PA startup in the phase origin. */
 			const uint32_t expected = slot_nominal_us + CONFIG_ZLRS_APP_TX_GUARD_US +
 						  ZLRS_LR2021_PHASE_STARTUP_US;
@@ -774,8 +774,8 @@ void zlrs_rf_log_snapshot(void)
 		"seq=%u/%u nonces=%08x/%08x pair=%08x",
 		data.hop_index, stats->slot_fail[ZLRS_SLOT_DATA_A],
 		stats->slot_fail[ZLRS_SLOT_DATA_B], stats->rx_dup, stats->rx_out_of_order,
-		stats->tx_retries, data.arq_seq, data.arq_rx_seq, data.sess_nonce_t,
-		data.sess_nonce_r, data.pair_fingerprint);
+		stats->tx_retries, data.arq_seq, data.arq_rx_seq, data.sess_nonce_leader,
+		data.sess_nonce_follower, data.pair_fingerprint);
 	zlrs_lr2021_diag_t radio_state;
 	zlrs_lr2021_diag(&radio_state);
 	LOG_INF("radio snapshot: late=%u setup=%u errors=%04x error_freq=%u phase=%d/%d",
@@ -805,7 +805,7 @@ zlrs_rf_status_t zlrs_rf_status(void)
 	zlrs_lr2021_diag_t radio;
 	zlrs_lr2021_diag(&radio);
 	zlrs_rf_status_t out = {
-		.role = role_tx ? ZLRS_ROLE_TX : ZLRS_ROLE_RX,
+		.role = role_leader ? ZLRS_ROLE_LEADER : ZLRS_ROLE_FOLLOWER,
 		.profile = active_profile,
 		.data_band = data_band,
 		.band_mode = band_mode,
@@ -819,7 +819,7 @@ zlrs_rf_status_t zlrs_rf_status(void)
 		.session_valid = info.session_valid,
 		.paused = paused,
 		.link_lost = ever_connected &&
-			(info.state != ZLRS_STATE_CONNECTED || info.radio_acquiring),
+			     (info.state != ZLRS_STATE_CONNECTED || info.radio_acquiring),
 		.fault = !radio_ready,
 		.data_drop_bytes = stats->data_drop_bytes,
 		.lq_percent = stats->lq_percent,
@@ -970,7 +970,7 @@ int zlrs_rf_init(void)
 	data_band = band_mode == ZLRS_DATA_BAND_SUBG ? ZLRS_DATA_BAND_SUBG : ZLRS_DATA_BAND_24;
 	region_id = settings->region;
 	tx_power_dbm = settings->power_dbm;
-	role_tx = settings->role == ZLRS_ROLE_TX;
+	role_leader = settings->role == ZLRS_ROLE_LEADER;
 	active_profile = settings->profile;
 	LOG_INF("data band: %s", ZLRS_DATA_SUBG ? "sub-G" : "2.4G");
 	region = zlrs_region_get(region_id);
@@ -993,7 +993,8 @@ int zlrs_rf_init(void)
 		rf_design.band == ZLRS_BAND_SUBG_LF ? "LF" : "HF", rf_design.low_hz / 1000000U,
 		rf_design.high_hz / 1000000U);
 
-	LOG_INF("role %s, profile P%u", role_tx ? "TX" : "RX", (unsigned int)active_profile);
+	LOG_INF("role %s, profile P%u", role_leader ? "Leader" : "Follower",
+		(unsigned int)active_profile);
 
 	/* Bench switches: with these off the link is no longer production-shaped, so say so at boot */
 	if (active_profile != ZLRS_PROFILE_P1) {
@@ -1019,9 +1020,8 @@ int zlrs_rf_init(void)
 		}
 	}
 	zlrs_duty_init(&duty, region, 0U);
-	zlrs_band_policy_init(&band_policy, band_mode == ZLRS_DATA_BAND_AUTO, role_tx,
-			      ZLRS_DATA_SUBG, region->duty_window_ms,
-			      zlrs_slot_timer_now_ms());
+	zlrs_band_policy_init(&band_policy, band_mode == ZLRS_DATA_BAND_AUTO, role_leader,
+			      ZLRS_DATA_SUBG, region->duty_window_ms, zlrs_slot_timer_now_ms());
 	band_switches = 0U;
 	/* The status LED comes up on its own thread and reads the state it renders: nothing to
 	 * init here (app/src/ui.c, rf.h) */
@@ -1052,7 +1052,7 @@ int zlrs_rf_init(void)
 void zlrs_rf_start(void)
 {
 	LOG_INF("entering data loop: %u Hz (%s)", (unsigned int)data_rate_hz,
-		role_tx ? "TX" : "RX");
+		role_leader ? "Leader" : "Follower");
 	zlrs_slot_timer_start(frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE, slot_prepare_us,
 			      zlrs_lr2021_wake);
 	consumed_frame = 0U;
@@ -1103,7 +1103,7 @@ void zlrs_rf_frame(void)
 	zlrs_link_tick(&link_data, now_ms);
 	report(now_ms);
 
-	if (!role_tx) {
+	if (!role_leader) {
 		const zlrs_link_cfg_t *const cfg = zlrs_link_get_config(&link_data);
 		const zlrs_link_info_t info = zlrs_link_get_info(&link_data);
 		const bool acquiring = info.radio_acquiring || info.state == ZLRS_STATE_SEARCHING;

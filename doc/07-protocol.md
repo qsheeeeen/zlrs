@@ -34,12 +34,12 @@ outside the union. Only identical layouts share a body:
 
 | Body | Fields |
 | --- | --- |
-| DATA_UP / DATA_DOWN | ACK:1, DATA sequence:7, RSSI:u8, LQ:u8, owned DATA byte array |
-| SYNC | Profile:1, version:4, hop:u8, TX nonce:u32, TDD frame index:u32, band plan |
+| DATA_L2F / DATA_F2L | ACK:1, DATA sequence:7, RSSI:u8, LQ:u8, owned DATA byte array |
+| SYNC | Profile:1, version:4, hop:u8, Leader nonce:u32, TDD frame index:u32, band plan |
 | PAIR_REQ | Initiator ID:4 bytes, initiator nonce:u32 |
 | PAIR_RESP / PAIR_CFM | Initiator ID:4 bytes, responder ID:4 bytes, both nonces:u32 |
-| SESS_RESP | TX nonce:u32, RX nonce:u32 |
-| SESS_CFM | RX nonce:u32, hop:u8, TDD frame index:u32, band plan |
+| SESS_RESP | Leader nonce:u32, Follower nonce:u32 |
+| SESS_CFM | Follower nonce:u32, hop:u8, TDD frame index:u32, band plan |
 
 DATA and tag are owned byte arrays. DATA capacity is 503 bytes; its used length
 comes from the total radio payload length supplied outside the frame model.
@@ -55,14 +55,14 @@ bytes, including the tag and excluding physical radio framing.
 
 | Type | Value | Body in wire order | P0 total | P1 total |
 | --- | --- | --- | ---: | ---: |
-| DATA_UP | 0 | ACK/sequence(1), RSSI(1), LQ(1), DATA(N) | 8+N | 12+N |
-| DATA_DOWN | 1 | ACK/sequence(1), RSSI(1), LQ(1), DATA(N) | 8+N | 12+N |
-| SYNC | 2 | Hop(1), TX nonce(4), frame index(4), band plan(5) | 19 | 23 |
+| DATA_L2F | 0 | ACK/sequence(1), RSSI(1), LQ(1), DATA(N) | 8+N | 12+N |
+| DATA_F2L | 1 | ACK/sequence(1), RSSI(1), LQ(1), DATA(N) | 8+N | 12+N |
+| SYNC | 2 | Hop(1), Leader nonce(4), frame index(4), band plan(5) | 19 | 23 |
 | PAIR_REQ | 3 | Initiator ID(4), initiator nonce(4) | 13 | 17 |
 | PAIR_RESP | 4 | Initiator ID(4), responder ID(4), initiator nonce(4), responder nonce(4) | 21 | 25 |
 | PAIR_CFM | 5 | Initiator ID(4), responder ID(4), initiator nonce(4), responder nonce(4) | 21 | 25 |
-| SESS_RESP | 6 | TX nonce(4), RX nonce(4) | 13 | 17 |
-| SESS_CFM | 7 | RX nonce(4), hop(1), frame index(4), band plan(5) | 19 | 23 |
+| SESS_RESP | 6 | Leader nonce(4), Follower nonce(4) | 13 | 17 |
+| SESS_CFM | 7 | Follower nonce(4), hop(1), frame index(4), band plan(5) | 19 | 23 |
 
 Fixed bodies require exact lengths. DATA length is:
 
@@ -124,11 +124,11 @@ sequence-span metric, not an end-to-end delivery percentage.
 
 ## Pairing and sessions
 
-Pairing opens for 30 seconds and repeats requests every 100 ms. TX initiates and
-RX responds. Automatic mode pairs on 2.4 GHz; fixed mode pairs on the selected
+Pairing opens for 30 seconds and repeats requests every 100 ms. Leader initiates and
+Follower responds. Automatic mode pairs on 2.4 GHz; fixed mode pairs on the selected
 band. Pairing uses hardware sync word 2, ASCII `ZLRS`.
 
-PAIR_REQ binds the initiator ID and nonce. RX identifies a request by both fields;
+PAIR_REQ binds the initiator ID and nonce. Follower identifies a request by both fields;
 a duplicate reuses its pending responder nonce, while a changed ID or nonce
 requires a fresh response. PAIR_RESP and PAIR_CFM bind and echo both IDs and both
 nonces. Repeated valid confirmation is idempotent. Equal device IDs cannot form a
@@ -138,19 +138,19 @@ Sessions use three messages in both P0 and P1:
 
 ```mermaid
 sequenceDiagram
-    participant TX
-    participant RX
-    TX->>RX: SYNC(TX nonce, hop, frame, band plan)
-    RX->>TX: SESS_RESP(TX nonce, RX nonce)
-    TX->>RX: SESS_CFM(RX nonce, hop, frame, band plan)
-    RX->>TX: DATA ACK / quality
+    participant Leader
+    participant Follower
+    Leader->>Follower: SYNC(Leader nonce, hop, frame, band plan)
+    Follower->>Leader: SESS_RESP(Leader nonce, Follower nonce)
+    Leader->>Follower: SESS_CFM(Follower nonce, hop, frame, band plan)
+    Follower->>Leader: DATA ACK / quality
 ```
 
-TX nonce selects its pending challenge; RX contributes fresh randomness.
-SESS_RESP is accepted only in that pending context. RX enters CONNECTED only
+Leader nonce selects its pending challenge; Follower contributes fresh randomness.
+SESS_RESP is accepted only in that pending context. Follower enters CONNECTED only
 when SESS_CFM verifies with the candidate directional session key and expected
-RX nonce. Repeated exchanges preserve confirmed DATA progress. A response with
-a different RX nonce after an established exchange can prompt a new TX challenge,
+Follower nonce. Repeated exchanges preserve confirmed DATA progress. A response with
+a different Follower nonce after an established exchange can prompt a new Leader challenge,
 but cannot directly reinstall a key or reset ARQ.
 
 PAIR messages use the root-derived pairing authentication key. SYNC and
@@ -162,8 +162,8 @@ valid nonce; a new local round must differ from the preceding local nonce.
 
 ## TDD timing and frequency hopping
 
-Each period contains slot A (0, TX → RX) and slot B (1, RX → TX). TX owns the clock;
-RX follows valid packet timestamps. DATA and session traffic use hardware sync
+Each period contains slot A (0, Leader → Follower) and slot B (1, Follower → Leader). Leader owns the clock;
+Follower follows valid packet timestamps. DATA and session traffic use hardware sync
 word 1 derived from pairing material.
 
 The pairing seed creates deterministic equal-visit channel blocks. Each block
@@ -182,6 +182,9 @@ skipped slots. Invalid received hop indices are rejected.
 An eight-bit hop field covers all indices. `frame_index` supplies period alignment
 and is independent of replay sequences.
 
+Leader and Follower are endpoint roles. Both endpoints transmit and receive;
+TX/RX denote operations and counters, not endpoint names.
+
 Periodic SYNC defaults to five seconds, rounded down to a whole number of actual
 periods with a minimum of one. Pacing affects that conversion. Acquisition SYNC
 repeats every 100/150/300/600 ms for raw rates 2.6/1.3/0.65/0.325 Mbps. Periodic
@@ -193,7 +196,7 @@ Short packets cannot open the next slot early. Failed preparation cannot launch
 late. Actual packet length determines transmit airtime and SubG duty charge;
 exhausted duty budget defers transmission. See [radio requirements](04-radio.md).
 
-RX estimates the sender's packet start from IRQ completion time minus airtime.
+Follower estimates the sender's packet start from IRQ completion time minus airtime.
 It corrects phase with a 100 µs deadband and a per-step limit of one-sixteenth of a
 period. Locked operation rejects large delayed-IRQ outliers. Fresh capture
 accepts large valid offsets within its correction limit. After acquisition,
@@ -208,7 +211,7 @@ search. Both endpoints must agree on automatic/fixed mode and active domain.
 
 ### Authenticated plan
 
-TX alone publishes coordinated plans. SYNC and SESS_CFM carry five bytes:
+Leader alone publishes coordinated plans. SYNC and SESS_CFM carry five bytes:
 
 | Bits / bytes | Meaning |
 | --- | --- |
@@ -223,9 +226,9 @@ periods ahead of the carried frame index. Fixed mode cannot publish a transition
 Domain and mode must match the receiving configuration. Invalid, stale or
 unauthenticated plans cannot change replay baseline, clock or band.
 
-TX schedules the transition at least one periodic SYNC interval plus two seconds
+Leader schedules the transition at least one periodic SYNC interval plus two seconds
 ahead. The first announcement uses a known periodic SYNC opportunity. Subsequent
-announcements repeat on the synchronization channel; RX follows that channel
+announcements repeat on the synchronization channel; Follower follows that channel
 while DATA and ACK continue before the transition.
 
 Both endpoints finish the two slots preceding `switch_frame`, reserve a shared
@@ -242,7 +245,7 @@ are cleared and power starts at the allowed ceiling.
 
 Fresh quality requires recent reverse feedback and available RSSI in both
 directions. Poor quality means either direction has LQ below 95% or RSSI below
-−95 dBm. The TX policy is:
+−95 dBm. The Leader policy is:
 
 | Condition | Action |
 | --- | --- |
@@ -256,23 +259,23 @@ does not start an unconditional 60-second return timer. The thresholds are
 product policy subject to RF calibration.
 
 Default contact loss is 1.5 seconds without confirmed-session reception. It
-tries the other band, then TX dwells 20 seconds and RX four seconds per band.
+tries the other band, then Leader dwells 20 seconds and Follower four seconds per band.
 The unequal dwell periods prevent permanent synchronized misses. Acquisition
 without capture uses that dwell limit; a preferred-band probe uses the contact
 loss limit. Radio capture is separate from logical session validity.
 
 During capture, user DATA transmission stops while SYNC and required session
-handshake messages continue on the synchronization channel. RX tracks valid
+handshake messages continue on the synchronization channel. Follower tracks valid
 SYNC/confirmation timestamps and completes capture only when phase error is
-within ±100 µs and the session is valid. RX then sends reverse DATA ACK/quality;
-TX completes capture upon receiving valid reverse DATA. Receiving a short frame
+within ±100 µs and the session is valid. Follower then sends reverse DATA ACK/quality;
+Leader completes capture upon receiving valid reverse DATA. Receiving a short frame
 alone cannot prove the phase required by maximum-length DATA.
 
-Before seeing valid synchronization, RX begins rapid phase scanning after 300 ms
+Before seeing valid synchronization, Follower begins rapid phase scanning after 300 ms
 of silence, stepping by one thirty-second of a period. After seeing valid
 synchronization, scanning waits at least two acquisition-SYNC intervals plus one
 period, with a 300 ms minimum, so it does not oppose normal correction. A captured
-RX answers each valid same-session SYNC with sync-channel reverse feedback,
+Follower answers each valid same-session SYNC with sync-channel reverse feedback,
 allowing one-sided recovery.
 
 Search preserves the session and queued DATA. Lost announcements, one-way loss,
@@ -282,9 +285,9 @@ queue backpressure and management access.
 
 Duty budget survives band changes. Every SubG transmission, including probes and
 control, is charged using actual airtime rounded up to milliseconds. For a duty
-window W, contact-loss timeout is at least W+2 s, RX dwell at least W+2 s and TX
-dwell at least 2(W+2 s). EU868 therefore uses 62-second loss/RX dwell and
-124-second TX dwell. Switching cannot reset that budget.
+window W, contact-loss timeout is at least W+2 s, Follower dwell at least W+2 s and Leader
+dwell at least 2(W+2 s). EU868 therefore uses 62-second loss/Follower dwell and
+124-second Leader dwell. Switching cannot reset that budget.
 
 Management cancels an unexecuted plan and requires capture when a plan was pending
 or pause duration reaches the contact-loss threshold. Short pauses without plans
@@ -341,7 +344,7 @@ temperature are signed 16-bit values, and counters are u32.
 | 21 | 4 | Local RSSI, peer RSSI; zero means unavailable |
 | 25 | 3 | Peer LQ, active power setpoint, effective floor |
 | 28 | 2 | MCU die temperature, 0.01 °C; `INT16_MIN` means unavailable |
-| 30 | 32 | TX, RX, CRC errors, authentication errors, ARQ retries, DATA drops, missed slots, radio failures |
+| 30 | 32 | TX frames, RX frames, CRC errors, authentication errors, ARQ retries, DATA drops, missed slots, radio failures |
 | 62 | 4 | Current FHSS schedule frequency, Hz |
 | 66 | 2 | Hop index |
 | 68 | 4 | Frame period, µs |
@@ -356,7 +359,7 @@ temperature are signed 16-bit values, and counters are u32.
 
 Flags: bit 0 root key, bit 1 pairing, bit 2 valid session, bit 3 active SubG,
 bit 4 automatic mode, bit 5 acquisition, bit 6 pending plan; bit 7 is reserved.
-Roles are TX=0/RX=1. States are unconfigured=0, unpaired=1, pairing=2, searching=3,
+Roles are Leader=0/Follower=1. States are unconfigured=0, unpaired=1, pairing=2, searching=3,
 connected=4. Hardware SKU is LF=0/HF=1. Acquisition can coexist with CONNECTED and
 a valid session; those flags do not prove DATA is ready.
 
