@@ -68,6 +68,7 @@ static void init_node(node_t *node, zlrs_role_t role, const uint8_t dev_id[4],
 		.profile = ZLRS_PROFILE_P1,
 		.mod = {.rate_bps = 2600000U},
 		.tx_power_dbm = 10,
+		.pair_tx_power_dbm = -10,
 		.rx_timeout_ms = 2U,
 		.acq_timeout_ms = 8U,
 		.sync_period_ms = 100U,
@@ -151,15 +152,17 @@ static void sim_slot(sim_t *sim, uint8_t slot)
 		uint16_t *const drops = a->is_tx ? &sim->drop_leader : &sim->drop_follower;
 		zlrs_frame_t air;
 		CHECK(zlrs_frame_decode(&air, source->buf, source->size,
-				      zlrs_profile_tag_len(sender->cfg.profile)));
+					zlrs_profile_tag_len(sender->cfg.profile)));
 		const bool on_24 = source->freq_hz > 1000000000U;
 		const bool blocked =
 			on_24 && (a->is_tx ? sim->block_24_leader : sim->block_24_follower);
 		const bool lost_plan = sim->lose_band_plans && air.type == ZLRS_PKT_SYNC &&
-			air.body.sync.band_plan.switch_frame != 0U;
-		if (blocked || lost_plan || (*drops != 0U &&
-		    (!sim->drop_confirms_only || air.type == ZLRS_PKT_SESS_CFM))) {
-			if (*drops != 0U) { (*drops)--; }
+				       air.body.sync.band_plan.switch_frame != 0U;
+		if (blocked || lost_plan ||
+		    (*drops != 0U && (!sim->drop_confirms_only || air.type == ZLRS_PKT_SESS_CFM))) {
+			if (*drops != 0U) {
+				(*drops)--;
+			}
 			zlrs_link_complete(receiver, ZLRS_RADIO_OK, 0U, 0, 0, sim->now_ms);
 		} else {
 			memcpy(dest->buf, source->buf, source->size);
@@ -167,7 +170,9 @@ static void sim_slot(sim_t *sim, uint8_t slot)
 					   on_24 && sim->rssi_24 ? sim->rssi_24 : -60, 0,
 					   sim->now_ms);
 			/* The fake radio has zero phase error unless this case withholds proof. */
-			if (!sim->withhold_phase) { (void)zlrs_link_radio_captured(receiver); }
+			if (!sim->withhold_phase) {
+				(void)zlrs_link_radio_captured(receiver);
+			}
 		}
 		zlrs_link_complete(sender, ZLRS_RADIO_OK, 0U, 0, 0, sim->now_ms);
 	} else {
@@ -285,7 +290,6 @@ static void test_data_sequence_wrap(void)
 	CHECK(sim.leader.link.stats.tx_retries > 0U);
 }
 
-
 /* Exercise the production RX entry with correctly authenticated attack packets. */
 static void inject(node_t *receiver, const zlrs_frame_t *packet, uint16_t body_len,
 		   const uint8_t *key, uint32_t now_ms, bool bad_tag)
@@ -305,7 +309,7 @@ static void inject(node_t *receiver, const zlrs_frame_t *packet, uint16_t body_l
 
 static void connect_saved(sim_t *sim, zlrs_profile_t profile)
 {
-	const uint8_t salt[ZLRS_PAIR_SALT_LEN] = {1,2,3,4,5,6,7,8};
+	const uint8_t salt[ZLRS_PAIR_SALT_LEN] = {1, 2, 3, 4, 5, 6, 7, 8};
 	sim->leader.link.cfg.profile = profile;
 	sim->follower.link.cfg.profile = profile;
 	zlrs_link_set_peer(&sim->leader.link, sim->follower.link.dev_id, salt, sim->now_ms);
@@ -470,8 +474,9 @@ static void test_pairing_context(void)
 	sim_init(&sim);
 	zlrs_link_t *follower = &sim.follower.link;
 	zlrs_link_press(follower, 0U);
-	zlrs_frame_t frame = {.type = ZLRS_PKT_PAIR_REQ, .seq = 42U,
-		.body.pair_req = {.dev_a = {1,2,3,4}, .nonce_a = 0U}};
+	zlrs_frame_t frame = {.type = ZLRS_PKT_PAIR_REQ,
+			      .seq = 42U,
+			      .body.pair_req = {.dev_a = {1, 2, 3, 4}, .nonce_a = 0U}};
 	inject(&sim.follower, &frame, ZLRS_PAIR_REQ_PAYLOAD_LEN, follower->auth_key, 1U, false);
 	CHECK(follower->pair_request_valid && follower->pair_wait_cfm &&
 	      follower->pair_nonce == 0U);
@@ -509,7 +514,7 @@ static void test_pairing_context(void)
 	CHECK(follower->session_pending && follower->sess_rx_seq == 77U &&
 	      follower->fhss.index == 100U);
 	frame.type = ZLRS_PKT_PAIR_REQ;
-	frame.body.pair_req = (zlrs_pair_request_frame_t){.dev_a = {1,2,3,4}};
+	frame.body.pair_req = (zlrs_pair_request_frame_t){.dev_a = {1, 2, 3, 4}};
 	frame.seq = 4U;
 	inject(&sim.follower, &frame, ZLRS_PAIR_REQ_PAYLOAD_LEN, follower->auth_key, 8U, false);
 	CHECK(follower->peer_id[0] == 9U && follower->pair_rx_seq == 3U);
@@ -558,7 +563,7 @@ static void test_entropy_failure(void)
 {
 	static sim_t sim;
 	sim_init(&sim);
-	const uint8_t salt[ZLRS_PAIR_SALT_LEN] = {1,2,3,4,5,6,7,8};
+	const uint8_t salt[ZLRS_PAIR_SALT_LEN] = {1, 2, 3, 4, 5, 6, 7, 8};
 	sim.leader.random_failed = true;
 	zlrs_link_press(&sim.leader.link, 0U);
 	CHECK(sim.leader.link.state == ZLRS_STATE_UNPAIRED);
@@ -578,8 +583,8 @@ static void test_entropy_failure(void)
 	CHECK(!sim.follower.link.session_pending && !sim.follower.link.session_valid);
 	CHECK(zlrs_link_slot(&sim.follower.link, ZLRS_SLOT_DATA_B, 2U) == NULL);
 	zlrs_link_press(&sim.follower.link, 3U);
-	frame = (zlrs_frame_t){.type = ZLRS_PKT_PAIR_REQ, .seq = 1U,
-		.body.pair_req = {.dev_a = {1,2,3,4}}};
+	frame = (zlrs_frame_t){
+		.type = ZLRS_PKT_PAIR_REQ, .seq = 1U, .body.pair_req = {.dev_a = {1, 2, 3, 4}}};
 	inject(&sim.follower, &frame, ZLRS_PAIR_REQ_PAYLOAD_LEN, sim.follower.link.auth_key, 4U,
 	       false);
 	CHECK(!sim.follower.link.pair_request_valid && !sim.follower.link.pair_wait_cfm);
@@ -636,28 +641,41 @@ static void automatic_frame(sim_t *sim, zlrs_band_policy_t policies[2])
 		zlrs_link_t *link = &nodes[i]->link;
 		const zlrs_link_info_t info = zlrs_link_get_info(link);
 		bool changed = false, target = false, probe = false;
-		if (info.band_plan.switch_frame && info.frame_index >= info.band_plan.switch_frame - 1) {
-			target = info.band_plan.target_subg; probe = !target; changed = true;
+		if (info.band_plan.switch_frame &&
+		    info.frame_index >= info.band_plan.switch_frame - 1) {
+			target = info.band_plan.target_subg;
+			probe = !target;
+			changed = true;
 		} else {
 			zlrs_band_observation_t o = {.now_ms = sim->now_ms,
-				.last_rx_ms = info.last_rx_ms, .feedback_ms = info.last_peer_feedback_ms,
-				.paired = info.paired, .pairing = info.state == ZLRS_STATE_PAIRING,
-				.connected = info.session_valid && info.state == ZLRS_STATE_CONNECTED,
-				.acquiring = info.radio_acquiring, .planned = info.band_plan.switch_frame != 0,
-				.rssi_dbm = link->stats.last_rssi, .peer_rssi_dbm = info.peer_rssi_dbm,
-				.lq_percent = link->stats.lq_percent, .peer_lq_percent = info.peer_lq_percent};
+						     .last_rx_ms = info.last_rx_ms,
+						     .feedback_ms = info.last_peer_feedback_ms,
+						     .paired = info.paired,
+						     .pairing = info.state == ZLRS_STATE_PAIRING,
+						     .connected =
+							     info.session_valid &&
+							     info.state == ZLRS_STATE_CONNECTED,
+						     .acquiring = info.radio_acquiring,
+						     .planned = info.band_plan.switch_frame != 0,
+						     .rssi_dbm = link->stats.last_rssi,
+						     .peer_rssi_dbm = info.peer_rssi_dbm,
+						     .lq_percent = link->stats.lq_percent,
+						     .peer_lq_percent = info.peer_lq_percent};
 			const zlrs_band_action_t action = zlrs_band_policy_update(&policies[i], &o);
 			if (action == ZLRS_BAND_SEARCH) {
-				target = link->cfg.domain == ZLRS_DOMAIN_ISM2400; changed = true;
+				target = link->cfg.domain == ZLRS_DOMAIN_ISM2400;
+				changed = true;
 			} else if (action == ZLRS_BAND_PLAN) {
-				CHECK(zlrs_link_plan_band(link, link->cfg.domain == ZLRS_DOMAIN_ISM2400,
-							 info.frame_index + link->cfg.resync_every_n + 334U));
+				CHECK(zlrs_link_plan_band(
+					link, link->cfg.domain == ZLRS_DOMAIN_ISM2400,
+					info.frame_index + link->cfg.resync_every_n + 334U));
 			}
 		}
 		if (changed) {
 			retune(nodes[i], target);
 			zlrs_link_acquire_radio(link, sim->now_ms);
-			zlrs_band_policy_changed(&policies[i], target, probe, sim->now_ms, info.last_rx_ms);
+			zlrs_band_policy_changed(&policies[i], target, probe, sim->now_ms,
+						 info.last_rx_ms);
 		}
 	}
 }
@@ -692,7 +710,9 @@ static void test_capture_waits_for_phase(void)
 	const zlrs_radio_req_t *b =
 		zlrs_link_slot(&sim.follower.link, ZLRS_SLOT_DATA_A, sim.now_ms);
 	CHECK(a && a->is_tx && b && !b->is_tx);
-	if (!a || !b) { return; }
+	if (!a || !b) {
+		return;
+	}
 	memcpy(b->buf, a->buf, a->size);
 	zlrs_link_complete(&sim.follower.link, ZLRS_RADIO_OK, a->size, -60, 0, sim.now_ms);
 	zlrs_link_complete(&sim.leader.link, ZLRS_RADIO_OK, 0, 0, 0, sim.now_ms);
@@ -722,7 +742,9 @@ static void test_automatic_bands(void)
 		sim_init(&sim);
 		sim.leader.link.cfg.automatic_band = sim.follower.link.cfg.automatic_band = true;
 		connect_saved(&sim, ZLRS_PROFILE_P1);
-		for (unsigned int i = 0; i < 100; i++) { sim_frame(&sim); }
+		for (unsigned int i = 0; i < 100; i++) {
+			sim_frame(&sim);
+		}
 		zlrs_band_policy_t policies[2];
 		zlrs_band_policy_init(&policies[0], true, true, false, 0, sim.now_ms);
 		zlrs_band_policy_init(&policies[1], true, false, false, 0, sim.now_ms);
@@ -732,7 +754,9 @@ static void test_automatic_bands(void)
 		/* First payload reaches Follower, but its ACK is lost before changing radio. */
 		sim.drop_follower = 100;
 		CHECK(zlrs_link_write(&sim.leader.link, data, sizeof(data)) == sizeof(data));
-		for (unsigned int i = 0; i < 20; i++) { sim_frame(&sim); }
+		for (unsigned int i = 0; i < 20; i++) {
+			sim_frame(&sim);
+		}
 		CHECK(sim.follower.received_len == sizeof(data) && sim.leader.link.arq_used);
 		sim.drop_follower = 0;
 		CHECK(zlrs_link_write(&sim.follower.link, data, sizeof(data)) == sizeof(data));
@@ -740,7 +764,8 @@ static void test_automatic_bands(void)
 			sim.block_24_leader = scenario == 0;
 			sim.block_24_follower = true;
 		} else {
-			sim.rssi_24 = -100; sim.lose_band_plans = scenario == 3;
+			sim.rssi_24 = -100;
+			sim.lose_band_plans = scenario == 3;
 		}
 		bool reached = false;
 		for (unsigned int i = 0; i < 7000; i++) {
@@ -765,14 +790,20 @@ static void test_automatic_bands(void)
 			for (unsigned int i = 0; i < 16000; i++) {
 				automatic_frame(&sim, policies);
 				tried |= sim.leader.link.cfg.domain == ZLRS_DOMAIN_ISM2400;
-				if (tried && captured_band(&sim, true)) { returned = true; break; }
+				if (tried && captured_band(&sim, true)) {
+					returned = true;
+					break;
+				}
 			}
 			CHECK(tried && returned && sim.leader.link.sess_nonce_leader == nonce);
 			sim.block_24_leader = sim.block_24_follower = false;
 			bool preferred = false;
 			for (unsigned int i = 0; i < 18000; i++) {
 				automatic_frame(&sim, policies);
-				if (captured_band(&sim, false)) { preferred = true; break; }
+				if (captured_band(&sim, false)) {
+					preferred = true;
+					break;
+				}
 			}
 			CHECK(preferred && sim.leader.link.sess_nonce_leader == nonce);
 		}
@@ -944,8 +975,8 @@ void test_link(void)
 					     .lq_percent = 100U,
 					     .bytes = {0xabU}}};
 	const uint16_t peer_size = zlrs_frame_len(ZLRS_DATA_PREFIX_LEN + 1U, ZLRS_TAG_LEN);
-	CHECK(zlrs_frame_encode(&packet, peer_frame, sizeof(peer_frame), peer_size, ZLRS_TAG_LEN)
-	      == peer_size);
+	CHECK(zlrs_frame_encode(&packet, peer_frame, sizeof(peer_frame), peer_size, ZLRS_TAG_LEN) ==
+	      peer_size);
 	zlrs_tag(sim.follower.link.session_key_out, ZLRS_KEY_LEN, peer_frame,
 		 peer_size - ZLRS_TAG_LEN, &peer_frame[peer_size - ZLRS_TAG_LEN]);
 	const uint16_t delivered_before = sim.leader.received_len;
@@ -961,7 +992,8 @@ void test_link(void)
 		CHECK(after.type == ZLRS_PKT_DATA_L2F);
 		CHECK(before.body.data.ack == after.body.data.ack);
 		CHECK(sim.leader.link.arq_ack_pending);
-		CHECK(request->size == zlrs_frame_len(ZLRS_DATA_PREFIX_LEN + sizeof(queued), ZLRS_TAG_LEN));
+		CHECK(request->size ==
+		      zlrs_frame_len(ZLRS_DATA_PREFIX_LEN + sizeof(queued), ZLRS_TAG_LEN));
 		CHECK(memcmp(after.body.data.bytes, queued, sizeof(queued)) == 0);
 		zlrs_link_complete(&sim.leader.link, ZLRS_RADIO_OK, 0U, 0, 0, sim.now_ms);
 	}

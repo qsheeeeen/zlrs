@@ -37,3 +37,23 @@ properties:
       CN433). It is a board property, not a product decision: the region is
       runtime configuration, this is only the value a fresh board boots with.
     enum: [0, 1, 2, 3]
+
+  ism2400-min-tx-power-dbm:
+    type: int
+    required: true
+    description: Minimum calibrated 2.4 GHz transmit setpoint
+
+  ism2400-max-tx-power-dbm:
+    type: int
+    required: true
+    description: Maximum allowed 2.4 GHz transmit setpoint for this board
+
+  subg-min-tx-power-dbm:
+    type: int
+    required: true
+    description: Minimum calibrated SubG transmit setpoint
+
+  subg-max-tx-power-dbm:
+    type: int
+    required: true
+    description: Maximum allowed SubG transmit setpoint before regional policy

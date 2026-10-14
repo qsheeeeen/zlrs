@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include <zephyr/kernel.h>
+#include <stdlib.h>
+#include <string.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/dfu/mcuboot.h>
@@ -18,8 +20,8 @@ static void status_temperature(const struct shell *sh, const char *name, int16_t
 {
 	const int magnitude = value < 0 ? -value : value;
 
-	shell_print(sh, "%s: %s%d.%02d C", name, value < 0 ? "-" : "",
-		    magnitude / 100, magnitude % 100);
+	shell_print(sh, "%s: %s%d.%02d C", name, value < 0 ? "-" : "", magnitude / 100,
+		    magnitude % 100);
 }
 
 static int cmd_status(const struct shell *sh, size_t argc, char **argv)
@@ -35,8 +37,8 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "region : %s", region != NULL ? region->name : "?");
 	shell_print(sh, "band   : %s", link.data_band == ZLRS_DATA_BAND_SUBG ? "sub-G" : "2.4 GHz");
 	shell_print(sh, "switch : %s, capture %d, planned %d, count %u",
-		    link.band_mode == ZLRS_DATA_BAND_AUTO ? "auto" : "fixed",
-		    link.band_acquiring, link.band_planned, link.band_switches);
+		    link.band_mode == ZLRS_DATA_BAND_AUTO ? "auto" : "fixed", link.band_acquiring,
+		    link.band_planned, link.band_switches);
 	shell_print(sh, "link   : state %u, lq %u%%, paired %d", link.state, link.lq_percent,
 		    link.paired);
 	if (link.rssi_dbm != 0) {
@@ -52,6 +54,7 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 	}
 	shell_print(sh, "power  : %d dBm, range %d..%d dBm", link.tx_power_dbm,
 		    link.power_floor_dbm, link.power_ceiling_dbm);
+	shell_print(sh, "control: %s", link.power_fixed ? "debug fixed" : "automatic");
 	int16_t temperature;
 	if (zlrs_temperature_read(&temperature) == 0) {
 		const int magnitude = temperature < 0 ? -temperature : temperature;
@@ -106,6 +109,27 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 			    k_uptime_get_32() - radio->sampled_ms);
 	}
 	return 0;
+}
+
+static int cmd_power(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	const bool automatic = strcmp(argv[1], "auto") == 0;
+	char *end;
+	const long dbm = automatic ? 0 : strtol(argv[1], &end, 10);
+	if (!automatic && (end == argv[1] || *end != '\0' || dbm < -128 || dbm > 127)) {
+		return -EINVAL;
+	}
+	const int rc = zlrs_rf_power_request(automatic, (int)dbm);
+	if (rc == 0) {
+		shell_print(sh, "power request queued: %s", automatic ? "automatic" : argv[1]);
+	} else {
+		shell_error(sh,
+			    "power request rejected (%d); fixed power requires a connected link "
+			    "and an in-range value",
+			    rc);
+	}
+	return rc;
 }
 
 #if DT_NODE_EXISTS(DT_ALIAS(zlrs_mgmt_cdc))
@@ -248,7 +272,9 @@ static int cmd_bootsel(const struct shell *sh, size_t argc, char **argv)
 
 SHELL_STATIC_SUBCMD_SET_CREATE(
 	zlrs_cmds,
-	SHELL_CMD(status, NULL, "link, MCU temperature, LR2021 snapshot and error counters", cmd_status),
+	SHELL_CMD(status, NULL, "link, MCU temperature, LR2021 snapshot and error counters",
+		  cmd_status),
+	SHELL_CMD_ARG(power, NULL, "temporary fixed dBm while connected, or auto", cmd_power, 2, 0),
 	SHELL_CMD(ports, NULL, "state of both data port endpoints", cmd_ports),
 #if DT_NODE_EXISTS(DT_ALIAS(zlrs_mgmt_cdc))
 	SHELL_CMD(mgmt, NULL, "enter management mode (EXIT returns)", cmd_mgmt),

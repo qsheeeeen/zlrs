@@ -21,14 +21,13 @@ enum record_id {
 	RECORD_BAND,
 	RECORD_BAUD,
 	RECORD_REGION,
-	RECORD_POWER,
 	RECORD_ROLE,
 	RECORD_PROFILE,
 	RECORD_KEY,
 	RECORD_ID,
 	RECORD_PAIR,
 };
-#define NVS_LAYOUT      0x5A4C0001U
+#define NVS_LAYOUT      0x5A4C0002U
 #define PAIR_BYTES      (ZLRS_DEV_ID_LEN + ZLRS_PAIR_SALT_LEN)
 #define NVS_SECTOR_SIZE DT_PROP(DT_GPARENT(DT_NODELABEL(storage_partition)), erase_block_size)
 
@@ -92,7 +91,6 @@ static zlrs_persist_settings_t default_settings(void)
 	return (zlrs_persist_settings_t){
 		.band = ZLRS_DATA_BAND_AUTO,
 		.region = DT_PROP(DT_NODELABEL(zlrs_rf), default_region),
-		.power_dbm = CONFIG_ZLRS_APP_TX_POWER_DBM,
 		.role = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_LEADER) ? ZLRS_ROLE_LEADER
 								: ZLRS_ROLE_FOLLOWER,
 		.profile = IS_ENABLED(CONFIG_ZLRS_APP_SECURITY_PROFILE_P0) ? ZLRS_PROFILE_P0
@@ -109,8 +107,9 @@ static bool settings_valid(const zlrs_persist_settings_t *s)
 	       (s->profile == ZLRS_PROFILE_P1 ||
 		(s->profile == ZLRS_PROFILE_P0 && IS_ENABLED(CONFIG_ZLRS_APP_DEBUG))) &&
 	       s->data_baud >= 9600U && s->data_baud <= 4000000U &&
-	       s->power_dbm >= ZLRS_POWER_MIN_DBM && s->power_dbm <= ZLRS_POWER_MAX_DBM &&
-	       zlrs_region_validate(zlrs_region_get(s->region), &rf_design, s->power_dbm) == 0;
+	       zlrs_region_get(s->region) != NULL &&
+	       zlrs_region_validate(zlrs_region_get(s->region), &rf_design,
+				    zlrs_region_get(s->region)->max_tx_power_dbm) == 0;
 }
 
 static int write_record(enum record_id id, const void *bytes, size_t size)
@@ -202,7 +201,7 @@ int zlrs_persist_init(void)
 		}
 	}
 	ready = true;
-	/* Load region and power as a combination before validating the other saved settings. */
+	/* Load and validate the complete set of stored settings. */
 	zlrs_persist_settings_t loaded = state.settings;
 	for (enum record_id id = RECORD_BAND; id <= RECORD_PROFILE; id++) {
 		const size_t size = id == RECORD_BAUD ? 4U : 1U;
@@ -227,9 +226,6 @@ int zlrs_persist_init(void)
 		case RECORD_REGION:
 			loaded.region = (zlrs_region_id_t)bytes[0];
 			break;
-		case RECORD_POWER:
-			loaded.power_dbm = (int8_t)bytes[0];
-			break;
 		case RECORD_ROLE:
 			loaded.role = (zlrs_role_t)bytes[0];
 			break;
@@ -243,7 +239,6 @@ int zlrs_persist_init(void)
 	/* The same rules apply on load and save; malformed fields keep their defaults. */
 	zlrs_persist_settings_t candidate = state.settings;
 	candidate.region = loaded.region;
-	candidate.power_dbm = loaded.power_dbm;
 	if (settings_valid(&candidate)) {
 		state.settings = candidate;
 	}
@@ -321,7 +316,6 @@ int zlrs_persist_save_settings(const zlrs_persist_settings_t *s)
 		state.settings.data_baud = s->data_baud;
 	}
 	SAVE_FIELD(region, RECORD_REGION);
-	SAVE_FIELD(power_dbm, RECORD_POWER);
 	SAVE_FIELD(role, RECORD_ROLE);
 	SAVE_FIELD(profile, RECORD_PROFILE);
 #undef SAVE_FIELD

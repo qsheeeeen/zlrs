@@ -1,6 +1,6 @@
 # Air and management protocols
 
-This specification defines air protocol version 11 and USB management version 4.
+This specification defines air protocol version 11 and USB management version 5.
 Peers require matching air version, band mode, SubG region, security profile and
 timing. Identity, key derivation and trust boundaries are specified in
 [security](08-security.md); service ownership in [architecture](05-architecture.md).
@@ -300,7 +300,7 @@ UART overflow accounting remain in effect.
 A5 5A | version(1) | command(1) | payload_length(1) | payload | CRC8(1)
 ```
 
-Version is 4. Payload is at most 90 bytes and a full frame at most 96. CRC8 uses
+Version is 5. Payload is at most 90 bytes and a full frame at most 96. CRC8 uses
 DVB-S2 polynomial `0xD5`, initial zero, over version, command, length and payload.
 This CRC detects corruption; local USB access is the trust boundary. Multibyte
 management integers are little endian. ACK command `0x80` carries the original
@@ -312,11 +312,11 @@ command and status: 0 success, 1 parameter, 2 state, 3 storage, 4 unknown comman
 | SET_KEY_HEX / SET_PHRASE | `04` / `05` | 64 ASCII hex characters / 1–32 phrase bytes |
 | BUILD / IMAGE_HASH | `06` / `07` | No payload |
 | SET_BAUD | `08` | u32 baud |
-| SET_REGION / SET_POWER / SET_ROLE / SET_PROFILE / SET_BAND | `09`–`0D` | One byte; power signed |
-| NEW_DEV_ID / EXIT / FACTORY_RESET / RECOVERY / CONFIRM | `0E`–`12` | No payload |
-| LOG_INFO | `13` | No payload |
-| LOG_READ | `14` | File index:u8, offset:u32, requested length:u8, at most 80 bytes |
-| DEBUG_REPORT | `15` | Report:u8, offset:u16; debug images only |
+| SET_REGION / SET_ROLE / SET_PROFILE / SET_BAND | `09` / `0A` / `0B` / `0C` | One byte |
+| NEW_DEV_ID / EXIT / FACTORY_RESET / RECOVERY / CONFIRM | `0D`–`11` | No payload |
+| LOG_INFO | `12` | No payload |
+| LOG_READ | `13` | File index:u8, offset:u32, requested length:u8, at most 80 bytes |
+| DEBUG_REPORT | `14` | Report:u8, offset:u16; debug images only |
 
 Responses are ACK `80`, STATUS `81`, BUILD `82`, IMAGE_HASH `83`, LOG_INFO `84`,
 LOG_DATA `85` and DEBUG_REPORT `86`. Build text is at most 32 bytes and image hash
@@ -338,7 +338,7 @@ temperature are signed 16-bit values, and counters are u32.
 | --- | --- | --- |
 | 0 | 4 | Management version, role, link state, flags |
 | 4 | 8 | Device ID, peer ID |
-| 12 | 4 | Local LQ, SubG hardware SKU, saved region, saved power ceiling |
+| 12 | 4 | Local LQ, SubG hardware SKU, saved region, active-band maximum power |
 | 16 | 4 | Saved UART baud |
 | 20 | 1 | Active profile |
 | 21 | 4 | Local RSSI, peer RSSI; zero means unavailable |
@@ -358,7 +358,7 @@ temperature are signed 16-bit values, and counters are u32.
 | 86 | 4 | IRQ mask at the maintenance boundary |
 
 Flags: bit 0 root key, bit 1 pairing, bit 2 valid session, bit 3 active SubG,
-bit 4 automatic mode, bit 5 acquisition, bit 6 pending plan; bit 7 is reserved.
+bit 4 automatic mode, bit 5 acquisition, bit 6 pending plan, bit 7 debug fixed power.
 Roles are Leader=0/Follower=1. States are unconfigured=0, unpaired=1, pairing=2, searching=3,
 connected=4. Hardware SKU is LF=0/HF=1. Acquisition can coexist with CONNECTED and
 a valid session; those flags do not prove DATA is ready.

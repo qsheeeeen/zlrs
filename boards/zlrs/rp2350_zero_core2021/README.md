@@ -48,7 +48,9 @@ channel centers and configured power must fit that design before transmission.
 
 Core2021 uses a crystal, DC/DC mode, internal low-frequency RC, zero TX-power
 offset and receiver boost 7. Crystal operation has no TCXO wake-up reservation.
-The 2.4 GHz PA capability is 12 dBm; SubG uses its SKU-specific PA tables.
+The allowed setpoint range is −17 to +12 dBm on 2.4 GHz and −10 to +22 dBm
+on SubG. Regional policy further bounds the SubG maximum. Each SKU uses its
+own SubG PA tables.
 
 | Calibration property | HF target | LF target |
 | --- | --- | --- |

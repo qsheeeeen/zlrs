@@ -9,7 +9,7 @@ import zlrs_recovery as recovery
 class RecoveryTests(unittest.TestCase):
     def test_frame_matches_firmware(self):
         request = recovery.build_request()
-        self.assertEqual(request, bytes.fromhex("a55a041100c8"))
+        self.assertEqual(request, bytes.fromhex("a55a05100040"))
         self.assertEqual(request[3], recovery.CMD_RECOVERY)
         header = (REPO / "include/zlrs/mgmt/mgmt.h").read_text()
         version = re.search(r"#define\s+ZLRS_MGMT_VERSION\s+(\d+)U", header)

@@ -5,7 +5,7 @@
 #
 # Put the device into MCUboot serial recovery: no replugging, no reset button.
 #
-# How: the tool sends the recovery command (management protocol 0x11) on the management port; the
+# How: the tool sends the recovery command (management protocol 0x10) on the management port; the
 # device sets the boot-mode flag and reboots into MCUboot recovery.
 # See doc/06-firmware.md#installation-updates-and-rollback.
 #
@@ -20,8 +20,8 @@
 # mode (recovery first, console second). Find recovery by /dev/serial/by-id/...MCUBOOT...-if00.
 
 SOF = b"\xa5\x5a"
-VERSION = 4
-CMD_RECOVERY = 0x11
+VERSION = 5
+CMD_RECOVERY = 0x10
 DEFAULT_BAUD = 115200
 
 

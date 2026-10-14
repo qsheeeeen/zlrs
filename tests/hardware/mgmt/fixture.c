@@ -38,7 +38,9 @@ int __wrap_zlrs_boot_confirm(void)
 ssize_t __real_nvs_write(struct nvs_fs *, uint16_t, const void *, size_t);
 ssize_t __wrap_nvs_write(struct nvs_fs *fs, uint16_t id, const void *bytes, size_t len)
 {
-	if (id == 4 && len == 1 && *(const int8_t *)bytes == -9) {
+	static bool once;
+	if (id == 4 && len == 1 && !once) {
+		once = true;
 		return -EIO;
 	}
 	return __real_nvs_write(fs, id, bytes, len);

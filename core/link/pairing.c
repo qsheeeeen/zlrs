@@ -3,11 +3,11 @@
 
 /* Identity, pairing key derivation and the repeated pairing handshake. */
 static const uint8_t pairing_sync_word[ZLRS_SYNC_WORD_LEN] = {'Z', 'L', 'R', 'S'};
-#define LABEL_PAIR       "zlrs/pair"
-#define LABEL_AUTH       "zlrs/auth"
-#define LABEL_FHSS       "zlrs/fhss"
-#define LABEL_SYNC_DATA  "zlrs/sync/data"
-#define LABEL_LINK_AUTH  "zlrs/link-auth"
+#define LABEL_PAIR      "zlrs/pair"
+#define LABEL_AUTH      "zlrs/auth"
+#define LABEL_FHSS      "zlrs/fhss"
+#define LABEL_SYNC_DATA "zlrs/sync/data"
+#define LABEL_LINK_AUTH "zlrs/link-auth"
 
 static void ordered_ids(const zlrs_link_t *link, uint8_t out[2U * ZLRS_DEV_ID_LEN])
 {
@@ -94,8 +94,8 @@ static void derive_pair(zlrs_link_t *link)
 	link->fhss.index = 0U;
 }
 
-static void pair_payload_fill(const zlrs_link_t *link, zlrs_pair_frame_t *out,
-			      uint32_t nonce_a, uint32_t nonce_b)
+static void pair_payload_fill(const zlrs_link_t *link, zlrs_pair_frame_t *out, uint32_t nonce_a,
+			      uint32_t nonce_b)
 {
 	const bool initiator = (link->cfg.role == ZLRS_ROLE_LEADER);
 	const uint8_t *dev_a = initiator ? link->dev_id : link->peer_id;
@@ -134,12 +134,16 @@ static const zlrs_radio_req_t *send_pair(zlrs_link_t *link, uint8_t type, uint32
 		return NULL;
 	}
 
-	const uint16_t len = link_build_frame(link, &frame, payload_len,
-					     link_tag_key_for(link, type, true));
+	const uint16_t len =
+		link_build_frame(link, &frame, payload_len, link_tag_key_for(link, type, true));
 	link->last_pair_tx_ms = now_ms;
 
-	return link_submit_tx(link, len, link_sync_freq_hz(link), ZLRS_SYNC_SLOT_PAIRING,
-			      pairing_sync_word);
+	const zlrs_radio_req_t *req = link_submit_tx(link, len, link_sync_freq_hz(link),
+						     ZLRS_SYNC_SLOT_PAIRING, pairing_sync_word);
+	if (req != NULL) {
+		link->req.tx_power_dbm = link->cfg.pair_tx_power_dbm;
+	}
+	return req;
 }
 
 static const zlrs_radio_req_t *pair_rx(zlrs_link_t *link, uint16_t timeout_ms)
@@ -188,7 +192,8 @@ bool link_handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame, uint32
 		    zlrs_ct_equal(frame->body.pair_req.dev_a, link->dev_id, ZLRS_DEV_ID_LEN)) {
 			return pair_reject(link);
 		}
-		const bool same_request = link->pair_request_valid &&
+		const bool same_request =
+			link->pair_request_valid &&
 			link->pair_nonce == frame->body.pair_req.nonce_a &&
 			zlrs_ct_equal(link->peer_id, frame->body.pair_req.dev_a, ZLRS_DEV_ID_LEN);
 		if (same_request && frame->seq <= link->pair_rx_seq) {
@@ -197,7 +202,8 @@ bool link_handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame, uint32
 		}
 		if (!same_request) {
 			uint32_t nonce_b;
-			if (!link_new_nonce(link, link->pair_nonce_b, link->pair_nonce_valid, &nonce_b)) {
+			if (!link_new_nonce(link, link->pair_nonce_b, link->pair_nonce_valid,
+					    &nonce_b)) {
 				return pair_reject(link);
 			}
 			memcpy(link->peer_id, frame->body.pair_req.dev_a, ZLRS_DEV_ID_LEN);

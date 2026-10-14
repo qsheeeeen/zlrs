@@ -22,7 +22,7 @@ import sys
 from zlrs_cli import HelpFormatter, bounded_int, positive_seconds, fields, heading, notice
 
 SOF = b"\xa5\x5a"
-VERSION = 4
+VERSION = 5
 STATUS_LEN = 90
 
 CMD_ENTER = 0x00
@@ -35,18 +35,17 @@ CMD_BUILD = 0x06
 CMD_IMAGE_HASH = 0x07
 CMD_SET_BAUD = 0x08
 CMD_SET_REGION = 0x09
-CMD_SET_POWER = 0x0A
-CMD_SET_ROLE = 0x0B
-CMD_SET_PROFILE = 0x0C
-CMD_SET_BAND = 0x0D
-CMD_NEW_DEV_ID = 0x0E
-CMD_EXIT = 0x0F
-CMD_FACTORY_RESET = 0x10
-CMD_RECOVERY = 0x11
-CMD_CONFIRM = 0x12
-CMD_LOG_INFO = 0x13
-CMD_LOG_READ = 0x14
-CMD_DEBUG_REPORT = 0x15
+CMD_SET_ROLE = 0x0A
+CMD_SET_PROFILE = 0x0B
+CMD_SET_BAND = 0x0C
+CMD_NEW_DEV_ID = 0x0D
+CMD_EXIT = 0x0E
+CMD_FACTORY_RESET = 0x0F
+CMD_RECOVERY = 0x10
+CMD_CONFIRM = 0x11
+CMD_LOG_INFO = 0x12
+CMD_LOG_READ = 0x13
+CMD_DEBUG_REPORT = 0x14
 ACK = 0x80
 STATUS_RESP = 0x81
 BUILD_RESP = 0x82
@@ -67,7 +66,6 @@ COMMAND_MESSAGES = {
     CMD_SET_PHRASE: "Binding phrase saved",
     CMD_SET_BAUD: "Data UART baud rate saved",
     CMD_SET_REGION: "Region saved",
-    CMD_SET_POWER: "TX power ceiling saved",
     CMD_SET_ROLE: "Role saved",
     CMD_SET_PROFILE: "Security profile saved",
     CMD_SET_BAND: "Data band saved; reboot to apply",
@@ -145,7 +143,6 @@ def status_text(payload: bytes) -> str:
                   ("Paired", "yes" if flags & 0x02 else "no"),
                   ("Session", "active" if flags & 0x04 else "inactive")]),
         ("Configuration", [("Region", REGION_NAMES.get(payload[14], str(payload[14]))),
-                           ("TX ceiling", f"{power} dBm"),
                            ("Data UART", f"{baud or 115200} baud"),
                            ("Profile", f"P{payload[20]}"),
                            ("Root key", "configured" if flags & 0x01 else "missing")]),
@@ -167,6 +164,8 @@ def status_text(payload: bytes) -> str:
             ("Peer RSSI", f"{peer_rssi} dBm" if peer_rssi else "unavailable"),
             ("Peer LQ", f"{payload[25]}%" if peer_rssi else "unavailable"),
             ("TX setpoint", f"{active_power} dBm"),
+            ("Power maximum", f"{power} dBm"),
+            ("Power control", "debug fixed" if flags & 0x80 else "automatic"),
             ("Power floor", f"{floor} dBm"),
             ("MCU temperature", "unavailable" if temperature == -32768
              else f"{temperature / 100:.2f} C"),
@@ -578,8 +577,6 @@ def add_commands(sub, parents=()):
     region = command("set-region", help="select a region compatible with the HF/LF board", description="select a region compatible with the HF/LF board")
     region.add_argument("region", type=int, choices=[0, 1, 2, 3],
                         help="0=FCC915 1=EU868 2=CN470 3=CN433")
-    power = command("set-power", help="set the regional TX power ceiling", description="set the regional TX power ceiling")
-    power.add_argument("dbm", type=bounded_int(-128, 127), help="TX power ceiling (dBm)")
     role = command("set-role", help="select the Leader or Follower role",
                    description="Select the timing role; both endpoints send and receive DATA.")
     role.add_argument("role", choices=["leader", "follower"],
@@ -682,9 +679,6 @@ def main(args=None, parser=None) -> int:
         expect = True
     elif args.command == "set-region":
         frame = encode(CMD_SET_REGION, bytes([args.region]))
-        expect = True
-    elif args.command == "set-power":
-        frame = encode(CMD_SET_POWER, bytes([args.dbm & 0xFF]))
         expect = True
     elif args.command == "set-role":
         frame = encode(CMD_SET_ROLE, bytes([0 if args.role == "leader" else 1]))

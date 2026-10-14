@@ -44,7 +44,7 @@ static struct nvs_fs inspect = {
 ZTEST(settings, test_layout_and_persistence)
 {
 	zassert_ok(nvs_mount(&inspect));
-	const uint8_t incompatible[4] = {0x78, 0x56, 0x34, 0x12};
+	const uint8_t incompatible[4] = {0x01, 0x00, 0x4c, 0x5a};
 	const uint8_t sentinel = 0xA5;
 	zassert_equal(nvs_write(&inspect, 0, incompatible, 4), 4);
 	zassert_equal(nvs_write(&inspect, 65000, &sentinel, 1), 1);
@@ -64,10 +64,11 @@ ZTEST(settings, test_layout_and_persistence)
 	zassert_ok(nvs_mount(&inspect));
 	uint8_t raw[32];
 	zassert_equal(nvs_read(&inspect, 65000, raw, 1), -ENOENT);
-	/* Populate the existing 1..9 layout directly, with the original byte format. */
+	/* Verify the documented contiguous byte records independently of the storage API. */
 	const uint8_t band = ZLRS_DATA_BAND_SUBG;
-	const uint8_t region = DT_PROP(DT_NODELABEL(zlrs_rf), default_region);
-	const uint8_t power = (uint8_t)-10;
+	const uint8_t region = DT_PROP(DT_NODELABEL(zlrs_rf), band) == ZLRS_BAND_SUBG_LF
+				       ? ZLRS_REGION_CN470
+				       : ZLRS_REGION_EU868;
 	const uint8_t role = ZLRS_ROLE_FOLLOWER;
 	const uint8_t profile = ZLRS_PROFILE_P1;
 	const uint8_t baud[4] = {0x00, 0x84, 0x03, 0x00}; /* 230400, little endian */
@@ -79,17 +80,17 @@ ZTEST(settings, test_layout_and_persistence)
 	zassert_equal(nvs_write(&inspect, 1, &band, 1), 1);
 	zassert_equal(nvs_write(&inspect, 2, baud, 4), 4);
 	zassert_equal(nvs_write(&inspect, 3, &region, 1), 1);
-	zassert_equal(nvs_write(&inspect, 4, &power, 1), 1);
-	zassert_equal(nvs_write(&inspect, 5, &role, 1), 1);
-	zassert_equal(nvs_write(&inspect, 6, &profile, 1), 1);
-	zassert_equal(nvs_write(&inspect, 7, key, 32), 32);
-	zassert_equal(nvs_write(&inspect, 8, id, 4), 4);
-	zassert_equal(nvs_write(&inspect, 9, pair, sizeof(pair)), sizeof(pair));
+	zassert_equal(nvs_write(&inspect, 4, &role, 1), 1);
+	zassert_equal(nvs_write(&inspect, 5, &profile, 1), 1);
+	zassert_equal(nvs_write(&inspect, 6, key, 32), 32);
+	zassert_equal(nvs_write(&inspect, 7, id, 4), 4);
+	zassert_equal(nvs_write(&inspect, 8, pair, sizeof(pair)), sizeof(pair));
 	zassert_ok(zlrs_persist_init());
 	const zlrs_persist_settings_t *const saved = zlrs_persist_settings();
 	zassert_equal(saved->band, ZLRS_DATA_BAND_SUBG);
 	zassert_equal(saved->data_baud, 230400);
 	zassert_equal(saved->role, ZLRS_ROLE_FOLLOWER);
+	zassert_equal(saved->region, region);
 	zassert_true(zlrs_persist_get_root_key(saved_key));
 	zassert_true(zlrs_persist_get_device_id(saved_id));
 	zassert_true(zlrs_persist_get_pairing(&saved_pairing));
@@ -154,6 +155,6 @@ ZTEST(settings, test_layout_and_persistence)
 	zassert_false(zlrs_persist_get_pairing(&saved_pairing));
 	zassert_ok(nvs_mount(&inspect));
 	zassert_equal(nvs_read(&inspect, 0, raw, 4), 4);
-	zassert_equal(sys_get_le32(raw), 0x5A4C0001);
+	zassert_equal(sys_get_le32(raw), 0x5A4C0002);
 }
 ZTEST_SUITE(settings, NULL, setup, NULL, NULL, teardown);

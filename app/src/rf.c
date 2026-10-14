@@ -73,8 +73,17 @@ static const zlrs_rf_design_t rf_design = {
 /* Region: picks the band, the power ceiling and the duty accounting */
 static const zlrs_region_t *region;
 static zlrs_region_id_t region_id;
-static int8_t tx_power_dbm;
 static zlrs_power_t power;
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
+/* Zero means no request; signed dBm values occupy the range after AUTO. */
+enum {
+	POWER_REQUEST_AUTO = 1,
+	POWER_REQUEST_FIXED_OFFSET = 2 - INT8_MIN
+};
+static atomic_t power_request;
+static bool power_fixed;
+static int8_t fixed_power_dbm;
+#endif
 static zlrs_duty_t duty;
 /* Identity is read or generated at boot before use.
  * See doc/08-security.md#identity-and-threat-model. */
@@ -186,6 +195,73 @@ static bool random_u32(void *ctx, uint32_t *out)
 	return sys_csrand_get(out, sizeof(*out)) == 0;
 }
 
+static int8_t power_minimum(void)
+{
+	return ZLRS_DATA_SUBG ? DT_PROP(DT_NODELABEL(zlrs_rf), subg_min_tx_power_dbm)
+			      : DT_PROP(DT_NODELABEL(zlrs_rf), ism2400_min_tx_power_dbm);
+}
+
+static int8_t power_maximum(void)
+{
+	return ZLRS_DATA_SUBG ? MIN(DT_PROP(DT_NODELABEL(zlrs_rf), subg_max_tx_power_dbm),
+				    region->max_tx_power_dbm)
+			      : DT_PROP(DT_NODELABEL(zlrs_rf), ism2400_max_tx_power_dbm);
+}
+
+static void power_reset(uint32_t now_ms)
+{
+	zlrs_power_init(&power, power_maximum(), power_minimum(), now_ms);
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
+	power_fixed = false;
+	atomic_set(&power_request, 0);
+#endif
+}
+
+static void update_power(uint32_t now_ms)
+{
+	const zlrs_link_info_t info = zlrs_link_get_info(&link_data);
+	const bool ready =
+		info.state == ZLRS_STATE_CONNECTED && info.session_valid && !info.radio_acquiring;
+	int8_t next;
+	if (!ready) {
+		next = zlrs_power_recover(&power, now_ms);
+		if (info.state == ZLRS_STATE_PAIRING) {
+			next = CLAMP(ZLRS_PAIR_POWER_DBM, power.floor_dbm, power.ceiling_dbm);
+		}
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
+		power_fixed = false;
+		atomic_set(&power_request, 0);
+#endif
+	} else {
+		next = zlrs_power_update(&power, info.peer_rssi_dbm, info.peer_lq_percent,
+					 info.last_peer_feedback_ms, now_ms);
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
+		const int request = atomic_set(&power_request, 0);
+		if (power.last_feedback_ms == 0U) {
+			power_fixed = false;
+		} else if (request != 0) {
+			power_fixed = request != POWER_REQUEST_AUTO;
+			fixed_power_dbm = CLAMP(request - POWER_REQUEST_FIXED_OFFSET,
+						power.floor_dbm, power.ceiling_dbm);
+			next = zlrs_power_recover(&power, now_ms);
+		}
+		if (power_fixed) {
+			zlrs_power_recover(&power, now_ms);
+			next = fixed_power_dbm;
+		}
+#endif
+		if (!IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)) {
+			next = zlrs_power_recover(&power, now_ms);
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
+			if (power_fixed) {
+				next = fixed_power_dbm;
+			}
+#endif
+		}
+	}
+	zlrs_link_set_power(&link_data, next);
+}
+
 static zlrs_link_cfg_t link_config(void)
 {
 	zlrs_link_cfg_t cfg = {
@@ -195,8 +271,8 @@ static zlrs_link_cfg_t link_config(void)
 		.profile = active_profile,
 		.hopping = IS_ENABLED(CONFIG_ZLRS_APP_FHSS) ? 1U : 0U,
 		.mod = data_mod,
-		.tx_power_dbm =
-			ZLRS_DATA_SUBG ? MIN(tx_power_dbm, region->max_tx_power_dbm) : tx_power_dbm,
+		.tx_power_dbm = power_maximum(),
+		.pair_tx_power_dbm = CLAMP(ZLRS_PAIR_POWER_DBM, power_minimum(), power_maximum()),
 		.rx_timeout_ms = 2U,
 		.acq_timeout_ms = 8U,
 		.sync_period_ms = sync_period_for_mod(&data_mod),
@@ -224,8 +300,7 @@ static void build_links(void)
 		.on_state = on_state,
 	};
 	zlrs_link_init(&link_data, &cfg, random_u32, NULL, &events);
-	zlrs_power_init(&power, cfg.tx_power_dbm, CONFIG_ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM,
-			zlrs_slot_timer_now_ms());
+	power_reset(zlrs_slot_timer_now_ms());
 }
 
 static void load_identity(void)
@@ -297,7 +372,7 @@ static zlrs_lr2021_diag_t radio_diag;
 #endif
 
 /* Leader owns the clock; Follower follows verified IRQ timestamps and scans after loss. */
-#define ZLRS_PHASE_DEADBAND_US  100
+#define ZLRS_PHASE_DEADBAND_US 100
 
 static uint32_t slot_deadline_us;
 static uint32_t slot_nominal_us;
@@ -315,9 +390,9 @@ static uint32_t late_prepare_entry_us;
 static uint32_t late_prepare_build_us;
 static uint32_t late_prepare_spi_us;
 static int32_t phase_adj_us;
-static bool phase_adj_set;    /* one correction per frame: several receptions would fight */
-static int32_t phase_last_us; /* what the last correction was, for the bench log */
-static int32_t phase_err_us;  /* residual the last correction was computed from */
+static bool phase_adj_set;      /* one correction per frame: several receptions would fight */
+static int32_t phase_last_us;   /* what the last correction was, for the bench log */
+static int32_t phase_err_us;    /* residual the last correction was computed from */
 static uint32_t phase_hits;     /* corrections since the last report */
 static uint32_t last_rx_any_ms; /* any verified DATA reception: the scan trigger */
 
@@ -340,13 +415,12 @@ static void change_band(zlrs_data_band_t target, bool probe, uint32_t now_ms)
 		return;
 	}
 	zlrs_link_acquire_radio(&link_data, now_ms);
-	zlrs_power_init(&power, cfg.tx_power_dbm, CONFIG_ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM,
-			now_ms);
+	power_reset(now_ms);
 	phase_samples = 0U;
 	phase_adj_us = 0;
 	last_rx_any_ms = now_ms;
-	zlrs_slot_timer_reconfigure(frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE,
-				    slot_prepare_us, transition_reserved ? 0U : 12000U);
+	zlrs_slot_timer_reconfigure(frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE, slot_prepare_us,
+				    transition_reserved ? 0U : 12000U);
 	transition_reserved = false;
 	zlrs_band_policy_changed(&band_policy, target == ZLRS_DATA_BAND_SUBG, probe, now_ms,
 				 zlrs_link_get_info(&link_data).last_rx_ms);
@@ -369,14 +443,18 @@ static void update_band(uint32_t now_ms)
 	}
 	const zlrs_link_stats_t *const stats = zlrs_link_get_stats(&link_data);
 	const zlrs_band_observation_t observation = {
-		.now_ms = now_ms, .last_rx_ms = info.last_rx_ms,
-		.feedback_ms = info.last_peer_feedback_ms, .paired = info.paired,
+		.now_ms = now_ms,
+		.last_rx_ms = info.last_rx_ms,
+		.feedback_ms = info.last_peer_feedback_ms,
+		.paired = info.paired,
 		.pairing = info.state == ZLRS_STATE_PAIRING,
 		.connected = info.session_valid && info.state == ZLRS_STATE_CONNECTED,
 		.acquiring = info.radio_acquiring,
 		.planned = info.band_plan.switch_frame != 0U,
-		.rssi_dbm = stats->last_rssi, .peer_rssi_dbm = info.peer_rssi_dbm,
-		.lq_percent = stats->lq_percent, .peer_lq_percent = info.peer_lq_percent,
+		.rssi_dbm = stats->last_rssi,
+		.peer_rssi_dbm = info.peer_rssi_dbm,
+		.lq_percent = stats->lq_percent,
+		.peer_lq_percent = info.peer_lq_percent,
 	};
 	const zlrs_band_action_t action = zlrs_band_policy_update(&band_policy, &observation);
 	if (action == ZLRS_BAND_SEARCH) {
@@ -387,7 +465,7 @@ static void update_band(uint32_t now_ms)
 		const uint32_t lead = resync_every_n + DIV_ROUND_UP(2000000U, period);
 		if (lead <= UINT16_MAX && info.frame_index < UINT32_MAX - lead) {
 			(void)zlrs_link_plan_band(&link_data, !ZLRS_DATA_SUBG,
-						 info.frame_index + lead);
+						  info.frame_index + lead);
 		}
 	}
 }
@@ -442,6 +520,7 @@ static void run_slot(uint8_t slot)
 	pump_serial();
 	const uint32_t protocol_at_us = now_us();
 
+	update_power(zlrs_slot_timer_now_ms());
 	req = zlrs_link_slot(link, link_slot, now_ms);
 
 	if (req == NULL) {
@@ -648,17 +727,6 @@ static void report(uint32_t now_ms)
 		return;
 	}
 	last_report_ms = now_ms;
-#if IS_ENABLED(CONFIG_ZLRS_APP_DYNAMIC_POWER)
-	const zlrs_link_info_t info = zlrs_link_get_info(&link_data);
-	const int8_t before = power.current_dbm;
-	const int8_t next = zlrs_power_update(&power, info.peer_rssi_dbm, info.peer_lq_percent,
-					      info.last_peer_feedback_ms, now_ms);
-	if (next != before) {
-		zlrs_link_set_power(&link_data, next);
-		LOG_INF("tx power -> %d dBm (rssi %d dBm, lq %u%%)", next, info.peer_rssi_dbm,
-			info.peer_lq_percent);
-	}
-#endif
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
 	rate_update(&link_data, &rate_before, rate_ms != 0U ? now_ms - rate_ms : REPORT_PERIOD_MS);
 	rate_before = rate_snapshot(&link_data);
@@ -692,15 +760,16 @@ void zlrs_rf_publish_state(void)
 		published.data_band == state.data_band && published.band_mode == state.band_mode &&
 		published.band_acquiring == state.band_acquiring &&
 		published.band_planned == state.band_planned &&
-		published.band_switches == state.band_switches && published.region == state.region &&
-		published.state == state.state && published.configured == state.configured &&
-		published.paired == state.paired &&
+		published.band_switches == state.band_switches &&
+		published.region == state.region && published.state == state.state &&
+		published.configured == state.configured && published.paired == state.paired &&
 		published.session_valid == state.session_valid &&
 		published.paused == state.paused && published.link_lost == state.link_lost &&
 		published.fault == state.fault &&
 		published.data_drop_bytes == state.data_drop_bytes &&
 		published.lq_percent == state.lq_percent &&
 		published.tx_power_dbm == state.tx_power_dbm &&
+		published.power_fixed == state.power_fixed &&
 		published.rssi_dbm == state.rssi_dbm && published.snr_db == state.snr_db &&
 		published.frame_period_us == state.frame_period_us &&
 		published.radio.sampled_ms == state.radio.sampled_ms &&
@@ -753,7 +822,7 @@ void zlrs_rf_diagnostics_capture(zlrs_rf_diagnostics_t *out)
 	out->rx_finish_us_max = rx_finish_us_max;
 	out->rx_protocol_us_last = rx_protocol_us_last;
 	out->rx_protocol_us_max = rx_protocol_us_max;
-	out->tx_power_dbm = tx_power_dbm;
+	out->power_fixed = power_fixed;
 	out->power = power;
 }
 #endif
@@ -823,13 +892,16 @@ zlrs_rf_status_t zlrs_rf_status(void)
 		.fault = !radio_ready,
 		.data_drop_bytes = stats->data_drop_bytes,
 		.lq_percent = stats->lq_percent,
-		.tx_power_dbm =
-			links_ready ? zlrs_link_get_config(&link_data)->tx_power_dbm : tx_power_dbm,
+		.tx_power_dbm = links_ready ? zlrs_link_get_config(&link_data)->tx_power_dbm
+					    : power.ceiling_dbm,
 		.rssi_dbm = stats->last_rssi,
 		.snr_db = stats->last_snr,
 		.frame_period_us = frame_period_us,
 		.peer_rssi_dbm = info.peer_rssi_dbm,
 		.peer_lq_percent = info.peer_lq_percent,
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
+		.power_fixed = power_fixed,
+#endif
 		.power_floor_dbm = power.floor_dbm,
 		.power_ceiling_dbm = power.ceiling_dbm,
 		.tx_frames = stats->tx_frames,
@@ -869,6 +941,7 @@ int zlrs_rf_pair_start(void)
 		}
 		zlrs_link_press(link, zlrs_slot_timer_now_ms());
 	}
+	update_power(zlrs_slot_timer_now_ms());
 	return 0;
 }
 
@@ -881,6 +954,7 @@ int zlrs_rf_pair_cancel(void)
 	if (zlrs_link_get_state(link) == ZLRS_STATE_PAIRING) {
 		(void)zlrs_link_cancel_pair(link, zlrs_slot_timer_now_ms());
 	}
+	update_power(zlrs_slot_timer_now_ms());
 	return 0;
 }
 
@@ -927,7 +1001,30 @@ void zlrs_rf_resume(void)
 						zlrs_link_get_info(&link_data).last_rx_ms);
 		}
 	}
+	if (links_ready) {
+		update_power(zlrs_slot_timer_now_ms());
+	}
 }
+
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
+int zlrs_rf_power_request(bool automatic, int dbm)
+{
+	zlrs_rf_status_t status;
+	if (zbus_chan_read(&zlrs_rf_chan, &status, K_MSEC(10)) != 0) {
+		return -EAGAIN;
+	}
+	if (!automatic && (dbm < status.power_floor_dbm || dbm > status.power_ceiling_dbm)) {
+		return -EINVAL;
+	}
+	if (!automatic && (status.state != ZLRS_STATE_CONNECTED || !status.session_valid ||
+			   status.band_acquiring)) {
+		return -ENOTCONN;
+	}
+	atomic_set(&power_request,
+		   automatic ? POWER_REQUEST_AUTO : dbm + POWER_REQUEST_FIXED_OFFSET);
+	return 0;
+}
+#endif
 
 int zlrs_rf_init(void)
 {
@@ -963,13 +1060,12 @@ int zlrs_rf_init(void)
 
 	/*
 	 * Persist loads settings or board defaults and validates each frontend's requested
-	 * region/power combination. RF owns the parameters adopted for this boot.
+	 * region. RF owns the parameters adopted for this boot.
 	 */
 	const zlrs_persist_settings_t *const settings = zlrs_persist_settings();
 	band_mode = settings->band;
 	data_band = band_mode == ZLRS_DATA_BAND_SUBG ? ZLRS_DATA_BAND_SUBG : ZLRS_DATA_BAND_24;
 	region_id = settings->region;
-	tx_power_dbm = settings->power_dbm;
 	role_leader = settings->role == ZLRS_ROLE_LEADER;
 	active_profile = settings->profile;
 	LOG_INF("data band: %s", ZLRS_DATA_SUBG ? "sub-G" : "2.4G");
@@ -1003,22 +1099,12 @@ int zlrs_rf_init(void)
 	if (!IS_ENABLED(CONFIG_ZLRS_APP_FHSS)) {
 		LOG_WRN("isolation: hopping off, every frame stays on the sync channel");
 	}
-	{
-		const int rc = zlrs_region_validate(region, &rf_design, tx_power_dbm);
-
-		/* -5: the region wants different sub-G hardware than this board has, so stay off the air */
-		if (rc == -5) {
-			LOG_ERR("region %s needs another sub-G sku (board band %d)", region->name,
-				rf_design.band);
-			return -EINVAL;
-		}
-		if (rc == -2) {
-			LOG_WRN("region %s caps tx power at %d dBm (configured %d)", region->name,
-				region->max_tx_power_dbm, tx_power_dbm);
-		} else if (rc != 0) {
-			LOG_WRN("region check failed (%d): channel plan out of band", rc);
-		}
+	if (zlrs_region_validate(region, &rf_design, region->max_tx_power_dbm) != 0 ||
+	    power_minimum() > power_maximum()) {
+		LOG_ERR("region %s is incompatible with radio design", region->name);
+		return -EINVAL;
 	}
+	power_reset(zlrs_slot_timer_now_ms());
 	zlrs_duty_init(&duty, region, 0U);
 	zlrs_band_policy_init(&band_policy, band_mode == ZLRS_DATA_BAND_AUTO, role_leader,
 			      ZLRS_DATA_SUBG, region->duty_window_ms, zlrs_slot_timer_now_ms());
@@ -1092,7 +1178,8 @@ void zlrs_rf_frame(void)
 		slot_nominal_us = start_us + ((uint64_t)period * slot) / ZLRS_SLOT_COUNT;
 		const uint32_t next_us =
 			slot == ZLRS_SLOT_DATA_B
-				? (transition_reserved ? start_us + period : zlrs_slot_timer_next_frame_us())
+				? (transition_reserved ? start_us + period
+						       : zlrs_slot_timer_next_frame_us())
 				: start_us + ((uint64_t)period * (slot + 1U)) / ZLRS_SLOT_COUNT;
 		slot_deadline_us = next_us - slot_prepare_us - 100U;
 		run_slot(slot);
@@ -1101,26 +1188,33 @@ void zlrs_rf_frame(void)
 	/* Re-read time after radio completions and any preceding maintenance window. */
 	const uint32_t now_ms = zlrs_slot_timer_now_ms();
 	zlrs_link_tick(&link_data, now_ms);
+	update_power(now_ms);
 	report(now_ms);
 
 	if (!role_leader) {
 		const zlrs_link_cfg_t *const cfg = zlrs_link_get_config(&link_data);
 		const zlrs_link_info_t info = zlrs_link_get_info(&link_data);
 		const bool acquiring = info.radio_acquiring || info.state == ZLRS_STATE_SEARCHING;
-		const uint32_t capture_wait_ms = info.radio_sync_seen ?
-			MAX(300U, 2U * cfg->sync_period_ms + DIV_ROUND_UP(period, 1000U)) : 300U;
-		const uint32_t scan_after_ms = acquiring ? capture_wait_ms :
-			zlrs_slot_timer_scan_delay_ms(period, cfg->resync_every_n, phase_samples > 0U);
+		const uint32_t capture_wait_ms =
+			info.radio_sync_seen
+				? MAX(300U, 2U * cfg->sync_period_ms + DIV_ROUND_UP(period, 1000U))
+				: 300U;
+		const uint32_t scan_after_ms =
+			acquiring ? capture_wait_ms
+				  : zlrs_slot_timer_scan_delay_ms(period, cfg->resync_every_n,
+								  phase_samples > 0U);
 		if ((uint32_t)(now_ms - last_rx_any_ms) > scan_after_ms) {
 			phase_samples = 0U;
 			const uint16_t sync_frames =
 				cfg->resync_every_n > 0U
 					? cfg->resync_every_n
-					: (uint16_t)MAX(1U, DIV_ROUND_UP(cfg->sync_period_ms * 1000U,
-								       period));
+					: (uint16_t)MAX(1U,
+							DIV_ROUND_UP(cfg->sync_period_ms * 1000U,
+								     period));
 
-			phase_adj_us = acquiring ? (int32_t)MAX(1U, period / 32U) :
-				(int32_t)zlrs_slot_timer_scan_step_us(period, sync_frames);
+			phase_adj_us = acquiring ? (int32_t)MAX(1U, period / 32U)
+						 : (int32_t)zlrs_slot_timer_scan_step_us(
+							   period, sync_frames);
 		}
 		zlrs_slot_timer_shift(phase_adj_us);
 	}

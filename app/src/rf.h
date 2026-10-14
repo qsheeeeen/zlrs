@@ -31,6 +31,7 @@ typedef struct {
 	uint32_t data_drop_bytes;
 	uint8_t lq_percent;
 	int8_t tx_power_dbm;
+	bool power_fixed;
 	int16_t rssi_dbm;
 	int8_t snr_db;
 	uint32_t frame_period_us;
@@ -75,3 +76,8 @@ void zlrs_rf_pause(void);
 void zlrs_rf_resume(void);
 /* Captured only while paused at a management boundary. */
 void zlrs_rf_log_snapshot(void);
+
+#if defined(CONFIG_ZLRS_APP_DEBUG)
+/* Any thread: enqueue a volatile debug override for the RF owner. */
+int zlrs_rf_power_request(bool automatic, int dbm);
+#endif

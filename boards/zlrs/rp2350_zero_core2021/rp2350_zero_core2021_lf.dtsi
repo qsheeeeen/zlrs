@@ -20,6 +20,10 @@
 	 */
 	zlrs_rf: zlrs-rf {
 		compatible = "zlrs,rf-design";
+		ism2400-min-tx-power-dbm = <(-17)>;
+		ism2400-max-tx-power-dbm = <12>;
+		subg-min-tx-power-dbm = <(-10)>;
+		subg-max-tx-power-dbm = <22>;
 		band = <0>;
 		low-hz = <410000000>;
 		high-hz = <510000000>;

@@ -12,7 +12,7 @@ them.
   DATA remains plaintext.
 - Automatic 2.4 GHz/SubG switching with coordinated plans and loss recovery, or
   fixed-band selection; one band is active at a time.
-- Peer quality feedback and dynamic transmit power within configured limits.
+- Peer quality feedback and dynamic transmit power within the active band’s board and regional limits.
 - Persistent identity, pairing and configuration.
 - Dedicated USB management, LR2021/MCU status, logs and signed firmware updates
   with verification, confirmation and rollback.

@@ -7,104 +7,96 @@ static int8_t observe(zlrs_power_t *power, int16_t rssi, uint8_t lq, uint32_t no
 	return zlrs_power_update(power, rssi, lq, now, now);
 }
 
-static void test_quality_policy(void)
+/* Keep real feedback cadence through the hold, including timer wraparound. */
+static uint32_t healthy(zlrs_power_t *power, uint32_t start, uint32_t duration)
 {
-	zlrs_power_t power;
-	zlrs_power_init(&power, 10, 0, 0U);
-	observe(&power, -60, 100U, 2000U);
-	observe(&power, -60, 100U, 3000U);
-	CHECK(observe(&power, -60, 100U, 4000U) == 10);
-
-	for (uint32_t step = 1U; step <= 4U; step++) {
-		for (uint32_t sample = 0U; sample < 3U; sample++) {
-			observe(&power, -60, 100U, step * 42000U + sample);
-		}
+	for (uint32_t elapsed = 0U; elapsed <= duration; elapsed += 250U) {
+		observe(power, -60, 100U, start + elapsed);
 	}
-	CHECK(power.current_dbm == 0);
-	observe(&power, -60, 98U, 170002U);
-	observe(&power, -60, 98U, 170003U);
-	CHECK(observe(&power, -60, 98U, 170004U) == 3);
-
-	/* Boot/search time without peer feedback must not satisfy the lowering hold. */
-	zlrs_power_init(&power, 10, 0, 1000U);
-	observe(&power, -60, 100U, 51000U);
-	observe(&power, -60, 100U, 52000U);
-	CHECK(observe(&power, -60, 100U, 53000U) == 10);
+	return start + duration;
 }
 
 void test_power(void)
 {
+	printf("power: continuous health, distinct feedback, recovery, bounds and clock wrap\n");
 	zlrs_power_t power;
-	printf("power: fresh feedback, limits, hold, timeout and clock wrap\n");
-	zlrs_power_init(&power, 20, 0, 10000U);
-	CHECK(zlrs_power_update(&power, -60, 100U, 0U, 11000U) == 20);
-	CHECK(observe(&power, -60, 100U, 11000U) == 20);
-	/* Start this run at the first feedback reception. */
-	zlrs_power_init(&power, 20, 0, 10000U);
-	CHECK(observe(&power, -60, 100U, 10000U) == 20);
-	CHECK(observe(&power, -60, 100U, 49999U) == 20);
-	CHECK(observe(&power, -60, 100U, 50000U) == 20);
-	/* Reading the same feedback repeatedly cannot fill the consecutive sample count. */
-	CHECK(zlrs_power_update(&power, -60, 100U, 50000U, 50001U) == 20);
-	CHECK(zlrs_power_update(&power, -60, 100U, 50000U, 50002U) == 20);
-	CHECK(observe(&power, -60, 100U, 50001U) == 20);
-	CHECK(observe(&power, -60, 100U, 50002U) == 17);
+	zlrs_power_init(&power, 12, -17, 0U);
+	CHECK(power.current_dbm == 12);
+	CHECK(zlrs_power_update(&power, -60, 100U, 0U, 1U) == 12);
+	/* Boot/search time cannot qualify a reduction. */
+	healthy(&power, 100001U, 39750U);
+	CHECK(power.current_dbm == 12);
+	CHECK(observe(&power, -60, 100U, 140001U) == 9);
 	CHECK(power.lowers == 1U);
-	CHECK(observe(&power, -100, 80U, 50003U) == 17);
-	CHECK(observe(&power, -100, 80U, 52002U) == 17);
-	CHECK(observe(&power, -60, 98U, 52003U) == 17);
-	CHECK(observe(&power, -96, 100U, 52004U) == 20);
-	CHECK(power.raises == 1U);
-
-	/* Exactly 99% holds power; RSSI threshold equality also interrupts good samples. */
-	CHECK(observe(&power, -60, 100U, 92004U) == 20);
-	CHECK(observe(&power, -70, 100U, 92005U) == 20);
-	CHECK(observe(&power, -60, 100U, 92006U) == 20);
-	CHECK(observe(&power, -95, 99U, 92007U) == 20);
-	CHECK(observe(&power, -69, 100U, 92008U) == 20);
-	CHECK(observe(&power, -69, 100U, 92009U) == 20);
-	CHECK(observe(&power, -69, 100U, 92010U) == 17);
-	/* Timeout uses reception time, not the time the caller first saw the record. */
-	CHECK(zlrs_power_update(&power, -60, 100U, 92010U, 93009U) == 17);
-	CHECK(zlrs_power_update(&power, -60, 100U, 92010U, 93010U) == 20);
-	CHECK(power.fallbacks == 1U);
-	CHECK(zlrs_power_update(&power, -60, 100U, 92010U, 93011U) == 20);
-	CHECK(power.fallbacks == 1U);
-
-	zlrs_power_init(&power, 1, 0, 0U);
-	observe(&power, -60, 100U, 1U);
-	for (uint32_t ms = 40000U; ms < 40006U; ++ms) {
-		observe(&power, -60, 100U, ms);
+	/* Duplicate feedback cannot supply the three poor observations. */
+	healthy(&power, 140251U, 1750U);
+	CHECK(observe(&power, -60, 98U, 142002U) == 9);
+	for (uint32_t now = 142003U; now < 142050U; now++) {
+		CHECK(zlrs_power_update(&power, -60, 98U, 142002U, now) == 9);
 	}
-	CHECK(power.current_dbm == 0);
-	CHECK(power.lowers == 1U);
-	for (uint32_t ms = 42002U; ms < 42008U; ++ms) {
-		observe(&power, -100, 80U, ms);
-	}
-	CHECK(power.current_dbm == 1);
+	CHECK(observe(&power, -60, 98U, 142050U) == 9);
+	CHECK(observe(&power, -96, 100U, 142051U) == 12);
 	CHECK(power.raises == 1U);
+	/* 99% LQ and threshold equality interrupt continuous health. */
+	healthy(&power, 142301U, 39750U);
+	CHECK(observe(&power, -70, 100U, 182301U) == 12);
+	healthy(&power, 182551U, 39750U);
+	CHECK(observe(&power, -95, 99U, 222551U) == 12);
+	healthy(&power, 222801U, 39750U);
+	CHECK(power.current_dbm == 12);
+	CHECK(observe(&power, -69, 100U, 262801U) == 9);
+	CHECK(zlrs_power_update(&power, -69, 100U, 262801U, 263800U) == 9);
+	CHECK(zlrs_power_update(&power, -69, 100U, 262801U, 263801U) == 12);
+	CHECK(power.fallbacks == 1U);
+	CHECK(zlrs_power_recover(&power, 263802U) == 12);
+	CHECK(power.fallbacks == 1U);
+	/* A caller that misses a feedback gap must still recover, even with new feedback. */
+	healthy(&power, 300001U, 40000U);
+	CHECK(power.current_dbm == 9);
+	CHECK(observe(&power, -60, 100U, 341001U) == 12);
+	CHECK(power.fallbacks == 2U);
+	/* RSSI zero/out-of-range and impossible quality never qualify lowering. */
+	healthy(&power, 341251U, 40000U);
+	CHECK(power.current_dbm == 9);
+	CHECK(observe(&power, 0, 100U, 381501U) == 12);
+	healthy(&power, 381751U, 40000U);
+	CHECK(observe(&power, -256, 100U, 422001U) == 12);
+	healthy(&power, 422251U, 40000U);
+	CHECK(observe(&power, -60, 101U, 462501U) == 12);
+	/* Explicit disconnect bypasses the two-second hold and all step sizes. */
+	healthy(&power, 462751U, 40000U);
+	CHECK(power.current_dbm == 9);
+	CHECK(observe(&power, -255, 100U, 502752U) == 9);
+	CHECK(zlrs_power_recover(&power, 502753U) == 12);
+
+	/* Both hardware ranges and every regional ceiling remain bounded. */
+	const int8_t ceilings[] = {12, 22, 14, 17, 10};
+	for (unsigned int i = 0; i < sizeof(ceilings) / sizeof(ceilings[0]); i++) {
+		const int8_t floor = i == 0 ? -17 : -10;
+		zlrs_power_init(&power, ceilings[i], floor, 0U);
+		uint32_t next = 1U;
+		for (unsigned int step = 0; step < 12U; step++) {
+			next = healthy(&power, next, 40000U) + 250U;
+			CHECK(power.current_dbm >= floor && power.current_dbm <= ceilings[i]);
+		}
+		CHECK(power.current_dbm == floor);
+		/* Poor reception raises by one bounded 3 dB step. */
+		CHECK(observe(&power, -60, 98U, next) == floor);
+		CHECK(observe(&power, -60, 98U, next + 250U) == floor);
+		CHECK(observe(&power, -60, 98U, next + 500U) == floor + 3);
+		CHECK(zlrs_power_recover(&power, next + 501U) == ceilings[i]);
+	}
 	zlrs_power_init(&power, -10, 0, 0U);
-	observe(&power, -60, 100U, 1U);
-	for (uint32_t ms = 40000U; ms < 40006U; ++ms) {
-		observe(&power, -60, 100U, ms);
-	}
-	CHECK(power.current_dbm == -10);
-	CHECK(power.lowers == 0U);
+	healthy(&power, 1U, 40000U);
+	CHECK(power.current_dbm == -10 && power.lowers == 0U);
+	zlrs_power_init(&power, 1, 0, 0U);
+	healthy(&power, 1U, 40000U);
+	CHECK(power.current_dbm == 0);
 
-	zlrs_power_init(&power, 10, -10, UINT32_MAX - 1000U);
-	observe(&power, -60, 100U, UINT32_MAX - 1000U);
-	CHECK(observe(&power, -60, 100U, 38998U) == 10);
-	CHECK(observe(&power, -60, 100U, 38999U) == 10);
-	CHECK(observe(&power, -60, 100U, 39000U) == 10);
-	CHECK(observe(&power, -60, 100U, 39001U) == 7);
-	CHECK(zlrs_power_update(&power, -60, 100U, 39001U, 40001U) == 10);
-	CHECK(power.fallbacks == 1U);
-	/* Feedback before wrap remains fresh across wrap. */
-	zlrs_power_init(&power, 10, -10, UINT32_MAX - 3000U);
-	observe(&power, -60, 100U, UINT32_MAX - 3000U);
-	CHECK(zlrs_power_update(&power, -60, 100U, UINT32_MAX - 2U, 1U) == 10);
-	CHECK(observe(&power, -60, 100U, 36999U) == 10);
-	CHECK(observe(&power, -60, 100U, 37000U) == 10);
-	CHECK(observe(&power, -60, 100U, 37001U) == 7);
-	test_quality_policy();
+	const uint32_t start = UINT32_MAX - 1000U;
+	zlrs_power_init(&power, 12, -17, start);
+	const uint32_t finish = healthy(&power, start, 40000U);
+	CHECK(power.current_dbm == 9);
+	CHECK(zlrs_power_update(&power, -60, 100U, finish, finish + 999U) == 9);
+	CHECK(zlrs_power_update(&power, -60, 100U, finish, finish + 1000U) == 12);
 }

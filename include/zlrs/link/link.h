@@ -58,7 +58,8 @@ typedef struct {
 	zlrs_profile_t profile;
 	zlrs_mod_cfg_t mod;
 	int8_t tx_power_dbm;
-	uint16_t rx_timeout_ms; /* one receive window */
+	int8_t pair_tx_power_dbm; /* Dedicated setpoint for every pairing transmission. */
+	uint16_t rx_timeout_ms;   /* one receive window */
 	/*
 	 * Receive window while pairing or searching (0 = rx_timeout_ms). Acquisition happens before the
 	 * two ends share a slot phase, so it needs a longer window than steady state: a short window
@@ -223,18 +224,18 @@ typedef struct {
 	 * to prove the peer derived the same key. Follower only adopts the session after that proof,
 	 * so replaying an old SYNC yields no old session key.
 	 */
-	bool session_pending;     /* Leader waits for response; Follower waits for confirm */
-	uint32_t sess_rx_seq;     /* Candidate handshake's receive baseline. */
-	bool sess_nonce_valid;    /* A local nonce has been drawn before, including zero. */
-	bool sess_resp_due;       /* Follower: SESS_RESP due in slot B */
-	bool sess_cfm_due;        /* Leader: SESS_CFM due in slot A */
-	bool sess_ack_due;        /* Received DATA: session-key authenticated empty ACK due */
-	uint32_t sess_sync_frame; /* Last DATA confirm's shared frame index. */
+	bool session_pending;         /* Leader waits for response; Follower waits for confirm */
+	uint32_t sess_rx_seq;         /* Candidate handshake's receive baseline. */
+	bool sess_nonce_valid;        /* A local nonce has been drawn before, including zero. */
+	bool sess_resp_due;           /* Follower: SESS_RESP due in slot B */
+	bool sess_cfm_due;            /* Leader: SESS_CFM due in slot A */
+	bool sess_ack_due;            /* Received DATA: session-key authenticated empty ACK due */
+	uint32_t sess_sync_frame;     /* Last DATA confirm's shared frame index. */
 	uint32_t sess_nonce_leader;   /* Leader nonce */
 	uint32_t sess_nonce_follower; /* Follower nonce */
-	uint16_t sess_hop;        /* hop index of this session */
-	uint32_t pair_nonce;      /* pairing: initiator nonce_a */
-	uint32_t pair_nonce_b;    /* pairing: responder nonce_b */
+	uint16_t sess_hop;            /* hop index of this session */
+	uint32_t pair_nonce;          /* pairing: initiator nonce_a */
+	uint32_t pair_nonce_b;        /* pairing: responder nonce_b */
 
 	/* state and timing */
 	zlrs_link_state_t state;
@@ -255,7 +256,7 @@ typedef struct {
 	uint32_t pair_tx_seq;    /* Pairing attempts, including delayed confirms after pairing. */
 
 	/* sequence numbers and hopping */
-	uint32_t tx_seq;         /* Next attempt, starting at one; never wraps. */
+	uint32_t tx_seq; /* Next attempt, starting at one; never wraps. */
 	uint32_t last_rx_seq;
 	uint32_t lq_last_seq;
 	bool lq_started;
@@ -359,8 +360,8 @@ bool zlrs_link_get_pairing(const zlrs_link_t *link, uint8_t peer_id[ZLRS_DEV_ID_
 
 /* Only nonce generation is injected; the caller executes each returned radio request. */
 void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
-		    bool (*random)(void *ctx, uint32_t *out),
-		    void *random_ctx, const zlrs_link_events_t *events);
+		    bool (*random)(void *ctx, uint32_t *out), void *random_ctx,
+		    const zlrs_link_events_t *events);
 
 /* The link only joins the air once a root key has been written */
 void zlrs_link_set_root_key(zlrs_link_t *link, const uint8_t root_key[ZLRS_KEY_LEN],

@@ -44,7 +44,7 @@ python3 tools/zlrs.py set-band auto --serial <Leader-serial>
 python3 tools/zlrs.py set-band auto --serial <Follower-serial>
 ```
 
-Reboot both endpoints after changing role, band, region, profile, power ceiling or
+Reboot both endpoints after changing role, band, region, profile or
 UART baud, then start pairing on both:
 
 ```sh
@@ -61,7 +61,6 @@ protocol version, band mode, SubG region, profile and timing are required.
 | `set-band` | `auto`, `2.4`, `subg`; default `auto` |
 | `set-role` | `leader`, `follower`; default Leader |
 | `set-region` | 0 FCC915, 1 EU868, 2 CN470, 3 CN433; must fit the module SKU |
-| `set-power` | −10 to 22 dBm, bounded by the selected region; default 10 dBm |
 | `set-baud` | 9600–4000000; default 115200 |
 | `set-profile` | `p1` in production; debug also accepts `p0`; `p2` is unsupported |
 | `set-phrase` | 1–32 UTF-8 bytes, derived on the device |
@@ -85,20 +84,37 @@ Switches preserve session and DATA progress, with transmission paused during
 capture. Exact thresholds, announcement and recovery rules are specified in
 [automatic band switching](07-protocol.md#automatic-band-switching).
 
-Dynamic power evaluates new peer feedback once per second. Each change requires three
-consecutive fresh qualifying observations and changes the setpoint by 3 dB:
+Each endpoint controls its own transmit power from authenticated peer feedback.
+The active band's board capability and operating policy define the range; there
+is no saved user power ceiling. The prototype supports −17 to +12 dBm on 2.4 GHz
+and −10 to +22 dBm on SubG, whose maximum is additionally bounded by the selected
+region. Status reports this effective range and the transmit setpoint.
+
+Pairing uses −10 dBm, bounded by the active range. Leaving pairing restores the
+maximum before session establishment. Startup, disconnection, invalid session,
+radio capture and feedback loss restore the active band's maximum before the
+next transmission. A band change starts at the new band's maximum.
+
+Power decisions run at each radio preparation boundary, independently of logging.
+Each normal adjustment requires three consecutive distinct fresh observations
+and changes the setpoint by 3 dB, bounded by the active range:
 
 | Observation | Decision | Minimum wait |
 | --- | --- | --- |
-| LQ below 99%, or RSSI below −95 dBm | Raise toward the ceiling | 2 s |
-| LQ 100% and RSSI above −70 dBm | Lower toward the floor | 40 s |
+| LQ below 99%, or RSSI below −95 dBm | Raise toward the maximum | 2 s since the last change |
+| LQ 100% and RSSI above −70 dBm | Lower toward the minimum | 40 s of continuously healthy feedback since the last change |
 | Other fresh feedback | Hold | — |
-| No fresh feedback for 1 s | Restore the ceiling | On the next policy evaluation |
+| Missing/invalid feedback, or feedback at least 1 s old | Restore the maximum | Before the next transmission |
 
-The lowering hold starts when feedback becomes available and restarts after
-feedback loss. The default floor is 0 dBm, limited to the ceiling if the ceiling
-is lower. Retuning discards old-band observations and starts at the allowed
-ceiling. Thresholds require RF calibration against measured loss.
+Repeated reads of one observation never advance qualification. Any non-healthy
+observation or feedback gap of at least one second resets the lowering interval.
+Recovery bypasses the normal raising delay and step size. Millisecond timers
+support clock wraparound. Thresholds require RF calibration against measured loss.
+
+Debug images provide `zlrs power <dBm>` on the console to hold a fixed setpoint
+within the active range while connected, and `zlrs power auto` to resume automatic
+control at maximum power. The override is volatile and clears on disconnection,
+feedback loss, pairing, retuning or reboot. Pairing and recovery take priority.
 
 ## Management and diagnostics
 
@@ -192,16 +208,15 @@ defines image slots, the 1 MiB log filesystem, 128 KiB crash area and 32 KiB NVS
 
 | NVS record | Stored value | Bytes |
 | --- | --- | --- |
-| 0 | Layout marker `0x5A4C0001` | 4 |
+| 0 | Layout marker `0x5A4C0002` | 4 |
 | 1 | Band mode: 0 fixed 2.4, 1 fixed SubG, 2 automatic | 1 |
 | 2 | UART baud, little endian | 4 |
 | 3 | SubG region | 1 |
-| 4 | Signed power ceiling | 1 |
-| 5 | Role | 1 |
-| 6 | Security profile | 1 |
-| 7 | Root key | 32 |
-| 8 | Device ID | 4 |
-| 9 | Peer ID and initiator/responder pairing nonces | 12 |
+| 4 | Role | 1 |
+| 5 | Security profile | 1 |
+| 6 | Root key | 32 |
+| 7 | Device ID | 4 |
+| 8 | Peer ID and initiator/responder pairing nonces | 12 |
 
 Missing settings use validated defaults. Invalid record lengths or values do not
 become active settings. A missing or invalid layout marker reinitializes the

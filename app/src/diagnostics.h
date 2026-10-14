@@ -50,7 +50,7 @@ typedef struct {
 	uint32_t rx_finish_us_max;
 	uint32_t rx_protocol_us_last;
 	uint32_t rx_protocol_us_max;
-	int8_t tx_power_dbm;
+	bool power_fixed;
 	zlrs_power_t power;
 } zlrs_rf_diagnostics_t;
 

@@ -93,7 +93,7 @@ Credential changes and factory reset invalidate the affected active link.
 
 | Persistent | Volatile |
 | --- | --- |
-| Role, band mode, region, profile, UART baud, power ceiling | Active modem, current power, duty budget, observations |
+| Role, band mode, region, profile, UART baud | Active modem, current power, duty budget, observations |
 | Device identity, root key, peer ID, pairing salt | Session keys, replay baselines, ARQ and queues |
 
 Missing records and flash errors are distinct outcomes. Reads return the loaded

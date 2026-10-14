@@ -325,8 +325,8 @@ static int diagnostic_render(zlrs_diagnostic_report_t report_id,
 		return 0;
 	case ZLRS_DIAGNOSTIC_POWER: {
 		diagnostic_append(writer, "[POWER LIMITS]\n");
-		diagnostic_append(writer, "  Configured target  : %+d dBm\n",
-				  (int)snapshot.tx_power_dbm);
+		diagnostic_append(writer, "  Effective range    : %+d..%+d dBm\n",
+				  (int)snapshot.power.floor_dbm, (int)snapshot.power.ceiling_dbm);
 		diagnostic_append(writer, "  Active data band   : %s\n",
 				  diagnostic_bands(&snapshot.link.config));
 		diagnostic_append(writer, "  Radio setpoint     : %+d dBm\n",
@@ -338,10 +338,12 @@ static int diagnostic_render(zlrs_diagnostic_report_t report_id,
 		diagnostic_append(writer, "  Peer feedback      : RSSI %d dBm, LQ %u%%\n",
 				  (int)snapshot.link.info.peer_rssi_dbm,
 				  (unsigned int)snapshot.link.info.peer_lq_percent);
-		diagnostic_append(writer, "  Region cap         : %s / %+d dBm\n",
+		diagnostic_append(writer, "  SubG region cap    : %s / %+d dBm\n",
 				  snapshot.region != NULL ? snapshot.region->name : "unknown",
 				  snapshot.region != NULL ? (int)snapshot.region->max_tx_power_dbm
 							  : 0);
+		diagnostic_append(writer, "  Control mode       : %s\n",
+				  snapshot.power_fixed ? "debug fixed" : "automatic");
 		diagnostic_append(writer, "  RF output is not measured.\n");
 		return 0;
 	}

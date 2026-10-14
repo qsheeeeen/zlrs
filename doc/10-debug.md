@@ -29,8 +29,8 @@ must not be presented as product performance.
 
 ## Observing a running link
 
-Management `status` reports local/peer RSSI and LQ, configured/active power,
-floor, MCU temperature, frequency, frame period, counters and automatic-band
+Management `status` reports local/peer RSSI and LQ, active-band power limits and
+transmit setpoint, MCU temperature, frequency, frame period, counters and automatic-band
 flags. Its LR2021 section provides junction/XOSC temperature, VBAT, version,
 mode/command/reset, IRQ and errors with independent validity bits.
 
@@ -50,6 +50,10 @@ python3 tools/zlrs.py radio --serial <serial>
 python3 tools/zlrs.py power --serial <serial>
 python3 tools/zlrs.py logs --serial <serial>
 ```
+
+The debug console accepts `zlrs power <dBm>` for a temporary fixed setpoint
+within the active range while connected. `zlrs power auto` resumes automatic
+control at maximum power. Pairing, retuning and recovery clear the override.
 
 Delivery, PHY reception and session readiness are separate observations. An exact
 ARQ-delivered stream does not prove zero physical loss; LQ=100 is a finite

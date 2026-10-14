@@ -31,7 +31,7 @@ management interface provides configuration, status, pairing, logs and firmware
 updates. USB DATA applies backpressure when buffers fill; UART without hardware
 flow control can overflow and reports dropped bytes.
 
-Role, band mode, region, UART baud, power ceiling and security profile are persistent
+Role, band mode, region, UART baud and security profile are persistent
 settings applied at boot. Identity, a shared root key and one peer pairing record
 also survive reboot. Sessions, queues and radio observations are volatile.
 
@@ -44,7 +44,9 @@ whole packet. Reliability is bounded by finite buffers and device resets; the
 service is not persistent message storage.
 
 Both endpoints report receive quality and adjust their own transmit power within
-the configured ceiling. SubG transmission observes the selected regional power,
+the active band’s board and regional limits. Disconnection restores maximum
+allowed power before the next transmission; pairing uses a low-power setpoint.
+SubG transmission observes the selected regional power,
 rate and duty policy. These policies require RF qualification on the finished
 hardware.
 

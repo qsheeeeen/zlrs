@@ -37,11 +37,13 @@ raw bitrate is not serial throughput.
 | CN470 | LF | 470–510 MHz | 0.325 Mbps | 17 dBm | No software duty cap |
 | CN433 | LF | 433.05–434.79 MHz | 0.325 Mbps | 10 dBm | No software duty cap |
 
-These are ZLRS operating policies, not a certification claim. Region and selected
-power must fit the board's declared SubG coverage. The 2.4 GHz PA has its own
-hardware limit of 12 dBm; the configured policy ceiling and physical PA capability
-are distinct. Antenna gain and measured output require qualification on the
-finished hardware.
+These are ZLRS operating policies, not a certification claim. The region must fit
+the board's declared SubG coverage. Each board declares minimum and maximum
+transmit setpoints for both paths. The prototype range is −17 to +12 dBm on
+2.4 GHz and −10 to +22 dBm on SubG. The effective SubG maximum is the smaller of
+the board maximum and regional ceiling; the SubG region does not constrain the
+2.4 GHz setpoint. Antenna gain and measured output require qualification on the
+finished hardware. Power policy is specified in [firmware](06-firmware.md#automatic-band-operation-and-power).
 
 ## Transfer and timing contract
 

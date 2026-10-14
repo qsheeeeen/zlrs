@@ -17,7 +17,9 @@ static zlrs_rf_status_t rf = {
 	.peer_rssi_dbm = -51,
 	.peer_lq_percent = 97,
 	.tx_power_dbm = -9,
-	.power_floor_dbm = -9,
+	.power_floor_dbm = -17,
+	.power_ceiling_dbm = 12,
+	.power_fixed = true,
 	.tx_frames = 1024,
 	.rx_frames = 1000,
 	.rx_crc_errors = 24,
@@ -153,12 +155,12 @@ ZTEST(commands, test_device_commands)
 	ack(ZLRS_MGMT_CMD_SET_ROLE, &role, 1, 0);
 	const uint8_t unsupported = ZLRS_PROFILE_P2;
 	ack(ZLRS_MGMT_CMD_SET_PROFILE, &unsupported, 1, ZLRS_MGMT_E_PARAM);
-	const uint8_t power = (uint8_t)-9;
+	ack(0x7f, NULL, 0, ZLRS_MGMT_E_UNKNOWN);
+	const uint8_t new_role = ZLRS_ROLE_LEADER;
 	fail_write = true;
-	ack(ZLRS_MGMT_CMD_SET_POWER, &power, 1, ZLRS_MGMT_E_STORE);
-	zassert_equal(zlrs_persist_settings()->power_dbm, -10);
+	ack(ZLRS_MGMT_CMD_SET_ROLE, &new_role, 1, ZLRS_MGMT_E_STORE);
+	zassert_equal(zlrs_persist_settings()->role, ZLRS_ROLE_FOLLOWER);
 	fail_write = false;
-	ack(ZLRS_MGMT_CMD_SET_POWER, &power, 1, 0);
 	uint8_t hex[64];
 	memset(hex, 'a', sizeof(hex));
 	ack(ZLRS_MGMT_CMD_SET_KEY_HEX, hex, 63, ZLRS_MGMT_E_PARAM);
@@ -186,12 +188,14 @@ ZTEST(commands, test_device_commands)
 	zassert_equal(status.role,
 		      ZLRS_ROLE_LEADER); /* Running role; saved role is Follower until reboot. */
 	zassert_equal(status.data_baud, 230400);
-	zassert_equal(status.tx_power_dbm, -9);
+	zassert_equal(status.tx_power_dbm, 12);
 	zassert_equal(status.temperature_centi_c, 2675);
 	zassert_equal(status.rssi_dbm, -48);
 	zassert_equal(status.peer_rssi_dbm, -51);
 	zassert_equal(status.peer_lq_percent, 97);
 	zassert_equal(status.active_power_dbm, -9);
+	zassert_equal(status.power_floor_dbm, -17);
+	zassert_true(status.flags & ZLRS_MGMT_FLAG_POWER_FIXED);
 	zassert_equal(status.tx_frames, 1024);
 	zassert_equal(status.rx_crc_errors, 24);
 	zassert_equal(status.frequency_hz, 2478000000U);

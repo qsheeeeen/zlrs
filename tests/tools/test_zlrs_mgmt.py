@@ -24,7 +24,7 @@ class ManagementTests(unittest.TestCase):
     def test_invalid_parameters_fail_before_port_access(self):
         cases = [("set-phrase", ""), ("set-phrase", "中" * 11),
                  ("set-key-hex", "z" * 64),
-                 ("set-baud", "0"), ("set-power", "256")]
+                 ("set-baud", "0")]
         with patch.object(mgmt, "talk") as talk:
             for command, value in cases:
                 with self.subTest(command=command, value=value):
@@ -124,7 +124,7 @@ class ManagementTests(unittest.TestCase):
         payload = bytearray(mgmt.STATUS_LEN)
         payload[1] = 1
         payload[2] = 4
-        payload[3] = 7
+        payload[3] = 0x87
         payload[12] = 87
         payload[14] = 2
         payload[15] = 246  # signed -10 dBm
@@ -132,7 +132,8 @@ class ManagementTests(unittest.TestCase):
         payload[20] = 1
         output = mgmt.status_text(payload)
         for text in ("Device\n", "Link\n", "Configuration\n", "connected", "87%",
-                     "CN470", "-10 dBm", "420000 baud", "Root key   : configured"):
+                     "CN470", "-10 dBm", "420000 baud", "Root key  : configured",
+                     "Power control   : debug fixed"):
             self.assertIn(text, output)
         self.assertNotIn("\033[", output)
 
@@ -212,24 +213,23 @@ class ManagementTests(unittest.TestCase):
 class FramingTests(unittest.TestCase):
     def test_firmware_frame_vectors(self):
         cases = [
-            ("enter", mgmt.CMD_ENTER, b"", "a55a04000073"),
-            ("status", mgmt.CMD_STATUS, b"", "a55a04010078"),
-            ("pair", mgmt.CMD_PAIR, b"", "a55a04020065"),
-            ("erase-pair", mgmt.CMD_ERASE_PAIR, b"", "a55a0403006e"),
-            ("set-phrase", mgmt.CMD_SET_PHRASE, b"hello", "a55a04050568656c6c6f78"),
+            ("enter", mgmt.CMD_ENTER, b"", "a55a050000f0"),
+            ("status", mgmt.CMD_STATUS, b"", "a55a050100fb"),
+            ("pair", mgmt.CMD_PAIR, b"", "a55a050200e6"),
+            ("erase-pair", mgmt.CMD_ERASE_PAIR, b"", "a55a050300ed"),
+            ("set-phrase", mgmt.CMD_SET_PHRASE, b"hello", "a55a05050568656c6c6f3b"),
             ("set-key-hex", mgmt.CMD_SET_KEY_HEX, b"00" * 32, None),
-            ("set-baud", mgmt.CMD_SET_BAUD, bytes([0x00, 0x25, 0x06, 0x00]), "a55a040804002506004e"),
-            ("set-region", mgmt.CMD_SET_REGION, bytes([3]), "a55a0409010305"),
-            ("set-power", mgmt.CMD_SET_POWER, bytes([20]), "a55a040a011453"),
-            ("set-role", mgmt.CMD_SET_ROLE, bytes([1]), "a55a040b0101a9"),
-            ("set-profile", mgmt.CMD_SET_PROFILE, bytes([2]), "a55a040c010220"),
-            ("new-dev-id", mgmt.CMD_NEW_DEV_ID, b"", "a55a040e0011"),
-            ("factory-reset", mgmt.CMD_FACTORY_RESET, b"", "a55a041000c3"),
-            ("recovery", mgmt.CMD_RECOVERY, b"", "a55a041100c8"),
-            ("build", mgmt.CMD_BUILD, b"", "a55a04060049"),
-            ("image-hash", mgmt.CMD_IMAGE_HASH, b"", "a55a04070042"),
-            ("confirm", mgmt.CMD_CONFIRM, b"", "a55a041200d5"),
-            ("exit", mgmt.CMD_EXIT, b"", "a55a040f001a"),
+            ("set-baud", mgmt.CMD_SET_BAUD, bytes([0x00, 0x25, 0x06, 0x00]), "a55a05080400250600da"),
+            ("set-region", mgmt.CMD_SET_REGION, bytes([3]), "a55a0509010340"),
+            ("set-role", mgmt.CMD_SET_ROLE, bytes([1]), "a55a050a01016f"),
+            ("set-profile", mgmt.CMD_SET_PROFILE, bytes([2]), "a55a050b010246"),
+            ("new-dev-id", mgmt.CMD_NEW_DEV_ID, b"", "a55a050d008f"),
+            ("factory-reset", mgmt.CMD_FACTORY_RESET, b"", "a55a050f0099"),
+            ("recovery", mgmt.CMD_RECOVERY, b"", "a55a05100040"),
+            ("build", mgmt.CMD_BUILD, b"", "a55a050600ca"),
+            ("image-hash", mgmt.CMD_IMAGE_HASH, b"", "a55a050700c1"),
+            ("confirm", mgmt.CMD_CONFIRM, b"", "a55a0511004b"),
+            ("exit", mgmt.CMD_EXIT, b"", "a55a050e0092"),
         ]
         for name, command, payload, expected in cases:
             with self.subTest(command=name):
@@ -239,7 +239,7 @@ class FramingTests(unittest.TestCase):
                     self.assertEqual(frame.hex(), expected)
 
     def test_known_frame_decode(self):
-        self.assertEqual(mgmt.decode(bytes.fromhex("a55a04050568656c6c6f78")),
+        self.assertEqual(mgmt.decode(bytes.fromhex("a55a05050568656c6c6f3b")),
                          (mgmt.CMD_SET_PHRASE, b"hello"))
 
 

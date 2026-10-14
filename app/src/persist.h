@@ -6,15 +6,11 @@
 #include "zlrs/proto/frame.h"
 #include "zlrs/region/region.h"
 
-#define ZLRS_POWER_MIN_DBM (-10)
-#define ZLRS_POWER_MAX_DBM 22
-
 typedef struct {
 	zlrs_data_band_t band;
 	zlrs_region_id_t region;
 	zlrs_role_t role;
 	zlrs_profile_t profile;
-	int8_t power_dbm;
 	uint32_t data_baud;
 } zlrs_persist_settings_t;
 

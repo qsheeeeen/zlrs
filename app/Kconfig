@@ -65,11 +65,6 @@ endmenu
 
 menu "Runtime defaults and link parameters"
 
-config ZLRS_APP_TX_POWER_DBM
-	int "TX power (dBm)"
-	default 10
-	range -10 22
-
 choice ZLRS_APP_SECURITY_PROFILE
 	prompt "Over-the-air security profile"
 	default ZLRS_APP_SECURITY_PROFILE_P1
@@ -174,17 +169,12 @@ config ZLRS_APP_DATA_ARQ
 	  See doc/07-protocol.md.
 
 config ZLRS_APP_DYNAMIC_POWER
-	bool "Adapt DATA transmit power to quality reported by the peer"
+	bool "Adapt DATA transmit power to quality reported by the peer" if ZLRS_APP_DEBUG
 	default y
 	help
 	  DATA and ACK frames carry the receiver's RSSI and link quality. The transmitter
-	  adjusts its own power once per second and returns to the configured ceiling if
-	  feedback stops.
-
-config ZLRS_APP_DYNAMIC_POWER_FLOOR_DBM
-	int "Dynamic DATA power floor (dBm)"
-	default 0
-	range -10 22
+	  adjusts its own power at radio preparation boundaries within board and regional
+	  limits. Pairing uses low power; recovery and missing feedback restore maximum.
 
 config ZLRS_APP_WATCHDOG
 	bool "Watchdog: reset on a crash or a stuck loop (helps rollback, is not rollback)"

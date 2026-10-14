@@ -286,9 +286,6 @@ static int save_setting(uint8_t cmd, const uint8_t *value, uint8_t len)
 	case ZLRS_MGMT_CMD_SET_REGION:
 		settings.region = (zlrs_region_id_t)value[0];
 		break;
-	case ZLRS_MGMT_CMD_SET_POWER:
-		settings.power_dbm = (int8_t)value[0];
-		break;
 	case ZLRS_MGMT_CMD_SET_ROLE:
 		settings.role = (zlrs_role_t)value[0];
 		break;
@@ -328,7 +325,7 @@ static void read_status(zlrs_mgmt_status_t *out)
 		.lq_percent = rf.lq_percent,
 		.band = DT_PROP(DT_NODELABEL(zlrs_rf), band),
 		.region = settings->region,
-		.tx_power_dbm = settings->power_dbm,
+		.tx_power_dbm = rf.power_ceiling_dbm,
 		.data_baud = settings->data_baud,
 		.rssi_dbm = rf.rssi_dbm,
 		.peer_rssi_dbm = rf.peer_rssi_dbm,
@@ -368,6 +365,9 @@ static void read_status(zlrs_mgmt_status_t *out)
 	}
 	if (rf.band_acquiring) {
 		out->flags |= ZLRS_MGMT_FLAG_BAND_ACQUIRING;
+	}
+	if (rf.power_fixed) {
+		out->flags |= ZLRS_MGMT_FLAG_POWER_FIXED;
 	}
 	if (rf.band_planned) {
 		out->flags |= ZLRS_MGMT_FLAG_BAND_PLANNED;
@@ -634,7 +634,6 @@ uint8_t zlrs_mgmt_command(uint8_t cmd, const uint8_t *payload, uint8_t len, uint
 	case ZLRS_MGMT_CMD_SET_BAND:
 	case ZLRS_MGMT_CMD_SET_BAUD:
 	case ZLRS_MGMT_CMD_SET_REGION:
-	case ZLRS_MGMT_CMD_SET_POWER:
 	case ZLRS_MGMT_CMD_SET_ROLE:
 	case ZLRS_MGMT_CMD_SET_PROFILE:
 		return ack_frame(out, cap, cmd, save_setting(cmd, payload, len));

@@ -152,4 +152,4 @@ class UpdateTests(unittest.TestCase):
         command = update.mgmt_probe_command("/dev/ttyACM0")
         self.assertIn("status", command)
         self.assertIn("/dev/ttyACM0", command)
-        self.assertEqual(recovery.build_request(), bytes.fromhex("a55a041100c8"))
+        self.assertEqual(recovery.build_request(), bytes.fromhex("a55a05100040"))

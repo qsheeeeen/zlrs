@@ -21,7 +21,7 @@ extern "C" {
 
 #define ZLRS_MGMT_SOF0            0xA5U
 #define ZLRS_MGMT_SOF1            0x5AU
-#define ZLRS_MGMT_VERSION         4U
+#define ZLRS_MGMT_VERSION         5U
 #define ZLRS_MGMT_FRAME_MAX_LEN   96U
 #define ZLRS_MGMT_PAYLOAD_MAX_LEN (ZLRS_MGMT_FRAME_MAX_LEN - 6U)
 
@@ -36,18 +36,17 @@ extern "C" {
 #define ZLRS_MGMT_CMD_IMAGE_HASH    0x07U /* MCUboot hash of this image (the update verdict) */
 #define ZLRS_MGMT_CMD_SET_BAUD      0x08U /* 4-byte little-endian baud rate */
 #define ZLRS_MGMT_CMD_SET_REGION    0x09U /* 1-byte region id (0..3) */
-#define ZLRS_MGMT_CMD_SET_POWER     0x0AU /* 1-byte signed dBm */
-#define ZLRS_MGMT_CMD_SET_ROLE      0x0BU /* 1-byte role (0 = Leader, 1 = Follower) */
-#define ZLRS_MGMT_CMD_SET_PROFILE   0x0CU /* 1-byte profile (0 = P0, 1 = P1, 2 = P2) */
-#define ZLRS_MGMT_CMD_SET_BAND      0x0DU /* 0 = 2.4 GHz, 1 = sub-G, 2 = auto; next boot */
-#define ZLRS_MGMT_CMD_NEW_DEV_ID    0x0EU /* make a fresh device id (drops the pairing record) */
-#define ZLRS_MGMT_CMD_EXIT          0x0FU /* leave management mode */
-#define ZLRS_MGMT_CMD_FACTORY_RESET 0x10U /* wipe NVS */
-#define ZLRS_MGMT_CMD_RECOVERY      0x11U /* reboot into MCUboot serial recovery */
-#define ZLRS_MGMT_CMD_CONFIRM       0x12U /* host confirms this upgrade (no confirm = rollback) */
-#define ZLRS_MGMT_CMD_LOG_INFO      0x13U /* what the log store holds */
-#define ZLRS_MGMT_CMD_LOG_READ      0x14U /* one chunk: log index (1) + offset (4) + length (1) */
-#define ZLRS_MGMT_CMD_DEBUG_REPORT  0x15U /* debug image only: report id (1) + offset (2) */
+#define ZLRS_MGMT_CMD_SET_ROLE      0x0AU /* 1-byte role (0 = Leader, 1 = Follower) */
+#define ZLRS_MGMT_CMD_SET_PROFILE   0x0BU /* 1-byte profile (0 = P0, 1 = P1, 2 = P2) */
+#define ZLRS_MGMT_CMD_SET_BAND      0x0CU /* 0 = 2.4 GHz, 1 = sub-G, 2 = auto; next boot */
+#define ZLRS_MGMT_CMD_NEW_DEV_ID    0x0DU /* make a fresh device id (drops the pairing record) */
+#define ZLRS_MGMT_CMD_EXIT          0x0EU /* leave management mode */
+#define ZLRS_MGMT_CMD_FACTORY_RESET 0x0FU /* wipe NVS */
+#define ZLRS_MGMT_CMD_RECOVERY      0x10U /* reboot into MCUboot serial recovery */
+#define ZLRS_MGMT_CMD_CONFIRM       0x11U /* host confirms this upgrade (no confirm = rollback) */
+#define ZLRS_MGMT_CMD_LOG_INFO      0x12U /* what the log store holds */
+#define ZLRS_MGMT_CMD_LOG_READ      0x13U /* one chunk: log index (1) + offset (4) + length (1) */
+#define ZLRS_MGMT_CMD_DEBUG_REPORT  0x14U /* debug image only: report id (1) + offset (2) */
 
 /* device -> host */
 #define ZLRS_MGMT_CMD_ACK               0x80U /* [cmd][status] */
@@ -93,7 +92,7 @@ typedef struct {
 	uint8_t band;        /* local sub-G hardware: 0 = LF (470/433), 1 = HF (868/915) */
 	uint8_t region;      /* current region id (0..3) */
 	uint8_t profile;     /* active security profile (ZLRS_PROFILE_*) */
-	int8_t tx_power_dbm; /* current TX power ceiling */
+	int8_t tx_power_dbm; /* active-band maximum allowed TX power */
 	uint32_t data_baud;  /* data port baud rate (effective on the next boot) */
 	int16_t rssi_dbm;
 	int16_t peer_rssi_dbm;
@@ -127,13 +126,14 @@ typedef struct {
 	uint32_t radio_irq;
 } zlrs_mgmt_status_t;
 
-#define ZLRS_MGMT_FLAG_KEY       0x01U
-#define ZLRS_MGMT_FLAG_PAIRED    0x02U
-#define ZLRS_MGMT_FLAG_SESSION   0x04U
-#define ZLRS_MGMT_FLAG_DATA_SUBG 0x08U /* DATA currently uses sub-GHz */
-#define ZLRS_MGMT_FLAG_BAND_AUTO 0x10U
+#define ZLRS_MGMT_FLAG_POWER_FIXED    0x80U /* volatile debug override */
+#define ZLRS_MGMT_FLAG_KEY            0x01U
+#define ZLRS_MGMT_FLAG_PAIRED         0x02U
+#define ZLRS_MGMT_FLAG_SESSION        0x04U
+#define ZLRS_MGMT_FLAG_DATA_SUBG      0x08U /* DATA currently uses sub-GHz */
+#define ZLRS_MGMT_FLAG_BAND_AUTO      0x10U
 #define ZLRS_MGMT_FLAG_BAND_ACQUIRING 0x20U
-#define ZLRS_MGMT_FLAG_BAND_PLANNED 0x40U
+#define ZLRS_MGMT_FLAG_BAND_PLANNED   0x40U
 
 /* Byte-at-a-time management frame parser */
 typedef struct {
