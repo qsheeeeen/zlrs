@@ -97,7 +97,16 @@ isolation, signed application installation and log-partition sizing.
 
 ## Native Zephyr acceptance
 
-Use `native_sim/native/64` for lifecycle, settings, management, UI and RF fixtures.
+Use `native_sim/native/64` for lifecycle, settings, management, serial, UI and RF fixtures.
+Serial acceptance covers UART output before any input, charge-only USB power,
+USB configuration without DTR or initial data, deconfiguration, reset, suspension,
+resume and input discard. Whole-packet output acceptance and USB input
+backpressure must hold across endpoint changes. Hardware acceptance includes USB
+enumeration and bidirectional DATA, plus UART output routing while USB is
+unconfigured. Endpoint diagnostics distinguish readiness, selection, cumulative
+input/output bytes, queued bytes and drops. This allows output routing to be
+checked before any UART input. Physical loopback acceptance shorts UART TX to RX
+and verifies returned DATA while USB is unconfigured.
 Settings and management runs use simulated flash:
 
 ```sh
@@ -108,6 +117,8 @@ west build -b native_sim/native/64 tests/simulation/settings -d build/sim-settin
 build/sim-settings/zephyr/zephyr.exe --flash_in_ram
 west build -b native_sim/native/64 tests/simulation/mgmt -d build/sim-mgmt
 build/sim-mgmt/zephyr/zephyr.exe --flash_in_ram
+west build -b native_sim/native/64 tests/simulation/serial -d build/sim-serial
+build/sim-serial/zephyr/zephyr.exe
 west build -b native_sim/native/64 tests/simulation/ui -d build/sim-ui
 build/sim-ui/zephyr/zephyr.exe
 ```

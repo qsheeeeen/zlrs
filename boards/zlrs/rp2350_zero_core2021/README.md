@@ -30,8 +30,8 @@ module LED. Radio wires use GP4–GP7 and GP13–GP15.
 | Management CDC, `if02` | `zlrs-mgmt-cdc` | Production and debug |
 | Console CDC | Console/shell endpoint | Debug only |
 
-MCUboot exposes recovery CDC at `if00` and a console. The firmware selects one
-active DATA endpoint when UART and USB coexist; see
+MCUboot exposes recovery CDC at `if00` and a console. DATA defaults to UART and
+uses USB when a host has configured the device and the bus is active; see
 [DATA endpoints](../../../doc/06-firmware.md#data-endpoints).
 
 ## SKU and RF coverage

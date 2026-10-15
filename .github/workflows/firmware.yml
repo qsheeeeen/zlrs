@@ -88,6 +88,16 @@ jobs:
             done
           done
 
+      - name: serial endpoint simulation
+        run: |
+          source zlrs/tools/zephyr-env.sh
+          for endpoints in both usb-only uart-only; do
+            overlays=app.overlay
+            if [ "$endpoints" != both ]; then overlays="$overlays;$endpoints.overlay"; fi
+            west build -b native_sim/native/64 zlrs/tests/simulation/serial -d "build-serial-$endpoints" -- -DDTC_OVERLAY_FILE="$overlays"
+            ./build-serial-$endpoints/zephyr/zephyr.exe
+          done
+
       - name: UI simulation
         run: |
           source zlrs/tools/zephyr-env.sh

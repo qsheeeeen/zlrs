@@ -11,12 +11,23 @@ Production firmware exposes DATA USB CDC at `if00` and management CDC at `if02`.
 Debug firmware adds a console CDC. MCUboot has a separate recovery CDC at `if00`.
 The DATA UART uses the board's assigned pins and stored baud rate.
 
-USB and UART are alternative endpoints of one byte stream. If both are ready,
-USB is selected when DTR is asserted or it has received at least four bytes.
-Otherwise a UART that has received at least four bytes is selected; the initial
-preference is USB so a receive-only host need not transmit first. These receive
-counts are cumulative since boot. Input on the inactive endpoint is discarded and
-counted to prevent stale bytes being transmitted after endpoint selection changes.
+USB and UART are alternative endpoints of one byte stream. UART is the default,
+including startup and charge-only USB power. USB takes priority only after a
+host has enumerated and selected a nonzero device configuration and the bus is
+not suspended. Opening the DATA port, asserting DTR or sending initial bytes is
+not required. Receive counters never determine endpoint selection.
+
+USB reset, removal, deconfiguration or an unrecoverable USB error returns DATA
+to UART. Bus suspension also selects UART because a powered board may lose its
+USB host without losing supply power or receiving a VBUS-removal event. Resume
+restores USB priority only if its device configuration remains valid. Management
+and console ports remain USB-only and do not change this DATA policy.
+
+If UART is unavailable and USB has no active host, no DATA sink is selected and
+radio reception withholds its DATA ACK. Endpoint availability is independent of
+current selection. Input on the inactive endpoint is discarded and counted;
+accepted output remains assigned to its original endpoint and is never duplicated
+onto another endpoint when selection changes.
 
 Each available serial endpoint has a 4096-byte input ring and a 4096-byte output
 ring. USB stops accepting more input when its ring fills and resumes when space

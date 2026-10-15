@@ -1,0 +1,16 @@
+/ {
+ aliases { zlrs-data-uart = &data_uart; zlrs-data-cdc = &data_usb; };
+ data_uart: data-uart {
+  compatible = "zephyr,uart-emul";
+  current-speed = <115200>;
+  tx-fifo-size = <64>;
+  rx-fifo-size = <1024>;
+  loopback;
+ };
+ data_usb: data-usb {
+  compatible = "zephyr,uart-emul";
+  current-speed = <115200>;
+  tx-fifo-size = <64>;
+  rx-fifo-size = <1024>;
+ };
+};

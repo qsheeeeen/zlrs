@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+common:
+  tags: [serial, usb]
+  platform_allow: [native_sim/native/64]
+tests:
+  zlrs.serial.selection: {}
+  zlrs.serial.usb_only:
+    extra_args: DTC_OVERLAY_FILE="app.overlay;usb-only.overlay"
+  zlrs.serial.uart_only:
+    extra_args: DTC_OVERLAY_FILE="app.overlay;uart-only.overlay"

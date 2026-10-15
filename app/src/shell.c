@@ -147,10 +147,7 @@ static int cmd_mgmt(const struct shell *sh, size_t argc, char **argv)
 }
 #endif
 
-/*
- * Data port endpoint state, for bench debugging. Picking an endpoint bit us twice on this
- * board: first DTR (never reaches us over usbipd), then "host bytes seen". This dumps both.
- */
+/* Data endpoint readiness, selection and queue state for bench observation. */
 static int cmd_ports(const struct shell *sh, size_t argc, char **argv)
 {
 	zlrs_serial_state_t states[2];
@@ -165,9 +162,9 @@ static int cmd_ports(const struct shell *sh, size_t argc, char **argv)
 	}
 
 	for (size_t i = 0U; i < count; i++) {
-		shell_print(sh, "%-16s ready=%d active=%d rx_total=%u rx_dropped=%u",
+		shell_print(sh, "%-16s ready=%d active=%d rx_total=%u tx_total=%u rx_dropped=%u",
 			    states[i].name, states[i].ready, states[i].active, states[i].rx_total,
-			    states[i].rx_dropped);
+			    states[i].tx_total, states[i].rx_dropped);
 		shell_print(sh, "                 rx_queue=%u tx_queue=%u rx_paused=%d",
 			    states[i].rx_queued, states[i].tx_queued, states[i].rx_paused);
 	}

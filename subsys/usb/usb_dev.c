@@ -18,6 +18,8 @@
 #include <zephyr/dt-bindings/reset/rp2350_reset.h>
 #include <zephyr/usb/usbd.h>
 
+#include "usb_state.h"
+
 LOG_MODULE_REGISTER(zlrs_usb, CONFIG_ZLRS_USB_LOG_LEVEL);
 
 USBD_DEVICE_DEFINE(zlrs_usbd, DEVICE_DT_GET(DT_NODELABEL(zephyr_udc0)), CONFIG_ZLRS_USB_VID,
@@ -117,6 +119,12 @@ static int zlrs_usb_init(void)
 	}
 
 	zlrs_usb_class_codes(speed);
+
+	err = usbd_msg_register_cb(&zlrs_usbd, zlrs_usb_message);
+	if (err != 0) {
+		LOG_ERR("usb message registration failed (%d); continuing without USB", err);
+		return 0;
+	}
 
 	err = usbd_init(&zlrs_usbd);
 	if (err != 0) {

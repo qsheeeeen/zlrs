@@ -12,6 +12,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/ring_buffer.h>
+#include <zlrs/usb.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -42,7 +43,8 @@ struct data_ep {
 	uint8_t rx_mem[DATA_RX_RING_LEN];
 	uint8_t tx_mem[DATA_TX_RING_LEN];
 	uint32_t rx_dropped;
-	uint32_t rx_total; /* bytes received (one of the endpoint-choice inputs) */
+	uint32_t rx_total;
+	uint32_t tx_total;
 	bool ready;
 	bool rx_paused;
 };
@@ -60,22 +62,19 @@ static struct data_ep data_eps[2] = {
 #endif
 };
 
-/* USB wins after DTR or four received bytes; otherwise a used UART wins.
- * Default to USB so a receive-only host does not have to send first. */
+/* Power alone is not a USB host. Keep UART usable before its first received byte. */
 static struct data_ep *data_active(void)
 {
 	struct data_ep *const uart = &data_eps[DATA_UART];
 	struct data_ep *const usb = &data_eps[DATA_USB];
-	uint32_t dtr = 0U;
-
-	if (!usb->ready) {
-		return uart->ready ? uart : NULL;
-	}
-	if (!uart->ready) {
+#if defined(CONFIG_ZLRS_USB)
+	if (usb->ready && zlrs_usb_active()) {
 		return usb;
 	}
-	(void)uart_line_ctrl_get(usb->dev, UART_LINE_CTRL_DTR, &dtr);
-	return (dtr != 0U || usb->rx_total >= 4U || uart->rx_total < 4U) ? usb : uart;
+#else
+	ARG_UNUSED(usb);
+#endif
+	return uart->ready ? uart : NULL;
 }
 
 static void data_isr(const struct device *dev, void *user_data)
@@ -128,6 +127,9 @@ static void data_isr(const struct device *dev, void *user_data)
 			}
 
 			const int sent = uart_fifo_fill(dev, claim, (int)claimed);
+			if (sent > 0) {
+				ep->tx_total += (uint32_t)sent;
+			}
 
 			ring_buf_get_finish(&ep->tx, (sent > 0) ? (uint32_t)sent : 0U);
 		}
@@ -186,6 +188,7 @@ size_t zlrs_serial_state(zlrs_serial_state_t *out, size_t count)
 		out[written].ready = data_eps[i].ready;
 		out[written].active = (&data_eps[i] == active);
 		out[written].rx_total = data_eps[i].rx_total;
+		out[written].tx_total = data_eps[i].tx_total;
 		out[written].rx_dropped = data_eps[i].rx_dropped;
 		out[written].rx_queued = ring_buf_size_get(&data_eps[i].rx);
 		out[written].tx_queued = ring_buf_size_get(&data_eps[i].tx);
@@ -198,6 +201,7 @@ size_t zlrs_serial_state(zlrs_serial_state_t *out, size_t count)
 
 int zlrs_serial_init(uint32_t baud)
 {
+	bool ready = false;
 	for (size_t i = 0U; i < ARRAY_SIZE(data_eps); i++) {
 		const struct device *const dev = data_eps[i].dev;
 
@@ -234,12 +238,13 @@ int zlrs_serial_init(uint32_t baud)
 			continue;
 		}
 		data_eps[i].ready = true;
+		ready = true;
 		uart_irq_rx_enable(dev);
 
 		LOG_INF("data port ready (%s)", dev->name);
 	}
 
-	if (data_active() == NULL) {
+	if (!ready) {
 		LOG_WRN("no data port on this board: passthrough disabled");
 		return -1;
 	}

@@ -29,8 +29,9 @@ void zlrs_serial_publish_state(void);
 typedef struct {
 	const char *name;
 	bool ready; /* the endpoint exists on the board and the device is ready */
-	bool active; /* this is the selected endpoint (selected locally from DTR and received bytes) */
-	uint32_t rx_total;   /* bytes received (evidence that the host is using it) */
+	bool active; /* UART by default; configured, nonsuspended USB takes priority */
+	uint32_t rx_total;   /* bytes received since boot */
+	uint32_t tx_total;   /* bytes handed to the peripheral since boot */
 	uint32_t rx_dropped; /* UART overflow and discarded inactive-endpoint bytes */
 	uint32_t rx_queued;
 	uint32_t tx_queued;
@@ -39,7 +40,7 @@ typedef struct {
 
 /*
  * Read the state of both data endpoints, returns how many were filled in.
- * The choice itself (DTR, host bytes seen) is implemented locally in serial.c.
+ * Device readiness is independent of whether a USB host is present.
  */
 size_t zlrs_serial_state(zlrs_serial_state_t *out, size_t count);
 
