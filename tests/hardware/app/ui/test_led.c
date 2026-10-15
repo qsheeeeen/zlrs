@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /* Exercise the real UI thread through its zbus inputs and LED driver output. */
 #include <errno.h>
+#include <stdlib.h>
 #include <string.h>
 #include <zephyr/drivers/led_strip.h>
 #include <zephyr/kernel.h>
@@ -29,6 +30,8 @@ static bool reject_next;
 static zlrs_rf_status_t link;
 static struct zlrs_mode mode;
 static struct zlrs_serial_status serial;
+/* Hardware forwards captured output to the real pixel; native_sim has no strip alias. */
+static const struct device *const physical_strip = DEVICE_DT_GET_OR_NULL(DT_ALIAS(led_strip));
 
 static int record_rgb(const struct device *dev, struct led_rgb *pixels, size_t count)
 {
@@ -36,13 +39,24 @@ static int record_rgb(const struct device *dev, struct led_rgb *pixels, size_t c
 	if (count != 1U) {
 		return -EINVAL;
 	}
-	const k_spinlock_key_t key = k_spin_lock(&capture_lock);
+	k_spinlock_key_t key = k_spin_lock(&capture_lock);
 	writes++;
 	if (reject_next) {
 		reject_next = false;
 		k_spin_unlock(&capture_lock, key);
 		return -EIO;
 	}
+	k_spin_unlock(&capture_lock, key);
+	if (physical_strip != NULL) {
+		if (!device_is_ready(physical_strip)) {
+			return -ENODEV;
+		}
+		const int rc = led_strip_update_rgb(physical_strip, pixels, count);
+		if (rc != 0) {
+			return rc;
+		}
+	}
+	key = k_spin_lock(&capture_lock);
 	last = pixels[0];
 	if (sample_count < ARRAY_SIZE(samples)) {
 		samples[sample_count++] = (struct sample){.color = last, .ms = k_uptime_get_32()};
@@ -164,6 +178,59 @@ static void expect_pattern(struct led_rgb first, struct led_rgb second, uint32_t
 		     first_ms, count);
 }
 
+static void expect_connected(struct led_rgb theme, uint8_t flashes)
+{
+	clear_capture();
+	k_msleep(2800);
+	struct sample captured[ARRAY_SIZE(samples)];
+	const k_spinlock_key_t key = k_spin_lock(&capture_lock);
+	const size_t count = sample_count;
+	memcpy(captured, samples, count * sizeof(*samples));
+	k_spin_unlock(&capture_lock, key);
+	uint32_t last_on = 0U;
+	uint32_t on_min = UINT32_MAX, on_max = 0U;
+	uint32_t gap_min = UINT32_MAX, gap_max = 0U;
+	unsigned int rises = 0U, widths = 0U;
+	bool was_on = false;
+	int previous_gap = -1;
+	for (size_t i = 0U; i < count; i++) {
+		const bool is_on = same_color(captured[i].color, theme);
+		zassert_true(is_on || same_color(captured[i].color, off));
+		if (is_on) {
+			if (rises != 0U) {
+				const uint32_t gap = captured[i].ms - last_on;
+				const uint32_t short_gap = flashes == 1U ? 900U : 300U;
+				const uint32_t long_gap = flashes == 2U ? 600U : short_gap;
+				const bool short_ok = abs((int32_t)gap - (int32_t)short_gap) <= 25;
+				const bool long_ok = abs((int32_t)gap - (int32_t)long_gap) <= 25;
+				zassert_true(short_ok || long_ok, "unexpected rise interval %u",
+					     gap);
+				if (flashes == 2U) {
+					const int kind = short_ok ? 0 : 1;
+					zassert_not_equal(kind, previous_gap,
+							  "two flashes must alternate 300/600 ms");
+					previous_gap = kind;
+				}
+				gap_min = MIN(gap_min, gap);
+				gap_max = MAX(gap_max, gap);
+			}
+			last_on = captured[i].ms;
+			rises++;
+		} else if (was_on) {
+			const uint32_t width = captured[i].ms - last_on;
+			zassert_true(abs((int32_t)width - 150) <= 25, "pulse width %u", width);
+			on_min = MIN(on_min, width);
+			on_max = MAX(on_max, width);
+			widths++;
+		}
+		was_on = is_on;
+	}
+	zassert_true(rises >= 2U * flashes && widths >= 2U, "not enough pulses: rises=%u widths=%u",
+		     rises, widths);
+	printk("CONNECTED role=%u LQ=%u flashes=%u on_ms=%u..%u rise_ms=%u..%u\n", link.role,
+	       link.lq_percent, flashes, on_min, on_max, gap_min, gap_max);
+}
+
 static void before(void *fixture)
 {
 	ARG_UNUSED(fixture);
@@ -223,19 +290,21 @@ ZTEST(led_patterns, test_link_lost_while_connected)
 
 ZTEST(led_patterns, test_connected_lq)
 {
-	link.lq_percent = 90U;
-	publish();
-	expect_pattern(green, off, 250U, 200U, 830U);
-	link.lq_percent = 60U;
-	publish();
-	expect_pattern(green, off, 250U, 50U, 830U);
-	link.lq_percent = 20U;
-	publish();
-	expect_pattern(green, off, 500U, 250U, 1080U);
+	static const struct {
+		uint8_t quality;
+		uint8_t flashes;
+	} cases[] = {{100U, 3U}, {80U, 3U}, {79U, 2U}, {50U, 2U}, {49U, 1U}, {0U, 1U}};
+	printk("Connected cadence output: %s\n",
+	       physical_strip != NULL ? physical_strip->name : "capture only");
+	for (size_t i = 0U; i < ARRAY_SIZE(cases); i++) {
+		link.lq_percent = cases[i].quality;
+		publish();
+		expect_connected(green, cases[i].flashes);
+	}
 	link.role = ZLRS_ROLE_LEADER;
-	link.lq_percent = 90U;
+	link.lq_percent = 100U;
 	publish();
-	expect_pattern(blue, off, 250U, 200U, 830U);
+	expect_connected(blue, 3U);
 }
 
 ZTEST(led_patterns, test_data_drops)

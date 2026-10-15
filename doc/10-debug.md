@@ -130,8 +130,8 @@ invalid records, partial write failure, identity, pairing deletion and reset.
 Deleted pairing must not return through a stale active result.
 
 UI acceptance covers all priorities and cadence, the 500 ms management delay,
-one-second drop indication, the 50 ms connected pulse, output retry, cumulative
-button input and missed/locked channel reads.
+one-second drop indication, the 150 ms connected pulses and 3/2/1-beat cadence,
+output retry, cumulative button input and missed/locked channel reads.
 
 Run the production RF owner for both roles and fixed bands:
 
@@ -185,6 +185,11 @@ west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33/lf \
 python3 tests/hardware/unit/run.py --serial <serial> \
   --image build/unit/unit/zephyr/zephyr.signed.bin --log build/unit.log
 ```
+
+The LED fixture records UI output timestamps and forwards accepted frames to the
+board's physical LED strip when available. Connected acceptance checks 150 ms
+pulses, 300/600/900 ms rising-edge intervals, both role colors and the 50%/80%
+quality boundaries.
 
 Entropy acceptance includes successive and partial-block reads, health-check
 failure, bounded timeout with USB available, propagation to handshake refusal and

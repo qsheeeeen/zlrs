@@ -106,14 +106,15 @@ static struct led_rgb led_color(const zlrs_rf_status_t *link, bool mgmt_mode, bo
 		return alternate(theme, orange, now_ms, 500U);
 	}
 	switch (link->state) {
-	case ZLRS_STATE_CONNECTED:
-		if (link->lq_percent >= 80U) {
-			return blink(theme, now_ms, 250U, 200U);
-		}
-		if (link->lq_percent >= 50U) {
-			return blink(theme, now_ms, 250U, 50U);
-		}
-		return blink(theme, now_ms, 500U, 250U);
+	case ZLRS_STATE_CONNECTED: {
+		/* Three 300 ms beats, with no extra gap between 900 ms cycles. */
+		const uint32_t phase = now_ms % 900U;
+		const uint8_t flashes = link->lq_percent >= 80U   ? 3U
+					: link->lq_percent >= 50U ? 2U
+								  : 1U;
+
+		return phase < flashes * 300U && phase % 300U < 150U ? theme : off;
+	}
 	case ZLRS_STATE_PAIRING:
 		return blink(theme, now_ms, 1000U, 300U);
 	case ZLRS_STATE_SEARCHING:
@@ -200,7 +201,7 @@ static void ui_thread(void *p1, void *p2, void *p3)
 		const uint32_t before_ms = k_uptime_get_32();
 		const uint32_t sample_age = before_ms - sample_ms;
 		const uint32_t render_age = before_ms - render_ms;
-		/* A fixed wait can step over the entire 50 ms connected pulse. */
+		/* Wake for the next input sample or LED frame, whichever is due first. */
 		const uint32_t wait_ms =
 			MIN(sample_age < BUTTON_SAMPLE_MS ? BUTTON_SAMPLE_MS - sample_age : 0U,
 			    render_age < LED_REFRESH_MS ? LED_REFRESH_MS - render_age : 0U);
@@ -234,7 +235,8 @@ static void ui_thread(void *p1, void *p2, void *p3)
 		if (!changed && (uint32_t)(now_ms - render_ms) < LED_REFRESH_MS) {
 			continue;
 		}
-		render_ms = now_ms;
+		/* Keep frame deadlines aligned when a wakeup or notification arrives late. */
+		render_ms = now_ms - now_ms % LED_REFRESH_MS;
 		(void)zbus_chan_read(&zlrs_rf_chan, &link, K_NO_WAIT);
 		(void)zbus_chan_read(&zlrs_mode_chan, &mode, K_NO_WAIT);
 		(void)zbus_chan_read(&zlrs_serial_chan, &data, K_NO_WAIT);
