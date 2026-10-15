@@ -96,11 +96,6 @@ static uint8_t device_id[ZLRS_DEV_ID_LEN];
 static bool role_leader;
 static zlrs_profile_t active_profile;
 
-/* The profile a build starts on, and which ones it may run: P1 is the production profile, P0
- * carries no tag at all so only a debug image may select it, P2 is not implemented yet. */
-#define ZLRS_PROFILE_DEFAULT                                                                       \
-	(IS_ENABLED(CONFIG_ZLRS_APP_SECURITY_PROFILE_P0) ? ZLRS_PROFILE_P0 : ZLRS_PROFILE_P1)
-
 static uint32_t last_report_ms;
 static uint32_t consumed_frame;
 /* Link-loss alarm only follows a connection already established. */

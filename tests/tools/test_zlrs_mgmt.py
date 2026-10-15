@@ -3,12 +3,13 @@ import argparse
 import contextlib
 import io
 from pathlib import Path
+import re
 import sys
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from support import invoke
+from support import REPO, invoke
 import zlrs_mgmt as mgmt
 
 
@@ -255,6 +256,12 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual(mgmt.read_response(link), (mgmt.STATUS_RESP, payload))
 
 class FramingTests(unittest.TestCase):
+    def test_protocol_version_matches_firmware(self):
+        header = (REPO / "include/zlrs/mgmt/mgmt.h").read_text()
+        version = re.search(r"#define\s+ZLRS_MGMT_VERSION\s+(\d+)U", header)
+        self.assertIsNotNone(version)
+        self.assertEqual(mgmt.VERSION, int(version[1]))
+
     def test_firmware_frame_vectors(self):
         cases = [
             ("enter", mgmt.CMD_ENTER, b"", "a55a050000f0"),

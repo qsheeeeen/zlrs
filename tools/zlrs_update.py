@@ -186,15 +186,6 @@ def inactive_slot(client: str, port: str, baud: int) -> int | None:
     return 1 - active
 
 
-def mgmt_probe_command(port: str) -> list[str]:
-    """
-    Send one management command (status) to the new image's management port; the upgrade flow decides the
-    outcome, see steps [5/6] and [6/6] in main().
-    """
-    return [sys.executable, str(repo_root() / "tools" / "zlrs.py"),
-            "status", "--port", port]
-
-
 def mgmt_subcmd_command(port: str, subcmd: str) -> list[str]:
     return [sys.executable, str(repo_root() / "tools" / "zlrs.py"),
             subcmd, "--port", port, "--timeout", "10"]

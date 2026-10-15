@@ -10,7 +10,6 @@ from unittest.mock import Mock, patch
 
 from support import image_bytes, invoke
 import zlrs_update as update
-import zlrs_recovery as recovery
 
 
 class UpdateTests(unittest.TestCase):
@@ -147,9 +146,3 @@ class UpdateTests(unittest.TestCase):
                                              update.DEFAULT_BAUD, 1)
         self.assertIn("--slot", command)
         self.assertEqual(command[command.index("--slot") + 1], "2")
-
-    def test_management_probe_and_trigger(self):
-        command = update.mgmt_probe_command("/dev/ttyACM0")
-        self.assertIn("status", command)
-        self.assertIn("/dev/ttyACM0", command)
-        self.assertEqual(recovery.build_request(), bytes.fromhex("a55a05100040"))
