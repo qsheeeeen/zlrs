@@ -36,8 +36,8 @@ mode/command/reset, IRQ and errors with independent validity bits.
 
 Management status pauses RF and refreshes chip measurements at that maintenance
 boundary. Repeated reads can affect peer quality or recovery. Use debug shell
-`zlrs status` for nonpausing observation: it reads copied state, with link facts
-published once per second and on changes. Chip values remain the latest boot or
+`zlrs status` for nonpausing observation: it reads copied state, refreshed once per
+second and when LED inputs change. Chip values remain the latest boot or
 management sample, and their age is shown. Standby mode at a maintenance boundary
 is expected; it is not the preceding live RX/TX mode.
 

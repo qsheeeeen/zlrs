@@ -319,6 +319,8 @@ typedef struct {
 	uint32_t last_rx_ms;
 	uint32_t accepted_rx_events;
 	uint32_t frame_index;
+	uint32_t frequency_hz;
+	uint16_t hop_index;
 	zlrs_band_plan_t band_plan;
 	bool radio_acquiring;
 	bool radio_sync_seen;

@@ -746,44 +746,40 @@ static void report(uint32_t now_ms)
 }
 
 /* RF facts for UI and diagnostics, including failed initialization. */
-void zlrs_rf_publish_state(void)
+static void publish_state(bool force)
 {
-	if (zlrs_link_get_state(&link_data) == ZLRS_STATE_CONNECTED) {
+	const zlrs_link_info_t info = zlrs_link_get_info(&link_data);
+	const zlrs_link_stats_t *stats = zlrs_link_get_stats(&link_data);
+	if (info.state == ZLRS_STATE_CONNECTED) {
 		ever_connected = true;
 	}
-	const zlrs_rf_status_t state = zlrs_rf_status();
+	const bool lost =
+		ever_connected && (info.state != ZLRS_STATE_CONNECTED || info.radio_acquiring);
 	static zlrs_rf_status_t published;
 	static bool have_state;
 	static uint32_t published_ms;
-	const bool same =
-		published.role == state.role && published.profile == state.profile &&
-		published.data_band == state.data_band && published.band_mode == state.band_mode &&
-		published.band_acquiring == state.band_acquiring &&
-		published.band_planned == state.band_planned &&
-		published.band_switches == state.band_switches &&
-		published.region == state.region && published.state == state.state &&
-		published.configured == state.configured && published.paired == state.paired &&
-		published.session_valid == state.session_valid &&
-		published.paused == state.paused && published.link_lost == state.link_lost &&
-		published.fault == state.fault &&
-		published.data_drop_bytes == state.data_drop_bytes &&
-		published.lq_percent == state.lq_percent &&
-		published.tx_power_dbm == state.tx_power_dbm &&
-		published.power_fixed == state.power_fixed &&
-		published.rssi_dbm == state.rssi_dbm && published.snr_db == state.snr_db &&
-		published.frame_period_us == state.frame_period_us &&
-		published.radio.sampled_ms == state.radio.sampled_ms &&
-		memcmp(published.dev_id, state.dev_id, sizeof(state.dev_id)) == 0 &&
-		memcmp(published.peer_id, state.peer_id, sizeof(state.peer_id)) == 0;
-	/* Keep changing packet/hop counters readable without waking UI for every packet. */
 	const uint32_t now_ms = k_uptime_get_32();
-	const bool metrics_due = (uint32_t)(now_ms - published_ms) >= REPORT_PERIOD_MS;
-	if ((!have_state || !same || metrics_due) &&
-	    zbus_chan_pub(&zlrs_rf_chan, &state, K_NO_WAIT) == 0) {
+
+	/* Only LED inputs wake UI immediately. Full metrics remain available at 1 Hz. */
+	if (!force && have_state && (uint32_t)(now_ms - published_ms) < REPORT_PERIOD_MS &&
+	    published.role == (role_leader ? ZLRS_ROLE_LEADER : ZLRS_ROLE_FOLLOWER) &&
+	    published.state == info.state && published.link_lost == lost &&
+	    published.fault == !radio_ready && published.lq_percent == stats->lq_percent &&
+	    published.data_drop_bytes == stats->data_drop_bytes &&
+	    published.frame_period_us == frame_period_us) {
+		return;
+	}
+	const zlrs_rf_status_t state = zlrs_rf_status();
+	if (zbus_chan_pub(&zlrs_rf_chan, &state, K_NO_WAIT) == 0) {
 		published = state;
 		have_state = true;
 		published_ms = now_ms;
 	}
+}
+
+void zlrs_rf_publish_state(void)
+{
+	publish_state(false);
 }
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
@@ -870,7 +866,6 @@ zlrs_rf_status_t zlrs_rf_status(void)
 {
 	const zlrs_link_info_t info = zlrs_link_get_info(&link_data);
 	const zlrs_link_stats_t *stats = zlrs_link_get_stats(&link_data);
-	const zlrs_link_diagnostics_t diagnostics = zlrs_link_get_diagnostics(&link_data);
 	zlrs_lr2021_diag_t radio;
 	zlrs_lr2021_diag(&radio);
 	zlrs_rf_status_t out = {
@@ -911,8 +906,8 @@ zlrs_rf_status_t zlrs_rf_status(void)
 		.tx_retries = stats->tx_retries,
 		.missed_slots = missed_slots,
 		.radio_fail = stats->radio_fail,
-		.frequency_hz = diagnostics.frequency_hz,
-		.hop_index = diagnostics.hop_index,
+		.frequency_hz = info.frequency_hz,
+		.hop_index = info.hop_index,
 		.radio = radio_status,
 	};
 	memcpy(out.dev_id, device_id, sizeof(out.dev_id));
@@ -926,7 +921,7 @@ void zlrs_rf_status_refresh(void)
 	if (radio_ready) {
 		zlrs_lr2021_read_status(&radio_status);
 	}
-	zlrs_rf_publish_state();
+	publish_state(true);
 }
 
 int zlrs_rf_pair_start(void)

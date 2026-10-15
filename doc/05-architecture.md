@@ -128,6 +128,12 @@ publication is retried at a later boundary without blocking RF. A cumulative inp
 count preserves requests across notification coalescing; the application consumes
 it in the owning context.
 
+RF publishes on changes to LED inputs (role, link state, loss/fault, quality,
+dropped bytes and initialization readiness), and refreshes the complete status at
+least once per second. Management measurement refresh forces a publication.
+Routine status uses lightweight link observations; key fingerprints and handshake
+details are collected only for explicit diagnostic reports or maintenance logs.
+
 One low-priority UI thread samples input every 20 ms and renders the LED at 20 Hz.
 It releases channel locks before hardware output and writes only changed colors
 or retries a failed write. UI output must not extend RF deadlines or feed the RF

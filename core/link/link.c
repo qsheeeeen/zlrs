@@ -737,6 +737,8 @@ zlrs_link_info_t zlrs_link_get_info(const zlrs_link_t *link)
 		.last_rx_ms = link->last_rx_ms,
 		.accepted_rx_events = link->accepted_rx_events,
 		.frame_index = link->frame_index,
+		.frequency_hz = link->fhss.domain != NULL ? zlrs_fhss_current_hz(&link->fhss) : 0U,
+		.hop_index = link->fhss.index,
 		.band_plan = link->band_plan,
 		.radio_acquiring = link->radio_acquiring,
 		.radio_sync_seen = link->radio_sync_seen,
