@@ -16,6 +16,7 @@
 # Standard library only; talking to a device needs pyserial (pip install pyserial).
 
 import argparse
+from contextlib import contextmanager
 import os
 import sys
 
@@ -239,7 +240,56 @@ def read_response(link):
             return decode(bytes(buf))
 
 
-def read_debug_report(link, report_id: int) -> bytes:
+class ManagementClient:
+    """One serial connection with command/ACK matching shared by all operations."""
+
+    def __init__(self, link):
+        self.link = link
+
+    def request(self, command, payload=b"", response=ACK):
+        self.link.write(encode(command, payload))
+        if response is None:
+            self.link.flush()
+            return b""
+        got, body = read_response(self.link)
+        if got == ACK:
+            if len(body) != 2 or body[0] != command:
+                raise ValueError("malformed or mismatched ACK")
+            if body[1] != 0:
+                raise ValueError(STATUS_NAMES.get(body[1], hex(body[1])))
+            if response != ACK:
+                raise ValueError("expected response data, received only an OK ACK")
+        elif got != response:
+            raise ValueError(f"unexpected response 0x{got:02x} for command 0x{command:02x}")
+        return body
+
+
+@contextmanager
+def management_session(port, baud, timeout, enter=True, keep=False):
+    import serial  # pyserial
+
+    with serial.Serial(port, baudrate=baud, timeout=timeout) as link:
+        client = ManagementClient(link)
+        failure = None
+        try:
+            if enter:
+                client.request(CMD_ENTER)
+            yield client
+        except BaseException as exc:
+            failure = exc
+            raise
+        finally:
+            if not keep:
+                try:
+                    client.request(CMD_EXIT)
+                except (OSError, ValueError, TimeoutError) as exc:
+                    if failure is not None:
+                        notice("error", str(failure), file=sys.stderr)
+                    raise ValueError("could not leave management mode; run exit to restore "
+                                     f"the radio: {exc}") from exc
+
+
+def read_debug_report(client, report_id: int) -> bytes:
     """Read a debug-only text report in bounded management frames."""
     report = bytearray()
     offset = 0
@@ -247,17 +297,9 @@ def read_debug_report(link, report_id: int) -> bytes:
 
     while total is None or offset < total:
         request = bytes([report_id]) + offset.to_bytes(2, "little")
-        link.write(encode(CMD_DEBUG_REPORT, request))
-        cmd, payload = read_response(link)
-
-        if cmd == ACK:
-            if len(payload) != 2 or payload[0] != CMD_DEBUG_REPORT:
-                raise ValueError("ACK does not match the debug report command")
-            if payload[1] == 4:
-                raise ValueError("detailed reports require a debug firmware image")
-            raise ValueError(STATUS_NAMES.get(payload[1], hex(payload[1])))
-        if cmd != DEBUG_REPORT_RESP or len(payload) < 5:
-            raise ValueError(f"unexpected debug report response 0x{cmd:02x}")
+        payload = client.request(CMD_DEBUG_REPORT, request, DEBUG_REPORT_RESP)
+        if len(payload) < 5:
+            raise ValueError("short debug report response")
 
         got_id = payload[0]
         got_offset = int.from_bytes(payload[1:3], "little")
@@ -290,147 +332,70 @@ def device_heading(port: str) -> None:
 
 
 def talk(port: str, baud: int, frame: bytes, expect: bool, timeout: float,
-         prelude: bytes | None, quiet: bool = False) -> int:
+         prelude: bytes | None, quiet: bool = False, keep: bool = False) -> int:
+    command, request = decode(frame)
+    response = {CMD_STATUS: STATUS_RESP, CMD_BUILD: BUILD_RESP,
+                CMD_IMAGE_HASH: IMAGE_HASH_RESP}.get(command, ACK) if expect else None
     try:
-        import serial  # pyserial
+        with management_session(port, baud, timeout, enter=prelude is not None,
+                                keep=keep or command in (CMD_ENTER, CMD_EXIT, CMD_RECOVERY)) as client:
+            if command == CMD_DEBUG_REPORT:
+                if len(request) != 3:
+                    raise ValueError("bad debug report request")
+                report_id = request[0]
+                report_name = next((name for name, ident in DEBUG_REPORTS.items()
+                                    if ident == report_id), None)
+                if report_name is None:
+                    raise ValueError(f"unknown debug report id {report_id}")
+                heading(f"ZLRS {report_name.title()} Diagnostics")
+                print(read_debug_report(client, report_id).decode(errors="replace"), end="")
+                return 0
+
+            payload = client.request(command, request, response)
+            if response is None:
+                notice("info", "Recovery requested; waiting for USB re-enumeration")
+            elif response == STATUS_RESP:
+                heading("ZLRS Status")
+                print(status_text(payload))
+            elif response == BUILD_RESP:
+                print(payload.decode(errors="replace"))
+            elif response == IMAGE_HASH_RESP:
+                if len(payload) != 32:
+                    raise ValueError("image hash must contain 32 bytes")
+                print(payload.hex())
+            elif not quiet:
+                notice("ok", COMMAND_MESSAGES.get(command, "Command accepted"))
+        return 0
     except ImportError:
         notice("error", "pyserial required: pip install pyserial", file=sys.stderr)
         return 2
-
-    with serial.Serial(port, baudrate=baud, timeout=timeout) as link:
-        if prelude is not None:
-            link.write(prelude)
-            try:
-                cmd, payload = read_response(link)
-            except TimeoutError as exc:
-                notice("error", f"entering management mode failed: {exc}", file=sys.stderr)
-                return 1
-
-            code = payload[1] if cmd == ACK and len(payload) >= 2 else 0xFF
-            if cmd != ACK or len(payload) != 2 or payload[0] != CMD_ENTER or code != 0:
-                notice("error", f"entering management mode failed: {STATUS_NAMES.get(code, hex(code))}", file=sys.stderr)
-                return 1
-
-        if frame[3] == CMD_DEBUG_REPORT:
-            if len(frame) != 9 or frame[4] != 3:
-                raise ValueError("bad debug report request")
-            report_id = frame[5]
-            report_name = next((name for name, ident in DEBUG_REPORTS.items()
-                                if ident == report_id), None)
-            if report_name is None:
-                raise ValueError(f"unknown debug report id {report_id}")
-            heading(f"ZLRS {report_name.title()} Diagnostics")
-            print(read_debug_report(link, report_id).decode(errors="replace"), end="")
-            return 0
-
-        link.write(frame)
-        if not expect:
-            link.flush()
-            notice("info", "Recovery requested; waiting for USB re-enumeration")
-            return 0
-
-        try:
-            cmd, payload = read_response(link)
-        except TimeoutError:
-            notice("error", "timed out waiting for a response", file=sys.stderr)
-            return 1
-        if cmd == ACK:
-            if len(payload) != 2 or payload[0] != frame[3]:
-                raise ValueError("ACK does not match the command")
-            code = payload[1]
-            if code != 0:
-                notice("error", STATUS_NAMES.get(code, hex(code)), file=sys.stderr)
-                return 1
-            # Read commands must return data; an OK ACK alone is incomplete.
-            if frame[3] in (CMD_STATUS, CMD_BUILD, CMD_IMAGE_HASH):
-                raise ValueError("expected response data but received only an ACK")
-            if not quiet:
-                notice("ok", COMMAND_MESSAGES.get(frame[3], "Command accepted"))
-            return 0
-        expected = {CMD_STATUS: STATUS_RESP, CMD_BUILD: BUILD_RESP,
-                    CMD_IMAGE_HASH: IMAGE_HASH_RESP}.get(frame[3], ACK)
-        if cmd != expected:
-            raise ValueError(f"unexpected response 0x{cmd:02x} for command 0x{frame[3]:02x}")
-        if cmd == STATUS_RESP:
-            heading("ZLRS Status")
-            print(status_text(payload))
-            return 0
-        if cmd == BUILD_RESP:
-            print(payload.decode(errors="replace"))
-            return 0
-        if cmd == IMAGE_HASH_RESP:
-            if len(payload) != 32:
-                raise ValueError("image hash must contain 32 bytes")
-            print(payload.hex())
-            return 0
-        print(f"unexpected response 0x{cmd:02x}: {payload.hex()}")
+    except (OSError, ValueError, TimeoutError) as exc:
+        notice("error", str(exc), file=sys.stderr)
         return 1
 
 
 def dump_logs(port: str, baud: int, timeout: float, out_dir: str,
               keep: bool = False, no_enter: bool = False) -> int:
-    """Read the whole log store over the management port and write it out file by file.
-
-    The device serves one chunk per request; the framing already has a CRC, so a lost byte shows up
-    as a bad frame instead of as a hole in the log.
-    """
-    try:
-        import serial  # pyserial
-    except ImportError:
-        notice("error", "pyserial required: pip install pyserial", file=sys.stderr)
-        return 2
-
-    import os
-
+    """Export the log store within one management session."""
     os.makedirs(out_dir, exist_ok=True)
-
-    with serial.Serial(port, baudrate=baud, timeout=timeout) as link:
-        if not no_enter:
-            link.write(encode(CMD_ENTER))
-            try:
-                cmd, payload = read_response(link)
-            except TimeoutError as exc:
-                notice("error", f"entering management mode failed: {exc}", file=sys.stderr)
-                return 1
-            if cmd != ACK or len(payload) != 2 or payload != bytes([CMD_ENTER, 0]):
-                notice("error", "entering management mode failed", file=sys.stderr)
-                return 1
-
-        try:
-            link.write(encode(CMD_LOG_INFO))
-            try:
-                cmd, payload = read_response(link)
-            except TimeoutError:
-                notice("error", "no answer to the log info request", file=sys.stderr)
-                return 1
-            if cmd == ACK:
-                if len(payload) != 2 or payload[0] != CMD_LOG_INFO:
-                    notice("error", "log store: malformed or mismatched ACK", file=sys.stderr)
-                    return 1
-                code = payload[1] if len(payload) == 2 else 0xFF
-                notice("error", f"log store: {STATUS_NAMES.get(code, hex(code))}", file=sys.stderr)
-                return 1
-            if cmd != LOG_INFO_RESP or len(payload) < 2:
-                notice("error", f"unexpected response 0x{cmd:02x}", file=sys.stderr)
-                return 1
-
-            count = payload[0]
-            newest = payload[1]
-            if count > LOG_FILES_MAX or len(payload) < 2 + 6 * count:
-                notice("error", "log info is malformed", file=sys.stderr)
-                return 1
-
+    try:
+        with management_session(port, baud, timeout, enter=not no_enter, keep=keep) as client:
+            payload = client.request(CMD_LOG_INFO, response=LOG_INFO_RESP)
+            if len(payload) < 2:
+                raise ValueError("log info is malformed")
+            count, newest = payload[:2]
+            if count > LOG_FILES_MAX or len(payload) != 2 + 6 * count:
+                raise ValueError("log info is malformed")
             files = []
             for i in range(count):
                 at = 2 + 6 * i
-                num = payload[at] | (payload[at + 1] << 8)
-                size = int.from_bytes(payload[at + 2 : at + 6], "little")
+                num = int.from_bytes(payload[at:at + 2], "little")
+                size = int.from_bytes(payload[at + 2:at + 6], "little")
                 files.append((i, num, size))
 
             heading("ZLRS Log Export")
             print(fields([("Files", count), ("Newest index", newest), ("Directory", out_dir)]))
             print()
-
             total = 0
             for index, num, size in files:
                 path = os.path.join(out_dir, f"log.{num:04d}.bin")
@@ -439,46 +404,28 @@ def dump_logs(port: str, baud: int, timeout: float, out_dir: str,
                     while written < size:
                         want = min(LOG_CHUNK_MAX, size - written)
                         body = bytes([index]) + written.to_bytes(4, "little") + bytes([want])
-                        link.write(encode(CMD_LOG_READ, body))
                         try:
-                            cmd, payload = read_response(link)
-                        except TimeoutError:
-                            notice("error", f"{path}: timed out at offset {written}", file=sys.stderr)
-                            return 1
-                        if cmd == ACK:
-                            if len(payload) != 2 or payload[0] != CMD_LOG_READ:
-                                reason = "malformed or mismatched ACK"
-                            elif payload[1] == 0:
-                                reason = "expected log data, received only an OK ACK"
-                            else:
-                                reason = STATUS_NAMES.get(payload[1], hex(payload[1]))
-                            notice("error", f"{path}: read failed at offset {written}: {reason}",
-                                   file=sys.stderr)
-                            return 1
-                        if cmd != LOG_DATA_RESP or len(payload) < 5:
-                            notice("error", f"{path}: unexpected response 0x{cmd:02x} at offset {written}",
-                                   file=sys.stderr)
-                            return 1
-                        got = payload[5:]
-                        if payload[0] != index or int.from_bytes(payload[1:5], "little") != written:
-                            raise ValueError(f"{path}: log chunk index or offset does not match")
-                        if not got or len(got) > want:
-                            raise ValueError(f"{path}: incomplete or oversized log chunk at {written}")
+                            payload = client.request(CMD_LOG_READ, body, LOG_DATA_RESP)
+                            if len(payload) < 5 or payload[:5] != body[:5]:
+                                raise ValueError("log chunk index or offset does not match")
+                            got = payload[5:]
+                            if not got or len(got) > want:
+                                raise ValueError("incomplete or oversized log chunk")
+                        except (OSError, ValueError, TimeoutError) as exc:
+                            raise ValueError(f"{path}: read failed at offset {written}: {exc}") from exc
                         out.write(got)
                         written += len(got)
                 print(f"  {written:>10,} bytes  {path}")
                 total += written
-
-        finally:
-            if not keep:
-                link.write(encode(CMD_EXIT))
-                cmd, payload = read_response(link)
-                if cmd != ACK or payload != bytes([CMD_EXIT, 0]):
-                    raise ValueError("could not leave management mode; run exit to restore the radio")
-
-    print()
-    notice("ok", f"Exported {total:,} bytes from {count} log file(s)")
-    return 0
+        print()
+        notice("ok", f"Exported {total:,} bytes from {count} log file(s)")
+        return 0
+    except ImportError:
+        notice("error", "pyserial required: pip install pyserial", file=sys.stderr)
+        return 2
+    except (OSError, ValueError, TimeoutError) as exc:
+        notice("error", str(exc), file=sys.stderr)
+        return 1
 
 
 def app_ports() -> list[str]:
@@ -725,21 +672,11 @@ def main(args=None, parser=None) -> int:
         if len(targets) > 1:
             device_heading(port)
         try:
-            this = talk(port, args.baud, frame, expect, args.timeout, prelude)
+            this = talk(port, args.baud, frame, expect, args.timeout, prelude, keep=args.keep)
         except (OSError, ValueError, TimeoutError) as exc:
             notice("error", f"{port}: {exc}", file=sys.stderr)
             this = 1
         if this != 0:
             rc = this
-        if args.command not in ("enter", "exit", "recovery") and not args.keep:
-            try:
-                cleanup = talk(port, args.baud, encode(CMD_EXIT), True, args.timeout, None, quiet=True)
-            except (OSError, ValueError, TimeoutError) as exc:
-                notice("error", f"{port}: {exc}", file=sys.stderr)
-                cleanup = 1
-            if cleanup != 0:
-                notice("error", "could not leave management mode; run exit to restore the radio",
-                       file=sys.stderr)
-                rc = cleanup
 
     return rc

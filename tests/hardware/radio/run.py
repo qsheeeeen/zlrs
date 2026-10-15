@@ -60,18 +60,8 @@ def command(port, text):
 
 def debug_report(identity, name):
     path = f"/dev/serial/by-id/usb-zlrs_ZLRS_{identity}-if02"
-    with serial.Serial(path, 115200, timeout=2) as port:
-        def request(cmd):
-            port.write(mgmt.encode(cmd))
-            got, reply = mgmt.read_response(port)
-            if got != mgmt.ACK or reply != bytes((cmd, 0)):
-                raise RuntimeError(f"Management command failed on {identity}: {got}, {reply!r}")
-
-        request(mgmt.CMD_ENTER)
-        try:
-            return mgmt.read_debug_report(port, mgmt.DEBUG_REPORTS[name]).decode()
-        finally:
-            request(mgmt.CMD_EXIT)
+    with mgmt.management_session(path, 115200, 2) as client:
+        return mgmt.read_debug_report(client, mgmt.DEBUG_REPORTS[name]).decode()
 
 
 def main():

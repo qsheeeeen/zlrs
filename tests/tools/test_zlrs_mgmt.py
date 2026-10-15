@@ -34,14 +34,29 @@ class ManagementTests(unittest.TestCase):
             talk.assert_not_called()
 
     def test_failure_still_exits_management(self):
-        with patch.object(mgmt, "talk", side_effect=[1, 0]) as talk:
+        link = Mock()
+        link.__enter__ = Mock(return_value=link)
+        link.__exit__ = Mock(return_value=False)
+        responses = io.BytesIO(mgmt.encode(mgmt.ACK, bytes([mgmt.CMD_ENTER, 0])) +
+                               mgmt.encode(mgmt.ACK, bytes([mgmt.CMD_STATUS, 2])) +
+                               mgmt.encode(mgmt.ACK, bytes([mgmt.CMD_EXIT, 0])))
+        link.read.side_effect = responses.read
+        with patch.dict(sys.modules, {"serial": Mock(Serial=Mock(return_value=link))}):
             rc, _ = invoke(mgmt, "--port", "fake", "status")
         self.assertEqual(rc, 1)
-        self.assertEqual(mgmt.decode(talk.call_args_list[1].args[2])[0], mgmt.CMD_EXIT)
+        self.assertEqual([mgmt.decode(call.args[0])[0] for call in link.write.call_args_list],
+                         [mgmt.CMD_ENTER, mgmt.CMD_STATUS, mgmt.CMD_EXIT])
 
     def test_exit_failure_is_reported(self):
-        with patch.object(mgmt, "talk", side_effect=[0, 1]):
-            rc, output = invoke(mgmt, "--port", "fake", "status")
+        link = Mock()
+        link.__enter__ = Mock(return_value=link)
+        link.__exit__ = Mock(return_value=False)
+        responses = io.BytesIO(mgmt.encode(mgmt.ACK, bytes([mgmt.CMD_ENTER, 0])) +
+                               mgmt.encode(mgmt.BUILD_RESP, b"test") +
+                               mgmt.encode(mgmt.ACK, bytes([mgmt.CMD_EXIT, 2])))
+        link.read.side_effect = responses.read
+        with patch.dict(sys.modules, {"serial": Mock(Serial=Mock(return_value=link))}):
+            rc, output = invoke(mgmt, "--port", "fake", "build")
         self.assertEqual(rc, 1)
         self.assertIn("restore the radio", output)
 
@@ -50,6 +65,28 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertNotIn("enter:", output)
         self.assertNotIn("exit :", output)
+
+    def test_session_flags_and_one_connection(self):
+        for options, commands in [
+            ([], [mgmt.CMD_ENTER, mgmt.CMD_BUILD, mgmt.CMD_EXIT]),
+            (["--keep"], [mgmt.CMD_ENTER, mgmt.CMD_BUILD]),
+            (["--no-enter"], [mgmt.CMD_BUILD, mgmt.CMD_EXIT]),
+        ]:
+            with self.subTest(options=options):
+                link = Mock()
+                link.__enter__ = Mock(return_value=link)
+                link.__exit__ = Mock(return_value=False)
+                responses = io.BytesIO(b"".join(
+                    mgmt.encode(mgmt.BUILD_RESP, b"test") if cmd == mgmt.CMD_BUILD else
+                    mgmt.encode(mgmt.ACK, bytes([cmd, 0])) for cmd in commands))
+                link.read.side_effect = responses.read
+                factory = Mock(return_value=link)
+                with patch.dict(sys.modules, {"serial": Mock(Serial=factory)}):
+                    rc, _ = invoke(mgmt, "--port", "fake", *options, "build")
+                self.assertEqual(rc, 0)
+                factory.assert_called_once()
+                self.assertEqual([mgmt.decode(call.args[0])[0]
+                                  for call in link.write.call_args_list], commands)
 
     def test_serial_substring_must_be_unique(self):
         args = argparse.Namespace(port=None, serial="abc", all=False)
@@ -169,7 +206,8 @@ class ManagementTests(unittest.TestCase):
         output = io.StringIO()
         with patch.dict(sys.modules, {"serial": Mock(Serial=Mock(return_value=link))}), \
                 contextlib.redirect_stdout(output):
-            rc = mgmt.talk("fake", 115200, mgmt.encode(mgmt.CMD_IMAGE_HASH), True, 1, None)
+            rc = mgmt.talk("fake", 115200, mgmt.encode(mgmt.CMD_IMAGE_HASH), True, 1, None,
+                           keep=True)
         self.assertEqual(rc, 0)
         self.assertEqual(output.getvalue(), digest.hex() + "\n")
 
