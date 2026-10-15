@@ -186,6 +186,12 @@ class ManagementTests(unittest.TestCase):
         payload[62:66] = (2478000000).to_bytes(4, "little")
         payload[66:68] = (236).to_bytes(2, "little")
         payload[68:72] = (9080).to_bytes(4, "little")
+        status = mgmt.decode_status(payload)
+        self.assertEqual(mgmt.STATUS_LEN, 90)
+        self.assertEqual((status.rssi_dbm, status.peer_rssi_dbm, status.temperature_centi_c),
+                         (-48, -51, -125))
+        self.assertEqual((status.tx_frames, status.frequency_hz, status.hop_index),
+                         (1024, 2478000000, 236))
         output = mgmt.status_text(payload)
         for text in ("-48 dBm", "-51 dBm", "97%", "7 dBm", "-1.25 C",
                      "TX 1024, RX 1000", "2478.000 MHz", "9.080 ms"):

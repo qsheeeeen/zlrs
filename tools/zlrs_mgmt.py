@@ -16,7 +16,9 @@
 # Standard library only; talking to a device needs pyserial (pip install pyserial).
 
 import argparse
+from collections import namedtuple
 from contextlib import contextmanager
+import struct
 import os
 import sys
 
@@ -24,7 +26,25 @@ from zlrs_cli import HelpFormatter, bounded_int, positive_seconds, fields, headi
 
 SOF = b"\xa5\x5a"
 VERSION = 5
-STATUS_LEN = 90
+# Fields follow wire order, with explicit little-endian widths and signedness.
+STATUS_FIELDS = {
+    "version": "B", "role": "B", "state": "B", "flags": "B",
+    "dev_id": "4s", "peer_id": "4s", "lq_percent": "B", "band": "B",
+    "region": "B", "tx_power_dbm": "b", "data_baud": "I", "profile": "B",
+    "rssi_dbm": "h", "peer_rssi_dbm": "h", "peer_lq_percent": "B",
+    "active_power_dbm": "b", "power_floor_dbm": "b", "temperature_centi_c": "h",
+    "tx_frames": "I", "rx_frames": "I", "rx_crc_errors": "I", "rx_bad_tag": "I",
+    "tx_retries": "I", "data_drop_bytes": "I", "missed_slots": "I", "radio_fail": "I",
+    "frequency_hz": "I", "hop_index": "H", "frame_period_us": "I",
+    "radio_temperature_centi_c": "h", "radio_xosc_temperature_centi_c": "h",
+    "radio_vbat_mv": "H", "radio_version_major": "B", "radio_version_minor": "B",
+    "radio_chip_mode": "B", "radio_command_status": "B", "radio_reset_status": "B",
+    "radio_valid": "B", "radio_errors": "H", "radio_irq": "I",
+}
+STATUS_STRUCT = struct.Struct("<" + "".join(STATUS_FIELDS.values()))
+STATUS_LEN = STATUS_STRUCT.size
+Status = namedtuple("Status", STATUS_FIELDS)
+
 
 CMD_ENTER = 0x00
 CMD_STATUS = 0x01
@@ -123,47 +143,57 @@ def decode(frame: bytes):
 
 
 
-def status_text(payload: bytes) -> str:
+def decode_status(payload: bytes) -> Status:
     if len(payload) != STATUS_LEN:
         raise ValueError(f"status payload must contain {STATUS_LEN} bytes")
-    flags = payload[3]
-    dev = payload[4:8].hex()
-    peer = payload[8:12].hex()
-    baud = int.from_bytes(payload[16:20], "little")
-    power = payload[15] - 256 if payload[15] > 127 else payload[15]
+    return Status(*STATUS_STRUCT.unpack(payload))
+
+
+def read_status(client) -> Status:
+    return decode_status(client.request(CMD_STATUS, response=STATUS_RESP))
+
+
+def status_text(payload: bytes) -> str:
+    status = decode_status(payload)
+    flags = status.flags
+    dev = status.dev_id.hex()
+    peer = status.peer_id.hex()
+    baud = status.data_baud
+    power = status.tx_power_dbm
     sections = [
-        ("Device", [("Role", "Leader" if payload[1] == 0 else "Follower"),
-                    ("Hardware", "HF (868/915 MHz)" if payload[13] else "LF (470/433 MHz)"),
+        ("Device", [("Role", "Leader" if status.role == 0 else "Follower"),
+                    ("Hardware", "HF (868/915 MHz)" if status.band else "LF (470/433 MHz)"),
                     ("Device ID", dev), ("Peer ID", peer)]),
         ("Link", [("Data band", "sub-GHz" if flags & 0x08 else "2.4 GHz"),
                   ("Band mode", "auto" if flags & 0x10 else "fixed"),
                   ("Band acquisition", "searching" if flags & 0x20 else "ready"),
                   ("Band transition", "scheduled" if flags & 0x40 else "none"),
-                  ("State", STATE_NAMES.get(payload[2], str(payload[2]))),
-                  ("Quality", f"{payload[12]}%"),
+                  ("State", STATE_NAMES.get(status.state, str(status.state))),
+                  ("Quality", f"{status.lq_percent}%"),
                   ("Paired", "yes" if flags & 0x02 else "no"),
                   ("Session", "active" if flags & 0x04 else "inactive")]),
-        ("Configuration", [("Region", REGION_NAMES.get(payload[14], str(payload[14]))),
+        ("Configuration", [("Region", REGION_NAMES.get(status.region, str(status.region))),
                            ("Data UART", f"{baud or 115200} baud"),
-                           ("Profile", f"P{payload[20]}"),
+                           ("Profile", f"P{status.profile}"),
                            ("Root key", "configured" if flags & 0x01 else "missing")]),
     ]
-    rssi = int.from_bytes(payload[21:23], "little", signed=True)
-    peer_rssi = int.from_bytes(payload[23:25], "little", signed=True)
-    active_power = int.from_bytes(payload[26:27], "little", signed=True)
-    floor = int.from_bytes(payload[27:28], "little", signed=True)
-    temperature = int.from_bytes(payload[28:30], "little", signed=True)
-    counters = [int.from_bytes(payload[offset:offset + 4], "little")
-                for offset in range(30, 62, 4)]
-    tx, rx, crc, tag, retry, dropped, missed, failed = counters
-    frequency = int.from_bytes(payload[62:66], "little")
-    hop = int.from_bytes(payload[66:68], "little")
-    period = int.from_bytes(payload[68:72], "little")
+    rssi = status.rssi_dbm
+    peer_rssi = status.peer_rssi_dbm
+    active_power = status.active_power_dbm
+    floor = status.power_floor_dbm
+    temperature = status.temperature_centi_c
+    tx, rx = status.tx_frames, status.rx_frames
+    crc, tag = status.rx_crc_errors, status.rx_bad_tag
+    retry, dropped = status.tx_retries, status.data_drop_bytes
+    missed, failed = status.missed_slots, status.radio_fail
+    frequency = status.frequency_hz
+    hop = status.hop_index
+    period = status.frame_period_us
     sections.extend([
         ("Measurements", [
             ("RSSI", f"{rssi} dBm" if rssi else "unavailable"),
             ("Peer RSSI", f"{peer_rssi} dBm" if peer_rssi else "unavailable"),
-            ("Peer LQ", f"{payload[25]}%" if peer_rssi else "unavailable"),
+            ("Peer LQ", f"{status.peer_lq_percent}%" if peer_rssi else "unavailable"),
             ("TX setpoint", f"{active_power} dBm"),
             ("Power maximum", f"{power} dBm"),
             ("Power control", "debug fixed" if flags & 0x80 else "automatic"),
@@ -184,17 +214,17 @@ def status_text(payload: bytes) -> str:
             ("Dropped data", f"{dropped} bytes"),
         ]),
     ])
-    valid = payload[83]
-    radio_temp = int.from_bytes(payload[72:74], "little", signed=True)
-    xosc_temp = int.from_bytes(payload[74:76], "little", signed=True)
-    vbat = int.from_bytes(payload[76:78], "little")
-    mode, command, reset = payload[80:83]
+    valid = status.radio_valid
+    radio_temp = status.radio_temperature_centi_c
+    xosc_temp = status.radio_xosc_temperature_centi_c
+    vbat = status.radio_vbat_mv
+    mode, command, reset = (status.radio_chip_mode, status.radio_command_status, status.radio_reset_status)
     mode_names = {0: "sleep", 1: "standby RC", 2: "standby XOSC",
                   3: "frequency synthesis", 4: "RX", 5: "TX"}
     command_names = {0: "failed", 1: "invalid command", 2: "OK", 3: "read data"}
     reset_names = {0: "cleared", 1: "power-on/brown-out", 2: "reset pin",
                    5: "NSS wakeup", 6: "RTC wakeup"}
-    errors = int.from_bytes(payload[84:86], "little")
+    errors = status.radio_errors
     error_names = ("HF XOSC start", "LF XOSC start", "PLL lock", "LF RC calibration",
                    "HF RC calibration", "PLL calibration", "AAF calibration",
                    "image calibration", "chip busy", "missing front-end calibration",
@@ -203,12 +233,12 @@ def status_text(payload: bytes) -> str:
                    "SRC tolerance")
     error_text = ", ".join(name for bit, name in enumerate(error_names)
                            if errors & (1 << bit)) or "none"
-    irq = int.from_bytes(payload[86:90], "little")
+    irq = status.radio_irq
     sections.append(("LR2021", [
         ("Junction temperature", f"{radio_temp / 100:.2f} C" if valid & 0x01 else "unavailable"),
         ("XOSC temperature", f"{xosc_temp / 100:.2f} C" if valid & 0x02 else "unavailable"),
         ("Supply voltage", f"{vbat / 1000:.3f} V ({vbat} mV)" if valid & 0x04 else "unavailable"),
-        ("Chip version", f"major 0x{payload[78]:02x}, minor 0x{payload[79]:02x}"
+        ("Chip version", f"major 0x{status.radio_version_major:02x}, minor 0x{status.radio_version_minor:02x}"
          if valid & 0x08 else "unavailable"),
         ("Chip mode", mode_names.get(mode, f"unknown ({mode})") if valid & 0x10 else "unavailable"),
         ("Last command", command_names.get(command, f"unknown ({command})")

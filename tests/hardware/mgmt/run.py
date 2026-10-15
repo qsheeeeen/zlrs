@@ -32,7 +32,8 @@ def main():
     previous = u.parse_hex_hash(run('image-hash'))
     assert previous
     port = f'/dev/serial/by-id/usb-zlrs_ZLRS_{args.serial}-if02'
-    original = run('status')
+    with m.management_session(port, 115200, 12) as client:
+        original = m.read_status(client)
     print('Original hash:', previous, flush=True)
     try:
         print(run('update', '--image', args.image, '--no-wait', '--timeout', '45'), flush=True)
@@ -117,12 +118,12 @@ def main():
         assert u.wait_for_by_id('ZLRS', 45, exclude='MCUBOOT', serial=args.serial, exact_serial=True)
         rc, out = u.run_mgmt_subcmd_retry(port, 'image-hash')
         assert rc == 0 and u.parse_hex_hash(out) == previous, (rc, out)
-        restored = run('status')
+        with m.management_session(port, 115200, 12) as client:
+            restored = m.read_status(client)
         # Acquisition changes quality/state; saved configuration and IDs must match.
-        for label in ('Device ID', 'Peer ID', 'Region', 'TX ceiling', 'Data UART', 'Profile'):
-            before = next((line.strip() for line in original.splitlines() if label in line))
-            after = next((line.strip() for line in restored.splitlines() if label in line))
-            assert before == after, (before, after)
+        for field in ('dev_id', 'peer_id', 'region', 'tx_power_dbm', 'data_baud', 'profile'):
+            before, after = getattr(original, field), getattr(restored, field)
+            assert before == after, (field, before, after)
         print('Original NVS and firmware restored.', flush=True)
     print('All management commands passed.', flush=True)
 
