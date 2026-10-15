@@ -535,7 +535,7 @@ bool zlrs_link_reconfigure_radio(zlrs_link_t *link, const zlrs_link_cfg_t *cfg)
 	uint8_t seed[4];
 	zlrs_kdf(link->pair_key, ZLRS_KEY_LEN, "zlrs/fhss", NULL, 0U, seed, sizeof(seed));
 	link->cfg = *cfg;
-	zlrs_fhss_init(&link->fhss, cfg->domain, rd32(seed));
+	zlrs_fhss_init(&link->fhss, cfg->domain, zlrs_get_le32(seed));
 	zlrs_link_acquire_radio(link, link->last_rx_ms);
 	/* Quality/power samples belong to the old RF path; replay/ARQ state does not. */
 	link->lq_started = false;

@@ -1,23 +1,11 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "zlrs/proto/frame.h"
+#include "../byteorder.h"
 #include <string.h>
 
 _Static_assert(ZLRS_PKT_SESS_CFM == ZLRS_FRAME_TYPE_MASK, "eight types require three bits");
 _Static_assert(ZLRS_PROTO_VERSION <= 15U, "SYNC version requires a new format above 15");
 _Static_assert(ZLRS_PROFILE_P1 == 1, "SYNC profile has one bit for P0/P1");
-
-static uint32_t read32(const uint8_t *p)
-{
-	return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
-	       ((uint32_t)p[3] << 24);
-}
-
-static void write32(uint8_t *p, uint32_t value)
-{
-	for (unsigned int i = 0U; i < 4U; i++) {
-		p[i] = (uint8_t)(value >> (8U * i));
-	}
-}
 
 uint8_t zlrs_profile_tag_len(zlrs_profile_t profile)
 {
@@ -27,7 +15,7 @@ uint8_t zlrs_profile_tag_len(zlrs_profile_t profile)
 static void encode_band_plan(uint8_t *p, const zlrs_band_plan_t *plan)
 {
 	p[0] = plan->domain | (plan->automatic << 3U) | (plan->target_subg << 4U);
-	write32(p + 1U, plan->switch_frame);
+	zlrs_put_le32(p + 1U, plan->switch_frame);
 }
 
 static bool decode_band_plan(zlrs_band_plan_t *plan, const uint8_t *p)
@@ -37,7 +25,7 @@ static bool decode_band_plan(zlrs_band_plan_t *plan, const uint8_t *p)
 	}
 	*plan = (zlrs_band_plan_t){.domain = p[0] & 7U,
 		.automatic = (p[0] >> 3U) & 1U, .target_subg = (p[0] >> 4U) & 1U,
-		.switch_frame = read32(p + 1U)};
+		.switch_frame = zlrs_get_le32(p + 1U)};
 	return plan->automatic || plan->switch_frame == 0U;
 }
 
@@ -81,7 +69,7 @@ uint16_t zlrs_frame_encode(const zlrs_frame_t *frame, uint8_t *buf, uint16_t cap
 		return 0U;
 	}
 	buf[0] = frame->type;
-	write32(buf + 1U, frame->seq);
+	zlrs_put_le32(buf + 1U, frame->seq);
 	uint8_t *const p = buf + ZLRS_FRAME_HDR_LEN;
 	switch (frame->type) {
 	case ZLRS_PKT_DATA_L2F:
@@ -98,13 +86,13 @@ uint16_t zlrs_frame_encode(const zlrs_frame_t *frame, uint8_t *buf, uint16_t cap
 		buf[0] |= (uint8_t)((frame->body.sync.profile << ZLRS_SYNC_PROFILE_SHIFT) |
 				   (frame->body.sync.version << ZLRS_SYNC_VERSION_SHIFT));
 		p[0] = frame->body.sync.hop_index;
-		write32(p + 1U, frame->body.sync.nonce_leader);
-		write32(p + 5U, frame->body.sync.frame_index);
+		zlrs_put_le32(p + 1U, frame->body.sync.nonce_leader);
+		zlrs_put_le32(p + 5U, frame->body.sync.frame_index);
 		encode_band_plan(p + 9U, &frame->body.sync.band_plan);
 		break;
 	case ZLRS_PKT_PAIR_REQ:
 		memcpy(p, frame->body.pair_req.dev_a, ZLRS_DEV_ID_LEN);
-		write32(p + 4U, frame->body.pair_req.nonce_a);
+		zlrs_put_le32(p + 4U, frame->body.pair_req.nonce_a);
 		break;
 	case ZLRS_PKT_PAIR_RESP:
 	case ZLRS_PKT_PAIR_CFM:
@@ -112,18 +100,18 @@ uint16_t zlrs_frame_encode(const zlrs_frame_t *frame, uint8_t *buf, uint16_t cap
 		const zlrs_pair_frame_t *const pair = &frame->body.pair;
 		memcpy(p, pair->dev_a, ZLRS_DEV_ID_LEN);
 		memcpy(p + 4U, pair->dev_b, ZLRS_DEV_ID_LEN);
-		write32(p + 8U, pair->nonce_a);
-		write32(p + 12U, pair->nonce_b);
+		zlrs_put_le32(p + 8U, pair->nonce_a);
+		zlrs_put_le32(p + 12U, pair->nonce_b);
 		break;
 	}
 	case ZLRS_PKT_SESS_RESP:
-		write32(p, frame->body.sess_resp.nonce_leader);
-		write32(p + 4U, frame->body.sess_resp.nonce_follower);
+		zlrs_put_le32(p, frame->body.sess_resp.nonce_leader);
+		zlrs_put_le32(p + 4U, frame->body.sess_resp.nonce_follower);
 		break;
 	case ZLRS_PKT_SESS_CFM:
-		write32(p, frame->body.sess_cfm.nonce_follower);
+		zlrs_put_le32(p, frame->body.sess_cfm.nonce_follower);
 		p[4] = frame->body.sess_cfm.hop_index;
-		write32(p + 5U, frame->body.sess_cfm.frame_index);
+		zlrs_put_le32(p + 5U, frame->body.sess_cfm.frame_index);
 		encode_band_plan(p + 9U, &frame->body.sess_cfm.band_plan);
 		break;
 	}
@@ -141,7 +129,7 @@ bool zlrs_frame_decode(zlrs_frame_t *frame, const uint8_t *buf, uint16_t len, ui
 	}
 	const uint8_t type = buf[0] & ZLRS_FRAME_TYPE_MASK;
 	if ((type != ZLRS_PKT_SYNC && (buf[0] & ~ZLRS_FRAME_TYPE_MASK) != 0U) ||
-	    read32(buf + 1U) == 0U) {
+	    zlrs_get_le32(buf + 1U) == 0U) {
 		return false;
 	}
 	const uint16_t payload_len = len - ZLRS_FRAME_HDR_LEN - tag_len;
@@ -150,7 +138,7 @@ bool zlrs_frame_decode(zlrs_frame_t *frame, const uint8_t *buf, uint16_t len, ui
 	}
 	const uint8_t *const p = buf + ZLRS_FRAME_HDR_LEN;
 	*frame = (zlrs_frame_t){.type = type};
-	frame->seq = read32(buf + 1U);
+	frame->seq = zlrs_get_le32(buf + 1U);
 	memcpy(frame->tag, p + payload_len, tag_len);
 	switch (frame->type) {
 	case ZLRS_PKT_DATA_L2F:
@@ -168,15 +156,15 @@ bool zlrs_frame_decode(zlrs_frame_t *frame, const uint8_t *buf, uint16_t len, ui
 		frame->body.sync.version = buf[0] >> ZLRS_SYNC_VERSION_SHIFT;
 		frame->body.sync.profile = (buf[0] >> ZLRS_SYNC_PROFILE_SHIFT) & 1U;
 		frame->body.sync.hop_index = p[0];
-		frame->body.sync.nonce_leader = read32(p + 1U);
-		frame->body.sync.frame_index = read32(p + 5U);
+		frame->body.sync.nonce_leader = zlrs_get_le32(p + 1U);
+		frame->body.sync.frame_index = zlrs_get_le32(p + 5U);
 		if (!decode_band_plan(&frame->body.sync.band_plan, p + 9U)) {
 			return false;
 		}
 		break;
 	case ZLRS_PKT_PAIR_REQ:
 		memcpy(frame->body.pair_req.dev_a, p, ZLRS_DEV_ID_LEN);
-		frame->body.pair_req.nonce_a = read32(p + 4U);
+		frame->body.pair_req.nonce_a = zlrs_get_le32(p + 4U);
 		break;
 	case ZLRS_PKT_PAIR_RESP:
 	case ZLRS_PKT_PAIR_CFM:
@@ -184,18 +172,18 @@ bool zlrs_frame_decode(zlrs_frame_t *frame, const uint8_t *buf, uint16_t len, ui
 		zlrs_pair_frame_t *const pair = &frame->body.pair;
 		memcpy(pair->dev_a, p, ZLRS_DEV_ID_LEN);
 		memcpy(pair->dev_b, p + 4U, ZLRS_DEV_ID_LEN);
-		pair->nonce_a = read32(p + 8U);
-		pair->nonce_b = read32(p + 12U);
+		pair->nonce_a = zlrs_get_le32(p + 8U);
+		pair->nonce_b = zlrs_get_le32(p + 12U);
 		break;
 	}
 	case ZLRS_PKT_SESS_RESP:
-		frame->body.sess_resp.nonce_leader = read32(p);
-		frame->body.sess_resp.nonce_follower = read32(p + 4U);
+		frame->body.sess_resp.nonce_leader = zlrs_get_le32(p);
+		frame->body.sess_resp.nonce_follower = zlrs_get_le32(p + 4U);
 		break;
 	case ZLRS_PKT_SESS_CFM:
-		frame->body.sess_cfm.nonce_follower = read32(p);
+		frame->body.sess_cfm.nonce_follower = zlrs_get_le32(p);
 		frame->body.sess_cfm.hop_index = p[4];
-		frame->body.sess_cfm.frame_index = read32(p + 5U);
+		frame->body.sess_cfm.frame_index = zlrs_get_le32(p + 5U);
 		if (!decode_band_plan(&frame->body.sess_cfm.band_plan, p + 9U)) {
 			return false;
 		}

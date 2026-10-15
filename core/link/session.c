@@ -57,8 +57,8 @@ void link_derive_by_endpoints(const zlrs_link_t *link, const char *label, const 
 static void derive_session_keys(zlrs_link_t *link)
 {
 	uint8_t ctx[2U * sizeof(uint32_t)];
-	wr32(ctx, link->sess_nonce_leader);
-	wr32(ctx + 4U, link->sess_nonce_follower);
+	zlrs_put_le32(ctx, link->sess_nonce_leader);
+	zlrs_put_le32(ctx + 4U, link->sess_nonce_follower);
 	link_derive_by_endpoints(link, LABEL_SESSION, ctx, sizeof(ctx), link->session_key_out,
 				 link->session_key_in);
 }

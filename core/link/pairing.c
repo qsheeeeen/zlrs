@@ -39,8 +39,8 @@ static void ordered_ids(const zlrs_link_t *link, uint8_t out[2U * ZLRS_DEV_ID_LE
 
 static void ordered_pair_salt(const zlrs_link_t *link, uint8_t out[ZLRS_PAIR_SALT_LEN])
 {
-	uint32_t a = rd32(&link->pair_salt[0]);
-	uint32_t b = rd32(&link->pair_salt[4]);
+	uint32_t a = zlrs_get_le32(&link->pair_salt[0]);
+	uint32_t b = zlrs_get_le32(&link->pair_salt[4]);
 
 	if (a > b) {
 		const uint32_t tmp = a;
@@ -48,8 +48,8 @@ static void ordered_pair_salt(const zlrs_link_t *link, uint8_t out[ZLRS_PAIR_SAL
 		a = b;
 		b = tmp;
 	}
-	wr32(&out[0], a);
-	wr32(&out[4], b);
+	zlrs_put_le32(&out[0], a);
+	zlrs_put_le32(&out[4], b);
 }
 
 static void derive_auth(zlrs_link_t *link)
@@ -76,7 +76,7 @@ static void derive_pair(zlrs_link_t *link)
 				 link->link_auth_in);
 
 	zlrs_kdf(link->pair_key, ZLRS_KEY_LEN, LABEL_FHSS, NULL, 0U, seed, sizeof(seed));
-	hop_seed = rd32(seed);
+	hop_seed = zlrs_get_le32(seed);
 	zlrs_fhss_init(&link->fhss, link->cfg.domain, hop_seed);
 
 	zlrs_kdf(link->pair_key, ZLRS_KEY_LEN, LABEL_SYNC_DATA, NULL, 0U, data_word,
@@ -155,8 +155,8 @@ static const zlrs_radio_req_t *pair_rx(zlrs_link_t *link, uint16_t timeout_ms)
 static void pairing_complete(zlrs_link_t *link, uint32_t now_ms)
 {
 	/* The two handshake nonces are this pair's material: keep them to recompute pair_key */
-	wr32(&link->pair_salt[0], link->pair_nonce);   /* nonce_a: initiator */
-	wr32(&link->pair_salt[4], link->pair_nonce_b); /* nonce_b: responder */
+	zlrs_put_le32(&link->pair_salt[0], link->pair_nonce);   /* nonce_a: initiator */
+	zlrs_put_le32(&link->pair_salt[4], link->pair_nonce_b); /* nonce_b: responder */
 
 	derive_pair(link);
 	link->paired = true;
@@ -389,8 +389,8 @@ void zlrs_link_set_peer(zlrs_link_t *link, const uint8_t peer_id[ZLRS_DEV_ID_LEN
 	}
 	memcpy(link->peer_id, peer_id, ZLRS_DEV_ID_LEN);
 	memcpy(link->pair_salt, pair_salt, ZLRS_PAIR_SALT_LEN);
-	link->pair_nonce = rd32(pair_salt);
-	link->pair_nonce_b = rd32(pair_salt + 4U);
+	link->pair_nonce = zlrs_get_le32(pair_salt);
+	link->pair_nonce_b = zlrs_get_le32(pair_salt + 4U);
 	link->pair_nonce_valid = true;
 	link->paired = true;
 
