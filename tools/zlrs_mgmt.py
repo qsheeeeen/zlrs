@@ -75,6 +75,21 @@ LOG_INFO_RESP = 0x84
 LOG_DATA_RESP = 0x85
 DEBUG_REPORT_RESP = 0x86
 
+# No-payload commands share registration and encoding metadata.
+SIMPLE_COMMANDS = {
+    "enter": (CMD_ENTER, "enter management mode"),
+    "status": (CMD_STATUS, "read link state, pairing and runtime settings"),
+    "pair": (CMD_PAIR, "start pairing on this device (start the peer too)"),
+    "erase-pair": (CMD_ERASE_PAIR, "erase the peer pairing record"),
+    "new-dev-id": (CMD_NEW_DEV_ID, "make a fresh device id (drops the pairing record)"),
+    "factory-reset": (CMD_FACTORY_RESET, "erase configuration and pairing"),
+    "recovery": (CMD_RECOVERY, "reboot into MCUboot serial recovery"),
+    "build": (CMD_BUILD, "read the build string"),
+    "image-hash": (CMD_IMAGE_HASH, "read the MCUboot hash of the running image (hex)"),
+    "confirm": (CMD_CONFIRM, "confirm this upgrade (no confirm means a timeout rollback)"),
+    "exit": (CMD_EXIT, "leave management mode and restore the radio"),
+}
+
 DEBUG_REPORTS = {"link": 0, "rate": 1, "radio": 2, "power": 3}
 DEBUG_REPORT_CHUNK_MAX = 85
 DEBUG_REPORT_MAX_LEN = 4096
@@ -537,14 +552,12 @@ def add_commands(sub, parents=()):
         commands[name] = child
         return child
 
-    command("enter", help="enter management mode")
-    command("status", help="read link state, pairing and runtime settings", description="read link state, pairing and runtime settings")
+    for name, (_, description) in SIMPLE_COMMANDS.items():
+        command(name, help=description, description=description)
     for name in DEBUG_REPORTS:
         description = ("compare per-link TX power limits and setpoints" if name == "power"
                        else f"read detailed {name} diagnostics")
         command(name, help=f"{description} (debug firmware only)")
-    command("pair", help="start pairing on this device (start the peer too)", description="start pairing on this device (start the peer too)")
-    command("erase-pair", help="erase the peer pairing record", description="erase the peer pairing record")
     phrase = command("set-phrase", help="derive the root key from a binding phrase", description="derive the root key from a binding phrase")
     phrase.add_argument("phrase", help="1..32 UTF-8 bytes; use the same phrase on both peers")
     key = command("set-key-hex", help="set a 32-byte root key", description="set a 32-byte root key")
@@ -566,17 +579,9 @@ def add_commands(sub, parents=()):
                    description="Save the data band; reboot both peers to apply.")
     band.add_argument("band", choices=["auto", "2.4", "subg"],
                       help="select the data frequency band")
-    command("new-dev-id",
-                   help="make a fresh device id (drops the pairing record; read status for the new one)")
-    command("factory-reset", help="erase configuration and pairing", description="erase configuration and pairing")
-    command("recovery", help="reboot into MCUboot serial recovery", description="reboot into MCUboot serial recovery")
-    command("build", help="read the build string")
-    command("image-hash", help="read the MCUboot hash of the running image (hex)")
     logs = command("logs", help="dump the flash log store to a directory")
     logs.add_argument("out_dir", nargs="?", default="zlrs-logs",
                       help="where the log files are written (default: ./zlrs-logs)")
-    command("confirm", help="confirm this upgrade (no confirm means a timeout rollback)")
-    command("exit", help="leave management mode and restore the radio", description="leave management mode and restore the radio")
     return commands
 
 
@@ -631,17 +636,12 @@ def main(args=None, parser=None) -> int:
                 rc = this
         return rc
 
-    if args.command == "enter":
-        frame, expect = encode(CMD_ENTER), True
-    elif args.command == "status":
-        frame, expect = encode(CMD_STATUS), True
+    if args.command in SIMPLE_COMMANDS:
+        frame = encode(SIMPLE_COMMANDS[args.command][0])
+        expect = args.command != "recovery"
     elif args.command in DEBUG_REPORTS:
         frame = encode(CMD_DEBUG_REPORT, bytes([DEBUG_REPORTS[args.command], 0, 0]))
         expect = True
-    elif args.command == "pair":
-        frame, expect = encode(CMD_PAIR), True
-    elif args.command == "erase-pair":
-        frame, expect = encode(CMD_ERASE_PAIR), True
     elif args.command == "set-phrase":
         payload = args.phrase.encode()
         if not 1 <= len(payload) <= 32:
@@ -666,21 +666,8 @@ def main(args=None, parser=None) -> int:
     elif args.command == "set-band":
         frame = encode(CMD_SET_BAND, bytes([{"2.4": 0, "subg": 1, "auto": 2}[args.band]]))
         expect = True
-    elif args.command == "new-dev-id":
-        frame = encode(CMD_NEW_DEV_ID, b"")
-        expect = True
-    elif args.command == "factory-reset":
-        frame, expect = encode(CMD_FACTORY_RESET), True
-    elif args.command == "recovery":
-        frame, expect = encode(CMD_RECOVERY), False
-    elif args.command == "build":
-        frame, expect = encode(CMD_BUILD), True
-    elif args.command == "image-hash":
-        frame, expect = encode(CMD_IMAGE_HASH), True
-    elif args.command == "confirm":
-        frame, expect = encode(CMD_CONFIRM), True
-    else:  # exit
-        frame, expect = encode(CMD_EXIT), True
+    else:
+        parser.error(f"unknown command: {args.command}")
 
     if args.dry_run:
         if args.command not in ("enter", "recovery", "exit") and not args.no_enter:
