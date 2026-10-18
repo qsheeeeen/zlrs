@@ -242,6 +242,22 @@ counters for band-only changes and an unchanged duty budget. A pending plan alon
 does not satisfy transition coverage; observation must include its execution and
 bidirectional recovery.
 
+### One-sided DATA loopback
+
+For a walk test with one board attached to the host, connect the TX board's DATA CDC to the
+host and short DATA TX to DATA RX on the remote peer. Send a deterministic pseudorandom byte
+stream and verify the exact returned stream with:
+
+```sh
+python3 tools/zlrs_loopback.py --device <TX-serial> --duration 120 \
+  --chunk-size 32 --interval-ms 50
+```
+
+The runner saves transmitted and received binary files, a byte-count timeline and a summary
+under `artifacts/loopback-*`. If the TX board exposes the debug console CDC, it also samples
+non-pausing link and DATA-port status. Use `--no-status` for data-only capture or `--console`
+to select a specific debug console port. Management status is not polled during the run.
+
 ### PHY and FIFO isolation
 
 ```sh
