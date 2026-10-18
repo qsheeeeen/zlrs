@@ -758,6 +758,7 @@ static void publish_state(bool force)
 	/* Only LED inputs wake UI immediately. Full metrics remain available at 1 Hz. */
 	if (!force && have_state && (uint32_t)(now_ms - published_ms) < REPORT_PERIOD_MS &&
 	    published.role == (role_leader ? ZLRS_ROLE_LEADER : ZLRS_ROLE_FOLLOWER) &&
+	    published.data_band == data_band && published.band_mode == band_mode &&
 	    published.state == info.state && published.link_lost == lost &&
 	    published.fault == !radio_ready && published.lq_percent == stats->lq_percent &&
 	    published.data_drop_bytes == stats->data_drop_bytes &&

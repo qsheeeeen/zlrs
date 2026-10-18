@@ -32,7 +32,11 @@ def main():
     parser.add_argument("--image", type=Path,
                         default=REPO / "build/unit-data-only-sysbuild/unit/zephyr/zephyr.signed.bin")
     parser.add_argument("--log", type=Path, required=True, help="save the complete Ztest output")
+    parser.add_argument("--timeout", type=int, default=300,
+                        help="test console discovery and execution timeout in seconds (default: 300)")
     args = parser.parse_args()
+    if args.timeout <= 0:
+        parser.error("--timeout must be positive")
     args.log.write_bytes(b"")
     previous = image_hash(args.serial)
     management = Path("/dev/serial/by-id") / f"usb-zlrs_ZLRS_{args.serial}-if02"
@@ -42,7 +46,7 @@ def main():
         check=True,
     )
     console = Path("/dev/serial/by-id") / f"usb-zlrs_ZLRS_UNIT_TEST_{args.serial}-if04"
-    deadline = time.monotonic() + 120
+    deadline = time.monotonic() + args.timeout
     while not console.exists():
         if management.exists():
             time.sleep(0.5)

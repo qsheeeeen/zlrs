@@ -178,10 +178,10 @@ static void expect_pattern(struct led_rgb first, struct led_rgb second, uint32_t
 		     first_ms, count);
 }
 
-static void expect_connected(struct led_rgb theme, uint8_t flashes)
+static void expect_connected(struct led_rgb theme, uint8_t flashes, uint32_t beat_ms)
 {
 	clear_capture();
-	k_msleep(2800);
+	k_msleep(9U * beat_ms + 100U);
 	struct sample captured[ARRAY_SIZE(samples)];
 	const k_spinlock_key_t key = k_spin_lock(&capture_lock);
 	const size_t count = sample_count;
@@ -199,16 +199,17 @@ static void expect_connected(struct led_rgb theme, uint8_t flashes)
 		if (is_on) {
 			if (rises != 0U) {
 				const uint32_t gap = captured[i].ms - last_on;
-				const uint32_t short_gap = flashes == 1U ? 900U : 300U;
-				const uint32_t long_gap = flashes == 2U ? 600U : short_gap;
+				const uint32_t short_gap = flashes == 1U ? 3U * beat_ms : beat_ms;
+				const uint32_t long_gap = flashes == 2U ? 2U * beat_ms : short_gap;
 				const bool short_ok = abs((int32_t)gap - (int32_t)short_gap) <= 25;
 				const bool long_ok = abs((int32_t)gap - (int32_t)long_gap) <= 25;
 				zassert_true(short_ok || long_ok, "unexpected rise interval %u",
 					     gap);
 				if (flashes == 2U) {
 					const int kind = short_ok ? 0 : 1;
-					zassert_not_equal(kind, previous_gap,
-							  "two flashes must alternate 300/600 ms");
+					zassert_not_equal(
+						kind, previous_gap,
+						"two flashes must alternate short/long intervals");
 					previous_gap = kind;
 				}
 				gap_min = MIN(gap_min, gap);
@@ -218,7 +219,8 @@ static void expect_connected(struct led_rgb theme, uint8_t flashes)
 			rises++;
 		} else if (was_on) {
 			const uint32_t width = captured[i].ms - last_on;
-			zassert_true(abs((int32_t)width - 150) <= 25, "pulse width %u", width);
+			zassert_true(abs((int32_t)width - (int32_t)(beat_ms / 2U)) <= 25,
+				     "pulse width %u", width);
 			on_min = MIN(on_min, width);
 			on_max = MAX(on_max, width);
 			widths++;
@@ -227,8 +229,9 @@ static void expect_connected(struct led_rgb theme, uint8_t flashes)
 	}
 	zassert_true(rises >= 2U * flashes && widths >= 2U, "not enough pulses: rises=%u widths=%u",
 		     rises, widths);
-	printk("CONNECTED role=%u LQ=%u flashes=%u on_ms=%u..%u rise_ms=%u..%u\n", link.role,
-	       link.lq_percent, flashes, on_min, on_max, gap_min, gap_max);
+	printk("CONNECTED role=%u mode=%u band=%u LQ=%u flashes=%u on_ms=%u..%u rise_ms=%u..%u\n",
+	       link.role, link.band_mode, link.data_band, link.lq_percent, flashes, on_min, on_max,
+	       gap_min, gap_max);
 }
 
 static void before(void *fixture)
@@ -236,6 +239,8 @@ static void before(void *fixture)
 	ARG_UNUSED(fixture);
 	link = (zlrs_rf_status_t){.role = ZLRS_ROLE_FOLLOWER,
 				  .state = ZLRS_STATE_CONNECTED,
+				  .data_band = ZLRS_DATA_BAND_24,
+				  .band_mode = ZLRS_DATA_BAND_24,
 				  .lq_percent = 100U,
 				  .frame_period_us = 9080U};
 	mode = (struct zlrs_mode){0};
@@ -282,6 +287,11 @@ ZTEST(led_patterns, test_link_lost_while_connected)
 	link.link_lost = true;
 	publish();
 	expect_pattern(green, red, 500U, 250U, 1080U);
+	link.band_mode = ZLRS_DATA_BAND_AUTO;
+	link.data_band = ZLRS_DATA_BAND_SUBG;
+	link.band_acquiring = true;
+	publish();
+	expect_pattern(green, red, 500U, 250U, 1080U);
 	link.link_lost = false;
 	link.fault = true;
 	publish();
@@ -290,21 +300,60 @@ ZTEST(led_patterns, test_link_lost_while_connected)
 
 ZTEST(led_patterns, test_connected_lq)
 {
-	static const struct {
+	struct lq_case {
 		uint8_t quality;
 		uint8_t flashes;
-	} cases[] = {{100U, 3U}, {80U, 3U}, {79U, 2U}, {50U, 2U}, {49U, 1U}, {0U, 1U}};
+	};
+	static const struct lq_case full_range[] = {{100U, 3U}, {80U, 3U}, {79U, 2U},
+						    {50U, 2U},  {49U, 1U}, {0U, 1U}};
+	static const struct lq_case auto_24[] = {{100U, 3U}, {99U, 3U}, {98U, 2U},
+						 {95U, 2U},  {94U, 1U}, {0U, 1U}};
+	static const struct {
+		zlrs_data_band_t mode;
+		zlrs_data_band_t band;
+		uint32_t beat_ms;
+		const struct lq_case *cases;
+		size_t count;
+	} scenarios[] = {
+		{ZLRS_DATA_BAND_24, ZLRS_DATA_BAND_24, 300U, full_range, ARRAY_SIZE(full_range)},
+		{ZLRS_DATA_BAND_SUBG, ZLRS_DATA_BAND_SUBG, 600U, full_range,
+		 ARRAY_SIZE(full_range)},
+		{ZLRS_DATA_BAND_AUTO, ZLRS_DATA_BAND_24, 300U, auto_24, ARRAY_SIZE(auto_24)},
+		{ZLRS_DATA_BAND_AUTO, ZLRS_DATA_BAND_SUBG, 600U, full_range,
+		 ARRAY_SIZE(full_range)},
+	};
 	printk("Connected cadence output: %s\n",
 	       physical_strip != NULL ? physical_strip->name : "capture only");
-	for (size_t i = 0U; i < ARRAY_SIZE(cases); i++) {
-		link.lq_percent = cases[i].quality;
+	for (size_t i = 0U; i < ARRAY_SIZE(scenarios); i++) {
+		link.band_mode = scenarios[i].mode;
+		link.data_band = scenarios[i].band;
+		link.role = ZLRS_ROLE_FOLLOWER;
+		for (size_t j = 0U; j < scenarios[i].count; j++) {
+			link.lq_percent = scenarios[i].cases[j].quality;
+			publish();
+			expect_connected(green, scenarios[i].cases[j].flashes,
+					 scenarios[i].beat_ms);
+		}
+		link.role = ZLRS_ROLE_LEADER;
+		link.lq_percent = 100U;
 		publish();
-		expect_connected(green, cases[i].flashes);
+		expect_connected(blue, 3U, scenarios[i].beat_ms);
 	}
-	link.role = ZLRS_ROLE_LEADER;
-	link.lq_percent = 100U;
+}
+
+ZTEST(led_patterns, test_connected_band_changes)
+{
+	link.band_mode = ZLRS_DATA_BAND_AUTO;
+	link.lq_percent = 97U;
 	publish();
-	expect_connected(blue, 3U);
+	expect_connected(green, 2U, 300U);
+	/* The active band changes the cadence and LQ scale even with unchanged LQ. */
+	link.data_band = ZLRS_DATA_BAND_SUBG;
+	publish();
+	expect_connected(green, 3U, 600U);
+	link.data_band = ZLRS_DATA_BAND_24;
+	publish();
+	expect_connected(green, 2U, 300U);
 }
 
 ZTEST(led_patterns, test_data_drops)

@@ -130,7 +130,8 @@ invalid records, partial write failure, identity, pairing deletion and reset.
 Deleted pairing must not return through a stale active result.
 
 UI acceptance covers all priorities and cadence, the 500 ms management delay,
-one-second drop indication, the 150 ms connected pulses and 3/2/1-beat cadence,
+one-second drop indication, the 150/300 ms connected pulses and 3/2/1-beat cadence
+on 2.4 GHz/SubG, active-band changes in automatic mode, per-band LQ boundaries,
 output retry, cumulative button input and missed/locked channel reads.
 
 Run the production RF owner for both roles and fixed bands:
@@ -163,6 +164,77 @@ periodic synchronization, pacing, power changes and diagnostic pagination.
 Automatic capture must reject user DATA until phase proof, retain acquisition
 through a large valid offset, and resume only after reverse DATA proof.
 
+## WSL USB forwarding
+
+On WSL 2, forward the boards from Windows before running hardware tools. Use
+usbipd-win 5.x and a WSL kernel with USB/IP VHCI and CDC ACM support. The Windows
+`usbipd` service must be running, and its installed firewall rule must allow the
+WSL connection. Current usbipd-win supplies its WSL client; installing Ubuntu
+`linux-tools-*` or finding a `usbip` binary matching the Microsoft kernel is not
+required. See [Microsoft's USB guide](https://learn.microsoft.com/en-us/windows/wsl/connect-usb)
+and [usbipd-win's WSL instructions](https://github.com/dorssel/usbipd-win/wiki/WSL-support).
+
+For a new Windows installation, run in administrator PowerShell:
+
+```powershell
+winget install --interactive --exact dorssel.usbipd-win
+Get-Service usbipd
+usbipd list
+```
+
+Identify the ZLRS boards before sharing them. The current application and MCUboot
+use `2fe3:0004`; do not share unrelated devices. Run `usbipd bind --busid <BUSID>`
+once per board from administrator PowerShell. `Shared` persists across Windows
+reboots; it does not mean the device is attached to WSL. Bus IDs belong to the
+current USB topology and can change when moving boards between ports.
+
+Keep WSL running. Attach each shared board from a normal WSL terminal; `attach`
+does not require Windows administrator privileges:
+
+```sh
+usbipd.exe list
+usbipd.exe attach --wsl --busid 1-2
+usbipd.exe attach --wsl --busid 4-1
+lsusb -d 2fe3:0004
+ls -l /dev/serial/by-id
+python3 tools/zlrs.py list
+```
+
+Replace the example bus IDs with those from `usbipd.exe list`, and verify that
+both change from `Shared` to `Attached`. Use each board's USB serial and
+`/dev/serial/by-id` names for tests; `/dev/ttyACM*` numbering can change at every
+enumeration. Management is application interface `if02`, the debug/unit-test
+console is `if04`, and MCUboot recovery is `if00`. These modes have different
+product strings and preserve the board's USB serial.
+
+Flashing and rollback reset USB. Before a hardware run, keep one foreground
+auto-attach command per board running in separate terminals:
+
+```sh
+usbipd.exe attach --wsl --busid 1-2 --auto-attach --unplugged
+```
+
+Run the same command with the other board's bus ID in a second terminal. This
+loop reattaches after a reset or unplug/replug on that port; it must remain
+running throughout application → MCUboot → fixture → rollback. Use bus IDs
+instead of `--hardware-id` when both boards have the same VID/PID. After testing,
+stop the loops with Ctrl+C. To return a board to Windows, stop its loop first,
+then run `usbipd.exe detach --busid <BUSID>`; otherwise it immediately reattaches.
+Start the loops again after restarting WSL or Windows.
+
+Forwarded USB can take several seconds to re-enumerate. For manual updates use
+`python3 tools/zlrs.py update --serial <serial> --image <signed.bin> --timeout 45`;
+the hardware unit runner already allows 45 seconds for recovery discovery.
+
+For permission failures, check `id -nG` and `ls -l /dev/ttyACM*`. Ubuntu serial
+nodes normally require the `dialout` group. If needed, run
+`sudo usermod -aG dialout "$USER"` and start a new login session (or use
+`newgrp dialout`). If Windows lists a board as attached but no serial nodes
+appear, inspect `lsmod` for `vhci_hcd`, `usbip_core` and `cdc_acm`, and inspect
+`dmesg` for enumeration errors. A subprocess sandbox can block Windows interop
+with `UtilBindVsockAnyPort: socket failed 1` or hide device access; retry from a
+normal WSL terminal or an explicitly approved process outside that sandbox.
+
 ## Hardware acceptance
 
 Build LF/HF production and debug configurations with matching MCUboot images.
@@ -186,10 +258,23 @@ python3 tests/hardware/unit/run.py --serial <serial> \
   --image build/unit/unit/zephyr/zephyr.signed.bin --log build/unit.log
 ```
 
+For LED-only acceptance without settings or persistence test cases, build the
+isolated fixture and use the same runner. The expanded per-band cadence cases
+take about 150 seconds, so the runner and hardware harness allow 300 seconds:
+
+```sh
+west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33/lf \
+  tests/hardware/unit -d build/unit-ui -- -Dunit_ZLRS_TEST_UI_ONLY=ON
+python3 tests/hardware/unit/run.py --serial <serial> \
+  --image build/unit-ui/unit/zephyr/zephyr.signed.bin --log build/unit-ui.log
+```
+
 The LED fixture records UI output timestamps and forwards accepted frames to the
 board's physical LED strip when available. Connected acceptance checks 150 ms
-pulses, 300/600/900 ms rising-edge intervals, both role colors and the 50%/80%
-quality boundaries.
+pulses and 300/600/900 ms rising-edge intervals on 2.4 GHz, and 300 ms pulses and
+600/1200/1800 ms intervals on SubG. It covers both role colors, automatic and fixed
+band modes, the 95%/99% quality boundaries on automatic 2.4 GHz and 50%/80% on
+fixed 2.4 GHz and both SubG modes.
 
 Entropy acceptance includes successive and partial-block reads, health-check
 failure, bounded timeout with USB available, propagation to handshake refusal and

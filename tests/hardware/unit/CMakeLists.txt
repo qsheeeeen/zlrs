@@ -9,13 +9,27 @@ zephyr_get(ZLRS_TEST_ENTROPY_ONLY)
 option(ZLRS_TEST_ENTROPY_ONLY "Run only hardware entropy acceptance without storage tests" OFF)
 set(ZLRS_TEST_ENTROPY_ONLY "${ZLRS_TEST_ENTROPY_ONLY}" CACHE BOOL
   "Run only hardware entropy acceptance without storage tests" FORCE)
+zephyr_get(ZLRS_TEST_UI_ONLY)
+option(ZLRS_TEST_UI_ONLY "Run only LED acceptance without storage tests" OFF)
+set(ZLRS_TEST_UI_ONLY "${ZLRS_TEST_UI_ONLY}" CACHE BOOL
+  "Run only LED acceptance without storage tests" FORCE)
+if(ZLRS_TEST_ENTROPY_ONLY AND ZLRS_TEST_UI_ONLY)
+  message(FATAL_ERROR "Select only one isolated hardware fixture")
+endif()
 target_sources(app PRIVATE
   src/main.c
-  ../drivers/entropy/test_rp2350_trng.c
   "${zlrs_root}/app/src/platform/sha256.c")
 target_include_directories(app PRIVATE "${zlrs_root}/app/src" "${zlrs_root}/core/proto" ..)
 
-if(NOT ZLRS_TEST_ENTROPY_ONLY)
+if(ZLRS_TEST_UI_ONLY)
+  target_sources(app PRIVATE
+    ../app/ui/test_led.c
+    "${zlrs_root}/app/src/ui.c")
+else()
+  target_sources(app PRIVATE ../drivers/entropy/test_rp2350_trng.c)
+endif()
+
+if(NOT ZLRS_TEST_ENTROPY_ONLY AND NOT ZLRS_TEST_UI_ONLY)
   target_sources(app PRIVATE
     ../drivers/crypto/test_rp2350_sha256.c
     ../core/proto/test_crypto.c

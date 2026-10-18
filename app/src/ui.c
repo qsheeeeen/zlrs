@@ -107,13 +107,19 @@ static struct led_rgb led_color(const zlrs_rf_status_t *link, bool mgmt_mode, bo
 	}
 	switch (link->state) {
 	case ZLRS_STATE_CONNECTED: {
-		/* Three 300 ms beats, with no extra gap between 900 ms cycles. */
-		const uint32_t phase = now_ms % 900U;
-		const uint8_t flashes = link->lq_percent >= 80U   ? 3U
-					: link->lq_percent >= 50U ? 2U
-								  : 1U;
+		/* SubG has the slower three-beat cycle. Automatic 2.4 GHz shows
+		 * degradation before fallback; fixed bands retain the full LQ range. */
+		const bool subg = link->data_band == ZLRS_DATA_BAND_SUBG;
+		const bool auto_24 = link->band_mode == ZLRS_DATA_BAND_AUTO && !subg;
+		const uint32_t beat_ms = subg ? 600U : 300U;
+		const uint8_t high_lq = auto_24 ? 99U : 80U;
+		const uint8_t medium_lq = auto_24 ? 95U : 50U;
+		const uint32_t phase = now_ms % (3U * beat_ms);
+		const uint8_t flashes = link->lq_percent >= high_lq     ? 3U
+					: link->lq_percent >= medium_lq ? 2U
+									: 1U;
 
-		return phase < flashes * 300U && phase % 300U < 150U ? theme : off;
+		return phase < flashes * beat_ms && phase % beat_ms < beat_ms / 2U ? theme : off;
 	}
 	case ZLRS_STATE_PAIRING:
 		return blink(theme, now_ms, 1000U, 300U);

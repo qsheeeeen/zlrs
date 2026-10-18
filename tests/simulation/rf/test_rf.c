@@ -406,8 +406,17 @@ static bool receive_peer(void *ctx, const uint8_t *bytes, uint16_t size)
 static void frames(unsigned int count)
 {
 	while (count--) {
+		const zlrs_data_band_t previous_band = zlrs_rf_status().data_band;
 		zlrs_rf_frame();
 		zassert_false(zlrs_link_is_busy(local));
+		if (RF_TEST_BAND_AUTO && zlrs_rf_status().data_band != previous_band) {
+			/* A transition must reach UI without waiting for the metrics timer. */
+			zlrs_rf_publish_state();
+			zlrs_rf_status_t published;
+			zassert_ok(zbus_chan_read(&zlrs_rf_chan, &published, K_NO_WAIT));
+			zassert_equal(published.data_band, zlrs_rf_status().data_band);
+			zassert_equal(published.band_mode, ZLRS_DATA_BAND_AUTO);
+		}
 	}
 }
 static bool peer_random(void *ctx, uint32_t *out)
