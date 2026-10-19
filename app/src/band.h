@@ -1,8 +1,10 @@
 /* Automatic frequency-band policy; clocks and radio operations belong to RF.
  * SPDX-License-Identifier: Apache-2.0 */
 #pragma once
+
 #include <stdbool.h>
 #include <stdint.h>
+
 #include "zlrs/proto/mod.h"
 
 typedef enum {
@@ -11,6 +13,7 @@ typedef enum {
 	ZLRS_BAND_SEARCH,
 	ZLRS_BAND_BOOST
 } zlrs_band_action_t;
+
 typedef struct {
 	bool automatic, leader, subg, probing;
 	zlrs_phy_t phy, target_phy;
@@ -21,6 +24,7 @@ typedef struct {
 	bool power_boosted;
 	uint32_t power_boost_ms;
 } zlrs_band_policy_t;
+
 typedef struct {
 	uint32_t now_ms, last_rx_ms, feedback_ms;
 	bool paired, pairing, connected, acquiring, planned;

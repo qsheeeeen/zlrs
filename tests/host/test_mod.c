@@ -40,6 +40,7 @@ static void test_mod_flrc_matches_region(void)
 void test_mod(void)
 {
 	test_mod_flrc_matches_region();
+
 	/* Independent LR20xx airtime vectors: BW1MHz, CR4/5, explicit, CRC, preamble12. */
 	static const struct {
 		uint16_t len;
@@ -48,6 +49,7 @@ void test_mod(void)
 		     {24U, 4559U, 8223U},
 		     {128U, 15759U, 27423U},
 		     {255U, 29199U, 50463U}};
+
 	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
 		const zlrs_mod_cfg_t sf6 = zlrs_mod_lora(6U), sf7 = zlrs_mod_lora(7U);
 		CHECK(zlrs_mod_airtime_us(&sf6, cases[i].len) == cases[i].sf6);

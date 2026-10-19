@@ -10,6 +10,7 @@
 struct zlrs_mode {
 	bool session;
 };
+
 ZBUS_CHAN_DECLARE(zlrs_mode_chan);
 
 /*

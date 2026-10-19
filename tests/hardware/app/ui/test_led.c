@@ -308,6 +308,7 @@ ZTEST(led_patterns, test_connected_lq)
 						    {50U, 2U},  {49U, 1U}, {0U, 1U}};
 	static const struct lq_case auto_24[] = {{100U, 3U}, {99U, 3U}, {98U, 2U},
 						 {95U, 2U},  {94U, 1U}, {0U, 1U}};
+
 	static const struct {
 		zlrs_data_band_t mode;
 		zlrs_data_band_t band;
@@ -322,6 +323,7 @@ ZTEST(led_patterns, test_connected_lq)
 		{ZLRS_DATA_BAND_AUTO, ZLRS_DATA_BAND_SUBG, 600U, full_range,
 		 ARRAY_SIZE(full_range)},
 	};
+
 	printk("Connected cadence output: %s\n",
 	       physical_strip != NULL ? physical_strip->name : "capture only");
 	for (size_t i = 0U; i < ARRAY_SIZE(scenarios); i++) {

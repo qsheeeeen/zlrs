@@ -21,6 +21,7 @@ struct zlrs_serial_status {
 	bool input_paused;
 	uint32_t dropped;
 };
+
 ZBUS_CHAN_DECLARE(zlrs_serial_chan);
 /* Publish changed serial status to zbus from the main thread. */
 void zlrs_serial_publish_state(void);
@@ -28,8 +29,8 @@ void zlrs_serial_publish_state(void);
 /* For bench debugging: state of one data endpoint (`zlrs ports` prints it) */
 typedef struct {
 	const char *name;
-	bool ready; /* the endpoint exists on the board and the device is ready */
-	bool active; /* UART by default; configured, nonsuspended USB takes priority */
+	bool ready;          /* the endpoint exists on the board and the device is ready */
+	bool active;         /* UART by default; configured, nonsuspended USB takes priority */
 	uint32_t rx_total;   /* bytes received since boot */
 	uint32_t tx_total;   /* bytes handed to the peripheral since boot */
 	uint32_t rx_dropped; /* UART overflow and discarded inactive-endpoint bytes */

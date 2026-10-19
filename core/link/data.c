@@ -55,7 +55,7 @@ static const zlrs_radio_req_t *arq_send_slot(zlrs_link_t *link, uint8_t seq, uin
 	zlrs_data_frame_t *const data = data_frame(link, seq, &frame);
 	queue_copy(link, 0U, data->bytes, len);
 	const uint16_t frame_len = link_build_frame(link, &frame, ZLRS_DATA_PREFIX_LEN + len,
-						  link_tag_key_for(link, frame.type, true));
+						    link_tag_key_for(link, frame.type, true));
 	/* Keep bytes queued until ACK, independently of radio completion. */
 	link->pending_data_len = 0U;
 	link->arq_ack_pending = false;
@@ -139,7 +139,7 @@ const uint8_t *zlrs_link_prepare_data(zlrs_link_t *link, uint8_t slot, uint32_t 
 	air_frame.seq = packet->frame_seq;
 	memcpy(packet->key, link_tag_key_for(link, type, true), ZLRS_KEY_LEN);
 	packet->size = link_encode_frame(link, packet->buf, &air_frame,
-					ZLRS_DATA_PREFIX_LEN + packet->data_len, packet->key);
+					 ZLRS_DATA_PREFIX_LEN + packet->data_len, packet->key);
 	if (packet->size == 0U) {
 		return NULL;
 	}
@@ -170,8 +170,7 @@ static const zlrs_radio_req_t *send_prepared_data(zlrs_link_t *link, uint32_t no
 	if (!packet->valid || packet->retry != retry || !data_valid ||
 	    packet->frame_index != link->frame_index || packet->frame_seq != link->tx_seq ||
 	    packet->data_seq != data_seq || packet->data_mtu != link->cfg.data_mtu ||
-	    packet->profile != link->cfg.profile ||
-	    packet->buf[0] != type ||
+	    packet->profile != link->cfg.profile || packet->buf[0] != type ||
 	    !zlrs_ct_equal(packet->key, link_tag_key_for(link, type, true), ZLRS_KEY_LEN)) {
 		packet->valid = false;
 		return NULL;
@@ -243,7 +242,7 @@ const zlrs_radio_req_t *link_send_empty_data(zlrs_link_t *link)
 	zlrs_frame_t frame;
 	data_frame(link, link->arq_seq, &frame);
 	const uint16_t len = link_build_frame(link, &frame, ZLRS_DATA_PREFIX_LEN,
-					     link_tag_key_for(link, frame.type, true));
+					      link_tag_key_for(link, frame.type, true));
 	if (len == 0U) {
 		return NULL;
 	}
@@ -287,7 +286,7 @@ const zlrs_radio_req_t *link_send_data(zlrs_link_t *link, uint32_t now_ms)
 	zlrs_data_frame_t *const data = data_frame(link, 0U, &frame);
 	queue_copy(link, 0U, data->bytes, take);
 	const uint16_t len = link_build_frame(link, &frame, ZLRS_DATA_PREFIX_LEN + take,
-					     link_tag_key_for(link, frame.type, true));
+					      link_tag_key_for(link, frame.type, true));
 	link->pending_data_len = take;
 	return link_submit_tx(link, len, link_slot_freq_hz(link), ZLRS_SYNC_SLOT_DATA,
 			      link->sync_word);
@@ -299,8 +298,8 @@ static bool deliver_data(zlrs_link_t *link, const zlrs_data_frame_t *data, uint1
 	       link->ev.on_data(link->ev.ctx, data->bytes, len);
 }
 
-void link_handle_data(zlrs_link_t *link, const zlrs_frame_t *frame,
-		      uint16_t data_len, uint32_t now_ms)
+void link_handle_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint16_t data_len,
+		      uint32_t now_ms)
 {
 	const zlrs_data_frame_t *const data = &frame->body.data;
 	if (link->cfg.arq) {
@@ -316,8 +315,8 @@ void link_handle_data(zlrs_link_t *link, const zlrs_frame_t *frame,
 	}
 	if (link->cfg.arq) {
 		const uint8_t seq = data->data_seq;
-		const uint8_t next = link->arq_rx_started
-					     ? (link->arq_rx_seq + 1U) & ZLRS_DATA_SEQ_MASK : 0U;
+		const uint8_t next =
+			link->arq_rx_started ? (link->arq_rx_seq + 1U) & ZLRS_DATA_SEQ_MASK : 0U;
 		link->arq_ack_pending = true;
 		if (seq != next) {
 			if (link->arq_rx_started && seq == link->arq_rx_seq) {
@@ -353,8 +352,7 @@ void link_lq_account(zlrs_link_t *link, uint32_t seq)
 	const uint64_t expected = (uint64_t)link->stats.lq_expected + delta;
 
 	if (expected >= ZLRS_LQ_WINDOW_FRAMES) {
-		link->stats.lq_percent =
-			(uint8_t)(((uint64_t)link->stats.lq_rx * 100U) / expected);
+		link->stats.lq_percent = (uint8_t)(((uint64_t)link->stats.lq_rx * 100U) / expected);
 		link->stats.lq_rx = 0U;
 		link->stats.lq_expected = 0U;
 	} else {

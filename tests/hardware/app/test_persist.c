@@ -13,6 +13,7 @@ static uint8_t backup[PARTITION_SIZE(storage_partition)];
 static const struct flash_area *area;
 static bool fail_write;
 ssize_t __real_nvs_write(struct nvs_fs *fs, uint16_t id, const void *data, size_t len);
+
 ssize_t __wrap_nvs_write(struct nvs_fs *fs, uint16_t id, const void *data, size_t len)
 {
 	if (fail_write) {
@@ -20,12 +21,14 @@ ssize_t __wrap_nvs_write(struct nvs_fs *fs, uint16_t id, const void *data, size_
 	}
 	return __real_nvs_write(fs, id, data, len);
 }
+
 static void *setup(void)
 {
 	zassert_ok(flash_area_open(PARTITION_ID(storage_partition), &area));
 	zassert_ok(flash_area_read(area, 0, backup, sizeof(backup)));
 	return NULL;
 }
+
 static void teardown(void *unused)
 {
 	ARG_UNUSED(unused);
@@ -41,6 +44,7 @@ static struct nvs_fs inspect = {
 	.sector_count = PARTITION_SIZE(storage_partition) /
 			DT_PROP(DT_GPARENT(DT_NODELABEL(storage_partition)), erase_block_size),
 };
+
 ZTEST(settings, test_layout_and_persistence)
 {
 	zassert_ok(nvs_mount(&inspect));
@@ -157,4 +161,5 @@ ZTEST(settings, test_layout_and_persistence)
 	zassert_equal(nvs_read(&inspect, 0, raw, 4), 4);
 	zassert_equal(sys_get_le32(raw), 0x5A4C0002);
 }
+
 ZTEST_SUITE(settings, NULL, setup, NULL, NULL, teardown);

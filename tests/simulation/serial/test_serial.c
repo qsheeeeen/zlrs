@@ -153,7 +153,8 @@ ZTEST(serial, test_suspend_resume_and_deconfiguration)
 ZTEST(serial, test_disconnect_reset_and_errors)
 {
 	const enum usbd_msg_type events[] = {USBD_MSG_VBUS_REMOVED, USBD_MSG_RESET,
-					   USBD_MSG_UDC_ERROR, USBD_MSG_STACK_ERROR};
+					     USBD_MSG_UDC_ERROR, USBD_MSG_STACK_ERROR};
+
 	for (size_t i = 0; i < ARRAY_SIZE(events); i++) {
 		message(USBD_MSG_CONFIGURATION, 1);
 		selected(true);

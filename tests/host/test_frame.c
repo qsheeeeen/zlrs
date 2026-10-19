@@ -31,8 +31,8 @@ static void check_wire(const zlrs_frame_t *view, const uint8_t *expected, uint16
 	if (debug.type == ZLRS_PKT_SYNC) {
 		debug.body.sync.profile = ZLRS_PROFILE_P0;
 	}
-	CHECK(zlrs_frame_encode(&debug, buf, sizeof(buf), size - ZLRS_TAG_LEN, 0U)
-	      == size - ZLRS_TAG_LEN);
+	CHECK(zlrs_frame_encode(&debug, buf, sizeof(buf), size - ZLRS_TAG_LEN, 0U) ==
+	      size - ZLRS_TAG_LEN);
 	CHECK(buf[0] == (view->type == ZLRS_PKT_SYNC ? 0xc2U : expected[0]));
 	CHECK(memcmp(buf + 1U, expected + 1U, size - ZLRS_TAG_LEN - 1U) == 0);
 	CHECK(zlrs_frame_decode(&decoded, buf, size - ZLRS_TAG_LEN, 0U));
@@ -51,13 +51,13 @@ void test_frame(void)
 					    .rssi_magnitude = 48,
 					    .lq_percent = 99,
 					    .bytes = {0x5a, 0xa5}}};
-	const uint8_t data[] = {0,2,1,3,4, 0xff,48,99,0x5a,0xa5, 0xde,0xad,0xbe,0xef};
+	const uint8_t data[] = {0, 2, 1, 3, 4, 0xff, 48, 99, 0x5a, 0xa5, 0xde, 0xad, 0xbe, 0xef};
 	check_wire(&frame, data, sizeof(data));
 	frame = (zlrs_frame_t){.type = ZLRS_PKT_DATA_F2L,
 			       .seq = 0x04030102,
 			       .tag = {0xde, 0xad, 0xbe, 0xef},
 			       .body.data = {.data_seq = 1, .lq_percent = 100}};
-	const uint8_t feedback[] = {1,2,1,3,4, 2,0,100, 0xde,0xad,0xbe,0xef};
+	const uint8_t feedback[] = {1, 2, 1, 3, 4, 2, 0, 100, 0xde, 0xad, 0xbe, 0xef};
 	check_wire(&frame, feedback, sizeof(feedback));
 	frame = (zlrs_frame_t){.type = ZLRS_PKT_SYNC,
 			       .seq = 0x04030102,
@@ -69,23 +69,29 @@ void test_frame(void)
 					     .frame_index = 0x55667788,
 					     .band_plan = {.domain = 4,
 							   .automatic = 1,
-							   .phy = 1, .target_phy = 4,
+							   .phy = 1,
+							   .target_phy = 4,
 							   .switch_frame = 0x66778899}}};
-	const uint8_t sync[] = {0xca,2,1,3,4, 254,0x44,0x33,0x22,0x11,
-			       0x88,0x77,0x66,0x55, 0x0c,0x99,0x88,0x77,0x66,0x21, 0xde,0xad,0xbe,0xef};
+	const uint8_t sync[] = {0xca, 2,    1,    3,    4,    254,  0x44, 0x33,
+				0x22, 0x11, 0x88, 0x77, 0x66, 0x55, 0x0c, 0x99,
+				0x88, 0x77, 0x66, 0x21, 0xde, 0xad, 0xbe, 0xef};
 	check_wire(&frame, sync, sizeof(sync));
-	frame = (zlrs_frame_t){.type = ZLRS_PKT_PAIR_REQ, .seq = 0x04030102,
-		.tag = {0xde, 0xad, 0xbe, 0xef},
-		.body.pair_req = {.dev_a = {1,2,3,4}, .nonce_a = 0x11223344}};
-	const uint8_t req[] = {3,2,1,3,4, 1,2,3,4,0x44,0x33,0x22,0x11, 0xde,0xad,0xbe,0xef};
+	frame = (zlrs_frame_t){.type = ZLRS_PKT_PAIR_REQ,
+			       .seq = 0x04030102,
+			       .tag = {0xde, 0xad, 0xbe, 0xef},
+			       .body.pair_req = {.dev_a = {1, 2, 3, 4}, .nonce_a = 0x11223344}};
+	const uint8_t req[] = {3,    2,    1,    3,    4,    1,    2,    3,   4,
+			       0x44, 0x33, 0x22, 0x11, 0xde, 0xad, 0xbe, 0xef};
 	check_wire(&frame, req, sizeof(req));
-	const zlrs_pair_frame_t pair_body = {.dev_a = {1,2,3,4}, .dev_b = {5,6,7,8},
-		.nonce_a = 0x11223344, .nonce_b = 0x55667788};
-	uint8_t pair[] = {4,2,1,3,4, 1,2,3,4,5,6,7,8,0x44,0x33,0x22,0x11,
-			 0x88,0x77,0x66,0x55, 0xde,0xad,0xbe,0xef};
+	const zlrs_pair_frame_t pair_body = {.dev_a = {1, 2, 3, 4},
+					     .dev_b = {5, 6, 7, 8},
+					     .nonce_a = 0x11223344,
+					     .nonce_b = 0x55667788};
+	uint8_t pair[] = {4,    2,    1,    3,    4,    1,    2,    3,    4,    5,    6,    7,   8,
+			  0x44, 0x33, 0x22, 0x11, 0x88, 0x77, 0x66, 0x55, 0xde, 0xad, 0xbe, 0xef};
 	for (uint8_t type = ZLRS_PKT_PAIR_RESP; type <= ZLRS_PKT_PAIR_CFM; type++) {
-		frame = (zlrs_frame_t){.type = type, .seq = 0x04030102,
-			.tag = {0xde, 0xad, 0xbe, 0xef}};
+		frame = (zlrs_frame_t){
+			.type = type, .seq = 0x04030102, .tag = {0xde, 0xad, 0xbe, 0xef}};
 		pair[0] = type;
 		frame.body.pair = pair_body;
 		check_wire(&frame, pair, sizeof(pair));
@@ -95,8 +101,8 @@ void test_frame(void)
 		.seq = 0x04030102,
 		.tag = {0xde, 0xad, 0xbe, 0xef},
 		.body.sess_resp = {.nonce_leader = 0x11223344, .nonce_follower = 0x55667788}};
-	const uint8_t resp[] = {6,2,1,3,4, 0x44,0x33,0x22,0x11,0x88,0x77,0x66,0x55,
-			       0xde,0xad,0xbe,0xef};
+	const uint8_t resp[] = {6,    2,    1,    3,    4,    0x44, 0x33, 0x22, 0x11,
+				0x88, 0x77, 0x66, 0x55, 0xde, 0xad, 0xbe, 0xef};
 	check_wire(&frame, resp, sizeof(resp));
 	frame = (zlrs_frame_t){.type = ZLRS_PKT_SESS_CFM,
 			       .seq = 0x04030102,
@@ -105,8 +111,8 @@ void test_frame(void)
 						 .hop_index = 0x44,
 						 .frame_index = 0x99aabbcc,
 						 .band_plan = {.domain = 4}}};
-	const uint8_t cfm[] = {7,2,1,3,4, 0x88,0x77,0x66,0x55,0x44,
-			      0xcc,0xbb,0xaa,0x99, 4,0,0,0,0,0, 0xde,0xad,0xbe,0xef};
+	const uint8_t cfm[] = {7,    2,    1, 3, 4, 0x88, 0x77, 0x66, 0x55, 0x44, 0xcc, 0xbb,
+			       0xaa, 0x99, 4, 0, 0, 0,    0,    0,    0xde, 0xad, 0xbe, 0xef};
 	check_wire(&frame, cfm, sizeof(cfm));
 
 	/* DATA owns the used bytes; P1 reserves four bytes that P0 can use. */

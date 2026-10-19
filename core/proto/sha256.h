@@ -15,5 +15,5 @@
 /* SHA256(first || second), fed without joining buffers. NULL requires zero length.
  * The operation must finish successfully or stop execution; failure must never
  * return bytes that the protocol could accept as an authentication tag or key. */
-void zlrs_sha256(const uint8_t *first, size_t first_len, const uint8_t *second,
-		 size_t second_len, uint8_t out[ZLRS_SHA256_LEN]);
+void zlrs_sha256(const uint8_t *first, size_t first_len, const uint8_t *second, size_t second_len,
+		 uint8_t out[ZLRS_SHA256_LEN]);

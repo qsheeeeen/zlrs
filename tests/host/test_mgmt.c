@@ -113,8 +113,8 @@ void test_mgmt(void)
 	CHECK(received.frequency_hz == 2478000000U && received.hop_index == 236);
 	CHECK(received.frame_period_us == 9080);
 	CHECK(received.data_phy == 4U && bytes[90] == 4U);
-	const uint8_t radio_fields[] = {0x83, 0xFF, 0x35, 0x0C, 0xE5, 0x0C, 1, 0x18,
-					2, 2, 1, 0x3F, 1, 0x84, 0x98, 0xBA, 0xDC, 0xFE};
+	const uint8_t radio_fields[] = {0x83, 0xFF, 0x35, 0x0C, 0xE5, 0x0C, 1,    0x18, 2,
+					2,    1,    0x3F, 1,    0x84, 0x98, 0xBA, 0xDC, 0xFE};
 	CHECK(memcmp(bytes + 72, radio_fields, sizeof(radio_fields)) == 0);
 	CHECK(received.radio_temperature_centi_c == -125);
 	CHECK(received.radio_xosc_temperature_centi_c == 3125);
@@ -126,8 +126,8 @@ void test_mgmt(void)
 	/* The enlarged status exactly fills the maximum management payload. */
 	uint8_t frame[ZLRS_MGMT_FRAME_MAX_LEN];
 	zlrs_mgmt_parser_t parser;
-	const uint8_t len = zlrs_mgmt_encode(frame, sizeof(frame), ZLRS_MGMT_CMD_STATUS_RESP,
-					     bytes, sizeof(bytes));
+	const uint8_t len = zlrs_mgmt_encode(frame, sizeof(frame), ZLRS_MGMT_CMD_STATUS_RESP, bytes,
+					     sizeof(bytes));
 	CHECK(len == ZLRS_MGMT_FRAME_MAX_LEN && parse_response(frame, len, &parser));
 	CHECK(parser.payload_len == ZLRS_MGMT_STATUS_LEN);
 	CHECK(memcmp(ZLRS_MGMT_PAYLOAD(&parser), bytes, sizeof(bytes)) == 0);

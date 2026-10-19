@@ -29,8 +29,7 @@
 /* Pico SDK rounds total_data_size + 9 + 63 before appending the padding. */
 #define SHA256_PAD_RESERVE 72U
 
-BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1,
-	     "RP2350 has one SHA-256 accelerator");
+BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1, "RP2350 has one SHA-256 accelerator");
 
 struct sha256_data {
 	pico_sha256_state_t state;

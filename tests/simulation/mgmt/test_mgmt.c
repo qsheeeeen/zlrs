@@ -30,20 +30,25 @@ static zlrs_rf_status_t rf = {
 static unsigned int credential_applies, pairs, confirms, radio_refreshes;
 static int confirm_rc;
 static bool fail_write;
+
 int zlrs_temperature_read(int16_t *centidegrees)
 {
 	*centidegrees = 2675;
 	return 0;
 }
+
 ssize_t __real_nvs_write(struct nvs_fs *, uint16_t, const void *, size_t);
+
 ssize_t __wrap_nvs_write(struct nvs_fs *fs, uint16_t id, const void *bytes, size_t len)
 {
 	return fail_write ? -EIO : __real_nvs_write(fs, id, bytes, len);
 }
+
 zlrs_rf_status_t zlrs_rf_status(void)
 {
 	return rf;
 }
+
 void zlrs_rf_status_refresh(void)
 {
 	radio_refreshes++;
@@ -61,6 +66,7 @@ void zlrs_rf_status_refresh(void)
 		.irq = 0xFEDCBA98U,
 	};
 }
+
 void zlrs_rf_credentials(void)
 {
 	credential_applies++;
@@ -72,37 +78,46 @@ void zlrs_rf_credentials(void)
 		memset(rf.dev_id, 0, sizeof(rf.dev_id));
 	}
 }
+
 int zlrs_rf_pair_start(void)
 {
 	pairs++;
 	return rf.configured ? 0 : -ENOTCONN;
 }
+
 int zlrs_boot_confirm(void)
 {
 	confirms++;
 	return confirm_rc;
 }
+
 int zlrs_boot_recovery(void)
 {
 	return -EIO;
 }
+
 void zlrs_watchdog_feed(void)
 {
 }
+
 void zlrs_watchdog_disarm(void)
 {
 }
+
 void zlrs_watchdog_arm(void)
 {
 }
+
 void zlrs_serial_publish_state(void)
 {
 }
+
 int zlrs_log_info(zlrs_log_info_t *out)
 {
 	*out = (zlrs_log_info_t){.count = 1, .newest = 0, .num = {7}, .size = {5}};
 	return 0;
 }
+
 int zlrs_log_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *out, uint8_t *got)
 {
 	if (index != 0 || len == 0) {
@@ -115,6 +130,7 @@ int zlrs_log_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *out, uin
 	memcpy(out, "hello" + offset, *got);
 	return 0;
 }
+
 static zlrs_mgmt_parser_t request(uint8_t cmd, const uint8_t *body, uint8_t size)
 {
 	uint8_t frame[ZLRS_MGMT_FRAME_MAX_LEN];
@@ -128,6 +144,7 @@ static zlrs_mgmt_parser_t request(uint8_t cmd, const uint8_t *body, uint8_t size
 	zassert_equal(result, 1);
 	return parser;
 }
+
 static void ack(uint8_t cmd, const uint8_t *body, uint8_t size, uint8_t status)
 {
 	const zlrs_mgmt_parser_t p = request(cmd, body, size);
@@ -136,6 +153,7 @@ static void ack(uint8_t cmd, const uint8_t *body, uint8_t size, uint8_t status)
 	zassert_equal(ZLRS_MGMT_PAYLOAD(&p)[0], cmd);
 	zassert_equal(ZLRS_MGMT_PAYLOAD(&p)[1], status);
 }
+
 ZTEST(commands, test_device_commands)
 {
 	zassert_ok(zlrs_persist_init());
@@ -254,4 +272,5 @@ ZTEST(commands, test_device_commands)
 	ack(0x7e, NULL, 0, ZLRS_MGMT_E_UNKNOWN);
 	ack(ZLRS_MGMT_CMD_EXIT, NULL, 0, 0);
 }
+
 ZTEST_SUITE(commands, NULL, NULL, NULL, NULL, NULL);

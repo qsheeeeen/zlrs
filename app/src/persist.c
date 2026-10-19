@@ -27,6 +27,7 @@ enum record_id {
 	RECORD_ID,
 	RECORD_PAIR,
 };
+
 #define NVS_LAYOUT      0x5A4C0002U
 #define PAIR_BYTES      (ZLRS_DEV_ID_LEN + ZLRS_PAIR_SALT_LEN)
 #define NVS_SECTOR_SIZE DT_PROP(DT_GPARENT(DT_NODELABEL(storage_partition)), erase_block_size)
@@ -36,6 +37,7 @@ static struct nvs_fs fs = {
 	.sector_size = NVS_SECTOR_SIZE,
 	.sector_count = PARTITION_SIZE(storage_partition) / NVS_SECTOR_SIZE,
 };
+
 /* RAM copy of saved records/defaults; reads do not access flash. */
 static struct {
 	zlrs_persist_settings_t settings;
@@ -46,6 +48,7 @@ static struct {
 	bool configured;
 	bool paired;
 } state;
+
 static bool ready;
 
 static const zlrs_rf_design_t rf_design = {

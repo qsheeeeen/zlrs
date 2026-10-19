@@ -17,8 +17,7 @@ ZTEST(rp2350_trng, test_successive_blocks)
 	zassert_true(device_is_ready(dev), "entropy driver unavailable");
 	zassert_ok(entropy_get_entropy(dev, first, sizeof(first)));
 	zassert_ok(entropy_get_entropy(dev, second, sizeof(second)));
-	zassert_not_equal(memcmp(first, second, sizeof(first)), 0,
-			  "successive TRNG blocks repeat");
+	zassert_not_equal(memcmp(first, second, sizeof(first)), 0, "successive TRNG blocks repeat");
 }
 
 ZTEST(rp2350_trng, test_secure_request_sizes)
@@ -30,7 +29,8 @@ ZTEST(rp2350_trng, test_secure_request_sizes)
 		zassert_ok(sys_csrand_get(buffer + 1U, sizes[i]), "secure request %zu", sizes[i]);
 		zassert_equal(buffer[0], 0xa5);
 		for (size_t j = 1U + sizes[i]; j < sizeof(buffer); j++) {
-			zassert_equal(buffer[j], 0xa5, "request %zu overwrote byte %zu", sizes[i], j);
+			zassert_equal(buffer[j], 0xa5, "request %zu overwrote byte %zu", sizes[i],
+				      j);
 		}
 	}
 }
@@ -62,8 +62,8 @@ ZTEST(rp2350_trng, test_timeout_and_recovery)
 	const int64_t secure_ms = k_uptime_get() - start;
 	trng_hw->sample_cnt1 = sampling;
 
-	printk("TRNG timeout: entropy=%d (%lld ms), secure=%d (%lld ms)\n",
-	       entropy_rc, (long long)entropy_ms, secure_rc, (long long)secure_ms);
+	printk("TRNG timeout: entropy=%d (%lld ms), secure=%d (%lld ms)\n", entropy_rc,
+	       (long long)entropy_ms, secure_rc, (long long)secure_ms);
 	zassert_equal(entropy_rc, -ETIMEDOUT);
 	zassert_equal(secure_rc, -EIO);
 	zassert_true(entropy_ms >= 1000 && entropy_ms < 5000);

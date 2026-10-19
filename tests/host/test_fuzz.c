@@ -163,7 +163,8 @@ static uint16_t fx_make_frame(rng_t *rng, uint8_t *out, uint16_t cap, const uint
 	const uint8_t type = (uint8_t)(rng_next(rng) % 11U);
 	const uint16_t fixed[] = {0, 0, 9, 8, 16, 16, 8, 9};
 	const uint16_t payload_len = type >= ZLRS_PKT_SYNC && type <= ZLRS_PKT_SESS_CFM
-					    ? fixed[type] : 3U + rng_next(rng) % 32U;
+					     ? fixed[type]
+					     : 3U + rng_next(rng) % 32U;
 	const uint16_t mac_len = ZLRS_FRAME_HDR_LEN + payload_len;
 	const uint16_t total = mac_len + ZLRS_TAG_LEN;
 	if (total > cap) {

@@ -4,7 +4,11 @@
 
 #include "usb_state.h"
 
-enum { HOST_CONFIGURED = BIT(0), BUS_SUSPENDED = BIT(1) };
+enum {
+	HOST_CONFIGURED = BIT(0),
+	BUS_SUSPENDED = BIT(1)
+};
+
 static atomic_t host_state;
 
 bool zlrs_usb_active(void)

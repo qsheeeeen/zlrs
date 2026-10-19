@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # zlrs follows Zephyr's C style (Linux kernel derived): tabs for indentation,
-# 100 columns, braces on the next line for functions. The only deliberate
-# difference is ReflowComments: the comments in this tree explain *why* and
-# their line breaks are hand-made, so the formatter leaves them alone.
+# 100 columns, braces on the next line for functions. Comments explain *why*
+# and their line breaks are hand-made, so ReflowComments leaves them alone.
+# SeparateDefinitionBlocks enforces blank lines between type/function definitions.
 #
 #   clang-format -i $(git ls-files '*.c' '*.h')
 #
@@ -52,6 +52,7 @@ IndentWidth: 8
 InsertBraces: true
 InsertNewlineAtEOF: true
 ReflowComments: false
+SeparateDefinitionBlocks: Always
 SpaceBeforeInheritanceColon: False
 SpaceBeforeParens: ControlStatementsExceptControlMacros
 SortIncludes: Never

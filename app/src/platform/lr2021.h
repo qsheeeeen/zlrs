@@ -44,6 +44,7 @@ static inline int16_t zlrs_lr2021_temperature_centi_c(uint16_t q5)
 void zlrs_lr2021_read_status(zlrs_lr2021_status_t *out);
 int zlrs_lr2021_wait_us(uint32_t timeout_us);
 bool zlrs_lr2021_irq_pending(void);
+
 /* One hardware completion. */
 typedef struct {
 	int status; /* 0 on success, negative errno on failure */
@@ -54,6 +55,7 @@ typedef struct {
 	uint32_t airtime_us;
 	uint32_t completed_ms; /* time after FIFO read, before protocol processing */
 } zlrs_lr2021_result_t;
+
 /* Process pending hardware IRQs; true returns one completed transaction.
  * false means idle, no IRQ, or an unfinished transaction. */
 bool zlrs_lr2021_process_irq(zlrs_lr2021_result_t *out);

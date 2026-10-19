@@ -11,13 +11,12 @@ static void test_periodic_sync_acquisition(void)
 		uint32_t cadence_us;
 		uint16_t sync_frames;
 		uint32_t window_us;
-	} bands[] = {{11092U, 450U, 4000U}, {48134U, 103U, 20000U},
-		     {22184U, 225U, 9000U}};
+	} bands[] = {{11092U, 450U, 4000U}, {48134U, 103U, 20000U}, {22184U, 225U, 9000U}};
 
 	for (size_t band = 0U; band < sizeof(bands) / sizeof(bands[0]); band++) {
 		const uint32_t cadence = bands[band].cadence_us;
-		const uint32_t receiver_period = cadence +
-			zlrs_slot_timer_scan_step_us(cadence, bands[band].sync_frames);
+		const uint32_t receiver_period =
+			cadence + zlrs_slot_timer_scan_step_us(cadence, bands[band].sync_frames);
 		const uint32_t sync_us = cadence * bands[band].sync_frames;
 
 		/* Try every initial clock offset: a quiet connected Leader only sends periodic
@@ -26,7 +25,8 @@ static void test_periodic_sync_acquisition(void)
 			bool heard = false;
 
 			for (uint32_t attempt = 1U; attempt <= 3U; attempt++) {
-				const uint32_t offset = (attempt * sync_us + phase) % receiver_period;
+				const uint32_t offset =
+					(attempt * sync_us + phase) % receiver_period;
 
 				heard |= offset < bands[band].window_us;
 			}

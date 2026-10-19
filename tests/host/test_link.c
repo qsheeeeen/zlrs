@@ -650,21 +650,21 @@ static void automatic_frame(sim_t *sim, zlrs_band_policy_t policies[2])
 			probe = !target && (policies[i].subg || phy < policies[i].phy);
 			changed = true;
 		} else {
-			zlrs_band_observation_t o = {.now_ms = sim->now_ms,
-						     .last_rx_ms = info.last_rx_ms,
-						     .feedback_ms = info.last_peer_feedback_ms,
-						     .paired = info.paired,
-						     .pairing = info.state == ZLRS_STATE_PAIRING,
-						     .connected =
-							     info.session_valid &&
-							     info.state == ZLRS_STATE_CONNECTED,
-						     .acquiring = info.radio_acquiring,
-						     .planned = info.band_plan.switch_frame != 0,
-						     .power_at_max = true, /* Constant-power link model. */
-						     .rssi_dbm = link->stats.last_rssi,
-						     .peer_rssi_dbm = info.peer_rssi_dbm,
-						     .lq_percent = link->stats.lq_percent,
-						     .peer_lq_percent = info.peer_lq_percent};
+			zlrs_band_observation_t o = {
+				.now_ms = sim->now_ms,
+				.last_rx_ms = info.last_rx_ms,
+				.feedback_ms = info.last_peer_feedback_ms,
+				.paired = info.paired,
+				.pairing = info.state == ZLRS_STATE_PAIRING,
+				.connected =
+					info.session_valid && info.state == ZLRS_STATE_CONNECTED,
+				.acquiring = info.radio_acquiring,
+				.planned = info.band_plan.switch_frame != 0,
+				.power_at_max = true, /* Constant-power link model. */
+				.rssi_dbm = link->stats.last_rssi,
+				.peer_rssi_dbm = info.peer_rssi_dbm,
+				.lq_percent = link->stats.lq_percent,
+				.peer_lq_percent = info.peer_lq_percent};
 			const zlrs_band_action_t action = zlrs_band_policy_update(&policies[i], &o);
 			if (action == ZLRS_BAND_SEARCH) {
 				target = policies[i].target_subg;

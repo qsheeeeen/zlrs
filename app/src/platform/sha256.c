@@ -14,8 +14,7 @@
 
 BUILD_ASSERT(DT_NODE_HAS_STATUS(DT_NODELABEL(sha256), okay),
 	     "ZLRS needs an enabled SHA-256 peripheral");
-BUILD_ASSERT(IS_ENABLED(CONFIG_ZLRS_RP2350_SHA256),
-	     "ZLRS needs the RP2350 SHA-256 driver");
+BUILD_ASSERT(IS_ENABLED(CONFIG_ZLRS_RP2350_SHA256), "ZLRS needs the RP2350 SHA-256 driver");
 
 LOG_MODULE_REGISTER(zlrs_sha256, CONFIG_APP_LOG_LEVEL);
 
@@ -26,8 +25,8 @@ K_MUTEX_DEFINE(hash_mutex);
 
 /* Feed both spans in order without copying. The driver retains partial words and
  * SHA state across update/compute; freeing releases it for other driver/ROM users. */
-void zlrs_sha256(const uint8_t *first, size_t first_len, const uint8_t *second,
-		 size_t second_len, uint8_t out[ZLRS_SHA256_LEN])
+void zlrs_sha256(const uint8_t *first, size_t first_len, const uint8_t *second, size_t second_len,
+		 uint8_t out[ZLRS_SHA256_LEN])
 {
 	struct hash_ctx ctx = {.flags = CAP_SEPARATE_IO_BUFS | CAP_SYNC_OPS};
 	struct hash_pkt pkt = {.in_buf = first, .in_len = first_len};

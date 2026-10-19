@@ -90,6 +90,7 @@ typedef struct {
 
 typedef struct {
 	uint8_t type: ZLRS_FRAME_TYPE_BITS;
+
 	union {
 		zlrs_data_frame_t data; /* DATA_L2F / DATA_F2L share this body layout */
 		zlrs_sync_frame_t sync;
@@ -98,6 +99,7 @@ typedef struct {
 		zlrs_session_response_frame_t sess_resp;
 		zlrs_session_confirm_frame_t sess_cfm;
 	} body;
+
 	uint32_t seq; /* common per-direction counter; zero is never transmitted */
 	uint8_t tag[ZLRS_TAG_LEN];
 } zlrs_frame_t;

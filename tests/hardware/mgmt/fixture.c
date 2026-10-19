@@ -9,6 +9,7 @@
 
 static uint8_t backup[PARTITION_SIZE(storage_partition)];
 static bool backed_up;
+
 static int snapshot(void)
 {
 	const struct flash_area *area;
@@ -20,12 +21,14 @@ static int snapshot(void)
 	backed_up = rc == 0;
 	return rc;
 }
+
 SYS_INIT(snapshot, APPLICATION, 0);
 
 bool __wrap_boot_is_img_confirmed(void)
 {
 	return true;
 }
+
 int __wrap_zlrs_boot_confirm(void)
 {
 	static bool once;
@@ -35,7 +38,9 @@ int __wrap_zlrs_boot_confirm(void)
 	}
 	return 0; /* Deliberately never writes image_ok. */
 }
+
 ssize_t __real_nvs_write(struct nvs_fs *, uint16_t, const void *, size_t);
+
 ssize_t __wrap_nvs_write(struct nvs_fs *fs, uint16_t id, const void *bytes, size_t len)
 {
 	static bool once;
@@ -45,7 +50,9 @@ ssize_t __wrap_nvs_write(struct nvs_fs *fs, uint16_t id, const void *bytes, size
 	}
 	return __real_nvs_write(fs, id, bytes, len);
 }
+
 int __real_zlrs_boot_recovery(void);
+
 int __wrap_zlrs_boot_recovery(void)
 {
 	if (!backed_up) {

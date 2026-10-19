@@ -81,6 +81,7 @@ enum {
 	POWER_REQUEST_AUTO = 1,
 	POWER_REQUEST_FIXED_OFFSET = 2 - INT8_MIN
 };
+
 static atomic_t power_request;
 static atomic_t phy_request;
 static bool power_fixed;

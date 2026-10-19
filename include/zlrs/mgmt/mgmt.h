@@ -64,7 +64,7 @@ extern "C" {
 #define ZLRS_MGMT_DEBUG_REPORT_REQ_LEN    3U
 #define ZLRS_MGMT_DEBUG_REPORT_HEADER_LEN 5U
 /* Keep pagination stable when an optional status field extends the frame capacity. */
-#define ZLRS_MGMT_DEBUG_REPORT_CHUNK_MAX 85U
+#define ZLRS_MGMT_DEBUG_REPORT_CHUNK_MAX  85U
 
 /* status codes */
 #define ZLRS_MGMT_OK        0U

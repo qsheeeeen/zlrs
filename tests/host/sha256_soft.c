@@ -148,8 +148,8 @@ static void sha256_final(zlrs_sha256_ctx_t *ctx, uint8_t out[SHA256_LEN])
 	memset(ctx, 0, sizeof(*ctx));
 }
 
-void zlrs_sha256(const uint8_t *first, size_t first_len, const uint8_t *second,
-		 size_t second_len, uint8_t out[ZLRS_SHA256_LEN])
+void zlrs_sha256(const uint8_t *first, size_t first_len, const uint8_t *second, size_t second_len,
+		 uint8_t out[ZLRS_SHA256_LEN])
 {
 	zlrs_sha256_ctx_t ctx;
 

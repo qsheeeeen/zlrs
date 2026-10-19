@@ -2,16 +2,19 @@
 #include <zephyr/ztest.h>
 #include <zephyr/drivers/gpio/gpio_emul.h>
 #include "ui.h"
+
 static uint32_t holds(void)
 {
 	struct zlrs_input input;
 	zassert_ok(zbus_chan_read(&zlrs_input_chan, &input, K_MSEC(20)));
 	return input.button_holds;
 }
+
 static void pressed(bool value)
 {
 	zassert_ok(gpio_emul_input_set(DEVICE_DT_GET(DT_NODELABEL(gpio_test)), 0, value));
 }
+
 ZTEST(ui_input, test_hold_and_publication_retry)
 {
 	k_msleep(40);
@@ -40,4 +43,5 @@ ZTEST(ui_input, test_hold_and_publication_retry)
 	k_msleep(60);
 	zassert_equal(holds(), 2);
 }
+
 ZTEST_SUITE(ui_input, NULL, NULL, NULL, NULL, NULL);

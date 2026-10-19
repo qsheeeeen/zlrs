@@ -16,6 +16,7 @@ typedef enum {
 	ZLRS_PHY_FLRC_1300,
 	ZLRS_PHY_COUNT,
 } zlrs_phy_t;
+
 #define ZLRS_PHY_AUTO_COUNT        5U
 #define ZLRS_LORA_FRAME_MAX_LEN    255U
 #define ZLRS_LORA_PREAMBLE_SYMBOLS 12U

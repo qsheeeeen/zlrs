@@ -37,6 +37,7 @@ static struct {
 	atomic_t empty;
 	atomic_t crc;
 } channels[79];
+
 static uint32_t channel_crc_previous;
 
 void __real_zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
@@ -216,18 +217,16 @@ void __wrap_zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, i
 	const uint32_t frequency = link->req.freq_hz;
 
 	channel_crc_previous = diag.rx_crc_errors;
-	if (frequency >= 2402000000U && frequency <= 2480000000U &&
-	    frequency % 1000000U == 0U) {
+	if (frequency >= 2402000000U && frequency <= 2480000000U && frequency % 1000000U == 0U) {
 		const uint8_t index = (uint8_t)(frequency / 1000000U - 2402U);
 
 		atomic_add(&channels[index].crc, crc);
 		if (link->req_is_tx) {
 			atomic_inc(status == ZLRS_RADIO_OK ? &channels[index].tx
-							: &channels[index].tx_failed);
+							   : &channels[index].tx_failed);
 		} else {
-			atomic_inc(status == ZLRS_RADIO_OK && rx_len > 0U
-					   ? &channels[index].rx
-					   : &channels[index].empty);
+			atomic_inc(status == ZLRS_RADIO_OK && rx_len > 0U ? &channels[index].rx
+									  : &channels[index].empty);
 		}
 	}
 	__real_zlrs_link_complete(link, status, rx_len, rssi, snr, now_ms);
@@ -245,13 +244,14 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 {
 	if (argc == 2U && strcmp(argv[1], "channels") == 0) {
 		for (uint8_t i = 0U; i < ARRAY_SIZE(channels); i++) {
-			shell_print(sh,
-				    "CHANNEL frequency_mhz=%u tx=%u tx_failed=%u rx=%u empty=%u crc=%u",
-				    2402U + i, (unsigned int)atomic_get(&channels[i].tx),
-				    (unsigned int)atomic_get(&channels[i].tx_failed),
-				    (unsigned int)atomic_get(&channels[i].rx),
-				    (unsigned int)atomic_get(&channels[i].empty),
-				    (unsigned int)atomic_get(&channels[i].crc));
+			shell_print(
+				sh,
+				"CHANNEL frequency_mhz=%u tx=%u tx_failed=%u rx=%u empty=%u crc=%u",
+				2402U + i, (unsigned int)atomic_get(&channels[i].tx),
+				(unsigned int)atomic_get(&channels[i].tx_failed),
+				(unsigned int)atomic_get(&channels[i].rx),
+				(unsigned int)atomic_get(&channels[i].empty),
+				(unsigned int)atomic_get(&channels[i].crc));
 		}
 		return 0;
 	}

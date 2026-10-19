@@ -20,6 +20,7 @@ static uint8_t peer_next_slot;
 static uint32_t clock_us, period_us, frame, boundary_us;
 static const zlrs_radio_req_t *active;
 static bool pending;
+
 static enum {
 	NORMAL,
 	TX_FAIL,
@@ -28,6 +29,7 @@ static enum {
 	PREPARE_FAIL,
 	LAUNCH_FAIL
 } mode;
+
 static unsigned int tx_ok, tx_fail, rx_fail, rx_ok, aborts;
 static unsigned int radio_reads;
 static bool entropy_failed;
@@ -47,6 +49,7 @@ static const uint8_t outgoing[] = "host bytes";
 static const uint8_t incoming[] = "peer bytes";
 
 int __real_z_impl_sys_csrand_get(void *dst, size_t len);
+
 int __wrap_z_impl_sys_csrand_get(void *dst, size_t len)
 {
 	if (entropy_failed) {
@@ -59,6 +62,7 @@ int __wrap_z_impl_sys_csrand_get(void *dst, size_t len)
 }
 
 void __real_z_impl_sys_rand_get(void *dst, size_t len);
+
 void __wrap_z_impl_sys_rand_get(void *dst, size_t len)
 {
 	plain_random_requests++;
@@ -84,6 +88,7 @@ const zlrs_persist_settings_t *zlrs_persist_settings(void)
 {
 	return &saved_settings;
 }
+
 bool zlrs_persist_get_device_id(uint8_t out[ZLRS_DEV_ID_LEN])
 {
 	if (!identity_valid) {
@@ -92,6 +97,7 @@ bool zlrs_persist_get_device_id(uint8_t out[ZLRS_DEV_ID_LEN])
 	memcpy(out, saved_id, sizeof(saved_id));
 	return true;
 }
+
 bool zlrs_persist_get_root_key(uint8_t out[ZLRS_KEY_LEN])
 {
 	if (!configured) {
@@ -100,6 +106,7 @@ bool zlrs_persist_get_root_key(uint8_t out[ZLRS_KEY_LEN])
 	memcpy(out, saved_key, sizeof(saved_key));
 	return true;
 }
+
 bool zlrs_persist_get_pairing(zlrs_persist_pairing_t *out)
 {
 	if (!paired) {
@@ -111,6 +118,7 @@ bool zlrs_persist_get_pairing(zlrs_persist_pairing_t *out)
 
 void __real_zlrs_link_init(zlrs_link_t *, const zlrs_link_cfg_t *, bool (*)(void *, uint32_t *),
 			   void *, const zlrs_link_events_t *);
+
 void __wrap_zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
 			   bool (*random)(void *, uint32_t *), void *ctx,
 			   const zlrs_link_events_t *events)
@@ -118,32 +126,39 @@ void __wrap_zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
 	__real_zlrs_link_init(link, cfg, random, ctx, events);
 	local = link;
 }
+
 uint32_t zlrs_slot_timer_now_us(void)
 {
 	return clock_us;
 }
+
 uint32_t zlrs_slot_timer_now_ms(void)
 {
 	return clock_us / 1000U;
 }
+
 uint32_t zlrs_slot_timer_uptime_ms(uint32_t us)
 {
 	return us / 1000U;
 }
+
 int zlrs_slot_timer_init(void)
 {
 	return 0;
 }
+
 void zlrs_slot_timer_start(uint32_t us, uint32_t prepare, void (*wake)(void))
 {
 	period_us = us;
 }
+
 void zlrs_slot_timer_reconfigure(uint32_t us, uint32_t prepare, uint32_t guard)
 {
 	retime_boundary_us = boundary_us + period_us + guard + transition_guard_us;
 	transition_guard_us = 0U;
 	period_us = us;
 }
+
 void zlrs_slot_timer_hold_next_frame(uint32_t guard)
 {
 	transition_guard_us = guard;
@@ -242,10 +257,12 @@ void zlrs_slot_timer_wait_frame(uint32_t *start, uint32_t *number)
 	*start = boundary_us;
 	*number = ++frame;
 }
+
 uint32_t zlrs_slot_timer_next_frame_us(void)
 {
 	return boundary_us + period_us;
 }
+
 void zlrs_slot_timer_wait_until(uint32_t us, struct zlrs_slot_timer_wait *timing)
 {
 	if ((int32_t)(us - clock_us) > 0) {
@@ -253,32 +270,40 @@ void zlrs_slot_timer_wait_until(uint32_t us, struct zlrs_slot_timer_wait *timing
 	}
 	*timing = (struct zlrs_slot_timer_wait){.wake_us = clock_us};
 }
+
 void zlrs_slot_timer_cancel_launch(void)
 {
 }
+
 void zlrs_slot_timer_shift(int32_t us)
 {
 	phase_shift_events += us != 0;
 }
+
 uint32_t zlrs_slot_timer_scan_delay_ms(uint32_t us, uint16_t sync, bool acquired)
 {
 	return scan_delay_override_ms != 0U ? scan_delay_override_ms : 2000U;
 }
+
 void zlrs_watchdog_feed(void)
 {
 }
+
 void zlrs_slot_timer_stats(struct zlrs_slot_timer_stats *out)
 {
 	*out = (struct zlrs_slot_timer_stats){.boundaries = frame};
 }
+
 void zlrs_lr2021_diag(zlrs_lr2021_diag_t *out)
 {
 	*out = (zlrs_lr2021_diag_t){0};
 }
+
 int zlrs_lr2021_init(void)
 {
 	return 0;
 }
+
 void zlrs_lr2021_read_status(zlrs_lr2021_status_t *out)
 {
 	zassert_false(pending);
@@ -289,16 +314,20 @@ void zlrs_lr2021_read_status(zlrs_lr2021_status_t *out)
 		.sampled_ms = radio_reads,
 	};
 }
+
 uint32_t zlrs_lr2021_airtime_us(const zlrs_mod_cfg_t *mod, uint16_t len)
 {
 	return zlrs_mod_airtime_us(mod, len);
 }
+
 void zlrs_lr2021_slot(uint32_t start, uint32_t end)
 {
 }
+
 void zlrs_lr2021_wake(void)
 {
 }
+
 int zlrs_lr2021_prepare(const zlrs_radio_req_t *req)
 {
 	if (req->is_tx) {
@@ -316,6 +345,7 @@ int zlrs_lr2021_prepare(const zlrs_radio_req_t *req)
 	active = req;
 	return mode == PREPARE_FAIL ? -EIO : 0;
 }
+
 int zlrs_lr2021_launch(void)
 {
 	if (mode == LAUNCH_FAIL) {
@@ -324,29 +354,35 @@ int zlrs_lr2021_launch(void)
 	pending = true;
 	return 0;
 }
+
 int zlrs_lr2021_launch_at(uint32_t us)
 {
 	clock_us = us;
 	return zlrs_lr2021_launch();
 }
+
 int zlrs_lr2021_preload_tx(const uint8_t *bytes, uint16_t size)
 {
 	return 0;
 }
+
 bool zlrs_lr2021_irq_pending(void)
 {
 	return pending && mode != NO_IRQ;
 }
+
 int zlrs_lr2021_wait_us(uint32_t us)
 {
 	clock_us += us;
 	return -EAGAIN;
 }
+
 void zlrs_lr2021_abort(void)
 {
 	pending = false;
 	aborts++;
 }
+
 bool zlrs_lr2021_process_irq(zlrs_lr2021_result_t *out)
 {
 	if (!pending || mode == NO_IRQ) {
@@ -354,9 +390,9 @@ bool zlrs_lr2021_process_irq(zlrs_lr2021_result_t *out)
 	}
 	pending = false;
 	clock_us += 100U;
-	*out = (zlrs_lr2021_result_t){
-		.completed_ms = clock_us / 1000U, .done_us = clock_us,
-		.rssi_dbm = active->freq_hz > 1500000000U ? rssi_24 : -42};
+	*out = (zlrs_lr2021_result_t){.completed_ms = clock_us / 1000U,
+				      .done_us = clock_us,
+				      .rssi_dbm = active->freq_hz > 1500000000U ? rssi_24 : -42};
 	if (active->is_tx && mode == TX_FAIL) {
 		out->status = -EIO;
 		tx_fail++;
@@ -412,6 +448,7 @@ bool zlrs_lr2021_process_irq(zlrs_lr2021_result_t *out)
 	}
 	return true;
 }
+
 uint16_t zlrs_serial_read(uint8_t *out, uint16_t capacity)
 {
 	const uint16_t take = MIN(source_left, capacity);
@@ -419,6 +456,7 @@ uint16_t zlrs_serial_read(uint8_t *out, uint16_t capacity)
 	source_left -= take;
 	return take;
 }
+
 bool zlrs_serial_receive(const uint8_t *bytes, uint16_t size)
 {
 	zassert_equal(size, sizeof(incoming) - 1U);
@@ -426,10 +464,12 @@ bool zlrs_serial_receive(const uint8_t *bytes, uint16_t size)
 	delivered += size;
 	return true;
 }
+
 uint32_t zlrs_serial_dropped(void)
 {
 	return 0;
 }
+
 static bool receive_peer(void *ctx, const uint8_t *bytes, uint16_t size)
 {
 	zassert_equal(size, sizeof(outgoing) - 1U);
@@ -437,6 +477,7 @@ static bool receive_peer(void *ctx, const uint8_t *bytes, uint16_t size)
 	peer_delivered += size;
 	return true;
 }
+
 static void frames(unsigned int count)
 {
 	while (count--) {
@@ -453,6 +494,7 @@ static void frames(unsigned int count)
 		}
 	}
 }
+
 static bool peer_random(void *ctx, uint32_t *out)
 {
 	ARG_UNUSED(ctx);
@@ -608,9 +650,14 @@ static void automatic_acceptance(void)
 	}
 	const uint32_t nonce = local->sess_nonce_leader;
 	power_before_profile_acceptance();
+
 	/* Wall-like attenuation should select a usable 2.4 GHz profile, not SubG. */
-	static const struct { int16_t rssi; zlrs_phy_t phy; } margins[] = {
+	static const struct {
+		int16_t rssi;
+		zlrs_phy_t phy;
+	} margins[] = {
 		{-97, ZLRS_PHY_FLRC_325}, {-102, ZLRS_PHY_LORA_SF6}, {-105, ZLRS_PHY_LORA_SF7}};
+
 	for (size_t i = 0; i < ARRAY_SIZE(margins); i++) {
 		rssi_24 = margins[i].rssi;
 		for (unsigned int n = 0; n < 8000 && !both_on_phy(margins[i].phy); n++) {
@@ -627,8 +674,8 @@ static void automatic_acceptance(void)
 	zassert_equal(zlrs_link_write(&peer, incoming, sizeof(incoming) - 1U),
 		      sizeof(incoming) - 1U);
 	for (unsigned int i = 0; i < 30000 && (!both_on_band(true) || source_left ||
-					      delivered != sizeof(incoming) - 1U ||
-					      peer_delivered != sizeof(outgoing) - 1U);
+					       delivered != sizeof(incoming) - 1U ||
+					       peer_delivered != sizeof(outgoing) - 1U);
 	     i++) {
 		frames(1);
 	}
@@ -868,4 +915,5 @@ ZTEST(rf_results, test_protocol_completion_and_timeouts)
 	zlrs_rf_resume();
 	k_thread_priority_set(k_current_get(), 0);
 }
+
 ZTEST_SUITE(rf_results, NULL, NULL, NULL, NULL, NULL);

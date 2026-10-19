@@ -34,6 +34,7 @@ bool boot_is_img_confirmed(void)
 {
 	return image_confirmed;
 }
+
 int boot_write_img_confirmed(void)
 {
 	confirm_writes++;
@@ -42,15 +43,18 @@ int boot_write_img_confirmed(void)
 	}
 	return confirm_result;
 }
+
 int bootmode_set(uint8_t mode)
 {
 	zassert_equal(mode, BOOT_MODE_TYPE_BOOTLOADER);
 	return retention_result;
 }
+
 void zlrs_watchdog_disarm(void)
 {
 	disarms++;
 }
+
 void zlrs_watchdog_feed(void)
 {
 }
@@ -60,6 +64,7 @@ static void finish(void)
 	k_sem_give(&done);
 	k_thread_abort(k_current_get());
 }
+
 void sys_reboot(int type)
 {
 	zassert_equal(type, SYS_REBOOT_COLD);
@@ -74,6 +79,7 @@ enum action {
 	RECOVER,
 	RUN_APPLICATION
 };
+
 static void owner(void *arg, void *unused1, void *unused2)
 {
 	const enum action action = (enum action)(uintptr_t)arg;
@@ -95,6 +101,7 @@ static void owner(void *arg, void *unused1, void *unused2)
 	}
 	zassert_unreachable("owner should have exited through the simulated reboot/frame endpoint");
 }
+
 static void run(enum action action)
 {
 	k_sem_reset(&done);
@@ -121,10 +128,12 @@ int zlrs_persist_init(void)
 {
 	return 0;
 }
+
 const zlrs_persist_settings_t *zlrs_persist_settings(void)
 {
 	return &settings;
 }
+
 bool zlrs_persist_get_pairing(zlrs_persist_pairing_t *out)
 {
 	if (!pairing_saved) {
@@ -133,6 +142,7 @@ bool zlrs_persist_get_pairing(zlrs_persist_pairing_t *out)
 	*out = saved_pairing;
 	return true;
 }
+
 int zlrs_persist_save_pairing(const zlrs_persist_pairing_t *pairing)
 {
 	zassert_equal(pause_depth, 1U,
@@ -145,14 +155,17 @@ int zlrs_persist_save_pairing(const zlrs_persist_pairing_t *pairing)
 	pairing_saved = true;
 	return 0;
 }
+
 int zlrs_mgmt_init(void)
 {
 	return 0;
 }
+
 bool zlrs_mgmt_process_idle(void)
 {
 	return ++idle_calls == 1U || (!rf_fault && frames == 3U && sessions == 1U);
 }
+
 int zlrs_mgmt_run(void)
 {
 	zassert_equal(pause_depth, 1U);
@@ -165,43 +178,52 @@ int zlrs_mgmt_run(void)
 	}
 	return 0;
 }
+
 void zlrs_rf_log_snapshot(void)
 {
 	zassert_equal(pause_depth, 1U);
 }
+
 void zlrs_rf_pause(void)
 {
 	pause_depth++;
 }
+
 void zlrs_rf_resume(void)
 {
 	zassert_equal(pause_depth, 1U);
 	pause_depth--;
 }
+
 int zlrs_rf_init(void)
 {
 	rf_paired = true;
 	return rf_fault ? -ENODEV : 0;
 }
+
 void zlrs_rf_credentials(void)
 {
 	zassert_equal(pause_depth, 1U);
 	zlrs_persist_pairing_t pairing;
 	rf_paired = zlrs_persist_get_pairing(&pairing);
 }
+
 void zlrs_rf_start(void)
 {
 	starts++;
 }
+
 void zlrs_rf_publish_state(void)
 {
 	publications++;
 }
+
 int zlrs_rf_pair_start(void)
 {
 	pairing_requests++;
 	return 0;
 }
+
 bool zlrs_rf_pairing(uint8_t peer_id[ZLRS_DEV_ID_LEN], uint8_t salt[ZLRS_PAIR_SALT_LEN])
 {
 	if (!rf_paired) {
@@ -211,6 +233,7 @@ bool zlrs_rf_pairing(uint8_t peer_id[ZLRS_DEV_ID_LEN], uint8_t salt[ZLRS_PAIR_SA
 	memcpy(salt, paired.pair_salt, sizeof(paired.pair_salt));
 	return true;
 }
+
 void zlrs_rf_frame(void)
 {
 	zassert_equal(pause_depth, 0U);
@@ -218,11 +241,13 @@ void zlrs_rf_frame(void)
 		finish();
 	}
 }
+
 int zlrs_serial_init(uint32_t baud)
 {
 	zassert_equal(baud, 115200U);
 	return 0;
 }
+
 void zlrs_serial_publish_state(void)
 {
 	if (rf_fault && idle_calls == 3U) {
@@ -277,4 +302,5 @@ ZTEST(application, test_lifecycle)
 	zassert_true(publications > 0U);
 	zassert_equal(pause_depth, 0U);
 }
+
 ZTEST_SUITE(application, NULL, NULL, NULL, NULL, NULL);

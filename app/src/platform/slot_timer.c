@@ -57,7 +57,8 @@ static uint32_t slot_clock_advance(struct slot_clock *clock, uint32_t now_us)
 		}
 		if (++clock->slot == ZLRS_SLOT_COUNT) {
 			clock->slot = 0U;
-			clock->origin_us += clock->period_us + (uint32_t)clock->shift_us + clock->guard_us;
+			clock->origin_us +=
+				clock->period_us + (uint32_t)clock->shift_us + clock->guard_us;
 			clock->shift_us = 0;
 			clock->guard_us = 0U;
 		}
@@ -80,7 +81,7 @@ static uint32_t slot_clock_next_origin(const struct slot_clock *clock)
 	/* The last slot already installs the next origin, including the queued phase correction. */
 	return clock->slot == 0U ? clock->origin_us
 				 : clock->origin_us + clock->period_us + (uint32_t)clock->shift_us +
-				   clock->guard_us;
+					   clock->guard_us;
 }
 
 uint32_t zlrs_slot_timer_scan_delay_ms(uint32_t cadence_us, uint16_t sync_every_n, bool acquired)

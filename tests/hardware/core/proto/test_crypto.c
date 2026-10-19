@@ -41,8 +41,7 @@ ZTEST(proto_crypto, test_authentication_tags)
 		for (size_t n = 0U; n < 255U; n++) {
 			data[n + 1U] = (uint8_t)n;
 		}
-		zlrs_tag(key + 1U, hmac_vectors[i].key_len, data + 1U, hmac_vectors[i].len,
-			 tag);
+		zlrs_tag(key + 1U, hmac_vectors[i].key_len, data + 1U, hmac_vectors[i].len, tag);
 		zlrs_test_check_hex(tag, sizeof(tag), hmac_vectors[i].want);
 	}
 	for (size_t i = 0U; i < 32U; i++) {
@@ -71,25 +70,25 @@ ZTEST(proto_crypto, test_key_derivation)
 	memset(ikm, 0x0b, sizeof(ikm));
 	zlrs_kdf(ikm, sizeof(ikm), "", info, sizeof(info), out, SHA256_LEN);
 	zlrs_test_check_hex(out, SHA256_LEN,
-		  "abbafb13f5c1bc489d4203135817956dd521b39e3bd61d1cc85cef884d1f8e2e");
+			    "abbafb13f5c1bc489d4203135817956dd521b39e3bd61d1cc85cef884d1f8e2e");
 	for (size_t i = 0U; i < sizeof(ctx); i++) {
 		ctx[i] = (uint8_t)(0x40U + i);
 	}
 	zlrs_kdf(key, 32U, "zlrs/pair", ctx, sizeof(ctx), out, sizeof(out));
 	zlrs_test_check_hex(out, sizeof(out),
-		  "1c6418d29272536de8c6d1492587bc52fb374109a5c313e02badd158066e58b7d"
-		  "8cd11057bdddc8ec2e4");
+			    "1c6418d29272536de8c6d1492587bc52fb374109a5c313e02badd158066e58b7d"
+			    "8cd11057bdddc8ec2e4");
 	zlrs_pbkdf2_sha256("password", (const uint8_t *)"salt", 4U, 1U, out);
 	zlrs_test_check_hex(out, SHA256_LEN,
-		  "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b");
+			    "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b");
 	zlrs_pbkdf2_sha256("password", (const uint8_t *)"salt", 4U, 2U, out);
 	zlrs_test_check_hex(out, SHA256_LEN,
-		  "ae4d0c95af6b46d32d0adff928f06dd02a303f8ef3c251dfd6e2d85a95474c43");
+			    "ae4d0c95af6b46d32d0adff928f06dd02a303f8ef3c251dfd6e2d85a95474c43");
 	memset(phrase, 'P', sizeof(phrase) - 1U);
 	phrase[sizeof(phrase) - 1U] = '\0';
 	zlrs_pbkdf2_sha256(phrase, key, 32U, 5U, out);
 	zlrs_test_check_hex(out, SHA256_LEN,
-		  "ba71e3c0299a60aa5620773114321003bf0a2044b09408313015054a177f510e");
+			    "ba71e3c0299a60aa5620773114321003bf0a2044b09408313015054a177f510e");
 }
 
 ZTEST(proto_crypto, test_production_passphrase)
@@ -101,7 +100,7 @@ ZTEST(proto_crypto, test_production_passphrase)
 	printk("PBKDF2 %u rounds: %lld ms\n", ZLRS_KDF_V1_ITERATIONS,
 	       (long long)(k_uptime_get() - started));
 	zlrs_test_check_hex(out, sizeof(out),
-		  "c435dcd88e863c3e9d0c00458a92cffcda5ad2bb412d4cc5a55066f3b863bb0e");
+			    "c435dcd88e863c3e9d0c00458a92cffcda5ad2bb412d4cc5a55066f3b863bb0e");
 }
 
 ZTEST(proto_crypto, test_tag_timing)
@@ -128,8 +127,8 @@ ZTEST(proto_crypto, test_tag_timing)
 			zlrs_test_check_hex(tag, sizeof(tag),
 					    lengths[n] == 251U ? "9f3c65f8" : "5521f6da");
 			printk("crypto %u-byte tag offset=%u: average=%u us max=%u us (64 calls)\n",
-			       lengths[n], (unsigned int)offset,
-			       k_cyc_to_us_ceil32(elapsed) / 64U, k_cyc_to_us_ceil32(worst));
+			       lengths[n], (unsigned int)offset, k_cyc_to_us_ceil32(elapsed) / 64U,
+			       k_cyc_to_us_ceil32(worst));
 		}
 	}
 }

@@ -259,6 +259,7 @@ bool zlrs_mgmt_process_idle(void)
 /* ---- session ------------------------------------------------------------- */
 
 static zlrs_mgmt_parser_t cfg_parser;
+
 /* Device commands: decode wire values at this boundary. */
 
 /* Wire decoding belongs here; configuration validation and persistence have one owner. */
@@ -398,6 +399,7 @@ static int read_image_hash(uint8_t out[ZLRS_MGMT_IMAGE_HASH_LEN])
 #define MCUBOOT_IMAGE_MAGIC    0x96f3b83dU
 #define MCUBOOT_TLV_INFO_MAGIC 0x6907U
 #define MCUBOOT_TLV_SHA256     0x10U
+
 	struct {
 		uint32_t magic;
 		uint32_t load_addr;

@@ -10,7 +10,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
-#if defined(CONFIG_IS_BOOTLOADER) && DT_NODE_EXISTS(DT_ALIAS(zlrs_led)) && \
+#if defined(CONFIG_IS_BOOTLOADER) && DT_NODE_EXISTS(DT_ALIAS(zlrs_led)) &&                         \
 	IS_ENABLED(CONFIG_LED_STRIP)
 #include <zephyr/drivers/led_strip.h>
 #endif
@@ -56,7 +56,7 @@ SYS_INIT(bootguard_disarm_watchdog, PRE_KERNEL_1, 51);
 
 #endif /* DT_NODE_EXISTS(DT_ALIAS(watchdog0)) */
 
-#if defined(CONFIG_IS_BOOTLOADER) && DT_NODE_EXISTS(DT_ALIAS(zlrs_led)) && \
+#if defined(CONFIG_IS_BOOTLOADER) && DT_NODE_EXISTS(DT_ALIAS(zlrs_led)) &&                         \
 	IS_ENABLED(CONFIG_LED_STRIP)
 
 /* MCUboot has no application LED thread. White at 2 Hz identifies serial recovery and updates. */
@@ -87,11 +87,11 @@ static void bootguard_led_thread(void *p1, void *p2, void *p3)
 		(void)led_strip_update_rgb(bootguard_led, &pixel, 1U);
 		on = !on;
 		k_msleep(on ? (BOOTGUARD_LED_PERIOD_MS - BOOTGUARD_LED_ON_MS)
-				   : BOOTGUARD_LED_ON_MS);
+			    : BOOTGUARD_LED_ON_MS);
 	}
 }
 
 K_THREAD_DEFINE(zlrs_bootguard_led_tid, BOOTGUARD_LED_STACK_SIZE, bootguard_led_thread, NULL, NULL,
-		       NULL, BOOTGUARD_LED_PRIORITY, 0, 0);
+		NULL, BOOTGUARD_LED_PRIORITY, 0, 0);
 
 #endif /* CONFIG_IS_BOOTLOADER && zlrs_led && LED_STRIP */
