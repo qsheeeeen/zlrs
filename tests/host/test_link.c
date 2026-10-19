@@ -660,6 +660,7 @@ static void automatic_frame(sim_t *sim, zlrs_band_policy_t policies[2])
 							     info.state == ZLRS_STATE_CONNECTED,
 						     .acquiring = info.radio_acquiring,
 						     .planned = info.band_plan.switch_frame != 0,
+						     .power_at_max = true, /* Constant-power link model. */
 						     .rssi_dbm = link->stats.last_rssi,
 						     .peer_rssi_dbm = info.peer_rssi_dbm,
 						     .lq_percent = link->stats.lq_percent,

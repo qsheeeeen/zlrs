@@ -237,7 +237,7 @@ static void update_power(uint32_t now_ms)
 	const bool ready =
 		info.state == ZLRS_STATE_CONNECTED && info.session_valid && !info.radio_acquiring;
 	int8_t next;
-	if (!ready) {
+	if (!ready || (band_mode == ZLRS_DATA_BAND_AUTO && band_policy.power_boosted)) {
 		next = zlrs_power_recover(&power, now_ms);
 		if (info.state == ZLRS_STATE_PAIRING) {
 			next = CLAMP(ZLRS_PAIR_POWER_DBM, power.floor_dbm, power.ceiling_dbm);
@@ -491,13 +491,17 @@ static void update_band(uint32_t now_ms)
 		.connected = info.session_valid && info.state == ZLRS_STATE_CONNECTED,
 		.acquiring = info.radio_acquiring,
 		.planned = info.band_plan.switch_frame != 0U,
+		.power_at_max = zlrs_link_get_config(&link_data)->tx_power_dbm >= power.ceiling_dbm,
 		.rssi_dbm = stats->last_rssi,
 		.peer_rssi_dbm = info.peer_rssi_dbm,
 		.lq_percent = stats->lq_percent,
 		.peer_lq_percent = info.peer_lq_percent,
 	};
 	const zlrs_band_action_t action = zlrs_band_policy_update(&band_policy, &observation);
-	if (action == ZLRS_BAND_SEARCH) {
+	if (action == ZLRS_BAND_BOOST) {
+		/* Apply before the next slot, including when poor feedback arrived on Follower. */
+		update_power(now_ms);
+	} else if (action == ZLRS_BAND_SEARCH) {
 		change_band(band_policy.target_subg ? ZLRS_DATA_BAND_SUBG : ZLRS_DATA_BAND_24,
 			    band_policy.target_phy, false, now_ms);
 	} else if (action == ZLRS_BAND_PLAN) {

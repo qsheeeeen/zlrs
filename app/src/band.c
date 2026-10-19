@@ -50,6 +50,7 @@ void zlrs_band_policy_resume(zlrs_band_policy_t *p, uint32_t now_ms, uint32_t la
 	p->entered_ms = p->contact_ms = now_ms;
 	p->last_rx_ms = last_rx_ms;
 	p->stable = p->bad = p->good = false;
+	p->power_boosted = false;
 }
 
 zlrs_band_action_t zlrs_band_policy_update(zlrs_band_policy_t *p, const zlrs_band_observation_t *o)
@@ -64,6 +65,7 @@ zlrs_band_action_t zlrs_band_policy_update(zlrs_band_policy_t *p, const zlrs_ban
 	}
 	if (o->acquiring) {
 		p->stable = p->bad = p->good = false;
+		p->power_boosted = false;
 		if ((uint32_t)(o->now_ms - p->entered_ms) >=
 		    (p->probing ? p->loss_ms : p->dwell_ms)) {
 			return next_profile(p, ZLRS_BAND_SEARCH);
@@ -89,6 +91,25 @@ zlrs_band_action_t zlrs_band_policy_update(zlrs_band_policy_t *p, const zlrs_ban
 	const int16_t upgrade_floor = p->subg || p->phy == 0U ? floor : floors[p->phy - 1U] + 6;
 	const bool upgrade = fresh && !poor && o->lq_percent >= 99U && o->peer_lq_percent >= 99U &&
 			     o->rssi_dbm >= upgrade_floor && o->peer_rssi_dbm >= upgrade_floor;
+	/* Both roles react to either weak direction before the Leader may downgrade.
+	 * Reverse DATA already reports the weak reception to the other endpoint. */
+	if (!p->subg && poor) {
+		p->stable = p->good = false;
+		if (!p->power_boosted || !o->power_at_max) {
+			p->power_boosted = true;
+			p->power_boost_ms = o->now_ms;
+			p->bad = false;
+			return ZLRS_BAND_BOOST;
+		}
+		/* Repeated pre-boost observations cannot qualify a downgrade. */
+		if ((int32_t)(o->feedback_ms - p->power_boost_ms) <= 0 ||
+		    (int32_t)(o->last_rx_ms - p->power_boost_ms) <= 0) {
+			p->bad = false;
+			return ZLRS_BAND_KEEP;
+		}
+	} else if (fresh) {
+		p->power_boosted = false;
+	}
 	if (!fresh || poor) {
 		p->good = p->stable = false;
 	} else {

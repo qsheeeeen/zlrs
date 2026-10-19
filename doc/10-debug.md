@@ -121,6 +121,8 @@ default. Required coverage includes:
   pending user DATA remains undelivered.
 - Automatic policy hysteresis, planned transitions, missed announcements,
   one-way/total loss, failed/successful probes and preserved replay/ARQ progress.
+- Power recovery before automatic 2.4 GHz downgrades, post-boost feedback timing,
+  and asymmetric attenuation with actual TX setpoints reflected in simulated RSSI.
 
 Tool checks validate commands, accepted lengths/values, status decoding, device
 selection, bootloader-port discovery and hash/confirmation verdicts. Tree gates

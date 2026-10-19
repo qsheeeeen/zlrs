@@ -8,7 +8,8 @@
 typedef enum {
 	ZLRS_BAND_KEEP,
 	ZLRS_BAND_PLAN,
-	ZLRS_BAND_SEARCH
+	ZLRS_BAND_SEARCH,
+	ZLRS_BAND_BOOST
 } zlrs_band_action_t;
 typedef struct {
 	bool automatic, leader, subg, probing;
@@ -17,10 +18,13 @@ typedef struct {
 	uint32_t loss_ms, dwell_ms, entered_ms, contact_ms, last_rx_ms;
 	uint32_t stable_ms, bad_ms, good_ms;
 	bool stable, bad, good;
+	bool power_boosted;
+	uint32_t power_boost_ms;
 } zlrs_band_policy_t;
 typedef struct {
 	uint32_t now_ms, last_rx_ms, feedback_ms;
 	bool paired, pairing, connected, acquiring, planned;
+	bool power_at_max;
 	int16_t rssi_dbm, peer_rssi_dbm;
 	uint8_t lq_percent, peer_lq_percent;
 } zlrs_band_observation_t;

@@ -10,6 +10,7 @@ static zlrs_band_observation_t good(uint32_t now)
 					 .feedback_ms = now,
 					 .paired = true,
 					 .connected = true,
+					 .power_at_max = true,
 					 .rssi_dbm = -60,
 					 .peer_rssi_dbm = -60,
 					 .lq_percent = 100,
@@ -30,11 +31,14 @@ void test_band(void)
 		CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
 		o = good(200);
 		o.peer_rssi_dbm = floors[phy] - 1;
-		CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
-		o = good(2199);
+		CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_BOOST);
+		o = good(201);
 		o.peer_rssi_dbm = floors[phy] - 1;
 		CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
 		o = good(2200);
+		o.peer_rssi_dbm = floors[phy] - 1;
+		CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
+		o = good(2201);
 		o.peer_rssi_dbm = floors[phy] - 1;
 		CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_PLAN);
 		CHECK(p.target_subg == (phy == ZLRS_PHY_LORA_SF7));
@@ -44,7 +48,7 @@ void test_band(void)
 		CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
 		o = good(2400);
 		o.peer_lq_percent = 94;
-		CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
+		CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_BOOST);
 		o = good(4300);
 		o.peer_lq_percent = 94;
 		o.feedback_ms = 1;
@@ -60,6 +64,38 @@ void test_band(void)
 		p.automatic = false;
 		o.now_ms += 100000;
 		CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
+	}
+	/* Either direction boosts both roles, including RSSI -90 with perfect LQ.
+	 * Only fresh post-boost feedback at maximum starts the two-second hold. */
+	for (unsigned int leader = 0; leader < 2; leader++) {
+		for (unsigned int direction = 0; direction < 2; direction++) {
+			zlrs_band_policy_init(&p, true, leader, false, 0, 0);
+			zlrs_band_observation_t o = good(100);
+			o.power_at_max = false;
+			if (direction == 0) {
+				o.rssi_dbm = -90;
+			} else {
+				o.peer_rssi_dbm = -90;
+			}
+			CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_BOOST);
+			CHECK(p.power_boosted && !p.bad);
+			o.now_ms = o.last_rx_ms = o.feedback_ms = 150;
+			CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_BOOST);
+			o.now_ms = o.last_rx_ms = 200;
+			o.power_at_max = true;
+			CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
+			CHECK(!p.bad); /* Feedback predates reaching maximum power. */
+			o.now_ms = o.last_rx_ms = o.feedback_ms = 300;
+			CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
+			o.now_ms = o.last_rx_ms = o.feedback_ms = 2299;
+			CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
+			o.now_ms = o.last_rx_ms = o.feedback_ms = 2300;
+			CHECK(zlrs_band_policy_update(&p, &o) ==
+			      (leader ? ZLRS_BAND_PLAN : ZLRS_BAND_KEEP));
+			o = good(2400);
+			CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
+			CHECK(!p.power_boosted && !p.bad);
+		}
 	}
 	/* Weak-but-healthy slow 2.4 GHz links stay on that band. */
 	zlrs_band_policy_init(&p, true, true, false, 0, 0);
@@ -123,4 +159,19 @@ void test_band(void)
 	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_SEARCH);
 	o.pairing = true;
 	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
+	/* Post-boost feedback and downgrade qualification also cross clock wrap. */
+	zlrs_band_policy_init(&p, true, true, false, 0, UINT32_MAX - 50U);
+	o = good(UINT32_MAX - 49U);
+	o.peer_rssi_dbm = -90;
+	o.power_at_max = false;
+	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_BOOST);
+	o = good(10);
+	o.peer_rssi_dbm = -90;
+	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
+	o = good(2009);
+	o.peer_rssi_dbm = -90;
+	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
+	o = good(2010);
+	o.peer_rssi_dbm = -90;
+	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_PLAN);
 }

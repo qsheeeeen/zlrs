@@ -255,7 +255,8 @@ SubG retains its -95 dBm boundary. The Leader policy is:
 
 | Condition | Action |
 | --- | --- |
-| Poor 2.4 GHz quality continuously for 2 s | Schedule the next more robust 2.4 GHz profile; after LoRa SF7, schedule SubG |
+| Fresh poor 2.4 GHz quality in either direction | Both roles restore their local TX maximum before the next transmission |
+| Poor 2.4 GHz quality continuously for 2 s at maximum, following post-boost reception and reverse feedback | Leader schedules the next more robust 2.4 GHz profile; after LoRa SF7, schedule SubG |
 | Both LQ values at least 99%, RSSI at least 6 dB above the next faster profile's boundary, continuously for 60 s | Probe that faster profile |
 | Healthy, fresh SubG feedback with both LQ values at least 99% continuously for 60 s | Probe 2.4 GHz LoRa SF7 |
 | Healthy probe quality continuously for 5 s | Retain 2.4 GHz and finish probing |
@@ -264,6 +265,14 @@ SubG retains its -95 dBm boundary. The Leader policy is:
 Stale or poor feedback restarts the healthy SubG interval; entering SubG alone
 does not start an unconditional 60-second return timer. The thresholds are
 product policy subject to RF calibration.
+
+Power recovery precedes downgrade qualification even when the endpoint already
+uses maximum power. Feedback timestamped before the recovery cannot start that
+qualification. Both roles hold maximum while poor quality persists; a healthy
+observation returns to normal power control. The existing reverse DATA RSSI/LQ
+feedback communicates asymmetric degradation. Power recovery changes no wire
+fields, session state, DATA sequence or replay baseline. Contact-loss searching
+continues independently when usable feedback disappears.
 
 Default contact loss is 1.5 seconds without confirmed-session reception. It
 first tries the next more robust 2.4 GHz profile, then SubG; SubG restarts the

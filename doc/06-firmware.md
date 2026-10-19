@@ -108,6 +108,16 @@ maximum before session establishment. Startup, disconnection, invalid session,
 radio capture and feedback loss restore the active band's maximum before the
 next transmission. A band change starts at the new band's maximum.
 
+Automatic 2.4 GHz degradation takes priority over normal power saving. Either
+direction crossing the current profile's poor-quality boundary immediately
+restores local TX to its allowed maximum on both roles. Reverse DATA carries
+the weak-direction RSSI/LQ to the other endpoint, which applies the same rule.
+The Leader waits for reception and reverse feedback newer than the boost, then
+requires two continuous seconds of poor feedback at maximum before planning a
+slower profile. Recovery cancels that qualification and resumes normal power
+saving. Firmware on both endpoints must implement this policy; no new air fields
+are required.
+
 Power decisions run at each radio preparation boundary, independently of logging.
 Each normal adjustment requires three consecutive distinct fresh observations
 and changes the setpoint by 3 dB, bounded by the active range:
@@ -127,7 +137,8 @@ support clock wraparound. Thresholds require RF calibration against measured los
 Debug images provide `zlrs power <dBm>` on the console to hold a fixed setpoint
 within the active range while connected, and `zlrs power auto` to resume automatic
 control at maximum power. The override is volatile and clears on disconnection,
-feedback loss, pairing, retuning or reboot. Pairing and recovery take priority.
+feedback loss, pairing, retuning, automatic 2.4 GHz power recovery or reboot.
+Pairing and recovery take priority.
 
 ## Management and diagnostics
 
