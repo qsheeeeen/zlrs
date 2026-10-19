@@ -25,6 +25,7 @@ jobs:
       - name: toolchain info
         run: |
           cc --version | head -1
+          c++ --version | head -1
           cmake --version | head -1
           python3 --version
       - name: configure checks

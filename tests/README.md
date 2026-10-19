@@ -7,7 +7,7 @@ enforces this boundary.
 
 | Location | Responsibility | Real code | Replaced boundary | Executor |
 | --- | --- | --- | --- | --- |
-| `host/` | Protocol vectors, state transitions, delivery invariants and pure policies | `core/`, band and power policies | SHA backend, deterministic radio/clock/entropy | CTest, ASan/UBSan |
+| `host/` | Protocol vectors, state transitions, delivery invariants and pure policies | `core/`, band and power policies | SHA backend, deterministic radio/clock/entropy | GoogleTest/CTest, ASan/UBSan |
 | `tools/` | Host commands, wire decoding, update decisions and device selection | Python device tools | Ports, subprocesses and device responses | Python unittest through CTest |
 | `simulation/` | Zephyr component integration and application lifecycle | Application owners, threads, zbus, NVS, UART emulation and protocol peers | Physical radio, flash, GPIO and external devices | Twister on `native_sim/native/64` |
 | `hardware/` | Peripheral behavior, physical timing, RF/data transfer and firmware rollback | Target firmware and peripherals | Only the boundary named by each fixture | Explicit board-specific runners |
@@ -31,10 +31,15 @@ ctest --test-dir build/tests --parallel 4 --output-on-failure --output-junit res
 ```
 
 This runs architecture gates, every Python tool module and every host scenario.
-Each host scenario has its own executable, static state, timeout and CTest
-result. Production code and the link fixture are compiled once. Zero executed
-checks is a failure. ASan and UBSan are enabled by default; CI additionally
+GoogleTest policy cases are discovered individually by CTest. Every selected
+case runs in its own process with a timeout and independent result. The other
+host suites still use the C runner during migration. Production code remains C11;
+GoogleTest cases use C++20. ASan and UBSan are enabled by default; CI additionally
 enables LeakSanitizer with `-DZLRS_HOST_LEAKS=ON`.
+
+GoogleTest 1.18.0 is fetched once during CMake configuration, with a pinned
+archive hash. For offline builds, prefetch its source and configure with
+`-DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/absolute/path/to/googletest-1.18.0`.
 
 List or select tests using CTest:
 

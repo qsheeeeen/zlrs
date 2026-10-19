@@ -5,7 +5,7 @@
 # and their line breaks are hand-made, so ReflowComments leaves them alone.
 # SeparateDefinitionBlocks enforces blank lines between type/function definitions.
 #
-#   clang-format -i $(git ls-files '*.c' '*.h')
+#   clang-format -i $(git ls-files '*.c' '*.h' '*.cpp' '*.hpp')
 #
 # References:
 #   - https://clang.llvm.org/docs/ClangFormatStyleOptions.html

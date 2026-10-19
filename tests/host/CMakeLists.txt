@@ -2,8 +2,22 @@
 # SPDX-License-Identifier: Apache-2.0
 
 cmake_minimum_required(VERSION 3.20.0)
-project(zlrs_host_tests LANGUAGES C)
+project(zlrs_host_tests LANGUAGES C CXX)
 include(CTest)
+include(FetchContent)
+include(GoogleTest)
+
+# Pin both the release and its bytes. FETCHCONTENT_SOURCE_DIR_GOOGLETEST can
+# point at a pre-fetched source tree for offline builds.
+if(POLICY CMP0135)
+  cmake_policy(SET CMP0135 NEW)
+endif()
+set(BUILD_GMOCK OFF CACHE BOOL "Build GoogleMock" FORCE)
+set(INSTALL_GTEST OFF CACHE BOOL "Install GoogleTest" FORCE)
+FetchContent_Declare(googletest
+  URL https://github.com/google/googletest/archive/refs/tags/v1.18.0.tar.gz
+  URL_HASH SHA256=6e3191c1455468b3fc35a417fb565c1c5071aee1b7e7f85e30cf48a98d37d8b5)
+FetchContent_MakeAvailable(googletest)
 
 option(ZLRS_HOST_SANITIZERS "Build host tests with AddressSanitizer and UBSan" ON)
 option(ZLRS_HOST_LEAKS "Enable LeakSanitizer during CTest" OFF)
@@ -23,6 +37,9 @@ target_compile_features(zlrs_test_options INTERFACE c_std_11)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 target_include_directories(zlrs_test_options INTERFACE
   "${CMAKE_CURRENT_SOURCE_DIR}"
   "${CMAKE_CURRENT_SOURCE_DIR}/../support"
@@ -81,8 +98,23 @@ zlrs_host_case(proto.fhss test_fhss test_fhss.c)
 zlrs_host_case(proto.mod test_mod test_mod.c)
 zlrs_host_case(mgmt.protocol test_mgmt test_mgmt.c)
 zlrs_host_case(region test_region test_region.c)
-zlrs_host_case(policy.power test_power test_power.c)
-zlrs_host_case(policy.band test_band test_band.c)
+function(zlrs_gtest_module module)
+  add_executable("${module}_tests" ${ARGN})
+  target_link_libraries("${module}_tests" PRIVATE zlrs_test_core GTest::gtest_main)
+  if(BUILD_TESTING)
+    set(test_properties TIMEOUT 120)
+    if(ZLRS_HOST_SANITIZERS)
+      list(APPEND test_properties ENVIRONMENT "ASAN_OPTIONS=detect_leaks=$<BOOL:${ZLRS_HOST_LEAKS}>")
+    endif()
+    gtest_discover_tests("${module}_tests"
+      TEST_PREFIX "host.${module}."
+      PROPERTIES LABELS "host.${module}" ${test_properties}
+      NO_PRETTY_VALUES
+      DISCOVERY_MODE PRE_TEST)
+  endif()
+endfunction()
+
+zlrs_gtest_module(policy test_power.cpp test_band.cpp)
 zlrs_host_case(support.data_pattern test_data_pattern test_data_pattern.c)
 zlrs_host_case(radio.request test_radio test_radio.c)
 zlrs_host_case(fuzz.malformed_inputs test_fuzz test_fuzz.c)

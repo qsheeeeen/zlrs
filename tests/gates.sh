@@ -90,7 +90,7 @@ for environment in host simulation hardware contracts support; do
 	hardware) foreign='host|simulation' ;;
 	*) foreign='host|simulation|hardware' ;;
 	esac
-	if hit=$(rg -n "(tests/|\.\./)($foreign)/" --glob '*.[ch]' --glob CMakeLists.txt \
+	if hit=$(rg -n "(tests/|\.\./)($foreign)/" --glob '*.[ch]' --glob '*.cpp' --glob '*.hpp' --glob CMakeLists.txt \
 		"tests/$environment"); then
 		bad "tests/$environment borrows environment-specific sources; use contracts/ or support/:"
 		echo "$hit"
