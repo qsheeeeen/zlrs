@@ -30,7 +30,8 @@ static inline void zlrs_bench_pattern_fill(uint8_t *out, uint16_t len, uint32_t 
 	}
 	while (len >= 4U) {
 		const uint32_t word = zlrs_bench_pattern_word(offset, sender_leader);
-		const uint8_t bytes[4] = {word, word >> 8, word >> 16, word >> 24};
+		const uint8_t bytes[4] = {(uint8_t)word, (uint8_t)(word >> 8),
+					  (uint8_t)(word >> 16), (uint8_t)(word >> 24)};
 
 		memcpy(out, bytes, sizeof(bytes));
 		out += 4U;

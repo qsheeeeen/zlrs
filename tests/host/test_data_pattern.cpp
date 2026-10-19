@@ -1,10 +1,12 @@
 /* Copyright (c) 2026 zlrs contributors
  * SPDX-License-Identifier: Apache-2.0
  */
-#include "test.h"
+#include <gtest/gtest.h>
+#include <cstdint>
+#include <cstdio>
 #include "data_pattern.h"
 
-void test_data_pattern(void)
+TEST(DataPattern, ExactBytesAcrossOffsetsAndAlignments)
 {
 	const uint32_t offsets[] = {0U,     1U,     2U,     3U,     252U,      253U,
 				    254U,   255U,   256U,   257U,   65532U,    65533U,
@@ -30,26 +32,30 @@ void test_data_pattern(void)
 									(leader ? 0x5aU : 0xa5U));
 					}
 					zlrs_bench_pattern_fill(data, len, offsets[o], leader);
-					CHECK(memcmp(data, expected, len) == 0);
-					CHECK(data[len] == 0xccU);
-					CHECK(zlrs_bench_pattern_bad(data, len, offsets[o],
-								     leader) == 0U);
-					CHECK(zlrs_bench_pattern_bad(data, len, offsets[o],
-								     !leader) == len);
+					EXPECT_EQ(memcmp(data, expected, len), 0);
+					EXPECT_EQ(data[len], 0xccU);
+					EXPECT_EQ(zlrs_bench_pattern_bad(data, len, offsets[o],
+									 leader),
+						  0U);
+					EXPECT_EQ(zlrs_bench_pattern_bad(data, len, offsets[o],
+									 !leader),
+						  len);
 					if (len > 0U) {
 						data[0] ^= 1U;
-						CHECK(zlrs_bench_pattern_bad(data, len, offsets[o],
-									     leader) == 1U);
+						EXPECT_EQ(zlrs_bench_pattern_bad(
+								  data, len, offsets[o], leader),
+							  1U);
 					}
 					if (len > 1U) {
 						data[len - 1U] ^= 0x80U;
-						CHECK(zlrs_bench_pattern_bad(data, len, offsets[o],
-									     leader) == 2U);
+						EXPECT_EQ(zlrs_bench_pattern_bad(
+								  data, len, offsets[o], leader),
+							  2U);
 					}
 				}
 			}
 		}
 	}
-	zlrs_bench_pattern_fill(NULL, 0U, 0U, true);
-	CHECK(zlrs_bench_pattern_bad(NULL, 0U, 0U, true) == 0U);
+	zlrs_bench_pattern_fill(nullptr, 0U, 0U, true);
+	EXPECT_EQ(zlrs_bench_pattern_bad(nullptr, 0U, 0U, true), 0U);
 }

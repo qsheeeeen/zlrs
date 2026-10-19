@@ -10,7 +10,9 @@
  * `-DZLRS_HOST_FUZZ_ITERS=2000000` when configuring the CMake project.
  */
 
-#include "test.h"
+#include <gtest/gtest.h>
+#include <cstdint>
+#include <cstdio>
 
 #include <string.h>
 
@@ -22,7 +24,7 @@
 #ifndef FUZZ_ITERS
 #define FUZZ_ITERS 20000U /* CMake supplies the configurable value. */
 #endif
-#define FUZZ_BUF_LEN 128U
+#define FUZZ_BUF_LEN (ZLRS_FRAME_MAX_LEN + 1U)
 
 typedef struct {
 	uint32_t state;
@@ -90,8 +92,8 @@ static void fuzz_frame_decode(rng_t *rng)
 		}
 	}
 
-	CHECK(violations == 0U);
-	CHECK(decoded > 0U); /* do not let the case spin without doing work */
+	EXPECT_EQ(violations, 0U);
+	EXPECT_GT(decoded, 0U); /* do not let the case spin without doing work */
 }
 
 /* ---- link entry: random bytes plus near-legal frames (tag included) ---- */
@@ -128,29 +130,23 @@ static void fx_link_init(zlrs_link_t *link, uint8_t arq)
 	static const uint8_t dev_id[ZLRS_DEV_ID_LEN] = {0x11, 0x22, 0x33, 0x44};
 	static const uint8_t peer_id[ZLRS_DEV_ID_LEN] = {0xaa, 0xbb, 0xcc, 0xdd};
 	static const uint8_t salt[ZLRS_PAIR_SALT_LEN] = {1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U};
-	const zlrs_link_cfg_t cfg = {
-		.role = ZLRS_ROLE_LEADER,
-		.domain = ZLRS_DOMAIN_ISM2400,
-		.profile = ZLRS_PROFILE_P1,
-		.mod = {.rate_bps = 2600000U},
-		.tx_power_dbm = 10,
-		.rx_timeout_ms = 2U,
-		.sync_period_ms = 2000U,
-		.peer_timeout_ms = 0U,
-		.pair_period_ms = 100U,
-		.pair_window_ms = 30000U,
-		.data_mtu = 128U,
-		.arq = arq,
-		.hopping = 1U,
-
-	};
+	const zlrs_link_cfg_t cfg = {.role = ZLRS_ROLE_LEADER,
+				     .domain = ZLRS_DOMAIN_ISM2400,
+				     .profile = ZLRS_PROFILE_P1,
+				     .mod = {.rate_bps = 2600000U},
+				     .tx_power_dbm = 10,
+				     .rx_timeout_ms = 2U,
+				     .sync_period_ms = 2000U,
+				     .peer_timeout_ms = 0U,
+				     .pair_period_ms = 100U,
+				     .pair_window_ms = 30000U,
+				     .data_mtu = 128U,
+				     .arq = arq,
+				     .hopping = 1U};
 	const zlrs_link_events_t ev = {
-		.on_data = fx_on_data,
-		.on_state = fx_on_state,
-		.ctx = NULL,
-	};
+		.on_data = fx_on_data, .on_state = fx_on_state, .ctx = nullptr};
 
-	zlrs_link_init(link, &cfg, fx_random, NULL, &ev);
+	zlrs_link_init(link, &cfg, fx_random, nullptr, &ev);
 	zlrs_link_set_dev_id(link, dev_id);
 	zlrs_link_set_root_key(link, root_key, 0U);
 	zlrs_link_set_peer(link, peer_id, salt, 0U);
@@ -161,10 +157,19 @@ static uint16_t fx_make_frame(rng_t *rng, uint8_t *out, uint16_t cap, const uint
 {
 	/* Construct bytes independently of the typed encoder. */
 	const uint8_t type = (uint8_t)(rng_next(rng) % 11U);
-	const uint16_t fixed[] = {0, 0, 9, 8, 16, 16, 8, 9};
-	const uint16_t payload_len = type >= ZLRS_PKT_SYNC && type <= ZLRS_PKT_SESS_CFM
-					     ? fixed[type]
-					     : 3U + rng_next(rng) % 32U;
+	const uint16_t fixed[] = {0,
+				  0,
+				  ZLRS_SYNC_PAYLOAD_LEN,
+				  ZLRS_PAIR_REQ_PAYLOAD_LEN,
+				  ZLRS_PAIR_PAYLOAD_LEN,
+				  ZLRS_PAIR_PAYLOAD_LEN,
+				  ZLRS_SESS_RESP_PAYLOAD_LEN,
+				  ZLRS_SESS_CFM_PAYLOAD_LEN};
+	const uint16_t payload_len =
+		type >= ZLRS_PKT_SYNC && type <= ZLRS_PKT_SESS_CFM
+			? fixed[type]
+			: ZLRS_DATA_PREFIX_LEN +
+				  rng_next(rng) % (ZLRS_DATA_MAX_LEN - ZLRS_TAG_LEN + 1U);
 	const uint16_t mac_len = ZLRS_FRAME_HDR_LEN + payload_len;
 	const uint16_t total = mac_len + ZLRS_TAG_LEN;
 	if (total > cap) {
@@ -193,7 +198,7 @@ static void fuzz_link_rx(rng_t *rng)
 
 		if (len == 0U || (rng_next(rng) % 3U) == 0U) {
 			/* pure random bytes */
-			len = (uint16_t)(rng_next(rng) % 70U);
+			len = (uint16_t)(rng_next(rng) % (FUZZ_BUF_LEN + 1U));
 			rng_fill(rng, buf, len);
 		} else {
 			/* Flip some bits of a legal frame, or truncate it at a random offset */
@@ -216,11 +221,11 @@ static void fuzz_link_rx(rng_t *rng)
 		}
 	}
 
-	CHECK(violations == 0U);
+	EXPECT_EQ(violations, 0U);
 	/* Something was rejected, so the parser really ran */
-	CHECK(best_effort.stats.rx_bad_frame + best_effort.stats.rx_bad_tag +
-		      arq.stats.rx_bad_frame + arq.stats.rx_bad_tag >
-	      0U);
+	EXPECT_GT(best_effort.stats.rx_bad_frame + best_effort.stats.rx_bad_tag +
+			  arq.stats.rx_bad_frame + arq.stats.rx_bad_tag,
+		  0U);
 }
 
 /* ---- management frames: random streams fed byte by byte ---- */
@@ -237,9 +242,6 @@ static void fuzz_byte_parsers(rng_t *rng)
 		if ((rng_next(rng) % 64U) == 0U) {
 			zlrs_mgmt_parser_init(&cfg); /* resynchronise now and then */
 		}
-		if ((rng_next(rng) % 64U) == 0U) {
-		}
-
 		switch (zlrs_mgmt_feed(&cfg, (uint8_t)rng_next(rng))) {
 		case 1: {
 			cfg_frames++;
@@ -258,20 +260,27 @@ static void fuzz_byte_parsers(rng_t *rng)
 		}
 	}
 
-	CHECK(violations == 0U);
-	CHECK(cfg_frames < FUZZ_ITERS); /* a random stream must not produce frame after frame */
+	EXPECT_EQ(violations, 0U);
+	EXPECT_LT(cfg_frames, FUZZ_ITERS); /* a random stream must not produce frame after frame */
 }
 
-void test_fuzz(void)
+TEST(MalformedInput, FrameRoundTrips)
 {
-	rng_t rng = {.state = 0x2545F491U};
-
-	printf("fuzz: frame decode\n");
+	rng_t rng{.state = 0x2545F491U};
+	SCOPED_TRACE("seed=0x2545F491U");
 	fuzz_frame_decode(&rng);
+}
 
-	printf("fuzz: link rx\n");
+TEST(MalformedInput, LinkRejectsMalformedInput)
+{
+	rng_t rng{.state = 0x12345678U};
+	SCOPED_TRACE("seed=0x12345678U");
 	fuzz_link_rx(&rng);
+}
 
-	printf("fuzz: management parser\n");
+TEST(MalformedInput, ManagementParserResynchronizes)
+{
+	rng_t rng{.state = 0x87654321U};
+	SCOPED_TRACE("seed=0x87654321U");
 	fuzz_byte_parsers(&rng);
 }

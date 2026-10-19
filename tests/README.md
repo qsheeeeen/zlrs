@@ -31,11 +31,11 @@ ctest --test-dir build/tests --parallel 4 --output-on-failure --output-junit res
 ```
 
 This runs architecture gates, every Python tool module and every host scenario.
-GoogleTest policy cases are discovered individually by CTest. Every selected
-case runs in its own process with a timeout and independent result. The other
-host suites still use the C runner during migration. Production code remains C11;
-GoogleTest cases use C++20. ASan and UBSan are enabled by default; CI additionally
-enables LeakSanitizer with `-DZLRS_HOST_LEAKS=ON`.
+GoogleTest cases are discovered individually by CTest from one executable per
+module. Every selected case runs in its own process with a timeout and independent
+result. Production code remains C11; GoogleTest cases use C++20. ASan and UBSan
+are enabled by default; CI additionally enables LeakSanitizer with
+`-DZLRS_HOST_LEAKS=ON`.
 
 GoogleTest 1.18.0 is fetched once during CMake configuration, with a pinned
 archive hash. For offline builds, prefetch its source and configure with
@@ -46,19 +46,36 @@ List or select tests using CTest:
 ```sh
 ctest --test-dir build/tests -N
 ctest --test-dir build/tests -L link --output-on-failure
-ctest --test-dir build/tests -R '^host.link.pairing_context$' --output-on-failure
+ctest --test-dir build/tests -R '^host.link.Link.PairingContext$' --output-on-failure
 ctest --test-dir build/tests --rerun-failed --output-on-failure
 ```
 
-Labels include `host`, `proto`, `link`, `policy`, `fuzz`, `tools` and
-`architecture`. The host-only CMake entry at `tests/host` remains available.
+Host labels use `host.<module>`, including `host.proto`, `host.link`, `host.policy`
+and `host.fuzz`. CTest label filters are regular expressions: `-L host` selects
+all host cases and `-L link` selects the link module. The other labels are `tools`
+and `architecture`. The host-only CMake entry at `tests/host` remains available.
 Python tool modules are discovered from `tools/test_*.py` and run in separate
 processes; they must not depend on another module's import side effects.
 
-`fuzz.malformed_inputs` is deterministic malformed-input stress, with a fixed
-seed and `ZLRS_HOST_FUZZ_ITERS` configurable in CMake. It checks parser robustness;
+The `MalformedInput` cases are deterministic stress tests, with separate fixed
+seeds and `ZLRS_HOST_FUZZ_ITERS` configurable in CMake. Inputs reach the maximum
+frame length and one byte beyond it; control-frame shapes use current protocol
+lengths. These cases check parser robustness;
 successful protocol transitions and recovery need named stateful scenarios.
 The number of random inputs is not a functional coverage claim.
+
+Link fixtures own both nodes, fake time, packet-loss controls, receive sinks and
+wire captures. `SetUp()` resets all of them before every case. Profile and loss
+variants use named `TEST_P` parameters. The link binary also supports repeated,
+shuffled execution to check for order-dependent state:
+
+```sh
+build/tests/host/link_tests --gtest_shuffle --gtest_repeat=3 --gtest_random_seed=2026
+```
+
+Use `ASSERT_*` for setup and decoding preconditions, `EXPECT_*` for independent
+observations, and `SCOPED_TRACE` for loop context. Existing C callbacks and radio
+fakes remain the protocol boundary; GoogleMock is not a dependency.
 
 CTest writes `results.xml` and `Testing/Temporary/LastTest.log` under the build
 directory. Use `--output-on-failure` for the failing scenario's assertions.
@@ -144,7 +161,8 @@ unchanged. Test both roles and relevant configuration variants. Do not replace
 these observations with assertion counts, fuzz iterations or a wire transcript
 hash alone.
 
-Register host scenarios in `host/CMakeLists.txt` and native configurations in
-their `testcase.yaml`. Add a named regression to the owning level when fixing a
+Add host `TEST`, `TEST_F` or `TEST_P` cases to the owning module; discovery is
+automatic. Add a new source file to that module in `host/CMakeLists.txt` and native
+configurations to their `testcase.yaml`. Add a named regression to the owning level when fixing a
 defect. Fake only the component's external boundary; an owner integration test
 must keep the real components whose interaction it claims to verify.

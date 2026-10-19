@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Editor defaults for the tree. C style is enforced by .clang-format (run
-# `clang-format -i $(git ls-files '*.c' '*.h')`); this file only keeps editors
+# `clang-format -i $(git ls-files '*.c' '*.h' '*.cpp' '*.hpp')`); this file only keeps editors
 # from fighting over the basics.
 
 root = true
@@ -12,7 +12,7 @@ end_of_line = lf
 insert_final_newline = true
 trim_trailing_whitespace = true
 
-[*.{c,h,dts,dtsi,overlay,conf}]
+[*.{c,h,cpp,hpp,dts,dtsi,overlay,conf}]
 indent_style = tab
 indent_size = 8
 

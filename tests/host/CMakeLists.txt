@@ -49,6 +49,9 @@ target_include_directories(zlrs_test_options INTERFACE
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(zlrs_test_options INTERFACE -O2 -Wall -Wextra -Werror)
+  # C++20 designated initializers deliberately zero unspecified C struct fields.
+  target_compile_options(zlrs_test_options INTERFACE
+    "$<$<COMPILE_LANGUAGE:CXX>:-Wno-missing-field-initializers>")
   if(ZLRS_HOST_SANITIZERS)
     target_compile_options(zlrs_test_options INTERFACE
       -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g -O1)
@@ -75,29 +78,6 @@ add_library(zlrs_test_core STATIC
   ../../core/link/data.c)
 target_link_libraries(zlrs_test_core PUBLIC zlrs_test_options)
 
-function(zlrs_host_case name entry)
-  set(target "host_${entry}")
-  add_executable("${target}" main.c ${ARGN})
-  target_link_libraries("${target}" PRIVATE zlrs_test_core)
-  target_compile_definitions("${target}" PRIVATE
-    "ZLRS_TEST_ENTRY=${entry}" "ZLRS_TEST_NAME=\"${name}\"")
-  if(BUILD_TESTING)
-    string(REGEX REPLACE "\\..*$" "" family "${name}")
-    add_test(NAME "host.${name}" COMMAND "${target}")
-    set_tests_properties("host.${name}" PROPERTIES LABELS "host;${family}" TIMEOUT 120)
-    if(ZLRS_HOST_SANITIZERS)
-      set_tests_properties("host.${name}" PROPERTIES
-        ENVIRONMENT "ASAN_OPTIONS=detect_leaks=$<BOOL:${ZLRS_HOST_LEAKS}>")
-    endif()
-  endif()
-endfunction()
-
-zlrs_host_case(proto.crypto test_crypto test_crypto.c)
-zlrs_host_case(proto.frame test_frame test_frame.c)
-zlrs_host_case(proto.fhss test_fhss test_fhss.c)
-zlrs_host_case(proto.mod test_mod test_mod.c)
-zlrs_host_case(mgmt.protocol test_mgmt test_mgmt.c)
-zlrs_host_case(region test_region test_region.c)
 function(zlrs_gtest_module module)
   add_executable("${module}_tests" ${ARGN})
   target_link_libraries("${module}_tests" PRIVATE zlrs_test_core GTest::gtest_main)
@@ -108,27 +88,19 @@ function(zlrs_gtest_module module)
     endif()
     gtest_discover_tests("${module}_tests"
       TEST_PREFIX "host.${module}."
+      EXTRA_ARGS --gtest_fail_if_no_test_selected
       PROPERTIES LABELS "host.${module}" ${test_properties}
       NO_PRETTY_VALUES
       DISCOVERY_MODE PRE_TEST)
   endif()
 endfunction()
 
+zlrs_gtest_module(proto test_crypto.cpp test_frame.cpp test_fhss.cpp test_mod.cpp)
+zlrs_gtest_module(mgmt test_mgmt.cpp)
+zlrs_gtest_module(region test_region.cpp)
 zlrs_gtest_module(policy test_power.cpp test_band.cpp)
-zlrs_host_case(support.data_pattern test_data_pattern test_data_pattern.c)
-zlrs_host_case(radio.request test_radio test_radio.c)
-zlrs_host_case(fuzz.malformed_inputs test_fuzz test_fuzz.c)
-target_compile_definitions(host_test_fuzz PRIVATE FUZZ_ITERS=${ZLRS_HOST_FUZZ_ITERS})
-
-# Each link scenario gets a fresh process, independent static state, a timeout and
-# its own CTest result. Build their shared two-node fixture only once.
-add_library(zlrs_link_scenarios STATIC test_link.c)
-target_link_libraries(zlrs_link_scenarios PUBLIC zlrs_test_core)
-foreach(scenario IN ITEMS
-    duplex replay_and_counters response_binding pairing_context
-    confirmation_loss_and_exhaustion entropy_failure nonce_reuse
-    band_plan_security capture_waits_for_phase automatic_bands
-    quality_window_boundary data_sequence_wrap)
-  zlrs_host_case("link.${scenario}" "test_${scenario}")
-  target_link_libraries("host_test_${scenario}" PRIVATE zlrs_link_scenarios)
-endforeach()
+zlrs_gtest_module(support test_data_pattern.cpp)
+zlrs_gtest_module(radio test_radio.cpp)
+zlrs_gtest_module(fuzz test_fuzz.cpp)
+target_compile_definitions(fuzz_tests PRIVATE FUZZ_ITERS=${ZLRS_HOST_FUZZ_ITERS})
+zlrs_gtest_module(link test_link.cpp)
