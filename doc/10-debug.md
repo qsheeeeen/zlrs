@@ -34,12 +34,31 @@ transmit setpoint, MCU temperature, frequency, frame period, counters and automa
 flags. Its LR2021 section provides junction/XOSC temperature, VBAT, version,
 mode/command/reset, IRQ and errors with independent validity bits.
 
+Both management `status` and debug `zlrs status` group observations as Link,
+Radio, Signal / Power, Traffic / Errors, Device / Configuration, Sensors and
+LR2021 snapshot. Radio places the active band and modulation beside frequency,
+frame period, capture and transition state. Modulation identifies the current
+FLRC rate or LoRa SF/BW. An older firmware's 90-byte status cannot report this
+field: the host prints `not reported (upgrade device firmware)` rather than
+inferring modulation from frequency or frame period. Upgrade both peers together
+to obtain the adaptive profiles and their live status.
+
 Management status pauses RF and refreshes chip measurements at that maintenance
 boundary. Repeated reads can affect peer quality or recovery. Use debug shell
 `zlrs status` for nonpausing observation: it reads copied state, refreshed once per
 second and when LED inputs change. Chip values remain the latest boot or
 management sample, and their age is shown. Standby mode at a maintenance boundary
 is expected; it is not the preceding live RX/TX mode.
+
+Sensor labels identify their source: `MCU chip temp` is the main MCU's internal
+temperature, `LR2021 chip temp` is the radio chip's internal junction temperature,
+and `LR2021 XOSC temp` is its crystal-oscillator-area temperature. These measure
+different locations inside the chips; none is an ambient-temperature reading.
+The console places `LR2021 sample age` beside these values in milliseconds.
+Management `status` refreshes the radio measurements for that request. Printing
+debug `zlrs status` only reads the previous radio snapshot; its MCU temperature
+is read when the command runs. The LR2021's two internal sensor sources are
+specified in [datasheet §6.5.2, GetTemp](https://www.mouser.com/pdfDocs/61979758LR2021_V1_1_datasheet.pdf#page=109).
 
 Debug management reports are available with:
 
@@ -50,6 +69,17 @@ python3 tools/zlrs.py radio --serial <serial>
 python3 tools/zlrs.py power --serial <serial>
 python3 tools/zlrs.py logs --serial <serial>
 ```
+
+Automatic-mode 2.4 GHz profiles are shown by management `status`, debug
+`zlrs status` and the `rate` report. On the Leader debug console, `zlrs phy 0`
+through `zlrs phy 4` request one coordinated profile change for bench acceptance:
+0 FLRC 2.6 Mbps, 1 FLRC 650 kbps, 2 FLRC 325 kbps, 3 LoRa SF6, 4 LoRa SF7.
+The request is volatile and normal quality policy continues after the change.
+Follower and fixed-band requests are rejected. Test both directions with queued
+DATA, lost ACKs, missed announcements and a PHY mismatch; a simulated radio must
+reject packets with mismatched rate/modulation, even at the same frequency.
+Air version 12 requires both endpoints to be upgraded together. The new host
+tool retains decoding of the previous 90-byte management status for rollback.
 
 The debug console accepts `zlrs power <dBm>` for a temporary fixed setpoint
 within the active range while connected. `zlrs power auto` resumes automatic
@@ -75,7 +105,9 @@ default. Required coverage includes:
 
 - Independent byte vectors for all eight air types, first-byte bit allocation,
   common u32 sequences, P0/P1 exact lengths, empty DATA and 511-byte frames.
-- Inline DATA ownership, maximum P1/P0 payloads of 499/503 bytes and encoded tags.
+- Inline DATA ownership, fixed-FLRC P1/P0 payloads of 499/503 bytes, automatic-mode
+  MTUs of 243/247 bytes and encoded tags.
+- LoRa SF6/SF7 airtime vectors, profile identifiers and rejected PHY mismatches.
 - Independent SHA/HMAC/HKDF/PBKDF2 vectors, multipart hashing and tag verification.
 - Both peers pairing and establishing sessions; duplicate requests, nonce zero,
   changed IDs, wrong tuple confirmations, response/confirmation loss and repeats.
@@ -306,6 +338,25 @@ original hash. Normal upgrade scenarios separately exercise confirmation and
 rollback deadlines.
 
 ### Bidirectional DATA and transitions
+
+For a 2.4 GHz profile sweep, build the radio fixture with hopping enabled and
+keep both boards in saved automatic-band mode. The runner negotiates profiles
+0→1→2→3→4→3→2→1→0 and verifies DATA in both directions at every step. It leaves
+the fixture unconfirmed and verifies rollback to the original image hashes:
+
+```sh
+mkdir -p build
+cat >build/phy-acceptance.conf <<'EOF'
+CONFIG_ZLRS_APP_FHSS=y
+CONFIG_ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS=600000
+EOF
+west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33/lf \
+  tests/hardware/radio -d build/radio-phy -- \
+  -Dradio_EXTRA_CONF_FILE="$PWD/build/phy-acceptance.conf"
+python3 tests/hardware/radio/run.py --serial <Leader-serial> --peer <Follower-serial> \
+  --image build/radio-phy/radio/zephyr/zephyr.signed.bin \
+  --profiles --bytes 8193 --rounds 1 --timeout 45 --log build/radio-phy.json
+```
 
 Use paired product images and deterministic bytes:
 

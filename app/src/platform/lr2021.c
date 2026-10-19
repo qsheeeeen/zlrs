@@ -43,6 +43,8 @@ static uint32_t tx_at_us;
 static bool timed_slot;
 static bool cfg_valid;
 static ralf_params_flrc_t flrc_cfg;
+static bool lora_valid;
+static ralf_params_lora_t lora_cfg;
 static bool sync_valid[3];
 static uint8_t sync_words[3][ZLRS_SYNC_WORD_LEN];
 static bool tx_cfg_valid;
@@ -153,8 +155,23 @@ static void make_flrc(const zlrs_mod_cfg_t *mod, uint16_t len, ralf_params_flrc_
 	cfg->pkt_params.crc_type = RAL_FLRC_CRC_2_BYTES;
 }
 
+static void make_lora(const zlrs_mod_cfg_t *mod, uint16_t len, ralf_params_lora_t *cfg)
+{
+	memset(cfg, 0, sizeof(*cfg));
+	cfg->mod_params.sf = mod->lora_sf == 6U ? RAL_LORA_SF6 : RAL_LORA_SF7;
+	cfg->mod_params.bw = RAL_LORA_BW_1000_KHZ;
+	cfg->mod_params.cr = RAL_LORA_CR_4_5;
+	cfg->pkt_params.preamble_len_in_symb = ZLRS_LORA_PREAMBLE_SYMBOLS;
+	cfg->pkt_params.header_type = RAL_LORA_PKT_EXPLICIT;
+	cfg->pkt_params.pld_len_in_bytes = MIN(len, ZLRS_LORA_FRAME_MAX_LEN);
+	cfg->pkt_params.crc_is_on = true;
+}
+
 uint32_t zlrs_lr2021_airtime_us(const zlrs_mod_cfg_t *mod, uint16_t len)
 {
+	if (mod->lora_sf != 0U) {
+		return zlrs_mod_airtime_us(mod, len);
+	}
 	ralf_params_flrc_t cfg;
 	make_flrc(mod, len, &cfg);
 	return ral_get_flrc_time_on_air_in_us(&radio.ral, &cfg.pkt_params, &cfg.mod_params);
@@ -192,6 +209,7 @@ static int setup_flrc(const zlrs_radio_req_t *req)
 {
 	ralf_params_flrc_t cfg;
 	const bool full = !cfg_valid;
+	lora_valid = false;
 
 	make_flrc(&req->mod, req->is_tx ? req->size : req->max_rx_size, &cfg);
 	cfg.rf_freq_in_hz = req->freq_hz;
@@ -240,8 +258,51 @@ static int setup_flrc(const zlrs_radio_req_t *req)
 	return setup_tx_power(req);
 }
 
+static int setup_lora(const zlrs_radio_req_t *req)
+{
+	ralf_params_lora_t cfg;
+	const bool full = !lora_valid;
+
+	if ((req->mod.lora_sf != 6U && req->mod.lora_sf != 7U) ||
+	    (req->is_tx && req->size > ZLRS_LORA_FRAME_MAX_LEN)) {
+		return -EINVAL;
+	}
+	make_lora(&req->mod, req->is_tx ? req->size : req->max_rx_size, &cfg);
+	cfg.rf_freq_in_hz = req->freq_hz;
+	cfg.sync_word =
+		req->sync_word[0] ^ req->sync_word[1] ^ req->sync_word[2] ^ req->sync_word[3];
+	/* Switching packet type invalidates the other modem's retained configuration. */
+	cfg_valid = false;
+	lora_valid = false;
+	if ((full && ral_set_pkt_type(&radio.ral, RAL_PKT_TYPE_LORA) != RAL_STATUS_OK) ||
+	    ((full || cfg.rf_freq_in_hz != lora_cfg.rf_freq_in_hz) &&
+	     setup_frequency(cfg.rf_freq_in_hz) != 0) ||
+	    ((full || memcmp(&cfg.mod_params, &lora_cfg.mod_params, sizeof(cfg.mod_params)) != 0) &&
+	     ral_set_lora_mod_params(&radio.ral, &cfg.mod_params) != RAL_STATUS_OK) ||
+	    ((full || memcmp(&cfg.pkt_params, &lora_cfg.pkt_params, sizeof(cfg.pkt_params)) != 0) &&
+	     ral_set_lora_pkt_params(&radio.ral, &cfg.pkt_params) != RAL_STATUS_OK) ||
+	    ((full || cfg.sync_word != lora_cfg.sync_word) &&
+	     ral_set_lora_sync_word(&radio.ral, cfg.sync_word) != RAL_STATUS_OK) ||
+	    (full && ral_set_lora_symb_nb_timeout(&radio.ral, 0U) != RAL_STATUS_OK)) {
+		return -EIO;
+	}
+	lora_cfg = cfg;
+	lora_valid = true;
+	return setup_tx_power(req);
+}
+
 static bool flrc_unchanged(const zlrs_radio_req_t *req)
 {
+	if (req->mod.lora_sf != 0U) {
+		ralf_params_lora_t cfg;
+		make_lora(&req->mod, req->is_tx ? req->size : req->max_rx_size, &cfg);
+		return lora_valid && tx_cfg_valid && tx_cfg_power == req->tx_power_dbm &&
+		       req->freq_hz == lora_cfg.rf_freq_in_hz &&
+		       (req->sync_word[0] ^ req->sync_word[1] ^ req->sync_word[2] ^
+			req->sync_word[3]) == lora_cfg.sync_word &&
+		       memcmp(&cfg.mod_params, &lora_cfg.mod_params, sizeof(cfg.mod_params)) == 0 &&
+		       memcmp(&cfg.pkt_params, &lora_cfg.pkt_params, sizeof(cfg.pkt_params)) == 0;
+	}
 	ralf_params_flrc_t cfg;
 	const uint8_t id = (uint8_t)req->sync_slot - 1U;
 
@@ -290,7 +351,8 @@ int zlrs_lr2021_prepare(const zlrs_radio_req_t *req)
 	}
 	if ((stale & (RAL_IRQ_CMD_ERROR | RAL_IRQ_ERROR)) != 0U) {
 		(void)lr20xx_system_get_errors(radio.ral.context, &diag.chip_errors);
-		diag.chip_error_freq_hz = flrc_cfg.rf_freq_in_hz;
+		diag.chip_error_freq_hz =
+			lora_valid ? lora_cfg.rf_freq_in_hz : flrc_cfg.rf_freq_in_hz;
 		(void)lr20xx_system_clear_errors(radio.ral.context);
 		if (reuse_fs &&
 		    ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC) != RAL_STATUS_OK) {
@@ -303,7 +365,7 @@ int zlrs_lr2021_prepare(const zlrs_radio_req_t *req)
 		diag.stale_irq_bits = stale;
 	}
 	stages[1] = zlrs_slot_timer_now_us();
-	rc = setup_flrc(req);
+	rc = req->mod.lora_sf != 0U ? setup_lora(req) : setup_flrc(req);
 	if (rc != 0) {
 		return rc;
 	}
@@ -620,8 +682,7 @@ static bool status_read_ok(lr20xx_status_t result)
 	lr20xx_system_stat1_t stat;
 
 	return result == LR20XX_STATUS_OK &&
-	       lr20xx_system_get_status(radio.ral.context, &stat, NULL, NULL) ==
-		       LR20XX_STATUS_OK &&
+	       lr20xx_system_get_status(radio.ral.context, &stat, NULL, NULL) == LR20XX_STATUS_OK &&
 	       (stat.command_status == LR20XX_SYSTEM_CMD_STATUS_OK ||
 		stat.command_status == LR20XX_SYSTEM_CMD_STATUS_DATA);
 }
@@ -637,8 +698,7 @@ void zlrs_lr2021_read_status(zlrs_lr2021_status_t *out)
 	__ASSERT_NO_MSG(!pending && !prepared);
 	*out = (zlrs_lr2021_status_t){0};
 	/* Capture the maintenance-boundary state before issuing sensor commands. */
-	if (lr20xx_system_get_status(radio.ral.context, &stat1, &stat2, &irq) ==
-	    LR20XX_STATUS_OK) {
+	if (lr20xx_system_get_status(radio.ral.context, &stat1, &stat2, &irq) == LR20XX_STATUS_OK) {
 		out->chip_mode = stat2.chip_mode;
 		out->command_status = stat1.command_status;
 		out->reset_status = stat2.reset_status;
@@ -663,8 +723,8 @@ void zlrs_lr2021_read_status(zlrs_lr2021_status_t *out)
 		out->valid |= ZLRS_LR2021_STATUS_XOSC_TEMP;
 	}
 	if (status_read_ok(lr20xx_system_get_vbat(radio.ral.context,
-					      LR20XX_SYSTEM_VALUE_FORMAT_UNIT,
-					      LR20XX_SYSTEM_MEAS_RES_13_BITS, &value))) {
+						  LR20XX_SYSTEM_VALUE_FORMAT_UNIT,
+						  LR20XX_SYSTEM_MEAS_RES_13_BITS, &value))) {
 		out->vbat_mv = value;
 		out->valid |= ZLRS_LR2021_STATUS_VBAT;
 	}
@@ -776,10 +836,17 @@ bool zlrs_lr2021_process_irq(zlrs_lr2021_result_t *out)
 		} else {
 			diag.rx_payload_errors++;
 		}
-		ral_flrc_rx_pkt_status_t pkt;
-		if (ral_get_flrc_rx_pkt_status(&radio.ral, &pkt) == RAL_STATUS_OK) {
-			/* RX_DONE makes the whole-packet measurement available. */
-			rssi = pkt.rssi_avg_in_dbm;
+		if (request->mod.lora_sf != 0U) {
+			ral_lora_rx_pkt_status_t pkt;
+			if (ral_get_lora_rx_pkt_status(&radio.ral, &pkt) == RAL_STATUS_OK) {
+				rssi = pkt.rssi_pkt_in_dbm;
+				snr = pkt.snr_pkt_in_db;
+			}
+		} else {
+			ral_flrc_rx_pkt_status_t pkt;
+			if (ral_get_flrc_rx_pkt_status(&radio.ral, &pkt) == RAL_STATUS_OK) {
+				rssi = pkt.rssi_avg_in_dbm;
+			}
 		}
 
 		diag.rx_us_last = event_us - begin_us;

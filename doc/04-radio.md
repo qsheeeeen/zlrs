@@ -1,6 +1,6 @@
 # Radio requirements
 
-ZLRS uses one Semtech LR2021 in half-duplex FLRC mode. SubG and 2.4 GHz share the
+ZLRS uses one Semtech LR2021 in half-duplex FLRC or LoRa mode. SubG and 2.4 GHz share the
 radio and cannot carry simultaneous DATA traffic. Module coverage, PA tables and
 antenna paths are hardware constraints; the selected band supplies its modem and
 channel plan.
@@ -30,6 +30,35 @@ The operational raw-rate tiers are 2.6, 1.3, 0.65 and 0.325 Mbps. The default
 Physical coding, headers and control traffic reduce delivered user throughput;
 raw bitrate is not serial throughput.
 
+### Automatic 2.4 GHz profiles
+
+Automatic mode uses the ordered profiles below before falling back to SubG.
+Fixed-band mode retains its configured FLRC rate. SubG remains FLRC and follows
+the selected regional rate and power policy.
+
+| Profile ID | Modulation | Initial downgrade RSSI boundary |
+| --- | --- | --- |
+| 0 | FLRC 2.6 Mbps, CR 3/4 | -89 dBm |
+| 1 | FLRC 650 kbps, CR 3/4 | -94 dBm |
+| 2 | FLRC 325 kbps, CR 3/4 | -98 dBm |
+| 3 | LoRa SF6, BW 1 MHz, CR 4/5 | -103 dBm |
+| 4 | LoRa SF7, BW 1 MHz, CR 4/5 | -106 dBm |
+
+These starting boundaries reserve approximately 10 dB over datasheet typical
+sensitivity and require calibration with equal-length packets on real hardware.
+LoRa uses a 12-symbol preamble, explicit header, physical CRC and normal IQ. Its
+8-bit hardware sync word XORs the four pairing-derived sync bytes; software tags
+continue to authenticate every frame. Profile ID 5 denotes fixed FLRC 1.3 Mbps
+and is not an automatic fallback step.
+
+Automatic mode caps every radio frame at 255 bytes, including FLRC and SubG.
+The P1 DATA MTU is therefore 243 bytes (P0: 247). Keeping the same MTU across
+all automatic profiles preserves a packet whose delivery ACK was lost: changing
+its packet boundaries at a PHY transition could duplicate or omit user bytes.
+Fixed FLRC retains its 511-byte frame limit. Slot reservations use the actual
+mode's frame limit and modem airtime. The smaller automatic MTU trades some
+peak throughput for safe transitions without discarding queued DATA.
+
 | Region | Module SKU | Configured band limits | Raw-rate ceiling | TX ceiling | Duty policy |
 | --- | --- | --- | --- | --- | --- |
 | FCC915 | HF | 902–928 MHz | 2.6 Mbps | 22 dBm | No software duty cap |
@@ -55,8 +84,9 @@ context. Preparation failure cancels that transmission; late transmission is not
 allowed.
 
 The preparation reservation is 2.5 ms on 2.4 GHz and 6 ms on SubG. Slot planning
-also reserves 500 µs for startup, the maximum 511-byte packet airtime and 200 µs
-for completion margin. The radio's airtime calculation must use the same physical
+also reserves 500 µs for startup, the active mode's maximum packet airtime
+(255 bytes in automatic mode, 511 in fixed FLRC) and 200 µs for completion
+margin. The radio's airtime calculation must use the same physical
 settings as the actual modem. Short packets keep the same slot boundaries and
 consume only their actual airtime.
 

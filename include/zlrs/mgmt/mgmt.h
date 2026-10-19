@@ -22,7 +22,7 @@ extern "C" {
 #define ZLRS_MGMT_SOF0            0xA5U
 #define ZLRS_MGMT_SOF1            0x5AU
 #define ZLRS_MGMT_VERSION         5U
-#define ZLRS_MGMT_FRAME_MAX_LEN   96U
+#define ZLRS_MGMT_FRAME_MAX_LEN   97U
 #define ZLRS_MGMT_PAYLOAD_MAX_LEN (ZLRS_MGMT_FRAME_MAX_LEN - 6U)
 
 /* host -> device */
@@ -63,8 +63,8 @@ extern "C" {
 #define ZLRS_MGMT_DEBUG_REPORT_POWER      3U
 #define ZLRS_MGMT_DEBUG_REPORT_REQ_LEN    3U
 #define ZLRS_MGMT_DEBUG_REPORT_HEADER_LEN 5U
-#define ZLRS_MGMT_DEBUG_REPORT_CHUNK_MAX                                                           \
-	(ZLRS_MGMT_PAYLOAD_MAX_LEN - ZLRS_MGMT_DEBUG_REPORT_HEADER_LEN)
+/* Keep pagination stable when an optional status field extends the frame capacity. */
+#define ZLRS_MGMT_DEBUG_REPORT_CHUNK_MAX 85U
 
 /* status codes */
 #define ZLRS_MGMT_OK        0U
@@ -73,7 +73,7 @@ extern "C" {
 #define ZLRS_MGMT_E_STORE   3U
 #define ZLRS_MGMT_E_UNKNOWN 4U
 
-#define ZLRS_MGMT_STATUS_LEN       90U
+#define ZLRS_MGMT_STATUS_LEN       91U
 #define ZLRS_MGMT_TEMP_UNAVAILABLE INT16_MIN
 #define ZLRS_MGMT_PHRASE_MAX_LEN   32U
 #define ZLRS_MGMT_BUILD_MAX_LEN    32U
@@ -124,6 +124,7 @@ typedef struct {
 	uint8_t radio_valid;
 	uint16_t radio_errors;
 	uint32_t radio_irq;
+	uint8_t data_phy; /* zlrs_phy_t; appended to the original 90-byte status */
 } zlrs_mgmt_status_t;
 
 #define ZLRS_MGMT_FLAG_POWER_FIXED    0x80U /* volatile debug override */

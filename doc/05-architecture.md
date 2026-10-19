@@ -7,8 +7,8 @@ behavior and [firmware](06-firmware.md) defines operation.
 
 ## Service ownership
 
-One LR2021 serves one active FLRC band. The RF service owns the radio schedule,
-frequency policy, phase, duty budget and power. The link service owns pairing,
+One LR2021 serves one active band and FLRC/LoRa profile. The RF service owns the
+radio schedule, frequency/profile policy, phase, duty budget and power. The link service owns pairing,
 sessions, authentication, replay contexts, ARQ and receive quality. Pairing,
 sessions and DATA share one link context. Retuning changes radio parameters while
 preserving that context's session and delivery progress.

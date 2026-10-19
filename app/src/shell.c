@@ -16,97 +16,138 @@
 #endif
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_SHELL)
-static void status_temperature(const struct shell *sh, const char *name, int16_t value)
+static void status_temperature(const struct shell *sh, const char *name, bool valid, int16_t value)
 {
 	const int magnitude = value < 0 ? -value : value;
 
-	shell_print(sh, "%s: %s%d.%02d C", name, value < 0 ? "-" : "", magnitude / 100,
-		    magnitude % 100);
+	if (valid) {
+		shell_print(sh, "  %-20s : %s%d.%02d C", name, value < 0 ? "-" : "",
+			    magnitude / 100, magnitude % 100);
+	} else {
+		shell_print(sh, "  %-20s : unavailable", name);
+	}
 }
 
 static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 {
-	zlrs_rf_status_t link = {0};
+	zlrs_rf_status_t link;
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
-	(void)zbus_chan_read(&zlrs_rf_chan, &link, K_MSEC(10));
+	const int rc = zbus_chan_read(&zlrs_rf_chan, &link, K_MSEC(10));
+	if (rc != 0) {
+		shell_error(sh, "RF status unavailable (%d)", rc);
+		return rc;
+	}
 	const zlrs_region_t *region = zlrs_region_get(link.region);
-	shell_print(sh, "role   : %s", link.role == ZLRS_ROLE_LEADER ? "Leader" : "Follower");
-	shell_print(sh, "sub-G  : %s",
-		    DT_PROP(DT_NODELABEL(zlrs_rf), band) == ZLRS_BAND_SUBG_LF ? "LF" : "HF");
-	shell_print(sh, "region : %s", region != NULL ? region->name : "?");
-	shell_print(sh, "band   : %s", link.data_band == ZLRS_DATA_BAND_SUBG ? "sub-G" : "2.4 GHz");
-	shell_print(sh, "switch : %s, capture %d, planned %d, count %u",
-		    link.band_mode == ZLRS_DATA_BAND_AUTO ? "auto" : "fixed", link.band_acquiring,
-		    link.band_planned, link.band_switches);
-	shell_print(sh, "link   : state %u, lq %u%%, paired %d", link.state, link.lq_percent,
-		    link.paired);
-	if (link.rssi_dbm != 0) {
-		shell_print(sh, "signal : RSSI %d dBm", link.rssi_dbm);
-	} else {
-		shell_print(sh, "signal : RSSI unavailable");
-	}
-	if (link.peer_rssi_dbm != 0) {
-		shell_print(sh, "peer   : RSSI %d dBm, lq %u%%", link.peer_rssi_dbm,
-			    link.peer_lq_percent);
-	} else {
-		shell_print(sh, "peer   : feedback unavailable");
-	}
-	shell_print(sh, "power  : %d dBm, range %d..%d dBm", link.tx_power_dbm,
-		    link.power_floor_dbm, link.power_ceiling_dbm);
-	shell_print(sh, "control: %s", link.power_fixed ? "debug fixed" : "automatic");
-	int16_t temperature;
-	if (zlrs_temperature_read(&temperature) == 0) {
-		const int magnitude = temperature < 0 ? -temperature : temperature;
-		shell_print(sh, "temp   : MCU %s%d.%02d C", temperature < 0 ? "-" : "",
-			    magnitude / 100, magnitude % 100);
-	} else {
-		shell_print(sh, "temp   : MCU unavailable");
-	}
-	shell_print(sh, "hop    : %u.%03u MHz, index %u, frame %u us", link.frequency_hz / 1000000U,
-		    (link.frequency_hz % 1000000U) / 1000U, link.hop_index, link.frame_period_us);
-	shell_print(sh, "frames : TX %u, RX %u, retry %u", link.tx_frames, link.rx_frames,
-		    link.tx_retries);
-	shell_print(sh, "errors : CRC %u, tag %u, radio %u, missed slots %u", link.rx_crc_errors,
-		    link.rx_bad_tag, link.radio_fail, link.missed_slots);
-	shell_print(sh, "data   : RF drop %u B", link.data_drop_bytes);
 	const zlrs_lr2021_status_t *radio = &link.radio;
-	if (radio->valid & ZLRS_LR2021_STATUS_TEMP) {
-		status_temperature(sh, "lr temp", radio->temperature_centi_c);
+	static const char *const states[] = {"unconfigured", "unpaired", "pairing", "searching",
+					     "connected"};
+
+	shell_print(sh, "ZLRS Status\n\nLink");
+	shell_print(sh, "  %-20s : %s", "Role",
+		    link.role == ZLRS_ROLE_LEADER ? "Leader" : "Follower");
+	shell_print(sh, "  %-20s : %s", "State",
+		    (unsigned int)link.state < ARRAY_SIZE(states) ? states[link.state] : "unknown");
+	shell_print(sh, "  %-20s : %s", "Paired", link.paired ? "yes" : "no");
+	shell_print(sh, "  %-20s : %s", "Session", link.session_valid ? "active" : "inactive");
+
+	shell_print(sh, "\nRadio");
+	shell_print(sh, "  %-20s : %s", "Band mode",
+		    link.band_mode == ZLRS_DATA_BAND_AUTO ? "auto" : "fixed");
+	shell_print(sh, "  %-20s : %s", "Active band",
+		    link.data_band == ZLRS_DATA_BAND_SUBG ? "sub-GHz" : "2.4 GHz");
+	shell_print(sh, "  %-20s : %s", "Modulation", zlrs_mod_phy_name(link.data_phy));
+	shell_print(sh, "  %-20s : %u.%03u MHz", "Frequency", link.frequency_hz / 1000000U,
+		    (link.frequency_hz % 1000000U) / 1000U);
+	shell_print(sh, "  %-20s : %u", "Hop index", link.hop_index);
+	shell_print(sh, "  %-20s : %u.%03u ms", "Frame period", link.frame_period_us / 1000U,
+		    link.frame_period_us % 1000U);
+	shell_print(sh, "  %-20s : %s", "Capture", link.band_acquiring ? "searching" : "ready");
+	shell_print(sh, "  %-20s : %s", "Transition", link.band_planned ? "scheduled" : "none");
+	shell_print(sh, "  %-20s : %u", "Switch count", link.band_switches);
+
+	shell_print(sh, "\nSignal / Power");
+	if (link.rssi_dbm != 0) {
+		shell_print(sh, "  %-20s : %d dBm", "Local RSSI", link.rssi_dbm);
 	} else {
-		shell_print(sh, "lr temp: unavailable");
+		shell_print(sh, "  %-20s : unavailable", "Local RSSI");
 	}
-	if (radio->valid & ZLRS_LR2021_STATUS_XOSC_TEMP) {
-		status_temperature(sh, "lr xosc", radio->xosc_temperature_centi_c);
+	shell_print(sh, "  %-20s : %u%%", "Local LQ", link.lq_percent);
+	if (link.peer_rssi_dbm != 0) {
+		shell_print(sh, "  %-20s : %d dBm", "Peer RSSI", link.peer_rssi_dbm);
+		shell_print(sh, "  %-20s : %u%%", "Peer LQ", link.peer_lq_percent);
 	} else {
-		shell_print(sh, "lr xosc: unavailable");
+		shell_print(sh, "  %-20s : unavailable", "Peer RSSI");
+		shell_print(sh, "  %-20s : unavailable", "Peer LQ");
 	}
+	shell_print(sh, "  %-20s : %d dBm", "TX setpoint", link.tx_power_dbm);
+	shell_print(sh, "  %-20s : %d..%d dBm", "TX range", link.power_floor_dbm,
+		    link.power_ceiling_dbm);
+	shell_print(sh, "  %-20s : %s", "Power control",
+		    link.power_fixed ? "debug fixed" : "automatic");
+
+	shell_print(sh, "\nTraffic / Errors");
+	shell_print(sh, "  %-20s : TX %u, RX %u", "RF frames", link.tx_frames, link.rx_frames);
+	shell_print(sh, "  %-20s : %u", "ARQ retries", link.tx_retries);
+	shell_print(sh, "  %-20s : %u", "CRC errors", link.rx_crc_errors);
+	shell_print(sh, "  %-20s : %u", "Auth errors", link.rx_bad_tag);
+	shell_print(sh, "  %-20s : %u", "Radio failures", link.radio_fail);
+	shell_print(sh, "  %-20s : %u", "Missed slots", link.missed_slots);
+	shell_print(sh, "  %-20s : %u bytes", "Dropped data", link.data_drop_bytes);
+
+	shell_print(sh, "\nDevice / Configuration");
+	shell_print(sh, "  %-20s : %s", "Hardware",
+		    DT_PROP(DT_NODELABEL(zlrs_rf), band) == ZLRS_BAND_SUBG_LF ? "LF (470/433 MHz)"
+									      : "HF (868/915 MHz)");
+	shell_print(sh, "  %-20s : %s", "Region", region != NULL ? region->name : "unknown");
+	shell_print(sh, "  %-20s : P%u", "Security profile", link.profile);
+	shell_print(sh, "  %-20s : %02x%02x%02x%02x", "Device ID", link.dev_id[0], link.dev_id[1],
+		    link.dev_id[2], link.dev_id[3]);
+	shell_print(sh, "  %-20s : %02x%02x%02x%02x", "Peer ID", link.peer_id[0], link.peer_id[1],
+		    link.peer_id[2], link.peer_id[3]);
+	shell_print(sh, "  %-20s : %s", "Root key", link.configured ? "configured" : "missing");
+
+	shell_print(sh, "\nSensors");
+	int16_t temperature = 0;
+	const bool temperature_valid = zlrs_temperature_read(&temperature) == 0;
+	status_temperature(sh, "MCU chip temp", temperature_valid, temperature);
+	status_temperature(sh, "LR2021 chip temp", radio->valid & ZLRS_LR2021_STATUS_TEMP,
+			   radio->temperature_centi_c);
+	status_temperature(sh, "LR2021 XOSC temp", radio->valid & ZLRS_LR2021_STATUS_XOSC_TEMP,
+			   radio->xosc_temperature_centi_c);
 	if (radio->valid & ZLRS_LR2021_STATUS_VBAT) {
-		shell_print(sh, "lr vbat: %u mV", radio->vbat_mv);
+		shell_print(sh, "  %-20s : %u.%03u V (%u mV)", "LR2021 supply",
+			    radio->vbat_mv / 1000U, radio->vbat_mv % 1000U, radio->vbat_mv);
 	} else {
-		shell_print(sh, "lr vbat: unavailable");
-	}
-	if (radio->valid & ZLRS_LR2021_STATUS_VERSION) {
-		shell_print(sh, "lr ver : major 0x%02x, minor 0x%02x", radio->version_major,
-			    radio->version_minor);
-	} else {
-		shell_print(sh, "lr ver : unavailable");
-	}
-	if (radio->valid & ZLRS_LR2021_STATUS_STATE) {
-		shell_print(sh, "lr stat: mode %u, command %u, reset %u, IRQ 0x%08x",
-			    radio->chip_mode, radio->command_status, radio->reset_status,
-			    radio->irq);
-	} else {
-		shell_print(sh, "lr stat: unavailable");
-	}
-	if (radio->valid & ZLRS_LR2021_STATUS_ERRORS) {
-		shell_print(sh, "lr errs: 0x%04x", radio->errors);
-	} else {
-		shell_print(sh, "lr errs: unavailable");
+		shell_print(sh, "  %-20s : unavailable", "LR2021 supply");
 	}
 	if (radio->valid != 0U) {
-		shell_print(sh, "lr age : %u ms (boot/management snapshot)",
+		shell_print(sh, "  %-20s : %u ms", "LR2021 sample age",
 			    k_uptime_get_32() - radio->sampled_ms);
+	}
+
+	shell_print(sh, "\nLR2021 snapshot");
+	if (radio->valid & ZLRS_LR2021_STATUS_VERSION) {
+		shell_print(sh, "  %-20s : major 0x%02x, minor 0x%02x", "Chip version",
+			    radio->version_major, radio->version_minor);
+	} else {
+		shell_print(sh, "  %-20s : unavailable", "Chip version");
+	}
+	if (radio->valid & ZLRS_LR2021_STATUS_STATE) {
+		shell_print(sh, "  %-20s : %u", "Chip mode", radio->chip_mode);
+		shell_print(sh, "  %-20s : %u", "Last command", radio->command_status);
+		shell_print(sh, "  %-20s : %u", "Reset source", radio->reset_status);
+		shell_print(sh, "  %-20s : 0x%08x", "IRQ status", radio->irq);
+	} else {
+		shell_print(sh, "  %-20s : unavailable", "Chip mode");
+		shell_print(sh, "  %-20s : unavailable", "Last command");
+		shell_print(sh, "  %-20s : unavailable", "Reset source");
+		shell_print(sh, "  %-20s : unavailable", "IRQ status");
+	}
+	if (radio->valid & ZLRS_LR2021_STATUS_ERRORS) {
+		shell_print(sh, "  %-20s : 0x%04x", "Chip errors", radio->errors);
+	} else {
+		shell_print(sh, "  %-20s : unavailable", "Chip errors");
 	}
 	return 0;
 }
@@ -267,11 +308,31 @@ static int cmd_bootsel(const struct shell *sh, size_t argc, char **argv)
 }
 #endif
 
+static int cmd_phy(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	char *end;
+	const unsigned long phy = strtoul(argv[1], &end, 10);
+	if (argv[1][0] == '\0' || *end != '\0' || phy >= ZLRS_PHY_AUTO_COUNT) {
+		shell_error(sh, "profile must be 0..4");
+		return -EINVAL;
+	}
+	const int rc = zlrs_rf_phy_request(phy);
+	if (rc != 0) {
+		shell_error(sh, "profile request requires an automatic-mode Leader (%d)", rc);
+		return rc;
+	}
+	shell_print(sh, "queued profile %lu: %s", phy, zlrs_mod_phy_name(phy));
+	return 0;
+}
+
 SHELL_STATIC_SUBCMD_SET_CREATE(
 	zlrs_cmds,
 	SHELL_CMD(status, NULL, "link, MCU temperature, LR2021 snapshot and error counters",
 		  cmd_status),
 	SHELL_CMD_ARG(power, NULL, "temporary fixed dBm while connected, or auto", cmd_power, 2, 0),
+	SHELL_CMD_ARG(phy, NULL, "negotiate one 2.4 GHz profile, 0..4 (Leader, auto)", cmd_phy, 2,
+		      0),
 	SHELL_CMD(ports, NULL, "state of both data port endpoints", cmd_ports),
 #if DT_NODE_EXISTS(DT_ALIAS(zlrs_mgmt_cdc))
 	SHELL_CMD(mgmt, NULL, "enter management mode (EXIT returns)", cmd_mgmt),

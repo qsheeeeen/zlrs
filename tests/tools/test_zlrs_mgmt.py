@@ -169,10 +169,12 @@ class ManagementTests(unittest.TestCase):
         payload[16:20] = (420000).to_bytes(4, "little")
         payload[20] = 1
         output = mgmt.status_text(payload)
-        for text in ("Device\n", "Link\n", "Configuration\n", "connected", "87%",
-                     "CN470", "-10 dBm", "420000 baud", "Root key  : configured",
-                     "Power control   : debug fixed"):
+        for text in ("Link\n", "Radio\n", "Signal / Power\n", "Traffic / Errors\n",
+                     "Device / Configuration\n", "Sensors\n", "LR2021 snapshot\n",
+                     "connected", "87%", "CN470", "-10 dBm", "420000 baud"):
             self.assertIn(text, output)
+        self.assertRegex(output, r"Root key\s*:\s*configured")
+        self.assertRegex(output, r"Power control\s*:\s*debug fixed")
         self.assertNotIn("\033[", output)
 
     def test_status_signed_measurements_and_counters(self):
@@ -188,7 +190,7 @@ class ManagementTests(unittest.TestCase):
         payload[66:68] = (236).to_bytes(2, "little")
         payload[68:72] = (9080).to_bytes(4, "little")
         status = mgmt.decode_status(payload)
-        self.assertEqual(mgmt.STATUS_LEN, 90)
+        self.assertEqual(mgmt.STATUS_LEN, 91)
         self.assertEqual((status.rssi_dbm, status.peer_rssi_dbm, status.temperature_centi_c),
                          (-48, -51, -125))
         self.assertEqual((status.tx_frames, status.frequency_hz, status.hop_index),
@@ -199,7 +201,11 @@ class ManagementTests(unittest.TestCase):
             self.assertIn(text, output)
         payload[28:30] = (-32768).to_bytes(2, "little", signed=True)
         self.assertIn("unavailable", mgmt.status_text(payload))
-        for length in (mgmt.STATUS_LEN - 1, mgmt.STATUS_LEN + 1):
+        self.assertEqual(mgmt.decode_status(bytes(90)).data_phy, 255)
+        self.assertIn("not reported (upgrade device firmware)", mgmt.status_text(bytes(90)))
+        payload[90] = 3
+        self.assertIn("LoRa SF6 / BW 1 MHz", mgmt.status_text(payload))
+        for length in (89, mgmt.STATUS_LEN + 1):
             with self.assertRaises(ValueError):
                 mgmt.status_text(bytes(length))
 
@@ -227,29 +233,33 @@ class ManagementTests(unittest.TestCase):
         payload[84:86] = (0x8401).to_bytes(2, "little")
         payload[86:90] = (0xfedcba98).to_bytes(4, "little")
         output = mgmt.status_text(payload)
-        for text in ("LR2021\n", "-1.25 C", "31.25 C", "3.301 V (3301 mV)",
+        for text in ("LR2021 snapshot\n", "-1.25 C", "31.25 C", "3.301 V (3301 mV)",
                      "major 0x01, minor 0x18", "standby XOSC", "power-on/brown-out",
                      "0xfedcba98", "0x8401", "HF XOSC start",
                      "measurement ADC calibration", "SRC tolerance"):
             self.assertIn(text, output)
         # Failed measurements must not display stale numeric values as current.
         payload[83] = 0
-        radio = mgmt.status_text(payload).split("LR2021\n")[1]
-        self.assertEqual(radio.count("unavailable"), 9)
-        self.assertNotIn("3.301", radio)
+        output = mgmt.status_text(payload)
+        sensors = output.split("Sensors\n")[1].split("\n\n")[0]
+        radio = output.split("LR2021 snapshot\n")[1]
+        self.assertEqual(sensors.count("unavailable"), 3)
+        self.assertEqual(radio.count("unavailable"), 6)
+        self.assertNotIn("3.301", sensors)
         # Individual validity bits work independently; valid zero is a reading.
         payload[83] = 1
         payload[72:74] = b"\0\0"
-        radio = mgmt.status_text(payload).split("LR2021\n")[1]
-        self.assertIn("0.00 C", radio)
-        self.assertEqual(radio.count("unavailable"), 8)
+        output = mgmt.status_text(payload)
+        sensors = output.split("Sensors\n")[1].split("\n\n")[0]
+        self.assertIn("0.00 C", sensors)
+        self.assertEqual(sensors.count("unavailable"), 2)
         with self.assertRaises(ValueError):
             mgmt.status_text(bytes(72))
 
     def test_status_full_size_serial_response(self):
         payload = bytes(mgmt.STATUS_LEN)
         frame = mgmt.encode(mgmt.STATUS_RESP, payload)
-        self.assertEqual(len(frame), 96)
+        self.assertEqual(len(frame), 97)
         link = Mock()
         response = io.BytesIO(frame)
         link.read.side_effect = response.read

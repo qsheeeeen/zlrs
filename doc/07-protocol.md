@@ -1,6 +1,6 @@
 # Air and management protocols
 
-This specification defines air protocol version 11 and USB management version 5.
+This specification defines air protocol version 12 and USB management version 5.
 Peers require matching air version, band mode, SubG region, security profile and
 timing. Identity, key derivation and trust boundaries are specified in
 [security](08-security.md); service ownership in [architecture](05-architecture.md).
@@ -18,7 +18,7 @@ byte and four sequence bytes.
 
 The first byte assigns bits 0–2 to the eight message types. For SYNC, bit 3 is
 profile and bits 4–7 are version. For every other type, bits 3–7 must be zero.
-SYNC declares version 11 and profile P0=0 or P1=1. A P1 SYNC starts with `0xBA`.
+SYNC declares version 12 and profile P0=0 or P1=1. A P1 SYNC starts with `0xCA`.
 The receiver selects tag length from its local profile and rejects a mismatching
 SYNC profile; untrusted input cannot downgrade authentication.
 
@@ -57,12 +57,12 @@ bytes, including the tag and excluding physical radio framing.
 | --- | --- | --- | ---: | ---: |
 | DATA_L2F | 0 | ACK/sequence(1), RSSI(1), LQ(1), DATA(N) | 8+N | 12+N |
 | DATA_F2L | 1 | ACK/sequence(1), RSSI(1), LQ(1), DATA(N) | 8+N | 12+N |
-| SYNC | 2 | Hop(1), Leader nonce(4), frame index(4), band plan(5) | 19 | 23 |
+| SYNC | 2 | Hop(1), Leader nonce(4), frame index(4), radio plan(6) | 20 | 24 |
 | PAIR_REQ | 3 | Initiator ID(4), initiator nonce(4) | 13 | 17 |
 | PAIR_RESP | 4 | Initiator ID(4), responder ID(4), initiator nonce(4), responder nonce(4) | 21 | 25 |
 | PAIR_CFM | 5 | Initiator ID(4), responder ID(4), initiator nonce(4), responder nonce(4) | 21 | 25 |
 | SESS_RESP | 6 | Leader nonce(4), Follower nonce(4) | 13 | 17 |
-| SESS_CFM | 7 | Follower nonce(4), hop(1), frame index(4), band plan(5) | 19 | 23 |
+| SESS_CFM | 7 | Follower nonce(4), hop(1), frame index(4), radio plan(6) | 20 | 24 |
 
 Fixed bodies require exact lengths. DATA length is:
 
@@ -185,10 +185,12 @@ and is independent of replay sequences.
 Leader and Follower are endpoint roles. Both endpoints transmit and receive;
 TX/RX denote operations and counters, not endpoint names.
 
-Periodic SYNC defaults to five seconds, rounded down to a whole number of actual
+Periodic SYNC defaults to five seconds in fixed mode; automatic mode caps it at
+one second to announce PHY downgrades before reception is lost. It is rounded down to a whole number of actual
 periods with a minimum of one. Pacing affects that conversion. Acquisition SYNC
 repeats every 100/150/300/600 ms for raw rates 2.6/1.3/0.65/0.325 Mbps. Periodic
 synchronization, acquisition and pending plans use the fixed sync channel.
+LoRa acquisition SYNC repeats every 300 ms.
 
 Slots reserve maximum-frame airtime and preparation: 2.5 ms for 2.4 GHz and 6 ms
 for SubG, plus a fixed 200 µs launch guard, startup and completion margins.
@@ -211,7 +213,7 @@ search. Both endpoints must agree on automatic/fixed mode and active domain.
 
 ### Authenticated plan
 
-Leader alone publishes coordinated plans. SYNC and SESS_CFM carry five bytes:
+Leader alone publishes coordinated plans. SYNC and SESS_CFM carry six bytes:
 
 | Bits / bytes | Meaning |
 | --- | --- |
@@ -220,13 +222,16 @@ Leader alone publishes coordinated plans. SYNC and SESS_CFM carry five bytes:
 | Bit 4 | Target band: 0 is 2.4 GHz, 1 is SubG |
 | Bits 5–7 | Reserved, zero |
 | Next four bytes | Little-endian u32 `switch_frame`; zero means no pending plan |
+| Final byte, bits 0–2 | Current 2.4 GHz PHY profile; zero on SubG |
+| Final byte, bits 3–5 | Target 2.4 GHz PHY profile; zero for target SubG |
+| Final byte, bits 6–7 | Reserved, zero |
 
-A nonzero plan targets the other band at a future period no more than 65535
+A nonzero plan changes band or PHY profile at a future period no more than 65535
 periods ahead of the carried frame index. Fixed mode cannot publish a transition.
-Domain and mode must match the receiving configuration. Invalid, stale or
+Domain, current PHY and mode must match the receiving configuration. Invalid, stale or
 unauthenticated plans cannot change replay baseline, clock or band.
 
-Leader schedules the transition at least one periodic SYNC interval plus two seconds
+Leader schedules the transition at least one periodic SYNC interval plus 500 ms
 ahead. The first announcement uses a known periodic SYNC opportunity. Subsequent
 announcements repeat on the synchronization channel; Follower follows that channel
 while DATA and ACK continue before the transition.
@@ -245,12 +250,14 @@ are cleared and power starts at the allowed ceiling.
 
 Fresh quality requires recent reverse feedback and available RSSI in both
 directions. Poor quality means either direction has LQ below 95% or RSSI below
-−95 dBm. The Leader policy is:
+the current profile's boundary in [radio requirements](04-radio.md#automatic-24-ghz-profiles).
+SubG retains its -95 dBm boundary. The Leader policy is:
 
 | Condition | Action |
 | --- | --- |
-| Poor 2.4 GHz quality continuously for 5 s | Schedule SubG |
-| Healthy, fresh SubG quality continuously for 60 s | Schedule a 2.4 GHz probe |
+| Poor 2.4 GHz quality continuously for 2 s | Schedule the next more robust 2.4 GHz profile; after LoRa SF7, schedule SubG |
+| Both LQ values at least 99%, RSSI at least 6 dB above the next faster profile's boundary, continuously for 60 s | Probe that faster profile |
+| Healthy, fresh SubG feedback with both LQ values at least 99% continuously for 60 s | Probe 2.4 GHz LoRa SF7 |
 | Healthy probe quality continuously for 5 s | Retain 2.4 GHz and finish probing |
 | Probe cannot capture or becomes persistently poor | Resume fallback/search |
 
@@ -259,8 +266,10 @@ does not start an unconditional 60-second return timer. The thresholds are
 product policy subject to RF calibration.
 
 Default contact loss is 1.5 seconds without confirmed-session reception. It
-tries the other band, then Leader dwells 20 seconds and Follower four seconds per band.
-The unequal dwell periods prevent permanent synchronized misses. Acquisition
+first tries the next more robust 2.4 GHz profile, then SubG; SubG restarts the
+full 2.4 GHz ladder at FLRC 2.6 Mbps during contact-loss searching. Leader dwells
+28 seconds and Follower four seconds per profile. Leader's dwell exceeds a
+complete six-profile Follower sweep, preventing permanent synchronized misses. Acquisition
 without capture uses that dwell limit; a preferred-band probe uses the contact
 loss limit. Radio capture is separate from logical session validity.
 
@@ -285,9 +294,10 @@ queue backpressure and management access.
 
 Duty budget survives band changes. Every SubG transmission, including probes and
 control, is charged using actual airtime rounded up to milliseconds. For a duty
-window W, contact-loss timeout is at least W+2 s, Follower dwell at least W+2 s and Leader
-dwell at least 2(W+2 s). EU868 therefore uses 62-second loss/Follower dwell and
-124-second Leader dwell. Switching cannot reset that budget.
+window W, contact-loss timeout is at least W+2 s, Follower dwell at least W+2 s and
+Leader dwell at least 7(W+2 s), covering a full six-profile Follower sweep.
+EU868 therefore uses 62-second loss/Follower dwell and 434-second Leader dwell.
+Switching cannot reset that budget.
 
 Management cancels an unexecuted plan and requires capture when a plan was pending
 or pause duration reaches the contact-loss threshold. Short pauses without plans
@@ -300,7 +310,7 @@ UART overflow accounting remain in effect.
 A5 5A | version(1) | command(1) | payload_length(1) | payload | CRC8(1)
 ```
 
-Version is 5. Payload is at most 90 bytes and a full frame at most 96. CRC8 uses
+Version is 5. Payload is at most 91 bytes and a full frame at most 97. CRC8 uses
 DVB-S2 polynomial `0xD5`, initial zero, over version, command, length and payload.
 This CRC detects corruption; local USB access is the trust boundary. Multibyte
 management integers are little endian. ACK command `0x80` carries the original
@@ -331,7 +341,9 @@ semantics and accepted settings are specified in [firmware](06-firmware.md).
 
 ## Management status
 
-STATUS_RESP is exactly 90 bytes. Power values are signed eight-bit dBm, RSSI and
+STATUS_RESP is 91 bytes, extending the original 90-byte response by one PHY byte.
+The host also decodes legacy 90-byte status with unavailable PHY information,
+so rollback to an older confirmed image remains observable. Power values are signed eight-bit dBm, RSSI and
 temperature are signed 16-bit values, and counters are u32.
 
 | Offset | Bytes | Field |
@@ -356,6 +368,7 @@ temperature are signed 16-bit values, and counters are u32.
 | 83 | 1 | Sensor/status validity bits |
 | 84 | 2 | Latched chip error mask |
 | 86 | 4 | IRQ mask at the maintenance boundary |
+| 90 | 1 | Active modulation profile ID from the radio profile table |
 
 Flags: bit 0 root key, bit 1 pairing, bit 2 valid session, bit 3 active SubG,
 bit 4 automatic mode, bit 5 acquisition, bit 6 pending plan, bit 7 debug fixed power.

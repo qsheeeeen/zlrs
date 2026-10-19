@@ -21,13 +21,13 @@ typedef enum {
 	ZLRS_PKT_SESS_CFM = 7,
 } zlrs_pkt_type_t;
 
-#define ZLRS_FRAME_TYPE_BITS 3U
-#define ZLRS_FRAME_TYPE_MASK 0x07U
+#define ZLRS_FRAME_TYPE_BITS    3U
+#define ZLRS_FRAME_TYPE_MASK    0x07U
 #define ZLRS_SYNC_PROFILE_SHIFT 3U
 #define ZLRS_SYNC_VERSION_SHIFT 4U
-#define ZLRS_DATA_ACK_MASK 0x01U
-#define ZLRS_DATA_SEQ_SHIFT 1U
-#define ZLRS_DATA_SEQ_MASK 0x7FU
+#define ZLRS_DATA_ACK_MASK      0x01U
+#define ZLRS_DATA_SEQ_SHIFT     1U
+#define ZLRS_DATA_SEQ_MASK      0x7FU
 
 typedef enum {
 	ZLRS_PROFILE_P0 = 0, /* no authentication, debug only */
@@ -38,8 +38,8 @@ typedef enum {
 /* Typed bodies contain only packet-specific fields. DATA owns its bytes; its
  * used length comes from the radio payload length, never an on-air size field. */
 typedef struct {
-	uint8_t ack : 1; /* reverse-direction ACK */
-	uint8_t data_seq : 7;
+	uint8_t ack: 1; /* reverse-direction ACK */
+	uint8_t data_seq: 7;
 	uint8_t rssi_magnitude;
 	uint8_t lq_percent;
 	uint8_t bytes[ZLRS_DATA_MAX_LEN];
@@ -47,15 +47,17 @@ typedef struct {
 
 /* Present only in authenticated synchronization/confirmation bodies. */
 typedef struct {
-	uint8_t domain : 3;
-	uint8_t automatic : 1;
-	uint8_t target_subg : 1;
+	uint8_t domain: 3;
+	uint8_t automatic: 1;
+	uint8_t target_subg: 1;
+	uint8_t phy: 3;        /* current 2.4 GHz profile; zero on SubG */
+	uint8_t target_phy: 3; /* target 2.4 GHz profile; zero for target SubG */
 	uint32_t switch_frame; /* zero = no transition; otherwise a future frame */
 } zlrs_band_plan_t;
 
 typedef struct {
-	uint8_t profile : 1;
-	uint8_t version : 4;
+	uint8_t profile: 1;
+	uint8_t version: 4;
 	uint8_t hop_index;
 	uint32_t nonce_leader;
 	uint32_t frame_index; /* shared TDD period count, including idle periods */
@@ -87,7 +89,7 @@ typedef struct {
 } zlrs_session_confirm_frame_t;
 
 typedef struct {
-	uint8_t type : ZLRS_FRAME_TYPE_BITS;
+	uint8_t type: ZLRS_FRAME_TYPE_BITS;
 	union {
 		zlrs_data_frame_t data; /* DATA_L2F / DATA_F2L share this body layout */
 		zlrs_sync_frame_t sync;
@@ -105,8 +107,8 @@ uint16_t zlrs_frame_len(uint16_t payload_len, uint8_t tag_len);
 /* len is the complete radio payload length, including common fields and tag.
  * Fixed bodies require exact lengths. DATA length is inferred from len.
  * Only the selected body's used bytes are encoded; unused capacity is omitted. */
-uint16_t zlrs_frame_encode(const zlrs_frame_t *frame, uint8_t *buf, uint16_t cap,
-			   uint16_t len, uint8_t tag_len);
+uint16_t zlrs_frame_encode(const zlrs_frame_t *frame, uint8_t *buf, uint16_t cap, uint16_t len,
+			   uint8_t tag_len);
 bool zlrs_frame_decode(zlrs_frame_t *frame, const uint8_t *buf, uint16_t len, uint8_t tag_len);
 #ifdef __cplusplus
 }

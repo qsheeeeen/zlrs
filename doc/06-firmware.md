@@ -88,9 +88,11 @@ antenna determine achievable RF output.
 
 ## Automatic band operation and power
 
-Automatic mode starts on 2.4 GHz. Leader schedules SubG after five seconds of sustained
-poor bidirectional quality and schedules a preferred-band probe after 60 seconds
-of continuously healthy SubG feedback. Complete loss invokes asymmetric searches.
+Automatic mode starts on 2.4 GHz FLRC 2.6 Mbps. Sustained poor bidirectional
+quality first steps through 650 kbps FLRC, 325 kbps FLRC, LoRa SF6 and LoRa SF7
+on 2.4 GHz. Only the final profile falls back to SubG. Continuously healthy
+feedback qualifies a faster profile after 60 seconds; SubG first probes 2.4 GHz
+LoRa SF7. Complete loss invokes asymmetric searches across these profiles.
 Switches preserve session and DATA progress, with transmission paused during
 capture. Exact thresholds, announcement and recovery rules are specified in
 [automatic band switching](07-protocol.md#automatic-band-switching).

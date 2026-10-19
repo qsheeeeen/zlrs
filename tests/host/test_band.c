@@ -18,79 +18,97 @@ static zlrs_band_observation_t good(uint32_t now)
 
 void test_band(void)
 {
-	printf("band: hysteresis, authority, recovery, probe and duty silence\n");
-	zlrs_band_policy_t p;
-	zlrs_band_policy_init(&p, true, true, false, 0, 0);
-	zlrs_band_observation_t o = good(100);
-	o.peer_lq_percent = 94;
-	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
-	for (uint32_t time = 200; time < 5100; time += 100) {
-		o = good(time);
+	printf("band: 2.4 GHz ladder, per-PHY margins, hysteresis and recovery\n");
+	zlrs_band_policy_t p, follower;
+	static const int16_t floors[] = {-89, -94, -98, -103, -106};
+	for (unsigned int phy = 0; phy < ZLRS_PHY_AUTO_COUNT; phy++) {
+		zlrs_band_policy_init(&p, true, true, false, 0, 0);
+		p.phy = phy;
+		zlrs_band_observation_t o = good(100);
+		o.rssi_dbm = floors[phy];
+		o.peer_rssi_dbm = floors[phy];
+		CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
+		o = good(200);
+		o.peer_rssi_dbm = floors[phy] - 1;
+		CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
+		o = good(2199);
+		o.peer_rssi_dbm = floors[phy] - 1;
+		CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
+		o = good(2200);
+		o.peer_rssi_dbm = floors[phy] - 1;
+		CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_PLAN);
+		CHECK(p.target_subg == (phy == ZLRS_PHY_LORA_SF7));
+		CHECK(p.target_phy == (phy == ZLRS_PHY_LORA_SF7 ? 0U : phy + 1U));
+		/* LQ alone also qualifies; stale feedback breaks qualification. */
+		o = good(2300);
+		CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
+		o = good(2400);
 		o.peer_lq_percent = 94;
 		CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
-	}
-	o = good(5100);
-	o.peer_lq_percent = 94;
-	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_PLAN);
-	/* A brief fade followed by valid healthy feedback does not accumulate. */
-	o = good(5200);
-	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
-	o = good(5300);
-	o.rssi_dbm = -96;
-	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
-	o = good(10200);
-	o.rssi_dbm = -96;
-	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
-	o = good(10300);
-	o.rssi_dbm = -96;
-	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_PLAN);
-	/* Follower never originates a quality-driven transition; fixed mode never searches. */
-	p.leader = false;
-	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
-	p.automatic = false;
-	o.now_ms += 100000;
-	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
-	zlrs_band_policy_init(&p, true, true, false, 0, 1000);
-	o = good(1000);
-	o.now_ms = 2499;
-	o.last_rx_ms = 0;
-	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
-	o.now_ms = 2500;
-	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_SEARCH);
-	/* Different dwell periods prevent synchronized opposite-band searching. */
-	zlrs_band_policy_t receiver;
-	zlrs_band_policy_init(&receiver, true, false, false, 0, 0);
-	CHECK(p.dwell_ms == 20000 && receiver.dwell_ms == 4000);
-	zlrs_band_policy_changed(&p, true, false, 2500, 0);
-	o.acquiring = true;
-	o.now_ms = 22499;
-	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
-	o.now_ms = 22500;
-	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_SEARCH);
-	/* A healthy SubG link probes only after an uninterrupted minute. */
-	zlrs_band_policy_changed(&p, true, false, 30000, 0);
-	for (uint32_t time = 30100; time < 90100; time += 500) {
-		o = good(time);
+		o = good(4300);
+		o.peer_lq_percent = 94;
+		o.feedback_ms = 1;
+		CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
+		o = good(4400);
+		o.peer_lq_percent = 94;
+		CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
+		o = good(6400);
+		o.peer_lq_percent = 94;
+		CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_PLAN);
+		p.leader = false;
+		CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
+		p.automatic = false;
+		o.now_ms += 100000;
 		CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
 	}
-	o = good(90100);
-	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_PLAN);
-	zlrs_band_policy_changed(&p, false, true, 100000, 0);
-	o = good(100100);
+	/* Weak-but-healthy slow 2.4 GHz links stay on that band. */
+	zlrs_band_policy_init(&p, true, true, false, 0, 0);
+	p.phy = ZLRS_PHY_FLRC_325;
+	for (uint32_t t = 100; t < 100000; t += 100) {
+		zlrs_band_observation_t o = good(t);
+		o.rssi_dbm = o.peer_rssi_dbm = -97;
+		CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
+	}
+	/* Upgrades need margin for the faster profile, then a continuous minute. */
+	zlrs_band_policy_changed(&p, false, ZLRS_PHY_LORA_SF7, false, 0, 0);
+	zlrs_band_observation_t o = good(100);
+	o.rssi_dbm = o.peer_rssi_dbm = -97;
 	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
-	o = good(105099);
-	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP && p.probing);
-	o = good(105100);
-	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP && !p.probing);
-	zlrs_band_policy_changed(&p, false, true, 110000, o.last_rx_ms);
+	o = good(60099);
+	o.rssi_dbm = o.peer_rssi_dbm = -97;
+	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
+	o = good(60100);
+	o.rssi_dbm = o.peer_rssi_dbm = -97;
+	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_PLAN);
+	CHECK(!p.target_subg && p.target_phy == ZLRS_PHY_LORA_SF6);
+	/* Contact loss traverses every 2.4 GHz profile before SubG. */
+	for (unsigned int phy = 0; phy < ZLRS_PHY_AUTO_COUNT; phy++) {
+		zlrs_band_policy_init(&p, true, true, false, 0, 1000);
+		p.phy = phy;
+		o = good(1000);
+		o.last_rx_ms = 0;
+		o.now_ms = 2500;
+		CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_SEARCH);
+		CHECK(p.target_subg == (phy == ZLRS_PHY_LORA_SF7));
+	}
+	zlrs_band_policy_init(&follower, true, false, false, 0, 0);
+	CHECK(p.dwell_ms > (ZLRS_PHY_AUTO_COUNT + 1U) * follower.dwell_ms);
+	/* Healthy SubG probes robust 2.4 GHz; failed capture resumes the full sweep. */
+	zlrs_band_policy_changed(&p, true, 0, false, 0, 0);
+	o = good(100);
+	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
+	o = good(60100);
+	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_PLAN);
+	CHECK(!p.target_subg && p.target_phy == ZLRS_PHY_LORA_SF7);
+	zlrs_band_policy_changed(&p, true, 0, false, 0, 0);
+	o = good(28000);
 	o.acquiring = true;
-	o.now_ms = 111500;
 	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_SEARCH);
-	/* Budget-induced silence is legal; switching cannot accelerate this timeout. */
+	CHECK(!p.target_subg && p.target_phy == ZLRS_PHY_FLRC_2600);
 	zlrs_band_policy_init(&p, true, true, true, 60000, 0);
-	zlrs_band_policy_init(&receiver, true, false, true, 60000, 0);
-	CHECK(p.loss_ms == 62000 && p.dwell_ms > 2U * 60000U);
-	CHECK(receiver.dwell_ms == 62000 && p.dwell_ms >= 2U * receiver.dwell_ms);
+	zlrs_band_policy_init(&follower, true, false, true, 60000, 0);
+	CHECK(p.loss_ms == 62000 && follower.dwell_ms == 62000);
+	CHECK(p.dwell_ms > (ZLRS_PHY_AUTO_COUNT + 1U) * follower.dwell_ms);
 	o = good(0);
 	o.now_ms = 61999;
 	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
@@ -98,6 +116,7 @@ void test_band(void)
 	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_SEARCH);
 	zlrs_band_policy_init(&p, true, true, false, 0, UINT32_MAX - 1000U);
 	o = good(0);
+	o.last_rx_ms = 0;
 	o.now_ms = 498;
 	CHECK(zlrs_band_policy_update(&p, &o) == ZLRS_BAND_KEEP);
 	o.now_ms = 499;

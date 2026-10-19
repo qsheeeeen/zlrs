@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "zlrs/proto/frame.h"
+#include "zlrs/proto/mod.h"
 #include "../byteorder.h"
 #include <string.h>
 
@@ -16,16 +17,21 @@ static void encode_band_plan(uint8_t *p, const zlrs_band_plan_t *plan)
 {
 	p[0] = plan->domain | (plan->automatic << 3U) | (plan->target_subg << 4U);
 	zlrs_put_le32(p + 1U, plan->switch_frame);
+	p[5] = plan->phy | (plan->target_phy << 3U);
 }
 
 static bool decode_band_plan(zlrs_band_plan_t *plan, const uint8_t *p)
 {
-	if ((p[0] & 0xe0U) != 0U || (p[0] & 7U) > 4U) {
+	if ((p[0] & 0xe0U) != 0U || (p[0] & 7U) > 4U || (p[5] & 0xc0U) != 0U ||
+	    (p[5] & 7U) >= ZLRS_PHY_COUNT || ((p[5] >> 3U) & 7U) >= ZLRS_PHY_COUNT) {
 		return false;
 	}
 	*plan = (zlrs_band_plan_t){.domain = p[0] & 7U,
-		.automatic = (p[0] >> 3U) & 1U, .target_subg = (p[0] >> 4U) & 1U,
-		.switch_frame = zlrs_get_le32(p + 1U)};
+				   .automatic = (p[0] >> 3U) & 1U,
+				   .target_subg = (p[0] >> 4U) & 1U,
+				   .phy = p[5] & 7U,
+				   .target_phy = (p[5] >> 3U) & 7U,
+				   .switch_frame = zlrs_get_le32(p + 1U)};
 	return plan->automatic || plan->switch_frame == 0U;
 }
 
@@ -56,12 +62,11 @@ static bool payload_len_valid(uint8_t type, uint16_t payload_len)
 	}
 }
 
-uint16_t zlrs_frame_encode(const zlrs_frame_t *frame, uint8_t *buf, uint16_t cap,
-			   uint16_t len, uint8_t tag_len)
+uint16_t zlrs_frame_encode(const zlrs_frame_t *frame, uint8_t *buf, uint16_t cap, uint16_t len,
+			   uint8_t tag_len)
 {
 	if (frame->seq == 0U || len > cap || len > ZLRS_FRAME_MAX_LEN ||
-	    len < ZLRS_FRAME_HDR_LEN + tag_len ||
-	    (tag_len != 0U && tag_len != ZLRS_TAG_LEN)) {
+	    len < ZLRS_FRAME_HDR_LEN + tag_len || (tag_len != 0U && tag_len != ZLRS_TAG_LEN)) {
 		return 0U;
 	}
 	const uint16_t payload_len = len - ZLRS_FRAME_HDR_LEN - tag_len;
@@ -78,13 +83,12 @@ uint16_t zlrs_frame_encode(const zlrs_frame_t *frame, uint8_t *buf, uint16_t cap
 		p[0] = (uint8_t)((data->data_seq << ZLRS_DATA_SEQ_SHIFT) | data->ack);
 		p[1] = data->rssi_magnitude;
 		p[2] = data->lq_percent;
-		memcpy(p + ZLRS_DATA_PREFIX_LEN, data->bytes,
-		       payload_len - ZLRS_DATA_PREFIX_LEN);
+		memcpy(p + ZLRS_DATA_PREFIX_LEN, data->bytes, payload_len - ZLRS_DATA_PREFIX_LEN);
 		break;
 	}
 	case ZLRS_PKT_SYNC:
 		buf[0] |= (uint8_t)((frame->body.sync.profile << ZLRS_SYNC_PROFILE_SHIFT) |
-				   (frame->body.sync.version << ZLRS_SYNC_VERSION_SHIFT));
+				    (frame->body.sync.version << ZLRS_SYNC_VERSION_SHIFT));
 		p[0] = frame->body.sync.hop_index;
 		zlrs_put_le32(p + 1U, frame->body.sync.nonce_leader);
 		zlrs_put_le32(p + 5U, frame->body.sync.frame_index);
@@ -95,8 +99,7 @@ uint16_t zlrs_frame_encode(const zlrs_frame_t *frame, uint8_t *buf, uint16_t cap
 		zlrs_put_le32(p + 4U, frame->body.pair_req.nonce_a);
 		break;
 	case ZLRS_PKT_PAIR_RESP:
-	case ZLRS_PKT_PAIR_CFM:
-	{
+	case ZLRS_PKT_PAIR_CFM: {
 		const zlrs_pair_frame_t *const pair = &frame->body.pair;
 		memcpy(p, pair->dev_a, ZLRS_DEV_ID_LEN);
 		memcpy(p + 4U, pair->dev_b, ZLRS_DEV_ID_LEN);
@@ -148,8 +151,7 @@ bool zlrs_frame_decode(zlrs_frame_t *frame, const uint8_t *buf, uint16_t len, ui
 		data->data_seq = p[0] >> ZLRS_DATA_SEQ_SHIFT;
 		data->rssi_magnitude = p[1];
 		data->lq_percent = p[2];
-		memcpy(data->bytes, p + ZLRS_DATA_PREFIX_LEN,
-		       payload_len - ZLRS_DATA_PREFIX_LEN);
+		memcpy(data->bytes, p + ZLRS_DATA_PREFIX_LEN, payload_len - ZLRS_DATA_PREFIX_LEN);
 		break;
 	}
 	case ZLRS_PKT_SYNC:
@@ -167,8 +169,7 @@ bool zlrs_frame_decode(zlrs_frame_t *frame, const uint8_t *buf, uint16_t len, ui
 		frame->body.pair_req.nonce_a = zlrs_get_le32(p + 4U);
 		break;
 	case ZLRS_PKT_PAIR_RESP:
-	case ZLRS_PKT_PAIR_CFM:
-	{
+	case ZLRS_PKT_PAIR_CFM: {
 		zlrs_pair_frame_t *const pair = &frame->body.pair;
 		memcpy(pair->dev_a, p, ZLRS_DEV_ID_LEN);
 		memcpy(pair->dev_b, p + 4U, ZLRS_DEV_ID_LEN);

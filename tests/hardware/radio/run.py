@@ -76,9 +76,13 @@ def main():
     parser.add_argument("--timeout", type=positive_seconds, default=60,
                         help="maximum seconds per DATA round (default: 60)")
     parser.add_argument("--raw", action="store_true", help="image must enable ZLRS_TEST_RAW_MS")
+    parser.add_argument("--profiles", action="store_true",
+                        help="sweep 2.4 GHz FLRC/LoRa profiles down and up (auto-mode peers)")
     args = parser.parse_args()
     if args.serial == args.peer or not 0 < args.bytes <= 16 * 1024 * 1024 or args.rounds < 1:
         parser.error("select two different boards, 1..16 MiB and at least one round")
+    if args.profiles and args.raw:
+        parser.error("--profiles cannot be combined with --raw")
     expected = image_hash_of(args.image)
     if expected is None:
         parser.error("invalid signed test image")
@@ -161,7 +165,40 @@ def main():
                 record["before_channels"] = channels()
                 record["observations"] = []
                 names = ("active", "target", "queued", "rx", "bad", "duration_us", "goodput_Bps")
-                for number in range(args.rounds):
+                profile_names = ("FLRC 2.6 Mbps", "FLRC 650 kbps", "FLRC 325 kbps",
+                                 "LoRa SF6/BW1MHz", "LoRa SF7/BW1MHz")
+                steps = [(None, number) for number in range(args.rounds)]
+                if args.profiles:
+                    roles = both("zlrs status")
+                    leaders = [identity for identity, output in roles.items()
+                               if re.search(r"Role\s*:\s*Leader", output)]
+                    if len(leaders) != 1:
+                        raise RuntimeError("Profile sweep needs exactly one Leader")
+                    leader = leaders[0]
+                    steps = [(phy, number) for phy in (0, 1, 2, 3, 4, 3, 2, 1, 0)
+                             for number in range(args.rounds)]
+                for phy, number in steps:
+                    if phy is not None:
+                        output = command(consoles[leader], f"zlrs phy {phy}")
+                        if f"queued profile {phy}:" not in output:
+                            raise RuntimeError(f"Profile request failed: {output!r}")
+                        deadline = time.monotonic() + 45
+                        while True:
+                            observed = both("zlrs status")
+                            ready = all(re.search(r"Modulation\s*:\s*" + re.escape(profile_names[phy]), text)
+                                        and re.search(r"State\s*:\s*connected\b", text)
+                                        and re.search(r"Band mode\s*:\s*auto\b", text)
+                                        and re.search(r"Capture\s*:\s*ready\b", text)
+                                        and re.search(r"Transition\s*:\s*none\b", text)
+                                        for text in observed.values())
+                            if ready:
+                                break
+                            if time.monotonic() >= deadline:
+                                record["profile_timeout"] = {"phy": phy, "status": observed}
+                                record["profile_radio"] = reports("radio")
+                                record["profile_link"] = reports("link")
+                                raise TimeoutError(f"Both peers did not capture profile {phy}")
+                            time.sleep(0.2)
                     deadline = time.monotonic() + 20
                     while True:
                         arm = both(f"test_data arm {args.bytes}")
@@ -200,7 +237,7 @@ def main():
                             record["timeout_radio"] = reports("radio")
                             record["timeout_link"] = reports("link")
                             raise TimeoutError("RF data delivery timed out")
-                    record["rounds"].append({"round": number + 1, "nodes": result})
+                    record["rounds"].append({"round": number + 1, "phy": phy, "nodes": result})
                     record["rounds"][-1]["status"] = both("zlrs status")
                     print(json.dumps(record["rounds"][-1]), flush=True)
                     if not all(value["rx"] == args.bytes and value["queued"] == args.bytes and

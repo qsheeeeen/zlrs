@@ -100,6 +100,34 @@ def parse_status(sample: dict) -> dict:
                           radio_failures=int(values[2]), missed_slots=int(values[3]))
         else:
             result[key] = int(values[0])
+    # Current grouped output; retain the legacy parser for older device firmware.
+    grouped = dict(re.findall(r"^\s*([A-Za-z][A-Za-z /]*?)\s*:\s*(.*?)\s*$",
+                              text, re.MULTILINE))
+    for label, key in (("Role", "role"), ("Active band", "band"),
+                       ("Modulation", "modulation")):
+        if label in grouped:
+            result[key] = grouped[label]
+    state_names = ("unconfigured", "unpaired", "pairing", "searching", "connected")
+    if grouped.get("State") in state_names:
+        result["state"] = state_names.index(grouped["State"])
+    if grouped.get("Paired") in ("yes", "no"):
+        result["paired"] = grouped["Paired"] == "yes"
+    for label, key, unit in (("Local RSSI", "rssi_dbm", "dBm"),
+                             ("Peer RSSI", "peer_rssi_dbm", "dBm"),
+                             ("Local LQ", "lq_percent", "%"),
+                             ("Peer LQ", "peer_lq_percent", "%"),
+                             ("ARQ retries", "retries", ""),
+                             ("CRC errors", "crc_errors", ""),
+                             ("Auth errors", "tag_errors", ""),
+                             ("Radio failures", "radio_failures", ""),
+                             ("Missed slots", "missed_slots", ""),
+                             ("Dropped data", "rf_drop_bytes", "bytes")):
+        match = re.fullmatch(r"(-?\d+)\s*" + re.escape(unit), grouped.get(label, ""))
+        if match:
+            result[key] = int(match[1])
+    match = re.fullmatch(r"TX (\d+), RX (\d+)", grouped.get("RF frames", ""))
+    if match:
+        result.update(tx_frames=int(match[1]), rx_frames=int(match[2]))
     return result
 
 

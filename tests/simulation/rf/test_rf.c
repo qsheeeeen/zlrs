@@ -36,6 +36,7 @@ static int32_t packet_phase_error_us;
 static uint16_t source_left, delivered;
 static uint16_t peer_delivered;
 static bool block_24;
+static int16_t rssi_24 = -42;
 static zlrs_band_policy_t peer_band_policy;
 static uint32_t retime_boundary_us;
 static uint32_t transition_guard_us;
@@ -153,9 +154,11 @@ static void peer_update_band(void)
 	const uint32_t now = clock_us / 1000U;
 	const zlrs_link_info_t info = zlrs_link_get_info(&peer);
 	bool change = false, subg = false, probe = false;
+	zlrs_phy_t phy = ZLRS_PHY_FLRC_2600;
 	if (info.band_plan.switch_frame && info.frame_index >= info.band_plan.switch_frame - 1U) {
 		subg = info.band_plan.target_subg;
-		probe = !subg;
+		phy = info.band_plan.target_phy;
+		probe = !subg && (peer_band_policy.subg || phy < peer_band_policy.phy);
 		change = true;
 	} else {
 		const zlrs_band_observation_t observation = {
@@ -174,31 +177,34 @@ static void peer_update_band(void)
 		const zlrs_band_action_t action =
 			zlrs_band_policy_update(&peer_band_policy, &observation);
 		if (action == ZLRS_BAND_SEARCH) {
-			subg = peer.cfg.domain == ZLRS_DOMAIN_ISM2400;
+			subg = peer_band_policy.target_subg;
+			phy = peer_band_policy.target_phy;
 			change = true;
 		} else if (action == ZLRS_BAND_PLAN) {
 			const uint32_t lead =
-				peer.cfg.resync_every_n + DIV_ROUND_UP(2000000U, period_us);
-			zassert_true(zlrs_link_plan_band(&peer,
-							 peer.cfg.domain == ZLRS_DOMAIN_ISM2400,
+				peer.cfg.resync_every_n + DIV_ROUND_UP(500000U, period_us);
+			zassert_true(zlrs_link_plan_radio(&peer,
+							 peer_band_policy.target_subg, peer_band_policy.target_phy,
 							 info.frame_index + lead));
 		}
 	}
 	if (change) {
 		zlrs_link_cfg_t cfg = peer.cfg;
 		cfg.domain = subg ? ZLRS_DOMAIN_CN433 : ZLRS_DOMAIN_ISM2400;
-		cfg.mod = zlrs_mod_flrc(subg ? 325000U : CONFIG_ZLRS_APP_DATA_RATE_BPS);
+		cfg.mod = subg ? zlrs_mod_flrc(325000U) : zlrs_mod_phy(phy);
 		const uint32_t prepare =
 			subg ? CONFIG_ZLRS_APP_PREPARE_US : CONFIG_ZLRS_APP_DATA_24_PREPARE_US;
 		const uint32_t cadence =
 			2U * (prepare + CONFIG_ZLRS_APP_TX_GUARD_US + ZLRS_LR2021_STARTUP_US +
-			      zlrs_mod_airtime_us(&cfg.mod, ZLRS_FRAME_MAX_LEN) + 200U);
-		cfg.sync_period_ms = subg ? 600U : 100U;
-		cfg.resync_every_n = CONFIG_ZLRS_APP_RESYNC_PERIOD_MS * 1000U / cadence;
+			      zlrs_mod_airtime_us(&cfg.mod, ZLRS_LORA_FRAME_MAX_LEN) + 200U);
+		cfg.sync_period_ms = cfg.mod.lora_sf != 0U ? 300U :
+			cfg.mod.rate_bps >= 2600000U ? 100U :
+			cfg.mod.rate_bps >= 650000U ? 300U : 600U;
+		cfg.resync_every_n = MIN(CONFIG_ZLRS_APP_RESYNC_PERIOD_MS, 1000U) * 1000U / cadence;
 		cfg.arq_timeout_ms = MAX(10U, DIV_ROUND_UP(cadence, 1000U));
 		zassert_true(zlrs_link_reconfigure_radio(&peer, &cfg));
 		zlrs_link_acquire_radio(&peer, now);
-		zlrs_band_policy_changed(&peer_band_policy, subg, probe, now, info.last_rx_ms);
+		zlrs_band_policy_changed(&peer_band_policy, subg, phy, probe, now, info.last_rx_ms);
 	}
 }
 
@@ -333,7 +339,8 @@ bool zlrs_lr2021_process_irq(zlrs_lr2021_result_t *out)
 	pending = false;
 	clock_us += 100U;
 	*out = (zlrs_lr2021_result_t){
-		.completed_ms = clock_us / 1000U, .done_us = clock_us, .rssi_dbm = -42};
+		.completed_ms = clock_us / 1000U, .done_us = clock_us,
+		.rssi_dbm = active->freq_hz > 1500000000U ? rssi_24 : -42};
 	if (active->is_tx && mode == TX_FAIL) {
 		out->status = -EIO;
 		tx_fail++;
@@ -352,9 +359,11 @@ bool zlrs_lr2021_process_irq(zlrs_lr2021_result_t *out)
 	if (active->is_tx) {
 		tx_ok++;
 		if (other && !other->is_tx && other->freq_hz == active->freq_hz &&
+		    other->mod.rate_bps == active->mod.rate_bps &&
+		    other->mod.lora_sf == active->mod.lora_sf &&
 		    !(block_24 && active->freq_hz > 1000000000U)) {
 			memcpy(other->buf, active->buf, active->size);
-			zlrs_link_complete(&peer, ZLRS_RADIO_OK, active->size, -42, 0,
+			zlrs_link_complete(&peer, ZLRS_RADIO_OK, active->size, out->rssi_dbm, 0,
 					   out->completed_ms);
 			/* The other node's fake hardware clock is aligned with its received packet. */
 			(void)zlrs_link_radio_captured(&peer);
@@ -364,6 +373,8 @@ bool zlrs_lr2021_process_irq(zlrs_lr2021_result_t *out)
 	} else {
 		rx_ok++;
 		if (other && other->is_tx && other->freq_hz == active->freq_hz &&
+		    other->mod.rate_bps == active->mod.rate_bps &&
+		    other->mod.lora_sf == active->mod.lora_sf &&
 		    !(block_24 && active->freq_hz > 1000000000U)) {
 			out->size = other->size;
 			memcpy(active->buf, other->buf, other->size);
@@ -434,6 +445,12 @@ static bool both_on_band(bool subg)
 	       peer.cfg.domain == (subg ? ZLRS_DOMAIN_CN433 : ZLRS_DOMAIN_ISM2400) &&
 	       status.session_valid && other.session_valid && !status.band_acquiring &&
 	       !other.radio_acquiring;
+}
+
+static bool both_on_phy(zlrs_phy_t phy)
+{
+	return both_on_band(false) && zlrs_rf_status().data_phy == phy &&
+	       zlrs_mod_phy_id(&peer.cfg.mod) == phy;
 }
 
 static void debug_power_acceptance(void)
@@ -525,11 +542,25 @@ static void automatic_acceptance(void)
 		zassert_true(both_on_band(false));
 	}
 	const uint32_t nonce = local->sess_nonce_leader;
+	/* Wall-like attenuation should select a usable 2.4 GHz profile, not SubG. */
+	static const struct { int16_t rssi; zlrs_phy_t phy; } margins[] = {
+		{-97, ZLRS_PHY_FLRC_325}, {-102, ZLRS_PHY_LORA_SF6}, {-105, ZLRS_PHY_LORA_SF7}};
+	for (size_t i = 0; i < ARRAY_SIZE(margins); i++) {
+		rssi_24 = margins[i].rssi;
+		for (unsigned int n = 0; n < 8000 && !both_on_phy(margins[i].phy); n++) {
+			frames(1);
+		}
+		zassert_true(both_on_phy(margins[i].phy), "2.4 GHz profile %u not captured",
+			     margins[i].phy);
+		frames(DIV_ROUND_UP(10000000U, period_us));
+		zassert_true(both_on_phy(margins[i].phy), "usable slow profile left 2.4 GHz");
+	}
+	rssi_24 = -42;
 	block_24 = true;
 	source_left = sizeof(outgoing) - 1U;
 	zassert_equal(zlrs_link_write(&peer, incoming, sizeof(incoming) - 1U),
 		      sizeof(incoming) - 1U);
-	for (unsigned int i = 0; i < 3000 && (!both_on_band(true) || source_left ||
+	for (unsigned int i = 0; i < 30000 && (!both_on_band(true) || source_left ||
 					      delivered != sizeof(incoming) - 1U ||
 					      peer_delivered != sizeof(outgoing) - 1U);
 	     i++) {
@@ -561,8 +592,25 @@ static void automatic_acceptance(void)
 		}
 	}
 	zassert_true(preferred);
-	frames(600);
-	zassert_true(both_on_band(false));
+	for (unsigned int i = 0; i < 60000 && !both_on_phy(ZLRS_PHY_FLRC_2600); i++) {
+		frames(1);
+	}
+	zassert_true(both_on_phy(ZLRS_PHY_FLRC_2600), "healthy link did not recover fast FLRC");
+	zassert_equal(zlrs_rf_phy_request(ZLRS_PHY_COUNT), -EINVAL);
+	if (RF_TEST_ROLE_FOLLOWER) {
+		zassert_equal(zlrs_rf_phy_request(ZLRS_PHY_LORA_SF6), -EPERM);
+	} else {
+		zassert_ok(zlrs_rf_phy_request(ZLRS_PHY_LORA_SF6));
+		for (unsigned int i = 0; i < 8000 && !both_on_phy(ZLRS_PHY_LORA_SF6); i++) {
+			frames(1);
+		}
+		zassert_true(both_on_phy(ZLRS_PHY_LORA_SF6));
+		zassert_ok(zlrs_rf_phy_request(ZLRS_PHY_FLRC_2600));
+		for (unsigned int i = 0; i < 8000 && !both_on_phy(ZLRS_PHY_FLRC_2600); i++) {
+			frames(1);
+		}
+		zassert_true(both_on_phy(ZLRS_PHY_FLRC_2600));
+	}
 	zassert_equal(local->sess_nonce_leader, nonce);
 	zassert_equal(local->stats.data_drop_bytes, 0);
 	zassert_equal(peer.stats.data_drop_bytes, 0);

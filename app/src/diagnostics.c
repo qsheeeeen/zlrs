@@ -194,12 +194,15 @@ static void diagnostic_radio(struct diagnostic_report_writer *writer)
 	struct zlrs_slot_timer_stats timer;
 	const uint32_t protocol_ms = zlrs_slot_timer_now_ms();
 	const uint32_t kernel_ms = k_uptime_get_32();
-	const uint32_t max_airtime_us =
-		zlrs_lr2021_airtime_us(&snapshot.data_mod, ZLRS_FRAME_MAX_LEN);
+	const uint32_t max_airtime_us = zlrs_lr2021_airtime_us(
+		&snapshot.data_mod, snapshot.data_mtu + ZLRS_FRAME_HDR_LEN + ZLRS_DATA_PREFIX_LEN +
+					    zlrs_profile_tag_len(snapshot.link.config.profile));
 
 	zlrs_lr2021_diag(&diag);
 	zlrs_slot_timer_stats(&timer);
 	diagnostic_append(writer, "[FRAME PLAN]\n");
+	diagnostic_append(writer, "  Modulation         : %s\n",
+			  zlrs_mod_phy_name(zlrs_mod_phy_id(&snapshot.data_mod)));
 	diagnostic_append(writer, "  Frame period       : %u.%03u ms\n",
 			  snapshot.frame_period_us / 1000U, snapshot.frame_period_us % 1000U);
 	diagnostic_append(writer, "  Slot budget        : %u.%03u ms   Preparation: %u.%03u ms\n",

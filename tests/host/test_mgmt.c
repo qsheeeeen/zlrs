@@ -67,8 +67,10 @@ static void test_frame_codec(void)
 void test_mgmt(void)
 {
 	test_frame_codec();
+	CHECK(ZLRS_MGMT_DEBUG_REPORT_CHUNK_MAX == 85U);
 
 	const zlrs_mgmt_status_t sent = {
+		.data_phy = 4U,
 		.version = ZLRS_MGMT_VERSION,
 		.rssi_dbm = -48,
 		.peer_rssi_dbm = -51,
@@ -110,6 +112,7 @@ void test_mgmt(void)
 	CHECK(received.rx_crc_errors == 24 && received.tx_retries == 3);
 	CHECK(received.frequency_hz == 2478000000U && received.hop_index == 236);
 	CHECK(received.frame_period_us == 9080);
+	CHECK(received.data_phy == 4U && bytes[90] == 4U);
 	const uint8_t radio_fields[] = {0x83, 0xFF, 0x35, 0x0C, 0xE5, 0x0C, 1, 0x18,
 					2, 2, 1, 0x3F, 1, 0x84, 0x98, 0xBA, 0xDC, 0xFE};
 	CHECK(memcmp(bytes + 72, radio_fields, sizeof(radio_fields)) == 0);

@@ -9,20 +9,20 @@
 #pragma once
 
 /* Current wire format only; SYNC must declare this exact version. */
-#define ZLRS_PROTO_VERSION 11U
+#define ZLRS_PROTO_VERSION 12U
 
 /* Frame: type/config(1) + common seq(4) + typed body + tag(0/4). */
-#define ZLRS_FRAME_HDR_LEN      5U
-#define ZLRS_TAG_LEN            4U
-#define ZLRS_FRAME_MAX_LEN      511U
-#define ZLRS_PAYLOAD_MAX_LEN    (ZLRS_FRAME_MAX_LEN - ZLRS_FRAME_HDR_LEN)
+#define ZLRS_FRAME_HDR_LEN   5U
+#define ZLRS_TAG_LEN         4U
+#define ZLRS_FRAME_MAX_LEN   511U
+#define ZLRS_PAYLOAD_MAX_LEN (ZLRS_FRAME_MAX_LEN - ZLRS_FRAME_HDR_LEN)
 
 /* DATA-only prefix: packed 7-bit sequence / 1-bit ACK, RSSI and LQ. */
-#define ZLRS_DATA_PREFIX_LEN 3U
-#define ZLRS_DATA_MAX_LEN (ZLRS_PAYLOAD_MAX_LEN - ZLRS_DATA_PREFIX_LEN)
-#define ZLRS_SYNC_PAYLOAD_LEN 14U
+#define ZLRS_DATA_PREFIX_LEN       3U
+#define ZLRS_DATA_MAX_LEN          (ZLRS_PAYLOAD_MAX_LEN - ZLRS_DATA_PREFIX_LEN)
+#define ZLRS_SYNC_PAYLOAD_LEN      15U
 #define ZLRS_SESS_RESP_PAYLOAD_LEN 8U
-#define ZLRS_SESS_CFM_PAYLOAD_LEN 14U
+#define ZLRS_SESS_CFM_PAYLOAD_LEN  15U
 
 /* Sync words: 4 bytes, hardware slot 1 DATA, slot 2 pairing */
 #define ZLRS_SYNC_WORD_LEN     4U
@@ -47,4 +47,4 @@ typedef enum {
 
 /* Request sends only the initiator ID/nonce. Response/confirm bind both ends. */
 #define ZLRS_PAIR_REQ_PAYLOAD_LEN 8U
-#define ZLRS_PAIR_PAYLOAD_LEN 16U
+#define ZLRS_PAIR_PAYLOAD_LEN     16U

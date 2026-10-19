@@ -3,8 +3,7 @@
 
 /* Link lifecycle, slot scheduling, frame authentication and radio completion. */
 
-bool link_new_nonce(const zlrs_link_t *link, uint32_t previous, bool have_previous,
-		    uint32_t *out)
+bool link_new_nonce(const zlrs_link_t *link, uint32_t previous, bool have_previous, uint32_t *out)
 {
 	if (link->random == NULL) {
 		return false;
@@ -77,8 +76,8 @@ void link_set_state(zlrs_link_t *link, zlrs_link_state_t state, uint32_t now_ms)
 	}
 }
 
-uint16_t link_encode_frame(const zlrs_link_t *link, uint8_t *buf,
-			   const zlrs_frame_t *frame, uint16_t payload_len, const uint8_t *tag_key)
+uint16_t link_encode_frame(const zlrs_link_t *link, uint8_t *buf, const zlrs_frame_t *frame,
+			   uint16_t payload_len, const uint8_t *tag_key)
 {
 	if (link->cfg.profile > ZLRS_PROFILE_P1 ||
 	    payload_len > ZLRS_PAYLOAD_MAX_LEN - zlrs_profile_tag_len(link->cfg.profile)) {
@@ -94,12 +93,14 @@ uint16_t link_encode_frame(const zlrs_link_t *link, uint8_t *buf,
 	return total;
 }
 
-uint16_t link_build_frame(zlrs_link_t *link, zlrs_frame_t *frame,
-			  uint16_t payload_len, const uint8_t *tag_key)
+uint16_t link_build_frame(zlrs_link_t *link, zlrs_frame_t *frame, uint16_t payload_len,
+			  const uint8_t *tag_key)
 {
 	link->prepared_data.valid = false;
-	uint32_t *const counter = frame->type >= ZLRS_PKT_PAIR_REQ &&
-		frame->type <= ZLRS_PKT_PAIR_CFM ? &link->pair_tx_seq : &link->tx_seq;
+	uint32_t *const counter =
+		frame->type >= ZLRS_PKT_PAIR_REQ && frame->type <= ZLRS_PKT_PAIR_CFM
+			? &link->pair_tx_seq
+			: &link->tx_seq;
 	if (*counter == 0U || *counter == UINT32_MAX) {
 		return 0U;
 	}
@@ -362,7 +363,8 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 		}
 		if (!link->sess_cfm_due) {
 			return (uint32_t)(now_ms - link->last_sync_ms) >= link->cfg.sync_period_ms
-				? link_send_sync(link, now_ms) : NULL;
+				       ? link_send_sync(link, now_ms)
+				       : NULL;
 		}
 	}
 
@@ -391,8 +393,9 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 			}
 			return link_send_sess_cfm(link);
 		}
-		if (sync_frame(link) || ((link->radio_acquiring || link->band_announced) &&
-		    (uint32_t)(now_ms - link->last_sync_ms) >= link->cfg.sync_period_ms)) {
+		if (sync_frame(link) ||
+		    ((link->radio_acquiring || link->band_announced) &&
+		     (uint32_t)(now_ms - link->last_sync_ms) >= link->cfg.sync_period_ms)) {
 			return link_send_sync(link, now_ms);
 		}
 	}
@@ -432,7 +435,11 @@ static const zlrs_radio_req_t *data_slot(zlrs_link_t *link, uint8_t slot, uint32
 
 static void limit_data_mtu(zlrs_link_t *link)
 {
-	const uint16_t mtu = ZLRS_DATA_MAX_LEN - zlrs_profile_tag_len(link->cfg.profile);
+	const uint16_t max_frame = link->cfg.automatic_band || link->cfg.mod.lora_sf != 0U
+					   ? ZLRS_LORA_FRAME_MAX_LEN
+					   : ZLRS_FRAME_MAX_LEN;
+	const uint16_t mtu = max_frame - ZLRS_FRAME_HDR_LEN - ZLRS_DATA_PREFIX_LEN -
+			     zlrs_profile_tag_len(link->cfg.profile);
 
 	if (link->cfg.data_mtu > mtu) {
 		link->cfg.data_mtu = mtu;
@@ -440,8 +447,8 @@ static void limit_data_mtu(zlrs_link_t *link)
 }
 
 void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
-		    bool (*random)(void *ctx, uint32_t *out),
-		    void *random_ctx, const zlrs_link_events_t *events)
+		    bool (*random)(void *ctx, uint32_t *out), void *random_ctx,
+		    const zlrs_link_events_t *events)
 {
 	memset(link, 0, sizeof(*link));
 	link->cfg = *cfg;
@@ -467,7 +474,13 @@ void zlrs_link_set_power(zlrs_link_t *link, int8_t tx_power_dbm)
 bool link_band_plan_valid(const zlrs_link_t *link, const zlrs_band_plan_t *plan,
 			  uint32_t frame_index)
 {
-	if (plan->domain != link->cfg.domain || plan->automatic != link->cfg.automatic_band) {
+	const uint8_t phy =
+		link->cfg.domain == ZLRS_DOMAIN_ISM2400 ? zlrs_mod_phy_id(&link->cfg.mod) : 0U;
+	if (plan->domain != link->cfg.domain || plan->automatic != link->cfg.automatic_band ||
+	    plan->phy != phy || plan->target_phy >= ZLRS_PHY_COUNT ||
+	    (plan->automatic &&
+	     (plan->phy >= ZLRS_PHY_AUTO_COUNT || plan->target_phy >= ZLRS_PHY_AUTO_COUNT)) ||
+	    (plan->target_subg && plan->target_phy != 0U)) {
 		return false;
 	}
 	if (plan->switch_frame == 0U) {
@@ -475,7 +488,8 @@ bool link_band_plan_valid(const zlrs_link_t *link, const zlrs_band_plan_t *plan,
 	}
 	return plan->automatic && plan->switch_frame > frame_index &&
 	       plan->switch_frame - frame_index <= UINT16_MAX &&
-	       plan->target_subg != (link->cfg.domain != ZLRS_DOMAIN_ISM2400);
+	       (plan->target_subg != (link->cfg.domain != ZLRS_DOMAIN_ISM2400) ||
+		(!plan->target_subg && plan->target_phy != phy));
 }
 
 void link_adopt_band_plan(zlrs_link_t *link, const zlrs_band_plan_t *plan)
@@ -488,8 +502,11 @@ void link_adopt_band_plan(zlrs_link_t *link, const zlrs_band_plan_t *plan)
 void zlrs_link_acquire_radio(zlrs_link_t *link, uint32_t now_ms)
 {
 	link->prepared_data.valid = false;
-	link->band_plan = (zlrs_band_plan_t){.domain = link->cfg.domain,
+	link->band_plan = (zlrs_band_plan_t){
+		.domain = link->cfg.domain,
 		.automatic = link->cfg.automatic_band,
+		.phy = link->cfg.domain == ZLRS_DOMAIN_ISM2400 ? zlrs_mod_phy_id(&link->cfg.mod)
+							       : 0U,
 		.target_subg = link->cfg.domain != ZLRS_DOMAIN_ISM2400};
 	link->band_announced = false;
 	link->radio_acquiring = true;
@@ -511,8 +528,23 @@ bool zlrs_link_radio_captured(zlrs_link_t *link)
 
 bool zlrs_link_plan_band(zlrs_link_t *link, bool target_subg, uint32_t switch_frame)
 {
-	zlrs_band_plan_t plan = {.domain = link->cfg.domain, .automatic = 1U,
-		.target_subg = target_subg, .switch_frame = switch_frame};
+	return zlrs_link_plan_radio(link, target_subg, ZLRS_PHY_FLRC_2600, switch_frame);
+}
+
+bool zlrs_link_plan_radio(zlrs_link_t *link, bool target_subg, zlrs_phy_t target_phy,
+			  uint32_t switch_frame)
+{
+	if ((unsigned int)target_phy >= ZLRS_PHY_AUTO_COUNT) {
+		return false;
+	}
+	zlrs_band_plan_t plan = {.domain = link->cfg.domain,
+				 .automatic = 1U,
+				 .phy = link->cfg.domain == ZLRS_DOMAIN_ISM2400
+						? zlrs_mod_phy_id(&link->cfg.mod)
+						: 0U,
+				 .target_phy = target_phy,
+				 .target_subg = target_subg,
+				 .switch_frame = switch_frame};
 	if (link->req_pending || link->cfg.role != ZLRS_ROLE_LEADER || !link->session_valid ||
 	    !link_band_plan_valid(link, &plan, link->frame_index) || switch_frame == 0U) {
 		return false;
@@ -526,9 +558,9 @@ bool zlrs_link_plan_band(zlrs_link_t *link, bool target_subg, uint32_t switch_fr
 
 bool zlrs_link_reconfigure_radio(zlrs_link_t *link, const zlrs_link_cfg_t *cfg)
 {
-	if (link->req_pending || cfg->domain >= ZLRS_DOMAIN_COUNT ||
-	    cfg->role != link->cfg.role || cfg->profile != link->cfg.profile ||
-	    cfg->arq != link->cfg.arq || cfg->data_mtu != link->cfg.data_mtu ||
+	if (link->req_pending || cfg->domain >= ZLRS_DOMAIN_COUNT || cfg->role != link->cfg.role ||
+	    cfg->profile != link->cfg.profile || cfg->arq != link->cfg.arq ||
+	    cfg->data_mtu != link->cfg.data_mtu ||
 	    cfg->automatic_band != link->cfg.automatic_band) {
 		return false;
 	}
@@ -609,14 +641,15 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 				      zlrs_profile_tag_len(link->cfg.profile)) &&
 		    (frame.type == ZLRS_PKT_DATA_L2F || frame.type == ZLRS_PKT_DATA_F2L)) {
 			const uint16_t data_len = link->req.size - ZLRS_FRAME_HDR_LEN -
-				zlrs_profile_tag_len(link->cfg.profile) - ZLRS_DATA_PREFIX_LEN;
+						  zlrs_profile_tag_len(link->cfg.profile) -
+						  ZLRS_DATA_PREFIX_LEN;
 			if (data_len == 0U) {
 				link->stats.tx_ack_only_frames++;
 			} else {
 				link->stats.tx_data_frames++;
 				link->stats.tx_data_ack_frames += link->cfg.arq != 0U;
 				link->stats.tx_data_bytes += data_len;
-				link->stats.tx_full_data_frames += link->req.size == ZLRS_FRAME_MAX_LEN;
+				link->stats.tx_full_data_frames += data_len == link->cfg.data_mtu;
 			}
 		}
 		link->queue_head = (uint16_t)((link->queue_head + link->pending_data_len) %

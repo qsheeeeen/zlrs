@@ -52,6 +52,7 @@ static uint16_t resync_every_n;
 static uint16_t data_mtu;
 static zlrs_data_band_t data_band = ZLRS_DATA_BAND_24;
 static zlrs_data_band_t band_mode;
+static zlrs_phy_t data_phy;
 static zlrs_band_policy_t band_policy;
 static uint32_t band_switches;
 static bool transition_reserved;
@@ -81,6 +82,7 @@ enum {
 	POWER_REQUEST_FIXED_OFFSET = 2 - INT8_MIN
 };
 static atomic_t power_request;
+static atomic_t phy_request;
 static bool power_fixed;
 static int8_t fixed_power_dbm;
 #endif
@@ -147,9 +149,12 @@ static void on_state(void *ctx, zlrs_link_state_t state)
 	LOG_INF("data link -> %s", name);
 }
 
-/* The selected band alone determines modulation, airtime and duty budget. */
+/* The active band and profile determine modulation, airtime and duty budget. */
 static uint16_t sync_period_for_mod(const zlrs_mod_cfg_t *mod)
 {
+	if (mod->lora_sf != 0U) {
+		return 300U;
+	}
 	if (mod->rate_bps >= 2600000U) {
 		return 100U;
 	}
@@ -161,25 +166,39 @@ static uint16_t sync_period_for_mod(const zlrs_mod_cfg_t *mod)
 
 static void plan_init(void)
 {
-	data_mod = zlrs_mod_flrc(
-		ZLRS_DATA_SUBG ? zlrs_region_clamp_rate(region, CONFIG_ZLRS_APP_DATA_RATE_BPS)
-			       : CONFIG_ZLRS_APP_DATA_RATE_BPS);
+	data_mod = !ZLRS_DATA_SUBG && band_mode == ZLRS_DATA_BAND_AUTO
+			   ? zlrs_mod_phy(data_phy)
+			   : zlrs_mod_flrc(ZLRS_DATA_SUBG
+						   ? zlrs_region_clamp_rate(
+							     region, CONFIG_ZLRS_APP_DATA_RATE_BPS)
+						   : CONFIG_ZLRS_APP_DATA_RATE_BPS);
 	slot_prepare_us =
 		ZLRS_DATA_SUBG ? CONFIG_ZLRS_APP_PREPARE_US : CONFIG_ZLRS_APP_DATA_24_PREPARE_US;
-	data_mtu = ZLRS_DATA_MAX_LEN - zlrs_profile_tag_len(active_profile);
+	/* A common MTU preserves outstanding ARQ packets across FLRC/LoRa changes. */
+	const uint16_t max_frame =
+		band_mode == ZLRS_DATA_BAND_AUTO ? ZLRS_LORA_FRAME_MAX_LEN : ZLRS_FRAME_MAX_LEN;
+	data_mtu = max_frame - ZLRS_FRAME_HDR_LEN - ZLRS_DATA_PREFIX_LEN -
+		   zlrs_profile_tag_len(active_profile);
 	slot_budget_us = slot_prepare_us + CONFIG_ZLRS_APP_TX_GUARD_US + ZLRS_LR2021_STARTUP_US +
-			 zlrs_lr2021_airtime_us(&data_mod, ZLRS_FRAME_MAX_LEN) + 200U;
+			 zlrs_lr2021_airtime_us(&data_mod, max_frame) + 200U;
 	frame_period_us = ZLRS_SLOT_COUNT * slot_budget_us;
 	data_rate_hz = 1000000U / frame_period_us;
-	if (CONFIG_ZLRS_APP_RESYNC_PERIOD_MS > 0) {
-		const uint32_t frames = ((uint32_t)CONFIG_ZLRS_APP_RESYNC_PERIOD_MS * 1000U) /
-					(frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE);
+	if (CONFIG_ZLRS_APP_RESYNC_PERIOD_MS > 0 || band_mode == ZLRS_DATA_BAND_AUTO) {
+		const uint32_t sync_ms =
+			band_mode == ZLRS_DATA_BAND_AUTO
+				? (CONFIG_ZLRS_APP_RESYNC_PERIOD_MS > 0
+					   ? MIN(CONFIG_ZLRS_APP_RESYNC_PERIOD_MS, 1000U)
+					   : 1000U)
+				: CONFIG_ZLRS_APP_RESYNC_PERIOD_MS;
+		const uint32_t frames =
+			(sync_ms * 1000U) / (frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE);
 		resync_every_n = (uint16_t)MAX(frames, 1U);
 	} else {
 		resync_every_n = 0U;
 	}
 	LOG_INF("data %s: mtu=%u frame=%u us rate=%u Hz", ZLRS_DATA_SUBG ? "sub-G" : "2.4G",
 		data_mtu, frame_period_us, data_rate_hz);
+	LOG_INF("modem: %s", zlrs_mod_phy_name(zlrs_mod_phy_id(&data_mod)));
 }
 
 /* ---- link setup ---------------------------------------------------------- */
@@ -396,16 +415,19 @@ static uint32_t now_us(void)
 	return zlrs_slot_timer_now_us();
 }
 
-static void change_band(zlrs_data_band_t target, bool probe, uint32_t now_ms)
+static void change_band(zlrs_data_band_t target, zlrs_phy_t phy, bool probe, uint32_t now_ms)
 {
 	zlrs_slot_timer_cancel_launch();
 	zlrs_lr2021_abort();
 	const zlrs_data_band_t previous = data_band;
+	const zlrs_phy_t previous_phy = data_phy;
 	data_band = target;
+	data_phy = target == ZLRS_DATA_BAND_SUBG ? ZLRS_PHY_FLRC_2600 : phy;
 	plan_init();
 	const zlrs_link_cfg_t cfg = link_config();
 	if (!zlrs_link_reconfigure_radio(&link_data, &cfg)) {
 		data_band = previous;
+		data_phy = previous_phy;
 		plan_init();
 		return;
 	}
@@ -417,11 +439,19 @@ static void change_band(zlrs_data_band_t target, bool probe, uint32_t now_ms)
 	zlrs_slot_timer_reconfigure(frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE, slot_prepare_us,
 				    transition_reserved ? 0U : 12000U);
 	transition_reserved = false;
-	zlrs_band_policy_changed(&band_policy, target == ZLRS_DATA_BAND_SUBG, probe, now_ms,
-				 zlrs_link_get_info(&link_data).last_rx_ms);
+	zlrs_band_policy_changed(&band_policy, target == ZLRS_DATA_BAND_SUBG, data_phy, probe,
+				 now_ms, zlrs_link_get_info(&link_data).last_rx_ms);
 	band_switches++;
 	LOG_INF("auto band -> %s (%s), switches=%u", ZLRS_DATA_SUBG ? "sub-G" : "2.4G",
 		probe ? "probe" : "capture", band_switches);
+}
+
+static bool plan_radio(bool subg, zlrs_phy_t phy, uint32_t frame_index)
+{
+	const uint64_t period = (uint64_t)frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE;
+	const uint32_t lead = resync_every_n + DIV_ROUND_UP(500000U, period);
+	return lead <= UINT16_MAX && frame_index < UINT32_MAX - lead &&
+	       zlrs_link_plan_radio(&link_data, subg, phy, frame_index + lead);
 }
 
 static void update_band(uint32_t now_ms)
@@ -433,9 +463,24 @@ static void update_band(uint32_t now_ms)
 	if (info.band_plan.switch_frame != 0U &&
 	    info.frame_index >= info.band_plan.switch_frame - 1U) {
 		change_band(info.band_plan.target_subg ? ZLRS_DATA_BAND_SUBG : ZLRS_DATA_BAND_24,
-			    !info.band_plan.target_subg, now_ms);
+			    info.band_plan.target_phy,
+			    !info.band_plan.target_subg &&
+				    (ZLRS_DATA_SUBG || info.band_plan.target_phy < data_phy),
+			    now_ms);
 		return;
 	}
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
+	const atomic_val_t requested = atomic_get(&phy_request);
+	if (requested != 0 && info.session_valid && info.state == ZLRS_STATE_CONNECTED &&
+	    !info.radio_acquiring && info.band_plan.switch_frame == 0U) {
+		const zlrs_phy_t phy = requested - 1;
+		if ((!ZLRS_DATA_SUBG && phy == data_phy) ||
+		    plan_radio(false, phy, info.frame_index)) {
+			(void)atomic_cas(&phy_request, requested, 0);
+		}
+		return;
+	}
+#endif
 	const zlrs_link_stats_t *const stats = zlrs_link_get_stats(&link_data);
 	const zlrs_band_observation_t observation = {
 		.now_ms = now_ms,
@@ -453,15 +498,10 @@ static void update_band(uint32_t now_ms)
 	};
 	const zlrs_band_action_t action = zlrs_band_policy_update(&band_policy, &observation);
 	if (action == ZLRS_BAND_SEARCH) {
-		change_band(ZLRS_DATA_SUBG ? ZLRS_DATA_BAND_24 : ZLRS_DATA_BAND_SUBG, false,
-			    now_ms);
+		change_band(band_policy.target_subg ? ZLRS_DATA_BAND_SUBG : ZLRS_DATA_BAND_24,
+			    band_policy.target_phy, false, now_ms);
 	} else if (action == ZLRS_BAND_PLAN) {
-		const uint64_t period = (uint64_t)frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE;
-		const uint32_t lead = resync_every_n + DIV_ROUND_UP(2000000U, period);
-		if (lead <= UINT16_MAX && info.frame_index < UINT32_MAX - lead) {
-			(void)zlrs_link_plan_band(&link_data, !ZLRS_DATA_SUBG,
-						  info.frame_index + lead);
-		}
+		(void)plan_radio(band_policy.target_subg, band_policy.target_phy, info.frame_index);
 	}
 }
 
@@ -759,8 +799,9 @@ static void publish_state(bool force)
 	if (!force && have_state && (uint32_t)(now_ms - published_ms) < REPORT_PERIOD_MS &&
 	    published.role == (role_leader ? ZLRS_ROLE_LEADER : ZLRS_ROLE_FOLLOWER) &&
 	    published.data_band == data_band && published.band_mode == band_mode &&
-	    published.state == info.state && published.link_lost == lost &&
-	    published.fault == !radio_ready && published.lq_percent == stats->lq_percent &&
+	    published.data_phy == zlrs_mod_phy_id(&data_mod) && published.state == info.state &&
+	    published.link_lost == lost && published.fault == !radio_ready &&
+	    published.lq_percent == stats->lq_percent &&
 	    published.data_drop_bytes == stats->data_drop_bytes &&
 	    published.frame_period_us == frame_period_us) {
 		return;
@@ -779,6 +820,18 @@ void zlrs_rf_publish_state(void)
 }
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
+int zlrs_rf_phy_request(unsigned int phy)
+{
+	if (phy >= ZLRS_PHY_AUTO_COUNT) {
+		return -EINVAL;
+	}
+	if (band_mode != ZLRS_DATA_BAND_AUTO || !role_leader) {
+		return -EPERM;
+	}
+	atomic_set(&phy_request, phy + 1U);
+	return 0;
+}
+
 void zlrs_rf_diagnostics_capture(zlrs_rf_diagnostics_t *out)
 {
 	out->link = (zlrs_rf_link_snapshot_t){
@@ -869,6 +922,7 @@ zlrs_rf_status_t zlrs_rf_status(void)
 		.profile = active_profile,
 		.data_band = data_band,
 		.band_mode = band_mode,
+		.data_phy = zlrs_mod_phy_id(&data_mod),
 		.band_acquiring = info.radio_acquiring,
 		.band_planned = info.band_plan.switch_frame != 0U,
 		.band_switches = band_switches,
@@ -927,8 +981,10 @@ int zlrs_rf_pair_start(void)
 		return -ENOTCONN;
 	}
 	if (zlrs_link_get_state(link) != ZLRS_STATE_PAIRING) {
-		if (band_mode == ZLRS_DATA_BAND_AUTO && ZLRS_DATA_SUBG) {
-			change_band(ZLRS_DATA_BAND_24, false, zlrs_slot_timer_now_ms());
+		if (band_mode == ZLRS_DATA_BAND_AUTO &&
+		    (ZLRS_DATA_SUBG || data_phy != ZLRS_PHY_FLRC_2600)) {
+			change_band(ZLRS_DATA_BAND_24, ZLRS_PHY_FLRC_2600, false,
+				    zlrs_slot_timer_now_ms());
 		}
 		zlrs_link_press(link, zlrs_slot_timer_now_ms());
 	}
@@ -1055,6 +1111,7 @@ int zlrs_rf_init(void)
 	 */
 	const zlrs_persist_settings_t *const settings = zlrs_persist_settings();
 	band_mode = settings->band;
+	data_phy = ZLRS_PHY_FLRC_2600;
 	data_band = band_mode == ZLRS_DATA_BAND_SUBG ? ZLRS_DATA_BAND_SUBG : ZLRS_DATA_BAND_24;
 	region_id = settings->region;
 	role_leader = settings->role == ZLRS_ROLE_LEADER;

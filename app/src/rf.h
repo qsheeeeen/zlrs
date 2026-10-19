@@ -15,6 +15,7 @@ typedef struct {
 	zlrs_profile_t profile;
 	zlrs_data_band_t data_band;
 	zlrs_data_band_t band_mode;
+	zlrs_phy_t data_phy;
 	bool band_acquiring;
 	bool band_planned;
 	uint32_t band_switches;
@@ -80,4 +81,6 @@ void zlrs_rf_log_snapshot(void);
 #if defined(CONFIG_ZLRS_APP_DEBUG)
 /* Any thread: enqueue a volatile debug override for the RF owner. */
 int zlrs_rf_power_request(bool automatic, int dbm);
+/* Leader only: negotiate one volatile 2.4 GHz profile change for bench tests. */
+int zlrs_rf_phy_request(unsigned int phy);
 #endif

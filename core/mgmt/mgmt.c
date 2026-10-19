@@ -161,6 +161,7 @@ void zlrs_mgmt_status_encode(uint8_t out[ZLRS_MGMT_STATUS_LEN], const zlrs_mgmt_
 	out[83] = status->radio_valid;
 	zlrs_put_le16(out + 84, status->radio_errors);
 	zlrs_put_le32(out + 86, status->radio_irq);
+	out[90] = status->data_phy;
 }
 
 bool zlrs_mgmt_status_decode(const uint8_t *in, uint8_t len, zlrs_mgmt_status_t *status)
@@ -209,5 +210,6 @@ bool zlrs_mgmt_status_decode(const uint8_t *in, uint8_t len, zlrs_mgmt_status_t 
 	status->radio_valid = in[83];
 	status->radio_errors = zlrs_get_le16(in + 84);
 	status->radio_irq = zlrs_get_le32(in + 86);
+	status->data_phy = in[90];
 	return true;
 }

@@ -89,6 +89,8 @@ const zlrs_radio_req_t *link_send_sync(zlrs_link_t *link, uint32_t now_ms)
 {
 	link->band_plan.domain = link->cfg.domain;
 	link->band_plan.automatic = link->cfg.automatic_band;
+	link->band_plan.phy =
+		link->cfg.domain == ZLRS_DOMAIN_ISM2400 ? zlrs_mod_phy_id(&link->cfg.mod) : 0U;
 	link->band_announced = link->band_plan.switch_frame != 0U;
 	zlrs_frame_t frame = {
 		.type = ZLRS_PKT_SYNC,
@@ -100,7 +102,7 @@ const zlrs_radio_req_t *link_send_sync(zlrs_link_t *link, uint32_t now_ms)
 			      .band_plan = link->band_plan},
 	};
 	const uint16_t len = link_build_frame(link, &frame, ZLRS_SYNC_PAYLOAD_LEN,
-					     link_tag_key_for(link, frame.type, true));
+					      link_tag_key_for(link, frame.type, true));
 	link->last_sync_ms = now_ms;
 	link->stats.tx_syncs++;
 	return link_submit_tx(link, len, link_sync_freq_hz(link), ZLRS_SYNC_SLOT_DATA,
@@ -115,7 +117,7 @@ const zlrs_radio_req_t *link_send_sess_resp(zlrs_link_t *link)
 				   .nonce_follower = link->sess_nonce_follower},
 	};
 	const uint16_t len = link_build_frame(link, &frame, ZLRS_SESS_RESP_PAYLOAD_LEN,
-					     link_tag_key_for(link, frame.type, true));
+					      link_tag_key_for(link, frame.type, true));
 	link->sess_resp_due = false;
 	link->stats.sess_resp_tx++;
 	return link_submit_tx(link, len, link_sync_freq_hz(link), ZLRS_SYNC_SLOT_DATA,
@@ -126,6 +128,8 @@ const zlrs_radio_req_t *link_send_sess_cfm(zlrs_link_t *link)
 {
 	link->band_plan.domain = link->cfg.domain;
 	link->band_plan.automatic = link->cfg.automatic_band;
+	link->band_plan.phy =
+		link->cfg.domain == ZLRS_DOMAIN_ISM2400 ? zlrs_mod_phy_id(&link->cfg.mod) : 0U;
 	zlrs_frame_t frame = {
 		.type = ZLRS_PKT_SESS_CFM,
 		.body.sess_cfm = {.nonce_follower = link->sess_nonce_follower,
@@ -135,7 +139,7 @@ const zlrs_radio_req_t *link_send_sess_cfm(zlrs_link_t *link)
 	};
 	link->sess_sync_frame = link->frame_index;
 	const uint16_t len = link_build_frame(link, &frame, ZLRS_SESS_CFM_PAYLOAD_LEN,
-					     link_tag_key_for(link, frame.type, true));
+					      link_tag_key_for(link, frame.type, true));
 	link->stats.sess_cfm_tx++;
 	return link_submit_tx(link, len, link_sync_freq_hz(link), ZLRS_SYNC_SLOT_DATA,
 			      link->sync_word);
@@ -216,8 +220,8 @@ bool link_handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now
 	return true;
 }
 
-int link_handle_sess_cfm(zlrs_link_t *link, const zlrs_frame_t *frame,
-		       uint16_t len, uint32_t now_ms)
+int link_handle_sess_cfm(zlrs_link_t *link, const zlrs_frame_t *frame, uint16_t len,
+			 uint32_t now_ms)
 {
 	const uint8_t tag_len = zlrs_profile_tag_len(link->cfg.profile);
 	const bool repeated = link->state == ZLRS_STATE_CONNECTED && link->session_valid;

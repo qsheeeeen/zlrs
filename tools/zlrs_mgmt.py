@@ -40,6 +40,7 @@ STATUS_FIELDS = {
     "radio_vbat_mv": "H", "radio_version_major": "B", "radio_version_minor": "B",
     "radio_chip_mode": "B", "radio_command_status": "B", "radio_reset_status": "B",
     "radio_valid": "B", "radio_errors": "H", "radio_irq": "I",
+    "data_phy": "B",
 }
 STATUS_STRUCT = struct.Struct("<" + "".join(STATUS_FIELDS.values()))
 STATUS_LEN = STATUS_STRUCT.size
@@ -78,7 +79,7 @@ DEBUG_REPORT_RESP = 0x86
 # No-payload commands share registration and encoding metadata.
 SIMPLE_COMMANDS = {
     "enter": (CMD_ENTER, "enter management mode"),
-    "status": (CMD_STATUS, "read link state, pairing and runtime settings"),
+    "status": (CMD_STATUS, "read link, modulation, signal/power and configuration"),
     "pair": (CMD_PAIR, "start pairing on this device (start the peer too)"),
     "erase-pair": (CMD_ERASE_PAIR, "erase the peer pairing record"),
     "new-dev-id": (CMD_NEW_DEV_ID, "make a fresh device id (drops the pairing record)"),
@@ -137,7 +138,7 @@ def crc8(data: bytes) -> int:
 
 
 def encode(cmd: int, payload: bytes = b"") -> bytes:
-    if len(payload) > 90:
+    if len(payload) > 91:
         raise ValueError("payload too long")
     body = bytes([VERSION, cmd, len(payload)]) + payload
     return SOF + body + bytes([crc8(body)])
@@ -159,6 +160,9 @@ def decode(frame: bytes):
 
 
 def decode_status(payload: bytes) -> Status:
+    # Allow status/rollback verification against an older confirmed image.
+    if len(payload) == 90:
+        payload += b"\xff"
     if len(payload) != STATUS_LEN:
         raise ValueError(f"status payload must contain {STATUS_LEN} bytes")
     return Status(*STATUS_STRUCT.unpack(payload))
@@ -171,64 +175,55 @@ def read_status(client) -> Status:
 def status_text(payload: bytes) -> str:
     status = decode_status(payload)
     flags = status.flags
-    dev = status.dev_id.hex()
-    peer = status.peer_id.hex()
-    baud = status.data_baud
-    power = status.tx_power_dbm
+    modulation = {0: "FLRC 2.6 Mbps", 1: "FLRC 650 kbps", 2: "FLRC 325 kbps",
+                  3: "LoRa SF6 / BW 1 MHz", 4: "LoRa SF7 / BW 1 MHz",
+                  5: "FLRC 1.3 Mbps"}.get(status.data_phy)
+    if modulation is None:
+        modulation = ("not reported (upgrade device firmware)" if status.data_phy == 255
+                      else f"unknown profile ({status.data_phy})")
     sections = [
-        ("Device", [("Role", "Leader" if status.role == 0 else "Follower"),
-                    ("Hardware", "HF (868/915 MHz)" if status.band else "LF (470/433 MHz)"),
-                    ("Device ID", dev), ("Peer ID", peer)]),
-        ("Link", [("Data band", "sub-GHz" if flags & 0x08 else "2.4 GHz"),
-                  ("Band mode", "auto" if flags & 0x10 else "fixed"),
-                  ("Band acquisition", "searching" if flags & 0x20 else "ready"),
-                  ("Band transition", "scheduled" if flags & 0x40 else "none"),
+        ("Link", [("Role", "Leader" if status.role == 0 else "Follower"),
                   ("State", STATE_NAMES.get(status.state, str(status.state))),
-                  ("Quality", f"{status.lq_percent}%"),
                   ("Paired", "yes" if flags & 0x02 else "no"),
                   ("Session", "active" if flags & 0x04 else "inactive")]),
-        ("Configuration", [("Region", REGION_NAMES.get(status.region, str(status.region))),
-                           ("Data UART", f"{baud or 115200} baud"),
-                           ("Profile", f"P{status.profile}"),
-                           ("Root key", "configured" if flags & 0x01 else "missing")]),
-    ]
-    rssi = status.rssi_dbm
-    peer_rssi = status.peer_rssi_dbm
-    active_power = status.active_power_dbm
-    floor = status.power_floor_dbm
-    temperature = status.temperature_centi_c
-    tx, rx = status.tx_frames, status.rx_frames
-    crc, tag = status.rx_crc_errors, status.rx_bad_tag
-    retry, dropped = status.tx_retries, status.data_drop_bytes
-    missed, failed = status.missed_slots, status.radio_fail
-    frequency = status.frequency_hz
-    hop = status.hop_index
-    period = status.frame_period_us
-    sections.extend([
-        ("Measurements", [
-            ("RSSI", f"{rssi} dBm" if rssi else "unavailable"),
-            ("Peer RSSI", f"{peer_rssi} dBm" if peer_rssi else "unavailable"),
-            ("Peer LQ", f"{status.peer_lq_percent}%" if peer_rssi else "unavailable"),
-            ("TX setpoint", f"{active_power} dBm"),
-            ("Power maximum", f"{power} dBm"),
+        ("Radio", [
+            ("Band mode", "auto" if flags & 0x10 else "fixed"),
+            ("Active band", "sub-GHz" if flags & 0x08 else "2.4 GHz"),
+            ("Modulation", modulation),
+            ("Frequency", f"{status.frequency_hz / 1000000:.3f} MHz"),
+            ("Hop index", str(status.hop_index)),
+            ("Frame period", f"{status.frame_period_us / 1000:.3f} ms"),
+            ("Capture", "searching" if flags & 0x20 else "ready"),
+            ("Transition", "scheduled" if flags & 0x40 else "none"),
+        ]),
+        ("Signal / Power", [
+            ("Local RSSI", f"{status.rssi_dbm} dBm" if status.rssi_dbm else "unavailable"),
+            ("Local LQ", f"{status.lq_percent}%"),
+            ("Peer RSSI", f"{status.peer_rssi_dbm} dBm" if status.peer_rssi_dbm else "unavailable"),
+            ("Peer LQ", f"{status.peer_lq_percent}%" if status.peer_rssi_dbm else "unavailable"),
+            ("TX setpoint", f"{status.active_power_dbm} dBm"),
+            ("TX range", f"{status.power_floor_dbm}..{status.tx_power_dbm} dBm"),
             ("Power control", "debug fixed" if flags & 0x80 else "automatic"),
-            ("Power floor", f"{floor} dBm"),
-            ("MCU temperature", "unavailable" if temperature == -32768
-             else f"{temperature / 100:.2f} C"),
-            ("Hop frequency", f"{frequency / 1000000:.3f} MHz"),
-            ("Hop index", str(hop)),
-            ("Frame period", f"{period / 1000:.3f} ms"),
         ]),
-        ("Counters", [
-            ("RF frames", f"TX {tx}, RX {rx}"),
-            ("ARQ retries", str(retry)),
-            ("CRC errors", str(crc)),
-            ("Auth errors", str(tag)),
-            ("Radio failures", str(failed)),
-            ("Missed slots", str(missed)),
-            ("Dropped data", f"{dropped} bytes"),
+        ("Traffic / Errors", [
+            ("RF frames", f"TX {status.tx_frames}, RX {status.rx_frames}"),
+            ("ARQ retries", str(status.tx_retries)),
+            ("CRC errors", str(status.rx_crc_errors)),
+            ("Auth errors", str(status.rx_bad_tag)),
+            ("Radio failures", str(status.radio_fail)),
+            ("Missed slots", str(status.missed_slots)),
+            ("Dropped data", f"{status.data_drop_bytes} bytes"),
         ]),
-    ])
+        ("Device / Configuration", [
+            ("Hardware", "HF (868/915 MHz)" if status.band else "LF (470/433 MHz)"),
+            ("Region", REGION_NAMES.get(status.region, str(status.region))),
+            ("Security profile", f"P{status.profile}"),
+            ("Device ID", status.dev_id.hex()),
+            ("Peer ID", status.peer_id.hex()),
+            ("Data UART", f"{status.data_baud or 115200} baud"),
+            ("Root key", "configured" if flags & 0x01 else "missing"),
+        ]),
+    ]
     valid = status.radio_valid
     radio_temp = status.radio_temperature_centi_c
     xosc_temp = status.radio_xosc_temperature_centi_c
@@ -249,10 +244,14 @@ def status_text(payload: bytes) -> str:
     error_text = ", ".join(name for bit, name in enumerate(error_names)
                            if errors & (1 << bit)) or "none"
     irq = status.radio_irq
-    sections.append(("LR2021", [
-        ("Junction temperature", f"{radio_temp / 100:.2f} C" if valid & 0x01 else "unavailable"),
-        ("XOSC temperature", f"{xosc_temp / 100:.2f} C" if valid & 0x02 else "unavailable"),
-        ("Supply voltage", f"{vbat / 1000:.3f} V ({vbat} mV)" if valid & 0x04 else "unavailable"),
+    sections.append(("Sensors", [
+        ("MCU chip temp", "unavailable" if status.temperature_centi_c == -32768
+         else f"{status.temperature_centi_c / 100:.2f} C"),
+        ("LR2021 chip temp", f"{radio_temp / 100:.2f} C" if valid & 0x01 else "unavailable"),
+        ("LR2021 XOSC temp", f"{xosc_temp / 100:.2f} C" if valid & 0x02 else "unavailable"),
+        ("LR2021 supply", f"{vbat / 1000:.3f} V ({vbat} mV)" if valid & 0x04 else "unavailable"),
+    ]))
+    sections.append(("LR2021 snapshot", [
         ("Chip version", f"major 0x{status.radio_version_major:02x}, minor 0x{status.radio_version_minor:02x}"
          if valid & 0x08 else "unavailable"),
         ("Chip mode", mode_names.get(mode, f"unknown ({mode})") if valid & 0x10 else "unavailable"),
@@ -279,8 +278,8 @@ def read_response(link):
             buf.clear()
         elif len(buf) == 2 and buf[1] != 0x5A:
             buf[:] = b"\xa5" if buf[-1] == 0xA5 else b""
-        elif len(buf) == 5 and buf[4] > 90:
-            raise ValueError("response payload exceeds 90 bytes")
+        elif len(buf) == 5 and buf[4] > 91:
+            raise ValueError("response payload exceeds 91 bytes")
         elif len(buf) >= 5 and len(buf) == buf[4] + 6:
             return decode(bytes(buf))
 

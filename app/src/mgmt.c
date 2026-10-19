@@ -355,6 +355,7 @@ static void read_status(zlrs_mgmt_status_t *out)
 		.radio_valid = rf.radio.valid,
 		.radio_errors = rf.radio.errors,
 		.radio_irq = rf.radio.irq,
+		.data_phy = rf.data_phy,
 	};
 	(void)zlrs_temperature_read(&out->temperature_centi_c);
 	if (rf.data_band == ZLRS_DATA_BAND_SUBG) {
