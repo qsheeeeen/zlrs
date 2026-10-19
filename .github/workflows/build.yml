@@ -1,10 +1,8 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# The quick check on every push and PR: unit and simulation tests for the pure C layers plus the
-# device tools' unit tests. No Zephyr workspace needed; results in under a minute.
-#
-# Firmware builds (~5 GB workspace, ~10 minutes) live in firmware.yml; see the notes there.
+# Fast host checks and native Zephyr integration tests run on every push and PR.
+# Signed hardware images are built separately in firmware.yml.
 
 name: build
 
@@ -19,14 +17,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  gates:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - name: tree gates
-        run: tests/gates.sh
-
   host-tests:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -37,11 +27,56 @@ jobs:
           cc --version | head -1
           cmake --version | head -1
           python3 --version
-      - name: configure host tests
-        run: cmake -S tests/host -B build/host -DZLRS_HOST_LEAKS=ON
-      - name: build host tests
-        run: cmake --build build/host --parallel
-      - name: host tests (ASan + UBSan + LSan)
-        run: ctest --test-dir build/host --output-on-failure
-      - name: device tool tests
-        run: python3 tests/tools/run.py
+      - name: configure checks
+        run: cmake -S tests -B build/tests -DZLRS_HOST_LEAKS=ON
+      - name: build checks
+        run: cmake --build build/tests --parallel
+      - name: host, tools and architecture (ASan + UBSan + LSan)
+        run: ctest --test-dir build/tests --parallel 4 --output-on-failure --output-junit results.xml
+      - name: upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: host-test-results
+          path: |
+            build/tests/results.xml
+            build/tests/Testing/Temporary/*.log
+
+  simulation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: zlrs
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build device-tree-compiler
+      - name: Zephyr workspace and test dependencies
+        run: |
+          zlrs/tools/setup-zephyr.sh "$GITHUB_WORKSPACE"
+          .venv/bin/python -m pip install -r zlrs/tests/simulation/requirements.txt
+      - name: complete native simulation matrix
+        run: |
+          source zlrs/tools/zephyr-env.sh
+          export ZEPHYR_TOOLCHAIN_VARIANT=host
+          unset ZEPHYR_SDK_INSTALL_DIR
+          python "$ZEPHYR_BASE/scripts/twister" \
+            -T zlrs/tests/simulation -p native_sim/native/64 \
+            --outdir build/simulation --jobs 2 --inline-logs
+      - name: upload simulation results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulation-results
+          path: |
+            build/simulation/*.xml
+            build/simulation/*.json
+            build/simulation/*.log
+            build/simulation/**/handler.log
+            build/simulation/**/handler_stderr.log
+            build/simulation/**/build.log

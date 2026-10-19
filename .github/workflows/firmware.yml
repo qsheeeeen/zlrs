@@ -3,7 +3,7 @@
 #
 # Firmware build: install the west workspace (~5 GB) and the Zephyr SDK the way the README
 # describes, then build both sub-G SKUs. It takes about 10 minutes, so it stays separate
-# from the fast host tests and never blocks a push on its own.
+# from the host/native checks in build.yml and never blocks a push on its own.
 #
 # Marked continue-on-error: the build could not be validated on a runner yet, so let it report
 # without blocking; drop the line once it runs green and make it a hard gate.
@@ -59,50 +59,6 @@ jobs:
           tar xf zephyr-sdk-1.0.0_linux-x86_64_minimal.tar.xz
           cd zephyr-sdk-1.0.0
           ./setup.sh -t arm-zephyr-eabi -h -c
-
-      - name: application lifecycle simulation
-        run: |
-          source zlrs/tools/zephyr-env.sh
-          west build -b native_sim/native/64 zlrs/tests/simulation/application -d build-application-simulation
-          ./build-application-simulation/zephyr/zephyr.exe
-
-      - name: persistence simulation
-        run: |
-          source zlrs/tools/zephyr-env.sh
-          west build -b native_sim/native/64 zlrs/tests/simulation/settings -d build-settings-simulation
-          ./build-settings-simulation/zephyr/zephyr.exe --flash_in_ram
-
-      - name: management command simulation
-        run: |
-          source zlrs/tools/zephyr-env.sh
-          west build -b native_sim/native/64 zlrs/tests/simulation/mgmt -d build-mgmt-simulation
-          ./build-mgmt-simulation/zephyr/zephyr.exe --flash_in_ram
-
-      - name: RF result simulation (both roles and bands)
-        run: |
-          source zlrs/tools/zephyr-env.sh
-          for role in OFF ON; do
-            for subg in OFF ON; do
-              west build -b native_sim/native/64 zlrs/tests/simulation/rf -d "build-rf-${role}-${subg}" -- -DRF_TEST_ROLE_FOLLOWER="${role}" -DRF_TEST_BAND_SUBG="${subg}"
-              ./build-rf-${role}-${subg}/zephyr/zephyr.exe
-            done
-          done
-
-      - name: serial endpoint simulation
-        run: |
-          source zlrs/tools/zephyr-env.sh
-          for endpoints in both usb-only uart-only; do
-            overlays=app.overlay
-            if [ "$endpoints" != both ]; then overlays="$overlays;$endpoints.overlay"; fi
-            west build -b native_sim/native/64 zlrs/tests/simulation/serial -d "build-serial-$endpoints" -- -DDTC_OVERLAY_FILE="$overlays"
-            ./build-serial-$endpoints/zephyr/zephyr.exe
-          done
-
-      - name: UI simulation
-        run: |
-          source zlrs/tools/zephyr-env.sh
-          west build -b native_sim/native/64 zlrs/tests/simulation/ui -d build-ui-simulation
-          ./build-ui-simulation/zephyr/zephyr.exe
 
       # Debug image: the overlay is the only place that sets CONFIG_ZLRS_APP_DEBUG, so this step
       # is what keeps the debug-only options (shell, stats log, boot delay) compiling.

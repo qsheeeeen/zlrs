@@ -7,6 +7,7 @@ import sys
 import unittest
 
 DIRECTORY = Path(__file__).resolve().parent
+sys.path.insert(0, str(DIRECTORY.parents[1] / "tools"))
 sys.path.insert(0, str(DIRECTORY))
 
 

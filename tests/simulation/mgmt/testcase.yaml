@@ -1,5 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
 common:
- tags: [mgmt, persist]
- platform_allow: [native_sim/native/64]
+  harness: ztest
+  tags: [mgmt, persist]
+  platform_allow: [native_sim/native/64]
 tests:
- zlrs.mgmt.commands: {}
+  zlrs.mgmt.commands: {}

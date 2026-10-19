@@ -93,15 +93,15 @@ capture.
 ## Host and tool checks
 
 ```sh
-cmake -S tests/host -B build/host
-cmake --build build/host
-ctest --test-dir build/host --output-on-failure
-python3 tests/tools/run.py
-tests/gates.sh
+cmake -S tests -B build/tests
+cmake --build build/tests --parallel
+ctest --test-dir build/tests --parallel 4 --output-on-failure --output-junit results.xml
 ```
 
-Host checks run without a Zephyr workspace and use AddressSanitizer/UBSan by
-default. Required coverage includes:
+The [test system](../tests/README.md) defines environment ownership, shared
+contracts, test selection and result artifacts. Fast checks run without a
+Zephyr workspace and use AddressSanitizer/UBSan by default. Required coverage
+includes:
 
 - Independent byte vectors for all eight air types, first-byte bit allocation,
   common u32 sequences, P0/P1 exact lengths, empty DATA and 511-byte frames.
@@ -141,20 +141,17 @@ unconfigured. Endpoint diagnostics distinguish readiness, selection, cumulative
 input/output bytes, queued bytes and drops. This allows output routing to be
 checked before any UART input. Physical loopback acceptance shorts UART TX to RX
 and verifies returned DATA while USB is unconfigured.
-Settings and management runs use simulated flash:
+Run the complete native matrix through Twister. Each configuration has its own
+build and working directory, including simulated flash:
 
 ```sh
 source tools/zephyr-env.sh
-west build -b native_sim/native/64 tests/simulation/application -d build/sim-application
-build/sim-application/zephyr/zephyr.exe
-west build -b native_sim/native/64 tests/simulation/settings -d build/sim-settings
-build/sim-settings/zephyr/zephyr.exe --flash_in_ram
-west build -b native_sim/native/64 tests/simulation/mgmt -d build/sim-mgmt
-build/sim-mgmt/zephyr/zephyr.exe --flash_in_ram
-west build -b native_sim/native/64 tests/simulation/serial -d build/sim-serial
-build/sim-serial/zephyr/zephyr.exe
-west build -b native_sim/native/64 tests/simulation/ui -d build/sim-ui
-build/sim-ui/zephyr/zephyr.exe
+python -m pip install -r tests/simulation/requirements.txt
+export ZEPHYR_TOOLCHAIN_VARIANT=host
+unset ZEPHYR_SDK_INSTALL_DIR
+python "$ZEPHYR_BASE/scripts/twister" \
+  -T tests/simulation -p native_sim/native/64 \
+  --outdir build/simulation --jobs 2 --inline-logs
 ```
 
 Lifecycle acceptance covers initialization failure with management reachable,
@@ -168,29 +165,10 @@ one-second drop indication, the 150/300 ms connected pulses and 3/2/1-beat caden
 on 2.4 GHz/SubG, active-band changes in automatic mode, per-band LQ boundaries,
 output retry, cumulative button input and missed/locked channel reads.
 
-Run the production RF owner for both roles and fixed bands:
-
-```sh
-for role in OFF ON; do
-  for subg in OFF ON; do
-    rf_build="build/sim-rf-${role}-${subg}"
-    west build -b native_sim/native/64 tests/simulation/rf -d "$rf_build" -- \
-      -DRF_TEST_ROLE_FOLLOWER="$role" -DRF_TEST_BAND_SUBG="$subg"
-    "$rf_build/zephyr/zephyr.exe"
-  done
-done
-```
-
-Run automatic-mode scenarios for each role:
-
-```sh
-for role in OFF ON; do
-  rf_build="build/sim-auto-${role}"
-  west build -b native_sim/native/64 tests/simulation/rf -d "$rf_build" -- \
-    -DRF_TEST_ROLE_FOLLOWER="$role" -DRF_TEST_BAND_AUTO=ON
-  "$rf_build/zephyr/zephyr.exe"
-done
-```
+The RF `testcase.yaml` covers both roles in fixed 2.4 GHz, fixed SubG and
+automatic modes. This is the configuration matrix consumed by both developers
+and PR CI; adding a variant does not require a separate CI loop. To select RF
+checks only, add `-t rf` to the Twister command.
 
 RF scenarios must exercise real P1/ARQ peers behind simulated radio/clock/serial
 edges: completion and preparation failures, missing IRQs, timeout cleanup,

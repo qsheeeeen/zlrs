@@ -217,7 +217,7 @@ static void finish_quality_window(sim_t *sim)
 	CHECK(false);
 }
 
-static void test_quality_window_boundary(void)
+void test_quality_window_boundary(void)
 {
 	static sim_t sim;
 	sim_init(&sim);
@@ -247,7 +247,7 @@ static void test_quality_window_boundary(void)
 	CHECK(stats->lq_percent == 100U);
 }
 
-static void test_data_sequence_wrap(void)
+void test_data_sequence_wrap(void)
 {
 	static sim_t sim;
 	sim_init(&sim);
@@ -321,7 +321,7 @@ static void connect_saved(sim_t *sim, zlrs_profile_t profile)
 	CHECK(both_connected(sim));
 }
 
-static void test_replay_and_counters(void)
+void test_replay_and_counters(void)
 {
 	static sim_t sim;
 	sim_init(&sim);
@@ -413,7 +413,7 @@ static void test_replay_and_counters(void)
 	CHECK(follower->last_rx_ms == sim.now_ms + 1U);
 }
 
-static void test_response_binding(void)
+void test_response_binding(void)
 {
 	static sim_t sim;
 	sim_init(&sim);
@@ -469,7 +469,7 @@ static void test_response_binding(void)
 	CHECK(memcmp(leader->session_key_in, old_key, sizeof(old_key)) == 0);
 }
 
-static void test_pairing_context(void)
+void test_pairing_context(void)
 {
 	static sim_t sim;
 	sim_init(&sim);
@@ -526,7 +526,7 @@ static void test_pairing_context(void)
 	CHECK(!follower->pair_request_valid && follower->pair_rx_seq == 0U);
 }
 
-static void test_confirmation_loss_and_exhaustion(void)
+void test_confirmation_loss_and_exhaustion(void)
 {
 	static sim_t sim;
 	for (zlrs_profile_t profile = ZLRS_PROFILE_P0; profile <= ZLRS_PROFILE_P1; profile++) {
@@ -560,7 +560,7 @@ static void test_confirmation_loss_and_exhaustion(void)
 	}
 }
 
-static void test_entropy_failure(void)
+void test_entropy_failure(void)
 {
 	static sim_t sim;
 	sim_init(&sim);
@@ -598,7 +598,7 @@ static void test_entropy_failure(void)
 	CHECK(both_connected(&sim));
 }
 
-static void test_nonce_reuse(void)
+void test_nonce_reuse(void)
 {
 	static sim_t sim;
 	sim_init(&sim);
@@ -693,7 +693,7 @@ static bool captured_band(const sim_t *sim, bool subg)
 	       !sim->follower.link.radio_acquiring;
 }
 
-static void test_capture_waits_for_phase(void)
+void test_capture_waits_for_phase(void)
 {
 	static sim_t sim;
 	sim_init(&sim);
@@ -740,7 +740,7 @@ static void test_capture_waits_for_phase(void)
 	CHECK(!sim.follower.link.radio_acquiring && sim.follower.link.sess_ack_due);
 }
 
-static void test_automatic_bands(void)
+void test_automatic_bands(void)
 {
 	static sim_t sim;
 	for (unsigned int scenario = 0; scenario < 4; scenario++) {
@@ -815,7 +815,7 @@ static void test_automatic_bands(void)
 	}
 }
 
-static void test_band_plan_security(void)
+void test_band_plan_security(void)
 {
 	static sim_t sim;
 	sim_init(&sim);
@@ -889,7 +889,7 @@ static void test_band_plan_security(void)
 	CHECK(!zlrs_link_reconfigure_radio(follower, &cfg));
 }
 
-void test_link(void)
+void test_duplex(void)
 {
 	static sim_t sim;
 	uint8_t leader_data[1024];
@@ -1054,15 +1054,4 @@ void test_link(void)
 	const uint32_t old_session_tags = sim.follower.link.stats.rx_bad_tag;
 	zlrs_link_rx(&sim.follower.link, old_capture, old_size, -60, 0, sim.now_ms);
 	CHECK(sim.follower.link.stats.rx_bad_tag == old_session_tags + 1U);
-	test_replay_and_counters();
-	test_response_binding();
-	test_pairing_context();
-	test_confirmation_loss_and_exhaustion();
-	test_entropy_failure();
-	test_nonce_reuse();
-	test_band_plan_security();
-	test_capture_waits_for_phase();
-	test_automatic_bands();
-	test_quality_window_boundary();
-	test_data_sequence_wrap();
 }

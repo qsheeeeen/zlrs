@@ -1,12 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
 common:
- tags: [rf, link]
- platform_allow: [native_sim/native/64]
+  harness: ztest
+  tags: [rf, link]
+  platform_allow: [native_sim/native/64]
+  timeout: 120
 tests:
- zlrs.rf.results: {}
- zlrs.rf.auto_leader:
-  extra_args:
-   - RF_TEST_BAND_AUTO=ON
- zlrs.rf.auto_follower:
-  extra_args:
-   - RF_TEST_BAND_AUTO=ON
-   - RF_TEST_ROLE_FOLLOWER=ON
+  zlrs.rf.fixed_24_leader: {}
+  zlrs.rf.fixed_24_follower:
+    extra_args:
+      - RF_TEST_ROLE_FOLLOWER=ON
+  zlrs.rf.fixed_subg_leader:
+    extra_args:
+      - RF_TEST_BAND_SUBG=ON
+  zlrs.rf.fixed_subg_follower:
+    extra_args:
+      - RF_TEST_ROLE_FOLLOWER=ON
+      - RF_TEST_BAND_SUBG=ON
+  zlrs.rf.auto_leader:
+    extra_args:
+      - RF_TEST_BAND_AUTO=ON
+  zlrs.rf.auto_follower:
+    extra_args:
+      - RF_TEST_BAND_AUTO=ON
+      - RF_TEST_ROLE_FOLLOWER=ON

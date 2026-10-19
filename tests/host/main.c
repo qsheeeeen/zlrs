@@ -2,7 +2,7 @@
  * Copyright (c) 2026 zlrs contributors
  * SPDX-License-Identifier: Apache-2.0
  *
- * Host-side tests for the protocol core and the link layer. Neither needs Zephyr, so they run
+ * One isolated host scenario per executable, registered with CTest by CMake.
  *
  *   cmake -S tests/host -B build/host && cmake --build build/host
  *   ctest --test-dir build/host --output-on-failure
@@ -12,6 +12,8 @@
  */
 
 #include "test.h"
+
+void ZLRS_TEST_ENTRY(void);
 
 unsigned int zlrs_test_checks;
 unsigned int zlrs_test_failures;
@@ -43,20 +45,9 @@ int zlrs_test_hex_eq(const uint8_t *data, size_t len, const char *hex)
 
 int main(void)
 {
-	printf("ZLRS host tests\n");
-	test_crypto();
-	test_frame();
-	test_fhss();
-	test_data_pattern();
-	test_radio();
-	test_link();
-	test_mgmt();
-	test_region();
-	test_mod();
-	test_power();
-	test_band();
-	test_fuzz();
+	printf("ZLRS host test: %s\n", ZLRS_TEST_NAME);
+	ZLRS_TEST_ENTRY();
 	printf("%u checks, %u failure(s)\n", zlrs_test_checks, zlrs_test_failures);
 
-	return zlrs_test_failures == 0U ? 0 : 1;
+	return zlrs_test_checks > 0U && zlrs_test_failures == 0U ? 0 : 1;
 }

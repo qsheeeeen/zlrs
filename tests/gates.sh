@@ -17,6 +17,7 @@
 #      the log_partition in the board's flash layout, or the ring either wastes flash or
 #      overwrites the coredump partition next to it (doc/06-firmware.md).
 #   6. RF owns link instances; frontends use business interfaces and own their channels.
+#   7. test environments share contracts and support, never another environment's sources.
 #
 # Usage: tests/gates.sh
 
@@ -81,6 +82,20 @@ if hit=$(rg -n 'zlrs/mgmt|ZLRS_MGMT' app/src/rf.c app/src/diagnostics.c app/src/
 	bad "RF or diagnostics depends on the management wire protocol:"
 	echo "$hit"
 fi
+
+for environment in host simulation hardware contracts support; do
+	case "$environment" in
+	host) foreign='simulation|hardware' ;;
+	simulation) foreign='host|hardware' ;;
+	hardware) foreign='host|simulation' ;;
+	*) foreign='host|simulation|hardware' ;;
+	esac
+	if hit=$(rg -n "(tests/|\.\./)($foreign)/" --glob '*.[ch]' --glob CMakeLists.txt \
+		"tests/$environment"); then
+		bad "tests/$environment borrows environment-specific sources; use contracts/ or support/:"
+		echo "$hit"
+	fi
+done
 
 # Shipped configurations: everything that produces a firmware image. A debug configuration is
 # the only place allowed to name a bench switch.

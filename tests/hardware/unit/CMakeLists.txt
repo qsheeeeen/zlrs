@@ -23,7 +23,7 @@ target_include_directories(app PRIVATE "${zlrs_root}/app/src" "${zlrs_root}/core
 
 if(ZLRS_TEST_UI_ONLY)
   target_sources(app PRIVATE
-    ../app/ui/test_led.c
+    "${zlrs_root}/tests/contracts/test_led.c"
     "${zlrs_root}/app/src/ui.c")
 else()
   target_sources(app PRIVATE ../drivers/entropy/test_rp2350_trng.c)
@@ -34,11 +34,11 @@ if(NOT ZLRS_TEST_ENTROPY_ONLY AND NOT ZLRS_TEST_UI_ONLY)
     ../drivers/crypto/test_rp2350_sha256.c
     ../core/proto/test_crypto.c
     ../app/storage/test_log.c
-    ../app/test_persist.c
+    "${zlrs_root}/tests/contracts/test_persist.c"
     ../core/link/test_link.c
     ../app/link/test_power.c
     ../app/platform/test_slot_timer.c
-    ../app/ui/test_led.c
+    "${zlrs_root}/tests/contracts/test_led.c"
     "${zlrs_root}/app/src/persist.c"
     "${zlrs_root}/app/src/power.c"
     "${zlrs_root}/app/src/platform/slot_timer.c"

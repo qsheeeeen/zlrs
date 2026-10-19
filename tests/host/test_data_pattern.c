@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "test.h"
-#include "../hardware/app/link/data_pattern.h"
+#include "data_pattern.h"
 
 void test_data_pattern(void)
 {

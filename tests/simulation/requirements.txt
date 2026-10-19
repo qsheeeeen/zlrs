@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+# Twister runtime additions to tools/setup-zephyr.sh's Zephyr build dependencies.
+colorama
+junitparser>=3.0.0
+natsort
+ply>=3.10
+pytest
