@@ -20,6 +20,20 @@ those levels separate makes a protocol failure distinguishable from an owner
 or Zephyr integration failure. Passing either level does not establish RF
 performance or hardware timing.
 
+The state and failure contracts include:
+
+| Contract | Scenarios |
+| --- | --- |
+| Pairing publishes a confirmed record | Both roles; candidate received then cancel, timeout or confirm; delayed abandoned responses; reconnect to the saved peer |
+| TX borrows queued bytes until commit | Both roles, ARQ/best effort, failed completions, retry and queue wrap |
+| Reliable DATA matches a reference byte stream | P0/P1 and three fixed seeds; duplex writes, packet loss, duplicate frames, bad P1 tags, TX failure, backpressure, queue and clock wrap; eventual drain |
+| Destructive reset retires active credentials | Failure before/after clear, remount failure and layout-marker failure; RF refresh despite command failure; recovery through initialization |
+| Saved state matches completed writes | Independent byte records, failed key/pair writes, partial settings saves and identity-write failure after pair deletion; remount checks |
+
+The stream test reports its seed, step and generator state on failure. Its oracle
+is the accepted application byte stream, independent of packet encoding or ARQ
+implementation. Malformed-input fuzzing remains a separate parser/memory check.
+
 ## Fast checks
 
 From the repository root, without a Zephyr workspace or connected devices:
@@ -121,6 +135,16 @@ output directory. Each configuration retains `build.log`, `handler.log` and
 `handler_stderr.log` for build and runtime diagnosis. Both test jobs in
 `.github/workflows/build.yml` fail on test errors and upload their reports.
 The separate firmware workflow builds signed target images.
+
+RF completion, entropy recovery, pairing outcomes, power recovery, diagnostics
+and publication have separate cases. Each creates its own peers and resets the
+fake edges. Storage cases start from a fresh partition; the hardware suite saves
+the original partition once and restores it after all cases. To audit order
+independence, select `-T tests/simulation/rf -T tests/simulation/settings
+-T tests/simulation/mgmt` and add `-x CONFIG_ZTEST_SHUFFLE=y` (Zephyr also
+repeats cases and suites in this mode). Application boot and asynchronous UI
+acceptance use their normal single-boot execution. Host link cases can be audited in one
+process with `link_tests --gtest_shuffle --gtest_repeat=3 --gtest_random_seed=2026`.
 
 ## Hardware acceptance
 

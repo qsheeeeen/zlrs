@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <tuple>
+#include <vector>
 #include <string.h>
 #include "zlrs/link/link.h"
 extern "C" {
@@ -13,7 +14,7 @@ extern "C" {
 typedef struct {
 	zlrs_link_t link;
 	uint32_t rng;
-	uint8_t received[4096];
+	uint8_t received[16384];
 	uint16_t received_len;
 	bool blocked;
 	bool random_failed;
@@ -28,6 +29,8 @@ typedef struct {
 	uint32_t frames;
 	uint16_t drop_leader;
 	uint16_t drop_follower;
+	uint16_t fail_leader, fail_follower;
+	bool duplicate_air, corrupt_air;
 	bool drop_confirms_only;
 	bool block_24_leader, block_24_follower, lose_band_plans;
 	int16_t rssi_24;
@@ -151,6 +154,11 @@ static void sim_slot(sim_t *sim, uint8_t slot)
 		zlrs_link_t *const sender = a->is_tx ? leader : follower;
 		zlrs_link_t *const receiver = a->is_tx ? follower : leader;
 		uint16_t *const drops = a->is_tx ? &sim->drop_leader : &sim->drop_follower;
+		uint16_t *const failures = a->is_tx ? &sim->fail_leader : &sim->fail_follower;
+		const bool failed = *failures != 0;
+		if (failed) {
+			(*failures)--;
+		}
 		zlrs_frame_t air;
 		ASSERT_TRUE(zlrs_frame_decode(&air, source->buf, source->size,
 					      zlrs_profile_tag_len(sender->cfg.profile)));
@@ -159,7 +167,7 @@ static void sim_slot(sim_t *sim, uint8_t slot)
 			on_24 && (a->is_tx ? sim->block_24_leader : sim->block_24_follower);
 		const bool lost_plan = sim->lose_band_plans && air.type == ZLRS_PKT_SYNC &&
 				       air.body.sync.band_plan.switch_frame != 0U;
-		if (blocked || lost_plan ||
+		if (failed || blocked || lost_plan ||
 		    (*drops != 0U && (!sim->drop_confirms_only || air.type == ZLRS_PKT_SESS_CFM))) {
 			if (*drops != 0U) {
 				(*drops)--;
@@ -167,6 +175,9 @@ static void sim_slot(sim_t *sim, uint8_t slot)
 			zlrs_link_complete(receiver, ZLRS_RADIO_OK, 0U, 0, 0, sim->now_ms);
 		} else {
 			memcpy(dest->buf, source->buf, source->size);
+			if (sim->corrupt_air) {
+				dest->buf[source->size - 1] ^= 0x80;
+			}
 			zlrs_link_complete(receiver, ZLRS_RADIO_OK, source->size,
 					   on_24 && sim->rssi_24 ? sim->rssi_24 : -60, 0,
 					   sim->now_ms);
@@ -174,8 +185,13 @@ static void sim_slot(sim_t *sim, uint8_t slot)
 			if (!sim->withhold_phase) {
 				(void)zlrs_link_radio_captured(receiver);
 			}
+			if (sim->duplicate_air) {
+				zlrs_link_rx(receiver, dest->buf, source->size, -60, 0,
+					     sim->now_ms);
+			}
 		}
-		zlrs_link_complete(sender, ZLRS_RADIO_OK, 0U, 0, 0, sim->now_ms);
+		zlrs_link_complete(sender, failed ? ZLRS_RADIO_FAIL : ZLRS_RADIO_OK, 0U, 0, 0,
+				   sim->now_ms);
 	} else {
 		if (a != nullptr) {
 			zlrs_link_complete(leader, ZLRS_RADIO_OK, 0U, 0, 0, sim->now_ms);
@@ -1229,3 +1245,101 @@ INSTANTIATE_TEST_SUITE_P(
 	testing::Values(BandLoss{0, "BothDirectionsLost"}, BandLoss{1, "FollowerDirectionLost"},
 			BandLoss{2, "WeakSignal"}, BandLoss{3, "AnnouncementsLost"}),
 	[](const testing::TestParamInfo<BandLoss> &info) { return info.param.name; });
+
+class StreamFaults: public Link,
+		    public testing::WithParamInterface<std::tuple<zlrs_profile_t, uint32_t>>
+{
+};
+
+TEST_P(StreamFaults, DuplexStreamMatchesReferenceUnderFaultSequences)
+{
+	const auto [profile, seed] = GetParam();
+	SCOPED_TRACE(testing::Message() << "seed=" << seed);
+	sim.now_ms = UINT32_MAX - 1000;
+	ASSERT_NO_FATAL_FAILURE(connect_saved(&sim, profile));
+	std::vector<uint8_t> expected[2];
+	node_t *nodes[] = {&sim.leader, &sim.follower};
+	uint32_t rng = seed;
+	auto next = [&]() {
+		rng ^= rng << 13;
+		rng ^= rng >> 17;
+		rng ^= rng << 5;
+		return rng;
+	};
+	bool queue_wrapped[2] = {};
+	auto check = [&]() {
+		for (unsigned int side = 0; side < 2; side++) {
+			const auto &sender = nodes[side]->link;
+			const auto &receiver = *nodes[1 - side];
+			ASSERT_LE(sender.queue_count, ZLRS_LINK_TX_QUEUE_LEN);
+			ASSERT_LT(sender.queue_head, ZLRS_LINK_TX_QUEUE_LEN);
+			ASSERT_LE(sender.arq_used ? sender.arq_len : 0, sender.queue_count);
+			EXPECT_EQ(zlrs_link_tx_space(&sender) + sender.queue_count,
+				  ZLRS_LINK_TX_QUEUE_LEN);
+			ASSERT_LE(receiver.received_len, expected[side].size());
+			if (receiver.received_len) {
+				ASSERT_EQ(memcmp(receiver.received, expected[side].data(),
+						 receiver.received_len),
+					  0);
+			}
+			/* Queued includes delivered bytes awaiting ACK, so delivery can be ahead. */
+			ASSERT_LE(expected[side].size() - receiver.received_len,
+				  sender.queue_count);
+		}
+	};
+	for (unsigned int step = 0; step < 5000; step++) {
+		SCOPED_TRACE(testing::Message() << "step=" << step << " rng=" << rng);
+		for (unsigned int side = 0; side < 2; side++) {
+			auto &sender = nodes[side]->link;
+			uint8_t bytes[32];
+			const uint16_t count = next() % sizeof(bytes) + 1;
+			if (expected[side].size() + count <= 12000 && next() % 2 == 0 &&
+			    zlrs_link_tx_space(&sender) >= count) {
+				for (auto &byte : bytes) {
+					byte = (uint8_t)next();
+				}
+				ASSERT_EQ(zlrs_link_write(&sender, bytes, count), count);
+				expected[side].insert(expected[side].end(), bytes, bytes + count);
+			}
+			nodes[side]->blocked = next() % 4 == 0;
+		}
+		sim.drop_leader = next() % 3 == 0;
+		sim.drop_follower = next() % 3 == 0;
+		sim.fail_leader = next() % 5 == 0;
+		sim.fail_follower = next() % 5 == 0;
+		sim.duplicate_air = next() % 5 == 0;
+		/* P0 cannot detect intentionally corrupted payloads. */
+		sim.corrupt_air = profile == ZLRS_PROFILE_P1 && next() % 5 == 0;
+		const uint16_t heads[] = {nodes[0]->link.queue_head, nodes[1]->link.queue_head};
+		ASSERT_NO_FATAL_FAILURE(sim_frame(&sim));
+		for (unsigned int side = 0; side < 2; side++) {
+			queue_wrapped[side] |= nodes[side]->link.queue_head < heads[side];
+		}
+		ASSERT_NO_FATAL_FAILURE(check());
+	}
+	sim.drop_leader = sim.drop_follower = sim.fail_leader = sim.fail_follower = 0;
+	sim.corrupt_air = sim.duplicate_air = false;
+	sim.leader.blocked = sim.follower.blocked = false;
+	for (unsigned int step = 0;
+	     step < 10000 && (nodes[0]->link.queue_count || nodes[1]->link.queue_count); step++) {
+		ASSERT_NO_FATAL_FAILURE(sim_frame(&sim));
+		ASSERT_NO_FATAL_FAILURE(check());
+	}
+	for (unsigned int side = 0; side < 2; side++) {
+		EXPECT_EQ(nodes[side]->link.queue_count, 0);
+		EXPECT_EQ(nodes[1 - side]->received_len, expected[side].size());
+		EXPECT_GT(expected[side].size(), ZLRS_LINK_TX_QUEUE_LEN);
+		EXPECT_TRUE(queue_wrapped[side]);
+		EXPECT_GT(nodes[side]->link.stats.radio_fail, 0U);
+		EXPECT_GT(nodes[side]->link.stats.tx_retries, 0U);
+		EXPECT_EQ(nodes[side]->link.stats.data_drop_bytes, 0U);
+	}
+}
+
+INSTANTIATE_TEST_SUITE_P(ProfilesAndSeeds, StreamFaults,
+			 testing::Combine(testing::Values(ZLRS_PROFILE_P0, ZLRS_PROFILE_P1),
+					  testing::Values(0x12345678U, 0x87654321U, 0x9e3779b9U)),
+			 [](const testing::TestParamInfo<StreamFaults::ParamType> &info) {
+				 return "P" + std::to_string(std::get<0>(info.param)) + "Seed" +
+					std::to_string(std::get<1>(info.param));
+			 });

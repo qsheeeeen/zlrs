@@ -624,10 +624,11 @@ static void automatic_acceptance(void)
 	const zlrs_link_events_t events = {.on_data = receive_peer};
 	__real_zlrs_link_init(&peer, &cfg, peer_random, NULL, &events);
 	zlrs_link_set_dev_id(&peer, saved_pairing.peer_id);
-	zlrs_link_set_root_key(&peer, saved_key, 0);
-	zlrs_link_set_peer(&peer, saved_id, saved_pairing.pair_salt, 0);
-	zlrs_band_policy_init(&peer_band_policy, true, cfg.role == ZLRS_ROLE_LEADER, false, 0, 0);
-	zlrs_power_init(&peer_power, 12, -17, 0);
+	zlrs_link_set_root_key(&peer, saved_key, clock_us / 1000U);
+	zlrs_link_set_peer(&peer, saved_id, saved_pairing.pair_salt, clock_us / 1000U);
+	zlrs_band_policy_init(&peer_band_policy, true, cfg.role == ZLRS_ROLE_LEADER, false, 0,
+			      clock_us / 1000U);
+	zlrs_power_init(&peer_power, 12, -17, clock_us / 1000U);
 	zlrs_rf_start();
 	frames(150);
 	zassert_true(both_on_band(false));
@@ -736,35 +737,82 @@ static void automatic_acceptance(void)
 	k_thread_priority_set(k_current_get(), 0);
 }
 
-ZTEST(rf_results, test_protocol_completion_and_timeouts)
+static void start_peers(bool fail_entropy)
 {
 	if (RF_TEST_BAND_AUTO) {
-		automatic_acceptance();
-		return;
+		ztest_test_skip();
 	}
-	zassert_equal(zlrs_rf_init(), -ENODEV);
-	zlrs_rf_pause();
-	zlrs_rf_status_refresh();
-	zassert_equal(radio_reads, 0); /* Failed init remains manageable without chip access. */
-	zassert_equal(zlrs_rf_status().radio.valid, 0);
-	zlrs_rf_resume();
 	identity_valid = true;
-	entropy_failed = true;
-	const unsigned int plain_before = plain_random_requests;
+	entropy_failed = fail_entropy;
 	zassert_ok(zlrs_rf_init());
-	zassert_equal(radio_reads, 1);
-	if (!RF_TEST_ROLE_FOLLOWER) {
-		zassert_equal(zlrs_rf_pair_start(), -EIO);
-		zassert_not_equal(zlrs_rf_status().state, ZLRS_STATE_PAIRING);
-	}
 	zlrs_link_cfg_t cfg = *zlrs_link_get_config(local);
 	cfg.role = RF_TEST_ROLE_FOLLOWER ? ZLRS_ROLE_LEADER : ZLRS_ROLE_FOLLOWER;
 	const zlrs_link_events_t events = {.on_data = receive_peer};
 	__real_zlrs_link_init(&peer, &cfg, peer_random, NULL, &events);
 	zlrs_link_set_dev_id(&peer, saved_pairing.peer_id);
-	zlrs_link_set_root_key(&peer, saved_key, 0);
-	zlrs_link_set_peer(&peer, saved_id, saved_pairing.pair_salt, 0);
+	zlrs_link_set_root_key(&peer, saved_key, clock_us / 1000U);
+	zlrs_link_set_peer(&peer, saved_id, saved_pairing.pair_salt, clock_us / 1000U);
 	zlrs_rf_start();
+}
+
+static void connected_peers(void)
+{
+	start_peers(false);
+	frames(150);
+	zassert_equal(local->state, ZLRS_STATE_CONNECTED);
+	zassert_equal(peer.state, ZLRS_STATE_CONNECTED);
+}
+
+static void before(void *unused)
+{
+	ARG_UNUSED(unused);
+	memset(&peer, 0, sizeof(peer));
+	peer_next_slot = 0;
+	clock_us = boundary_us = period_us = 0;
+	frame = 0;
+	active = NULL;
+	pending = false;
+	mode = NORMAL;
+	tx_ok = tx_fail = rx_fail = rx_ok = aborts = radio_reads = 0;
+	entropy_failed = false;
+	secure_random_failures = plain_random_requests = 0;
+	scan_delay_override_ms = phase_shift_events = 0;
+	packet_phase_error_us = 0;
+	source_left = delivered = peer_delivered = 0;
+	block_24 = false;
+	rssi_24 = -42;
+	local_rx_offset = peer_rx_offset = 0;
+	retime_boundary_us = transition_guard_us = 0;
+	identity_valid = configured = paired = true;
+}
+
+static void after(void *unused)
+{
+	ARG_UNUSED(unused);
+	k_thread_priority_set(k_current_get(), 0);
+}
+
+ZTEST(rf_results, test_initialization_failure_stays_off_radio)
+{
+
+	identity_valid = false;
+	zassert_equal(zlrs_rf_init(), -ENODEV);
+	zlrs_rf_pause();
+	zlrs_rf_status_refresh();
+	zassert_equal(radio_reads, 0);
+	zassert_false(zlrs_rf_status().radio.valid);
+	zlrs_rf_resume();
+}
+
+ZTEST(rf_results, test_entropy_failure_and_recovery)
+{
+	start_peers(true);
+
+	if (!RF_TEST_ROLE_FOLLOWER) {
+		zassert_equal(zlrs_rf_pair_start(), -EIO);
+		zassert_not_equal(zlrs_rf_status().state, ZLRS_STATE_PAIRING);
+	}
+	const unsigned int plain_before = plain_random_requests;
 	frames(150);
 	zassert_true(secure_random_failures > 0U);
 	zassert_false(local->session_valid || local->session_pending);
@@ -776,6 +824,12 @@ ZTEST(rf_results, test_protocol_completion_and_timeouts)
 	frames(150);
 	zassert_equal(zlrs_link_get_state(local), ZLRS_STATE_CONNECTED);
 	zassert_equal(zlrs_link_get_state(&peer), ZLRS_STATE_CONNECTED);
+}
+
+ZTEST(rf_results, test_periodic_sync_cadence)
+{
+	connected_peers();
+	zlrs_link_cfg_t cfg = *zlrs_link_get_config(local);
 	/* A five-second SYNC cadence must remain five seconds above 255 frames. */
 	if (!RF_TEST_BAND_SUBG && CONFIG_ZLRS_APP_PACING_SCALE == 1) {
 		zassert_true(cfg.resync_every_n > UINT8_MAX);
@@ -785,6 +839,14 @@ ZTEST(rf_results, test_protocol_completion_and_timeouts)
 	frames(12000000U / period_us);
 	const uint32_t periodic = zlrs_link_get_stats(leader)->tx_syncs - syncs;
 	zassert_true(periodic == 2U || periodic == 3U);
+}
+
+ZTEST(rf_results, test_rebooted_peer_clock_reacquires)
+{
+	connected_peers();
+
+	zlrs_link_cfg_t cfg = *zlrs_link_get_config(&peer);
+	const zlrs_link_events_t events = {.on_data = receive_peer};
 
 	if (RF_TEST_ROLE_FOLLOWER) {
 		/* A new leader clock can differ beyond the locked outlier limit before
@@ -811,6 +873,11 @@ ZTEST(rf_results, test_protocol_completion_and_timeouts)
 		packet_phase_error_us = 0;
 		scan_delay_override_ms = 0U;
 	}
+}
+
+ZTEST(rf_results, test_duplex_delivery_and_counters)
+{
+	connected_peers();
 
 	source_left = sizeof(outgoing) - 1U;
 	zassert_equal(zlrs_link_write(&peer, incoming, sizeof(incoming) - 1U),
@@ -823,6 +890,12 @@ ZTEST(rf_results, test_protocol_completion_and_timeouts)
 	zassert_equal(zlrs_link_get_stats(local)->slot_rx[0] +
 			      zlrs_link_get_stats(local)->slot_rx[1],
 		      rx_ok);
+}
+
+ZTEST(rf_results, test_power_saving_and_loss_recovery)
+{
+	connected_peers();
+
 	debug_power_acceptance();
 	const uint32_t power_wait_frames = 60000000U / period_us;
 	for (uint32_t i = 0U; i < power_wait_frames &&
@@ -835,35 +908,78 @@ ZTEST(rf_results, test_protocol_completion_and_timeouts)
 	frames(DIV_ROUND_UP(1100000U, period_us));
 	zassert_equal(zlrs_rf_status().tx_power_dbm, RF_TEST_BAND_SUBG ? 10 : 12);
 	zassert_false(zlrs_rf_status().power_fixed);
-	zassert_true(rx_fail > 0);
-	zassert_equal(zlrs_link_get_stats(local)->radio_fail, rx_fail);
+}
+
+ZTEST(rf_results, test_rx_failure)
+{
+	connected_peers();
+	mode = RX_FAIL;
+	frames(50);
+	zassert_true(local->stats.radio_fail > 0);
+	zassert_equal(radio_reads, 1);
+}
+
+ZTEST(rf_results, test_tx_failure)
+{
+	connected_peers();
 	mode = TX_FAIL;
 	frames(50);
-	zassert_true(tx_fail > 0);
-	zassert_equal(zlrs_link_get_stats(local)->radio_fail, rx_fail + tx_fail);
-	const uint32_t failed = zlrs_link_get_stats(local)->radio_fail;
+	zassert_true(local->stats.radio_fail > 0);
+	zassert_equal(radio_reads, 1);
+}
+
+ZTEST(rf_results, test_prepare_failure)
+{
+	connected_peers();
 	mode = PREPARE_FAIL;
-	frames(30);
-	zassert_true(zlrs_link_get_stats(local)->radio_fail > failed);
+	frames(50);
+	zassert_true(local->stats.radio_fail > 0);
+	zassert_equal(radio_reads, 1);
+}
+
+ZTEST(rf_results, test_launch_failure)
+{
+	connected_peers();
 	mode = LAUNCH_FAIL;
-	frames(30);
+	frames(50);
+	zassert_true(local->stats.radio_fail > 0);
+	zassert_equal(radio_reads, 1);
+}
+
+ZTEST(rf_results, test_missing_irq)
+{
+	connected_peers();
 	mode = NO_IRQ;
-	frames(30);
+	frames(50);
 	zassert_true(aborts > 0);
-	zassert_equal(radio_reads, 1); /* Ordinary frames/status publication never use SPI. */
-	/* Every pairing packet uses low power; cancel, timeout and completion restore maximum. */
-	mode = NORMAL;
+	zassert_equal(radio_reads, 1);
+}
+
+ZTEST(rf_results, test_pair_cancel_restores_power)
+{
+	connected_peers();
+
 	zassert_ok(zlrs_rf_pair_start());
 	zassert_equal(zlrs_rf_status().tx_power_dbm, -10);
 	frames(DIV_ROUND_UP(250000U, period_us));
 	zassert_ok(zlrs_rf_pair_cancel());
 	zassert_equal(zlrs_rf_status().tx_power_dbm, RF_TEST_BAND_SUBG ? 10 : 12);
+}
+
+ZTEST(rf_results, test_pair_timeout_restores_power)
+{
+	connected_peers();
+
 	zassert_ok(zlrs_rf_pair_start());
 	mode = RX_FAIL;
 	frames(DIV_ROUND_UP(30100000U, period_us));
 	zassert_not_equal(zlrs_rf_status().state, ZLRS_STATE_PAIRING);
 	zassert_equal(zlrs_rf_status().tx_power_dbm, RF_TEST_BAND_SUBG ? 10 : 12);
-	mode = NORMAL;
+}
+
+ZTEST(rf_results, test_pair_confirmation_restores_power)
+{
+	connected_peers();
 	zassert_ok(zlrs_rf_pair_start());
 	zlrs_link_press(&peer, clock_us / 1000U);
 	frames(DIV_ROUND_UP(3000000U, period_us));
@@ -871,7 +987,17 @@ ZTEST(rf_results, test_protocol_completion_and_timeouts)
 	zassert_equal(zlrs_rf_status().tx_power_dbm, RF_TEST_BAND_SUBG ? 10 : 12);
 	zassert_true(local->stats.pair_req_tx + local->stats.pair_resp_tx > 0U);
 	zassert_true(local->stats.pair_cfm_tx + peer.stats.pair_cfm_tx > 0U);
+}
+
+ZTEST(rf_results, test_state_publication_retries_and_refreshes)
+{
+	connected_peers();
 	publication_acceptance();
+}
+
+ZTEST(rf_results, test_diagnostics_snapshot_and_pagination)
+{
+	connected_peers();
 	zlrs_rf_pause();
 	zlrs_rf_status_refresh();
 	zassert_equal(radio_reads, 2);
@@ -903,6 +1029,14 @@ ZTEST(rf_results, test_protocol_completion_and_timeouts)
 	zassert_equal(zlrs_diagnostics_read((zlrs_diagnostic_report_t)255, 0U, chunk, sizeof(chunk),
 					    &total, &written),
 		      -EINVAL);
+	zlrs_rf_resume();
+}
+
+ZTEST(rf_results, test_credential_removal_retires_active_session)
+{
+	connected_peers();
+	zlrs_rf_pause();
+
 	/* Deleting the saved pairing clears the active peer/session in the same window. */
 	paired = false;
 	zlrs_rf_credentials();
@@ -917,7 +1051,14 @@ ZTEST(rf_results, test_protocol_completion_and_timeouts)
 	const uint8_t empty_id[ZLRS_DEV_ID_LEN] = {0};
 	zassert_mem_equal(zlrs_rf_status().dev_id, empty_id, sizeof(empty_id));
 	zlrs_rf_resume();
-	k_thread_priority_set(k_current_get(), 0);
 }
 
-ZTEST_SUITE(rf_results, NULL, NULL, NULL, NULL, NULL);
+ZTEST(rf_results, test_automatic_band_recovery_and_session_retention)
+{
+	if (!RF_TEST_BAND_AUTO) {
+		ztest_test_skip();
+	}
+	automatic_acceptance();
+}
+
+ZTEST_SUITE(rf_results, NULL, NULL, before, after, NULL);

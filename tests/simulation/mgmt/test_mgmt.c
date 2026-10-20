@@ -10,7 +10,7 @@
 #include "zlrs/mgmt/mgmt.h"
 #include "zlrs/proto/crypto.h"
 
-static zlrs_rf_status_t rf = {
+static const zlrs_rf_status_t initial_rf = {
 	.role = ZLRS_ROLE_LEADER,
 	.profile = ZLRS_PROFILE_P1,
 	.rssi_dbm = -48,
@@ -27,6 +27,7 @@ static zlrs_rf_status_t rf = {
 	.hop_index = 236,
 	.frame_period_us = 9080,
 };
+static zlrs_rf_status_t rf;
 static unsigned int credential_applies, pairs, confirms, radio_refreshes;
 static int confirm_rc;
 static bool fail_write;
@@ -273,7 +274,19 @@ ZTEST(commands, test_device_commands)
 	ack(ZLRS_MGMT_CMD_EXIT, NULL, 0, 0);
 }
 
-ZTEST_SUITE(commands, NULL, NULL, NULL, NULL, NULL);
+static void before(void *unused)
+{
+	ARG_UNUSED(unused);
+	fail_write = false;
+	confirm_rc = 0;
+	credential_applies = pairs = confirms = radio_refreshes = 0;
+	rf = initial_rf;
+	zassert_ok(zlrs_persist_init());
+	zassert_ok(zlrs_persist_factory_reset());
+	zassert_ok(zlrs_persist_init());
+}
+
+ZTEST_SUITE(commands, NULL, NULL, before, NULL, NULL);
 
 ZTEST(commands, test_failed_factory_reset_invalidates_active_credentials)
 {

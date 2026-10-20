@@ -1083,6 +1083,10 @@ int zlrs_rf_power_request(bool automatic, int dbm)
 
 int zlrs_rf_init(void)
 {
+	/* A retried initialization must not publish or access a previous radio instance. */
+	links_ready = false;
+	radio_ready = false;
+	memset(&radio_status, 0, sizeof(radio_status));
 	/* Debug image only (gated in Kconfig, so the symbol does not exist in production builds):
 	 * USB is up, so wait for the host to open the console port — otherwise a panic log lands
 	 * on a port nobody has open. */
