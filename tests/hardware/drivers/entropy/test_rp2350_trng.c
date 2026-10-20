@@ -6,6 +6,7 @@
 #include <zephyr/ztest.h>
 #include <errno.h>
 #include <hardware/structs/trng.h>
+#include <stdlib.h>
 #include <string.h>
 
 ZTEST(rp2350_trng, test_successive_blocks)
@@ -41,6 +42,42 @@ ZTEST(rp2350_trng, test_secure_successive_blocks)
 	zassert_ok(sys_csrand_get(first, sizeof(first)));
 	zassert_ok(sys_csrand_get(second, sizeof(second)));
 	zassert_not_equal(memcmp(first, second, sizeof(first)), 0, "secure blocks repeat");
+}
+
+static int compare_duration(const void *lhs, const void *rhs)
+{
+	const uint32_t a = *(const uint32_t *)lhs;
+	const uint32_t b = *(const uint32_t *)rhs;
+	return (a > b) - (a < b);
+}
+
+ZTEST(rp2350_trng, test_link_nonce_latency)
+{
+	/* Match rf.c's synchronous four-byte sys_csrand_get, without timing printk/sorting.
+	 * Keep samples off the test thread's stack. These measure isolated API latency;
+	 * they do not measure complete RF handshakes or concurrent DATA goodput.
+	 */
+	static uint32_t duration_us[1024];
+	uint64_t total_us = 0U;
+	unsigned int failures = 0U, over_5ms = 0U, over_10ms = 0U;
+	for (size_t i = 0U; i < ARRAY_SIZE(duration_us); i++) {
+		uint32_t nonce;
+		const uint64_t before = k_cycle_get_64();
+		const int rc = sys_csrand_get(&nonce, sizeof(nonce));
+		const uint32_t elapsed = k_cyc_to_us_floor64(k_cycle_get_64() - before);
+		duration_us[i] = elapsed;
+		total_us += elapsed;
+		failures += rc != 0;
+		over_5ms += elapsed > 5000U;
+		over_10ms += elapsed > 10000U;
+	}
+	qsort(duration_us, ARRAY_SIZE(duration_us), sizeof(duration_us[0]), compare_duration);
+	printk("TRNG_NONCE requests=1024 bytes=4 failures=%u min_us=%u mean_us=%u "
+	       "p50_us=%u p95_us=%u p99_us=%u max_us=%u over_5ms=%u over_10ms=%u\n",
+	       failures, duration_us[0], (uint32_t)(total_us / ARRAY_SIZE(duration_us)),
+	       duration_us[511], duration_us[972], duration_us[1013], duration_us[1023], over_5ms,
+	       over_10ms);
+	zassert_equal(failures, 0U, "link-sized secure read failed");
 }
 
 ZTEST(rp2350_trng, test_repeated_secure_reads)

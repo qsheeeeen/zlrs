@@ -145,6 +145,13 @@ Reads are
 serialized in thread context with interrupts enabled so USB and watchdog service
 remain possible. ISR entropy requests are unsupported.
 
+The RF adapter requests a four-byte nonce synchronously when pairing or creating
+a session. DATA, acknowledgements, FHSS and SYNC within an existing session do
+not draw fresh entropy. Entropy collection therefore adds no per-packet work,
+but it can delay connection establishment or session replacement: yielding the
+CPU does not let the calling RF thread advance its slot schedule. The block
+deadline bounds collection, not mutex contention or a complete handshake.
+
 Nonce generation permits zero and rejects repetition of the preceding local
 nonce, with a bounded number of fresh draws. Random failure prevents transmission
 of a new handshake proof. Time, counters and noncryptographic generators cannot
