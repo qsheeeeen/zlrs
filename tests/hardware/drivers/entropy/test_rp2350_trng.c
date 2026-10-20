@@ -5,6 +5,7 @@
 #include <zephyr/random/random.h>
 #include <zephyr/ztest.h>
 #include <zephyr/irq_offload.h>
+#include <zephyr/init.h>
 #include <errno.h>
 #include <hardware/structs/trng.h>
 #include <stdlib.h>
@@ -12,6 +13,42 @@
 
 static const struct device *const entropy_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_entropy));
 static uint32_t sampling_baseline;
+
+static struct {
+	uint8_t bytes[48];
+	int count;
+	bool ready;
+	bool source_stopped;
+	uint32_t read_us;
+} boot_pool;
+
+static int capture_boot_pool(void)
+{
+	/* Run immediately after driver initialization, before any test requests entropy.
+	 * This read must consume two already-validated blocks without waiting or warming up.
+	 */
+	boot_pool.ready = device_is_ready(entropy_dev);
+	boot_pool.source_stopped = trng_hw->rnd_source_enable == 0U;
+	const uint64_t before = k_cycle_get_64();
+	boot_pool.count =
+		entropy_get_entropy_isr(entropy_dev, boot_pool.bytes, sizeof(boot_pool.bytes), 0U);
+	boot_pool.read_us = k_cyc_to_us_floor64(k_cycle_get_64() - before);
+	return 0;
+}
+
+SYS_INIT(capture_boot_pool, POST_KERNEL, UTIL_INC(CONFIG_ENTROPY_INIT_PRIORITY));
+
+ZTEST(rp2350_trng, test_boot_pool_is_full)
+{
+	printk("TRNG_BOOT ready=%u stopped=%u bytes=%d read_us=%u\n", boot_pool.ready,
+	       boot_pool.source_stopped, boot_pool.count, boot_pool.read_us);
+	zassert_true(boot_pool.ready, "entropy device not ready after initialization");
+	zassert_true(boot_pool.source_stopped, "initial pool was still collecting");
+	zassert_equal(boot_pool.count, sizeof(boot_pool.bytes), "startup did not fill the pool");
+	zassert_true(boot_pool.read_us < 1000U, "first read waited for generation");
+	zassert_not_equal(memcmp(boot_pool.bytes, boot_pool.bytes + 24U, 24U), 0,
+			  "startup reissued the first block");
+}
 
 static uint32_t stall_source(void)
 {

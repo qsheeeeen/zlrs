@@ -28,8 +28,9 @@
  * through Zephyr's cryptographic random API. Random numbers that merely look fine are
  * not acceptable.
  *
- * The IRQ publishes complete, validated blocks into a Zephyr ring buffer. Reads trigger
- * collection at the low watermark. An earlier cache returned cleared EHR data as zeros;
+ * Initialization fills the Zephyr ring buffer before the device becomes ready. The IRQ
+ * publishes complete, validated blocks; later reads trigger collection at the low watermark.
+ * An earlier cache returned cleared EHR data as zeros;
  * publication here happens only after EHR_VALID and the health checks, using a software copy.
  * The ordinary entropy API waits with a deadline; the ISR-safe API only consumes ready bytes.
  *
@@ -296,6 +297,40 @@ static DEVICE_API(entropy, trng_api) = {
 	.get_entropy_isr = trng_get_entropy_isr,
 };
 
+static int trng_prefill(const struct device *dev)
+{
+	const struct trng_config *cfg = dev->config;
+	struct trng_data *data = dev->data;
+	struct k_poll_event event = K_POLL_EVENT_INITIALIZER(
+		K_POLL_TYPE_SEM_AVAILABLE, K_POLL_MODE_NOTIFY_ONLY, &data->available);
+	const k_timepoint_t deadline = sys_timepoint_calc(
+		K_MSEC(TRNG_BLOCK_TIMEOUT_MS * (TRNG_POOL_BYTES / TRNG_BLOCK_BYTES)));
+	k_spinlock_key_t key = k_spin_lock(&data->lock);
+	trng_begin(cfg, data);
+	k_spin_unlock(&data->lock, key);
+
+	for (;;) {
+		key = k_spin_lock(&data->lock);
+		const bool full = ring_buf_space_get(&data->ring) == 0U;
+		const bool collecting = data->collecting;
+		k_spin_unlock(&data->lock, key);
+		if (full) {
+			return 0;
+		}
+		if (!collecting || k_poll(&event, 1, sys_timepoint_timeout(deadline)) != 0) {
+			key = k_spin_lock(&data->lock);
+			trng_stop(cfg, data);
+			data->collecting = false;
+			data->retry = false;
+			(void)k_work_cancel_delayable(&data->service);
+			k_spin_unlock(&data->lock, key);
+			return -ETIMEDOUT;
+		}
+		(void)k_sem_take(&data->available, K_NO_WAIT);
+		event.state = K_POLL_STATE_NOT_READY;
+	}
+}
+
 static int trng_init(const struct device *dev)
 {
 	const struct trng_config *cfg = dev->config;
@@ -310,8 +345,12 @@ static int trng_init(const struct device *dev)
 	k_work_init_delayable(&data->service, trng_service);
 	trng_reset(cfg, data);
 	cfg->irq_config(dev);
-	return 0;
+	return trng_prefill(dev);
 }
+
+/* Prefill sleeps on IRQ publication and uses the already-started system workqueue. */
+BUILD_ASSERT(CONFIG_ENTROPY_INIT_PRIORITY > CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,
+	     "TRNG initialization requires the system workqueue");
 
 #define TRNG_DEFINE(inst)                                                                          \
 	static void trng_irq_config_##inst(const struct device *dev)                               \
@@ -327,6 +366,6 @@ static int trng_init(const struct device *dev)
 		.irq_config = trng_irq_config_##inst,                                              \
 	};                                                                                         \
 	DEVICE_DT_INST_DEFINE(inst, trng_init, NULL, &trng_data_##inst, &trng_config_##inst,       \
-			      PRE_KERNEL_1, CONFIG_ENTROPY_INIT_PRIORITY, &trng_api);
+			      POST_KERNEL, CONFIG_ENTROPY_INIT_PRIORITY, &trng_api);
 
 DT_INST_FOREACH_STATUS_OKAY(TRNG_DEFINE)

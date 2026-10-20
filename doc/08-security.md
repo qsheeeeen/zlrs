@@ -135,7 +135,10 @@ entropy. Each operation reports success or failure; a failed or partial result
 must not become an identity, nonce or proof.
 
 The RP2350 source collects fresh 192-bit blocks with hardware health checks
-enabled. Reads start collection when the 48-byte Zephyr ring buffer reaches its
+enabled. Post-kernel initialization fills the 48-byte Zephyr ring buffer before
+the entropy device becomes ready, waiting on IRQ publication with a bounded
+deadline after the system workqueue has started. Later reads start collection
+when the pool reaches its
 24-byte low watermark. The TRNG IRQ alone reads EHR and publishes validated
 blocks; a full pool stops the source. EHR validity is checked separately from
 the latched IRQ status, which is acknowledged before reading the last EHR word.

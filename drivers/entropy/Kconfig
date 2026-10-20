@@ -13,7 +13,8 @@ config ZLRS_RP2350_TRNG
 	select POLL
 	help
 	  Drives the TRNG registers directly per RP2350 datasheet 12.12: 6 EHR words per 192-bit
-	  block. Its IRQ publishes validated blocks to a 48-byte pool. Delayed work
+	  block. Initialization waits for a full 48-byte pool before marking the device ready.
+	  Its IRQ publishes validated blocks to the pool. Delayed work
 	  handles bounded timeouts and recovery without waiting on hardware.
 	  Ordinary reads wait with a deadline; ISR-safe reads consume only ready bytes.
 	  Zephyr's entropy_rpi_pico goes through pico-sdk get_rand_64(), which spins with interrupts
