@@ -1,7 +1,7 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 
-description: zlrs RP2350 TRNG entropy source (bounded waits, interrupts stay on)
+description: zlrs RP2350 TRNG entropy source with interrupt-driven collection and a byte pool
 
 compatible: "zlrs,rp2350-trng"
 
@@ -9,4 +9,6 @@ include: base.yaml
 
 properties:
   reg:
+    required: true
+  interrupts:
     required: true

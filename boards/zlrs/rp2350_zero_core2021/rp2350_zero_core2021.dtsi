@@ -57,6 +57,7 @@
  */
 &rng {
 	compatible = "zlrs,rp2350-trng";
+	interrupts = <39 3>;
 	status = "okay";
 };
 
