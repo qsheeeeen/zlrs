@@ -876,13 +876,17 @@ void zlrs_lr2021_abort(void)
 	const bool active = pending && request != NULL;
 	const bool tx = active && request->is_tx;
 
+	/* Read IRQs before requesting standby. A read after SET_STANDBY waits for
+	 * its BUSY transition and stalls the next slot's protocol work. Subsequent
+	 * HAL commands already wait for BUSY, allowing that work to overlap the
+	 * transition. prepare() clears any IRQ arriving after this snapshot. */
+	ral_irq_t discarded = 0;
+	(void)ral_get_and_clear_irq_status(&radio.ral, &discarded);
 	(void)ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC);
 	pending = false;
 	irq_pending = false;
 	prepared = false;
 	tx_fifo_used = 0U;
-	ral_irq_t discarded = 0;
-	(void)ral_get_and_clear_irq_status(&radio.ral, &discarded);
 	if (active) {
 		if (tx) {
 			diag.tx_expired++;
