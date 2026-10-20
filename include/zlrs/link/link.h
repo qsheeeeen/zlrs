@@ -234,8 +234,10 @@ typedef struct {
 	uint32_t sess_nonce_leader;   /* Leader nonce */
 	uint32_t sess_nonce_follower; /* Follower nonce */
 	uint16_t sess_hop;            /* hop index of this session */
-	uint32_t pair_nonce;          /* pairing: initiator nonce_a */
-	uint32_t pair_nonce_b;        /* pairing: responder nonce_b */
+	/* Pending handshake identity is never exposed as the committed peer above. */
+	uint8_t pair_peer_id[ZLRS_DEV_ID_LEN];
+	uint32_t pair_nonce;   /* pairing: initiator nonce_a */
+	uint32_t pair_nonce_b; /* pairing: responder nonce_b */
 
 	/* state and timing */
 	zlrs_link_state_t state;
@@ -271,7 +273,7 @@ typedef struct {
 	uint8_t tx_queue[ZLRS_LINK_TX_QUEUE_LEN];
 	uint16_t queue_head;
 	uint16_t queue_count;
-	uint16_t pending_data_len;
+	uint16_t pending_data_len; /* Best-effort bytes borrowed until successful TX completion. */
 
 	/* ARQ sender: one packet retained until the peer ACK bit changes. */
 	uint8_t arq_seq;
@@ -357,6 +359,7 @@ zlrs_link_state_t zlrs_link_get_state(const zlrs_link_t *link);
 bool zlrs_link_is_busy(const zlrs_link_t *link);
 zlrs_link_info_t zlrs_link_get_info(const zlrs_link_t *link);
 zlrs_link_diagnostics_t zlrs_link_get_diagnostics(const zlrs_link_t *link);
+/* Only the last confirmed record is visible, including while re-pairing. */
 bool zlrs_link_get_pairing(const zlrs_link_t *link, uint8_t peer_id[ZLRS_DEV_ID_LEN],
 			   uint8_t pair_salt[ZLRS_PAIR_SALT_LEN]);
 

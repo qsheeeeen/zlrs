@@ -624,8 +624,7 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 		link->stats.radio_fail++;
 		link->stats.slot_fail[slot]++;
 		if (was_tx) {
-			/* On a failed send, push the bytes we already took back into the queue */
-			link->queue_count = (uint16_t)(link->queue_count + link->pending_data_len);
+			/* Preparation borrowed bytes; only successful completion dequeues them. */
 			link->pending_data_len = 0U;
 		}
 		return;
@@ -709,9 +708,7 @@ void zlrs_link_tick(zlrs_link_t *link, uint32_t now_ms)
 
 	case ZLRS_STATE_PAIRING:
 		if ((uint32_t)(now_ms - link->state_ms) > link->cfg.pair_window_ms) {
-			link_set_state(link,
-				       link->paired ? ZLRS_STATE_SEARCHING : ZLRS_STATE_UNPAIRED,
-				       now_ms);
+			(void)zlrs_link_cancel_pair(link, now_ms);
 		}
 		break;
 

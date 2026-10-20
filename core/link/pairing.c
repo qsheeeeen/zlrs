@@ -98,8 +98,8 @@ static void pair_payload_fill(const zlrs_link_t *link, zlrs_pair_frame_t *out, u
 			      uint32_t nonce_b)
 {
 	const bool initiator = (link->cfg.role == ZLRS_ROLE_LEADER);
-	const uint8_t *dev_a = initiator ? link->dev_id : link->peer_id;
-	const uint8_t *dev_b = initiator ? link->peer_id : link->dev_id;
+	const uint8_t *dev_a = initiator ? link->dev_id : link->pair_peer_id;
+	const uint8_t *dev_b = initiator ? link->pair_peer_id : link->dev_id;
 
 	memcpy(out->dev_a, dev_a, ZLRS_DEV_ID_LEN);
 	memcpy(out->dev_b, dev_b, ZLRS_DEV_ID_LEN);
@@ -154,6 +154,8 @@ static const zlrs_radio_req_t *pair_rx(zlrs_link_t *link, uint16_t timeout_ms)
 
 static void pairing_complete(zlrs_link_t *link, uint32_t now_ms)
 {
+	/* Publish the peer and salt together, only after confirmation. */
+	memcpy(link->peer_id, link->pair_peer_id, ZLRS_DEV_ID_LEN);
 	/* The two handshake nonces are this pair's material: keep them to recompute pair_key */
 	zlrs_put_le32(&link->pair_salt[0], link->pair_nonce);   /* nonce_a: initiator */
 	zlrs_put_le32(&link->pair_salt[4], link->pair_nonce_b); /* nonce_b: responder */
@@ -195,7 +197,8 @@ bool link_handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame, uint32
 		const bool same_request =
 			link->pair_request_valid &&
 			link->pair_nonce == frame->body.pair_req.nonce_a &&
-			zlrs_ct_equal(link->peer_id, frame->body.pair_req.dev_a, ZLRS_DEV_ID_LEN);
+			zlrs_ct_equal(link->pair_peer_id, frame->body.pair_req.dev_a,
+				      ZLRS_DEV_ID_LEN);
 		if (same_request && frame->seq <= link->pair_rx_seq) {
 			link->stats.rx_dup++;
 			return false;
@@ -206,7 +209,7 @@ bool link_handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame, uint32
 					    &nonce_b)) {
 				return pair_reject(link);
 			}
-			memcpy(link->peer_id, frame->body.pair_req.dev_a, ZLRS_DEV_ID_LEN);
+			memcpy(link->pair_peer_id, frame->body.pair_req.dev_a, ZLRS_DEV_ID_LEN);
 			link->pair_nonce = frame->body.pair_req.nonce_a;
 			link->pair_nonce_b = nonce_b;
 			link->pair_nonce_valid = true;
@@ -228,7 +231,7 @@ bool link_handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame, uint32
 		    pair->nonce_a != link->pair_nonce ||
 		    zlrs_ct_equal(pair->dev_b, link->dev_id, ZLRS_DEV_ID_LEN) ||
 		    (link->pair_rx_seq != 0U &&
-		     (!zlrs_ct_equal(pair->dev_b, link->peer_id, ZLRS_DEV_ID_LEN) ||
+		     (!zlrs_ct_equal(pair->dev_b, link->pair_peer_id, ZLRS_DEV_ID_LEN) ||
 		      pair->nonce_b != link->pair_nonce_b))) {
 			return pair_reject(link);
 		}
@@ -237,7 +240,7 @@ bool link_handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame, uint32
 			return false;
 		}
 		link->pair_rx_seq = frame->seq;
-		memcpy(link->peer_id, pair->dev_b, ZLRS_DEV_ID_LEN);
+		memcpy(link->pair_peer_id, pair->dev_b, ZLRS_DEV_ID_LEN);
 		link->pair_nonce_b = pair->nonce_b;
 		link->last_pair_rx_ms = now_ms;
 		link->pair_cfm_pending = true;
@@ -249,7 +252,7 @@ bool link_handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame, uint32
 		if (initiator || !link->pair_request_valid) {
 			return pair_reject(link);
 		}
-		if (!zlrs_ct_equal(pair->dev_a, link->peer_id, ZLRS_DEV_ID_LEN) ||
+		if (!zlrs_ct_equal(pair->dev_a, link->pair_peer_id, ZLRS_DEV_ID_LEN) ||
 		    !zlrs_ct_equal(pair->dev_b, link->dev_id, ZLRS_DEV_ID_LEN) ||
 		    pair->nonce_a != link->pair_nonce || pair->nonce_b != link->pair_nonce_b) {
 			return pair_reject(link);
@@ -433,6 +436,8 @@ bool zlrs_link_cancel_pair(zlrs_link_t *link, uint32_t now_ms)
 	}
 	link->pair_cfm_pending = false;
 	link->pair_wait_cfm = false;
+	link->pair_request_valid = false;
+	memset(link->pair_peer_id, 0, sizeof(link->pair_peer_id));
 	link->session_valid = false;
 	link->session_pending = false;
 	link->sess_resp_due = false;

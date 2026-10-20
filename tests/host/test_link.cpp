@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 #include <cstdint>
 #include <cstdio>
+#include <tuple>
 #include <string.h>
 #include "zlrs/link/link.h"
 extern "C" {
@@ -512,7 +513,7 @@ TEST_F(Link, PairingContext)
 	frame.body.pair_req.dev_a[0] = 9U;
 	frame.seq = 1U;
 	inject(&sim.follower, &frame, ZLRS_PAIR_REQ_PAYLOAD_LEN, follower->auth_key, 4U, false);
-	EXPECT_TRUE(follower->peer_id[0] == 9U && follower->pair_nonce_b != nonce_b &&
+	EXPECT_TRUE(follower->pair_peer_id[0] == 9U && follower->pair_nonce_b != nonce_b &&
 		    follower->pair_rx_seq == 1U);
 	frame = zlrs_frame_t{.type = ZLRS_PKT_PAIR_CFM,
 			     .body = {.pair = {.dev_a = {9, 2, 3, 4},
@@ -545,6 +546,159 @@ TEST_F(Link, PairingContext)
 	inject(&sim.follower, &frame, ZLRS_PAIR_REQ_PAYLOAD_LEN, follower->auth_key, 10U, false);
 	EXPECT_FALSE(follower->pair_request_valid && follower->pair_rx_seq == 0U);
 }
+
+enum class PairEnd {
+	Cancel,
+	Timeout,
+	Confirm
+};
+
+class PairingCommit: public Link,
+		     public testing::WithParamInterface<std::tuple<zlrs_role_t, PairEnd>>
+{
+};
+
+TEST_P(PairingCommit, SavedRecordChangesOnlyAfterConfirmation)
+{
+	const auto [role, end] = GetParam();
+	node_t *node = role == ZLRS_ROLE_LEADER ? &sim.leader : &sim.follower;
+	node_t *old_peer = role == ZLRS_ROLE_LEADER ? &sim.follower : &sim.leader;
+	zlrs_link_t *link = &node->link;
+	const uint8_t salt[ZLRS_PAIR_SALT_LEN] = {1, 2, 3, 4, 5, 6, 7, 8};
+	const uint8_t candidate[ZLRS_DEV_ID_LEN] = {9, 10, 11, 12};
+	zlrs_link_set_peer(link, old_peer->link.dev_id, salt, 0);
+	zlrs_link_set_peer(&old_peer->link, link->dev_id, salt, 0);
+	uint8_t old_key[ZLRS_KEY_LEN];
+	memcpy(old_key, link->pair_key, sizeof(old_key));
+	zlrs_link_press(link, 1);
+	zlrs_frame_t frame = {.type = ZLRS_PKT_PAIR_REQ, .seq = 1};
+	if (role == ZLRS_ROLE_LEADER) {
+		frame.type = ZLRS_PKT_PAIR_RESP;
+		memcpy(frame.body.pair.dev_a, link->dev_id, ZLRS_DEV_ID_LEN);
+		memcpy(frame.body.pair.dev_b, candidate, ZLRS_DEV_ID_LEN);
+		frame.body.pair.nonce_a = link->pair_nonce;
+		frame.body.pair.nonce_b = 42;
+	} else {
+		memcpy(frame.body.pair_req.dev_a, candidate, ZLRS_DEV_ID_LEN);
+		frame.body.pair_req.nonce_a = 42;
+	}
+	const uint16_t payload =
+		role == ZLRS_ROLE_LEADER ? ZLRS_PAIR_PAYLOAD_LEN : ZLRS_PAIR_REQ_PAYLOAD_LEN;
+	ASSERT_NO_FATAL_FAILURE(inject(node, &frame, payload, link->auth_key, 2, false));
+	ASSERT_TRUE(link->pair_cfm_pending || link->pair_wait_cfm);
+	uint8_t saved_id[ZLRS_DEV_ID_LEN], saved_salt[ZLRS_PAIR_SALT_LEN];
+	ASSERT_TRUE(zlrs_link_get_pairing(link, saved_id, saved_salt));
+	EXPECT_EQ(memcmp(saved_id, old_peer->link.dev_id, sizeof(saved_id)), 0);
+	EXPECT_EQ(memcmp(saved_salt, salt, sizeof(salt)), 0);
+	EXPECT_EQ(memcmp(link->pair_key, old_key, sizeof(old_key)), 0);
+	EXPECT_EQ(memcmp(zlrs_link_get_info(link).peer_id, saved_id, sizeof(saved_id)), 0);
+	const uint32_t nonce_a = link->pair_nonce;
+	const uint32_t nonce_b = link->pair_nonce_b;
+	if (end == PairEnd::Cancel) {
+		ASSERT_TRUE(zlrs_link_cancel_pair(link, 3));
+	} else if (end == PairEnd::Timeout) {
+		zlrs_link_tick(link, link->cfg.pair_window_ms + 2);
+	} else if (role == ZLRS_ROLE_FOLLOWER) {
+		frame = zlrs_frame_t{.type = ZLRS_PKT_PAIR_CFM, .seq = 2};
+		memcpy(frame.body.pair.dev_a, candidate, ZLRS_DEV_ID_LEN);
+		memcpy(frame.body.pair.dev_b, link->dev_id, ZLRS_DEV_ID_LEN);
+		frame.body.pair.nonce_a = nonce_a;
+		frame.body.pair.nonce_b = nonce_b;
+		ASSERT_NO_FATAL_FAILURE(
+			inject(node, &frame, ZLRS_PAIR_PAYLOAD_LEN, link->auth_key, 3, false));
+	} else {
+		for (unsigned int i = 1; i <= ZLRS_PAIR_CFM_REPEATS + 1; i++) {
+			const auto *req = zlrs_link_slot(link, ZLRS_SLOT_DATA_A, i * 100);
+			if (req) {
+				zlrs_link_complete(link, ZLRS_RADIO_OK, 0, 0, 0, i * 100);
+			}
+		}
+	}
+	ASSERT_EQ(zlrs_link_get_state(link), ZLRS_STATE_SEARCHING);
+	ASSERT_TRUE(zlrs_link_get_pairing(link, saved_id, saved_salt));
+	if (end == PairEnd::Confirm) {
+		EXPECT_EQ(memcmp(saved_id, candidate, sizeof(saved_id)), 0);
+		uint8_t expected[ZLRS_PAIR_SALT_LEN];
+		for (unsigned int i = 0; i < 4; i++) {
+			expected[i] = (uint8_t)(nonce_a >> (8 * i));
+			expected[i + 4] = (uint8_t)(nonce_b >> (8 * i));
+		}
+		EXPECT_EQ(memcmp(saved_salt, expected, sizeof(expected)), 0);
+	} else {
+		EXPECT_EQ(memcmp(saved_id, old_peer->link.dev_id, sizeof(saved_id)), 0);
+		EXPECT_EQ(memcmp(saved_salt, salt, sizeof(salt)), 0);
+		/* Late packets from the abandoned attempt cannot commit a new record. */
+		frame.seq++;
+		ASSERT_NO_FATAL_FAILURE(
+			inject(node, &frame, payload, link->auth_key, 31000, false));
+		ASSERT_TRUE(zlrs_link_get_pairing(link, saved_id, saved_salt));
+		EXPECT_EQ(memcmp(saved_id, old_peer->link.dev_id, sizeof(saved_id)), 0);
+		EXPECT_FALSE(link->pair_cfm_pending || link->pair_wait_cfm);
+		for (unsigned int i = 0; i < 3000 && !both_connected(&sim); i++) {
+			sim_frame(&sim);
+		}
+		EXPECT_TRUE(both_connected(&sim));
+	}
+}
+
+INSTANTIATE_TEST_SUITE_P(RolesAndOutcomes, PairingCommit,
+			 testing::Combine(testing::Values(ZLRS_ROLE_LEADER, ZLRS_ROLE_FOLLOWER),
+					  testing::Values(PairEnd::Cancel, PairEnd::Timeout,
+							  PairEnd::Confirm)),
+			 [](const testing::TestParamInfo<PairingCommit::ParamType> &info) {
+				 const auto role = std::get<0>(info.param);
+				 const auto end = std::get<1>(info.param);
+				 return std::string(role == ZLRS_ROLE_LEADER ? "Leader"
+									     : "Follower") +
+					(end == PairEnd::Cancel    ? "Cancel"
+					 : end == PairEnd::Timeout ? "Timeout"
+								   : "Confirm");
+			 });
+
+class QueueFailure: public Link, public testing::WithParamInterface<std::tuple<zlrs_role_t, bool>>
+{
+};
+
+TEST_P(QueueFailure, FailedTransactionsKeepTheQueuedBytes)
+{
+	ASSERT_NO_FATAL_FAILURE(connect_saved(&sim, ZLRS_PROFILE_P1));
+	const auto [role, arq] = GetParam();
+	zlrs_link_t *link = role == ZLRS_ROLE_LEADER ? &sim.leader.link : &sim.follower.link;
+	link->cfg.arq = arq;
+	link->cfg.resync_every_n = 0;
+	link->sess_cfm_due = false;
+	link->queue_head = ZLRS_LINK_TX_QUEUE_LEN - 2;
+	const uint8_t bytes[] = {1, 2, 3, 4, 5};
+	ASSERT_EQ(zlrs_link_write(link, bytes, sizeof(bytes)), sizeof(bytes));
+	const uint8_t slot = role == ZLRS_ROLE_LEADER ? ZLRS_SLOT_DATA_A : ZLRS_SLOT_DATA_B;
+	for (unsigned int attempt = 0; attempt < 4; attempt++) {
+		const uint32_t now = sim.now_ms + 100 * (attempt + 1);
+		uint16_t size;
+		(void)zlrs_link_prepare_data(link, slot, now, &size);
+		const auto *req = zlrs_link_slot(link, slot, now);
+		ASSERT_NE(req, nullptr);
+		ASSERT_TRUE(req->is_tx);
+		zlrs_frame_t frame;
+		ASSERT_TRUE(zlrs_frame_decode(&frame, req->buf, req->size, ZLRS_TAG_LEN));
+		ASSERT_EQ(req->size - ZLRS_FRAME_HDR_LEN - ZLRS_DATA_PREFIX_LEN - ZLRS_TAG_LEN,
+			  sizeof(bytes));
+		EXPECT_EQ(memcmp(frame.body.data.bytes, bytes, sizeof(bytes)), 0);
+		zlrs_link_complete(link, attempt == 3 ? ZLRS_RADIO_OK : ZLRS_RADIO_FAIL, 0, 0, 0,
+				   now);
+		EXPECT_EQ(link->queue_count, arq || attempt != 3 ? sizeof(bytes) : 0);
+		EXPECT_EQ(zlrs_link_tx_space(link) + link->queue_count, ZLRS_LINK_TX_QUEUE_LEN);
+	}
+}
+
+INSTANTIATE_TEST_SUITE_P(RolesAndReliability, QueueFailure,
+			 testing::Combine(testing::Values(ZLRS_ROLE_LEADER, ZLRS_ROLE_FOLLOWER),
+					  testing::Bool()),
+			 [](const testing::TestParamInfo<QueueFailure::ParamType> &info) {
+				 return std::string(std::get<0>(info.param) == ZLRS_ROLE_LEADER
+							    ? "Leader"
+							    : "Follower") +
+					(std::get<1>(info.param) ? "ARQ" : "BestEffort");
+			 });
 
 TEST_P(LinkProfiles, ConfirmationLossAndExhaustion)
 {

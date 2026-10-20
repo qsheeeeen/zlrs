@@ -287,9 +287,10 @@ const zlrs_radio_req_t *link_send_data(zlrs_link_t *link, uint32_t now_ms)
 	queue_copy(link, 0U, data->bytes, take);
 	const uint16_t len = link_build_frame(link, &frame, ZLRS_DATA_PREFIX_LEN + take,
 					      link_tag_key_for(link, frame.type, true));
-	link->pending_data_len = take;
-	return link_submit_tx(link, len, link_slot_freq_hz(link), ZLRS_SYNC_SLOT_DATA,
-			      link->sync_word);
+	const zlrs_radio_req_t *req = link_submit_tx(link, len, link_slot_freq_hz(link),
+						     ZLRS_SYNC_SLOT_DATA, link->sync_word);
+	link->pending_data_len = req != NULL ? take : 0U;
+	return req;
 }
 
 static bool deliver_data(zlrs_link_t *link, const zlrs_data_frame_t *data, uint16_t len)
