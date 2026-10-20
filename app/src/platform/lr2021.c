@@ -550,7 +550,8 @@ static void __ramfunc launch_command_isr(uint32_t irq_time_us)
 
 	launch_mailbox.irq_us = irq_time_us;
 	launch_mailbox.begin_us = zlrs_slot_timer_now_us();
-	if ((int32_t)(irq_time_us - launch_mailbox.target_us) > 10) {
+	if ((int32_t)(irq_time_us - launch_mailbox.target_us) >
+	    (int32_t)ZLRS_SLOT_TIMER_LAUNCH_MAX_LATE_US) {
 		result = -ETIME;
 		goto done;
 	}

@@ -2,17 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Firmware build: install the west workspace (~5 GB) and the Zephyr SDK the way the README
-# describes, then build both sub-G SKUs. It takes about 10 minutes, so it stays separate
-# from the host/native checks in build.yml and never blocks a push on its own.
-#
-# Marked continue-on-error: the build could not be validated on a runner yet, so let it report
-# without blocking; drop the line once it runs green and make it a hard gate.
+# describes, then build both sub-G SKUs and audit the linked timed-launch paths.
+# Runs separately from host/native checks, with failures reported on every PR.
 
 name: firmware
 
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 concurrency:
@@ -23,7 +21,6 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -85,6 +82,14 @@ jobs:
             test ! -e "build-${sku}/app/zephyr/zephyr.uf2"
           done
 
+      - name: audit timed-launch RAM closure and code budget
+        run: |
+          for build in build-debug build-hf build-lf; do
+            objdump=$(sed -n 's/^CMAKE_OBJDUMP:FILEPATH=//p' "$build/app/CMakeCache.txt")
+            .venv/bin/python zlrs/tools/check_ram.py "$build/app/zephyr/zephyr.elf" \
+              --objdump "$objdump" --report "$build/ram-audit.json"
+          done
+
       - name: upload images
         if: always()
         uses: actions/upload-artifact@v4
@@ -95,4 +100,6 @@ jobs:
             build-lf/mcuboot/zephyr/zephyr.uf2
             build-hf/app/zephyr/zephyr.signed.bin
             build-lf/app/zephyr/zephyr.signed.bin
+            build-*/ram-audit.json
+            build-*/app/zephyr/zephyr.map
           if-no-files-found: ignore

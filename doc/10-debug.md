@@ -253,6 +253,33 @@ Build LF/HF production and debug configurations with matching MCUboot images.
 Inspect ELF placement for critical RF, launch, GPIO timestamp, timer and crypto
 paths in SRAM. Verify polling SPI and absence of DMA allocation on radio/LED paths.
 
+Audit the linked timed-launch closure after each production/debug build:
+
+```sh
+objdump=$(sed -n 's/^CMAKE_OBJDUMP:FILEPATH=//p' build/app/CMakeCache.txt)
+python3 tools/check_ram.py build/app/zephyr/zephyr.elf \
+  --objdump "$objdump" --report build/ram-audit.json
+```
+
+The gate follows direct calls/tail branches from the alarm ISR, prepared-command
+callback and hardware timestamp reader. All reached code must reside in RAM;
+missing symbols, unknown targets and unreviewed indirect transfers fail the
+check. The alarm callback is an explicit reviewed edge in `CALLBACKS`; update
+that declaration when callback binding changes. The default combined relocated
+code/ramfunc budget is 32 KiB. The report also lists direct RAM-to-Flash edges
+and unresolved indirect transfers outside the gated closure for review.
+This check covers code placement and declared callback edges. It does not prove
+data/cache placement, bound all RF/SHA/driver work or measure interrupt latency.
+
+The target unit fixture records 128 alarm deadlines while repeatedly hashing
+1024-byte buffers with the production SHA backend. Its `LAUNCH_JITTER` line reports
+the sample count, hashes, maximum lateness and the radio's 10 us acceptance budget.
+It fails on an early/missing alarm or a worst-case lateness beyond that budget.
+Save this measurement with the image hash. Run with the normal USB connection;
+additional host traffic, logging and storage load require separate measured
+runs and should be recorded with the workload. Host benchmarks are described in
+the [testing guide](../tests/README.md#performance-measurements).
+
 Before a test changes settings, save the complete settings partition and the
 original image hash. Preserve device identity, root key, pairing and configuration.
 Unconfirmed fixtures must restore the original partition/image and verify both.

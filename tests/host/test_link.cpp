@@ -186,7 +186,9 @@ static void sim_slot(sim_t *sim, uint8_t slot)
 				(void)zlrs_link_radio_captured(receiver);
 			}
 			if (sim->duplicate_air) {
-				zlrs_link_rx(receiver, dest->buf, source->size, -60, 0,
+				uint8_t duplicate[ZLRS_FRAME_MAX_LEN];
+				memcpy(duplicate, dest->buf, source->size);
+				zlrs_link_rx(receiver, duplicate, source->size, -60, 0,
 					     sim->now_ms);
 			}
 		}

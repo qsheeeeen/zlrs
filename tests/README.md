@@ -135,7 +135,9 @@ Reports live in `twister.json`, `twister.xml` and `twister_report.xml` under the
 output directory. Each configuration retains `build.log`, `handler.log` and
 `handler_stderr.log` for build and runtime diagnosis. Both test jobs in
 `.github/workflows/build.yml` fail on test errors and upload their reports.
-The separate firmware workflow builds signed target images.
+The separate firmware workflow runs on PRs and main pushes, builds signed target
+images and fails on build errors or timed-launch RAM audit failures. Its artifacts
+include linked maps and placement reports.
 
 RF completion, entropy recovery, pairing outcomes, power recovery, diagnostics
 and publication have separate cases. Each creates its own peers and resets the
@@ -185,6 +187,9 @@ They are not part of CTest discovery or the native test root.
 
 Run a fixture's `run.py --help` for its required inputs. Build, wiring and
 acceptance procedures are in [Development and acceptance](../doc/10-debug.md).
+The unit timer suite includes a loaded alarm-latency measurement. It requires a
+board run; compiling the image or passing native tests does not establish its
+result.
 Save full logs and image hashes with the verdict. Hardware runners must report
 restoration/rollback failures separately from the fixture's test verdict.
 
