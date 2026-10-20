@@ -29,6 +29,8 @@ RAW = re.compile(r"RAW ready=(\d+) tx=(\d+) tx_failed=(\d+) rx=(\d+) expected=(\
                  r"bad=(\d+) frequency_mhz=(\d+) payload_bytes=(\d+) duration_ms=(\d+)")
 CHANNEL = re.compile(r"CHANNEL frequency_mhz=(\d+) tx=(\d+) tx_failed=(\d+) "
                      r"rx=(\d+) empty=(\d+) crc=(\d+)")
+ENTROPY = re.compile(r"ENTROPY active=(\d+) pending=(\d+) calls=(\d+) empty=(\d+) "
+                     r"max_us=(\d+) restores=(\d+)")
 
 
 def wait_image(identity, expected, timeout=45):
@@ -78,11 +80,16 @@ def main():
     parser.add_argument("--raw", action="store_true", help="image must enable ZLRS_TEST_RAW_MS")
     parser.add_argument("--profiles", action="store_true",
                         help="sweep 2.4 GHz FLRC/LoRa profiles down and up (auto-mode peers)")
+    parser.add_argument("--entropy-stall-ms", type=int, default=0,
+                        help="stall both TRNGs during one sustained DATA round (3500..10000 ms)")
     args = parser.parse_args()
     if args.serial == args.peer or not 0 < args.bytes <= 16 * 1024 * 1024 or args.rounds < 1:
         parser.error("select two different boards, 1..16 MiB and at least one round")
     if args.profiles and args.raw:
         parser.error("--profiles cannot be combined with --raw")
+    if args.entropy_stall_ms and (not 3500 <= args.entropy_stall_ms <= 10000 or
+                                  args.profiles or args.raw or args.rounds != 1):
+        parser.error("--entropy-stall-ms needs 3500..10000 ms, one round, no raw/profile sweep")
     expected = image_hash_of(args.image)
     if expected is None:
         parser.error("invalid signed test image")
@@ -212,12 +219,26 @@ def main():
                     start = both("test_data start")
                     if not all("BENCH start: 0" in output for output in start.values()):
                         raise RuntimeError("Cannot start both data sources")
+                    fault = None
+                    entropy_names = ("active", "pending", "calls", "empty", "max_us", "restores")
+                    if args.entropy_stall_ms:
+                        queued = both(f"test_radio entropy {args.entropy_stall_ms}")
+                        if not all(f"ENTROPY queued_ms={args.entropy_stall_ms}" in output
+                                   for output in queued.values()):
+                            raise RuntimeError(f"Could not queue TRNG stalls: {queued!r}")
+                        fault = {"duration_ms": args.entropy_stall_ms, "active_samples": []}
+                        record["entropy_stall"] = fault
                     deadline = time.monotonic() + args.timeout
                     started = time.monotonic()
                     observe_at = started
                     while True:
                         result = parse("test_data status", BENCH, names)
                         record["last_round"] = {"round": number + 1, "nodes": result}
+                        if fault is not None:
+                            entropy = parse("test_radio entropy", ENTROPY, entropy_names)
+                            fault["last"] = entropy
+                            if all(value["active"] for value in entropy.values()):
+                                fault["active_samples"].append(result)
                         if time.monotonic() >= observe_at:
                             record["observations"].append({
                                 "round": number + 1,
@@ -225,7 +246,10 @@ def main():
                                 "status": both("zlrs status"),
                             })
                             observe_at = time.monotonic() + 2
-                        if all(value["rx"] >= args.bytes for value in result.values()):
+                        fault_done = fault is None or all(value["restores"] == 1 and
+                                                         not value["active"] and not value["pending"]
+                                                         for value in fault["last"].values())
+                        if all(value["rx"] >= args.bytes for value in result.values()) and fault_done:
                             break
                         if time.monotonic() > deadline:
                             record["timeout_images"] = {}
@@ -243,6 +267,15 @@ def main():
                     if not all(value["rx"] == args.bytes and value["queued"] == args.bytes and
                                value["bad"] == 0 for value in result.values()):
                         raise RuntimeError("RF data does not match the generated stream")
+                    if fault is not None:
+                        samples = fault["active_samples"]
+                        if len(samples) < 2 or not all(samples[-1][identity]["rx"] >
+                                                       samples[0][identity]["rx"]
+                                                       for identity in identities):
+                            raise RuntimeError("No bidirectional DATA progress observed during TRNG stalls")
+                        if not all(value["calls"] > 0 and value["empty"] == value["calls"] and
+                                   value["max_us"] < 1000 for value in fault["last"].values()):
+                            raise RuntimeError("RF nonce probes blocked or accepted bytes from stalled TRNGs")
                     stopped = both("test_data stop")
                     if not all("BENCH stop: 0" in output for output in stopped.values()):
                         raise RuntimeError("Radio queue did not drain before stop")

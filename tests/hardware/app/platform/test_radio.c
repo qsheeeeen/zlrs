@@ -5,6 +5,8 @@
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/reboot.h>
+#include <zephyr/drivers/entropy.h>
+#include <hardware/structs/trng.h>
 
 #include <errno.h>
 #include <stdlib.h>
@@ -27,6 +29,23 @@ static atomic_t raw_tx_failed;
 static atomic_t raw_rx;
 static atomic_t raw_expected;
 static atomic_t raw_bad;
+static atomic_t entropy_request;
+static atomic_t entropy_active;
+static atomic_t entropy_calls;
+static atomic_t entropy_empty;
+static atomic_t entropy_max_us;
+static atomic_t entropy_restores;
+static uint32_t entropy_sampling;
+
+static void restore_entropy(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	trng_hw->sample_cnt1 = entropy_sampling;
+	atomic_inc(&entropy_restores);
+	atomic_clear(&entropy_active);
+}
+
+K_WORK_DELAYABLE_DEFINE(entropy_restore_work, restore_entropy);
 
 /* Fixed 1 MHz bins for the current 2.4 GHz DATA domain. Empty receive windows
  * include idle peer slots; they are not a packet-loss denominator. */
@@ -59,6 +78,31 @@ void __wrap_zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
 
 void zlrs_test_radio_apply_window_request(zlrs_link_t *link)
 {
+	/* Test-only fault injection and probes run on the real RF owner, without
+	 * changing production state or waiting on a broken source.
+	 */
+	const int fault_ms = atomic_get(&entropy_request);
+	if (fault_ms > 0 && trng_hw->rnd_source_enable == 0U) {
+		entropy_sampling = trng_hw->sample_cnt1;
+		trng_hw->sample_cnt1 = UINT32_MAX;
+		const struct device *const dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_entropy));
+		uint8_t discard[48];
+		(void)entropy_get_entropy_isr(dev, discard, sizeof(discard), 0U);
+		atomic_clear(&entropy_request);
+		atomic_set(&entropy_active, 1);
+		k_work_schedule(&entropy_restore_work, K_MSEC(fault_ms));
+	}
+	if (atomic_get(&entropy_active)) {
+		uint32_t nonce;
+		const uint32_t started = zlrs_slot_timer_now_us();
+		const bool ready = link->random(link->random_ctx, &nonce);
+		const uint32_t elapsed = zlrs_slot_timer_now_us() - started;
+		atomic_inc(&entropy_calls);
+		if (!ready) {
+			atomic_inc(&entropy_empty);
+		}
+		atomic_set(&entropy_max_us, MAX(elapsed, (uint32_t)atomic_get(&entropy_max_us)));
+	}
 	const int request = atomic_set(&window_request, 0);
 
 	if (request != 0) {
@@ -242,6 +286,33 @@ K_WORK_DELAYABLE_DEFINE(restore_work, restore);
 
 static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 {
+	if (argc >= 2U && strcmp(argv[1], "entropy") == 0) {
+		if (argc == 3U) {
+			char *end;
+			const unsigned long ms = strtoul(argv[2], &end, 0);
+			if (argv[2][0] == '-' || *end != '\0' || ms < 3500UL || ms > 10000UL) {
+				return -EINVAL;
+			}
+			if (atomic_get(&entropy_active) || atomic_get(&entropy_restores) ||
+			    !atomic_cas(&entropy_request, 0, (int)ms)) {
+				return -EBUSY;
+			}
+			shell_print(sh, "ENTROPY queued_ms=%lu", ms);
+			return 0;
+		}
+		if (argc != 2U) {
+			return -EINVAL;
+		}
+		shell_print(sh,
+			    "ENTROPY active=%u pending=%u calls=%u empty=%u max_us=%u restores=%u",
+			    (unsigned int)atomic_get(&entropy_active),
+			    (unsigned int)(atomic_get(&entropy_request) != 0),
+			    (unsigned int)atomic_get(&entropy_calls),
+			    (unsigned int)atomic_get(&entropy_empty),
+			    (unsigned int)atomic_get(&entropy_max_us),
+			    (unsigned int)atomic_get(&entropy_restores));
+		return 0;
+	}
 	if (argc == 2U && strcmp(argv[1], "channels") == 0) {
 		for (uint8_t i = 0U; i < ARRAY_SIZE(channels); i++) {
 			shell_print(
@@ -298,5 +369,6 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
-SHELL_CMD_REGISTER(test_radio, NULL, "Radio test: status, channels, start, rxwin <ms>, restore",
+SHELL_CMD_REGISTER(test_radio, NULL,
+		   "Radio test: status, channels, start, rxwin <ms>, entropy [ms], restore",
 		   cmd_radio);

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
 #include <zephyr/ztest.h>
+#include <zephyr/drivers/entropy.h>
 #include <stdalign.h>
 
 #include "platform/slot_timer.h"
@@ -71,12 +72,16 @@ static void __ramfunc record_launch(uint32_t irq_us)
 	launch_fired = true;
 }
 
-ZTEST(slot_timer, test_launch_jitter_during_sha_load)
+ZTEST(slot_timer, test_launch_jitter_during_sha_and_entropy_load)
 {
 	static alignas(uint32_t) uint8_t input[1024];
 	uint8_t digest[ZLRS_SHA256_LEN];
 	uint32_t max_late_us = 0;
 	unsigned int hashes = 0;
+	unsigned int nonce_ready = 0, nonce_miss = 0;
+	const struct device *const entropy = DEVICE_DT_GET(DT_CHOSEN(zephyr_entropy));
+	uint8_t discard[48];
+	zassert_true(entropy_get_entropy_isr(entropy, discard, sizeof(discard), 0U) >= 0);
 	zassert_ok(zlrs_slot_timer_init());
 	zlrs_slot_timer_stop();
 	for (unsigned int sample = 0; sample < 128; sample++) {
@@ -87,17 +92,26 @@ ZTEST(slot_timer, test_launch_jitter_during_sha_load)
 			input[0] = (uint8_t)sample;
 			zlrs_sha256(input, sizeof(input), NULL, 0, digest);
 			hashes++;
+			uint32_t nonce;
+			const int rc = entropy_get_entropy_isr(entropy, (uint8_t *)&nonce,
+							       sizeof(nonce), 0U);
+			zassert_true(rc >= 0 && rc <= sizeof(nonce));
+			nonce_ready += rc == sizeof(nonce);
+			nonce_miss += rc != sizeof(nonce);
 		}
 		zlrs_slot_timer_cancel_launch();
 		zassert_true(launch_fired, "launch alarm did not fire, sample %u", sample);
 		const int32_t late_us = (int32_t)(launch_irq_us - target_us);
 		zassert_true(late_us >= 0, "launch alarm fired early");
 		max_late_us = MAX(max_late_us, (uint32_t)late_us);
+		k_yield(); /* Let deferred health-check recovery run between alarm windows. */
 	}
 	zlrs_slot_timer_stop();
-	printk("LAUNCH_JITTER samples=128 sha_bytes=1024 hashes=%u max_late_us=%u budget_us=%u\n",
-	       hashes, max_late_us, ZLRS_SLOT_TIMER_LAUNCH_MAX_LATE_US);
+	printk("LAUNCH_JITTER samples=128 sha_bytes=1024 hashes=%u max_late_us=%u budget_us=%u "
+	       "entropy_ready=%u entropy_miss=%u\n",
+	       hashes, max_late_us, ZLRS_SLOT_TIMER_LAUNCH_MAX_LATE_US, nonce_ready, nonce_miss);
 	zassert_true(hashes > 0);
+	zassert_true(nonce_ready > 0 && nonce_miss > 0, "TRNG refill was not exercised");
 	zassert_true(max_late_us <= ZLRS_SLOT_TIMER_LAUNCH_MAX_LATE_US,
 		     "loaded alarm latency exceeds the radio acceptance window");
 }

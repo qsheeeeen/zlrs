@@ -365,6 +365,23 @@ python3 tests/hardware/radio/run.py --serial <Leader-serial> --peer <Follower-se
   --profiles --bytes 8193 --rounds 1 --timeout 45 --log build/radio-phy.json
 ```
 
+The same radio fixture can stall both TRNGs while DATA continues. Use one
+sustained round, with enough bytes to cover the entire fault window:
+
+```sh
+python3 tests/hardware/radio/run.py --serial <Leader-serial> --peer <Follower-serial> \
+  --image build/radio-phy/radio/zephyr/zephyr.signed.bin \
+  --bytes 262145 --rounds 1 --entropy-stall-ms 3500 --timeout 60 \
+  --log build/radio-entropy-stall.json
+```
+
+The RF owner drains cached entropy, stalls hardware collection and probes its
+actual nonce callback while transmitting. Delayed work restores sampling. Require
+both directions to make byte-exact DATA progress during the active fault,
+unavailable nonce probes to return without hardware waits, and original firmware
+rollback on both boards. The unit fixture separately covers concurrent entropy
+consumers, short reads, IRQ calls, deadline/recovery and other workqueue activity.
+
 Use paired product images and deterministic bytes:
 
 ```sh
