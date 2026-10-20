@@ -48,6 +48,21 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual([mgmt.decode(call.args[0])[0] for call in link.write.call_args_list],
                          [mgmt.CMD_ENTER, mgmt.CMD_STATUS, mgmt.CMD_EXIT])
 
+    def test_pair_busy_is_reported_and_management_exits(self):
+        link = Mock()
+        link.__enter__ = Mock(return_value=link)
+        link.__exit__ = Mock(return_value=False)
+        responses = io.BytesIO(mgmt.encode(mgmt.ACK, bytes([mgmt.CMD_ENTER, 0])) +
+                               mgmt.encode(mgmt.ACK, bytes([mgmt.CMD_PAIR, 5])) +
+                               mgmt.encode(mgmt.ACK, bytes([mgmt.CMD_EXIT, 0])))
+        link.read.side_effect = responses.read
+        with patch.dict(sys.modules, {"serial": Mock(Serial=Mock(return_value=link))}):
+            rc, output = invoke(mgmt, "--port", "fake", "pair")
+        self.assertEqual(rc, 1)
+        self.assertIn("temporarily unavailable", output)
+        self.assertEqual([mgmt.decode(call.args[0])[0] for call in link.write.call_args_list],
+                         [mgmt.CMD_ENTER, mgmt.CMD_PAIR, mgmt.CMD_EXIT])
+
     def test_exit_failure_is_reported(self):
         link = Mock()
         link.__enter__ = Mock(return_value=link)

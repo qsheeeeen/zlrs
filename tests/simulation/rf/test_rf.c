@@ -3,6 +3,7 @@
 #include <string.h>
 #include <zephyr/ztest.h>
 #include <zephyr/random/random.h>
+#include <zephyr/drivers/entropy.h>
 #include "rf.h"
 #include "persist.h"
 #include "diagnostics.h"
@@ -33,6 +34,9 @@ static enum {
 static unsigned int tx_ok, tx_fail, rx_fail, rx_ok, aborts;
 static unsigned int radio_reads;
 static bool entropy_failed;
+static int entropy_result;
+static uint32_t entropy_sequence;
+static unsigned int blocking_random_requests;
 static unsigned int secure_random_failures, plain_random_requests;
 static uint32_t scan_delay_override_ms, phase_shift_events;
 static int32_t packet_phase_error_us;
@@ -48,18 +52,39 @@ static uint32_t transition_guard_us;
 static const uint8_t outgoing[] = "host bytes";
 static const uint8_t incoming[] = "peer bytes";
 
-int __real_z_impl_sys_csrand_get(void *dst, size_t len);
-
-int __wrap_z_impl_sys_csrand_get(void *dst, size_t len)
+static int entropy_fill(const struct device *dev, uint8_t *dst, uint16_t len)
 {
+	ARG_UNUSED(dev);
+	blocking_random_requests++;
+	for (uint16_t i = 0U; i < len; i++) {
+		dst[i] = (uint8_t)(++entropy_sequence);
+	}
+	return 0;
+}
+
+static int entropy_ready(const struct device *dev, uint8_t *dst, uint16_t len, uint32_t flags)
+{
+	ARG_UNUSED(dev);
+	zassert_equal(flags, 0U, "RF must not request busy-wait entropy");
 	if (entropy_failed) {
 		secure_random_failures++;
 		/* Failed providers can leave bytes behind; the application must ignore them. */
 		memset(dst, 0xa5, len);
-		return -EIO;
+		return entropy_result;
 	}
-	return __real_z_impl_sys_csrand_get(dst, len);
+	for (uint16_t i = 0U; i < len; i++) {
+		dst[i] = (uint8_t)(++entropy_sequence);
+	}
+	return len;
 }
+
+static DEVICE_API(entropy, entropy_api) = {
+	.get_entropy = entropy_fill,
+	.get_entropy_isr = entropy_ready,
+};
+
+DEVICE_DT_DEFINE(DT_NODELABEL(rf_entropy), NULL, NULL, NULL, NULL, PRE_KERNEL_1,
+		 CONFIG_ENTROPY_INIT_PRIORITY, &entropy_api);
 
 void __real_z_impl_sys_rand_get(void *dst, size_t len);
 
@@ -498,8 +523,9 @@ static void frames(unsigned int count)
 static bool peer_random(void *ctx, uint32_t *out)
 {
 	ARG_UNUSED(ctx);
-	/* Keep the peer healthy while the real application's provider reports failure. */
-	return __real_z_impl_sys_csrand_get(out, sizeof(*out)) == 0;
+	/* Deterministic healthy peer, independent of the application's simulated source. */
+	*out = ++entropy_sequence;
+	return true;
 }
 
 static bool both_on_band(bool subg)
@@ -775,6 +801,8 @@ static void before(void *unused)
 	mode = NORMAL;
 	tx_ok = tx_fail = rx_fail = rx_ok = aborts = radio_reads = 0;
 	entropy_failed = false;
+	entropy_result = 0;
+	entropy_sequence = blocking_random_requests = 0U;
 	secure_random_failures = plain_random_requests = 0;
 	scan_delay_override_ms = phase_shift_events = 0;
 	packet_phase_error_us = 0;
@@ -809,7 +837,7 @@ ZTEST(rf_results, test_entropy_failure_and_recovery)
 	start_peers(true);
 
 	if (!RF_TEST_ROLE_FOLLOWER) {
-		zassert_equal(zlrs_rf_pair_start(), -EIO);
+		zassert_equal(zlrs_rf_pair_start(), -EAGAIN);
 		zassert_not_equal(zlrs_rf_status().state, ZLRS_STATE_PAIRING);
 	}
 	const unsigned int plain_before = plain_random_requests;
@@ -820,10 +848,57 @@ ZTEST(rf_results, test_entropy_failure_and_recovery)
 	zassert_equal(local->sess_nonce_follower, 0U);
 	zassert_equal(tx_ok, 0U, "failed entropy must not produce a handshake transmission");
 	zassert_equal(plain_random_requests, plain_before, "noncryptographic RNG fallback");
+	zassert_equal(blocking_random_requests, 0U, "RF called the blocking entropy API");
 	entropy_failed = false;
 	frames(150);
 	zassert_equal(zlrs_link_get_state(local), ZLRS_STATE_CONNECTED);
 	zassert_equal(zlrs_link_get_state(&peer), ZLRS_STATE_CONNECTED);
+}
+
+ZTEST(rf_results, test_partial_nonce_is_not_used)
+{
+	entropy_result = 3;
+	start_peers(true);
+	frames(150);
+	zassert_true(secure_random_failures > 0U);
+	zassert_false(local->session_valid || local->session_pending);
+	zassert_equal(local->sess_nonce_leader, 0U);
+	zassert_equal(local->sess_nonce_follower, 0U);
+	zassert_equal(tx_ok, 0U);
+	zassert_equal(blocking_random_requests, 0U);
+	entropy_failed = false;
+	frames(150);
+	zassert_equal(local->state, ZLRS_STATE_CONNECTED);
+	zassert_equal(peer.state, ZLRS_STATE_CONNECTED);
+}
+
+ZTEST(rf_results, test_entropy_error_is_not_a_nonce)
+{
+	entropy_result = -EIO;
+	start_peers(true);
+	if (!RF_TEST_ROLE_FOLLOWER) {
+		zassert_equal(zlrs_rf_pair_start(), -EIO);
+	}
+	frames(150);
+	zassert_true(secure_random_failures > 0U);
+	zassert_false(local->session_valid || local->session_pending);
+	zassert_equal(tx_ok, 0U);
+	zassert_equal(blocking_random_requests, 0U);
+}
+
+ZTEST(rf_results, test_connected_data_does_not_need_more_entropy)
+{
+	connected_peers();
+	entropy_failed = true;
+	entropy_result = -EAGAIN;
+	const unsigned int requests = secure_random_failures;
+	source_left = sizeof(outgoing) - 1U;
+	frames(150);
+	zassert_equal(local->state, ZLRS_STATE_CONNECTED);
+	zassert_equal(peer.state, ZLRS_STATE_CONNECTED);
+	zassert_true(peer_delivered > 0U);
+	zassert_equal(secure_random_failures, requests);
+	zassert_equal(blocking_random_requests, 0U);
 }
 
 ZTEST(rf_results, test_periodic_sync_cadence)

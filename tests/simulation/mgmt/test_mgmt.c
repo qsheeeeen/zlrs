@@ -30,6 +30,7 @@ static const zlrs_rf_status_t initial_rf = {
 static zlrs_rf_status_t rf;
 static unsigned int credential_applies, pairs, confirms, radio_refreshes;
 static int confirm_rc;
+static int pair_rc;
 static bool fail_write;
 
 int zlrs_temperature_read(int16_t *centidegrees)
@@ -83,7 +84,7 @@ void zlrs_rf_credentials(void)
 int zlrs_rf_pair_start(void)
 {
 	pairs++;
-	return rf.configured ? 0 : -ENOTCONN;
+	return rf.configured ? pair_rc : -ENOTCONN;
 }
 
 int zlrs_boot_confirm(void)
@@ -274,11 +275,26 @@ ZTEST(commands, test_device_commands)
 	ack(ZLRS_MGMT_CMD_EXIT, NULL, 0, 0);
 }
 
+ZTEST(commands, test_pair_busy_is_retryable)
+{
+	zassert_ok(zlrs_persist_init());
+	ack(ZLRS_MGMT_CMD_ENTER, NULL, 0, ZLRS_MGMT_OK);
+	const uint8_t key[ZLRS_KEY_LEN] = {0x42};
+	zassert_ok(zlrs_persist_set_root_key(key));
+	zlrs_rf_credentials();
+	pair_rc = -EAGAIN;
+	ack(ZLRS_MGMT_CMD_PAIR, NULL, 0, ZLRS_MGMT_E_BUSY);
+	pair_rc = 0;
+	ack(ZLRS_MGMT_CMD_PAIR, NULL, 0, ZLRS_MGMT_OK);
+	ack(ZLRS_MGMT_CMD_EXIT, NULL, 0, ZLRS_MGMT_OK);
+}
+
 static void before(void *unused)
 {
 	ARG_UNUSED(unused);
 	fail_write = false;
 	confirm_rc = 0;
+	pair_rc = 0;
 	credential_applies = pairs = confirms = radio_refreshes = 0;
 	rf = initial_rf;
 	zassert_ok(zlrs_persist_init());

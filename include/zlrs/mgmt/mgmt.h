@@ -72,6 +72,7 @@ extern "C" {
 #define ZLRS_MGMT_E_STATE   2U
 #define ZLRS_MGMT_E_STORE   3U
 #define ZLRS_MGMT_E_UNKNOWN 4U
+#define ZLRS_MGMT_E_BUSY    5U
 
 #define ZLRS_MGMT_STATUS_LEN       91U
 #define ZLRS_MGMT_TEMP_UNAVAILABLE INT16_MIN

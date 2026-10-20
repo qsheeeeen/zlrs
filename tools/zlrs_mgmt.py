@@ -122,6 +122,7 @@ STATUS_NAMES = {
     2: "wrong state",
     3: "storage error",
     4: "unknown command",
+    5: "temporarily unavailable; retry the command",
 }
 
 STATE_NAMES = dict(enumerate(("unconfigured", "unpaired", "pairing", "searching", "connected")))

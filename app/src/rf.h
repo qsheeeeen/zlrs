@@ -68,6 +68,7 @@ zlrs_rf_status_t zlrs_rf_status(void);
 /* Fresh chip measurements only at a paused management boundary; publishes the
  * snapshot for shell/UI readers without SPI work on their threads. */
 void zlrs_rf_status_refresh(void);
+/* Zero means pairing is active; -EAGAIN means retry when a full nonce is ready. */
 int zlrs_rf_pair_start(void);
 int zlrs_rf_pair_cancel(void);
 /* Reload saved credentials in a maintenance window; ordinary settings wait for reboot. */

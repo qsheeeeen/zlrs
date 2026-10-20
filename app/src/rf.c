@@ -9,7 +9,7 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
-#include <zephyr/random/random.h>
+#include <zephyr/drivers/entropy.h>
 
 #include <string.h>
 #include <errno.h>
@@ -31,6 +31,8 @@ LOG_MODULE_REGISTER(zlrs_rf, CONFIG_APP_LOG_LEVEL);
 
 BUILD_ASSERT(IS_ENABLED(CONFIG_CSPRNG_ENABLED), "RF requires a cryptographic entropy source");
 BUILD_ASSERT(!IS_ENABLED(CONFIG_TEST_CSPRNG_GENERATOR), "RF must not use a test CSPRNG");
+BUILD_ASSERT(IS_ENABLED(CONFIG_HARDWARE_DEVICE_CS_GENERATOR),
+	     "RF entropy reads must use the same hardware source as the secure random API");
 
 ZBUS_CHAN_DEFINE(zlrs_rf_chan, zlrs_rf_status_t, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
 		 ZBUS_MSG_INIT(0));
@@ -204,10 +206,24 @@ static void plan_init(void)
 
 /* ---- link setup ---------------------------------------------------------- */
 
+static int random_error;
+
 static bool random_u32(void *ctx, uint32_t *out)
 {
 	ARG_UNUSED(ctx);
-	return sys_csrand_get(out, sizeof(*out)) == 0;
+	const struct device *const dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_entropy));
+	if (!device_is_ready(dev)) {
+		random_error = -ENODEV;
+		return false;
+	}
+	uint32_t nonce;
+	const int rc = entropy_get_entropy_isr(dev, (uint8_t *)&nonce, sizeof(nonce), 0U);
+	if (rc != sizeof(nonce)) {
+		random_error = rc >= 0 || rc == -EAGAIN ? -EAGAIN : rc;
+		return false;
+	}
+	*out = nonce;
+	return true;
 }
 
 static int8_t power_minimum(void)
@@ -987,8 +1003,9 @@ int zlrs_rf_pair_start(void)
 	}
 	if (zlrs_link_get_state(link) != ZLRS_STATE_PAIRING) {
 		const uint32_t now_ms = zlrs_slot_timer_now_ms();
+		random_error = 0;
 		if (!zlrs_link_press(link, now_ms)) {
-			return -EIO;
+			return random_error != 0 ? random_error : -EIO;
 		}
 		if (band_mode == ZLRS_DATA_BAND_AUTO &&
 		    (ZLRS_DATA_SUBG || data_phy != ZLRS_PHY_FLRC_2600)) {

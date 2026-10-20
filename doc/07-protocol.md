@@ -323,7 +323,9 @@ Version is 5. Payload is at most 91 bytes and a full frame at most 97. CRC8 uses
 DVB-S2 polynomial `0xD5`, initial zero, over version, command, length and payload.
 This CRC detects corruption; local USB access is the trust boundary. Multibyte
 management integers are little endian. ACK command `0x80` carries the original
-command and status: 0 success, 1 parameter, 2 state, 3 storage, 4 unknown command.
+command and status: 0 success, 1 parameter, 2 state, 3 storage, 4 unknown command,
+5 temporarily busy (retry). PAIR returns busy when no complete nonce is ready;
+it reports success only after pairing has started.
 
 | Request | ID | Payload / effect |
 | --- | --- | --- |

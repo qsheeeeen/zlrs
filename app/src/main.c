@@ -5,6 +5,7 @@
 #include <zephyr/logging/log_ctrl.h>
 
 #include <string.h>
+#include <errno.h>
 
 #include "boot.h"
 #include "persist.h"
@@ -15,6 +16,9 @@
 #include "ui.h"
 
 LOG_MODULE_REGISTER(zlrs_main, CONFIG_APP_LOG_LEVEL);
+
+/* A physical request must not start pairing long after the user has left. */
+#define PAIR_REQUEST_WAIT_MS 30000U
 
 static void enter_management_mode(void)
 {
@@ -69,6 +73,8 @@ int main(void)
 		zlrs_rf_start();
 	}
 	uint32_t button_holds_seen = 0U;
+	bool pair_requested = false;
+	uint32_t pair_requested_at = 0U;
 
 	for (;;) {
 		zlrs_watchdog_feed();
@@ -76,6 +82,8 @@ int main(void)
 		zlrs_serial_publish_state();
 		zlrs_boot_check_rollback(!rf_ready);
 		if (zlrs_mgmt_process_idle()) {
+			/* Explicit management commands supersede a waiting button request. */
+			pair_requested = false;
 			enter_management_mode();
 			continue;
 		}
@@ -83,7 +91,15 @@ int main(void)
 		if (zbus_chan_read(&zlrs_input_chan, &asked, K_NO_WAIT) == 0 &&
 		    asked.button_holds != button_holds_seen) {
 			button_holds_seen = asked.button_holds;
-			(void)zlrs_rf_pair_start();
+			pair_requested = true;
+			pair_requested_at = k_uptime_get_32();
+		}
+		if (pair_requested) {
+			if ((uint32_t)(k_uptime_get_32() - pair_requested_at) >=
+				    PAIR_REQUEST_WAIT_MS ||
+			    zlrs_rf_pair_start() != -EAGAIN) {
+				pair_requested = false;
+			}
 		}
 		if (rf_ready) {
 			zlrs_rf_frame();

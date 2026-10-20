@@ -135,22 +135,30 @@ entropy. Each operation reports success or failure; a failed or partial result
 must not become an identity, nonce or proof.
 
 The RP2350 source collects fresh 192-bit blocks with hardware health checks
-enabled. Reads consume complete blocks, retain the requested bytes and stop the
-source when finished. A block failing health checks is discarded and collection
-restarts within one three-second deadline per block. Health-check recovery cannot
-extend that deadline; continuous errors and stalled generation return failure.
+enabled. Reads start collection when the 48-byte Zephyr ring buffer reaches its
+24-byte low watermark. The TRNG IRQ alone reads EHR and publishes validated
+blocks; a full pool stops the source. EHR validity is checked separately from
+the latched IRQ status, which is acknowledged before reading the last EHR word.
+A block failing health checks is discarded and collection restarts within one
+three-second deadline per block. Delayed system work handles recovery and
+timeouts without waiting on hardware. Health-check recovery cannot extend the
+deadline; continuous errors and stalled generation do not publish bytes.
 This accommodates the variable collection time documented in the
 [RP2350 datasheet, section 12.12.4](https://datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf).
-Reads are
-serialized in thread context with interrupts enabled so USB and watchdog service
-remain possible. ISR entropy requests are unsupported.
+Pool access and register transitions share a short spinlock; no hardware wait
+runs under that lock. The ordinary entropy API uses Zephyr polling on a readiness
+semaphore, with a three-second deadline for each chunk of at most 24 bytes.
+Concurrent consumers receive each cached byte at most once. Requests larger than
+the pool stream through bounded chunks; a failure may leave a partial result
+which the caller must discard.
 
-The RF adapter requests a four-byte nonce synchronously when pairing or creating
-a session. DATA, acknowledgements, FHSS and SYNC within an existing session do
-not draw fresh entropy. Entropy collection therefore adds no per-packet work,
-but it can delay connection establishment or session replacement: yielding the
-CPU does not let the calling RF thread advance its slot schedule. The block
-deadline bounds collection, not mutex contention or a complete handshake.
+The ISR-safe entropy API with flags zero consumes only cached bytes and may
+return a short count or zero; busy-wait requests are unsupported. RF uses this
+API and accepts a nonce only when all four bytes were returned. Missing entropy
+defers a handshake without waiting in the RF owner. DATA, acknowledgements, FHSS
+and SYNC within an existing session do not draw fresh entropy. A button request
+retries temporary unavailability for at most 30 seconds and is superseded by
+management; a management PAIR reports a retryable busy status instead of success.
 
 Nonce generation permits zero and rejects repetition of the preceding local
 nonce, with a bounded number of fresh draws. Random failure prevents transmission

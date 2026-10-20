@@ -1,4 +1,6 @@
 / {
+ chosen { zephyr,entropy = &rf_entropy; };
+ rf_entropy: rf-entropy { status = "okay"; };
  zlrs_rf: rf-capabilities {
   compatible = "zlrs,rf-design";
   ism2400-min-tx-power-dbm = <(-17)>;

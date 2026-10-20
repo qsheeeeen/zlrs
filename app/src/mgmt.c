@@ -579,8 +579,11 @@ uint8_t zlrs_mgmt_command(uint8_t cmd, const uint8_t *payload, uint8_t len, uint
 		(void)zlrs_boot_recovery(); /* Success reboots. */
 		return ack_frame(out, cap, cmd, ZLRS_MGMT_E_STATE);
 	case ZLRS_MGMT_CMD_PAIR:
+		rc = zlrs_rf_pair_start();
 		return ack_frame(out, cap, cmd,
-				 zlrs_rf_pair_start() == 0 ? ZLRS_MGMT_OK : ZLRS_MGMT_E_STATE);
+				 rc == 0         ? ZLRS_MGMT_OK
+				 : rc == -EAGAIN ? ZLRS_MGMT_E_BUSY
+						 : ZLRS_MGMT_E_STATE);
 	case ZLRS_MGMT_CMD_NEW_DEV_ID:
 		if (len != 0U) {
 			return ack_frame(out, cap, cmd, ZLRS_MGMT_E_PARAM);

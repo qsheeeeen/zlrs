@@ -107,7 +107,7 @@ static void run(enum action action)
 	k_sem_reset(&done);
 	k_thread_create(&owner_thread, owner_stack, K_THREAD_STACK_SIZEOF(owner_stack), owner,
 			(void *)(uintptr_t)action, NULL, NULL, 0, 0, K_NO_WAIT);
-	zassert_equal(k_sem_take(&done, K_SECONDS(5)), 0,
+	zassert_equal(k_sem_take(&done, K_SECONDS(35)), 0,
 		      "owner did not reach its expected endpoint");
 	zassert_equal(k_thread_join(&owner_thread, K_SECONDS(1)), 0);
 }
@@ -118,6 +118,9 @@ static unsigned int pause_depth;
 static bool fail_first_save;
 static zlrs_persist_pairing_t saved_pairing;
 static bool pairing_saved, rf_paired;
+static bool pairing_scenario, cancel_waiting_pair, expire_waiting_pair;
+static unsigned int busy_pair_attempts;
+static int pair_result;
 static const zlrs_persist_settings_t settings = {.data_baud = 115200U};
 static const zlrs_persist_pairing_t paired = {
 	.peer_id = {1, 2, 3, 4},
@@ -163,7 +166,11 @@ int zlrs_mgmt_init(void)
 
 bool zlrs_mgmt_process_idle(void)
 {
-	return ++idle_calls == 1U || (!rf_fault && frames == 3U && sessions == 1U);
+	idle_calls++;
+	if (pairing_scenario) {
+		return cancel_waiting_pair && frames == 2U && sessions == 0U;
+	}
+	return idle_calls == 1U || (!rf_fault && frames == 3U && sessions == 1U);
 }
 
 int zlrs_mgmt_run(void)
@@ -221,7 +228,7 @@ void zlrs_rf_publish_state(void)
 int zlrs_rf_pair_start(void)
 {
 	pairing_requests++;
-	return 0;
+	return pairing_requests <= busy_pair_attempts ? -EAGAIN : pair_result;
 }
 
 bool zlrs_rf_pairing(uint8_t peer_id[ZLRS_DEV_ID_LEN], uint8_t salt[ZLRS_PAIR_SALT_LEN])
@@ -237,7 +244,11 @@ bool zlrs_rf_pairing(uint8_t peer_id[ZLRS_DEV_ID_LEN], uint8_t salt[ZLRS_PAIR_SA
 void zlrs_rf_frame(void)
 {
 	zassert_equal(pause_depth, 0U);
-	if (++frames == 5U) {
+	frames++;
+	if (expire_waiting_pair && frames == 2U) {
+		k_msleep(30001);
+	}
+	if (frames == 5U) {
 		finish();
 	}
 }
@@ -301,6 +312,38 @@ ZTEST(application, test_lifecycle)
 	zassert_equal(sessions, 1U, "RF initialization failure must leave management reachable");
 	zassert_true(publications > 0U);
 	zassert_equal(pause_depth, 0U);
+
+	/* The real boot policy has now confirmed this process. Fresh application
+	 * owners below exercise independent button intents against that same boot.
+	 */
+	static const struct {
+		unsigned int busy_attempts;
+		int result;
+		bool management;
+		bool expire;
+		unsigned int expected_attempts;
+	} cases[] = {
+		{2U, 0, false, false, 3U},
+		{100U, 0, true, false, 2U},
+		{0U, -EIO, false, false, 1U},
+		{100U, 0, false, true, 2U},
+	};
+
+	for (size_t i = 0U; i < ARRAY_SIZE(cases); i++) {
+		starts = frames = idle_calls = sessions = pairing_requests = saves = publications =
+			0U;
+		rf_fault = fail_first_save = pairing_saved = rf_paired = false;
+		pairing_scenario = true;
+		busy_pair_attempts = cases[i].busy_attempts;
+		pair_result = cases[i].result;
+		cancel_waiting_pair = cases[i].management;
+		expire_waiting_pair = cases[i].expire;
+		zassert_ok(zbus_chan_pub(&zlrs_input_chan, &input, K_NO_WAIT));
+		run(RUN_APPLICATION);
+		zassert_equal(pairing_requests, cases[i].expected_attempts, "button case %zu", i);
+		zassert_equal(sessions, cases[i].management ? 1U : 0U);
+		zassert_equal(frames, 5U, "waiting for entropy blocked the owner");
+	}
 }
 
 ZTEST_SUITE(application, NULL, NULL, NULL, NULL, NULL);
