@@ -12,11 +12,37 @@
 static uint8_t backup[PARTITION_SIZE(storage_partition)];
 static const struct flash_area *area;
 static bool fail_write;
+
+enum reset_fault {
+	RESET_OK,
+	CLEAR_BEFORE,
+	CLEAR_AFTER,
+	REMOUNT,
+	MARKER_WRITE
+};
+static enum reset_fault reset_fault;
+int __real_nvs_clear(struct nvs_fs *fs);
+int __real_nvs_mount(struct nvs_fs *fs);
+
+int __wrap_nvs_clear(struct nvs_fs *fs)
+{
+	if (reset_fault == CLEAR_BEFORE) {
+		return -EIO;
+	}
+	const int rc = __real_nvs_clear(fs);
+	return reset_fault == CLEAR_AFTER && rc == 0 ? -EIO : rc;
+}
+
+int __wrap_nvs_mount(struct nvs_fs *fs)
+{
+	return reset_fault == REMOUNT ? -EIO : __real_nvs_mount(fs);
+}
+
 ssize_t __real_nvs_write(struct nvs_fs *fs, uint16_t id, const void *data, size_t len);
 
 ssize_t __wrap_nvs_write(struct nvs_fs *fs, uint16_t id, const void *data, size_t len)
 {
-	if (fail_write) {
+	if (fail_write || (reset_fault == MARKER_WRITE && id == 0)) {
 		return -EIO;
 	}
 	return __real_nvs_write(fs, id, data, len);
@@ -33,6 +59,7 @@ static void teardown(void *unused)
 {
 	ARG_UNUSED(unused);
 	fail_write = false;
+	reset_fault = RESET_OK;
 	zassert_ok(flash_area_flatten(area, 0, sizeof(backup)));
 	zassert_ok(flash_area_write(area, 0, backup, sizeof(backup)));
 	flash_area_close(area);
@@ -160,6 +187,54 @@ ZTEST(settings, test_layout_and_persistence)
 	zassert_ok(nvs_mount(&inspect));
 	zassert_equal(nvs_read(&inspect, 0, raw, 4), 4);
 	zassert_equal(sys_get_le32(raw), 0x5A4C0002);
+}
+
+static void failed_reset(enum reset_fault fault)
+{
+	zassert_ok(zlrs_persist_init());
+	uint8_t key[ZLRS_KEY_LEN];
+	memset(key, 0x42, sizeof(key));
+	const zlrs_persist_pairing_t pair = {.peer_id = {9, 8, 7, 6},
+					     .pair_salt = {1, 2, 3, 4, 5, 6, 7, 8}};
+	zassert_ok(zlrs_persist_set_root_key(key));
+	zassert_ok(zlrs_persist_save_pairing(&pair));
+	reset_fault = fault;
+	const int rc = zlrs_persist_factory_reset();
+	reset_fault = RESET_OK;
+	zassert_equal(rc, -EIO);
+	/* Any destructive attempt invalidates the active identity, even if erase failed midway. */
+	uint8_t id[ZLRS_DEV_ID_LEN];
+	zlrs_persist_pairing_t saved;
+	zassert_false(zlrs_persist_get_root_key(key));
+	zassert_false(zlrs_persist_get_device_id(id));
+	zassert_false(zlrs_persist_get_pairing(&saved));
+	zassert_equal(zlrs_persist_set_root_key(key), -EIO);
+	zassert_equal(zlrs_persist_save_settings(zlrs_persist_settings()), -EIO);
+	/* A fresh mount is the recovery boundary. A failed erase may leave old flash records. */
+	zassert_ok(zlrs_persist_init());
+	zassert_true(zlrs_persist_get_device_id(id));
+	zassert_equal(zlrs_persist_get_root_key(key), fault == CLEAR_BEFORE);
+	zassert_equal(zlrs_persist_get_pairing(&saved), fault == CLEAR_BEFORE);
+}
+
+ZTEST(settings, test_reset_clear_failure)
+{
+	failed_reset(CLEAR_BEFORE);
+}
+
+ZTEST(settings, test_reset_partial_clear_failure)
+{
+	failed_reset(CLEAR_AFTER);
+}
+
+ZTEST(settings, test_reset_remount_failure)
+{
+	failed_reset(REMOUNT);
+}
+
+ZTEST(settings, test_reset_marker_failure)
+{
+	failed_reset(MARKER_WRITE);
 }
 
 ZTEST_SUITE(settings, NULL, setup, NULL, NULL, teardown);

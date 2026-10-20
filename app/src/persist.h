@@ -31,4 +31,6 @@ int zlrs_persist_set_root_key(const uint8_t key[ZLRS_KEY_LEN]);
 int zlrs_persist_save_pairing(const zlrs_persist_pairing_t *pairing);
 int zlrs_persist_new_identity(void);
 int zlrs_persist_erase_pairing(void);
+/* A destructive attempt retires RAM credentials even on failure. Failed storage stays
+ * unavailable until init succeeds; a failed erase can leave records on flash. */
 int zlrs_persist_factory_reset(void);

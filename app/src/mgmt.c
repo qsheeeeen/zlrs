@@ -599,9 +599,8 @@ uint8_t zlrs_mgmt_command(uint8_t cmd, const uint8_t *payload, uint8_t len, uint
 		return ack_frame(out, cap, cmd, persist_result(rc));
 	case ZLRS_MGMT_CMD_FACTORY_RESET:
 		rc = zlrs_persist_factory_reset();
-		if (rc == 0) {
-			zlrs_rf_credentials();
-		}
+		/* Even a failed erase may have retired the active identity. */
+		zlrs_rf_credentials();
 		return ack_frame(out, cap, cmd, persist_result(rc));
 	case ZLRS_MGMT_CMD_SET_KEY_HEX:
 	case ZLRS_MGMT_CMD_SET_PHRASE: {

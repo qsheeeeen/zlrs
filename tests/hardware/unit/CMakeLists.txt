@@ -44,7 +44,8 @@ if(NOT ZLRS_TEST_ENTROPY_ONLY AND NOT ZLRS_TEST_UI_ONLY)
     "${zlrs_root}/app/src/platform/slot_timer.c"
     "${zlrs_root}/app/src/ui.c"
     "${zlrs_root}/app/src/log.c")
-  target_link_options(app PUBLIC "-Wl,--wrap=nvs_write")
+  target_link_options(app PUBLIC "-Wl,--wrap=nvs_write" "-Wl,--wrap=nvs_clear"
+    "-Wl,--wrap=nvs_mount")
 endif()
 
 # Match production placement of the protocol algorithms, SHA operation and driver.

@@ -736,7 +736,7 @@ TEST_F(Link, EntropyFailure)
 {
 	const uint8_t salt[ZLRS_PAIR_SALT_LEN] = {1, 2, 3, 4, 5, 6, 7, 8};
 	sim.leader.random_failed = true;
-	zlrs_link_press(&sim.leader.link, 0U);
+	EXPECT_FALSE(zlrs_link_press(&sim.leader.link, 0U));
 	EXPECT_EQ(sim.leader.link.state, ZLRS_STATE_UNPAIRED);
 	zlrs_link_set_peer(&sim.leader.link, sim.follower.link.dev_id, salt, 0U);
 	EXPECT_FALSE(sim.leader.link.session_pending && !sim.leader.link.session_valid);

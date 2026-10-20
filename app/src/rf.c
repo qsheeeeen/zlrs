@@ -986,12 +986,15 @@ int zlrs_rf_pair_start(void)
 		return -ENOTCONN;
 	}
 	if (zlrs_link_get_state(link) != ZLRS_STATE_PAIRING) {
+		const uint32_t now_ms = zlrs_slot_timer_now_ms();
+		if (!zlrs_link_press(link, now_ms)) {
+			return -EIO;
+		}
 		if (band_mode == ZLRS_DATA_BAND_AUTO &&
 		    (ZLRS_DATA_SUBG || data_phy != ZLRS_PHY_FLRC_2600)) {
 			change_band(ZLRS_DATA_BAND_24, ZLRS_PHY_FLRC_2600, false,
 				    zlrs_slot_timer_now_ms());
 		}
-		zlrs_link_press(link, zlrs_slot_timer_now_ms());
 	}
 	update_power(zlrs_slot_timer_now_ms());
 	return 0;

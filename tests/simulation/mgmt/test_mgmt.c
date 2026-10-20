@@ -274,3 +274,21 @@ ZTEST(commands, test_device_commands)
 }
 
 ZTEST_SUITE(commands, NULL, NULL, NULL, NULL, NULL);
+
+ZTEST(commands, test_failed_factory_reset_invalidates_active_credentials)
+{
+	zassert_ok(zlrs_persist_init());
+	const uint8_t key[ZLRS_KEY_LEN] = {0x42};
+	zassert_ok(zlrs_persist_set_root_key(key));
+	zlrs_rf_credentials();
+	zassert_true(rf.configured);
+	ack(ZLRS_MGMT_CMD_ENTER, NULL, 0, ZLRS_MGMT_OK);
+	fail_write = true;
+	/* Erase succeeds but writing the new layout marker fails. */
+	ack(ZLRS_MGMT_CMD_FACTORY_RESET, NULL, 0, ZLRS_MGMT_E_STORE);
+	fail_write = false;
+	zassert_false(rf.configured || rf.paired);
+	const uint8_t empty_id[ZLRS_DEV_ID_LEN] = {0};
+	zassert_mem_equal(rf.dev_id, empty_id, sizeof(empty_id));
+	ack(ZLRS_MGMT_CMD_EXIT, NULL, 0, ZLRS_MGMT_OK);
+}

@@ -402,8 +402,9 @@ bool zlrs_link_radio_captured(zlrs_link_t *link);
 void zlrs_link_set_peer(zlrs_link_t *link, const uint8_t peer_id[ZLRS_DEV_ID_LEN],
 			const uint8_t pair_salt[ZLRS_PAIR_SALT_LEN], uint32_t now_ms);
 
-/* Button: a long press starts pairing (re-pairing takes this path too, the new record wins) */
-void zlrs_link_press(zlrs_link_t *link, uint32_t now_ms);
+/* Start pairing; false leaves the current state intact (unconfigured or entropy unavailable).
+ * True accepts an attempt, not a completed pairing; the previous saved record remains visible. */
+bool zlrs_link_press(zlrs_link_t *link, uint32_t now_ms);
 
 /* Superframe slot: return the transaction to submit, or NULL when there is none */
 const zlrs_radio_req_t *zlrs_link_slot(zlrs_link_t *link, uint8_t slot, uint32_t now_ms);

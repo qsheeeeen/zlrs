@@ -126,6 +126,10 @@ static int write_record(enum record_id id, const void *bytes, size_t size)
 
 static int reset_layout(void)
 {
+	/* Erase can fail after modifying flash. Retire the RAM identity before attempting it;
+	 * only a successful initialization may make surviving records active again. */
+	memset(&state, 0, sizeof(state));
+	state.settings = default_settings();
 	ready = false;
 	int rc = nvs_clear(&fs);
 	if (rc == 0) {
@@ -292,6 +296,9 @@ int zlrs_persist_init(void)
 
 int zlrs_persist_save_settings(const zlrs_persist_settings_t *s)
 {
+	if (!ready) {
+		return -EIO;
+	}
 	if (!settings_valid(s)) {
 		return -EINVAL;
 	}
@@ -386,10 +393,5 @@ int zlrs_persist_factory_reset(void)
 	if (!ready) {
 		return -EIO;
 	}
-	const int rc = reset_layout();
-	if (rc == 0) {
-		memset(&state, 0, sizeof(state));
-		state.settings = default_settings();
-	}
-	return rc;
+	return reset_layout();
 }

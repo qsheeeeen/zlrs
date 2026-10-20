@@ -753,6 +753,10 @@ ZTEST(rf_results, test_protocol_completion_and_timeouts)
 	const unsigned int plain_before = plain_random_requests;
 	zassert_ok(zlrs_rf_init());
 	zassert_equal(radio_reads, 1);
+	if (!RF_TEST_ROLE_FOLLOWER) {
+		zassert_equal(zlrs_rf_pair_start(), -EIO);
+		zassert_not_equal(zlrs_rf_status().state, ZLRS_STATE_PAIRING);
+	}
 	zlrs_link_cfg_t cfg = *zlrs_link_get_config(local);
 	cfg.role = RF_TEST_ROLE_FOLLOWER ? ZLRS_ROLE_LEADER : ZLRS_ROLE_FOLLOWER;
 	const zlrs_link_events_t events = {.on_data = receive_peer};

@@ -403,16 +403,16 @@ void zlrs_link_set_peer(zlrs_link_t *link, const uint8_t peer_id[ZLRS_DEV_ID_LEN
 	}
 }
 
-void zlrs_link_press(zlrs_link_t *link, uint32_t now_ms)
+bool zlrs_link_press(zlrs_link_t *link, uint32_t now_ms)
 {
 	if (!link->configured) {
-		return;
+		return false;
 	}
 
 	if (link->cfg.role == ZLRS_ROLE_LEADER) {
 		uint32_t nonce_a;
 		if (!link_new_nonce(link, link->pair_nonce, link->pair_nonce_valid, &nonce_a)) {
-			return;
+			return false;
 		}
 		link->pair_nonce = nonce_a;
 		link->pair_nonce_valid = true;
@@ -427,6 +427,7 @@ void zlrs_link_press(zlrs_link_t *link, uint32_t now_ms)
 	link->session_valid = false;
 	link->session_pending = false;
 	link_set_state(link, ZLRS_STATE_PAIRING, now_ms);
+	return true;
 }
 
 bool zlrs_link_cancel_pair(zlrs_link_t *link, uint32_t now_ms)
