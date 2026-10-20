@@ -63,6 +63,14 @@ static void teardown(void *unused)
 	reset_fault = RESET_OK;
 	zassert_ok(flash_area_flatten(area, 0, sizeof(backup)));
 	zassert_ok(flash_area_write(area, 0, backup, sizeof(backup)));
+	uint8_t restored[128];
+	for (size_t offset = 0; offset < sizeof(backup); offset += sizeof(restored)) {
+		const size_t size = MIN(sizeof(restored), sizeof(backup) - offset);
+		zassert_ok(flash_area_read(area, offset, restored, size));
+		zassert_mem_equal(restored, backup + offset, size, "restored NVS differs at %zu",
+				  offset);
+	}
+	printk("NVS_RESTORE bytes=%zu verified=1\n", sizeof(backup));
 	flash_area_close(area);
 }
 static struct nvs_fs inspect = {
