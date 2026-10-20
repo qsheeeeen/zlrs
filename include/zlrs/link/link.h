@@ -302,6 +302,11 @@ typedef struct {
 	zlrs_radio_req_t req;
 	bool req_is_tx;
 	bool req_pending;
+	/* Statistics snapshot belongs to the submitted packet, including staged DATA. */
+	bool req_is_data;
+	bool req_arq;
+	uint16_t req_data_len;
+	uint16_t req_data_mtu;
 	uint8_t slot; /* ZLRS_SLOT_*: the slot the pending transaction serves (stats and logs) */
 	uint32_t slot_ms; /* Current slot time, used for the session-confirm slot B window. */
 } zlrs_link_t;
@@ -421,7 +426,7 @@ void zlrs_link_discard_prepared_data(zlrs_link_t *link);
 /* Advance a missed slot without building a packet, consuming data or changing session state. */
 void zlrs_link_skip_slot(zlrs_link_t *link, uint8_t slot);
 
-/* radio transaction finished */
+/* Close the outstanding radio transaction once. Ignore unsolicited/duplicate completions. */
 void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t rssi, int8_t snr,
 			uint32_t now_ms);
 

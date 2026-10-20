@@ -134,7 +134,7 @@ const uint8_t *link_tag_key_for(const zlrs_link_t *link, uint8_t type, bool outb
 	}
 }
 
-static const zlrs_radio_req_t *make_req(zlrs_link_t *link, bool is_tx, uint16_t size,
+static const zlrs_radio_req_t *make_req(zlrs_link_t *link, bool is_tx, uint8_t *buf, uint16_t size,
 					uint32_t freq_hz, uint8_t sync_slot,
 					const uint8_t sync_word[ZLRS_SYNC_WORD_LEN],
 					uint16_t timeout_ms)
@@ -152,29 +152,37 @@ static const zlrs_radio_req_t *make_req(zlrs_link_t *link, bool is_tx, uint16_t 
 	link->req.size = size;
 	link->req.max_rx_size = is_tx ? 0U : ZLRS_FRAME_MAX_LEN;
 	link->req.timeout_ms = timeout_ms;
-	link->req.buf = is_tx ? link->tx_buf : link->rx_buf;
+	link->req.buf = buf;
 	link->req_is_tx = is_tx;
+	/* The encoder has already validated TX shape. Snapshot the actual request buffer,
+	 * which may be the staged packet rather than tx_buf, without decoding/copying it. */
+	link->req_is_data = is_tx && (buf[0] == ZLRS_PKT_DATA_L2F || buf[0] == ZLRS_PKT_DATA_F2L);
+	link->req_data_len = link->req_is_data ? size - ZLRS_FRAME_HDR_LEN - ZLRS_DATA_PREFIX_LEN -
+							 zlrs_profile_tag_len(link->cfg.profile)
+					       : 0U;
+	link->req_data_mtu = link->cfg.data_mtu;
+	link->req_arq = link->cfg.arq != 0U;
 	link->req_pending = true;
 
 	return &link->req;
 }
 
-const zlrs_radio_req_t *link_submit_tx(zlrs_link_t *link, uint16_t len, uint32_t freq_hz,
-				       uint8_t sync_slot,
+const zlrs_radio_req_t *link_submit_tx(zlrs_link_t *link, uint8_t *buf, uint16_t len,
+				       uint32_t freq_hz, uint8_t sync_slot,
 				       const uint8_t sync_word[ZLRS_SYNC_WORD_LEN])
 {
 	if (len == 0U) {
 		return NULL;
 	}
 
-	return make_req(link, true, len, freq_hz, sync_slot, sync_word, 0U);
+	return make_req(link, true, buf, len, freq_hz, sync_slot, sync_word, 0U);
 }
 
 const zlrs_radio_req_t *link_submit_rx(zlrs_link_t *link, uint32_t freq_hz, uint8_t sync_slot,
 				       const uint8_t sync_word[ZLRS_SYNC_WORD_LEN],
 				       uint16_t timeout_ms)
 {
-	return make_req(link, false, 0U, freq_hz, sync_slot, sync_word, timeout_ms);
+	return make_req(link, false, link->rx_buf, 0U, freq_hz, sync_slot, sync_word, timeout_ms);
 }
 
 uint16_t link_acq_timeout_ms(const zlrs_link_t *link)
@@ -615,6 +623,9 @@ void zlrs_link_skip_slot(zlrs_link_t *link, uint8_t slot)
 void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t rssi, int8_t snr,
 			uint32_t now_ms)
 {
+	if (!link->req_pending) {
+		return;
+	}
 	const bool was_tx = link->req_is_tx;
 	const uint8_t slot = (link->slot < ZLRS_SLOT_COUNT) ? link->slot : 0U;
 
@@ -634,21 +645,15 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 		link->stats.slot_tx[slot]++;
 		link->stats.tx_frames++;
 		link->stats.tx_bytes = (uint32_t)(link->stats.tx_bytes + link->req.size);
-		zlrs_frame_t frame;
-
-		if (zlrs_frame_decode(&frame, link->req.buf, link->req.size,
-				      zlrs_profile_tag_len(link->cfg.profile)) &&
-		    (frame.type == ZLRS_PKT_DATA_L2F || frame.type == ZLRS_PKT_DATA_F2L)) {
-			const uint16_t data_len = link->req.size - ZLRS_FRAME_HDR_LEN -
-						  zlrs_profile_tag_len(link->cfg.profile) -
-						  ZLRS_DATA_PREFIX_LEN;
+		if (link->req_is_data) {
+			const uint16_t data_len = link->req_data_len;
 			if (data_len == 0U) {
 				link->stats.tx_ack_only_frames++;
 			} else {
 				link->stats.tx_data_frames++;
-				link->stats.tx_data_ack_frames += link->cfg.arq != 0U;
+				link->stats.tx_data_ack_frames += link->req_arq;
 				link->stats.tx_data_bytes += data_len;
-				link->stats.tx_full_data_frames += data_len == link->cfg.data_mtu;
+				link->stats.tx_full_data_frames += data_len == link->req_data_mtu;
 			}
 		}
 		link->queue_head = (uint16_t)((link->queue_head + link->pending_data_len) %

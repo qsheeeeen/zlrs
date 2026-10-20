@@ -37,8 +37,8 @@ uint32_t link_slot_freq_hz(const zlrs_link_t *link);
 const zlrs_radio_req_t *link_submit_rx(zlrs_link_t *link, uint32_t freq_hz, uint8_t sync_slot,
 				       const uint8_t sync_word[ZLRS_SYNC_WORD_LEN],
 				       uint16_t timeout_ms);
-const zlrs_radio_req_t *link_submit_tx(zlrs_link_t *link, uint16_t len, uint32_t freq_hz,
-				       uint8_t sync_slot,
+const zlrs_radio_req_t *link_submit_tx(zlrs_link_t *link, uint8_t *buf, uint16_t len,
+				       uint32_t freq_hz, uint8_t sync_slot,
 				       const uint8_t sync_word[ZLRS_SYNC_WORD_LEN]);
 uint32_t link_sync_freq_hz(const zlrs_link_t *link);
 const uint8_t *link_tag_key_for(const zlrs_link_t *link, uint8_t type, bool outbound);

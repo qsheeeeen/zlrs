@@ -59,8 +59,8 @@ static const zlrs_radio_req_t *arq_send_slot(zlrs_link_t *link, uint8_t seq, uin
 	/* Keep bytes queued until ACK, independently of radio completion. */
 	link->pending_data_len = 0U;
 	link->arq_ack_pending = false;
-	return link_submit_tx(link, frame_len, link_slot_freq_hz(link), ZLRS_SYNC_SLOT_DATA,
-			      link->sync_word);
+	return link_submit_tx(link, link->tx_buf, frame_len, link_slot_freq_hz(link),
+			      ZLRS_SYNC_SLOT_DATA, link->sync_word);
 }
 
 static bool arq_timed_out(const zlrs_link_t *link, uint32_t now_ms)
@@ -175,13 +175,13 @@ static const zlrs_radio_req_t *send_prepared_data(zlrs_link_t *link, uint32_t no
 		packet->valid = false;
 		return NULL;
 	}
-	const zlrs_radio_req_t *req = link_submit_tx(link, packet->size, link_slot_freq_hz(link),
-						     ZLRS_SYNC_SLOT_DATA, link->sync_word);
+	const zlrs_radio_req_t *req =
+		link_submit_tx(link, packet->buf, packet->size, link_slot_freq_hz(link),
+			       ZLRS_SYNC_SLOT_DATA, link->sync_word);
 
 	if (req == NULL) {
 		return NULL;
 	}
-	link->req.buf = packet->buf;
 	link->tx_seq++;
 	if (!retry) {
 		arq_commit_data(link, packet->data_len, now_ms);
@@ -249,7 +249,7 @@ const zlrs_radio_req_t *link_send_empty_data(zlrs_link_t *link)
 	link->arq_ack_pending = false;
 	link->pending_data_len = 0U;
 	link->last_feedback_tx_ms = link->slot_ms;
-	return link_submit_tx(link, len, link_slot_freq_hz(link), ZLRS_SYNC_SLOT_DATA,
+	return link_submit_tx(link, link->tx_buf, len, link_slot_freq_hz(link), ZLRS_SYNC_SLOT_DATA,
 			      link->sync_word);
 }
 
@@ -287,8 +287,9 @@ const zlrs_radio_req_t *link_send_data(zlrs_link_t *link, uint32_t now_ms)
 	queue_copy(link, 0U, data->bytes, take);
 	const uint16_t len = link_build_frame(link, &frame, ZLRS_DATA_PREFIX_LEN + take,
 					      link_tag_key_for(link, frame.type, true));
-	const zlrs_radio_req_t *req = link_submit_tx(link, len, link_slot_freq_hz(link),
-						     ZLRS_SYNC_SLOT_DATA, link->sync_word);
+	const zlrs_radio_req_t *req =
+		link_submit_tx(link, link->tx_buf, len, link_slot_freq_hz(link),
+			       ZLRS_SYNC_SLOT_DATA, link->sync_word);
 	link->pending_data_len = req != NULL ? take : 0U;
 	return req;
 }

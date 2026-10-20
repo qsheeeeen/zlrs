@@ -13,6 +13,7 @@ enforces this boundary.
 | `hardware/` | Peripheral behavior, physical timing, RF/data transfer and firmware rollback | Target firmware and peripherals | Only the boundary named by each fixture | Explicit board-specific runners |
 | `contracts/` | Identical behavior required on native and hardware backends | Persistence and UI components | Backend selected by the including test application | Included by simulation/hardware CMake |
 | `support/` | Software SHA backend and deterministic DATA patterns | Test implementations only | No scenario ownership | Linked by consumers |
+| `bench/` | Reproducible host cost measurements | Protocol codec, authentication and DATA paths | Software SHA and steady-state link fixture | Standalone release executable, JSON results |
 
 Host link tests use two real protocol peers. Native RF tests use the real RF
 owner and protocol peers behind simulated radio/clock/serial edges. Keeping
@@ -145,6 +146,29 @@ independence, select `-T tests/simulation/rf -T tests/simulation/settings
 repeats cases and suites in this mode). Application boot and asynchronous UI
 acceptance use their normal single-boot execution. Host link cases can be audited in one
 process with `link_tests --gtest_shuffle --gtest_repeat=3 --gtest_random_seed=2026`.
+
+## Performance measurements
+
+Build benchmarks separately so sanitizer instrumentation and GoogleTest do not
+affect the measurements:
+
+```sh
+cmake -S tests/bench -B build/bench -DCMAKE_BUILD_TYPE=Release
+cmake --build build/bench --parallel
+build/bench/link_bench > build/bench/link.json
+```
+
+The optional positional argument selects 100..1000000 iterations (default 20000).
+Results include compiler version and seven samples per case, with median/min/max
+nanoseconds for encoding, P1 authentication, prepared DATA and TX completion at
+0/32/128/499 payload bytes. Completion replays a prepared request to isolate its
+bookkeeping cost. Prepare measurements exclude empty packets. The fixture checks
+packet sizes and completion counters before accepting a measurement.
+
+Compare release builds with the same compiler, CPU and load; retain both JSON
+files and commits. CI retains measurements without noisy wall-clock thresholds.
+These measurements use software SHA on the host. Board SHA, SPI, deadline jitter
+and over-the-air throughput require the hardware fixtures below.
 
 ## Hardware acceptance
 

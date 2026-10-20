@@ -34,6 +34,11 @@ jobs:
         run: cmake --build build/tests --parallel
       - name: host, tools and architecture (ASan + UBSan + LSan)
         run: ctest --test-dir build/tests --parallel 4 --output-on-failure --output-junit results.xml
+      - name: release performance baseline
+        run: |
+          cmake -S tests/bench -B build/bench -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/bench --parallel
+          build/bench/link_bench > build/bench/link.json
       - name: upload test results
         if: always()
         uses: actions/upload-artifact@v4
@@ -42,6 +47,7 @@ jobs:
           path: |
             build/tests/results.xml
             build/tests/Testing/Temporary/*.log
+            build/bench/link.json
 
   simulation:
     runs-on: ubuntu-24.04

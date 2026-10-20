@@ -1343,3 +1343,90 @@ INSTANTIATE_TEST_SUITE_P(ProfilesAndSeeds, StreamFaults,
 				 return "P" + std::to_string(std::get<0>(info.param)) + "Seed" +
 					std::to_string(std::get<1>(info.param));
 			 });
+
+struct TxMode {
+	bool arq;
+	bool staged;
+	const char *name;
+};
+
+class TxAccounting
+	: public Link,
+	  public testing::WithParamInterface<std::tuple<zlrs_profile_t, zlrs_role_t, TxMode, bool>>
+{
+};
+
+TEST_P(TxAccounting, CountsTheSubmittedPacketExactlyOnce)
+{
+	const auto [profile, role, mode, full] = GetParam();
+	ASSERT_NO_FATAL_FAILURE(connect_saved(&sim, profile));
+	auto *link = role == ZLRS_ROLE_LEADER ? &sim.leader.link : &sim.follower.link;
+	link->cfg.resync_every_n = 0;
+	link->sess_cfm_due = false;
+	link->cfg.arq = mode.arq;
+	link->cfg.data_mtu = ZLRS_FRAME_MAX_LEN - ZLRS_FRAME_HDR_LEN - ZLRS_DATA_PREFIX_LEN -
+			     zlrs_profile_tag_len(profile);
+	const auto payload = full ? link->cfg.data_mtu : 17;
+	std::vector<uint8_t> bytes(payload, 0x42);
+	ASSERT_EQ(zlrs_link_write(link, bytes.data(), bytes.size()), bytes.size());
+	const auto slot = role == ZLRS_ROLE_LEADER ? ZLRS_SLOT_DATA_A : ZLRS_SLOT_DATA_B;
+	if (mode.staged) {
+		uint16_t size;
+		ASSERT_NE(zlrs_link_prepare_data(link, slot, sim.now_ms, &size), nullptr);
+	}
+	const auto *req = zlrs_link_slot(link, slot, sim.now_ms);
+	ASSERT_NE(req, nullptr);
+	ASSERT_TRUE(req->is_tx);
+	const uint16_t wire_size = req->size;
+	const auto before = *zlrs_link_get_stats(link);
+	zlrs_link_complete(link, ZLRS_RADIO_OK, 0, 0, 0, sim.now_ms);
+	EXPECT_EQ(link->stats.tx_frames, before.tx_frames + 1);
+	EXPECT_EQ(link->stats.tx_bytes, before.tx_bytes + wire_size);
+	EXPECT_EQ(link->stats.tx_data_frames, before.tx_data_frames + 1);
+	EXPECT_EQ(link->stats.tx_data_bytes, before.tx_data_bytes + payload);
+	EXPECT_EQ(link->stats.tx_full_data_frames, before.tx_full_data_frames + full);
+	EXPECT_EQ(link->stats.tx_data_ack_frames, before.tx_data_ack_frames + mode.arq);
+	EXPECT_EQ(link->stats.tx_ack_only_frames, before.tx_ack_only_frames);
+	const auto completed = *zlrs_link_get_stats(link);
+	zlrs_link_complete(link, ZLRS_RADIO_OK, 0, 0, 0, sim.now_ms);
+	EXPECT_EQ(memcmp(&link->stats, &completed, sizeof(completed)), 0);
+}
+
+TEST_P(LinkProfiles, EmptyDataCompletionIsAckOnly)
+{
+	ASSERT_NO_FATAL_FAILURE(connect_saved(&sim, GetParam()));
+	auto *link = &sim.leader.link;
+	link->cfg.resync_every_n = 0;
+	link->sess_cfm_due = false;
+	link->arq_ack_pending = true;
+	const auto *req = zlrs_link_slot(link, ZLRS_SLOT_DATA_A, sim.now_ms);
+	ASSERT_NE(req, nullptr);
+	ASSERT_TRUE(req->is_tx);
+	const auto before = *zlrs_link_get_stats(link);
+	zlrs_link_complete(link, ZLRS_RADIO_OK, 0, 0, 0, sim.now_ms);
+	EXPECT_EQ(link->stats.tx_ack_only_frames, before.tx_ack_only_frames + 1);
+	EXPECT_EQ(link->stats.tx_data_frames, before.tx_data_frames);
+	EXPECT_EQ(link->stats.tx_data_bytes, before.tx_data_bytes);
+}
+
+TEST_F(Link, UnsolicitedCompletionLeavesStateAndCountersIntact)
+{
+	const auto before = *zlrs_link_get_stats(&sim.leader.link);
+	zlrs_link_complete(&sim.leader.link, ZLRS_RADIO_FAIL, 0, 0, 0, sim.now_ms);
+	EXPECT_EQ(memcmp(&sim.leader.link.stats, &before, sizeof(before)), 0);
+}
+
+INSTANTIATE_TEST_SUITE_P(ProfilesRolesAndPaths, TxAccounting,
+			 testing::Combine(testing::Values(ZLRS_PROFILE_P0, ZLRS_PROFILE_P1),
+					  testing::Values(ZLRS_ROLE_LEADER, ZLRS_ROLE_FOLLOWER),
+					  testing::Values(TxMode{false, false, "BestEffort"},
+							  TxMode{true, false, "ARQ"},
+							  TxMode{true, true, "StagedARQ"}),
+					  testing::Bool()),
+			 [](const testing::TestParamInfo<TxAccounting::ParamType> &info) {
+				 return "P" + std::to_string(std::get<0>(info.param)) +
+					(std::get<1>(info.param) == ZLRS_ROLE_LEADER ? "Leader"
+										     : "Follower") +
+					std::get<2>(info.param).name +
+					(std::get<3>(info.param) ? "Full" : "Partial");
+			 });

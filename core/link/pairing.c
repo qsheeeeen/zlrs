@@ -138,8 +138,9 @@ static const zlrs_radio_req_t *send_pair(zlrs_link_t *link, uint8_t type, uint32
 		link_build_frame(link, &frame, payload_len, link_tag_key_for(link, type, true));
 	link->last_pair_tx_ms = now_ms;
 
-	const zlrs_radio_req_t *req = link_submit_tx(link, len, link_sync_freq_hz(link),
-						     ZLRS_SYNC_SLOT_PAIRING, pairing_sync_word);
+	const zlrs_radio_req_t *req =
+		link_submit_tx(link, link->tx_buf, len, link_sync_freq_hz(link),
+			       ZLRS_SYNC_SLOT_PAIRING, pairing_sync_word);
 	if (req != NULL) {
 		link->req.tx_power_dbm = link->cfg.pair_tx_power_dbm;
 	}

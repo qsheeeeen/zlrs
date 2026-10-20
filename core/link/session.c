@@ -105,7 +105,7 @@ const zlrs_radio_req_t *link_send_sync(zlrs_link_t *link, uint32_t now_ms)
 					      link_tag_key_for(link, frame.type, true));
 	link->last_sync_ms = now_ms;
 	link->stats.tx_syncs++;
-	return link_submit_tx(link, len, link_sync_freq_hz(link), ZLRS_SYNC_SLOT_DATA,
+	return link_submit_tx(link, link->tx_buf, len, link_sync_freq_hz(link), ZLRS_SYNC_SLOT_DATA,
 			      link->sync_word);
 }
 
@@ -120,7 +120,7 @@ const zlrs_radio_req_t *link_send_sess_resp(zlrs_link_t *link)
 					      link_tag_key_for(link, frame.type, true));
 	link->sess_resp_due = false;
 	link->stats.sess_resp_tx++;
-	return link_submit_tx(link, len, link_sync_freq_hz(link), ZLRS_SYNC_SLOT_DATA,
+	return link_submit_tx(link, link->tx_buf, len, link_sync_freq_hz(link), ZLRS_SYNC_SLOT_DATA,
 			      link->sync_word);
 }
 
@@ -141,7 +141,7 @@ const zlrs_radio_req_t *link_send_sess_cfm(zlrs_link_t *link)
 	const uint16_t len = link_build_frame(link, &frame, ZLRS_SESS_CFM_PAYLOAD_LEN,
 					      link_tag_key_for(link, frame.type, true));
 	link->stats.sess_cfm_tx++;
-	return link_submit_tx(link, len, link_sync_freq_hz(link), ZLRS_SYNC_SLOT_DATA,
+	return link_submit_tx(link, link->tx_buf, len, link_sync_freq_hz(link), ZLRS_SYNC_SLOT_DATA,
 			      link->sync_word);
 }
 
