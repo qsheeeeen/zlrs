@@ -70,6 +70,39 @@ static const char *diagnostic_bands(const zlrs_link_cfg_t *cfg)
 	return cfg->domain == ZLRS_DOMAIN_ISM2400 ? "2.4 GHz" : "sub-G";
 }
 
+static void diagnostic_timings(struct diagnostic_report_writer *writer)
+{
+	static const char *const names[ZLRS_RF_TIMING_COUNT] = {
+		"prepare IRQ",  "owner wake",    "serial pump", "protocol build",
+		"packet total", "radio prepare", "RX protocol", "RX completion",
+	};
+	diagnostic_append(writer, "\n[ACTIVE TIMING / CURRENT PLAN]\n");
+	diagnostic_append(writer, "  Epoch %u   Since %u ms   Quantiles are upper bounds (us)\n",
+			  snapshot.timings.epoch, snapshot.timings.started_ms);
+	diagnostic_append(writer,
+			  "  Phase              Samples   Mean   P50<=   P95<=   P99<=   Max us\n");
+	for (unsigned int i = 0U; i < ZLRS_RF_TIMING_COUNT; i++) {
+		const zlrs_timing_histogram_t *const h = &snapshot.timings.phase[i];
+		if (h->samples == 0U) {
+			diagnostic_append(writer, "  %-18s no samples\n", names[i]);
+			continue;
+		}
+		diagnostic_append(writer, "  %-18s %7u %6u %7u %7u %7u %8u\n", names[i], h->samples,
+				  (uint32_t)(h->total_us / h->samples),
+				  zlrs_timing_percentile_bound(h, 50U),
+				  zlrs_timing_percentile_bound(h, 95U),
+				  zlrs_timing_percentile_bound(h, 99U), h->max_us);
+	}
+	diagnostic_append(writer, "\n[MAINTENANCE / SINCE RF INIT]\n");
+	diagnostic_append(writer, "  Pauses             : %u   Total %llu us   Max %llu us\n",
+			  snapshot.maintenance.count,
+			  (unsigned long long)snapshot.maintenance.total_us,
+			  (unsigned long long)snapshot.maintenance.max_us);
+	diagnostic_append(writer, "  Skipped after pause: %u frames   Without pause: %u frames\n",
+			  snapshot.maintenance.skipped_after_maintenance,
+			  snapshot.maintenance.skipped_without_maintenance);
+}
+
 static void diagnostic_phy(struct diagnostic_report_writer *writer, const zlrs_mod_cfg_t *mod)
 {
 	diagnostic_append(writer, "FLRC, %u.%03u Mbps", mod->rate_bps / 1000000U,
@@ -214,7 +247,8 @@ static void diagnostic_radio(struct diagnostic_report_writer *writer)
 	diagnostic_append(writer, "  Launch guard       : %u us\n",
 			  (unsigned int)CONFIG_ZLRS_APP_TX_GUARD_US);
 
-	diagnostic_append(writer, "\n[CLOCK / TIMER]\n");
+	diagnostic_timings(writer);
+	diagnostic_append(writer, "\n[CLOCK / TIMER / LIFETIME MAXIMA]\n");
 	diagnostic_append(writer, "  TIMER1 / kernel    : %u / %u ms   Delta: %+d ms\n",
 			  protocol_ms, kernel_ms, (int32_t)(protocol_ms - kernel_ms));
 	diagnostic_append(writer, "  Boundaries         : %u   IRQ max lateness: %u us\n",

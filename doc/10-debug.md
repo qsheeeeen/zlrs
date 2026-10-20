@@ -365,6 +365,30 @@ python3 tests/hardware/radio/run.py --serial <Leader-serial> --peer <Follower-se
   --profiles --bytes 8193 --rounds 1 --timeout 45 --log build/radio-phy.json
 ```
 
+Add `--timing` to validate each round's active timing distributions and maintenance
+totals. The debug radio report records preparation IRQ delay, owner wake delay,
+serial input, protocol construction, complete packet construction, radio preparation,
+RX protocol processing and IRQ-to-RX completion. TX samples include control/ACK
+attempts; RX samples include complete PHY packets handed to the protocol.
+P50/P95/P99 are histogram upper bounds in microseconds; mean and maximum use
+the measured samples. Storage is fixed, counts saturate at `UINT32_MAX`, and
+rebuilding the PHY/frame plan starts a fresh epoch. Production images omit this
+instrumentation. Preparation IRQ/wake samples require an armed hardware wait;
+paths prepared immediately can correctly report no samples for those two phases.
+
+Maintenance pause count/duration and frame catch-up totals span RF initialization.
+"Skipped after pause" identifies catch-up immediately following maintenance;
+"without pause" identifies catch-up with no preceding maintenance. These labels
+describe owner scheduling context. Timer and radio launch IRQ delays remain
+separate observations. Compare fixed-PHY rounds on the same image and load:
+
+```sh
+python3 tests/hardware/radio/run.py --serial <Leader-serial> --peer <Follower-serial> \
+  --image build/radio-phy/radio/zephyr/zephyr.signed.bin \
+  --phy 0 --status-poll-hz 0 50 0 --timing --bytes 524289 --rounds 3 \
+  --timeout 90 --log build/radio-timing.json
+```
+
 The same radio fixture can stall both TRNGs while DATA continues. Use one
 sustained round, with enough bytes to cover the entire fault window:
 

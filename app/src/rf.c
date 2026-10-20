@@ -100,6 +100,21 @@ static atomic_t power_request;
 static atomic_t phy_request;
 static bool power_fixed;
 static int8_t fixed_power_dbm;
+static zlrs_rf_timings_t timings;
+static zlrs_rf_maintenance_t maintenance;
+static uint64_t pause_started_cycles;
+static bool maintenance_gap;
+
+static void reset_timings(void)
+{
+	const uint32_t epoch = timings.epoch + 1U;
+	timings = (zlrs_rf_timings_t){.epoch = epoch, .started_ms = k_uptime_get_32()};
+}
+
+#define RECORD_TIMING(phase_id, us) zlrs_timing_record(&timings.phase[phase_id], (us))
+#else
+#define reset_timings()             ((void)0)
+#define RECORD_TIMING(phase_id, us) ((void)0)
 #endif
 static zlrs_duty_t duty;
 /* Identity is read or generated at boot before use.
@@ -214,6 +229,7 @@ static void plan_init(void)
 	LOG_INF("data %s: mtu=%u frame=%u us rate=%u Hz", ZLRS_DATA_SUBG ? "sub-G" : "2.4G",
 		data_mtu, frame_period_us, data_rate_hz);
 	LOG_INF("modem: %s", zlrs_mod_phy_name(zlrs_mod_phy_id(&data_mod)));
+	reset_timings();
 }
 
 /* ---- link setup ---------------------------------------------------------- */
@@ -385,6 +401,8 @@ static bool complete_radio(zlrs_lr2021_result_t *result)
 		rx_protocol_us_max = MAX(rx_protocol_us_max, rx_protocol_us_last);
 		rx_finish_us_last = finish_us - result->done_us;
 		rx_finish_us_max = MAX(rx_finish_us_max, rx_finish_us_last);
+		RECORD_TIMING(ZLRS_RF_TIMING_RX_PROTOCOL, rx_protocol_us_last);
+		RECORD_TIMING(ZLRS_RF_TIMING_RX_FINISH, rx_finish_us_last);
 	}
 	return true;
 }
@@ -559,6 +577,8 @@ static void run_slot(uint8_t slot)
 		prepare_irq_late_us_max =
 			MAX(prepare_irq_late_us_max, timing.irq_us - prepare_at_us);
 		prepare_wake_us_max = MAX(prepare_wake_us_max, timing.wake_us - timing.irq_us);
+		RECORD_TIMING(ZLRS_RF_TIMING_PREPARE_IRQ, timing.irq_us - prepare_at_us);
+		RECORD_TIMING(ZLRS_RF_TIMING_OWNER_WAKE, timing.wake_us - timing.irq_us);
 	} else {
 		prepare_wait_skipped++;
 		if ((int32_t)(timing.wake_us - prepare_at_us) > 0) {
@@ -608,6 +628,9 @@ static void run_slot(uint8_t slot)
 		protocol_build_us_last = now_us() - protocol_at_us;
 		packet_build_us_last = now_us() - slot_start_us;
 		packet_build_us_max = MAX(packet_build_us_max, packet_build_us_last);
+		RECORD_TIMING(ZLRS_RF_TIMING_SERIAL, serial_pump_us_last);
+		RECORD_TIMING(ZLRS_RF_TIMING_PROTOCOL, protocol_build_us_last);
+		RECORD_TIMING(ZLRS_RF_TIMING_PACKET, packet_build_us_last);
 	}
 
 	/* Out of duty budget: give the slot up (finish as a radio failure, the link retries next
@@ -621,7 +644,11 @@ static void run_slot(uint8_t slot)
 
 	const uint32_t prepare_started_us = now_us();
 
-	if (zlrs_lr2021_prepare(req) != 0) {
+	const int prepare_rc = zlrs_lr2021_prepare(req);
+	if (req->is_tx) {
+		RECORD_TIMING(ZLRS_RF_TIMING_RADIO_PREPARE, now_us() - prepare_started_us);
+	}
+	if (prepare_rc != 0) {
 		if (req->is_tx) {
 			late_prepare_entry_us = slot_start_us - prepare_at_us;
 			late_prepare_build_us = prepare_started_us - slot_start_us;
@@ -902,6 +929,14 @@ void zlrs_rf_diagnostics_capture(zlrs_rf_diagnostics_t *out)
 	out->rx_protocol_us_max = rx_protocol_us_max;
 	out->power_fixed = power_fixed;
 	out->power = power;
+	out->timings = timings;
+	out->maintenance = maintenance;
+	if (paused) {
+		const uint64_t elapsed =
+			k_cyc_to_us_floor64(k_cycle_get_64() - pause_started_cycles);
+		out->maintenance.total_us += elapsed;
+		out->maintenance.max_us = MAX(out->maintenance.max_us, elapsed);
+	}
 }
 #endif
 
@@ -1059,6 +1094,11 @@ void zlrs_rf_credentials(void)
 void zlrs_rf_pause(void)
 {
 	__ASSERT_NO_MSG(!paused);
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
+	pause_started_cycles = k_cycle_get_64();
+	maintenance.count++;
+	maintenance_gap = true;
+#endif
 	paused = true;
 	paused_at_ms = zlrs_slot_timer_now_ms();
 	pause_had_plan = links_ready && zlrs_link_get_info(&link_data).band_plan.switch_frame != 0U;
@@ -1090,6 +1130,11 @@ void zlrs_rf_resume(void)
 	if (links_ready) {
 		update_power(zlrs_slot_timer_now_ms());
 	}
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
+	const uint64_t elapsed = k_cyc_to_us_floor64(k_cycle_get_64() - pause_started_cycles);
+	maintenance.total_us += elapsed;
+	maintenance.max_us = MAX(maintenance.max_us, elapsed);
+#endif
 }
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
@@ -1120,6 +1165,13 @@ int zlrs_rf_init(void)
 	memset(&radio_status, 0, sizeof(radio_status));
 	temperature_centi_c = INT16_MIN;
 	hardware_sampled_ms = 0U;
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
+	timings = (zlrs_rf_timings_t){0};
+	maintenance = (zlrs_rf_maintenance_t){0};
+	maintenance_gap = false;
+#endif
+	skipped_frames = 0U;
+	missed_slots = 0U;
 	/* Debug image only (gated in Kconfig, so the symbol does not exist in production builds):
 	 * USB is up, so wait for the host to open the console port — otherwise a panic log lands
 	 * on a port nobody has open. */
@@ -1251,10 +1303,20 @@ void zlrs_rf_frame(void)
 	/* Frames elapsed during maintenance still advance the original hop cadence. */
 	while (++consumed_frame < timer_frame) {
 		skipped_frames++;
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
+		if (maintenance_gap) {
+			maintenance.skipped_after_maintenance++;
+		} else {
+			maintenance.skipped_without_maintenance++;
+		}
+#endif
 		for (uint8_t slot = 0U; slot < ZLRS_SLOT_COUNT; slot++) {
 			zlrs_link_skip_slot(&link_data, slot);
 		}
 	}
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
+	maintenance_gap = false;
+#endif
 	phase_adj_set = false;
 	const uint32_t period = frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE;
 	transition_reserved = false;

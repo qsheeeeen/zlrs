@@ -2,6 +2,7 @@
 #pragma once
 
 #include "power.h"
+#include "timing.h"
 #include "zlrs/link/link.h"
 #include "zlrs/region/region.h"
 
@@ -20,6 +21,32 @@ typedef struct {
 	uint32_t span_ms;
 	zlrs_link_state_t state;
 } zlrs_rf_rate_sample_t;
+
+typedef enum {
+	ZLRS_RF_TIMING_PREPARE_IRQ,
+	ZLRS_RF_TIMING_OWNER_WAKE,
+	ZLRS_RF_TIMING_SERIAL,
+	ZLRS_RF_TIMING_PROTOCOL,
+	ZLRS_RF_TIMING_PACKET,
+	ZLRS_RF_TIMING_RADIO_PREPARE,
+	ZLRS_RF_TIMING_RX_PROTOCOL,
+	ZLRS_RF_TIMING_RX_FINISH,
+	ZLRS_RF_TIMING_COUNT,
+} zlrs_rf_timing_phase_t;
+
+typedef struct {
+	zlrs_timing_histogram_t phase[ZLRS_RF_TIMING_COUNT];
+	uint32_t epoch;
+	uint32_t started_ms;
+} zlrs_rf_timings_t;
+
+typedef struct {
+	uint32_t count;
+	uint64_t total_us;
+	uint64_t max_us;
+	uint32_t skipped_after_maintenance;
+	uint32_t skipped_without_maintenance;
+} zlrs_rf_maintenance_t;
 
 typedef struct {
 	zlrs_rf_link_snapshot_t link;
@@ -52,6 +79,8 @@ typedef struct {
 	uint32_t rx_protocol_us_max;
 	bool power_fixed;
 	zlrs_power_t power;
+	zlrs_rf_timings_t timings;
+	zlrs_rf_maintenance_t maintenance;
 } zlrs_rf_diagnostics_t;
 
 /* Called by management diagnostics at a safe boundary; no work on the RF hot path. */

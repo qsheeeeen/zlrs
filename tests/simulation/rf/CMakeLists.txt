@@ -6,6 +6,7 @@ get_filename_component(zlrs_root "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE
 target_sources(app PRIVATE test_rf.c "${zlrs_root}/app/src/rf.c"
  "${zlrs_root}/app/src/platform/temperature.c"
  "${zlrs_root}/app/src/diagnostics.c"
+ "${zlrs_root}/app/src/timing.c"
  "${zlrs_root}/app/src/power.c" "${zlrs_root}/app/src/band.c"
  "${zlrs_root}/tests/support/sha256_soft.c")
 target_include_directories(app PRIVATE "${zlrs_root}/app/src" "${zlrs_root}/core/proto")

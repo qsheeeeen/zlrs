@@ -36,16 +36,52 @@ SAVE_FAULT = re.compile(r"SAVE_FAULT active=(\d+) pending=(\d+) calls=(\d+) firs
                         r"last_ms=(\d+) min_gap_ms=(\d+) restores=(\d+)")
 
 
+def timing_snapshot(report):
+    names = ("prepare IRQ", "owner wake", "serial pump", "protocol build", "packet total",
+             "radio prepare", "RX protocol", "RX completion")
+    phases = {}
+    for name in names:
+        row = re.search(r"^\s+" + re.escape(name) +
+                        r"\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*$",
+                        report, re.MULTILINE)
+        if row is None:
+            if name in names[:2] and re.search(re.escape(name) + r"\s+no samples", report):
+                phases[name] = {"samples": 0}
+                continue
+            raise RuntimeError(f"Missing active timing samples for {name}")
+        values = dict(zip(("samples", "mean_us", "p50_bound_us", "p95_bound_us",
+                           "p99_bound_us", "max_us"), map(int, row.groups())))
+        if not (values["samples"] > 0 and values["mean_us"] <= values["max_us"] and
+                values["p50_bound_us"] <= values["p95_bound_us"] <=
+                values["p99_bound_us"] <= values["max_us"]):
+            raise RuntimeError(f"Inconsistent {name} timing statistics: {values}")
+        phases[name] = values
+    epoch = re.search(r"Epoch (\d+)\s+Since (\d+) ms", report)
+    pauses = re.search(r"Pauses\s*:\s*(\d+)\s+Total (\d+) us\s+Max (\d+) us", report)
+    catchup = re.search(r"Skipped after pause:\s*(\d+) frames\s+Without pause:\s*(\d+) frames", report)
+    totals = re.search(r"Missed / skipped\s*:\s*\d+ boundaries\s+(\d+) frames", report)
+    if not all((epoch, pauses, catchup, totals)):
+        raise RuntimeError("Incomplete timing epoch or maintenance statistics")
+    after, other = map(int, catchup.groups())
+    if after + other != int(totals[1]):
+        raise RuntimeError("Maintenance/runtime frame catch-up does not match its total")
+    return {"epoch": int(epoch[1]), "started_ms": int(epoch[2]), "phases": phases,
+            "maintenance": dict(zip(("count", "total_us", "max_us"), map(int, pauses.groups()))),
+            "skipped_after_maintenance": after, "skipped_without_maintenance": other}
+
+
 def wait_image(identity, expected, timeout=45):
     deadline = time.monotonic() + timeout
+    observed = "no response"
     while time.monotonic() < deadline:
         try:
-            if image_hash(identity) == expected:
+            observed = image_hash(identity)
+            if observed == expected:
                 return
-        except (OSError, RuntimeError, subprocess.SubprocessError):
-            pass
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            observed = str(error)
         time.sleep(0.2)
-    raise TimeoutError(f"Firmware {expected} did not return on {identity}")
+    raise TimeoutError(f"Firmware {expected} did not return on {identity}; last observed: {observed}")
 
 
 def command(port, text):
@@ -158,6 +194,8 @@ def main():
                         help="hold one automatic-mode PHY for a repeatable DATA measurement")
     parser.add_argument("--status-poll-hz", type=int, nargs="+", default=[0],
                         help="0..100 queries/s; one value or one per round, e.g. 0 50 0")
+    parser.add_argument("--timing", action="store_true",
+                        help="validate per-phase timing histograms and maintenance totals after each round")
     parser.add_argument("--entropy-stall-ms", type=int, default=0,
                         help="stall both TRNGs during one sustained DATA round (3500..10000 ms)")
     parser.add_argument("--pairing-save-fault-ms", type=int, default=0,
@@ -171,8 +209,8 @@ def main():
             len(args.status_poll_hz) not in (1, args.rounds) or
             (args.phy is not None and (args.profiles or args.raw))):
         parser.error("select 0..100 status queries/s and only one of --phy/--profiles/--raw")
-    if args.raw and any(args.status_poll_hz):
-        parser.error("online status polling requires DATA mode")
+    if args.raw and (any(args.status_poll_hz) or args.timing):
+        parser.error("online status polling and timing histograms require DATA mode")
     if args.entropy_stall_ms and (not 3500 <= args.entropy_stall_ms <= 10000 or
                                   args.profiles or args.raw or args.rounds != 1 or args.pairing_save_fault_ms):
         parser.error("--entropy-stall-ms needs 3500..10000 ms, one round, no raw/profile sweep")
@@ -365,6 +403,10 @@ def main():
                     record["rounds"][-1]["online_status"] = observers.stop()
                     observers.verify(phy)
                     record["rounds"][-1]["status"] = both("zlrs status")
+                    if args.timing:
+                        record["rounds"][-1]["timing"] = {
+                            identity: timing_snapshot(report)
+                            for identity, report in reports("radio").items()}
                     print(json.dumps(record["rounds"][-1]), flush=True)
                     if not all(value["rx"] == args.bytes and value["queued"] == args.bytes and
                                value["bad"] == 0 for value in result.values()):
