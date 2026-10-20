@@ -8,7 +8,8 @@
 #   tools/zlrs.py set-phrase --port /dev/ttyACM1 "correct horse battery staple"
 #   python3 tests/tools/run.py --module zlrs_mgmt   # no device: check management framing
 #
-# Except for `enter`, every command first sends enter-management-mode and waits for the ACK.
+# Read-only queries leave RF running; --refresh requests fresh chip measurements in maintenance.
+# Older firmware falls back to an explicit management session when it rejects an online query.
 # The two USB CDCs are data and management (/dev/ttyACM0/1).
 # Framing and commands: doc/07-protocol.md#usb-management-framing.
 # Public wire definitions: include/zlrs/mgmt/mgmt.h.
@@ -68,6 +69,7 @@ CMD_CONFIRM = 0x11
 CMD_LOG_INFO = 0x12
 CMD_LOG_READ = 0x13
 CMD_DEBUG_REPORT = 0x14
+CMD_OBSERVE = 0x15
 ACK = 0x80
 STATUS_RESP = 0x81
 BUILD_RESP = 0x82
@@ -75,6 +77,10 @@ IMAGE_HASH_RESP = 0x83
 LOG_INFO_RESP = 0x84
 LOG_DATA_RESP = 0x85
 DEBUG_REPORT_RESP = 0x86
+OBSERVE_RESP = 0x87
+OBSERVE_HEADER_LEN = 8
+PAYLOAD_MAX_LEN = STATUS_LEN + OBSERVE_HEADER_LEN
+ONLINE_COMMANDS = {CMD_STATUS, CMD_BUILD, CMD_IMAGE_HASH}
 
 # No-payload commands share registration and encoding metadata.
 SIMPLE_COMMANDS = {
@@ -139,7 +145,7 @@ def crc8(data: bytes) -> int:
 
 
 def encode(cmd: int, payload: bytes = b"") -> bytes:
-    if len(payload) > 91:
+    if len(payload) > PAYLOAD_MAX_LEN:
         raise ValueError("payload too long")
     body = bytes([VERSION, cmd, len(payload)]) + payload
     return SOF + body + bytes([crc8(body)])
@@ -279,10 +285,17 @@ def read_response(link):
             buf.clear()
         elif len(buf) == 2 and buf[1] != 0x5A:
             buf[:] = b"\xa5" if buf[-1] == 0xA5 else b""
-        elif len(buf) == 5 and buf[4] > 91:
-            raise ValueError("response payload exceeds 91 bytes")
+        elif len(buf) == 5 and buf[4] > PAYLOAD_MAX_LEN:
+            raise ValueError(f"response payload exceeds {PAYLOAD_MAX_LEN} bytes")
         elif len(buf) >= 5 and len(buf) == buf[4] + 6:
             return decode(bytes(buf))
+
+
+class ManagementError(ValueError):
+    def __init__(self, command, status):
+        super().__init__(STATUS_NAMES.get(status, hex(status)))
+        self.command = command
+        self.status = status
 
 
 class ManagementClient:
@@ -290,6 +303,7 @@ class ManagementClient:
 
     def __init__(self, link):
         self.link = link
+        self.entered = False
 
     def request(self, command, payload=b"", response=ACK):
         self.link.write(encode(command, payload))
@@ -301,30 +315,34 @@ class ManagementClient:
             if len(body) != 2 or body[0] != command:
                 raise ValueError("malformed or mismatched ACK")
             if body[1] != 0:
-                raise ValueError(STATUS_NAMES.get(body[1], hex(body[1])))
+                raise ManagementError(command, body[1])
             if response != ACK:
                 raise ValueError("expected response data, received only an OK ACK")
         elif got != response:
             raise ValueError(f"unexpected response 0x{got:02x} for command 0x{command:02x}")
+        if command == CMD_ENTER:
+            self.entered = True
+        elif command == CMD_EXIT:
+            self.entered = False
         return body
 
 
 @contextmanager
-def management_session(port, baud, timeout, enter=True, keep=False):
+def management_session(port, baud, timeout, enter=True, keep=False, observe=False):
     import serial  # pyserial
 
     with serial.Serial(port, baudrate=baud, timeout=timeout) as link:
         client = ManagementClient(link)
         failure = None
         try:
-            if enter:
+            if enter and not observe:
                 client.request(CMD_ENTER)
             yield client
         except BaseException as exc:
             failure = exc
             raise
         finally:
-            if not keep:
+            if not keep and (not observe or client.entered):
                 try:
                     client.request(CMD_EXIT)
                 except (OSError, ValueError, TimeoutError) as exc:
@@ -377,13 +395,16 @@ def device_heading(port: str) -> None:
 
 
 def talk(port: str, baud: int, frame: bytes, expect: bool, timeout: float,
-         prelude: bytes | None, quiet: bool = False, keep: bool = False) -> int:
+         prelude: bytes | None, quiet: bool = False, keep: bool = False,
+         refresh: bool = False) -> int:
     command, request = decode(frame)
     response = {CMD_STATUS: STATUS_RESP, CMD_BUILD: BUILD_RESP,
                 CMD_IMAGE_HASH: IMAGE_HASH_RESP}.get(command, ACK) if expect else None
+    online = command in ONLINE_COMMANDS and prelude is not None and not keep and not refresh
     try:
         with management_session(port, baud, timeout, enter=prelude is not None,
-                                keep=keep or command in (CMD_ENTER, CMD_EXIT, CMD_RECOVERY)) as client:
+                                keep=keep or command in (CMD_ENTER, CMD_EXIT, CMD_RECOVERY),
+                                observe=online) as client:
             if command == CMD_DEBUG_REPORT:
                 if len(request) != 3:
                     raise ValueError("bad debug report request")
@@ -396,11 +417,29 @@ def talk(port: str, baud: int, frame: bytes, expect: bool, timeout: float,
                 print(read_debug_report(client, report_id).decode(errors="replace"), end="")
                 return 0
 
-            payload = client.request(command, request, response)
+            query = CMD_OBSERVE if online and command == CMD_STATUS else command
+            answer = OBSERVE_RESP if query == CMD_OBSERVE else response
+            try:
+                payload = client.request(query, request, answer)
+            except ManagementError as error:
+                if not online or error.status not in (2, 4):
+                    raise
+                client.request(CMD_ENTER)
+                payload = client.request(command, request, response)
+                query = command
             if response is None:
                 notice("info", "Recovery requested; waiting for USB re-enumeration")
             elif response == STATUS_RESP:
                 heading("ZLRS Status")
+                if query == CMD_OBSERVE:
+                    if len(payload) != OBSERVE_HEADER_LEN + STATUS_LEN:
+                        raise ValueError("invalid observation snapshot length")
+                    sampled_ms, hardware_ms = struct.unpack_from("<II", payload)
+                    age = (sampled_ms - hardware_ms) & 0xffffffff
+                    print("[Snapshot]")
+                    print(fields([("Device uptime", f"{sampled_ms} ms"),
+                                  ("Chip observations age", f"{age} ms" if hardware_ms else "unavailable")]))
+                    payload = payload[OBSERVE_HEADER_LEN:]
                 print(status_text(payload))
             elif response == BUILD_RESP:
                 print(payload.decode(errors="replace"))
@@ -542,6 +581,8 @@ def add_options(parser, include_list=True):
                         help="skip the enter-management-mode step (when already in it)")
     parser.add_argument("--keep", action="store_true",
                         help="stay in management mode after the command (the default leaves it, which restores the radio)")
+    parser.add_argument("--refresh", action="store_true",
+                        help="pause RF to refresh chip measurements for a read-only query")
 
 
 def add_commands(sub, parents=()):
@@ -669,11 +710,15 @@ def main(args=None, parser=None) -> int:
     else:
         parser.error(f"unknown command: {args.command}")
 
+    query_command = decode(frame)[0]
+    online = (query_command in ONLINE_COMMANDS and not args.no_enter and
+              not args.keep and not args.refresh)
     if args.dry_run:
-        if args.command not in ("enter", "recovery", "exit") and not args.no_enter:
+        if args.command not in ("enter", "recovery", "exit") and not args.no_enter and not online:
             print(f"enter: {encode(CMD_ENTER).hex()}")
-        print(f"cmd  : {frame.hex()}")
-        if args.command not in ("enter", "exit", "recovery") and not args.keep:
+        command_frame = encode(CMD_OBSERVE) if online and query_command == CMD_STATUS else frame
+        print(f"cmd  : {command_frame.hex()}")
+        if args.command not in ("enter", "exit", "recovery") and not args.keep and not online:
             print(f"exit : {encode(CMD_EXIT).hex()}")
         return 0
 
@@ -689,7 +734,8 @@ def main(args=None, parser=None) -> int:
         if len(targets) > 1:
             device_heading(port)
         try:
-            this = talk(port, args.baud, frame, expect, args.timeout, prelude, keep=args.keep)
+            this = talk(port, args.baud, frame, expect, args.timeout, prelude, keep=args.keep,
+                        refresh=args.refresh)
         except (OSError, ValueError, TimeoutError) as exc:
             notice("error", f"{port}: {exc}", file=sys.stderr)
             this = 1

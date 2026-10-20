@@ -38,7 +38,8 @@ class ManagementTests(unittest.TestCase):
         link = Mock()
         link.__enter__ = Mock(return_value=link)
         link.__exit__ = Mock(return_value=False)
-        responses = io.BytesIO(mgmt.encode(mgmt.ACK, bytes([mgmt.CMD_ENTER, 0])) +
+        responses = io.BytesIO(mgmt.encode(mgmt.ACK, bytes([mgmt.CMD_OBSERVE, 2])) +
+                               mgmt.encode(mgmt.ACK, bytes([mgmt.CMD_ENTER, 0])) +
                                mgmt.encode(mgmt.ACK, bytes([mgmt.CMD_STATUS, 2])) +
                                mgmt.encode(mgmt.ACK, bytes([mgmt.CMD_EXIT, 0])))
         link.read.side_effect = responses.read
@@ -46,7 +47,7 @@ class ManagementTests(unittest.TestCase):
             rc, _ = invoke(mgmt, "--port", "fake", "status")
         self.assertEqual(rc, 1)
         self.assertEqual([mgmt.decode(call.args[0])[0] for call in link.write.call_args_list],
-                         [mgmt.CMD_ENTER, mgmt.CMD_STATUS, mgmt.CMD_EXIT])
+                         [mgmt.CMD_OBSERVE, mgmt.CMD_ENTER, mgmt.CMD_STATUS, mgmt.CMD_EXIT])
 
     def test_pair_busy_is_reported_and_management_exits(self):
         link = Mock()
@@ -72,7 +73,7 @@ class ManagementTests(unittest.TestCase):
                                mgmt.encode(mgmt.ACK, bytes([mgmt.CMD_EXIT, 2])))
         link.read.side_effect = responses.read
         with patch.dict(sys.modules, {"serial": Mock(Serial=Mock(return_value=link))}):
-            rc, output = invoke(mgmt, "--port", "fake", "build")
+            rc, output = invoke(mgmt, "--port", "fake", "--refresh", "build")
         self.assertEqual(rc, 1)
         self.assertIn("restore the radio", output)
 
@@ -84,7 +85,8 @@ class ManagementTests(unittest.TestCase):
 
     def test_session_flags_and_one_connection(self):
         for options, commands in [
-            ([], [mgmt.CMD_ENTER, mgmt.CMD_BUILD, mgmt.CMD_EXIT]),
+            ([], [mgmt.CMD_BUILD]),
+            (["--refresh"], [mgmt.CMD_ENTER, mgmt.CMD_BUILD, mgmt.CMD_EXIT]),
             (["--keep"], [mgmt.CMD_ENTER, mgmt.CMD_BUILD]),
             (["--no-enter"], [mgmt.CMD_BUILD, mgmt.CMD_EXIT]),
         ]:
@@ -136,6 +138,56 @@ class ManagementTests(unittest.TestCase):
                 contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(mgmt.dump_logs("fake", 115200, 1, directory), 1)
         self.assertEqual(link.write.call_args.args[0], mgmt.encode(mgmt.CMD_EXIT))
+
+    def test_online_status_has_timestamps_and_never_enters_management(self):
+        link = Mock()
+        link.__enter__ = Mock(return_value=link)
+        link.__exit__ = Mock(return_value=False)
+        snapshot = (16).to_bytes(4, "little") + (0xfffffff0).to_bytes(4, "little") + bytes(mgmt.STATUS_LEN)
+        responses = io.BytesIO(mgmt.encode(mgmt.OBSERVE_RESP, snapshot))
+        link.read.side_effect = responses.read
+        with patch.dict(sys.modules, {"serial": Mock(Serial=Mock(return_value=link))}):
+            rc, output = invoke(mgmt, "--port", "fake", "status")
+        self.assertEqual(rc, 0)
+        self.assertIn("32 ms", output)
+        self.assertEqual([mgmt.decode(call.args[0])[0] for call in link.write.call_args_list],
+                         [mgmt.CMD_OBSERVE])
+
+    def test_online_query_falls_back_only_when_unsupported(self):
+        for status in (2, 4, 3):
+            with self.subTest(status=status):
+                link = Mock()
+                link.__enter__ = Mock(return_value=link)
+                link.__exit__ = Mock(return_value=False)
+                responses = io.BytesIO(
+                    mgmt.encode(mgmt.ACK, bytes([mgmt.CMD_BUILD, status])) +
+                    mgmt.encode(mgmt.ACK, bytes([mgmt.CMD_ENTER, 0])) +
+                    mgmt.encode(mgmt.BUILD_RESP, b"legacy") +
+                    mgmt.encode(mgmt.ACK, bytes([mgmt.CMD_EXIT, 0])))
+                link.read.side_effect = responses.read
+                with patch.dict(sys.modules, {"serial": Mock(Serial=Mock(return_value=link))}):
+                    rc, output = invoke(mgmt, "--port", "fake", "build")
+                expected = [mgmt.CMD_BUILD]
+                if status in (2, 4):
+                    expected += [mgmt.CMD_ENTER, mgmt.CMD_BUILD, mgmt.CMD_EXIT]
+                    self.assertEqual(rc, 0)
+                    self.assertIn("legacy", output)
+                else:
+                    self.assertEqual(rc, 1)
+                self.assertEqual([mgmt.decode(call.args[0])[0] for call in link.write.call_args_list],
+                                 expected)
+
+    def test_malformed_observation_does_not_change_management_mode(self):
+        link = Mock()
+        link.__enter__ = Mock(return_value=link)
+        link.__exit__ = Mock(return_value=False)
+        responses = io.BytesIO(mgmt.encode(mgmt.OBSERVE_RESP, bytes(mgmt.STATUS_LEN)))
+        link.read.side_effect = responses.read
+        with patch.dict(sys.modules, {"serial": Mock(Serial=Mock(return_value=link))}):
+            rc, output = invoke(mgmt, "--port", "fake", "status")
+        self.assertEqual(rc, 1)
+        self.assertIn("snapshot length", output)
+        self.assertEqual(link.write.call_count, 1)
 
     def test_log_read_ack_reports_status_and_offset_then_exits(self):
         cases = ((bytes([mgmt.CMD_LOG_READ, 2]), "wrong state"),

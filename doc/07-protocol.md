@@ -319,7 +319,7 @@ UART overflow accounting remain in effect.
 A5 5A | version(1) | command(1) | payload_length(1) | payload | CRC8(1)
 ```
 
-Version is 5. Payload is at most 91 bytes and a full frame at most 97. CRC8 uses
+Version is 5. Payload is at most 99 bytes and a full frame at most 105. CRC8 uses
 DVB-S2 polynomial `0xD5`, initial zero, over version, command, length and payload.
 This CRC detects corruption; local USB access is the trust boundary. Multibyte
 management integers are little endian. ACK command `0x80` carries the original
@@ -338,13 +338,28 @@ it reports success only after pairing has started.
 | LOG_INFO | `12` | No payload |
 | LOG_READ | `13` | File index:u8, offset:u32, requested length:u8, at most 80 bytes |
 | DEBUG_REPORT | `14` | Report:u8, offset:u16; debug images only |
+| OBSERVE | `15` | No payload; online status with sampling times |
 
 Responses are ACK `80`, STATUS `81`, BUILD `82`, IMAGE_HASH `83`, LOG_INFO `84`,
-LOG_DATA `85` and DEBUG_REPORT `86`. Build text is at most 32 bytes and image hash
+LOG_DATA `85`, DEBUG_REPORT `86` and OBSERVE `87`. Build text is at most 32 bytes and image hash
 is 32 bytes. LOG_INFO carries count:u8, newest index:u8, then file number:u16 and
 size:u32 pairs. LOG_DATA echoes file index and offset before the bytes.
 DEBUG_REPORT carries report:u8, offset:u16, total:u16 and at most 85 text bytes;
 report IDs 0–3 mean link, rate, radio and power.
+
+STATUS, OBSERVE, BUILD and IMAGE_HASH also work outside a maintenance session.
+The application owner services at most one online query between frames, without
+pausing RF, refreshing chip measurements, or disarming the watchdog. Writes and
+debug report formatting still require ENTER. OBSERVE_RESP contains sample uptime:u32,
+hardware sample uptime:u32 and the unchanged 91-byte STATUS_RESP payload. The
+hardware timestamp covers the cached MCU/radio observations taken at startup or
+the last maintenance refresh; zero means unavailable. Uptime subtraction wraps
+modulo 2^32. The link fields are captured together on the owner thread.
+
+The host uses online queries by default. `--refresh` or `--keep` requests an
+explicit maintenance session. If older firmware rejects the query with state or
+unknown-command status, the host enters maintenance, uses the original command,
+and exits. Legacy STATUS_RESP remains 91 bytes and its framing is unchanged.
 
 Successful ENTER follows radio pause and synchronous log flush. Repeated ENTER
 flushes again. The session exits on EXIT or 300 seconds of inactivity. Command

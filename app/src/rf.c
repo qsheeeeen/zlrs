@@ -23,6 +23,7 @@
 #include "platform/slot_timer.h"
 #include "platform/watchdog.h"
 #include "platform/lr2021.h"
+#include "platform/temperature.h"
 
 #include "zlrs/link/link.h"
 #include "zlrs/region/region.h"
@@ -40,6 +41,17 @@ ZBUS_CHAN_DEFINE(zlrs_rf_chan, zlrs_rf_status_t, NULL, NULL, ZBUS_OBSERVERS_EMPT
 static bool links_ready;
 static bool radio_ready;
 static zlrs_lr2021_status_t radio_status;
+static int16_t temperature_centi_c = INT16_MIN;
+static uint32_t hardware_sampled_ms;
+
+static void refresh_hardware_status(void)
+{
+	zlrs_lr2021_read_status(&radio_status);
+	temperature_centi_c = INT16_MIN;
+	(void)zlrs_temperature_read(&temperature_centi_c);
+	hardware_sampled_ms = k_uptime_get_32();
+}
+
 static bool paused;
 static int pause_priority;
 static uint32_t paused_at_ms;
@@ -980,6 +992,8 @@ zlrs_rf_status_t zlrs_rf_status(void)
 		.frequency_hz = info.frequency_hz,
 		.hop_index = info.hop_index,
 		.radio = radio_status,
+		.temperature_centi_c = temperature_centi_c,
+		.hardware_sampled_ms = hardware_sampled_ms,
 	};
 	memcpy(out.dev_id, device_id, sizeof(out.dev_id));
 	memcpy(out.peer_id, info.peer_id, sizeof(out.peer_id));
@@ -990,7 +1004,7 @@ void zlrs_rf_status_refresh(void)
 {
 	__ASSERT_NO_MSG(paused);
 	if (radio_ready) {
-		zlrs_lr2021_read_status(&radio_status);
+		refresh_hardware_status();
 	}
 	publish_state(true);
 }
@@ -1104,6 +1118,8 @@ int zlrs_rf_init(void)
 	links_ready = false;
 	radio_ready = false;
 	memset(&radio_status, 0, sizeof(radio_status));
+	temperature_centi_c = INT16_MIN;
+	hardware_sampled_ms = 0U;
 	/* Debug image only (gated in Kconfig, so the symbol does not exist in production builds):
 	 * USB is up, so wait for the host to open the console port — otherwise a panic log lands
 	 * on a port nobody has open. */
@@ -1208,7 +1224,7 @@ int zlrs_rf_init(void)
 
 	radio_ready = true;
 	/* Initial snapshot before the timer starts; later refreshes use management. */
-	zlrs_lr2021_read_status(&radio_status);
+	refresh_hardware_status();
 	return 0;
 }
 

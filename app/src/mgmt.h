@@ -22,7 +22,8 @@ int zlrs_mgmt_run(void);
 
 /* Dedicated management CDC, serviced directly by the application owner. */
 int zlrs_mgmt_init(void);
-/* Process idle CDC input and session requests; true asks the owner to run a session.
+/* Process idle CDC input, including one online query per frame, and session requests;
+ * true asks the owner to run a session.
  * run() acknowledges host ENTER when ready; RECOVERY may reboot here. */
 bool zlrs_mgmt_process_idle(void);
 /* May be called by a shell thread; the application owner consumes it in process_idle(). */

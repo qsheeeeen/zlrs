@@ -123,12 +123,12 @@ TEST(Management, StatusWireLayout)
 	EXPECT_TRUE(received.radio_chip_mode == 2 && received.radio_command_status == 2);
 	EXPECT_TRUE(received.radio_reset_status == 1 && received.radio_valid == 0x3F);
 	EXPECT_TRUE(received.radio_errors == 0x8401 && received.radio_irq == 0xFEDCBA98U);
-	/* The enlarged status exactly fills the maximum management payload. */
+	/* Existing status replies retain their size alongside timestamped observations. */
 	uint8_t frame[ZLRS_MGMT_FRAME_MAX_LEN];
 	zlrs_mgmt_parser_t parser;
 	const uint8_t len = zlrs_mgmt_encode(frame, sizeof(frame), ZLRS_MGMT_CMD_STATUS_RESP, bytes,
 					     sizeof(bytes));
-	EXPECT_TRUE(len == ZLRS_MGMT_FRAME_MAX_LEN && parse_response(frame, len, &parser));
+	EXPECT_TRUE(len == ZLRS_MGMT_STATUS_LEN + 6U && parse_response(frame, len, &parser));
 	EXPECT_EQ(parser.payload_len, ZLRS_MGMT_STATUS_LEN);
 	EXPECT_EQ(memcmp(ZLRS_MGMT_PAYLOAD(&parser), bytes, sizeof(bytes)), 0);
 	EXPECT_FALSE(zlrs_mgmt_status_decode(bytes, 72, &received));

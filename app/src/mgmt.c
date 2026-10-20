@@ -28,7 +28,6 @@
 #include "serial.h"
 #include "persist.h"
 #include "rf.h"
-#include "platform/temperature.h"
 #if defined(CONFIG_ZLRS_APP_DEBUG)
 #include "diagnostics.h"
 #endif
@@ -206,6 +205,14 @@ static void mgmt_log_flush(void)
 	}
 }
 
+static bool query_command(uint8_t cmd)
+{
+	return cmd == ZLRS_MGMT_CMD_STATUS || cmd == ZLRS_MGMT_CMD_OBSERVE ||
+	       cmd == ZLRS_MGMT_CMD_BUILD || cmd == ZLRS_MGMT_CMD_IMAGE_HASH;
+}
+
+static uint8_t execute_query(uint8_t cmd, uint8_t len, uint8_t *out, size_t cap, bool refresh);
+
 bool zlrs_mgmt_process_idle(void)
 {
 	publish_mode();
@@ -237,13 +244,20 @@ bool zlrs_mgmt_process_idle(void)
 			cfg_enter_pending = true;
 			return true;
 		}
+		if (query_command(cmd)) {
+			cfg_tx_pending = execute_query(cmd, parser.payload_len, cfg_tx_line,
+						       sizeof(cfg_tx_line), false);
+			flush_reply();
+			/* Bound query work per frame even when the host floods the CDC. */
+			return false;
+		}
 
 		/* Recovery is available outside a session; success reboots, failure replies below. */
 		if (cmd == ZLRS_MGMT_CMD_RECOVERY) {
 			(void)zlrs_boot_recovery();
 		}
 
-		/* Outside a session everything answers "wrong state"; EXIT is a no-op */
+		/* Mutations require a session; EXIT outside one is a no-op. */
 		payload[0] = cmd;
 		payload[1] = (cmd == ZLRS_MGMT_CMD_EXIT) ? ZLRS_MGMT_OK : ZLRS_MGMT_E_STATE;
 
@@ -312,9 +326,8 @@ static int save_root_key(const uint8_t key[ZLRS_KEY_LEN])
 	return persist_result(rc);
 }
 
-static void read_status(zlrs_mgmt_status_t *out)
+static uint32_t read_status(zlrs_mgmt_status_t *out)
 {
-	zlrs_rf_status_refresh();
 	const zlrs_rf_status_t rf = zlrs_rf_status();
 	const zlrs_persist_settings_t *const settings = zlrs_persist_settings();
 
@@ -333,7 +346,7 @@ static void read_status(zlrs_mgmt_status_t *out)
 		.peer_lq_percent = rf.peer_lq_percent,
 		.active_power_dbm = rf.tx_power_dbm,
 		.power_floor_dbm = rf.power_floor_dbm,
-		.temperature_centi_c = ZLRS_MGMT_TEMP_UNAVAILABLE,
+		.temperature_centi_c = rf.temperature_centi_c,
 		.tx_frames = rf.tx_frames,
 		.rx_frames = rf.rx_frames,
 		.rx_crc_errors = rf.rx_crc_errors,
@@ -358,7 +371,6 @@ static void read_status(zlrs_mgmt_status_t *out)
 		.radio_irq = rf.radio.irq,
 		.data_phy = rf.data_phy,
 	};
-	(void)zlrs_temperature_read(&out->temperature_centi_c);
 	if (rf.data_band == ZLRS_DATA_BAND_SUBG) {
 		out->flags |= ZLRS_MGMT_FLAG_DATA_SUBG;
 	}
@@ -385,6 +397,7 @@ static void read_status(zlrs_mgmt_status_t *out)
 	}
 	memcpy(out->dev_id, rf.dev_id, ZLRS_DEV_ID_LEN);
 	memcpy(out->peer_id, rf.peer_id, ZLRS_DEV_ID_LEN);
+	return rf.hardware_sampled_ms;
 }
 
 /*
@@ -481,6 +494,54 @@ static uint8_t ack_frame(uint8_t *out, size_t cap, uint8_t cmd, uint8_t status)
 	return zlrs_mgmt_encode(out, cap, ZLRS_MGMT_CMD_ACK, body, sizeof(body));
 }
 
+/* The owner services online queries between frames. Only maintenance queries refresh
+ * chip observations: online status never accesses the radio SPI or the ADC.
+ */
+static uint8_t execute_query(uint8_t cmd, uint8_t len, uint8_t *out, size_t cap, bool refresh)
+{
+	if (len != 0U) {
+		return ack_frame(out, cap, cmd, ZLRS_MGMT_E_PARAM);
+	}
+	switch (cmd) {
+	case ZLRS_MGMT_CMD_STATUS:
+	case ZLRS_MGMT_CMD_OBSERVE: {
+		zlrs_mgmt_status_t status;
+		uint8_t body[ZLRS_MGMT_OBSERVE_HEADER_LEN + ZLRS_MGMT_STATUS_LEN];
+		const uint8_t header =
+			cmd == ZLRS_MGMT_CMD_OBSERVE ? ZLRS_MGMT_OBSERVE_HEADER_LEN : 0U;
+		if (refresh) {
+			zlrs_rf_status_refresh();
+		}
+		const uint32_t hardware_sampled_ms = read_status(&status);
+		if (header != 0U) {
+			sys_put_le32(k_uptime_get_32(), body);
+			sys_put_le32(hardware_sampled_ms, body + 4U);
+		}
+		zlrs_mgmt_status_encode(body + header, &status);
+		return zlrs_mgmt_encode(out, cap,
+					header != 0U ? ZLRS_MGMT_CMD_OBSERVE_RESP
+						     : ZLRS_MGMT_CMD_STATUS_RESP,
+					body, header + ZLRS_MGMT_STATUS_LEN);
+	}
+	case ZLRS_MGMT_CMD_BUILD: {
+		char build[ZLRS_MGMT_BUILD_MAX_LEN];
+		(void)snprintf(build, sizeof(build), "%s", APP_VERSION_STRING);
+		return zlrs_mgmt_encode(out, cap, ZLRS_MGMT_CMD_BUILD_RESP, (const uint8_t *)build,
+					strlen(build));
+	}
+	case ZLRS_MGMT_CMD_IMAGE_HASH: {
+		uint8_t hash[ZLRS_MGMT_IMAGE_HASH_LEN];
+		const int rc = read_image_hash(hash);
+		return rc == ZLRS_MGMT_OK
+			       ? zlrs_mgmt_encode(out, cap, ZLRS_MGMT_CMD_IMAGE_HASH_RESP, hash,
+						  sizeof(hash))
+			       : ack_frame(out, cap, cmd, rc);
+	}
+	default:
+		return ack_frame(out, cap, cmd, ZLRS_MGMT_E_UNKNOWN);
+	}
+}
+
 #if defined(CONFIG_ZLRS_APP_DEBUG)
 
 static uint8_t cfg_debug_report(const uint8_t *request, uint8_t request_len, uint8_t *out,
@@ -543,6 +604,9 @@ uint8_t zlrs_mgmt_command(uint8_t cmd, const uint8_t *payload, uint8_t len, uint
 			  size_t cap)
 {
 	int rc;
+	if (query_command(cmd)) {
+		return execute_query(cmd, len, out, cap, true);
+	}
 	switch (cmd) {
 #if defined(CONFIG_ZLRS_APP_DEBUG)
 	case ZLRS_MGMT_CMD_DEBUG_REPORT:
@@ -551,27 +615,6 @@ uint8_t zlrs_mgmt_command(uint8_t cmd, const uint8_t *payload, uint8_t len, uint
 	case ZLRS_MGMT_CMD_ENTER:
 	case ZLRS_MGMT_CMD_EXIT:
 		return ack_frame(out, cap, cmd, ZLRS_MGMT_OK);
-	case ZLRS_MGMT_CMD_STATUS: {
-		zlrs_mgmt_status_t status;
-		uint8_t body[ZLRS_MGMT_STATUS_LEN];
-		read_status(&status);
-		zlrs_mgmt_status_encode(body, &status);
-		return zlrs_mgmt_encode(out, cap, ZLRS_MGMT_CMD_STATUS_RESP, body, sizeof(body));
-	}
-	case ZLRS_MGMT_CMD_BUILD: {
-		char build[ZLRS_MGMT_BUILD_MAX_LEN];
-		(void)snprintf(build, sizeof(build), "%s", APP_VERSION_STRING);
-		return zlrs_mgmt_encode(out, cap, ZLRS_MGMT_CMD_BUILD_RESP, (const uint8_t *)build,
-					strlen(build));
-	}
-	case ZLRS_MGMT_CMD_IMAGE_HASH: {
-		uint8_t hash[ZLRS_MGMT_IMAGE_HASH_LEN];
-		rc = read_image_hash(hash);
-		return rc == ZLRS_MGMT_OK
-			       ? zlrs_mgmt_encode(out, cap, ZLRS_MGMT_CMD_IMAGE_HASH_RESP, hash,
-						  sizeof(hash))
-			       : ack_frame(out, cap, cmd, rc);
-	}
 	case ZLRS_MGMT_CMD_CONFIRM:
 		return ack_frame(out, cap, cmd,
 				 zlrs_boot_confirm() == 0 ? ZLRS_MGMT_OK : ZLRS_MGMT_E_STORE);

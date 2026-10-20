@@ -3,6 +3,9 @@
 #include <string.h>
 #include <zephyr/ztest.h>
 #include <zephyr/kvss/nvs.h>
+#include <zephyr/drivers/serial/uart_emul.h>
+#include <zephyr/drivers/uart.h>
+#include <zephyr/sys/byteorder.h>
 #include "mgmt.h"
 #include "log.h"
 #include "persist.h"
@@ -26,18 +29,16 @@ static const zlrs_rf_status_t initial_rf = {
 	.frequency_hz = 2478000000U,
 	.hop_index = 236,
 	.frame_period_us = 9080,
+	.temperature_centi_c = 2675,
+	.hardware_sampled_ms = 17U,
 };
 static zlrs_rf_status_t rf;
 static unsigned int credential_applies, pairs, confirms, radio_refreshes;
 static int confirm_rc;
 static int pair_rc;
 static bool fail_write;
-
-int zlrs_temperature_read(int16_t *centidegrees)
-{
-	*centidegrees = 2675;
-	return 0;
-}
+static unsigned int watchdog_disarms;
+static const struct device *const mgmt_uart = DEVICE_DT_GET(DT_ALIAS(zlrs_mgmt_cdc));
 
 ssize_t __real_nvs_write(struct nvs_fs *, uint16_t, const void *, size_t);
 
@@ -104,6 +105,7 @@ void zlrs_watchdog_feed(void)
 
 void zlrs_watchdog_disarm(void)
 {
+	watchdog_disarms++;
 }
 
 void zlrs_watchdog_arm(void)
@@ -296,13 +298,108 @@ static void before(void *unused)
 	confirm_rc = 0;
 	pair_rc = 0;
 	credential_applies = pairs = confirms = radio_refreshes = 0;
+	watchdog_disarms = 0U;
 	rf = initial_rf;
 	zassert_ok(zlrs_persist_init());
 	zassert_ok(zlrs_persist_factory_reset());
 	zassert_ok(zlrs_persist_init());
+	zassert_ok(zlrs_mgmt_init());
+	(void)uart_emul_flush_tx_data(mgmt_uart);
+	(void)uart_emul_flush_rx_data(mgmt_uart);
 }
 
 ZTEST_SUITE(commands, NULL, NULL, before, NULL, NULL);
+
+static void send_online(uint8_t cmd, const uint8_t *body, uint8_t len)
+{
+	uint8_t frame[ZLRS_MGMT_FRAME_MAX_LEN];
+	const uint8_t size = zlrs_mgmt_encode(frame, sizeof(frame), cmd, body, len);
+	zassert_equal(uart_emul_put_rx_data(mgmt_uart, frame, size), size);
+	k_msleep(1);
+}
+
+static zlrs_mgmt_parser_t receive_online(void)
+{
+	zlrs_mgmt_parser_t parser;
+	zlrs_mgmt_parser_init(&parser);
+	for (unsigned int wait = 0U; wait < 100U; wait++) {
+		zassert_false(zlrs_mgmt_process_idle(), "query requested RF maintenance");
+		uint8_t byte;
+		while (uart_emul_get_tx_data(mgmt_uart, &byte, 1U) == 1U) {
+			if (zlrs_mgmt_feed(&parser, byte) == 1) {
+				return parser;
+			}
+		}
+		uart_irq_tx_enable(mgmt_uart);
+		k_msleep(1);
+	}
+	zassert_unreachable("online reply did not complete");
+	return parser;
+}
+
+ZTEST(commands, test_online_snapshot_does_not_touch_hardware)
+{
+	send_online(ZLRS_MGMT_CMD_OBSERVE, NULL, 0U);
+	const zlrs_mgmt_parser_t reply = receive_online();
+	zassert_equal(reply.cmd, ZLRS_MGMT_CMD_OBSERVE_RESP);
+	zassert_equal(reply.payload_len, ZLRS_MGMT_OBSERVE_HEADER_LEN + ZLRS_MGMT_STATUS_LEN);
+	const uint8_t *body = ZLRS_MGMT_PAYLOAD(&reply);
+	zassert_true(sys_get_le32(body) <= k_uptime_get_32());
+	zassert_equal(sys_get_le32(body + 4U), initial_rf.hardware_sampled_ms);
+	zlrs_mgmt_status_t status;
+	zassert_true(zlrs_mgmt_status_decode(body + ZLRS_MGMT_OBSERVE_HEADER_LEN,
+					     ZLRS_MGMT_STATUS_LEN, &status));
+	zassert_equal(status.tx_frames, initial_rf.tx_frames);
+	zassert_equal(status.temperature_centi_c, initial_rf.temperature_centi_c);
+	zassert_equal(radio_refreshes, 0U);
+	zassert_equal(watchdog_disarms, 0U);
+
+	send_online(ZLRS_MGMT_CMD_STATUS, NULL, 0U);
+	const zlrs_mgmt_parser_t legacy = receive_online();
+	zassert_equal(legacy.cmd, ZLRS_MGMT_CMD_STATUS_RESP);
+	zassert_equal(legacy.payload_len, ZLRS_MGMT_STATUS_LEN);
+	send_online(ZLRS_MGMT_CMD_BUILD, NULL, 0U);
+	zassert_equal(receive_online().cmd, ZLRS_MGMT_CMD_BUILD_RESP);
+}
+
+ZTEST(commands, test_online_rejects_mutations_and_malformed_queries)
+{
+	const uint8_t commands[] = {ZLRS_MGMT_CMD_PAIR, ZLRS_MGMT_CMD_FACTORY_RESET,
+				    ZLRS_MGMT_CMD_SET_KEY_HEX, ZLRS_MGMT_CMD_CONFIRM};
+	for (size_t i = 0U; i < ARRAY_SIZE(commands); i++) {
+		send_online(commands[i], NULL, 0U);
+		const zlrs_mgmt_parser_t reply = receive_online();
+		zassert_equal(reply.cmd, ZLRS_MGMT_CMD_ACK);
+		zassert_equal(ZLRS_MGMT_PAYLOAD(&reply)[0], commands[i]);
+		zassert_equal(ZLRS_MGMT_PAYLOAD(&reply)[1], ZLRS_MGMT_E_STATE);
+	}
+	const uint8_t extra = 0U;
+	send_online(ZLRS_MGMT_CMD_OBSERVE, &extra, 1U);
+	const zlrs_mgmt_parser_t bad = receive_online();
+	zassert_equal(bad.cmd, ZLRS_MGMT_CMD_ACK);
+	zassert_equal(ZLRS_MGMT_PAYLOAD(&bad)[1], ZLRS_MGMT_E_PARAM);
+	zassert_equal(pairs + confirms + credential_applies + radio_refreshes + watchdog_disarms,
+		      0U);
+}
+
+ZTEST(commands, test_online_flood_preserves_replies_under_backpressure)
+{
+	for (unsigned int i = 0U; i < 8U; i++) {
+		send_online(ZLRS_MGMT_CMD_OBSERVE, NULL, 0U);
+	}
+	/* Leave the emulated FIFO full; the owner's reply/ring must retain whole frames. */
+	for (unsigned int i = 0U; i < 16U; i++) {
+		zassert_false(zlrs_mgmt_process_idle());
+		k_msleep(1);
+	}
+	for (unsigned int i = 0U; i < 8U; i++) {
+		const zlrs_mgmt_parser_t reply = receive_online();
+		zassert_equal(reply.cmd, ZLRS_MGMT_CMD_OBSERVE_RESP);
+		zassert_equal(reply.payload_len,
+			      ZLRS_MGMT_OBSERVE_HEADER_LEN + ZLRS_MGMT_STATUS_LEN);
+	}
+	zassert_equal(radio_refreshes + watchdog_disarms, 0U);
+}
 
 ZTEST(commands, test_failed_factory_reset_invalidates_active_credentials)
 {

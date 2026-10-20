@@ -1,5 +1,11 @@
 / {
- aliases { zlrs-data-uart = &uart0; zlrs-mgmt-cdc = &uart1; };
+ aliases { zlrs-data-uart = &uart0; zlrs-mgmt-cdc = &mgmt_uart; };
+ mgmt_uart: management-uart {
+  compatible = "zephyr,uart-emul";
+  current-speed = <115200>;
+  tx-fifo-size = <64>;
+  rx-fifo-size = <1024>;
+ };
  zlrs_rf: rf-capabilities {
   compatible = "zlrs,rf-design";
   ism2400-min-tx-power-dbm = <(-17)>;
@@ -13,4 +19,3 @@
  };
 };
 &uart0 { current-speed = <115200>; };
-&uart1 { status = "okay"; current-speed = <115200>; };

@@ -49,6 +49,8 @@ typedef struct {
 	uint32_t radio_fail;
 	uint32_t frequency_hz;
 	uint16_t hop_index;
+	int16_t temperature_centi_c;
+	uint32_t hardware_sampled_ms;
 	zlrs_lr2021_status_t radio;
 } zlrs_rf_status_t;
 

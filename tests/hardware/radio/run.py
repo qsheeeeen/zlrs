@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import threading
 import time
 
 import serial
@@ -66,6 +67,77 @@ def debug_report(identity, name):
         return mgmt.read_debug_report(client, mgmt.DEBUG_REPORTS[name]).decode()
 
 
+class OnlineObservers:
+    """Poll each management CDC independently while the physical DATA links run."""
+
+    def __init__(self, identities, hz):
+        self.hz = hz
+        self.done = threading.Event()
+        self.records = {identity: {"latency_ms": [], "states": set(), "phys": set(),
+                                   "hardware_samples": set(), "errors": []}
+                        for identity in identities}
+        self.threads = [threading.Thread(target=self.observe, args=(identity,))
+                        for identity in identities] if hz else []
+        self.stopped = False
+        for thread in self.threads:
+            thread.start()
+
+    def observe(self, identity):
+        record = self.records[identity]
+        try:
+            path = f"/dev/serial/by-id/usb-zlrs_ZLRS_{identity}-if02"
+            with serial.Serial(path, 115200, timeout=2, write_timeout=2) as port:
+                client = mgmt.ManagementClient(port)
+                while not self.done.is_set():
+                    before = time.monotonic()
+                    payload = client.request(mgmt.CMD_OBSERVE, response=mgmt.OBSERVE_RESP)
+                    if len(payload) != mgmt.OBSERVE_HEADER_LEN + mgmt.STATUS_LEN:
+                        raise RuntimeError("Invalid online observation length")
+                    status = mgmt.decode_status(payload[mgmt.OBSERVE_HEADER_LEN:])
+                    sample = {"uptime_ms": int.from_bytes(payload[:4], "little"),
+                              "tx_frames": status.tx_frames, "rx_frames": status.rx_frames,
+                              "missed_slots": status.missed_slots, "radio_fail": status.radio_fail}
+                    record.setdefault("first", sample)
+                    record["last"] = sample
+                    record["latency_ms"].append((time.monotonic() - before) * 1000)
+                    record["states"].add(status.state)
+                    record["phys"].add(status.data_phy)
+                    record["hardware_samples"].add(int.from_bytes(payload[4:8], "little"))
+                    if not status.flags & 4:
+                        raise RuntimeError("Online query observed a retired DATA session")
+                    self.done.wait(max(0, 1 / self.hz - (time.monotonic() - before)))
+        except (OSError, ValueError, RuntimeError, TimeoutError) as error:
+            record["errors"].append(str(error))
+
+    def stop(self):
+        if not self.stopped:
+            self.done.set()
+            for thread in self.threads:
+                thread.join(timeout=5)
+                if thread.is_alive():
+                    raise RuntimeError("Online status observer did not stop")
+            for record in self.records.values():
+                latencies = sorted(record.pop("latency_ms"))
+                record["queries"] = len(latencies)
+                if latencies:
+                    record["latency_ms"] = {"p50": latencies[len(latencies) // 2],
+                                            "p99": latencies[min(len(latencies) - 1,
+                                                                len(latencies) * 99 // 100)],
+                                            "max": latencies[-1]}
+                for name in ("states", "phys", "hardware_samples"):
+                    record[name] = sorted(record[name])
+            self.stopped = True
+        return self.records
+
+    def verify(self, phy):
+        if self.hz and not all(record["queries"] >= 2 and not record["errors"] and
+                               record["states"] == [4] and
+                               len(record["hardware_samples"]) == 1 and
+                               (phy is None or record["phys"] == [phy])
+                               for record in self.records.values()):
+            raise RuntimeError(f"Online status interrupted DATA or refreshed hardware: {self.records}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--serial", required=True, help="first board USB serial")
@@ -80,6 +152,10 @@ def main():
     parser.add_argument("--raw", action="store_true", help="image must enable ZLRS_TEST_RAW_MS")
     parser.add_argument("--profiles", action="store_true",
                         help="sweep 2.4 GHz FLRC/LoRa profiles down and up (auto-mode peers)")
+    parser.add_argument("--phy", type=int, choices=range(5),
+                        help="hold one automatic-mode PHY for a repeatable DATA measurement")
+    parser.add_argument("--status-poll-hz", type=int, nargs="+", default=[0],
+                        help="0..100 queries/s; one value or one per round, e.g. 0 50 0")
     parser.add_argument("--entropy-stall-ms", type=int, default=0,
                         help="stall both TRNGs during one sustained DATA round (3500..10000 ms)")
     args = parser.parse_args()
@@ -87,6 +163,12 @@ def main():
         parser.error("select two different boards, 1..16 MiB and at least one round")
     if args.profiles and args.raw:
         parser.error("--profiles cannot be combined with --raw")
+    if (any(not 0 <= rate <= 100 for rate in args.status_poll_hz) or
+            len(args.status_poll_hz) not in (1, args.rounds) or
+            (args.phy is not None and (args.profiles or args.raw))):
+        parser.error("select 0..100 status queries/s and only one of --phy/--profiles/--raw")
+    if args.raw and any(args.status_poll_hz):
+        parser.error("online status polling requires DATA mode")
     if args.entropy_stall_ms and (not 3500 <= args.entropy_stall_ms <= 10000 or
                                   args.profiles or args.raw or args.rounds != 1):
         parser.error("--entropy-stall-ms needs 3500..10000 ms, one round, no raw/profile sweep")
@@ -174,16 +256,17 @@ def main():
                 names = ("active", "target", "queued", "rx", "bad", "duration_us", "goodput_Bps")
                 profile_names = ("FLRC 2.6 Mbps", "FLRC 650 kbps", "FLRC 325 kbps",
                                  "LoRa SF6/BW1MHz", "LoRa SF7/BW1MHz")
-                steps = [(None, number) for number in range(args.rounds)]
-                if args.profiles:
+                steps = [(args.phy, number) for number in range(args.rounds)]
+                if args.profiles or args.phy is not None:
                     roles = both("zlrs status")
                     leaders = [identity for identity, output in roles.items()
                                if re.search(r"Role\s*:\s*Leader", output)]
                     if len(leaders) != 1:
                         raise RuntimeError("Profile sweep needs exactly one Leader")
                     leader = leaders[0]
-                    steps = [(phy, number) for phy in (0, 1, 2, 3, 4, 3, 2, 1, 0)
-                             for number in range(args.rounds)]
+                    if args.profiles:
+                        steps = [(phy, number) for phy in (0, 1, 2, 3, 4, 3, 2, 1, 0)
+                                 for number in range(args.rounds)]
                 for phy, number in steps:
                     if phy is not None:
                         output = command(consoles[leader], f"zlrs phy {phy}")
@@ -219,6 +302,9 @@ def main():
                     start = both("test_data start")
                     if not all("BENCH start: 0" in output for output in start.values()):
                         raise RuntimeError("Cannot start both data sources")
+                    poll_hz = args.status_poll_hz[number % len(args.status_poll_hz)]
+                    observers = OnlineObservers(identities, poll_hz)
+                    stack.callback(observers.stop)
                     fault = None
                     entropy_names = ("active", "pending", "calls", "empty", "max_us", "restores")
                     if args.entropy_stall_ms:
@@ -262,6 +348,9 @@ def main():
                             record["timeout_link"] = reports("link")
                             raise TimeoutError("RF data delivery timed out")
                     record["rounds"].append({"round": number + 1, "phy": phy, "nodes": result})
+                    record["rounds"][-1]["status_poll_hz"] = poll_hz
+                    record["rounds"][-1]["online_status"] = observers.stop()
+                    observers.verify(phy)
                     record["rounds"][-1]["status"] = both("zlrs status")
                     print(json.dumps(record["rounds"][-1]), flush=True)
                     if not all(value["rx"] == args.bytes and value["queued"] == args.bytes and

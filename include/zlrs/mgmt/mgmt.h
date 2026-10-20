@@ -1,5 +1,5 @@
 /*
- * Management protocol: runs on the management CDC while in management mode
+ * Management protocol: queries and maintenance commands on the management CDC
  * (table: doc/07-protocol.md#usb-management-framing). Pure C frame and fixed status codecs.
  * The application executes device commands.
  *
@@ -22,7 +22,7 @@ extern "C" {
 #define ZLRS_MGMT_SOF0            0xA5U
 #define ZLRS_MGMT_SOF1            0x5AU
 #define ZLRS_MGMT_VERSION         5U
-#define ZLRS_MGMT_FRAME_MAX_LEN   97U
+#define ZLRS_MGMT_FRAME_MAX_LEN   105U
 #define ZLRS_MGMT_PAYLOAD_MAX_LEN (ZLRS_MGMT_FRAME_MAX_LEN - 6U)
 
 /* host -> device */
@@ -47,6 +47,7 @@ extern "C" {
 #define ZLRS_MGMT_CMD_LOG_INFO      0x12U /* what the log store holds */
 #define ZLRS_MGMT_CMD_LOG_READ      0x13U /* one chunk: log index (1) + offset (4) + length (1) */
 #define ZLRS_MGMT_CMD_DEBUG_REPORT  0x14U /* debug image only: report id (1) + offset (2) */
+#define ZLRS_MGMT_CMD_OBSERVE       0x15U /* timestamped status without pausing RF */
 
 /* device -> host */
 #define ZLRS_MGMT_CMD_ACK               0x80U /* [cmd][status] */
@@ -56,6 +57,7 @@ extern "C" {
 #define ZLRS_MGMT_CMD_LOG_INFO_RESP     0x84U /* count, newest, then file number/size pairs */
 #define ZLRS_MGMT_CMD_LOG_DATA_RESP     0x85U /* log index (1) + offset (4) + bytes */
 #define ZLRS_MGMT_CMD_DEBUG_REPORT_RESP 0x86U /* report id + offset + total + text chunk */
+#define ZLRS_MGMT_CMD_OBSERVE_RESP      0x87U /* sample time + hardware sample time + status */
 
 #define ZLRS_MGMT_DEBUG_REPORT_LINK       0U
 #define ZLRS_MGMT_DEBUG_REPORT_RATE       1U
@@ -74,13 +76,14 @@ extern "C" {
 #define ZLRS_MGMT_E_UNKNOWN 4U
 #define ZLRS_MGMT_E_BUSY    5U
 
-#define ZLRS_MGMT_STATUS_LEN       91U
-#define ZLRS_MGMT_TEMP_UNAVAILABLE INT16_MIN
-#define ZLRS_MGMT_PHRASE_MAX_LEN   32U
-#define ZLRS_MGMT_BUILD_MAX_LEN    32U
-#define ZLRS_MGMT_IMAGE_HASH_LEN   32U
+#define ZLRS_MGMT_STATUS_LEN         91U
+#define ZLRS_MGMT_OBSERVE_HEADER_LEN 8U
+#define ZLRS_MGMT_TEMP_UNAVAILABLE   INT16_MIN
+#define ZLRS_MGMT_PHRASE_MAX_LEN     32U
+#define ZLRS_MGMT_BUILD_MAX_LEN      32U
+#define ZLRS_MGMT_IMAGE_HASH_LEN     32U
 /* Log store: at most this many files, and this many bytes back per read (one frame's payload) */
-#define ZLRS_MGMT_LOG_CHUNK_MAX    80U
+#define ZLRS_MGMT_LOG_CHUNK_MAX      80U
 
 typedef struct {
 	uint8_t version; /* protocol version */
