@@ -14,7 +14,8 @@
  *     chain length 0/1 with 20-25 samples (about 2 ms per block), but that fails the Von
  *     Neumann check on this silicon (measured: runs of 32 zeroes or ones, sometimes autocorrelation
  *     giving up entirely), and 12.12.4 admits the official driver does not use it. We take the
- *     100 samples it names: 10 blocks in a row came out clean, at a proportional time cost.
+ *     100 samples it names, with the hardware checks still enabled. Real boards can reject
+ *     several consecutive blocks, so recovery is bounded by elapsed time rather than three draws.
  *   - A block is 6 EHR_DATA words; reading the last one clears the result registers and starts
  *     the next block (12.12.3).
  *   - Generation time is unpredictable and occasionally exceeds 100x the average (12.12.4), so the
@@ -59,12 +60,9 @@ LOG_MODULE_REGISTER(zlrs_trng, CONFIG_ZLRS_TRNG_LOG_LEVEL);
 #define TRNG_BLOCK_WORDS 6U
 #define TRNG_BLOCK_BYTES (TRNG_BLOCK_WORDS * sizeof(uint32_t))
 
-/* Generation occasionally exceeds 100x the average (12.12.4), so the timeout is that order */
-#define TRNG_BLOCK_TIMEOUT_MS 1000U
+/* One deadline covers generation and every discarded block, including repeated health errors. */
+#define TRNG_BLOCK_TIMEOUT_MS 3000U
 #define TRNG_POLL_INTERVAL_MS 1U
-
-/* A block that failed a check is not data; starting a new one is the normal path, not a fallback */
-#define TRNG_BLOCK_ATTEMPTS 3U
 
 /* Bits software can clear in RNG_ISR; AUTOCORR_ERR needs a soft reset (12.12.5) */
 #define TRNG_ISR_CLEARABLE                                                                         \
@@ -175,6 +173,9 @@ static int trng_wait_block(const struct trng_config *cfg, uint32_t start)
 	const trng_hw_t *trng = cfg->regs;
 
 	for (;;) {
+		if ((uint32_t)(k_uptime_get_32() - start) >= TRNG_BLOCK_TIMEOUT_MS) {
+			return -ETIMEDOUT;
+		}
 		const uint32_t isr = trng->rng_isr;
 
 		if ((isr & TRNG_RNG_ISR_AUTOCORR_ERR_BITS) != 0U) {
@@ -186,10 +187,6 @@ static int trng_wait_block(const struct trng_config *cfg, uint32_t start)
 		if ((isr & TRNG_RNG_ISR_EHR_VALID_BITS) != 0U) {
 			return 0;
 		}
-		if ((k_uptime_get_32() - start) >= TRNG_BLOCK_TIMEOUT_MS) {
-			return -ETIMEDOUT;
-		}
-
 		k_msleep(TRNG_POLL_INTERVAL_MS);
 	}
 }
@@ -205,29 +202,29 @@ static void trng_read_block(const struct trng_config *cfg, uint8_t *out)
 }
 
 /*
- * One block into out, retrying the machine state after a block that failed a check. Returns 0 or
- * the errno of the last attempt; a slow block keeps its place in the machine and is waited on
- * again, so an attempt only ends when the block is discarded or ready.
+ * Collect one healthy block within a shared deadline. Rejected blocks are never copied;
+ * restarting them cannot extend the deadline. A wedged/continuously failing source returns
+ * an error, while intermittent health failures need not fail an otherwise healthy request.
  */
 static int trng_block(const struct trng_config *cfg, struct trng_data *data, uint8_t *out)
 {
-	int rc = -EIO;
+	const uint32_t start = k_uptime_get_32();
 
-	for (uint8_t attempt = 0U; attempt < TRNG_BLOCK_ATTEMPTS; attempt++) {
+	for (;;) {
 		trng_start(cfg, data);
-		rc = trng_wait_block(cfg, k_uptime_get_32());
+		const int rc = trng_wait_block(cfg, start);
 		if (rc == 0) {
 			trng_read_block(cfg, out);
 			return 0;
 		}
 		if (rc == -ETIMEDOUT) {
-			continue;
+			return rc;
 		}
 
 		trng_recover(cfg, data);
+		/* Even a persistently asserted error must leave USB/watchdog threads runnable. */
+		k_msleep(TRNG_POLL_INTERVAL_MS);
 	}
-
-	return rc;
 }
 
 static int trng_get_entropy(const struct device *dev, uint8_t *buf, uint16_t len)

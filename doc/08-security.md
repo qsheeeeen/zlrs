@@ -136,8 +136,12 @@ must not become an identity, nonce or proof.
 
 The RP2350 source collects fresh 192-bit blocks with hardware health checks
 enabled. Reads consume complete blocks, retain the requested bytes and stop the
-source when finished. A block failing health checks is discarded. Per-block waits
-are limited to one second per attempt, with at most three attempts. Reads are
+source when finished. A block failing health checks is discarded and collection
+restarts within one three-second deadline per block. Health-check recovery cannot
+extend that deadline; continuous errors and stalled generation return failure.
+This accommodates the variable collection time documented in the
+[RP2350 datasheet, section 12.12.4](https://datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf).
+Reads are
 serialized in thread context with interrupts enabled so USB and watchdog service
 remain possible. ISR entropy requests are unsupported.
 

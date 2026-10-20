@@ -43,6 +43,39 @@ ZTEST(rp2350_trng, test_secure_successive_blocks)
 	zassert_not_equal(memcmp(first, second, sizeof(first)), 0, "secure blocks repeat");
 }
 
+ZTEST(rp2350_trng, test_repeated_secure_reads)
+{
+	const uint32_t bypass_mask = TRNG_TRNG_DEBUG_CONTROL_AUTO_CORRELATE_BYPASS_BITS |
+				     TRNG_TRNG_DEBUG_CONTROL_TRNG_CRNGT_BYPASS_BITS |
+				     TRNG_TRNG_DEBUG_CONTROL_VNC_BYPASS_BITS;
+	zassert_equal(trng_hw->trng_debug_control & bypass_mask, 0U);
+	uint8_t block[32], previous[32];
+	unsigned int failures = 0, repeats = 0;
+	uint32_t max_ms = 0;
+	bool have_previous = false;
+	const int64_t started = k_uptime_get();
+	for (unsigned int request = 0; request < 256; request++) {
+		const int64_t before = k_uptime_get();
+		const int rc = sys_csrand_get(block, sizeof(block));
+		max_ms = MAX(max_ms, (uint32_t)(k_uptime_get() - before));
+		if (rc != 0) {
+			failures++;
+			continue;
+		}
+		if (have_previous && memcmp(previous, block, sizeof(block)) == 0) {
+			repeats++;
+		}
+		memcpy(previous, block, sizeof(previous));
+		have_previous = true;
+	}
+	printk("TRNG_STRESS requests=256 bytes=32 failures=%u repeats=%u max_ms=%u "
+	       "duration_ms=%lld\n",
+	       failures, repeats, max_ms, (long long)(k_uptime_get() - started));
+	zassert_equal(failures, 0U, "healthy source failed during repeated secure reads");
+	zassert_equal(repeats, 0U);
+	zassert_equal(trng_hw->trng_debug_control & bypass_mask, 0U);
+}
+
 ZTEST(rp2350_trng, test_timeout_and_recovery)
 {
 	const struct device *const dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_entropy));
