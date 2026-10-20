@@ -2,6 +2,7 @@
 /* Two-node DATA-only simulation: pairing, sessions, duplex ARQ and backpressure. */
 #include <gtest/gtest.h>
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <tuple>
 #include <vector>
@@ -9,6 +10,7 @@
 #include "zlrs/link/link.h"
 extern "C" {
 #include "band.h"
+#include "power.h"
 }
 
 typedef struct {
@@ -286,6 +288,65 @@ TEST_F(Link, QualityWindowBoundary)
 	finish_quality_window(&sim);
 	EXPECT_EQ(stats->lq_percent, 100U);
 }
+
+class PowerSymmetry: public Link, public testing::WithParamInterface<int>
+{
+};
+
+TEST_P(PowerSymmetry, StrongDuplexLinkKeepsSavingWithOneOccasionalLostPacket)
+{
+	zlrs_link_press(&sim.leader.link, sim.now_ms);
+	zlrs_link_press(&sim.follower.link, sim.now_ms);
+	for (unsigned int i = 0U; i < 3000U && !both_connected(&sim); i++) {
+		sim_frame(&sim);
+	}
+	ASSERT_TRUE(both_connected(&sim));
+	zlrs_power_t powers[2];
+	zlrs_link_t *const nodes[] = {&sim.leader.link, &sim.follower.link};
+	for (unsigned int i = 0U; i < 2U; i++) {
+		zlrs_power_init(&powers[i], 12, -17, sim.now_ms);
+	}
+	zlrs_link_t *const lossy_sender = GetParam() == 0 ? nodes[0] : nodes[1];
+	uint32_t last_loss_seq = lossy_sender->tx_seq;
+	const uint32_t finish_ms = sim.now_ms + 130000U;
+	unsigned int losses = 0U;
+	bool saw_99 = false;
+	while (sim.now_ms < finish_ms) {
+		/* One missing packet per 130 attempts: each completed quality window
+		 * remains at least 99%, and the received RSSI is -60 dBm in both directions.
+		 */
+		if (GetParam() >= 0 && lossy_sender->tx_seq - last_loss_seq >= 130U) {
+			last_loss_seq = lossy_sender->tx_seq;
+			(GetParam() == 0 ? sim.drop_leader : sim.drop_follower) = 1U;
+			losses++;
+		}
+		sim_frame(&sim);
+		for (unsigned int i = 0U; i < 2U; i++) {
+			const zlrs_link_info_t info = zlrs_link_get_info(nodes[i]);
+			saw_99 |= info.peer_lq_percent == 99U;
+			zlrs_link_set_power(nodes[i],
+					    zlrs_power_update(&powers[i], info.peer_rssi_dbm,
+							      info.peer_lq_percent,
+							      info.last_peer_feedback_ms,
+							      sim.now_ms));
+		}
+	}
+	if (GetParam() >= 0) {
+		ASSERT_GE(losses, 2U);
+		ASSERT_TRUE(saw_99);
+	} else {
+		EXPECT_EQ(losses, 0U);
+		EXPECT_FALSE(saw_99);
+	}
+	ASSERT_TRUE(both_connected(&sim));
+	EXPECT_GE(powers[0].lowers, 2U);
+	EXPECT_GE(powers[1].lowers, 2U);
+	EXPECT_LE(powers[0].current_dbm, 6);
+	EXPECT_LE(powers[1].current_dbm, 6);
+	EXPECT_LE(std::abs(powers[0].current_dbm - powers[1].current_dbm), 3);
+}
+
+INSTANTIATE_TEST_SUITE_P(IdealAndOccasionalLoss, PowerSymmetry, testing::Values(-1, 0, 1));
 
 TEST_F(Link, DataSequenceWrap)
 {

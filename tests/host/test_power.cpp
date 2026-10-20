@@ -12,10 +12,10 @@ int8_t observe(zlrs_power_t *power, int16_t rssi, uint8_t lq, uint32_t now)
 	return zlrs_power_update(power, rssi, lq, now, now);
 }
 
-uint32_t healthy(zlrs_power_t *power, uint32_t start, uint32_t duration)
+uint32_t healthy(zlrs_power_t *power, uint32_t start, uint32_t duration, uint8_t quality = 100U)
 {
 	for (uint32_t elapsed = 0U; elapsed <= duration; elapsed += 250U) {
-		observe(power, -60, 100U, start + elapsed);
+		observe(power, -60, quality, start + elapsed);
 	}
 	return start + duration;
 }
@@ -39,6 +39,24 @@ TEST_F(PowerPolicy, RequiresContinuousHealthBeforeLowering)
 	EXPECT_EQ(power.current_dbm, 12);
 	EXPECT_EQ(observe(&power, -60, 100U, 140001U), 9);
 	EXPECT_EQ(power.lowers, 1U);
+}
+
+TEST_F(PowerPolicy, OneLostPacketInAQualityWindowStillAllowsSaving)
+{
+	healthy(&power, 1U, 39750U, 99U);
+	EXPECT_EQ(power.current_dbm, 12);
+	EXPECT_EQ(observe(&power, -60, 99U, 40001U), 9);
+	EXPECT_EQ(power.lowers, 1U);
+	EXPECT_EQ(zlrs_power_update(&power, -60, 99U, 40001U, 41001U), 12);
+}
+
+TEST_F(PowerPolicy, TwoPercentLossRestartsSavingQualification)
+{
+	healthy(&power, 1U, 39750U, 99U);
+	EXPECT_EQ(observe(&power, -60, 98U, 40001U), 12);
+	healthy(&power, 40251U, 39750U, 99U);
+	EXPECT_EQ(power.current_dbm, 12);
+	EXPECT_EQ(observe(&power, -60, 99U, 80251U), 9);
 }
 
 TEST_F(PowerPolicy, CountsDistinctPoorFeedback)

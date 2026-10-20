@@ -8,7 +8,10 @@ enum {
 	RSSI_LOW_DBM = -95,
 	RSSI_HIGH_DBM = -70,
 	LQ_LOW = 99,
-	LQ_HIGH = 100,
+	/* One lost packet in a 128-attempt window reports 99% until the next window.
+	 * Requiring 100% makes occasional loss prevent saving for an entire idle window.
+	 */
+	LQ_HIGH = 99,
 	FEEDBACK_SAMPLES = 3,
 	RAISE_HOLD_MS = 2000,
 	/* A 128-packet idle quality window takes about 33–37 seconds on the shipped bands. */

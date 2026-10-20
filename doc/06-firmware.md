@@ -125,10 +125,12 @@ and changes the setpoint by 3 dB, bounded by the active range:
 | Observation | Decision | Minimum wait |
 | --- | --- | --- |
 | LQ below 99%, or RSSI below −95 dBm | Raise toward the maximum | 2 s since the last change |
-| LQ 100% and RSSI above −70 dBm | Lower toward the minimum | 40 s of continuously healthy feedback since the last change |
+| LQ at least 99% and RSSI above −70 dBm | Lower toward the minimum | 40 s of continuously healthy feedback since the last change |
 | Other fresh feedback | Hold | — |
 | Missing/invalid feedback, or feedback at least 1 s old | Restore the maximum | Before the next transmission |
 
+The saving threshold tolerates one lost packet in a 128-attempt quality window;
+isolated loss must not hold one strong direction at maximum while its peer saves power.
 Repeated reads of one observation never advance qualification. Any non-healthy
 observation or feedback gap of at least one second resets the lowering interval.
 Recovery bypasses the normal raising delay and step size. Millisecond timers
