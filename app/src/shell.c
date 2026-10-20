@@ -80,7 +80,7 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 		shell_print(sh, "  %-20s : unavailable", "Peer RSSI");
 		shell_print(sh, "  %-20s : unavailable", "Peer LQ");
 	}
-	shell_print(sh, "  %-20s : %d dBm", "TX setpoint", link.tx_power_dbm);
+	shell_print(sh, "  %-20s : %d dBm", "TX power", link.tx_power_dbm);
 	shell_print(sh, "  %-20s : %d..%d dBm", "TX range", link.power_floor_dbm,
 		    link.power_ceiling_dbm);
 	shell_print(sh, "  %-20s : %s", "Power control",

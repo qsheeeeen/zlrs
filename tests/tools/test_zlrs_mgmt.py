@@ -246,10 +246,12 @@ class ManagementTests(unittest.TestCase):
 
     def test_status_signed_measurements_and_counters(self):
         payload = bytearray(mgmt.STATUS_LEN)
+        payload[15] = 12
         payload[21:23] = (-48).to_bytes(2, "little", signed=True)
         payload[23:25] = (-51).to_bytes(2, "little", signed=True)
         payload[25] = 97
         payload[26] = 7
+        payload[27] = 239  # signed -17 dBm
         payload[28:30] = (-125).to_bytes(2, "little", signed=True)
         for offset, value in zip(range(30, 62, 4), (1024, 1000, 24, 1, 3, 0, 2, 4)):
             payload[offset:offset + 4] = value.to_bytes(4, "little")
@@ -263,6 +265,8 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual((status.tx_frames, status.frequency_hz, status.hop_index),
                          (1024, 2478000000, 236))
         output = mgmt.status_text(payload)
+        self.assertRegex(output, r"TX power\s*:\s*7 dBm")
+        self.assertRegex(output, r"TX range\s*:\s*-17\.\.12 dBm")
         for text in ("-48 dBm", "-51 dBm", "97%", "7 dBm", "-1.25 C",
                      "TX 1024, RX 1000", "2478.000 MHz", "9.080 ms"):
             self.assertIn(text, output)

@@ -208,7 +208,7 @@ def status_text(payload: bytes) -> str:
             ("Local LQ", f"{status.lq_percent}%"),
             ("Peer RSSI", f"{status.peer_rssi_dbm} dBm" if status.peer_rssi_dbm else "unavailable"),
             ("Peer LQ", f"{status.peer_lq_percent}%" if status.peer_rssi_dbm else "unavailable"),
-            ("TX setpoint", f"{status.active_power_dbm} dBm"),
+            ("TX power", f"{status.active_power_dbm} dBm"),
             ("TX range", f"{status.power_floor_dbm}..{status.tx_power_dbm} dBm"),
             ("Power control", "debug fixed" if flags & 0x80 else "automatic"),
         ]),
