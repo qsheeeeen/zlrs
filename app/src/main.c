@@ -4,11 +4,11 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/logging/log_ctrl.h>
 
-#include <string.h>
 #include <errno.h>
 
 #include "boot.h"
 #include "persist.h"
+#include "pairing_save.h"
 #include "serial.h"
 #include "mgmt.h"
 #include "platform/watchdog.h"
@@ -34,26 +34,25 @@ static void enter_management_mode(void)
 	zlrs_rf_resume();
 }
 
-static void save_pairing(void)
+static void save_pairing(zlrs_pairing_save_t *state)
 {
 	zlrs_persist_pairing_t pairing;
-	if (!zlrs_rf_pairing(pairing.peer_id, pairing.pair_salt)) {
-		return;
-	}
+	const bool paired = zlrs_rf_pairing(pairing.peer_id, pairing.pair_salt);
 	zlrs_persist_pairing_t saved_pairing;
-	if (zlrs_persist_get_pairing(&saved_pairing) &&
-	    memcmp(pairing.peer_id, saved_pairing.peer_id, sizeof(pairing.peer_id)) == 0 &&
-	    memcmp(pairing.pair_salt, saved_pairing.pair_salt, sizeof(pairing.pair_salt)) == 0) {
+	const bool saved = zlrs_persist_get_pairing(&saved_pairing);
+	if (!zlrs_pairing_save_due(state, paired ? &pairing : NULL, saved ? &saved_pairing : NULL,
+				   k_uptime_get_32())) {
 		return;
 	}
 	zlrs_rf_pause();
 	const int rc = zlrs_persist_save_pairing(&pairing);
 	zlrs_rf_resume();
+	const uint32_t retry_ms = zlrs_pairing_save_complete(state, rc == 0, k_uptime_get_32());
 	if (rc == 0) {
 		LOG_INF("paired with %02x%02x%02x%02x", pairing.peer_id[0], pairing.peer_id[1],
 			pairing.peer_id[2], pairing.peer_id[3]);
 	} else {
-		LOG_ERR("pairing save failed (%d); will retry at the next frame boundary", rc);
+		LOG_ERR("pairing save failed (%d); retry in %u ms", rc, retry_ms);
 	}
 }
 
@@ -75,6 +74,7 @@ int main(void)
 	uint32_t button_holds_seen = 0U;
 	bool pair_requested = false;
 	uint32_t pair_requested_at = 0U;
+	zlrs_pairing_save_t pairing_save = {0};
 
 	for (;;) {
 		zlrs_watchdog_feed();
@@ -103,7 +103,7 @@ int main(void)
 		}
 		if (rf_ready) {
 			zlrs_rf_frame();
-			save_pairing();
+			save_pairing(&pairing_save);
 		} else {
 			k_msleep(20);
 		}

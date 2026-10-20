@@ -19,6 +19,7 @@ target_sources(app PRIVATE
   ${zlrs_app_dir}/src/boot.c
   ${zlrs_app_dir}/src/rf.c
   ${zlrs_app_dir}/src/persist.c
+  ${zlrs_app_dir}/src/pairing_save.c
   ${zlrs_app_dir}/src/platform/sha256.c
   ${zlrs_app_dir}/src/platform/slot_timer.c
   ${zlrs_app_dir}/src/platform/watchdog.c

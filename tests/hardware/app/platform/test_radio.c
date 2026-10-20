@@ -81,6 +81,7 @@ void zlrs_test_radio_apply_window_request(zlrs_link_t *link)
 	/* Test-only fault injection and probes run on the real RF owner, without
 	 * changing production state or waiting on a broken source.
 	 */
+	zlrs_test_pairing_save_fault_apply();
 	const int fault_ms = atomic_get(&entropy_request);
 	if (fault_ms > 0 && trng_hw->rnd_source_enable == 0U) {
 		entropy_sampling = trng_hw->sample_cnt1;
@@ -286,6 +287,9 @@ K_WORK_DELAYABLE_DEFINE(restore_work, restore);
 
 static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 {
+	if (argc >= 2U && strcmp(argv[1], "save-fault") == 0) {
+		return zlrs_test_pairing_save_fault_command(sh, argc, argv);
+	}
 	if (argc >= 2U && strcmp(argv[1], "entropy") == 0) {
 		if (argc == 3U) {
 			char *end;

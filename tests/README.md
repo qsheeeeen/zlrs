@@ -30,6 +30,7 @@ The state and failure contracts include:
 | Reliable DATA matches a reference byte stream | P0/P1 and three fixed seeds; duplex writes, packet loss, duplicate frames, bad P1 tags, TX failure, backpressure, queue and clock wrap; eventual drain |
 | Destructive reset retires active credentials | Failure before/after clear, remount failure and layout-marker failure; RF refresh despite command failure; recovery through initialization |
 | Saved state matches completed writes | Independent byte records, failed key/pair writes, partial settings saves and identity-write failure after pair deletion; remount checks |
+| Pairing-save retries preserve RF service | One-to-30-second failure backoff, uptime wrap, replaced/retired candidates, and no rewrite of a committed record; hardware EIO injection during duplex DATA |
 
 The stream test reports its seed, step and generator state on failure. Its oracle
 is the accepted application byte stream, independent of packet encoding or ARQ

@@ -244,6 +244,7 @@ bool zlrs_rf_pairing(uint8_t peer_id[ZLRS_DEV_ID_LEN], uint8_t salt[ZLRS_PAIR_SA
 void zlrs_rf_frame(void)
 {
 	zassert_equal(pause_depth, 0U);
+	k_msleep(500);
 	frames++;
 	if (expire_waiting_pair && frames == 2U) {
 		k_msleep(30001);

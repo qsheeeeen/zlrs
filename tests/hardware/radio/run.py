@@ -32,6 +32,8 @@ CHANNEL = re.compile(r"CHANNEL frequency_mhz=(\d+) tx=(\d+) tx_failed=(\d+) "
                      r"rx=(\d+) empty=(\d+) crc=(\d+)")
 ENTROPY = re.compile(r"ENTROPY active=(\d+) pending=(\d+) calls=(\d+) empty=(\d+) "
                      r"max_us=(\d+) restores=(\d+)")
+SAVE_FAULT = re.compile(r"SAVE_FAULT active=(\d+) pending=(\d+) calls=(\d+) first_ms=(\d+) "
+                        r"last_ms=(\d+) min_gap_ms=(\d+) restores=(\d+)")
 
 
 def wait_image(identity, expected, timeout=45):
@@ -158,6 +160,8 @@ def main():
                         help="0..100 queries/s; one value or one per round, e.g. 0 50 0")
     parser.add_argument("--entropy-stall-ms", type=int, default=0,
                         help="stall both TRNGs during one sustained DATA round (3500..10000 ms)")
+    parser.add_argument("--pairing-save-fault-ms", type=int, default=0,
+                        help="inject pairing-store EIOs during DATA (4000..30000 ms, one round)")
     args = parser.parse_args()
     if args.serial == args.peer or not 0 < args.bytes <= 16 * 1024 * 1024 or args.rounds < 1:
         parser.error("select two different boards, 1..16 MiB and at least one round")
@@ -170,8 +174,11 @@ def main():
     if args.raw and any(args.status_poll_hz):
         parser.error("online status polling requires DATA mode")
     if args.entropy_stall_ms and (not 3500 <= args.entropy_stall_ms <= 10000 or
-                                  args.profiles or args.raw or args.rounds != 1):
+                                  args.profiles or args.raw or args.rounds != 1 or args.pairing_save_fault_ms):
         parser.error("--entropy-stall-ms needs 3500..10000 ms, one round, no raw/profile sweep")
+    if args.pairing_save_fault_ms and (not 4000 <= args.pairing_save_fault_ms <= 30000 or
+                                       args.profiles or args.raw or args.rounds != 1):
+        parser.error("--pairing-save-fault-ms needs 4000..30000 ms, one round, no raw/profile sweep")
     expected = image_hash_of(args.image)
     if expected is None:
         parser.error("invalid signed test image")
@@ -306,14 +313,20 @@ def main():
                     observers = OnlineObservers(identities, poll_hz)
                     stack.callback(observers.stop)
                     fault = None
-                    entropy_names = ("active", "pending", "calls", "empty", "max_us", "restores")
-                    if args.entropy_stall_ms:
-                        queued = both(f"test_radio entropy {args.entropy_stall_ms}")
-                        if not all(f"ENTROPY queued_ms={args.entropy_stall_ms}" in output
+                    fault_command = "entropy" if args.entropy_stall_ms else "save-fault"
+                    fault_pattern = ENTROPY if args.entropy_stall_ms else SAVE_FAULT
+                    fault_names = (("active", "pending", "calls", "empty", "max_us", "restores")
+                                   if args.entropy_stall_ms else
+                                   ("active", "pending", "calls", "first_ms", "last_ms", "min_gap_ms", "restores"))
+                    fault_ms = args.entropy_stall_ms or args.pairing_save_fault_ms
+                    if fault_ms:
+                        queued = both(f"test_radio {fault_command} {fault_ms}")
+                        marker = "ENTROPY" if args.entropy_stall_ms else "SAVE_FAULT"
+                        if not all(f"{marker} queued_ms={fault_ms}" in output
                                    for output in queued.values()):
-                            raise RuntimeError(f"Could not queue TRNG stalls: {queued!r}")
-                        fault = {"duration_ms": args.entropy_stall_ms, "active_samples": []}
-                        record["entropy_stall"] = fault
+                            raise RuntimeError(f"Could not queue {fault_command}: {queued!r}")
+                        fault = {"duration_ms": fault_ms, "active_samples": []}
+                        record["entropy_stall" if args.entropy_stall_ms else "pairing_save_fault"] = fault
                     deadline = time.monotonic() + args.timeout
                     started = time.monotonic()
                     observe_at = started
@@ -321,9 +334,9 @@ def main():
                         result = parse("test_data status", BENCH, names)
                         record["last_round"] = {"round": number + 1, "nodes": result}
                         if fault is not None:
-                            entropy = parse("test_radio entropy", ENTROPY, entropy_names)
-                            fault["last"] = entropy
-                            if all(value["active"] for value in entropy.values()):
+                            observed_fault = parse(f"test_radio {fault_command}", fault_pattern, fault_names)
+                            fault["last"] = observed_fault
+                            if all(value["active"] for value in observed_fault.values()):
                                 fault["active_samples"].append(result)
                         if time.monotonic() >= observe_at:
                             record["observations"].append({
@@ -361,10 +374,15 @@ def main():
                         if len(samples) < 2 or not all(samples[-1][identity]["rx"] >
                                                        samples[0][identity]["rx"]
                                                        for identity in identities):
-                            raise RuntimeError("No bidirectional DATA progress observed during TRNG stalls")
-                        if not all(value["calls"] > 0 and value["empty"] == value["calls"] and
-                                   value["max_us"] < 1000 for value in fault["last"].values()):
+                            raise RuntimeError(f"No bidirectional DATA progress during {fault_command}")
+                        if args.entropy_stall_ms and not all(
+                                value["calls"] > 0 and value["empty"] == value["calls"] and
+                                value["max_us"] < 1000 for value in fault["last"].values()):
                             raise RuntimeError("RF nonce probes blocked or accepted bytes from stalled TRNGs")
+                        if args.pairing_save_fault_ms and not all(
+                                2 <= value["calls"] <= 5 and value["min_gap_ms"] >= 1000
+                                for value in fault["last"].values()):
+                            raise RuntimeError(f"Pairing save did not back off: {fault['last']}")
                     stopped = both("test_data stop")
                     if not all("BENCH stop: 0" in output for output in stopped.values()):
                         raise RuntimeError("Radio queue did not drain before stop")
