@@ -12,6 +12,8 @@
 
 &cdc_acm_uart2 {
 	status = "okay";
-	/* Hold complete link/ports/radio replies without blocking an unopened console. */
+	/* Queue short replies even before a host opens the console. CDC polling TX
+	 * waits for space on longer shell output instead of discarding bytes. */
 	tx-fifo-size = <8192>;
+	hw-flow-control;
 };
