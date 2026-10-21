@@ -34,6 +34,12 @@ ZBUS_CHAN_DEFINE(zlrs_serial_chan, struct zlrs_serial_status, NULL, NULL, ZBUS_O
 #define DATA_RX_RING_LEN 4096U
 #define DATA_TX_RING_LEN 4096U
 
+#if DT_NODE_EXISTS(DT_ALIAS(zlrs_data_uart))
+#define DATA_UART_FLOW_CONTROL DT_PROP_OR(DT_ALIAS(zlrs_data_uart), hw_flow_control, 0)
+#else
+#define DATA_UART_FLOW_CONTROL 0
+#endif
+
 /* One buffer set per endpoint; dev == NULL means the alias is not wired */
 struct data_ep {
 	const struct device *dev;
@@ -86,10 +92,10 @@ static void data_isr(const struct device *dev, void *user_data)
 			uint8_t chunk[64];
 			const uint32_t room = ring_buf_space_get(&ep->rx);
 
-			/* Leave USB bytes in the CDC FIFO when the application ring is full.
-			 * Its OUT endpoint then NAKs naturally instead of accepting and dropping
-			 * the rest of the host stream. UART without flow control still drains. */
-			if (room == 0U && ep == &data_eps[DATA_USB]) {
+			/* Keep bytes in the peripheral FIFO when the application ring is full:
+			 * USB NAKs its OUT endpoint; a flow-controlled UART deasserts RTS at its
+			 * FIFO watermark. An unthrottled UART still drains and counts drops. */
+			if (room == 0U && (ep == &data_eps[DATA_USB] || DATA_UART_FLOW_CONTROL)) {
 				const unsigned int key = irq_lock();
 
 				if (ring_buf_space_get(&ep->rx) == 0U) {
@@ -132,6 +138,12 @@ static void data_isr(const struct device *dev, void *user_data)
 			}
 
 			ring_buf_get_finish(&ep->tx, (sent > 0) ? (uint32_t)sent : 0U);
+			const unsigned int key = irq_lock();
+
+			if (ring_buf_is_empty(&ep->tx)) {
+				uart_irq_tx_disable(dev);
+			}
+			irq_unlock(key);
 		}
 	}
 }
@@ -215,7 +227,21 @@ int zlrs_serial_init(uint32_t baud)
 		}
 
 		if (baud > 0U) {
-			const int rc = uart_line_ctrl_set(dev, UART_LINE_CTRL_BAUD_RATE, baud);
+			int rc;
+
+			if (i == DATA_UART) {
+				struct uart_config config;
+
+				rc = uart_config_get(dev, &config);
+				if (rc == 0) {
+					/* Preserve the board's framing and RTS/CTS when changing speed. */
+					config.baudrate = baud;
+					rc = uart_configure(dev, &config);
+				}
+			} else {
+				/* CDC stores line coding through its line-control API. */
+				rc = uart_line_ctrl_set(dev, UART_LINE_CTRL_BAUD_RATE, baud);
+			}
 
 			if (rc != 0) {
 				LOG_WRN("data port %s baud %u rejected: %d", dev->name,

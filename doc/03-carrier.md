@@ -28,12 +28,14 @@ host TX connects to carrier RX and host RX connects to carrier TX.
 | 1, red | +5 V | `5V_IN` | Protected module 5 V input |
 | 2 | TX | DATA RX | GP9, UART1 RX |
 | 3 | RX | DATA TX | GP8, UART1 TX |
-| 4 | CTS | Unconnected | No hardware flow control |
-| 5 | RTS | Unconnected | No hardware flow control |
+| 4 | CTS | DATA RTS | GP11, UART1 RTS, active low output |
+| 5 | RTS | DATA CTS | GP10, UART1 CTS, active low input with pull-up |
 | 6 | Ground | Ground | Common ground |
 
-UART transmitters must respect the finite input buffers because CTS/RTS are
-unconnected. USB DATA supports backpressure. See [firmware](06-firmware.md).
+Both UART peers enable RTS/CTS hardware flow control. The carrier deasserts RTS
+when its input buffers fill; host RTS controls carrier transmission through CTS.
+Earlier assemblies that left J2 pins 4/5 unconnected need these two connections.
+USB DATA also supports backpressure. See [firmware](06-firmware.md).
 
 ## Module interconnect
 

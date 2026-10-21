@@ -76,8 +76,8 @@ and interrupt paths must execute from SRAM.
 The link queue retains outbound bytes until the peer acknowledges them. Serial
 output queues retain received bytes until the local host drains them. The local
 sink must accept the entire packet before the link advances its receive ACK.
-USB input backpressure propagates when finite queues fill; unthrottled UART
-loss is counted.
+USB and flow-controlled UART input backpressure propagate when finite queues
+fill; unthrottled UART loss is counted.
 
 Management, pairing persistence, image confirmation and log synchronization
 require a maintenance window at a frame boundary. The window cancels pending

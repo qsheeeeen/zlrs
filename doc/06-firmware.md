@@ -31,7 +31,10 @@ onto another endpoint when selection changes.
 
 Each available serial endpoint has a 4096-byte input ring and a 4096-byte output
 ring. USB stops accepting more input when its ring fills and resumes when space
-returns. UART without flow control continues receiving and counts overflow.
+returns. A UART with `hw-flow-control` uses the same pause/resume path: leaving
+its hardware FIFO unread deasserts RTS at the FIFO watermark, and peer CTS gates
+transmission. Both peers must connect and enable RTS/CTS. UARTs without flow
+control continue receiving and count overflow.
 Incoming radio DATA is accepted atomically into the selected output ring;
 insufficient space withholds the radio ACK and allows retransmission.
 

@@ -17,7 +17,7 @@ if(ZLRS_TEST_ENTROPY_ONLY AND ZLRS_TEST_UI_ONLY)
   message(FATAL_ERROR "Select only one isolated hardware fixture")
 endif()
 target_sources(app PRIVATE
-  src/main.c
+  ../ztest_main.c
   "${zlrs_root}/app/src/platform/sha256.c")
 target_include_directories(app PRIVATE "${zlrs_root}/app/src" "${zlrs_root}/core/proto" ..)
 

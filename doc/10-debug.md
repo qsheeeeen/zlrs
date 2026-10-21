@@ -140,7 +140,7 @@ enumeration and bidirectional DATA, plus UART output routing while USB is
 unconfigured. Endpoint diagnostics distinguish readiness, selection, cumulative
 input/output bytes, queued bytes and drops. This allows output routing to be
 checked before any UART input. Physical loopback acceptance shorts UART TX to RX
-and verifies returned DATA while USB is unconfigured.
+and RTS to CTS and verifies returned DATA while USB is unconfigured.
 Run the complete native matrix through Twister. Each configuration has its own
 build and working directory, including simulated flash:
 

@@ -63,6 +63,6 @@ void test_main(void)
 	k_msleep(100);
 	ztest_run_all(NULL, false, 1, 1);
 	ztest_verify_all_test_suites_ran();
-	printk("ZLRS unit tests complete; rebooting for MCUboot rollback in 3 s\n");
+	printk("ZLRS hardware tests complete; rebooting for MCUboot rollback in 3 s\n");
 	k_work_schedule(&restore_work, K_SECONDS(3));
 }

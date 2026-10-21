@@ -28,8 +28,8 @@ matching band mode, SubG region, security profile and air protocol version.
 
 USB CDC and UART are alternative endpoints of one DATA service. A separate USB
 management interface provides configuration, status, pairing, logs and firmware
-updates. USB DATA applies backpressure when buffers fill; UART without hardware
-flow control can overflow and reports dropped bytes.
+updates. USB DATA and the board's RTS/CTS UART apply backpressure when buffers
+fill. UART peers must connect and enable both handshake signals.
 
 Role, band mode, region, UART baud and security profile are persistent
 settings applied at boot. Identity, a shared root key and one peer pairing record

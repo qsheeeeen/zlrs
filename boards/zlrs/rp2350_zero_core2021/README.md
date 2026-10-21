@@ -16,13 +16,17 @@ calibration and storage. Assembly is specified in
 | NRESET | GP14 | Radio `reset-gpios` | Active low |
 | DIO8 IRQ | GP15 | Radio DIO8 | Active high, pull-down |
 | UART1 TX / RX | GP8 / GP9 | `zlrs-data-uart` | 3.3 V logic; default 115200 baud |
+| UART1 CTS / RTS | GP10 / GP11 | `zlrs-data-uart` | Active low hardware flow control |
 | Pairing button | GP12 | `zlrs-button`, `smtc-user-button` | Active low to ground, pull-up |
 | WS2812B | GP16 | `zlrs-led`, `led-strip` | One pixel, PIO0, GRB order, 800 kHz |
 | Slot timer | — | `zlrs-slot-timer`, TIMER1 | Dedicated microsecond radio clock |
 | Watchdog | — | `watchdog0` | Application progress timeout |
 
-External UART wiring crosses TX/RX and shares ground. GP16 is reserved for the
-module LED. Radio wires use GP4–GP7 and GP13–GP15.
+External UART wiring crosses TX/RX and RTS/CTS and shares ground. Both peers must
+enable RTS/CTS. CTS has a pull-up, so an unconnected CTS stops DATA transmission.
+When the application input ring is full, it leaves the hardware FIFO unread;
+RTS then stops the peer at the FIFO watermark. GP16 is reserved for the module
+LED. Radio wires use GP4–GP7 and GP13–GP15.
 
 | USB endpoint | Alias | Application mode |
 | --- | --- | --- |

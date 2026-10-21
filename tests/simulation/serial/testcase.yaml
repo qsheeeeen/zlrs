@@ -9,3 +9,7 @@ tests:
     extra_args: DTC_OVERLAY_FILE="app.overlay;usb-only.overlay"
   zlrs.serial.uart_only:
     extra_args: DTC_OVERLAY_FILE="app.overlay;uart-only.overlay"
+  zlrs.serial.flow_control:
+    extra_args: DTC_OVERLAY_FILE="app.overlay;flow-control.overlay"
+  zlrs.serial.uart_only_flow_control:
+    extra_args: DTC_OVERLAY_FILE="app.overlay;uart-only.overlay;flow-control.overlay"

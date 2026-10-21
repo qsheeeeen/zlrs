@@ -47,8 +47,9 @@ radio transfers and the one-pixel PIO LED do not allocate DMA channels.
 
 The radio SPI device permits a 16 MHz clock. BUSY has a pull-up and DIO8 has a
 pull-down. GP16 is reserved for the on-board LED. The DATA UART uses GP8 for TX and
-GP9 for RX at 3.3 V logic levels; external UART wiring crosses TX and RX and shares
-ground.
+GP9 for RX, GP10 for CTS and GP11 for RTS at 3.3 V logic levels. External UART
+wiring crosses TX/RX and RTS/CTS and shares ground; both peers enable hardware
+flow control. An unconnected CTS is pulled high and stops UART transmission.
 
 ## USB interfaces
 
@@ -61,7 +62,8 @@ ground.
 
 DATA USB and UART are alternative endpoints of the same byte stream. Management
 uses its dedicated CDC. While management pauses RF, accepted DATA stays queued;
-USB applies backpressure when buffers fill. UART without flow control can overflow.
+USB and the RTS/CTS UART apply backpressure when buffers fill. A UART peer that
+ignores RTS can still overrun the hardware FIFO.
 Endpoint selection is specified in [firmware operation](06-firmware.md#data-endpoints).
 
 ## Assembly requirements

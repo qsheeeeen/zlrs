@@ -97,10 +97,11 @@
 	status = "okay";
 };
 
-/* Data port: passthrough, GP8 = TX / GP9 = RX */
+/* Data port: GP8 = TX, GP9 = RX, GP10 = CTS, GP11 = RTS (active low). */
 &uart1 {
 	status = "okay";
 	current-speed = <115200>;
+	hw-flow-control;
 	pinctrl-0 = <&zlrs_uart1_default>;
 	pinctrl-names = "default";
 };

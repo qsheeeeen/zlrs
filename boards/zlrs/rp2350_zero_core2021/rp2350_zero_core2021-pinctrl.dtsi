@@ -22,13 +22,13 @@
 	/* Data UART: the passthrough port */
 	zlrs_uart1_default: zlrs_uart1_default {
 		group1 {
-			pinmux = <UART1_TX_P8>;
+			pinmux = <UART1_TX_P8>, <UART1_RTS_P11>;
 		};
 
 		group2 {
-			pinmux = <UART1_RX_P9>;
+			pinmux = <UART1_RX_P9>, <UART1_CTS_P10>;
 			input-enable;
-			/* Idle high when no data source is attached. */
+			/* RX idles high; disconnected CTS prevents transmitting to an absent host. */
 			bias-pull-up;
 		};
 	};

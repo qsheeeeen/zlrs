@@ -116,7 +116,7 @@ to run without an ARM toolchain installation.
 
 The `testcase.yaml` files are the sole configuration matrix. CI runs this same
 command and does not enumerate roles, bands or endpoints separately. The matrix
-contains application lifecycle, persistence, management, UI, three serial
+contains application lifecycle, persistence, management, UI, five serial
 endpoint configurations, and six RF configurations: both roles in fixed 2.4 GHz,
 fixed SubG and automatic modes. Twister gives every configuration a separate
 build and working directory, including its simulated flash file.
@@ -182,6 +182,7 @@ They are not part of CTest discovery or the native test root.
 | Fixture | Responsibility |
 | --- | --- |
 | `hardware/unit` | Target component image: entropy, SHA, link, persistence, slot timer, UI and log acceptance; original firmware rollback |
+| `hardware/serial` | Production UART queues with real CTS, RTS pause/resume, hardware loopback and short TX restarts |
 | `hardware/application` | Application boot, confirmation, watchdog and recovery acceptance |
 | `hardware/mgmt` | Real CDC management, settings and firmware identity; see its README |
 | `hardware/radio` | Two-board RF/DATA transfer, diagnostic capture and isolated RAW checks |
@@ -193,6 +194,20 @@ board run; compiling the image or passing native tests does not establish its
 result.
 Save full logs and image hashes with the verdict. Hardware runners must report
 restoration/rollback failures separately from the fixture's test verdict.
+
+The UART fixture uses the shared `hardware/ztest_main.c` watchdog/rollback
+bootstrap and the unit runner. It forces the real CTS input for the blocked-TX
+case and uses UART hardware loopback for DATA and RTS/CTS; external cable wiring
+requires a separate check. Build and run it without changing saved settings:
+
+```sh
+west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33/lf \
+  tests/hardware/serial -d build/serial-hardware -- \
+  -DSB_APPLICATION_CONFIG_DIR="$PWD/app"
+python tests/hardware/unit/run.py --serial <serial> \
+  --image build/serial-hardware/serial/zephyr/zephyr.signed.bin \
+  --log build/serial-hardware/results.log
+```
 
 ## Adding a test
 

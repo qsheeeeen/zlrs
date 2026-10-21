@@ -79,9 +79,40 @@ static void *setup(void)
 	}
 	/* Enumeration may happen before the application's serial initialization. */
 	message(USBD_MSG_CONFIGURATION, 1);
-	zassert_ok(zlrs_serial_init(115200));
+#if DT_HAS_ALIAS(zlrs_data_uart)
+	/* The emulator starts with a zeroed line config. Model an initialized board
+	 * with nondefault framing so changing speed must preserve every other field. */
+	const struct uart_config config = {
+		.baudrate = 115200,
+		.parity = UART_CFG_PARITY_EVEN,
+		.stop_bits = UART_CFG_STOP_BITS_2,
+		.data_bits = UART_CFG_DATA_BITS_8,
+		.flow_ctrl = DT_PROP_OR(DT_ALIAS(zlrs_data_uart), hw_flow_control, 0)
+				     ? UART_CFG_FLOW_CTRL_RTS_CTS
+				     : UART_CFG_FLOW_CTRL_NONE,
+	};
+	zassert_ok(uart_configure(uart, &config));
+#endif
+	zassert_ok(zlrs_serial_init(230400));
 	selected(true);
 	return NULL;
+}
+
+ZTEST(serial, test_baud_change_preserves_line_configuration)
+{
+#if DT_HAS_ALIAS(zlrs_data_uart)
+	struct uart_config config;
+	zassert_ok(uart_config_get(uart, &config));
+	zassert_equal(config.baudrate, 230400);
+	zassert_equal(config.parity, UART_CFG_PARITY_EVEN);
+	zassert_equal(config.stop_bits, UART_CFG_STOP_BITS_2);
+	zassert_equal(config.data_bits, UART_CFG_DATA_BITS_8);
+	zassert_equal(config.flow_ctrl, DT_PROP_OR(DT_ALIAS(zlrs_data_uart), hw_flow_control, 0)
+						? UART_CFG_FLOW_CTRL_RTS_CTS
+						: UART_CFG_FLOW_CTRL_NONE);
+#else
+	ztest_test_skip();
+#endif
 }
 
 static void before(void *fixture)
@@ -233,6 +264,44 @@ ZTEST(serial, test_packet_acceptance_and_output_ownership)
 	k_msleep(2);
 	zassert_equal(state(usb).tx_queued, 0);
 	zassert_equal(uart_emul_get_tx_data(usb, bytes, sizeof(bytes)), 0);
+#else
+	ztest_test_skip();
+#endif
+}
+
+ZTEST(serial, test_uart_full_buffer_and_recovery)
+{
+#if DT_HAS_ALIAS(zlrs_data_uart)
+	const uint32_t dropped = state(uart).rx_dropped;
+	for (size_t i = 0; i < sizeof(pattern); i += 512) {
+		zassert_equal(uart_emul_put_rx_data(uart, pattern + i, 512), 512);
+		wait_rx(uart, i + 512);
+	}
+	zassert_equal(uart_emul_put_rx_data(uart, pattern, 128), 128);
+	k_msleep(2);
+#if DT_PROP_OR(DT_ALIAS(zlrs_data_uart), hw_flow_control, 0)
+	zassert_true(state(uart).rx_paused);
+	zassert_equal(state(uart).rx_dropped, dropped);
+	/* A partial drain below the wakeup watermark must retain pending bytes. */
+	zassert_equal(zlrs_serial_read(bytes, 63), 63);
+	zassert_mem_equal(bytes, pattern, 63);
+	k_msleep(2);
+	zassert_true(state(uart).rx_paused);
+	zassert_equal(state(uart).rx_queued, 4096 - 63);
+	zassert_equal(zlrs_serial_read(bytes, 436), 436);
+	zassert_mem_equal(bytes, pattern + 63, 436);
+	wait_rx(uart, 4096 - 499 + 128);
+	zassert_false(state(uart).rx_paused);
+	zassert_equal(zlrs_serial_read(bytes, sizeof(bytes)), 4096 - 499 + 128);
+	zassert_mem_equal(bytes, pattern + 499, 4096 - 499);
+	zassert_mem_equal(bytes + 4096 - 499, pattern, 128);
+	zassert_equal(state(uart).rx_dropped, dropped);
+#else
+	zassert_false(state(uart).rx_paused);
+	zassert_equal(state(uart).rx_dropped, dropped + 128);
+	zassert_equal(zlrs_serial_read(bytes, sizeof(bytes)), sizeof(pattern));
+	zassert_mem_equal(bytes, pattern, sizeof(pattern));
+#endif
 #else
 	ztest_test_skip();
 #endif

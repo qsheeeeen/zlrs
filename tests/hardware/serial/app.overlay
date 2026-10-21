@@ -1,0 +1,10 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/ {
+	/* Exercise the production UART path while USB captures the test results. */
+	aliases { /delete-property/ zlrs-data-cdc; };
+};
+&cdc_acm_uart2 {
+	status = "okay";
+	tx-fifo-size = <8192>;
+	hw-flow-control;
+};
