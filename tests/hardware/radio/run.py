@@ -99,6 +99,26 @@ def command(port, text):
     return ANSI.sub("", output.decode(errors="replace"))
 
 
+def restore_images(identities, previous):
+    result = {"restored": {}}
+    # Request every rollback before waiting for a board that may be unavailable.
+    for identity in identities:
+        try:
+            path = f"/dev/serial/by-id/usb-zlrs_ZLRS_{identity}-if04"
+            with serial.Serial(path, 115200, timeout=0.02, write_timeout=2) as port:
+                command(port, "test_radio restore")
+        except Exception as error:
+            result.setdefault("restore_errors", {}).setdefault(identity, {})["request"] = str(error)
+    for identity in identities:
+        try:
+            wait_image(identity, previous[identity], timeout=125)
+            result["restored"][identity] = True
+        except Exception as error:
+            result["restored"][identity] = False
+            result.setdefault("restore_errors", {}).setdefault(identity, {})["wait"] = str(error)
+    return result
+
+
 def debug_report(identity, name):
     path = f"/dev/serial/by-id/usb-zlrs_ZLRS_{identity}-if02"
     with mgmt.management_session(path, 115200, 2) as client:
@@ -173,7 +193,7 @@ class OnlineObservers:
                                len(record["hardware_samples"]) == 1 and
                                (phy is None or record["phys"] == [phy])
                                for record in self.records.values()):
-            raise RuntimeError(f"Online status interrupted DATA or refreshed hardware: {self.records}")
+            raise RuntimeError(f"DATA state, PHY or hardware snapshot changed during observation: {self.records}")
 
 
 def main():
@@ -303,6 +323,10 @@ def main():
                                  "LoRa SF6/BW1MHz", "LoRa SF7/BW1MHz")
                 steps = [(args.phy, number) for number in range(args.rounds)]
                 if args.profiles or args.phy is not None:
+                    pinned = both("test_phy pin 1")
+                    if not all("PHY_PIN active=1" in output for output in pinned.values()):
+                        raise RuntimeError(f"Cannot hold the requested PHY: {pinned!r}")
+                    record["phy_pinned"] = True
                     roles = both("zlrs status")
                     leaders = [identity for identity, output in roles.items()
                                if re.search(r"Role\s*:\s*Leader", output)]
@@ -377,11 +401,16 @@ def main():
                             if all(value["active"] for value in observed_fault.values()):
                                 fault["active_samples"].append(result)
                         if time.monotonic() >= observe_at:
+                            status = both("zlrs status")
                             record["observations"].append({
                                 "round": number + 1,
                                 "seconds": round(time.monotonic() - started, 3),
-                                "status": both("zlrs status"),
+                                "status": status,
                             })
+                            if phy is not None and not all(
+                                    re.search(r"Modulation\s*:\s*" + re.escape(profile_names[phy]), text)
+                                    for text in status.values()):
+                                raise RuntimeError(f"Requested PHY {phy} changed during DATA: {status!r}")
                             observe_at = time.monotonic() + 2
                         fault_done = fault is None or all(value["restores"] == 1 and
                                                          not value["active"] and not value["pending"]
@@ -431,23 +460,19 @@ def main():
                 record["after"] = reports("radio")
                 record["after_link"] = reports("link")
                 record["after_channels"] = channels()
+                if record.get("phy_pinned"):
+                    record["phy_pin"] = both("test_phy")
+                    released = both("test_phy pin 0")
+                    if not all("PHY_PIN active=0" in output for output in released.values()):
+                        raise RuntimeError(f"Cannot release the requested PHY: {released!r}")
             both("test_radio restore")
             consoles.clear()
     finally:
         # A failed test still requests rollback; the app confirmation timer is the fallback.
-        for identity in installed:
-            try:
-                path = f"/dev/serial/by-id/usb-zlrs_ZLRS_{identity}-if04"
-                with serial.Serial(path, 115200, timeout=0.02, write_timeout=2) as port:
-                    command(port, "test_radio restore")
-            except (OSError, serial.SerialException):
-                pass
-            try:
-                wait_image(identity, previous[identity], timeout=125)
-                record["restored"][identity] = True
-            except (OSError, RuntimeError, TimeoutError, subprocess.SubprocessError):
-                record["restored"][identity] = False
-        args.log.write_text(json.dumps(record, indent=2) + "\n")
+        try:
+            record.update(restore_images(installed, previous))
+        finally:
+            args.log.write_text(json.dumps(record, indent=2) + "\n")
     if not all(record["restored"].get(identity) for identity in identities):
         raise RuntimeError("Previous firmware was not restored on both boards")
     print(f"Radio tests passed; previous firmware restored. Log: {args.log}")
