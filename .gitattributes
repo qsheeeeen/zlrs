@@ -1,0 +1,2 @@
+# Unified diff context starts with a space before source indentation.
+patches/**/*.patch -whitespace

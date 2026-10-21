@@ -89,6 +89,16 @@ echo "==> [4/5] west update"
 [ -d "${WS}/zephyr" ] || echo "    the first run pulls Zephyr and its modules: about 5 GB"
 (cd "${WS}" && "${WEST}" update --narrow -o=--depth=1)
 
+# The pinned PL011 driver busy-waits in irq_tx_enable while CTS blocks TX.
+# Keep this dependency fix reproducible and preserve unrelated workspace edits.
+UART_PATCH="${ZLRS_REPO_ROOT}/patches/zephyr/uart-pl011-nonblocking-tx.patch"
+if git -C "${WS}/zephyr" apply --reverse --check "${UART_PATCH}" 2>/dev/null; then
+	echo "    PL011 nonblocking TX patch already applied"
+else
+	git -C "${WS}/zephyr" apply --check "${UART_PATCH}"
+	git -C "${WS}/zephyr" apply "${UART_PATCH}"
+fi
+
 echo "==> [5/5] Zephyr's Python build dependencies"
 "${VENV_DIR}/bin/python" -m pip install --quiet --no-warn-script-location \
 	-r "${WS}/zephyr/scripts/requirements-base.txt"

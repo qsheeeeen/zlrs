@@ -1,0 +1,84 @@
+--- a/drivers/serial/uart_pl011.c
++++ b/drivers/serial/uart_pl011.c
+@@ -66,7 +66,6 @@
+ 	bool sbsa;		/* SBSA mode */
+ 	uint32_t clk_freq;
+ #if PL011_USE_IRQ
+-	volatile bool sw_call_txdrdy;
+ 	uart_irq_callback_user_data_t irq_cb;
+ 	struct k_spinlock irq_cb_lock;
+ 	void *irq_cb_data;
+@@ -398,37 +397,14 @@
+ static void pl011_irq_tx_enable(const struct device *dev)
+ {
+ 	struct pl011_data *data = dev->data;
+-	volatile struct pl011_regs *uart = get_uart(dev);
+-
+-	uart->imsc |= PL011_IMSC_TXIM;
+-	if (!data->sw_call_txdrdy) {
+-		return;
+-	}
+-	data->sw_call_txdrdy = false;
+-
+-	/*
+-	 * Verify if the callback has been registered. Due to HW limitation, the
+-	 * first TX interrupt should be triggered by the software.
+-	 *
+-	 * PL011 TX interrupt is based on a transition through a level, rather
+-	 * than on the level itself[1]. So that, enable TX interrupt can not
+-	 * trigger TX interrupt if no data was filled to TX FIFO at the
+-	 * beginning.
+-	 *
+-	 * [1]: PrimeCell UART (PL011) Technical Reference Manual
+-	 *      functional-overview/interrupts
++
++	get_uart(dev)->imsc |= PL011_IMSC_TXIM;
++	/* A TX FIFO below its watermark cannot generate the initial interrupt.
++	 * Prime it once on every enable, including a short-fragment restart. Never
++	 * wait for FIFO space here: CTS may keep the transmitter stopped forever.
++	 * The hardware interrupt takes over once the FIFO drains past its watermark.
+ 	 */
+-	if (!data->irq_cb) {
+-		return;
+-	}
+-
+-	/*
+-	 * Execute callback while TX interrupt remains enabled. If
+-	 * uart_fifo_fill() is called with small amounts of data, the 1/8 TX
+-	 * FIFO threshold may never be reached, and the hardware TX interrupt
+-	 * will never trigger.
+-	 */
+-	while (uart->imsc & PL011_IMSC_TXIM) {
++	if (data->irq_cb) {
+ 		K_SPINLOCK(&data->irq_cb_lock) {
+ 			data->irq_cb(dev, data->irq_cb_data);
+ 		}
+@@ -437,9 +413,6 @@
+ 
+ static void pl011_irq_tx_disable(const struct device *dev)
+ {
+-	struct pl011_data *data = dev->data;
+-
+-	data->sw_call_txdrdy = true;
+ 	get_uart(dev)->imsc &= ~PL011_IMSC_TXIM;
+ }
+ 
+@@ -459,8 +432,8 @@
+ 	}
+ 
+ 	return ((uart->imsc & PL011_IMSC_TXIM) &&
+-		/* Check for TX interrupt status is set or TX FIFO is empty. */
+-		(uart->ris & PL011_RIS_TXRIS || uart->fr & PL011_FR_TXFE));
++		/* A software kick can also refill a partially occupied FIFO. */
++		!(uart->fr & PL011_FR_TXFF));
+ }
+ 
+ static void pl011_irq_rx_enable(const struct device *dev)
+@@ -637,7 +610,6 @@
+ #if PL011_USE_IRQ
+ 	if (config->irq_config_func) {
+ 		config->irq_config_func(dev);
+-		data->sw_call_txdrdy = true;
+ 	}
+ #endif
+ 
