@@ -15,6 +15,6 @@ board:
         # (`--sysbuild`), so there is no second shape to name after. Both dts files include the
         # same flash layout, and the bootloader built from the same target includes it too.
         - name: hf
-          cpucluster: m33
+          cpucluster: m33_0
         - name: lf
-          cpucluster: m33
+          cpucluster: m33_0

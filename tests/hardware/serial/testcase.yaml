@@ -5,8 +5,8 @@ common:
   tags: [serial, hardware]
   timeout: 60
   platform_allow:
-    - rp2350_zero_core2021/rp2350a/m33/lf
-    - rp2350_zero_core2021/rp2350a/m33/hf
+    - rp2350_zero_core2021/rp2350a/m33_0/lf
+    - rp2350_zero_core2021/rp2350a/m33_0/hf
   extra_args:
     - SB_APPLICATION_CONFIG_DIR=${ZEPHYR_ZLRS_MODULE_DIR}/app
 tests:

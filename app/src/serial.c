@@ -87,7 +87,12 @@ static void data_isr(const struct device *dev, void *user_data)
 {
 	struct data_ep *const ep = user_data;
 
-	while (uart_irq_update(dev) && uart_irq_is_pending(dev)) {
+	for (;;) {
+		uart_irq_update(dev);
+		if (!uart_irq_is_pending(dev)) {
+			break;
+		}
+
 		if (uart_irq_rx_ready(dev)) {
 			uint8_t chunk[64];
 			const uint32_t room = ring_buf_space_get(&ep->rx);
@@ -118,7 +123,7 @@ static void data_isr(const struct device *dev, void *user_data)
 
 		if (uart_irq_tx_ready(dev)) {
 			uint8_t *claim = NULL;
-			const uint32_t claimed = ring_buf_get_claim(&ep->tx, &claim, 64U);
+			const uint32_t claimed = MIN(ring_buf_get_ptr(&ep->tx, &claim, 0U), 64U);
 
 			if (claimed == 0U) {
 				/* A timer can preempt a CDC callback and enqueue output. Recheck under
@@ -137,7 +142,7 @@ static void data_isr(const struct device *dev, void *user_data)
 				ep->tx_total += (uint32_t)sent;
 			}
 
-			ring_buf_get_finish(&ep->tx, (sent > 0) ? (uint32_t)sent : 0U);
+			ring_buf_consume(&ep->tx, (sent > 0) ? (uint32_t)sent : 0U);
 			const unsigned int key = irq_lock();
 
 			if (ring_buf_is_empty(&ep->tx)) {

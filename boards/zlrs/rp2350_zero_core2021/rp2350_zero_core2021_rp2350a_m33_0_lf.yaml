@@ -1,5 +1,5 @@
-identifier: rp2350_zero_core2021/rp2350a/m33/hf
-name: Waveshare RP2350-Zero + Core2021-HF (Cortex-M33)
+identifier: rp2350_zero_core2021/rp2350a/m33_0/lf
+name: Waveshare RP2350-Zero + Core2021-LF (Cortex-M33)
 type: mcu
 arch: arm
 flash: 4096

@@ -166,17 +166,17 @@ without pausing RF. See [development](10-debug.md#observing-a-running-link).
 
 ## Build environment
 
-The manifest pins Zephyr v4.4.0 and Semtech `usp_zephyr`/`usp` v1.2.1. ZLRS is the
+The manifest pins Zephyr v4.5.0 and Semtech `usp_zephyr`/`usp` v1.2.1. ZLRS is the
 west manifest repository; the build environment selects Zephyr SDK 1.0.0.
 
 ```sh
 tools/setup-zephyr.sh
-export ZLRS_BOARD=rp2350_zero_core2021/rp2350a/m33/lf
+export ZLRS_BOARD=rp2350_zero_core2021/rp2350a/m33_0/lf
 source tools/zephyr-env.sh
 zlrs-build
 ```
 
-Use `rp2350_zero_core2021/rp2350a/m33/hf` for an HF module. The setup command
+Use `rp2350_zero_core2021/rp2350a/m33_0/hf` for an HF module. The setup command
 installs workspace, build and host-tool dependencies and prints SDK installation
 instructions if required. `ZLRS_WS`, `ZLRS_VENV`, `ZLRS_SDK_DIR`, `ZLRS_BOARD` and
 `ZLRS_APP` select the workspace, virtual environment, SDK, board and application.

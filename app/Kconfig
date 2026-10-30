@@ -23,7 +23,7 @@ menu "Hardware and product shape"
 config ZLRS_APP_RAM_RADIO
 	bool "Execute RF application and protocol code from SRAM"
 	default y
-	depends on SOC_RP2350A_M33
+	depends on SOC_RP2350A_M33_0
 	select CODE_DATA_RELOCATION
 	help
 	  Keep the RF owner's application, protocol and crypto code in SRAM so external

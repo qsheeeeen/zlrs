@@ -24,7 +24,7 @@ antenna paths for both SubG and 2.4 GHz.
 
 ## Build and install
 
-Create a west workspace and install its dependencies:
+Use CMake 3.28 or newer. Create a west workspace and install its dependencies:
 
 ```sh
 mkdir -p ~/zlrs-workspace
@@ -37,12 +37,12 @@ tools/setup-zephyr.sh
 Follow the SDK installation commands printed by setup if required, then build:
 
 ```sh
-export ZLRS_BOARD=rp2350_zero_core2021/rp2350a/m33/lf
+export ZLRS_BOARD=rp2350_zero_core2021/rp2350a/m33_0/lf
 source tools/zephyr-env.sh
 zlrs-build
 ```
 
-Use `rp2350_zero_core2021/rp2350a/m33/hf` for the HF module. Default build output
+Use `rp2350_zero_core2021/rp2350a/m33_0/hf` for the HF module. Default build output
 is in the parent workspace's `build` directory. Commands below run from the
 repository root.
 

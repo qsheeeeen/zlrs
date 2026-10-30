@@ -42,8 +42,8 @@ uses USB when a host has configured the device and the bus is active; see
 
 | Build target | SubG design | Regions | Default |
 | --- | --- | --- | --- |
-| `rp2350_zero_core2021/rp2350a/m33/lf` | 410–510 MHz | CN470, CN433 | CN433 |
-| `rp2350_zero_core2021/rp2350a/m33/hf` | 850–930 MHz | FCC915, EU868 | FCC915 |
+| `rp2350_zero_core2021/rp2350a/m33_0/lf` | 410–510 MHz | CN470, CN433 | CN433 |
+| `rp2350_zero_core2021/rp2350a/m33_0/hf` | 850–930 MHz | FCC915, EU868 | FCC915 |
 
 Both targets support the same 2.4 GHz path and use sysbuild with MCUboot.
 Cortex-M33 is supported; Hazard3 is not a build target for this board.

@@ -15,7 +15,7 @@ band mode, SubG region, profile and timing.
 Build a debug image from the repository root:
 
 ```sh
-export ZLRS_BOARD=rp2350_zero_core2021/rp2350a/m33/lf
+export ZLRS_BOARD=rp2350_zero_core2021/rp2350a/m33_0/lf
 source tools/zephyr-env.sh
 zlrs-build -d build-debug -- \
   -DEXTRA_CONF_FILE="$ZLRS_REPO_ROOT/app/debug.conf" \
@@ -291,7 +291,7 @@ The hardware unit fixture covers protocol, hardware SHA-256, entropy, persistenc
 logs, radio operations and timer behavior:
 
 ```sh
-west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33/lf \
+west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33_0/lf \
   tests/hardware/unit -d build/unit
 python3 tests/hardware/unit/run.py --serial <serial> \
   --image build/unit/unit/zephyr/zephyr.signed.bin --log build/unit.log
@@ -302,7 +302,7 @@ isolated fixture and use the same runner. The expanded per-band cadence cases
 take about 150 seconds, so the runner and hardware harness allow 300 seconds:
 
 ```sh
-west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33/lf \
+west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33_0/lf \
   tests/hardware/unit -d build/unit-ui -- -Dunit_ZLRS_TEST_UI_ONLY=ON
 python3 tests/hardware/unit/run.py --serial <serial> \
   --image build/unit-ui/unit/zephyr/zephyr.signed.bin --log build/unit-ui.log
@@ -324,7 +324,7 @@ Management acceptance covers malformed commands, values and lengths, write
 failure, confirmation retry, identity generation, pairing deletion and reset:
 
 ```sh
-west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33/lf \
+west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33_0/lf \
   tests/hardware/mgmt -d build/mgmt-hardware
 python3 tests/hardware/mgmt/run.py --serial <serial>
 ```
@@ -333,7 +333,7 @@ See the [management fixture](../tests/hardware/mgmt/README.md) for restoration
 requirements. Initialization-fault acceptance uses a separate image:
 
 ```sh
-west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33/lf \
+west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33_0/lf \
   tests/hardware/application -d build/application-fault
 python3 tests/hardware/application/run.py --serial <serial> \
   --image build/application-fault/application/zephyr/zephyr.signed.bin \
@@ -357,7 +357,7 @@ cat >build/phy-acceptance.conf <<'EOF'
 CONFIG_ZLRS_APP_FHSS=y
 CONFIG_ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS=600000
 EOF
-west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33/lf \
+west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33_0/lf \
   tests/hardware/radio -d build/radio-phy -- \
   -Dradio_EXTRA_CONF_FILE="$PWD/build/phy-acceptance.conf"
 python3 tests/hardware/radio/run.py --serial <Leader-serial> --peer <Follower-serial> \
@@ -445,7 +445,7 @@ to select a specific debug console port. Management status is not polled during 
 ### PHY and FIFO isolation
 
 ```sh
-west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33/lf \
+west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33_0/lf \
   tests/hardware/radio -d build/radio
 python3 tests/hardware/radio/run.py --serial <Leader-serial> --peer <Follower-serial> \
   --log build/radio.json --timeout 60

@@ -49,8 +49,8 @@ ctest --test-dir build/tests --parallel 4 --output-on-failure --output-junit res
 This runs architecture gates, every Python tool module and every host scenario.
 GoogleTest cases are discovered individually by CTest from one executable per
 module. Every selected case runs in its own process with a timeout and independent
-result. Production code remains C11; GoogleTest cases use C++20. ASan and UBSan
-are enabled by default; CI additionally enables LeakSanitizer with
+result. Host C sources use C11; Zephyr firmware uses C17, and GoogleTest cases use
+C++20. ASan and UBSan are enabled by default; CI additionally enables LeakSanitizer with
 `-DZLRS_HOST_LEAKS=ON`.
 
 GoogleTest 1.18.0 is fetched once during CMake configuration, with a pinned
@@ -201,7 +201,7 @@ case and uses UART hardware loopback for DATA and RTS/CTS; external cable wiring
 requires a separate check. Build and run it without changing saved settings:
 
 ```sh
-west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33/lf \
+west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33_0/lf \
   tests/hardware/serial -d build/serial-hardware -- \
   -DSB_APPLICATION_CONFIG_DIR="$PWD/app"
 python tests/hardware/unit/run.py --serial <serial> \

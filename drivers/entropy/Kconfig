@@ -9,7 +9,6 @@ config ZLRS_RP2350_TRNG
 	# Only built into images with the entropy subsystem (the bootloader has no ENTROPY_GENERATOR)
 	depends on DT_HAS_ZLRS_RP2350_TRNG_ENABLED && ENTROPY_GENERATOR
 	select ENTROPY_HAS_DRIVER
-	select RING_BUFFER
 	select POLL
 	help
 	  Drives the TRNG registers directly per RP2350 datasheet 12.12: 6 EHR words per 192-bit

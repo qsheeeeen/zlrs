@@ -9,7 +9,7 @@ Run from the repository root with an LF board:
 
 ```sh
 source tools/zephyr-env.sh
-west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33/lf \
+west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33_0/lf \
   tests/hardware/mgmt -d build/mgmt-hardware
 python3 tests/hardware/mgmt/run.py --serial <board-serial>
 ```

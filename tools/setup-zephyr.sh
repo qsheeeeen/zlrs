@@ -6,9 +6,8 @@
 #
 #   tools/setup-zephyr.sh [workspace root]    defaults to the directory above the repository
 #
-# west T2 topology: this repository is the manifest repository and the manifest is west.yml
-# (pinning zephyr v4.4.0 and usp_zephyr/usp v1.2.1); usp_zephyr is no longer
-# the manifest repository.
+# west T2 topology: this repository owns west.yml, which pins Zephyr v4.5.0
+# and usp_zephyr/usp v1.2.1.
 #
 # Default layout (on this machine: /home/qs/zlrs-worksapce):
 #
@@ -17,7 +16,7 @@
 #   ├── .venv/               west and the build dependencies (Python venv, ZLRS_VENV overrides)
 #   ├── build/               default output directory of west build
 #   ├── zlrs/                this repository == manifest repository (west.yml self.path)
-#   ├── zephyr/              Zephyr v4.4.0 plus the modules it imports
+#   ├── zephyr/              Zephyr v4.5.0 plus the modules it imports
 #   ├── usp_zephyr/          Semtech usp_zephyr v1.2.1
 #   ├── bootloader/mcuboot/  MCUboot: the bootloader image and its imgtool (doc/06-firmware.md)
 #   └── modules/lib/usp/     Semtech usp v1.2.1
@@ -88,16 +87,6 @@ echo "==> [4/5] west update"
 # Always sync to the manifest revisions, including in an existing workspace.
 [ -d "${WS}/zephyr" ] || echo "    the first run pulls Zephyr and its modules: about 5 GB"
 (cd "${WS}" && "${WEST}" update --narrow -o=--depth=1)
-
-# The pinned PL011 driver busy-waits in irq_tx_enable while CTS blocks TX.
-# Keep this dependency fix reproducible and preserve unrelated workspace edits.
-UART_PATCH="${ZLRS_REPO_ROOT}/patches/zephyr/uart-pl011-nonblocking-tx.patch"
-if git -C "${WS}/zephyr" apply --reverse --check "${UART_PATCH}" 2>/dev/null; then
-	echo "    PL011 nonblocking TX patch already applied"
-else
-	git -C "${WS}/zephyr" apply --check "${UART_PATCH}"
-	git -C "${WS}/zephyr" apply "${UART_PATCH}"
-fi
 
 echo "==> [5/5] Zephyr's Python build dependencies"
 "${VENV_DIR}/bin/python" -m pip install --quiet --no-warn-script-location \

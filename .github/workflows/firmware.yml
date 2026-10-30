@@ -74,7 +74,7 @@ jobs:
         run: |
           set -x
           . zlrs/tools/zephyr-env.sh
-          for board in rp2350_zero_core2021/rp2350a/m33/hf rp2350_zero_core2021/rp2350a/m33/lf; do
+          for board in rp2350_zero_core2021/rp2350a/m33_0/hf rp2350_zero_core2021/rp2350a/m33_0/lf; do
             sku="${board##*/}"
             ZLRS_BOARD="$board" zlrs-build -d "build-${sku}"
             # BOOTSEL carries the bootloader image only

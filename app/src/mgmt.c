@@ -88,7 +88,12 @@ static void cfg_port_isr(const struct device *dev, void *user_data)
 {
 	struct cfg_port *const p = user_data;
 
-	while (uart_irq_update(dev) && uart_irq_is_pending(dev)) {
+	for (;;) {
+		uart_irq_update(dev);
+		if (!uart_irq_is_pending(dev)) {
+			break;
+		}
+
 		if (uart_irq_rx_ready(dev)) {
 			uint8_t chunk[32];
 			const int n = uart_fifo_read(dev, chunk, sizeof(chunk));
@@ -105,7 +110,7 @@ static void cfg_port_isr(const struct device *dev, void *user_data)
 
 		if (uart_irq_tx_ready(dev)) {
 			uint8_t *claim = NULL;
-			const uint32_t claimed = ring_buf_get_claim(&p->tx, &claim, 64U);
+			const uint32_t claimed = MIN(ring_buf_get_ptr(&p->tx, &claim, 0U), 64U);
 
 			if (claimed == 0U) {
 				uart_irq_tx_disable(dev);
@@ -114,7 +119,7 @@ static void cfg_port_isr(const struct device *dev, void *user_data)
 
 			const int sent = uart_fifo_fill(dev, claim, (int)claimed);
 
-			ring_buf_get_finish(&p->tx, (sent > 0) ? (uint32_t)sent : 0U);
+			ring_buf_consume(&p->tx, (sent > 0) ? (uint32_t)sent : 0U);
 		}
 	}
 }

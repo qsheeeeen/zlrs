@@ -24,8 +24,7 @@
 		zephyr,lorawan-transceiver = &lora_core2021;
 		/* Entropy comes from the zlrs TRNG driver (bounded waits, no interrupt masking; drivers/entropy) */
 		zephyr,entropy = &rng;
-		/* Each variant sets zephyr,code-partition itself: code without a bootloader, slot0 with one
-		 * (see the partition table in this directory's README) */
+		/* Each variant links the application into slot0; see the partition table in README.md. */
 	};
 	aliases {
 		lora-transceiver = &lora_core2021;
@@ -94,6 +93,10 @@
  * See doc/06-firmware.md.
  */
 &wdt0 {
+	status = "okay";
+};
+
+&vreg {
 	status = "okay";
 };
 
