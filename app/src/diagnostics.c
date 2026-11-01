@@ -70,29 +70,8 @@ static const char *diagnostic_bands(const zlrs_link_cfg_t *cfg)
 	return cfg->domain == ZLRS_DOMAIN_ISM2400 ? "2.4 GHz" : "sub-G";
 }
 
-static void diagnostic_timings(struct diagnostic_report_writer *writer)
+static void diagnostic_maintenance(struct diagnostic_report_writer *writer)
 {
-	static const char *const names[ZLRS_RF_TIMING_COUNT] = {
-		"prepare IRQ",  "owner wake",    "serial pump", "protocol build",
-		"packet total", "radio prepare", "RX protocol", "RX completion",
-	};
-	diagnostic_append(writer, "\n[ACTIVE TIMING / CURRENT PLAN]\n");
-	diagnostic_append(writer, "  Epoch %u   Since %u ms   Quantiles are upper bounds (us)\n",
-			  snapshot.timings.epoch, snapshot.timings.started_ms);
-	diagnostic_append(writer,
-			  "  Phase              Samples   Mean   P50<=   P95<=   P99<=   Max us\n");
-	for (unsigned int i = 0U; i < ZLRS_RF_TIMING_COUNT; i++) {
-		const zlrs_timing_histogram_t *const h = &snapshot.timings.phase[i];
-		if (h->samples == 0U) {
-			diagnostic_append(writer, "  %-18s no samples\n", names[i]);
-			continue;
-		}
-		diagnostic_append(writer, "  %-18s %7u %6u %7u %7u %7u %8u\n", names[i], h->samples,
-				  (uint32_t)(h->total_us / h->samples),
-				  zlrs_timing_percentile_bound(h, 50U),
-				  zlrs_timing_percentile_bound(h, 95U),
-				  zlrs_timing_percentile_bound(h, 99U), h->max_us);
-	}
 	diagnostic_append(writer, "\n[MAINTENANCE / SINCE RF INIT]\n");
 	diagnostic_append(writer, "  Pauses             : %u   Total %llu us   Max %llu us\n",
 			  snapshot.maintenance.count,
@@ -247,7 +226,7 @@ static void diagnostic_radio(struct diagnostic_report_writer *writer)
 	diagnostic_append(writer, "  Launch guard       : %u us\n",
 			  (unsigned int)CONFIG_ZLRS_APP_TX_GUARD_US);
 
-	diagnostic_timings(writer);
+	diagnostic_maintenance(writer);
 	diagnostic_append(writer, "\n[CLOCK / TIMER / LIFETIME MAXIMA]\n");
 	diagnostic_append(writer, "  TIMER1 / kernel    : %u / %u ms   Delta: %+d ms\n",
 			  protocol_ms, kernel_ms, (int32_t)(protocol_ms - kernel_ms));
@@ -255,10 +234,6 @@ static void diagnostic_radio(struct diagnostic_report_writer *writer)
 			  timer.boundaries, timer.irq_late_us_max);
 	diagnostic_append(writer, "  Missed / skipped   : %u boundaries   %u frames   %u slots\n",
 			  timer.missed_boundaries, snapshot.skipped_frames, snapshot.missed_slots);
-	diagnostic_append(
-		writer, "  Prepare wait       : skipped %u   late %u us   IRQ %u us   wake %u us\n",
-		snapshot.prepare_wait_skipped, snapshot.prepare_wait_late_us_max,
-		snapshot.prepare_irq_late_us_max, snapshot.prepare_wake_us_max);
 	diagnostic_append(
 		writer, "  Phase correction   : error %+d us   applied %+d us   hits %u\n",
 		(int)snapshot.phase_err_us, (int)snapshot.phase_last_us, snapshot.phase_hits);
@@ -319,10 +294,6 @@ static void diagnostic_radio(struct diagnostic_report_writer *writer)
 	diagnostic_append(writer,
 			  "  Window outcomes    : expired %u   incomplete %u   restarted %u\n",
 			  diag.rx_expired, diag.rx_incomplete, diag.rx_restarted);
-	diagnostic_append(writer, "  RX finish          : last / max %u / %u us\n",
-			  snapshot.rx_finish_us_last, snapshot.rx_finish_us_max);
-	diagnostic_append(writer, "  Link processing    : last / max %u / %u us\n",
-			  snapshot.rx_protocol_us_last, snapshot.rx_protocol_us_max);
 	diagnostic_append(writer, "  FIFO reads         : %u packets   %u B   %u / %u us\n",
 			  diag.rx_packets, diag.rx_fifo_bytes, diag.rx_fifo_us_last,
 			  diag.rx_fifo_us_max);
@@ -330,10 +301,6 @@ static void diagnostic_radio(struct diagnostic_report_writer *writer)
 			  diag.irq_service_us_last, diag.irq_service_us_max, diag.tx_expired);
 
 	diagnostic_append(writer, "\n[BUILD / RADIO HEALTH]\n");
-	diagnostic_append(writer, "  Serial / protocol  : %u / %u us\n",
-			  snapshot.serial_pump_us_last, snapshot.protocol_build_us_last);
-	diagnostic_append(writer, "  Packet build       : last / max %u / %u us\n",
-			  snapshot.packet_build_us_last, snapshot.packet_build_us_max);
 	diagnostic_append(writer, "  FS reused          : %u   TX startup max: %u us\n",
 			  diag.fs_reused, diag.tx_startup_us_max);
 	diagnostic_append(writer, "  Chip errors        : 0x%04x\n",

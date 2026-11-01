@@ -104,6 +104,7 @@ Both application and MCUboot share this 4 MiB flash layout:
 | log | `0x1C0000` | 1 MiB | LittleFS rotating logs |
 | coredump | `0x2C0000` | 128 KiB | Fault context |
 | storage | `0x2E0000` | 32 KiB | NVS settings, identity, root key and pairing |
+| trace | `0x300000` | 256 KiB | Bounded CTF snapshots; mounted by trace debug images |
 
 Application and bootloader must agree on every partition. The application links
 into its code partition and must fail to build if it exceeds that allocation.

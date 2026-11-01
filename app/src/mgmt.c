@@ -28,6 +28,7 @@
 #include "serial.h"
 #include "persist.h"
 #include "rf.h"
+#include "trace.h"
 #if defined(CONFIG_ZLRS_APP_DEBUG)
 #include "diagnostics.h"
 #endif
@@ -757,6 +758,7 @@ int zlrs_mgmt_run(void)
 	/* ENTER acknowledges readiness, including the queued logs. The watchdog is already
 	 * disarmed, and the idle timeout starts only after this synchronous flush. */
 	mgmt_log_flush();
+	zlrs_trace_session(true);
 	if (cfg_enter_pending) {
 		const uint8_t len = zlrs_mgmt_command(ZLRS_MGMT_CMD_ENTER, NULL, 0U, cfg_tx_line,
 						      sizeof(cfg_tx_line));
@@ -772,6 +774,7 @@ int zlrs_mgmt_run(void)
 		bool any = false;
 
 		zlrs_watchdog_feed();
+		zlrs_trace_process(true);
 		publish_mode();
 		zlrs_serial_publish_state();
 		(void)log_process();
@@ -820,6 +823,7 @@ int zlrs_mgmt_run(void)
 	}
 
 	LOG_INF("management mode finished");
+	zlrs_trace_session(false);
 
 	mode.session = false;
 	mode_pending = true;

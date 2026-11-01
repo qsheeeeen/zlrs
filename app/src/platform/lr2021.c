@@ -8,6 +8,7 @@
 #include "platform/slot_timer.h"
 
 #include <string.h>
+#include "trace.h"
 #include <hardware/gpio.h>
 #include <hardware/structs/spi.h>
 #include <zephyr/dt-bindings/gpio/gpio.h>
@@ -627,6 +628,7 @@ int zlrs_lr2021_launch_at(uint32_t target_us)
 		(void)k_sem_take(&done_sem, K_USEC(remaining));
 	}
 	begin_us = launch_mailbox.begin_us;
+	ZLRS_TRACE_EVENT("rf_launch", target_us, launch_mailbox.irq_us);
 	diag.launch_irq_late_us_last = launch_mailbox.irq_us - target_us;
 	diag.launch_irq_late_us_max =
 		MAX(diag.launch_irq_late_us_max, diag.launch_irq_late_us_last);

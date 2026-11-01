@@ -106,7 +106,7 @@ for the command list.
 | [Protocol](doc/07-protocol.md) | Air frames, switching, management framing and status |
 | [Security](doc/08-security.md) | Keys, authentication, replay, entropy and trust |
 | [User interface](doc/09-ux.md) | Button, LED and tool presentation |
-| [Development and acceptance](doc/10-debug.md) | Build/test procedures and evidence requirements |
+| [Development and acceptance](doc/10-debug.md) | Build/test procedures, bounded tracing and evidence requirements |
 | [Test system](tests/README.md) | Test ownership, execution, configuration matrices and failure diagnosis |
 | [Roadmap](doc/11-roadmap.md) | RF qualification and planned product scope |
 | [Board reference](boards/zlrs/rp2350_zero_core2021/README.md) | Pin aliases, calibration and flash partitions |

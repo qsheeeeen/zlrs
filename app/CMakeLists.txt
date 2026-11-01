@@ -30,8 +30,8 @@ target_sources(app PRIVATE
 )
 
 target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG_SHELL app PRIVATE ${zlrs_app_dir}/src/shell.c)
-target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG app PRIVATE ${zlrs_app_dir}/src/diagnostics.c
-  ${zlrs_app_dir}/src/timing.c)
+target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG_TRACE app PRIVATE ${zlrs_app_dir}/src/trace.c)
+target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG app PRIVATE ${zlrs_app_dir}/src/diagnostics.c)
 
 # App-internal headers use their paths on disk, such as "platform/lr2021.h" and "serial.h"
 # (the layers are described in doc/05-architecture.md).

@@ -200,6 +200,18 @@ endmenu
 menu "Debug image (never in production)"
 	depends on ZLRS_APP_DEBUG
 
+config ZLRS_APP_DEBUG_TRACE
+	bool "Bounded Zephyr CTF capture and Flash snapshots"
+	depends on ZLRS_APP_DEBUG_SHELL && !SMP
+	depends on TRACING_CTF && TRACING_SYNC && TRACING_BACKEND_RAM
+	depends on TRACING_CTF_TIMESTAMP
+	depends on FILE_SYSTEM_LITTLEFS && MCUMGR_GRP_FS
+	depends on MCUMGR_TRANSPORT_SHELL && JSON_LIBRARY
+	help
+	  Record a manually started, time-limited interval using Zephyr's RAM
+	  tracing backend. Save only at RF maintenance boundaries and export
+	  committed snapshots through the MCUmgr filesystem group.
+
 config ZLRS_APP_DEBUG_SHELL
 	bool "Debug shell on the console CDC"
 	default n

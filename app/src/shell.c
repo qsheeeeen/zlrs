@@ -10,6 +10,7 @@
 #include "mgmt.h"
 #include "boot.h"
 #include "rf.h"
+#include "trace.h"
 #include "platform/temperature.h"
 #ifdef PICO_RP2350
 #include <pico/bootrom.h>
@@ -326,8 +327,75 @@ static int cmd_phy(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+#if defined(CONFIG_ZLRS_APP_DEBUG_TRACE)
+static int cmd_trace_status(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	static const char *const names[] = {"idle", "capturing", "frozen", "saving", "saved"};
+	const struct zlrs_trace_status status = zlrs_trace_status();
+
+	shell_print(sh, "Trace state=%s id=%u requested_ms=%u reason=%u dropped=%u error=%d",
+		    names[status.state], status.id, status.duration_ms, status.reason,
+		    status.dropped, status.error);
+	shell_print(sh, "RAM capacity=%u used=unavailable full=unavailable",
+		    CONFIG_RAM_TRACING_BUFFER_SIZE);
+	shell_print(sh, "Started_ns=%llu stopped_ns=%llu generation=%u slot=%d",
+		    (unsigned long long)status.started_ns, (unsigned long long)status.stopped_ns,
+		    status.generation, status.slot);
+	if (status.slot >= 0) {
+		shell_print(sh, "Files /trace/%d/channel0_0 /trace/%d/capture.json",
+			    status.slot, status.slot);
+	}
+	return 0;
+}
+
+static int cmd_trace(const struct shell *sh, size_t argc, char **argv)
+{
+	enum zlrs_trace_command command;
+	uint32_t duration = 50U;
+
+	if (strcmp(argv[0], "start") == 0) {
+		command = ZLRS_TRACE_START;
+		if (argc == 2U) {
+			char *end;
+			const unsigned long parsed = strtoul(argv[1], &end, 10);
+
+			if (argv[1][0] == '\0' || *end != '\0' || parsed < 10UL || parsed > 5000UL) {
+				return -EINVAL;
+			}
+			duration = (uint32_t)parsed;
+		}
+	} else if (strcmp(argv[0], "stop") == 0) {
+		command = ZLRS_TRACE_STOP;
+	} else if (strcmp(argv[0], "save") == 0) {
+		command = ZLRS_TRACE_SAVE;
+	} else {
+		command = ZLRS_TRACE_DISCARD;
+	}
+	const int rc = zlrs_trace_request(command, duration);
+
+	if (rc != 0) {
+		shell_error(sh, "trace %s failed (%d)", argv[0], rc);
+		return rc;
+	}
+	return cmd_trace_status(sh, 0U, NULL);
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(trace_commands,
+	SHELL_CMD_ARG(start, NULL, "record 10..5000 ms (default 50)", cmd_trace, 1, 1),
+	SHELL_CMD_ARG(stop, NULL, "freeze the active capture", cmd_trace, 1, 0),
+	SHELL_CMD_ARG(status, NULL, "capture and saved artifact state", cmd_trace_status, 1, 0),
+	SHELL_CMD_ARG(save, NULL, "save the frozen capture with RF paused", cmd_trace, 1, 0),
+	SHELL_CMD_ARG(discard, NULL, "discard RAM; retain Flash artifacts", cmd_trace, 1, 0),
+	SHELL_SUBCMD_SET_END);
+#endif
+
 SHELL_STATIC_SUBCMD_SET_CREATE(
 	zlrs_cmds,
+#if defined(CONFIG_ZLRS_APP_DEBUG_TRACE)
+	SHELL_CMD(trace, &trace_commands, "bounded Zephyr CTF capture", NULL),
+#endif
 	SHELL_CMD(status, NULL, "link, MCU temperature, LR2021 snapshot and error counters",
 		  cmd_status),
 	SHELL_CMD_ARG(power, NULL, "temporary fixed dBm while connected, or auto", cmd_power, 2, 0),

@@ -20,6 +20,7 @@
 #include "diagnostics.h"
 #include "power.h"
 #include "band.h"
+#include "trace.h"
 #include "platform/slot_timer.h"
 #include "platform/watchdog.h"
 #include "platform/lr2021.h"
@@ -100,21 +101,10 @@ static atomic_t power_request;
 static atomic_t phy_request;
 static bool power_fixed;
 static int8_t fixed_power_dbm;
-static zlrs_rf_timings_t timings;
 static zlrs_rf_maintenance_t maintenance;
 static uint64_t pause_started_cycles;
 static bool maintenance_gap;
 
-static void reset_timings(void)
-{
-	const uint32_t epoch = timings.epoch + 1U;
-	timings = (zlrs_rf_timings_t){.epoch = epoch, .started_ms = k_uptime_get_32()};
-}
-
-#define RECORD_TIMING(phase_id, us) zlrs_timing_record(&timings.phase[phase_id], (us))
-#else
-#define reset_timings()             ((void)0)
-#define RECORD_TIMING(phase_id, us) ((void)0)
 #endif
 static zlrs_duty_t duty;
 /* Identity is read or generated at boot before use.
@@ -229,7 +219,6 @@ static void plan_init(void)
 	LOG_INF("data %s: mtu=%u frame=%u us rate=%u Hz", ZLRS_DATA_SUBG ? "sub-G" : "2.4G",
 		data_mtu, frame_period_us, data_rate_hz);
 	LOG_INF("modem: %s", zlrs_mod_phy_name(zlrs_mod_phy_id(&data_mod)));
-	reset_timings();
 }
 
 /* ---- link setup ---------------------------------------------------------- */
@@ -383,8 +372,6 @@ static void load_identity(void)
 
 static void pump_serial(void);
 
-static uint32_t rx_finish_us_last, rx_finish_us_max;
-static uint32_t rx_protocol_us_last, rx_protocol_us_max;
 
 /* RF owns protocol completion; the LR2021 adapter only returns hardware facts. */
 static bool complete_radio(zlrs_lr2021_result_t *result)
@@ -392,18 +379,10 @@ static bool complete_radio(zlrs_lr2021_result_t *result)
 	if (!zlrs_lr2021_process_irq(result)) {
 		return false;
 	}
-	const uint32_t protocol_us = zlrs_slot_timer_now_us();
+	ZLRS_TRACE_EVENT("rf_rx_begin", result->done_us, result->size);
 	zlrs_link_complete(&link_data, result->status == 0 ? ZLRS_RADIO_OK : ZLRS_RADIO_FAIL,
 			   result->size, result->rssi_dbm, result->snr_db, result->completed_ms);
-	if (result->status == 0 && result->size > 0U) {
-		const uint32_t finish_us = zlrs_slot_timer_now_us();
-		rx_protocol_us_last = finish_us - protocol_us;
-		rx_protocol_us_max = MAX(rx_protocol_us_max, rx_protocol_us_last);
-		rx_finish_us_last = finish_us - result->done_us;
-		rx_finish_us_max = MAX(rx_finish_us_max, rx_finish_us_last);
-		RECORD_TIMING(ZLRS_RF_TIMING_RX_PROTOCOL, rx_protocol_us_last);
-		RECORD_TIMING(ZLRS_RF_TIMING_RX_FINISH, rx_finish_us_last);
-	}
+	ZLRS_TRACE_EVENT("rf_rx_end", result->done_us, result->size);
 	return true;
 }
 
@@ -439,14 +418,7 @@ static uint32_t slot_deadline_us;
 static uint32_t slot_nominal_us;
 static uint32_t skipped_frames;
 static uint32_t missed_slots;
-static uint32_t packet_build_us_last;
-static uint32_t packet_build_us_max;
-static uint32_t serial_pump_us_last;
-static uint32_t protocol_build_us_last;
 static uint32_t prepare_wait_skipped;
-static uint32_t prepare_wait_late_us_max;
-static uint32_t prepare_irq_late_us_max;
-static uint32_t prepare_wake_us_max;
 static uint32_t late_prepare_entry_us;
 static uint32_t late_prepare_build_us;
 static uint32_t late_prepare_spi_us;
@@ -574,17 +546,10 @@ static void run_slot(uint8_t slot)
 		zlrs_slot_timer_wait_until(prepare_at_us, &timing);
 	}
 	if (timing.armed) {
-		prepare_irq_late_us_max =
-			MAX(prepare_irq_late_us_max, timing.irq_us - prepare_at_us);
-		prepare_wake_us_max = MAX(prepare_wake_us_max, timing.wake_us - timing.irq_us);
-		RECORD_TIMING(ZLRS_RF_TIMING_PREPARE_IRQ, timing.irq_us - prepare_at_us);
-		RECORD_TIMING(ZLRS_RF_TIMING_OWNER_WAKE, timing.wake_us - timing.irq_us);
+		ZLRS_TRACE_EVENT("rf_prep_irq", prepare_at_us, timing.irq_us);
+		ZLRS_TRACE_EVENT("rf_owner_wake", timing.irq_us, timing.wake_us);
 	} else {
 		prepare_wait_skipped++;
-		if ((int32_t)(timing.wake_us - prepare_at_us) > 0) {
-			prepare_wait_late_us_max =
-				MAX(prepare_wait_late_us_max, timing.wake_us - prepare_at_us);
-		}
 	}
 
 	const uint8_t link_slot = slot;
@@ -603,13 +568,14 @@ static void run_slot(uint8_t slot)
 		zlrs_link_skip_slot(link, link_slot);
 		return;
 	}
-	const uint32_t pump_at_us = now_us();
-
+	ZLRS_TRACE_EVENT("rf_serial_begin", slot_nominal_us, slot);
 	pump_serial();
-	const uint32_t protocol_at_us = now_us();
+	ZLRS_TRACE_EVENT("rf_serial_end", slot_nominal_us, slot);
+	ZLRS_TRACE_EVENT("rf_protocol_begin", slot_nominal_us, slot);
 
 	update_power(zlrs_slot_timer_now_ms());
 	req = zlrs_link_slot(link, link_slot, now_ms);
+	ZLRS_TRACE_EVENT("rf_protocol_end", slot_nominal_us, slot);
 
 	if (req == NULL) {
 		return;
@@ -623,15 +589,6 @@ static void run_slot(uint8_t slot)
 	}
 	zlrs_lr2021_slot(slot_nominal_us + CONFIG_ZLRS_APP_TX_GUARD_US, slot_deadline_us);
 
-	if (req->is_tx) {
-		serial_pump_us_last = protocol_at_us - pump_at_us;
-		protocol_build_us_last = now_us() - protocol_at_us;
-		packet_build_us_last = now_us() - slot_start_us;
-		packet_build_us_max = MAX(packet_build_us_max, packet_build_us_last);
-		RECORD_TIMING(ZLRS_RF_TIMING_SERIAL, serial_pump_us_last);
-		RECORD_TIMING(ZLRS_RF_TIMING_PROTOCOL, protocol_build_us_last);
-		RECORD_TIMING(ZLRS_RF_TIMING_PACKET, packet_build_us_last);
-	}
 
 	/* Out of duty budget: give the slot up (finish as a radio failure, the link retries next
 	 * round). Only constrains the sub-G link. */
@@ -644,10 +601,9 @@ static void run_slot(uint8_t slot)
 
 	const uint32_t prepare_started_us = now_us();
 
+	ZLRS_TRACE_EVENT("rf_prepare_begin", slot_nominal_us, req->is_tx);
 	const int prepare_rc = zlrs_lr2021_prepare(req);
-	if (req->is_tx) {
-		RECORD_TIMING(ZLRS_RF_TIMING_RADIO_PREPARE, now_us() - prepare_started_us);
-	}
+	ZLRS_TRACE_EVENT("rf_prepare_end", slot_nominal_us, (uint32_t)prepare_rc);
 	if (prepare_rc != 0) {
 		if (req->is_tx) {
 			late_prepare_entry_us = slot_start_us - prepare_at_us;
@@ -910,26 +866,14 @@ void zlrs_rf_diagnostics_capture(zlrs_rf_diagnostics_t *out)
 	out->skipped_frames = skipped_frames;
 	out->missed_slots = missed_slots;
 	out->prepare_wait_skipped = prepare_wait_skipped;
-	out->prepare_wait_late_us_max = prepare_wait_late_us_max;
-	out->prepare_irq_late_us_max = prepare_irq_late_us_max;
-	out->prepare_wake_us_max = prepare_wake_us_max;
 	out->phase_err_us = phase_err_us;
 	out->phase_last_us = phase_last_us;
 	out->phase_hits = phase_hits;
 	out->late_prepare_entry_us = late_prepare_entry_us;
 	out->late_prepare_build_us = late_prepare_build_us;
 	out->late_prepare_spi_us = late_prepare_spi_us;
-	out->serial_pump_us_last = serial_pump_us_last;
-	out->protocol_build_us_last = protocol_build_us_last;
-	out->packet_build_us_last = packet_build_us_last;
-	out->packet_build_us_max = packet_build_us_max;
-	out->rx_finish_us_last = rx_finish_us_last;
-	out->rx_finish_us_max = rx_finish_us_max;
-	out->rx_protocol_us_last = rx_protocol_us_last;
-	out->rx_protocol_us_max = rx_protocol_us_max;
 	out->power_fixed = power_fixed;
 	out->power = power;
-	out->timings = timings;
 	out->maintenance = maintenance;
 	if (paused) {
 		const uint64_t elapsed =
@@ -1094,6 +1038,7 @@ void zlrs_rf_credentials(void)
 void zlrs_rf_pause(void)
 {
 	__ASSERT_NO_MSG(!paused);
+	zlrs_trace_maintenance(true);
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
 	pause_started_cycles = k_cycle_get_64();
 	maintenance.count++;
@@ -1116,6 +1061,7 @@ void zlrs_rf_pause(void)
 void zlrs_rf_resume(void)
 {
 	__ASSERT_NO_MSG(paused);
+	zlrs_trace_maintenance(false);
 	paused = false;
 	k_thread_priority_set(k_current_get(), pause_priority);
 	if (links_ready && band_mode == ZLRS_DATA_BAND_AUTO) {
@@ -1166,7 +1112,6 @@ int zlrs_rf_init(void)
 	temperature_centi_c = INT16_MIN;
 	hardware_sampled_ms = 0U;
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
-	timings = (zlrs_rf_timings_t){0};
 	maintenance = (zlrs_rf_maintenance_t){0};
 	maintenance_gap = false;
 #endif

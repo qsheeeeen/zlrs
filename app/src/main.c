@@ -14,6 +14,7 @@
 #include "platform/watchdog.h"
 #include "rf.h"
 #include "ui.h"
+#include "trace.h"
 
 LOG_MODULE_REGISTER(zlrs_main, CONFIG_APP_LOG_LEVEL);
 
@@ -81,6 +82,7 @@ int main(void)
 		zlrs_rf_publish_state();
 		zlrs_serial_publish_state();
 		zlrs_boot_check_rollback(!rf_ready);
+		zlrs_trace_process(false);
 		if (zlrs_mgmt_process_idle()) {
 			/* Explicit management commands supersede a waiting button request. */
 			pair_requested = false;

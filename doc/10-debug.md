@@ -90,6 +90,267 @@ ARQ-delivered stream does not prove zero physical loss; LQ=100 is a finite
 sequence-span observation. CONNECTED alone does not prove bidirectional DATA
 capture.
 
+## Bounded trace capture
+
+The trace debug configuration records one bounded interval using Zephyr CTF,
+then saves and exports the frozen snapshot separately. Build it with:
+
+```sh
+source tools/zephyr-env.sh
+zlrs-build -d "$ZLRS_REPO_ROOT/build/trace-debug" -- \
+  '-DEXTRA_CONF_FILE=debug.conf;trace-debug.conf' \
+  -DDTC_OVERLAY_FILE=debug.overlay
+```
+
+The trace configuration allows ten minutes to inspect an unconfirmed test image
+before rollback. It does not confirm the image. Ordinary debug and production
+images omit tracing and the trace filesystem service.
+
+### Capture contract
+
+Tracing records one explicitly requested interval into RAM. It is disabled at
+boot, disabled between captures and never enabled by a saved setting. Production
+and ordinary debug images omit tracing; a separate trace debug configuration
+includes it. Compiled-in hooks still have a runtime enable check when recording
+is off.
+
+A capture reserves 64 KiB of RAM. The default interval is 50 ms and the accepted
+range is 10–5000 ms. The default is shorter than the measured capacity window;
+high event rates can still fill the buffer before the deadline. Duration bounds
+recording time; it does not promise that all events fit in RAM. The existing
+Zephyr RAM backend retains the first events and discards
+subsequent events after it fills. It does not overwrite earlier events.
+
+A Zephyr kernel timer stops recording at the deadline, independently of the host
+connection and RF owner's polling cadence. Manual stop can end it earlier. The
+actual start and stop times are recorded because normal interrupt latency can
+delay timer dispatch. Disconnecting the console does not extend the interval.
+Stopping freezes RAM and leaves RF running. Saving is a separate explicit action
+which pauses RF at the existing maintenance boundary.
+
+### Zephyr facilities and application ownership
+
+Use the Zephyr v4.5.0 CTF format, synchronous tracing and built-in RAM backend.
+Synchronous output copies records to RAM; it performs no Flash or transport I/O.
+Enable the existing start-disabled behavior through `TRACING_HANDLE_HOST_CMD`.
+The application uses `tracing_set_enabled()` to control each interval. Leave the
+unbounded `TRACING_SHELL` enable command disabled in this configuration.
+
+The configuration requests thread switching, ordinary ISR, semaphore and idle
+events. Zephyr v4.5.0 CTF also emits direct GPIO and busy-wait hooks despite
+category switches, so capacity depends on the actual stream. Use 10 ms for the
+USB/DATA load acceptance case. Add RF phase
+boundaries through `sys_trace_named_event()` with frame/slot identifiers. Keep
+names within the CTF limit of 19 visible characters. No user DATA, keys or pairing
+secrets belong in named event arguments.
+
+The application owns only bounded capture control, persistence and its RF phase
+annotations. Zephyr owns event encoding, collection and buffering. The host uses
+Zephyr's `scripts/tracing/trace_viewer.py` with the matching CTF metadata. No
+application tracing backend, binary event format, decoder or histogram engine is
+introduced. Compiler instrumentation is a separate diagnostic configuration.
+
+The controller is restricted to the current single-CPU application. It serializes
+all start/stop/reset/save operations. A start first disables tracing and waits
+for any synchronous writer to finish. It then calls the registered RAM backend's
+existing initialization operation to clear and reset the buffer in thread
+context. The full-buffer clear must not run with interrupts locked. Enabling
+recording, emitting the begin marker and arming the deadline form one bounded
+operation after reset; a deadline callback cannot race a pending enable. A stop
+disables recording and waits for the last writer before exposing an immutable
+snapshot. Repeated capture must not inherit a prior deadline callback.
+
+The zero-latency launch ISR and its RAM call closure remain free of tracing,
+logging and instrumentation calls. Its existing hardware timestamps are emitted
+later by the RF thread as named event arguments. These timestamps identify the
+hardware event; the enclosing CTF timestamp identifies the later emission.
+
+### Commands and state
+
+The trace debug shell exposes these lifecycle operations:
+
+| Command | Behavior |
+| --- | --- |
+| `zlrs trace start [duration_ms]` | Validate duration, reset RAM and record one interval; omitted duration means 50 ms |
+| `zlrs trace stop` | Freeze an active capture; repeated stop on a frozen capture succeeds |
+| `zlrs trace status` | Report state, capture ID, requested/actual interval, stop reason, RAM capacity, core drop count, saved generation and last error |
+| `zlrs trace save` | Save the frozen snapshot through an RF maintenance boundary; success requires committed files |
+| `zlrs trace discard` | Release a frozen RAM snapshot without modifying saved files |
+
+| State | Allowed transitions |
+| --- | --- |
+| IDLE | Start → CAPTURING |
+| CAPTURING | Deadline, stop or accepted maintenance entry → FROZEN |
+| FROZEN | Save → SAVING; discard → IDLE |
+| SAVING | Commit → SAVED; failure → FROZEN with error |
+| SAVED | Start → CAPTURING; discard → IDLE |
+
+Reject a new start while capturing, saving or holding an unsaved frozen snapshot.
+Start is also rejected during maintenance, pairing persistence or firmware
+installation. Existing owner serialization resolves concurrent requests. An
+accepted maintenance request freezes an active capture before log flushing or
+Flash operations. The deadline callback performs only the bounded stop/marker
+operation and notification; filesystem work runs in thread context.
+
+Start and stop emit `cap_begin` and `cap_end` named events, carrying the capture
+ID and requested duration or stop reason. Stop reasons are deadline, manual or
+maintenance. Identifiers distinguish successive captures within one boot; saved
+metadata also identifies the firmware build and its start/stop clock interval. After reboot the RAM state
+is IDLE and committed files remain available. Their inventory is validated on
+entering management, before filesystem downloads are accepted. Recording never
+resumes itself.
+
+### RAM backend limits and completeness
+
+The stock RAM backend exposes its `ram_tracing` array, but keeps its used length
+and full flag private. Its initialization operation resets these values. The
+core dropped-packet counter does not account for discards inside the RAM backend.
+The application must not access private static variables, infer their layout or
+claim that a zero core drop count proves a complete capture.
+
+Save the entire fixed-size array, following Zephyr's documented RAM dump method.
+The file therefore contains a valid CTF prefix and may contain zero padding.
+Record the file size and capacity; report the exact used length and backend-full
+state as unavailable. Do not scan CTF records in firmware to calculate them.
+
+In the standard viewer, matching `cap_begin` and `cap_end` events plus a zero core
+drop-count delta establish a complete interval for the selected categories.
+The RAM backend stops accepting records after its first overflow, so an overflow
+also prevents the end marker from being stored. An absent end marker means the
+interval is incomplete; never present that prefix as the requested full window.
+Zero padding after a valid end marker is outside the recorded interval. Viewer
+handling of padded dumps is part of integration acceptance.
+
+Automatic stop on backend fullness is not available with this stock backend.
+The deadline still disables recording after an overflow. If a later requirement
+needs exact occupancy or stop-on-full, use an upstream RAM-backend interface
+extension rather than implementing another recorder.
+
+### Flash save and export
+
+The shared board description reserves a separate 256 KiB `trace_partition`:
+offset `0x300000`, size `0x40000`, within the declared 4 MiB device. Application
+and MCUboot use this same partition description.
+Existing image, log, coredump and settings partitions retain their offsets and
+sizes. Only trace debug images mount this partition as LittleFS at `/trace`.
+LF/HF production and trace builds use this shared partition geometry.
+
+Keep two bounded generations. Each contains `channel0_0`, the raw RAM snapshot,
+and `capture.json`, containing the capture ID, application and Zephyr revisions,
+RF hardware band from devicetree, event selection, RAM capacity and SHA-256,
+requested/actual times, stop reason and core drop-count delta. The event mask describes requested
+switches: bits 0–4 mean thread, ISR, semaphore, idle and named events. It does not
+imply that other hooks are absent. The JSON describes the artifact;
+it does not wrap or alter the CTF bytes. Archive the build's CTF `metadata` file
+with the exported capture so decoding does not depend on a later Zephyr version.
+
+Write only the inactive generation. Synchronize the data file first and publish
+its complete metadata last. A generation is usable only when its metadata and
+data size/hash agree. Keep the prior valid generation until the new one commits.
+At boot, ignore incomplete generations. A failed save retains the frozen RAM
+snapshot for retry and reports the storage error. No saved capture is deleted by
+starting or discarding a RAM capture.
+
+The RF owner grants the same maintenance exclusion used for existing Flash
+operations. The saver waits for the pause before any mount, erase, program or
+metadata write, including cleanup. It feeds the watchdog during bounded storage
+work. A save requested during normal operation restores that mode on completion
+or failure; a save inside an existing management session leaves that session
+open. Storage failure must release the saver-owned pause. Capture expiry alone
+does not initiate maintenance or a Flash write.
+
+Export through Zephyr MCUmgr filesystem management over the existing debug shell
+CDC using the SMP-over-shell transport. This requires trace-only MCUmgr/FS
+configuration and a standard compatible host client. Allow read-only downloads
+of committed trace artifacts through the filesystem access hook; file mutation
+remains owned by the saver. Select the 4 GiB file-size encoding option because a
+65536-byte snapshot exceeds the 16-bit CBOR size range. Do not add trace payloads
+to `DEBUG_REPORT`, a new ZLRS file-transfer protocol or a dedicated USB class.
+Filesystem downloads require an explicit maintenance session, with tracing off
+and RF paused, to isolate transfer load from RF measurements. Serialize saves
+against downloads and close active file transfers before leaving maintenance.
+
+Unsaved RAM is volatile. Fatal handlers and watchdog-reset paths do not attempt
+Flash saves. Previously committed generations can be exported after reboot;
+survival of the current unsaved capture is not promised.
+
+### Migration and acceptance
+
+RF phase profiling uses named events. The application histogram engine, its
+P50/P95/P99 text reports and the radio runner's `--timing` option have been
+removed. Hardware deadlines, scheduling timestamps, driver health counters and
+maintenance totals remain available.
+
+On the console, run `zlrs trace start`, wait for the window, then use
+`zlrs trace status`, `zlrs trace save` and `zlrs mgmt`. Close the terminal before
+using the same console CDC with the standard client. Set the slot from the
+printed status, then export and decode:
+
+```sh
+ZLRS_TRACE_SLOT=0
+mkdir -p build/trace-capture
+smpmgr --port "$CONSOLE" file download \
+  "/trace/$ZLRS_TRACE_SLOT/channel0_0" build/trace-capture/channel0_0
+smpmgr --port "$CONSOLE" file download \
+  "/trace/$ZLRS_TRACE_SLOT/capture.json" build/trace-capture/capture.json
+cp "$ZEPHYR_BASE/subsys/tracing/ctf/tsdl/metadata" build/trace-capture/metadata
+python "$ZEPHYR_BASE/scripts/tracing/trace_viewer.py" \
+  build/trace-capture/channel0_0 --metadata build/trace-capture/metadata --text
+python tools/zlrs.py exit --serial <serial>
+```
+
+`CONSOLE` identifies the debug CDC (`if04`), not the management CDC (`if02`).
+Compare the downloaded file's SHA-256 with `capture.json`. A padded RAM dump can
+make the viewer flag undecoded tail bytes; complete coverage requires matching
+start/end markers, not the absence of zero padding.
+
+Zephyr's `ctf2perfetto.py` accepts a copy containing the decoded record prefix.
+Its strict input check rejects the unused zero padding in a full RAM dump. Use
+the stock viewer's decoded record sizes to extract that prefix, retain the
+original dump for hash verification, then pass the copy and matching metadata
+to the stock converter. This does not change the on-device capture format.
+
+The hardware runner orchestrates the stock client and viewer; it does not
+implement a trace decoder. It installs an unconfirmed image, exercises capture
+and save/retry, exports artifacts, verifies persistence after reboot and restores
+the original firmware hashes. With a peer, it installs the same image on both
+boards, which must have the same hardware SKU. The optional peer is a paired
+Follower; the traced device is the Leader for this DATA check:
+
+```sh
+python tests/hardware/trace/run.py --serial <Leader-serial> --peer <Follower-serial> \
+  --image build/trace-debug/app/zephyr/zephyr.signed.bin \
+  --out build/trace-acceptance
+```
+
+Acceptance must cover:
+
+- No recording at boot, between captures or after console disconnection and the
+  deadline; production and ordinary debug images omit the trace facilities.
+- Invalid durations, overlapping requests, manual/deadline/maintenance stop,
+  save failure/retry, explicit discard and repeated captures in one boot.
+- A complete capture and a deliberately saturated buffer decoded by the stock
+  viewer with matching metadata; missing end markers and core drops are visible.
+- No Flash operations during recording or normal RF operation; saving and
+  exporting occur under maintenance exclusion and restore the prior mode.
+- Interrupted saves, full/unavailable storage and reboot, retaining the prior
+  valid generation and preventing partial artifacts from being advertised.
+- Standard MCUmgr download of all 65536 bytes, matching SHA-256 and stock viewer
+  decoding without an application decoder or text-to-binary reconstruction.
+- LF/HF production, ordinary debug and trace debug builds, RAM/Flash budgets,
+  the launch RAM closure audit and the existing 10 us launch-jitter bound under
+  recording load. Compare DATA behavior with recording enabled and disabled;
+  a trace build is not automatically evidence of production performance.
+
+### References
+
+- [Zephyr tracing and named events](https://docs.zephyrproject.org/latest/services/tracing/index.html)
+- [RAM dump and standard tracing tools](https://docs.zephyrproject.org/latest/samples/subsys/tracing/basic/README.html)
+- [MCUmgr filesystem management and shell transport](https://docs.zephyrproject.org/latest/services/device_mgmt/mcumgr.html)
+- The pinned Zephyr tree's `subsys/tracing/tracing_backend_ram.c`,
+  `subsys/tracing/include/tracing_backend.h` and `subsys/tracing/tracing_core.c`
+  define the backend limits and lifecycle operations used by this design.
+
 ## Host and tool checks
 
 ```sh
@@ -365,16 +626,9 @@ python3 tests/hardware/radio/run.py --serial <Leader-serial> --peer <Follower-se
   --profiles --bytes 8193 --rounds 1 --timeout 45 --log build/radio-phy.json
 ```
 
-Add `--timing` to validate each round's active timing distributions and maintenance
-totals. The debug radio report records preparation IRQ delay, owner wake delay,
-serial input, protocol construction, complete packet construction, radio preparation,
-RX protocol processing and IRQ-to-RX completion. TX samples include control/ACK
-attempts; RX samples include complete PHY packets handed to the protocol.
-P50/P95/P99 are histogram upper bounds in microseconds; mean and maximum use
-the measured samples. Storage is fixed, counts saturate at `UINT32_MAX`, and
-rebuilding the PHY/frame plan starts a fresh epoch. Production images omit this
-instrumentation. Preparation IRQ/wake samples require an armed hardware wait;
-paths prepared immediately can correctly report no samples for those two phases.
+Per-phase execution timing uses the [bounded CTF capture](#bounded-trace-capture)
+and standard viewer. Capture only the interval of interest. The radio fixture's
+DATA acceptance and status-polling load remain independently selectable.
 
 Maintenance pause count/duration and frame catch-up totals span RF initialization.
 "Skipped after pause" identifies catch-up immediately following maintenance;
@@ -385,7 +639,7 @@ separate observations. Compare fixed-PHY rounds on the same image and load:
 ```sh
 python3 tests/hardware/radio/run.py --serial <Leader-serial> --peer <Follower-serial> \
   --image build/radio-phy/radio/zephyr/zephyr.signed.bin \
-  --phy 0 --status-poll-hz 0 50 0 --timing --bytes 524289 --rounds 3 \
+  --phy 0 --status-poll-hz 0 50 0 --bytes 524289 --rounds 3 \
   --timeout 90 --log build/radio-timing.json
 ```
 

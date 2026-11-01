@@ -1122,7 +1122,7 @@ ZTEST(rf_results, test_diagnostics_snapshot_and_pagination)
 	zlrs_rf_resume();
 }
 
-ZTEST(rf_results, test_timing_and_frame_catchup_classification)
+ZTEST(rf_results, test_frame_catchup_classification)
 {
 	if (RF_TEST_BAND_AUTO) {
 		start_automatic_peers();
@@ -1132,13 +1132,6 @@ ZTEST(rf_results, test_timing_and_frame_catchup_classification)
 	}
 	static zlrs_rf_diagnostics_t before_pause, after_pause, after_runtime;
 	zlrs_rf_diagnostics_capture(&before_pause);
-	zassert_true(before_pause.timings.phase[ZLRS_RF_TIMING_PACKET].samples > 0U);
-	zassert_true(before_pause.timings.phase[ZLRS_RF_TIMING_RADIO_PREPARE].samples > 0U);
-	/* This fake never arms a prepare alarm: early/late software entry must not
-	 * manufacture IRQ/wake latency observations.
-	 */
-	zassert_equal(before_pause.timings.phase[ZLRS_RF_TIMING_PREPARE_IRQ].samples, 0U);
-	zassert_equal(before_pause.timings.phase[ZLRS_RF_TIMING_OWNER_WAKE].samples, 0U);
 
 	zlrs_rf_pause();
 	clock_us += 3U * period_us;
@@ -1165,38 +1158,6 @@ ZTEST(rf_results, test_timing_and_frame_catchup_classification)
 	zassert_equal(after_runtime.skipped_frames,
 		      after_runtime.maintenance.skipped_after_maintenance +
 			      after_runtime.maintenance.skipped_without_maintenance);
-	for (unsigned int i = 0U; i < ZLRS_RF_TIMING_COUNT; i++) {
-		const zlrs_timing_histogram_t *const h = &after_runtime.timings.phase[i];
-		uint64_t total = 0U;
-		for (unsigned int bucket = 0U; bucket < ZLRS_TIMING_BUCKETS; bucket++) {
-			total += h->buckets[bucket];
-		}
-		zassert_equal(total, h->samples);
-	}
-}
-
-ZTEST(rf_results, test_new_phy_starts_a_fresh_timing_epoch)
-{
-	if (!RF_TEST_BAND_AUTO || RF_TEST_ROLE_FOLLOWER) {
-		ztest_test_skip();
-	}
-	start_automatic_peers();
-	frames(150U);
-	static zlrs_rf_diagnostics_t before_change, after_change;
-	zlrs_rf_diagnostics_capture(&before_change);
-	zassert_true(before_change.timings.phase[ZLRS_RF_TIMING_PACKET].samples > 0U);
-	zassert_ok(zlrs_rf_phy_request(ZLRS_PHY_FLRC_650));
-	for (unsigned int i = 0U; i < 8000U && zlrs_rf_status().data_phy != ZLRS_PHY_FLRC_650;
-	     i++) {
-		frames(1U);
-	}
-	zassert_equal(zlrs_rf_status().data_phy, ZLRS_PHY_FLRC_650);
-	zlrs_rf_diagnostics_capture(&after_change);
-	zassert_true(after_change.timings.epoch > before_change.timings.epoch);
-	for (unsigned int i = 0U; i < ZLRS_RF_TIMING_COUNT; i++) {
-		zassert_equal(after_change.timings.phase[i].samples, 0U,
-			      "new PHY inherited timing samples from its predecessor");
-	}
 }
 
 ZTEST(rf_results, test_credential_removal_retires_active_session)
