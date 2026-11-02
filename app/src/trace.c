@@ -419,13 +419,17 @@ static int save_capture(void)
 	return rc;
 }
 
-static int start_capture(uint32_t duration_ms, bool maintenance)
+static int reset_capture(uint32_t duration_ms)
 {
 	if (duration_ms < 10U || duration_ms > 5000U) {
 		return -EINVAL;
 	}
-	if (maintenance || capture.state == ZLRS_TRACE_CAPTURING ||
-	    capture.state == ZLRS_TRACE_FROZEN || capture.state == ZLRS_TRACE_SAVING) {
+	const unsigned int key = irq_lock();
+	const bool unavailable = maintenance_active ||
+		(capture.state != ZLRS_TRACE_IDLE && capture.state != ZLRS_TRACE_SAVED);
+
+	irq_unlock(key);
+	if (unavailable) {
 		return -EBUSY;
 	}
 	k_timer_stop(&capture_timer);
@@ -435,7 +439,20 @@ static int start_capture(uint32_t duration_ms, bool maintenance)
 	if (backend == NULL) {
 		return -ENODEV;
 	}
+	/* The shell thread can be preempted by RF. Clearing 64 KiB on the
+	 * cooperative RF owner would delay its next slot before recording begins.
+	 * request_lock excludes another start/save until the owner acknowledges.
+	 */
 	tracing_backend_init(backend);
+	return 0;
+}
+
+static int start_capture(uint32_t duration_ms, bool maintenance)
+{
+	if (maintenance || (capture.state != ZLRS_TRACE_IDLE &&
+			    capture.state != ZLRS_TRACE_SAVED)) {
+		return -EBUSY;
+	}
 	const unsigned int key = irq_lock();
 
 	capture.id++;
@@ -460,6 +477,14 @@ int zlrs_trace_request(enum zlrs_trace_command command, uint32_t duration_ms)
 
 	if (rc != 0) {
 		return rc;
+	}
+	if (command == ZLRS_TRACE_START) {
+		rc = reset_capture(duration_ms);
+		if (rc != 0) {
+			capture.error = rc;
+			k_mutex_unlock(&request_lock);
+			return rc;
+		}
 	}
 	requested_command = command;
 	requested_duration = duration_ms;

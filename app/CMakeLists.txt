@@ -33,6 +33,24 @@ target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG_SHELL app PRIVATE ${zlrs_app_dir}/src
 target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG_TRACE app PRIVATE ${zlrs_app_dir}/src/trace.c)
 target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG app PRIVATE ${zlrs_app_dir}/src/diagnostics.c)
 
+if(CONFIG_ZLRS_APP_DEBUG_TRACE)
+  # Zephyr 4.5's GPIO function hooks do not consult CONFIG_TRACING_GPIO.
+  # Use the tracing macros' API-type masks without replacing the CTF hooks.
+  if(NOT CONFIG_TRACING_GPIO)
+    zephyr_compile_definitions(
+      sys_port_trace_gpio_is_disabled=1
+      sys_port_trace_gpio_pin_is_disabled=1
+      sys_port_trace_gpio_port_is_disabled=1
+    )
+  endif()
+  # SPI CS calls k_busy_wait(0) twice per transaction. Mask this source only;
+  # the rest of the kernel retains k_thread scheduling and lifecycle events.
+  set_property(SOURCE ${ZEPHYR_BASE}/kernel/busy_wait.c
+    DIRECTORY ${ZEPHYR_BASE}/kernel APPEND PROPERTY COMPILE_DEFINITIONS
+    sys_port_trace_k_thread_is_disabled=1
+  )
+endif()
+
 # App-internal headers use their paths on disk, such as "platform/lr2021.h" and "serial.h"
 # (the layers are described in doc/05-architecture.md).
 # core/proto supplies the private SHA declaration used by the platform implementation.

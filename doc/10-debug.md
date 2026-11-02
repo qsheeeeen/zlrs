@@ -137,12 +137,23 @@ The application uses `tracing_set_enabled()` to control each interval. Leave the
 unbounded `TRACING_SHELL` enable command disabled in this configuration.
 
 The configuration requests thread switching, ordinary ISR, semaphore and idle
-events. Zephyr v4.5.0 CTF also emits direct GPIO and busy-wait hooks despite
-category switches, so capacity depends on the actual stream. Use 10 ms for the
-USB/DATA load acceptance case. Add RF phase
+events. Zephyr v4.5.0's GPIO function hooks do not consult `TRACING_GPIO`.
+The trace build therefore uses Zephyr's `sys_port_trace_<type>_is_disabled`
+API-type masks for `gpio`, `gpio_pin` and `gpio_port` when GPIO tracing is off.
+It applies the `k_thread` mask only to the kernel's `busy_wait.c`, suppressing
+busy-wait events while keeping scheduling events in the other kernel sources.
+SPI chip-select handling calls `k_busy_wait(0)` twice per transaction; these
+events add overhead without measuring a delay. These compile-time filters leave
+the native CTF hooks, encoding and RAM backend intact. Add RF phase
 boundaries through `sys_trace_named_event()` with frame/slot identifiers. Keep
 names within the CTF limit of 19 visible characters. No user DATA, keys or pairing
 secrets belong in named event arguments.
+GPIO callback events remain available to identify interrupt delivery.
+
+RF annotations check Zephyr's recording state before calling the named-event
+function, avoiding its bounded string copy between captures. Compiled-in kernel
+hooks still perform their native runtime checks. Compare recording off and on
+under the same load before attributing a deadline miss to production firmware.
 
 The application owns only bounded capture control, persistence and its RF phase
 annotations. Zephyr owns event encoding, collection and buffering. The host uses
@@ -153,8 +164,11 @@ introduced. Compiler instrumentation is a separate diagnostic configuration.
 The controller is restricted to the current single-CPU application. It serializes
 all start/stop/reset/save operations. A start first disables tracing and waits
 for any synchronous writer to finish. It then calls the registered RAM backend's
-existing initialization operation to clear and reset the buffer in thread
-context. The full-buffer clear must not run with interrupts locked. Enabling
+existing initialization operation to clear and reset the buffer on the
+preemptible shell thread, before submitting the start request to the RF owner.
+The RF owner can preempt the full-buffer clear to meet its slot deadlines.
+The clear must not run with interrupts locked or on the cooperative RF owner.
+The owner rechecks capture state and maintenance mode after reset. Enabling
 recording, emitting the begin marker and arming the deadline form one bounded
 operation after reset; a deadline callback cannot race a pending enable. A stop
 disables recording and waits for the last writer before exposing an immutable
@@ -315,7 +329,11 @@ implement a trace decoder. It installs an unconfirmed image, exercises capture
 and save/retry, exports artifacts, verifies persistence after reboot and restores
 the original firmware hashes. With a peer, it installs the same image on both
 boards, which must have the same hardware SKU. The optional peer is a paired
-Follower; the traced device is the Leader for this DATA check:
+Follower; the traced device is the Leader for this DATA check. The DATA test
+requires a complete 50 ms capture without GPIO pin/port or busy-wait events.
+It also checks the existing radio deadline counters around the workload:
+buffer reset happens before `cap_begin`, so a startup stall can be absent from
+the CTF stream itself.
 
 ```sh
 python tests/hardware/trace/run.py --serial <Leader-serial> --peer <Follower-serial> \

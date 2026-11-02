@@ -118,6 +118,10 @@ class Acceptance:
         assert hashlib.sha256(raw).hexdigest() == saved["sha256"]
         definitions, _ = self.viewer.build_event_defs(str(folder / "metadata"))
         trace = self.viewer.parse_trace(str(folder / "channel0_0"), definitions)
+        filtered = [event.name for event in trace.events
+                    if event.name.startswith(("gpio_port_", "gpio_pin_"))
+                    or "busy_wait" in event.name]
+        assert not filtered, f"Filtered API events reached the CTF stream: {filtered[:5]}"
         named = [event for event in trace.events if event.name == "named_event"]
         names = [event.fields["name"] for event in named]
         assert "cap_begin" in names, names
@@ -207,6 +211,7 @@ class Acceptance:
     def duplex(self):
         if self.args.peer is None:
             return
+        before = self.radio_late_counts("duplex-before")
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             status = self.command("zlrs status")
@@ -223,17 +228,27 @@ class Acceptance:
                 "--timeout", "60", "--format", "json"], stdout=output, stderr=subprocess.STDOUT)
             try:
                 time.sleep(1.5)
-                # Full kernel tracing fills 64 KiB faster under USB/DATA load.
-                self.command("zlrs trace start 10")
+                self.command("zlrs trace start 50")
                 assert process.wait(timeout=65) == 0, "Bidirectional DATA failed"
             finally:
                 if process.poll() is None:
                     process.terminate()
                     process.wait(timeout=5)
+        after = self.radio_late_counts("duplex-after")
+        assert after == before, f"TX deadlines missed during DATA/capture: {before} -> {after}"
         self.command("zlrs trace save")
         self.management(True)
         self.export("duplex", complete=True)
         self.management(False)
+
+    def radio_late_counts(self, name):
+        result = subprocess.run([sys.executable, str(CLI), "radio", "--serial", self.args.serial],
+                                check=True, capture_output=True, text=True, timeout=30)
+        (self.output / f"{name}-radio.txt").write_text(result.stdout)
+        match = re.search(r"Late by phase\s+: prepare (\d+)\s+trigger (\d+)", result.stdout)
+        if match is None:
+            raise RuntimeError(f"Missing radio deadline counters: {result.stdout}")
+        return tuple(map(int, match.groups()))
 
     def run(self):
         previous = image_hash(self.args.serial)

@@ -35,8 +35,9 @@ struct zlrs_trace_status {
 
 #if defined(CONFIG_ZLRS_APP_DEBUG_TRACE)
 #include <zephyr/tracing/tracing.h>
+#include <tracing_core.h>
 
-/* Shell requests run on the RF owner. The timer independently bounds recording. */
+/* Reset on the preemptible caller; control/save on RF owner; stop on kernel timer. */
 int zlrs_trace_request(enum zlrs_trace_command command, uint32_t duration_ms);
 struct zlrs_trace_status zlrs_trace_status(void);
 void zlrs_trace_process(bool maintenance);
@@ -45,7 +46,13 @@ void zlrs_trace_session(bool entering);
 /* Management exit waits until an accepted MCUmgr request and its file access finish. */
 bool zlrs_trace_export_busy(void);
 
-#define ZLRS_TRACE_EVENT(name, arg0, arg1) sys_trace_named_event(name, arg0, arg1)
+/* Avoid CTF's bounded-name copy while recording is disabled. */
+#define ZLRS_TRACE_EVENT(name, arg0, arg1) \
+	do { \
+		if (is_tracing_enabled()) { \
+			sys_trace_named_event(name, arg0, arg1); \
+		} \
+	} while (false)
 #else
 static inline void zlrs_trace_process(bool maintenance) { ARG_UNUSED(maintenance); }
 static inline void zlrs_trace_maintenance(bool entering) { ARG_UNUSED(entering); }
