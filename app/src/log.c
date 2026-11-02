@@ -17,6 +17,9 @@
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/logging/log_backend.h>
+#include <zephyr/logging/log_ctrl.h>
+#include <zephyr/drivers/uart.h>
 #include <zephyr/storage/flash_map.h>
 
 #include <stdio.h>
@@ -28,6 +31,28 @@
 
 #include "log.h"
 #include <errno.h>
+
+#if defined(CONFIG_LOG_BACKEND_UART)
+void zlrs_log_console_sync(void)
+{
+	const struct log_backend *backend = log_backend_get_by_name("log_backend_uart");
+	bool connected = true;
+
+#if DT_NODE_HAS_COMPAT(DT_CHOSEN(zephyr_console), zephyr_cdc_acm_uart)
+	uint32_t dtr = 0U;
+	const struct device *dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
+
+	connected = uart_line_ctrl_get(dev, UART_LINE_CTRL_DTR, &dtr) == 0 && dtr != 0U;
+#endif
+	if (backend != NULL && connected != log_backend_is_active(backend)) {
+		if (connected) {
+			log_backend_enable(backend, backend->cb->ctx, CONFIG_LOG_MAX_LEVEL);
+		} else {
+			log_backend_disable(backend);
+		}
+	}
+}
+#endif
 
 /*
  * Only boards whose partition table has a log partition get this: the whole file is about that

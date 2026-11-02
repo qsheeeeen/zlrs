@@ -4,7 +4,7 @@
 #
 # One-sided DATA loopback capture. Send a deterministic byte stream through the
 # DATA CDC and verify the stream returned by a UART loopback on the remote peer.
-# If present, debug status is read from the non-pausing console CDC.
+# If present, status is read through online queries on the management CDC.
 
 import argparse
 import csv
@@ -16,6 +16,7 @@ import re
 import sys
 import time
 from pathlib import Path
+import zlrs_mgmt as mgmt
 
 BY_ID_DIR = "/dev/serial/by-id"
 SEED = 0x5A4C5253
@@ -31,43 +32,24 @@ def resolve_port(value: str, interface: str) -> str:
     return matches[0] if matches else value
 
 
-def matching_console(data_path: str) -> str | None:
+def matching_management(data_path: str) -> str | None:
     path = Path(data_path)
     suffix = "-if00"
     if not path.name.endswith(suffix):
         return None
-    candidate = path.with_name(path.name[:-len(suffix)] + "-if04")
+    candidate = path.with_name(path.name[:-len(suffix)] + "-if02")
     return str(candidate) if candidate.exists() else None
 
 
-def shell_command(port, command: str, timeout_s: float = 1.5) -> str:
-    port.reset_input_buffer()
-    port.write(command.encode("ascii") + b"\r\n")
-    deadline = time.monotonic() + timeout_s
-    chunks = bytearray()
-    last_byte = time.monotonic()
-    while time.monotonic() < deadline:
-        data = port.read(4096)
-        if data:
-            chunks.extend(data)
-            last_byte = time.monotonic()
-            if b"uart:~$" in chunks:
-                break
-        elif chunks and time.monotonic() - last_byte >= 0.15:
-            break
-    return chunks.decode("utf-8", errors="replace")
-
-
-def sample_status(console) -> dict:
+def sample_status(client) -> dict:
     return {
         "captured_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
-        "status": shell_command(console, "zlrs status"),
-        "ports": shell_command(console, "zlrs ports"),
+        "status": mgmt.status_text(client.request(mgmt.CMD_STATUS, response=mgmt.STATUS_RESP)),
     }
 
 
 def parse_status(sample: dict) -> dict:
-    text = sample["status"] + "\n" + sample["ports"]
+    text = sample["status"] + "\n" + sample.get("ports", "")
     patterns = {
         "role": r"role\s+:\s+(.+)",
         "band": r"band\s+:\s+(.+)",
@@ -135,9 +117,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", required=True,
                         help="TX USB serial fragment or explicit DATA CDC path")
-    parser.add_argument("--console", help="debug console path or serial fragment (auto-detected if available)")
+    parser.add_argument("--management-port", help="management CDC path or serial fragment (auto-detected)")
     parser.add_argument("--no-status", action="store_true",
-                        help="skip debug-console status sampling")
+                        help="skip online management status sampling")
     parser.add_argument("--duration", type=float, default=120.0)
     parser.add_argument("--chunk-size", type=int, default=32)
     parser.add_argument("--interval-ms", type=int, default=50)
@@ -156,17 +138,18 @@ def main() -> int:
         return 2
 
     data_path = resolve_port(args.device, "if00")
-    console_path = None
+    management_path = None
     if not args.no_status:
-        if args.console:
-            console_path = resolve_port(args.console, "if04")
+        if args.management_port:
+            management_path = resolve_port(args.management_port, "if02")
         else:
-            console_path = matching_console(data_path)
+            management_path = matching_management(data_path)
     stamp = dt.datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
     out_dir = args.out_dir or Path("artifacts") / f"loopback-{stamp}"
     out_dir.mkdir(parents=True, exist_ok=True)
     data = None
-    console = None
+    management = None
+    client = None
     transmitted = bytearray()
     received = bytearray()
     status_samples = []
@@ -178,25 +161,26 @@ def main() -> int:
 
     try:
         data = serial.Serial(data_path, 115200, timeout=0.01, write_timeout=2)
-        if console_path is not None:
-            console = serial.Serial(console_path, 115200, timeout=0.05, write_timeout=2)
+        if management_path is not None:
+            management = serial.Serial(management_path, 115200, timeout=1, write_timeout=2)
+            client = mgmt.ManagementClient(management)
         time.sleep(0.2)
         # Clear only stale host-side input before a fresh deterministic run.
         data.reset_input_buffer()
-        print(f"DATA port={data_path} console={console_path or 'disabled'}", flush=True)
-        if console is not None:
-            pre = sample_status(console)
+        print(f"DATA port={data_path} management={management_path or 'disabled'}", flush=True)
+        if client is not None:
+            pre = sample_status(client)
             status_samples.append(pre)
             print(parse_status(pre), flush=True)
         else:
-            print("No debug console detected; collecting DATA loopback only.", flush=True)
+            print("No management port detected; collecting DATA loopback only.", flush=True)
         print(f"Capturing {args.duration:g}s; move RX now. Output: {out_dir}", flush=True)
 
         rng = random.Random(SEED)
         start = time.monotonic()
         end_at = start + args.duration
         next_send = start
-        next_status = start + args.status_interval if console is not None else float("inf")
+        next_status = start + args.status_interval if client is not None else float("inf")
         next_timeline = start + 1.0
         last_progress = start
         rx_offset = 0
@@ -234,8 +218,8 @@ def main() -> int:
                 rx_offset += len(chunk)
 
             now = time.monotonic()
-            if console is not None and now >= next_status:
-                sample = sample_status(console)
+            if client is not None and now >= next_status:
+                sample = sample_status(client)
                 status_samples.append(sample)
                 parsed = parse_status(sample)
                 print(f"status {sample['captured_at']}: {parsed}", flush=True)
@@ -275,8 +259,8 @@ def main() -> int:
             received.extend(chunk)
             rx_offset += len(chunk)
 
-        if console is not None:
-            post = sample_status(console)
+        if client is not None:
+            post = sample_status(client)
             status_samples.append(post)
     except KeyboardInterrupt:
         interrupted = True
@@ -287,8 +271,8 @@ def main() -> int:
     finally:
         if data is not None:
             data.close()
-        if console is not None:
-            console.close()
+        if management is not None:
+            management.close()
 
         (out_dir / "transmitted.bin").write_bytes(transmitted)
         (out_dir / "received.bin").write_bytes(received)
@@ -305,7 +289,7 @@ def main() -> int:
         summary = {
             "device": args.device,
             "data_port": data_path,
-            "console_port": console_path,
+            "management_port": management_path,
             "duration_s_requested": args.duration,
             "chunk_size": args.chunk_size,
             "interval_ms": args.interval_ms,

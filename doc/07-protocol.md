@@ -406,13 +406,13 @@ Validity bits identify junction temperature (0), XOSC temperature (1), VBAT (2),
 version (3), mode/command/reset/IRQ (4) and chip errors (5). Unset means unavailable,
 even when the value is zero.
 
-Radio sensors refresh at boot and management status while the RF owner is paused.
+Radio sensors refresh at boot and explicit `status --refresh` while the RF owner is paused.
 Mode and IRQ describe the stopped maintenance boundary; standby XOSC is expected.
 Reads do not clear latched errors, IRQs or reset information. Temperatures use the
 chip's 13-bit ADC unit format, signed Q8.5 converted to hundredths of a degree.
 MCU and chip sensors measure internal temperatures, not ambient temperature.
 The schedule frequency can differ from the fixed periodic-SYNC channel.
 
-The debug shell reads copied observations without SPI or RF pause and displays
+Online management status reads copied observations without SPI or RF pause and displays
 the radio sample age. Sensor observations must remain separate from live link
 quality. Validation requirements are in [development and acceptance](10-debug.md).

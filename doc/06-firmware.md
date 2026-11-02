@@ -8,7 +8,10 @@ is specified in [air protocol](07-protocol.md).
 ## DATA endpoints
 
 Production firmware exposes DATA USB CDC at `if00` and management CDC at `if02`.
-Debug firmware adds a console CDC. MCUboot has a separate recovery CDC at `if00`.
+The debug overlay enables an additional UART console CDC for kernel output and
+logs, also used for MCUmgr serial in trace and RF test firmware. No image has an
+interactive shell. MCUboot has a separate
+recovery CDC at `if00`.
 The DATA UART uses the board's assigned pins and stored baud rate.
 
 USB and UART are alternative endpoints of one byte stream. UART is the default,
@@ -21,7 +24,7 @@ USB reset, removal, deconfiguration or an unrecoverable USB error returns DATA
 to UART. Bus suspension also selects UART because a powered board may lose its
 USB host without losing supply power or receiving a VBUS-removal event. Resume
 restores USB priority only if its device configuration remains valid. Management
-and console ports remain USB-only and do not change this DATA policy.
+and debug-console ports remain USB-only and do not change this DATA policy.
 
 If UART is unavailable and USB has no active host, no DATA sink is selected and
 radio reception withholds its DATA ACK. Endpoint availability is independent of
@@ -139,12 +142,6 @@ observation or feedback gap of at least one second resets the lowering interval.
 Recovery bypasses the normal raising delay and step size. Millisecond timers
 support clock wraparound. Thresholds require RF calibration against measured loss.
 
-Debug images provide `zlrs power <dBm>` on the console to hold a fixed setpoint
-within the active range while connected, and `zlrs power auto` to resume automatic
-control at maximum power. The override is volatile and clears on disconnection,
-feedback loss, pairing, retuning, automatic 2.4 GHz power recovery or reboot.
-Pairing and recovery take priority.
-
 ## Management and diagnostics
 
 The tool normally enters management, executes one command and exits. `--serial`
@@ -161,8 +158,8 @@ require reacquisition.
 `status` reports local/peer RSSI and LQ, power, active band, capture, transition,
 frame/error counters, hopping, MCU temperature and LR2021 sensors/status.
 `logs [directory]` exports flash logs. Debug-only `link`, `rate`, `radio` and
-`power` provide detailed reports. The debug shell provides copied observations
-without pausing RF. See [development](10-debug.md#observing-a-running-link).
+`power` provide detailed reports. Online management status provides copied
+observations without pausing RF. See [development](10-debug.md#observing-a-running-link).
 
 ## Build environment
 
@@ -186,7 +183,8 @@ Sysbuild produces MCUboot and its signed application with matching partitions an
 signing type. Runtime parameters come from persistent settings; modem timing,
 FHSS, ARQ, dynamic power, watchdog and debug facilities are build-time choices.
 Production configuration enables P1, hopping, ARQ, dynamic power and watchdog.
-Debug configuration adds the console and a 1% LED brightness setting.
+Debug configuration enables UART kernel output, diagnostic reports and a 1% LED
+brightness setting. The console has no interactive commands.
 
 ## Installation, updates and rollback
 

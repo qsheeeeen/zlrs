@@ -8,8 +8,9 @@ bench logs and unresolved observations belong in validation artifacts.
 ## Build configurations
 
 Production acceptance uses P1, normal hopping, ARQ, automatic or explicitly fixed
-band selection, dynamic power and watchdog. Debug builds add a console and
-reports without changing the air contract. Both peers require matching protocol,
+band selection, dynamic power and watchdog. Debug builds retain the UART console
+for kernel output and logs, and add diagnostic reports. Trace builds also use
+that CDC for MCUmgr serial. The air contract stays the same. Both peers require matching protocol,
 band mode, SubG region, profile and timing.
 
 Build a debug image from the repository root:
@@ -23,7 +24,16 @@ zlrs-build -d build-debug -- \
 ```
 
 The wrapper builds in the parent workspace; this example's artifacts are under
-`../build-debug`. Debug LED output defaults to 1%. Production has no console shell.
+`../build-debug`. Debug LED output defaults to 1%. Application and test images
+have no interactive shell or built-in shell commands.
+`CONSOLE`, `UART_CONSOLE`, `PRINTK` and `LOG_BACKEND_UART` remain enabled in debug
+builds. `printk` uses Zephyr's deferred logger; kernel and application messages
+reach UART and Flash when processed at boot or during management, preserving
+the RF logging policy. The debug UART console is CDC `if04`. Before processing
+logs, the application enables its native UART backend only while the host's DTR
+is asserted. An unopened console therefore leaves boot and management running;
+Flash logging remains active. CDC flow control preserves complete UART/SMP
+output while the host is connected.
 Fixed-channel, P0, ARQ-disabled and RAW configurations are isolation fixtures and
 must not be presented as product performance.
 
@@ -34,7 +44,7 @@ transmit setpoint, MCU temperature, frequency, frame period, counters and automa
 flags. Its LR2021 section provides junction/XOSC temperature, VBAT, version,
 mode/command/reset, IRQ and errors with independent validity bits.
 
-Both management `status` and debug `zlrs status` group observations as Link,
+Management `status` groups observations as Link,
 Radio, Signal / Power, Traffic / Errors, Device / Configuration, Sensors and
 LR2021 snapshot. Radio places the active band and modulation beside frequency,
 frame period, capture and transition state. Modulation identifies the current
@@ -43,21 +53,19 @@ field: the host prints `not reported (upgrade device firmware)` rather than
 inferring modulation from frequency or frame period. Upgrade both peers together
 to obtain the adaptive profiles and their live status.
 
-Management status pauses RF and refreshes chip measurements at that maintenance
-boundary. Repeated reads can affect peer quality or recovery. Use debug shell
-`zlrs status` for nonpausing observation: it reads copied state, refreshed once per
-second and when LED inputs change. Chip values remain the latest boot or
-management sample, and their age is shown. Standby mode at a maintenance boundary
-is expected; it is not the preceding live RX/TX mode.
+Management `status` uses an online query without pausing RF. It reads copied
+state; chip values remain the latest boot or maintenance sample, and their age
+is shown. Use `--refresh` to pause RF and refresh chip measurements. Older
+firmware may require a management-session fallback. Standby mode at a maintenance
+boundary is expected; it is not the preceding live RX/TX mode.
 
 Sensor labels identify their source: `MCU chip temp` is the main MCU's internal
 temperature, `LR2021 chip temp` is the radio chip's internal junction temperature,
 and `LR2021 XOSC temp` is its crystal-oscillator-area temperature. These measure
 different locations inside the chips; none is an ambient-temperature reading.
-The console places `LR2021 sample age` beside these values in milliseconds.
-Management `status` refreshes the radio measurements for that request. Printing
-debug `zlrs status` only reads the previous radio snapshot; its MCU temperature
-is read when the command runs. The LR2021's two internal sensor sources are
+The status report places `LR2021 sample age` beside these values in milliseconds.
+Only `status --refresh` refreshes the radio measurements for that request.
+The LR2021's two internal sensor sources are
 specified in [datasheet §6.5.2, GetTemp](https://www.mouser.com/pdfDocs/61979758LR2021_V1_1_datasheet.pdf#page=109).
 
 Debug management reports are available with:
@@ -70,9 +78,9 @@ python3 tools/zlrs.py power --serial <serial>
 python3 tools/zlrs.py logs --serial <serial>
 ```
 
-Automatic-mode 2.4 GHz profiles are shown by management `status`, debug
-`zlrs status` and the `rate` report. On the Leader debug console, `zlrs phy 0`
-through `zlrs phy 4` request one coordinated profile change for bench acceptance:
+Automatic-mode 2.4 GHz profiles are shown by management `status` and the `rate`
+report. The RF hardware runner requests coordinated profile changes through its
+test-only MCUmgr interface for bench acceptance:
 0 FLRC 2.6 Mbps, 1 FLRC 650 kbps, 2 FLRC 325 kbps, 3 LoRa SF6, 4 LoRa SF7.
 The request is volatile and normal quality policy continues after the change.
 Follower and fixed-band requests are rejected. Test both directions with queued
@@ -80,10 +88,6 @@ DATA, lost ACKs, missed announcements and a PHY mismatch; a simulated radio must
 reject packets with mismatched rate/modulation, even at the same frequency.
 Air version 12 requires both endpoints to be upgraded together. The new host
 tool retains decoding of the previous 90-byte management status for rollback.
-
-The debug console accepts `zlrs power <dBm>` for a temporary fixed setpoint
-within the active range while connected. `zlrs power auto` resumes automatic
-control at maximum power. Pairing, retuning and recovery clear the override.
 
 Delivery, PHY reception and session readiness are separate observations. An exact
 ARQ-delivered stream does not prove zero physical loss; LQ=100 is a finite
@@ -124,7 +128,7 @@ subsequent events after it fills. It does not overwrite earlier events.
 A Zephyr kernel timer stops recording at the deadline, independently of the host
 connection and RF owner's polling cadence. Manual stop can end it earlier. The
 actual start and stop times are recorded because normal interrupt latency can
-delay timer dispatch. Disconnecting the console does not extend the interval.
+delay timer dispatch. Disconnecting the host does not extend the interval.
 Stopping freezes RAM and leaves RF running. Saving is a separate explicit action
 which pauses RF at the existing maintenance boundary.
 
@@ -165,7 +169,7 @@ The controller is restricted to the current single-CPU application. It serialize
 all start/stop/reset/save operations. A start first disables tracing and waits
 for any synchronous writer to finish. It then calls the registered RAM backend's
 existing initialization operation to clear and reset the buffer on the
-preemptible shell thread, before submitting the start request to the RF owner.
+preemptible MCUmgr worker, before submitting the start request to the RF owner.
 The RF owner can preempt the full-buffer clear to meet its slot deadlines.
 The clear must not run with interrupts locked or on the cooperative RF owner.
 The owner rechecks capture state and maintenance mode after reset. Enabling
@@ -181,15 +185,21 @@ hardware event; the enclosing CTF timestamp identifies the later emission.
 
 ### Commands and state
 
-The trace debug shell exposes these lifecycle operations:
+Trace control is MCUmgr user group 64, command 0. Read returns capture status;
+write accepts `op` (0 start, 1 stop, 2 save, 3 discard) and optional `ms` (default
+50). Responses contain `result` (zero or negative errno) and the status fields.
+Zephyr owns SMP framing, CBOR handling, the serial transport and its preemptible
+worker. The host uses the standard `smpclient` transport supplied with `smpmgr`.
+
+The host tool exposes these lifecycle operations over MCUmgr serial:
 
 | Command | Behavior |
 | --- | --- |
-| `zlrs trace start [duration_ms]` | Validate duration, reset RAM and record one interval; omitted duration means 50 ms |
-| `zlrs trace stop` | Freeze an active capture; repeated stop on a frozen capture succeeds |
-| `zlrs trace status` | Report state, capture ID, requested/actual interval, stop reason, RAM capacity, core drop count, saved generation and last error |
-| `zlrs trace save` | Save the frozen snapshot through an RF maintenance boundary; success requires committed files |
-| `zlrs trace discard` | Release a frozen RAM snapshot without modifying saved files |
+| `python tools/zlrs.py trace start [duration_ms]` | Validate duration, reset RAM and record one interval; omitted duration means 50 ms |
+| `python tools/zlrs.py trace stop` | Freeze an active capture; repeated stop on a frozen capture succeeds |
+| `python tools/zlrs.py trace status` | Report state, capture ID, requested/actual interval, stop reason, RAM capacity, core drop count, saved generation and last error |
+| `python tools/zlrs.py trace save` | Save the frozen snapshot through an RF maintenance boundary; success requires committed files |
+| `python tools/zlrs.py trace discard` | Release a frozen RAM snapshot without modifying saved files |
 
 | State | Allowed transitions |
 | --- | --- |
@@ -273,8 +283,8 @@ or failure; a save inside an existing management session leaves that session
 open. Storage failure must release the saver-owned pause. Capture expiry alone
 does not initiate maintenance or a Flash write.
 
-Export through Zephyr MCUmgr filesystem management over the existing debug shell
-CDC using the SMP-over-shell transport. This requires trace-only MCUmgr/FS
+Export through Zephyr MCUmgr filesystem management over the debug CDC using
+the native UART SMP transport, with no shell backend. This requires trace-only MCUmgr/FS
 configuration and a standard compatible host client. Allow read-only downloads
 of committed trace artifacts through the filesystem access hook; file mutation
 remains owned by the saver. Select the 4 GiB file-size encoding option because a
@@ -295,17 +305,20 @@ P50/P95/P99 text reports and the radio runner's `--timing` option have been
 removed. Hardware deadlines, scheduling timestamps, driver health counters and
 maintenance totals remain available.
 
-On the console, run `zlrs trace start`, wait for the window, then use
-`zlrs trace status`, `zlrs trace save` and `zlrs mgmt`. Close the terminal before
-using the same console CDC with the standard client. Set the slot from the
-printed status, then export and decode:
+Run the host tool to record and save, then enter the existing management session
+for file downloads. Set the slot from the JSON status, then export and decode:
 
 ```sh
+python tools/zlrs.py trace start 50 --serial <serial>
+# Wait for the bounded window, then inspect and save it.
+python tools/zlrs.py trace status --serial <serial>
+python tools/zlrs.py trace save --serial <serial>
+python tools/zlrs.py enter --serial <serial>
 ZLRS_TRACE_SLOT=0
 mkdir -p build/trace-capture
-smpmgr --port "$CONSOLE" file download \
+smpmgr --port "$SMP_PORT" file download \
   "/trace/$ZLRS_TRACE_SLOT/channel0_0" build/trace-capture/channel0_0
-smpmgr --port "$CONSOLE" file download \
+smpmgr --port "$SMP_PORT" file download \
   "/trace/$ZLRS_TRACE_SLOT/capture.json" build/trace-capture/capture.json
 cp "$ZEPHYR_BASE/subsys/tracing/ctf/tsdl/metadata" build/trace-capture/metadata
 python "$ZEPHYR_BASE/scripts/tracing/trace_viewer.py" \
@@ -313,7 +326,8 @@ python "$ZEPHYR_BASE/scripts/tracing/trace_viewer.py" \
 python tools/zlrs.py exit --serial <serial>
 ```
 
-`CONSOLE` identifies the debug CDC (`if04`), not the management CDC (`if02`).
+`SMP_PORT` identifies the debug UART console/MCUmgr CDC (`if04`); management control uses `if02`.
+Run `python tools/zlrs.py exit --serial <serial>` after downloads to resume RF.
 Compare the downloaded file's SHA-256 with `capture.json`. A padded RAM dump can
 make the viewer flag undecoded tail bytes; complete coverage requires matching
 start/end markers, not the absence of zero padding.
@@ -326,7 +340,7 @@ to the stock converter. This does not change the on-device capture format.
 
 The hardware runner orchestrates the stock client and viewer; it does not
 implement a trace decoder. It installs an unconfirmed image, exercises capture
-and save/retry, exports artifacts, verifies persistence after reboot and restores
+and save, exports artifacts, verifies persistence after reboot and restores
 the original firmware hashes. With a peer, it installs the same image on both
 boards, which must have the same hardware SKU. The optional peer is a paired
 Follower; the traced device is the Leader for this DATA check. The DATA test
@@ -343,10 +357,11 @@ python tests/hardware/trace/run.py --serial <Leader-serial> --peer <Follower-ser
 
 Acceptance must cover:
 
-- No recording at boot, between captures or after console disconnection and the
+- No recording at boot, between captures or after host disconnection and the
   deadline; production and ordinary debug images omit the trace facilities.
 - Invalid durations, overlapping requests, manual/deadline/maintenance stop,
-  save failure/retry, explicit discard and repeated captures in one boot.
+  explicit discard and repeated captures in one boot. Storage-failure injection
+  requires a fault fixture; the runner has no filesystem mutation interface.
 - A complete capture and a deliberately saturated buffer decoded by the stock
   viewer with matching metadata; missing end markers and core drops are visible.
 - No Flash operations during recording or normal RF operation; saving and
@@ -364,7 +379,7 @@ Acceptance must cover:
 
 - [Zephyr tracing and named events](https://docs.zephyrproject.org/latest/services/tracing/index.html)
 - [RAM dump and standard tracing tools](https://docs.zephyrproject.org/latest/samples/subsys/tracing/basic/README.html)
-- [MCUmgr filesystem management and shell transport](https://docs.zephyrproject.org/latest/services/device_mgmt/mcumgr.html)
+- [MCUmgr filesystem management and serial transport](https://docs.zephyrproject.org/latest/services/device_mgmt/mcumgr.html)
 - The pinned Zephyr tree's `subsys/tracing/tracing_backend_ram.c`,
   `subsys/tracing/include/tracing_backend.h` and `subsys/tracing/tracing_core.c`
   define the backend limits and lifecycle operations used by this design.
@@ -495,7 +510,7 @@ Replace the example bus IDs with those from `usbipd.exe list`, and verify that
 both change from `Shared` to `Attached`. Use each board's USB serial and
 `/dev/serial/by-id` names for tests; `/dev/ttyACM*` numbering can change at every
 enumeration. Management is application interface `if02`, the debug/unit-test
-console is `if04`, and MCUboot recovery is `if00`. These modes have different
+MCUmgr serial is `if04`, and MCUboot recovery is `if00`. These modes have different
 product strings and preserve the board's USB serial.
 
 Flashing and rollback reset USB. Before a hardware run, keep one foreground
@@ -710,9 +725,10 @@ python3 tools/zlrs_loopback.py --device <TX-serial> --duration 120 \
 ```
 
 The runner saves transmitted and received binary files, a byte-count timeline and a summary
-under `artifacts/loopback-*`. If the TX board exposes the debug console CDC, it also samples
-non-pausing link and DATA-port status. Use `--no-status` for data-only capture or `--console`
-to select a specific debug console port. Management status is not polled during the run.
+under `artifacts/loopback-*`. It samples non-pausing status through the management
+CDC. Use `--no-status` for data-only capture or `--management-port` to select a
+specific management port. The runner sends online queries without entering a
+management session.
 
 ### PHY and FIFO isolation
 
@@ -728,7 +744,7 @@ fixed-channel measurement. A separate hopping-enabled configuration provides a
 comparison. The runner captures counters and reports on success and timeout,
 including image hashes, and verifies rollback to both original images.
 
-The `test_radio channels` report bins 2.4 GHz completed/failed TX, modem-valid RX,
+The RF test MCUmgr channel report bins 2.4 GHz completed/failed TX, modem-valid RX,
 empty/failed windows and CRC errors across 79 DATA channels. Counts precede
 authentication; empty windows include peer silence and are not packet-error rate.
 SubG operation leaves those bins empty.

@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
 #include <zephyr/kernel.h>
-#include <zephyr/shell/shell.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/reboot.h>
@@ -285,29 +284,25 @@ static void restore(struct k_work *work)
 
 K_WORK_DELAYABLE_DEFINE(restore_work, restore);
 
-static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
+int zlrs_test_radio_control(struct zlrs_test_report *report, enum zlrs_test_op op, uint32_t arg)
 {
-	if (argc >= 2U && strcmp(argv[1], "save-fault") == 0) {
-		return zlrs_test_pairing_save_fault_command(sh, argc, argv);
+	if (op == TEST_SAVE_STATUS || op == TEST_SAVE_FAULT) {
+		return zlrs_test_pairing_save_fault_control(report, op, arg);
 	}
-	if (argc >= 2U && strcmp(argv[1], "entropy") == 0) {
-		if (argc == 3U) {
-			char *end;
-			const unsigned long ms = strtoul(argv[2], &end, 0);
-			if (argv[2][0] == '-' || *end != '\0' || ms < 3500UL || ms > 10000UL) {
+	if (op == TEST_ENTROPY_STATUS || op == TEST_ENTROPY_STALL) {
+		if (op == TEST_ENTROPY_STALL) {
+			const unsigned long ms = arg;
+			if (ms < 3500UL || ms > 10000UL) {
 				return -EINVAL;
 			}
 			if (atomic_get(&entropy_active) || atomic_get(&entropy_restores) ||
 			    !atomic_cas(&entropy_request, 0, (int)ms)) {
 				return -EBUSY;
 			}
-			shell_print(sh, "ENTROPY queued_ms=%lu", ms);
+			zlrs_test_print(report, "ENTROPY queued_ms=%lu", ms);
 			return 0;
 		}
-		if (argc != 2U) {
-			return -EINVAL;
-		}
-		shell_print(sh,
+		zlrs_test_print(report,
 			    "ENTROPY active=%u pending=%u calls=%u empty=%u max_us=%u restores=%u",
 			    (unsigned int)atomic_get(&entropy_active),
 			    (unsigned int)(atomic_get(&entropy_request) != 0),
@@ -317,10 +312,10 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 			    (unsigned int)atomic_get(&entropy_restores));
 		return 0;
 	}
-	if (argc == 2U && strcmp(argv[1], "channels") == 0) {
+	if (op == TEST_CHANNELS) {
 		for (uint8_t i = 0U; i < ARRAY_SIZE(channels); i++) {
-			shell_print(
-				sh,
+			zlrs_test_print(
+				report,
 				"CHANNEL frequency_mhz=%u tx=%u tx_failed=%u rx=%u empty=%u crc=%u",
 				2402U + i, (unsigned int)atomic_get(&channels[i].tx),
 				(unsigned int)atomic_get(&channels[i].tx_failed),
@@ -330,23 +325,22 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 		}
 		return 0;
 	}
-	if (argc == 2U && strcmp(argv[1], "restore") == 0) {
-		shell_print(sh, "restoring previous confirmed firmware");
+	if (op == TEST_RESTORE) {
+		zlrs_test_print(report, "restoring previous confirmed firmware");
 		k_work_schedule(&restore_work, K_MSEC(100));
 		return 0;
 	}
-	if (argc == 2U && strcmp(argv[1], "start") == 0) {
+	if (op == TEST_RADIO_START) {
 		if (!atomic_get(&raw_ready)) {
 			return -EINVAL;
 		}
 		k_sem_give(&raw_start);
 		return 0;
 	}
-	if (argc == 3U && strcmp(argv[1], "rxwin") == 0) {
-		char *end;
-		const unsigned long ms = strtoul(argv[2], &end, 0);
+	if (op == TEST_RX_WINDOW) {
+		const unsigned long ms = arg;
 
-		if (argv[2][0] == '-' || *end != '\0' || ms > 500UL) {
+		if (ms > 500UL) {
 			return -EINVAL;
 		}
 		k_sem_reset(&window_done);
@@ -359,10 +353,10 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 		}
 		return 0;
 	}
-	if (argc != 1U && !(argc == 2U && strcmp(argv[1], "status") == 0)) {
+	if (op != TEST_RADIO_STATUS) {
 		return -EINVAL;
 	}
-	shell_print(sh,
+	zlrs_test_print(report,
 		    "RAW ready=%u tx=%u tx_failed=%u rx=%u expected=%u bad=%u "
 		    "frequency_mhz=%u payload_bytes=%u duration_ms=%u",
 		    (unsigned int)atomic_get(&raw_ready), (unsigned int)atomic_get(&raw_tx),
@@ -372,7 +366,3 @@ static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
 		    CONFIG_ZLRS_TEST_RAW_MS);
 	return 0;
 }
-
-SHELL_CMD_REGISTER(test_radio, NULL,
-		   "Radio test: status, channels, start, rxwin <ms>, entropy [ms], restore",
-		   cmd_radio);

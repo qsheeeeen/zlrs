@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Exercise bounded captures, download with smpmgr, and decode with Zephyr's viewer."""
+"""Exercise shell-free bounded captures with MCUmgr and Zephyr's viewer."""
 
 import argparse
 import hashlib
@@ -17,11 +17,12 @@ import serial
 
 REPO = Path(__file__).resolve().parents[3]
 CLI = REPO / "tools/zlrs.py"
-ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 sys.path.insert(0, str(REPO / "tests/hardware"))
 from unit.run import image_hash
 sys.path.insert(0, str(REPO / "tools"))
 from zlrs_update import image_hash_of
+from zlrs_smp import request as smp_request
+from zlrs_trace import GROUP, OPERATIONS, STATES
 
 
 def wait_hash(identity, expected, timeout=60):
@@ -39,10 +40,10 @@ def wait_hash(identity, expected, timeout=60):
 class Acceptance:
     def __init__(self, args):
         self.args = args
-        self.console = f"/dev/serial/by-id/usb-zlrs_ZLRS_{args.serial}-if04"
+        self.smp_port = f"/dev/serial/by-id/usb-zlrs_ZLRS_{args.serial}-if04"
         self.output = args.out
         self.output.mkdir(parents=True, exist_ok=True)
-        self.log = self.output / "console.log"
+        self.log = self.output / "control.jsonl"
         self.result = {"serial": args.serial, "captures": []}
         self.smpmgr = str(Path(sys.executable).with_name("smpmgr"))
         self.metadata = args.zephyr / "subsys/tracing/ctf/tsdl/metadata"
@@ -51,52 +52,40 @@ class Acceptance:
         self.viewer = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.viewer)
 
-    def command(self, text, timeout=30, identity=None):
-        device = identity or self.args.serial
-        console = f"/dev/serial/by-id/usb-zlrs_ZLRS_{device}-if04"
-        with serial.Serial(console, 115200, timeout=0.05, write_timeout=2) as port:
-            port.write(b"\x03\r")
-            time.sleep(0.1)
-            port.reset_input_buffer()
-            port.write(text.encode() + b"\r")
-            output = bytearray()
-            deadline = time.monotonic() + timeout
-            while time.monotonic() < deadline:
-                output.extend(port.read(4096))
-                clean = ANSI.sub("", output.decode(errors="replace"))
-                if re.search(r"(?:^|\n)[^\n]*~\$\s*$", clean):
-                    with self.log.open("a") as log:
-                        log.write(f"\n$ {text}\n{clean}\n")
-                    return clean
-            raise TimeoutError(f"Console command timed out: {text}: {output!r}")
+    def control(self, action, duration=None, success=True):
+        fields = None if action == "status" else {"op": OPERATIONS[action]}
+        if duration is not None:
+            fields["ms"] = duration
+        response = smp_request(self.smp_port, GROUP, fields)
+        with self.log.open("a") as log:
+            log.write(json.dumps({"action": action, "fields": fields, "response": response}) + "\n")
+        assert (response["result"] == 0) == success, response
+        response["state"] = STATES[response["state"]]
+        return response
 
     def status(self):
-        output = self.command("zlrs trace status")
-        match = re.search(r"Trace state=(\w+) id=(\d+) requested_ms=(\d+) "
-                          r"reason=(\d+) dropped=(\d+) error=(-?\d+)", output)
-        slot = re.search(r"generation=(\d+) slot=(-?\d+)", output)
-        if match is None or slot is None:
-            raise RuntimeError(f"Incomplete capture status: {output}")
-        return dict(zip(("state", "id", "requested_ms", "reason", "dropped", "error",
-                         "generation", "slot"),
-                        (match[1], *map(int, match.groups()[1:]), *map(int, slot.groups()))))
+        return self.control("status")
 
     def reboot(self, identity=None):
-        try:
-            self.command("kernel reboot cold", timeout=2, identity=identity)
-        except (OSError, TimeoutError, serial.SerialException):
-            pass
+        port = f"/dev/serial/by-id/usb-zlrs_ZLRS_{identity or self.args.serial}-if04"
+        subprocess.run([self.smpmgr, "--port", port, "os", "reset"],
+                       check=True, capture_output=True, timeout=15)
+
+    def device_status(self):
+        return subprocess.run([sys.executable, str(CLI), "status", "--serial", self.args.serial],
+                              check=True, capture_output=True, text=True, timeout=15).stdout
 
     def management(self, entering):
         if entering:
-            self.command("zlrs mgmt")
+            subprocess.run([sys.executable, str(CLI), "enter", "--serial", self.args.serial],
+                           check=True, capture_output=True, timeout=15)
             time.sleep(0.1)
         else:
             subprocess.run([sys.executable, str(CLI), "exit", "--serial", self.args.serial],
                            check=True, capture_output=True, timeout=15)
 
     def download(self, source, target, success=True):
-        result = subprocess.run([self.smpmgr, "--port", self.console, "--timeout", "5",
+        result = subprocess.run([self.smpmgr, "--port", self.smp_port, "--timeout", "5",
                                  "file", "download", source, str(target)],
                                 capture_output=True, text=True, timeout=60)
         with (self.output / "smpmgr.log").open("a") as log:
@@ -164,47 +153,27 @@ class Acceptance:
             time.sleep(0.2)
         raise TimeoutError("Trace firmware did not start")
 
-    def storage_failure(self):
-        self.command("zlrs trace start 10")
-        self.management(True)
-        before = self.status()
-        inactive = 1 - before["slot"]
-        backup = f"/trace/fault-backup-{before['id']}"
-        self.command(f"fs mv /trace/{inactive} {backup}")
-        try:
-            self.command(f"fs write /trace/{inactive} 00")
-            self.command("zlrs trace save")
-            failed = self.status()
-            assert failed["state"] == "frozen" and failed["error"] < 0, failed
-            assert failed["generation"] == before["generation"]
-        finally:
-            self.command(f"fs rm /trace/{inactive}")
-            self.command(f"fs mv {backup} /trace/{inactive}")
-        self.command("zlrs trace save")
-        self.export("storage-retry", complete=True)
-        self.management(False)
-
     def controls(self):
-        self.command("zlrs trace start 5001")
+        self.control('start', 5001, success=False)
         assert self.status()["state"] == "idle"
-        self.command("zlrs trace start 1000")
+        self.control('start', 1000)
         active = self.status()
         assert active["state"] == "capturing"
-        self.command("zlrs trace discard")
+        self.control("discard", success=False)
         assert self.status()["state"] == "capturing"
-        self.command("zlrs trace start 50")
+        self.control("start", 50, success=False)
         assert self.status()["id"] == active["id"]
-        self.command("zlrs trace stop")
-        self.command("zlrs trace stop")
+        self.control('stop')
+        self.control('stop')
         assert self.status()["reason"] == 2
-        self.command("zlrs trace discard")
+        self.control('discard')
         assert self.status()["state"] == "idle"
         for duration in (10, 50):
-            self.command(f"zlrs trace start {duration}")
+            self.control("start", duration)
             time.sleep(duration / 1000 + 0.03)
             status = self.status()
             assert status["state"] == "frozen" and status["reason"] == 1, status
-            self.command("zlrs trace discard")
+            self.control('discard')
         assert self.status()["state"] == "idle"
         (self.output / "controls.json").write_text(json.dumps({"passed": True}) + "\n")
 
@@ -214,7 +183,7 @@ class Acceptance:
         before = self.radio_late_counts("duplex-before")
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
-            status = self.command("zlrs status")
+            status = self.device_status()
             if re.search(r"State\s+: connected", status) and re.search(r"Capture\s+: ready", status):
                 break
             time.sleep(0.2)
@@ -228,7 +197,7 @@ class Acceptance:
                 "--timeout", "60", "--format", "json"], stdout=output, stderr=subprocess.STDOUT)
             try:
                 time.sleep(1.5)
-                self.command("zlrs trace start 50")
+                self.control('start', 50)
                 assert process.wait(timeout=65) == 0, "Bidirectional DATA failed"
             finally:
                 if process.poll() is None:
@@ -236,7 +205,7 @@ class Acceptance:
                     process.wait(timeout=5)
         after = self.radio_late_counts("duplex-after")
         assert after == before, f"TX deadlines missed during DATA/capture: {before} -> {after}"
-        self.command("zlrs trace save")
+        self.control('save')
         self.management(True)
         self.export("duplex", complete=True)
         self.management(False)
@@ -249,6 +218,27 @@ class Acceptance:
         if match is None:
             raise RuntimeError(f"Missing radio deadline counters: {result.stdout}")
         return tuple(map(int, match.groups()))
+
+    def restore(self, originals):
+        errors = {}
+        for identity, original in originals.items():
+            try:
+                if image_hash(identity) != original:
+                    self.reboot(identity)
+            except Exception as error:
+                errors.setdefault(identity, {})["request"] = str(error)
+        restored = True
+        for identity, original in originals.items():
+            try:
+                wait_hash(identity, original)
+            except Exception as error:
+                restored = False
+                errors.setdefault(identity, {})["verify"] = str(error)
+        self.result["restored"] = restored
+        if errors:
+            self.result["restore_errors"] = errors
+        if not restored:
+            raise RuntimeError(f"Firmware restoration failed: {errors}")
 
     def run(self):
         previous = image_hash(self.args.serial)
@@ -265,51 +255,50 @@ class Acceptance:
             assert self.result["trace_hash"] != previous
             assert self.status()["state"] == "idle"
             self.controls()
-            self.command("zlrs trace start 9")
+            self.control('start', 9, success=False)
             assert self.status()["state"] == "idle"
-            self.command("zlrs trace start 10")
+            self.control('start', 10)
             time.sleep(0.03)
             assert self.status()["state"] == "frozen"
-            self.command("zlrs trace start 100")
+            self.control('start', 100, success=False)
             assert self.status()["state"] == "frozen"
-            self.command("zlrs trace save")
+            self.control('save')
             assert self.status()["state"] == "saved"
             self.download("/trace/0/channel0_0", self.output / "denied.bin", success=False)
             self.management(True)
             short = self.export("deadline", complete=True)
             self.management(False)
 
-            self.command("zlrs trace start")
+            self.control('start')
             time.sleep(0.1)
             assert self.status()["requested_ms"] == 50
-            self.command("zlrs trace save")
+            self.control('save')
             self.management(True)
             self.export("default", complete=True)
             self.management(False)
-            self.storage_failure()
             self.duplex()
 
-            self.command("zlrs trace start 5000")
-            self.command("zlrs trace stop")
+            self.control('start', 5000)
+            self.control('stop')
             assert self.status()["reason"] == 2
-            self.command("zlrs trace stop")
-            self.command("zlrs trace save")
+            self.control('stop')
+            self.control('save')
             self.management(True)
             self.export("manual", complete=None)
             self.management(False)
 
-            self.command("zlrs trace start 5000")
+            self.control('start', 5000)
             time.sleep(5.1)
             assert self.status()["state"] == "frozen"
-            self.command("zlrs trace save")
+            self.control('save')
             self.management(True)
             self.export("capacity", complete=False)
             self.management(False)
 
-            self.command("zlrs trace start 5000")
+            self.control('start', 5000)
             self.management(True)
             assert self.status()["reason"] == 3
-            self.command("zlrs trace save")
+            self.control('save')
             assert self.status()["state"] == "saved"
             last = self.export("maintenance", complete=None)
             self.management(False)
@@ -325,10 +314,9 @@ class Acceptance:
             self.result["passed"] = True
         except Exception:
             try:
-                self.command("zlrs status")
-                self.command("zlrs ports")
+                self.device_status()
                 if self.status()["state"] == "frozen":
-                    self.command("zlrs trace save")
+                    self.control('save')
                     self.management(True)
                     self.export("failure", complete=None)
                     self.management(False)
@@ -337,11 +325,7 @@ class Acceptance:
             raise
         finally:
             try:
-                for identity, original in originals.items():
-                    if image_hash(identity) != original:
-                        self.reboot(identity)
-                    wait_hash(identity, original)
-                self.result["restored"] = True
+                self.restore(originals)
             finally:
                 (self.output / "summary.json").write_text(json.dumps(self.result, indent=2) + "\n")
 

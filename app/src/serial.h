@@ -26,7 +26,7 @@ ZBUS_CHAN_DECLARE(zlrs_serial_chan);
 /* Publish changed serial status to zbus from the main thread. */
 void zlrs_serial_publish_state(void);
 
-/* For bench debugging: state of one data endpoint (`zlrs ports` prints it) */
+/* Endpoint counters and queue state for diagnostics and platform checks. */
 typedef struct {
 	const char *name;
 	bool ready;          /* the endpoint exists on the board and the device is ready */

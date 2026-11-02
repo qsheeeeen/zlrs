@@ -43,7 +43,7 @@ if hit=$(grep -rn -E '\b(CONFIG_)?BOARD_[A-Z0-9_]+' app 2>/dev/null); then
 fi
 
 if hit=$(rg -n 'zlrs_link_t|zlrs/link/link.h|zlrs_storage_settings_' \
-	app/src/serial.c app/src/mgmt.c app/src/shell.c app/src/ui.c app/src/ui.h app/src/main.c); then
+	app/src/serial.c app/src/mgmt.c app/src/ui.c app/src/ui.h app/src/main.c); then
 	bad "a frontend reaches into RF or private configuration storage:"
 	echo "$hit"
 fi
@@ -55,6 +55,12 @@ fi
 
 if [ -e app/src/state/sys_bus.c ] || [ -e app/src/state/sys_bus.h ]; then
 	bad "centralized module channels returned"
+fi
+
+if hit=$(rg -n '#include <zephyr/shell/|SHELL_(CMD|STATIC_SUBCMD|SUBCMD)|^CONFIG_SHELL=y' \
+	app tests/hardware --glob '*.[ch]' --glob '*.conf'); then
+	bad "interactive shell commands returned; use management or MCUmgr interfaces:"
+	echo "$hit"
 fi
 
 # The core region's RF design value is allowed; application RF APIs/state are not.

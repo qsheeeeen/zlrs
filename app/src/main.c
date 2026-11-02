@@ -15,6 +15,7 @@
 #include "rf.h"
 #include "ui.h"
 #include "trace.h"
+#include "log.h"
 
 LOG_MODULE_REGISTER(zlrs_main, CONFIG_APP_LOG_LEVEL);
 
@@ -31,6 +32,7 @@ static void enter_management_mode(void)
 		LOG_WRN("management mode ended without EXIT (rc %d)", rc);
 	}
 	LOG_INF("management mode done, back to normal");
+	zlrs_log_console_sync();
 	log_flush();
 	zlrs_rf_resume();
 }
@@ -68,6 +70,7 @@ int main(void)
 		LOG_ERR("fault state: not transmitting; management port stays available for "
 			"flashing");
 	}
+	zlrs_log_console_sync();
 	log_flush();
 	if (rf_ready) {
 		zlrs_rf_start();

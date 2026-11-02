@@ -8,6 +8,7 @@ import argparse
 from zlrs_cli import HelpFormatter, run
 import zlrs_mgmt as mgmt
 import zlrs_update as update
+import zlrs_trace as trace
 
 
 def build_parser():
@@ -40,6 +41,10 @@ for management commands. With several modules, use --serial or --port.
                              formatter_class=HelpFormatter)
     update.configure_parser(upgrade)
     upgrade.set_defaults(handler=update.main, command_parser=upgrade)
+    tracing = sub.add_parser("trace", help="control bounded Zephyr tracing over MCUmgr serial",
+                             formatter_class=HelpFormatter)
+    trace.configure_parser(tracing)
+    tracing.set_defaults(handler=trace.main, command_parser=tracing)
     return parser
 
 

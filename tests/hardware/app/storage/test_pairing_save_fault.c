@@ -1,8 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include <errno.h>
-#include <stdlib.h>
 #include <zephyr/kernel.h>
-#include <zephyr/shell/shell.h>
 #include <zephyr/sys/atomic.h>
 
 #include "persist.h"
@@ -66,28 +64,28 @@ void zlrs_test_pairing_save_fault_apply(void)
 	}
 }
 
-int zlrs_test_pairing_save_fault_command(const struct shell *sh, size_t argc, char **argv)
+int zlrs_test_pairing_save_fault_control(struct zlrs_test_report *report,
+				       enum zlrs_test_op op, uint32_t arg)
 {
-	if (argc == 3U) {
-		char *end;
-		const unsigned long ms = strtoul(argv[2], &end, 0);
-		if (argv[2][0] == '-' || *end != '\0' || ms < 4000UL || ms > 30000UL) {
+	if (op == TEST_SAVE_FAULT) {
+		const unsigned long ms = arg;
+		if (ms < 4000UL || ms > 30000UL) {
 			return -EINVAL;
 		}
 		if (atomic_get(&active) || atomic_get(&restores) ||
 		    !atomic_cas(&requested_ms, 0, (int)ms)) {
 			return -EBUSY;
 		}
-		shell_print(sh, "SAVE_FAULT queued_ms=%lu", ms);
+		zlrs_test_print(report, "SAVE_FAULT queued_ms=%lu", ms);
 		return 0;
 	}
-	if (argc != 2U) {
+	if (op != TEST_SAVE_STATUS) {
 		return -EINVAL;
 	}
 	k_spinlock_key_t key = k_spin_lock(&trace_lock);
 	const uint32_t count = calls, first = first_ms, last = last_ms, gap = min_gap_ms;
 	k_spin_unlock(&trace_lock, key);
-	shell_print(sh,
+	zlrs_test_print(report,
 		    "SAVE_FAULT active=%u pending=%u calls=%u first_ms=%u last_ms=%u min_gap_ms=%u "
 		    "restores=%u",
 		    (unsigned int)atomic_get(&active),

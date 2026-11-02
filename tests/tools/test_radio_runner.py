@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Firmware rollback must survive failures in the test or its console hooks."""
+"""Firmware rollback must survive failures in test control requests."""
 import importlib.util
 from pathlib import Path
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("hardware_radio_runner", ROOT / "tests/hardware/radio/run.py")
@@ -17,12 +17,10 @@ class RollbackTests(unittest.TestCase):
         for failure in (ValueError("invalid capture output"), OSError("USB disappeared")):
             with self.subTest(failure=failure):
                 events = []
-                consoles = [MagicMock(), MagicMock()]
-
-                def request(port, text):
-                    index = consoles.index(port)
+                def request(port, operation):
+                    index = 0 if "_a-if04" in port else 1
                     events.append(("request", index))
-                    self.assertEqual(text, "test_radio restore")
+                    self.assertEqual(operation, runner.Op.RESTORE)
                     if index == 0:
                         raise failure
 
@@ -31,17 +29,15 @@ class RollbackTests(unittest.TestCase):
                     self.assertEqual(image, identity + "-original")
                     self.assertEqual(timeout, 125)
 
-                with patch.object(runner.serial, "Serial") as serial, \
-                        patch.object(runner, "command", side_effect=request), \
+                with patch.object(runner, "command", side_effect=request), \
                         patch.object(runner, "wait_image", side_effect=wait):
-                    serial.side_effect = [MagicMock(__enter__=MagicMock(return_value=p)) for p in consoles]
                     result = runner.restore_images(("a", "b"), {"a": "a-original", "b": "b-original"})
                 self.assertEqual(events, [("request", 0), ("request", 1), ("wait", "a"), ("wait", "b")])
                 self.assertEqual(result["restored"], {"a": True, "b": True})
                 self.assertEqual(result["restore_errors"], {"a": {"request": str(failure)}})
 
     def test_verification_failure_preserves_peer_result(self):
-        with patch.object(runner.serial, "Serial"), patch.object(runner, "command") as command, \
+        with patch.object(runner, "command") as command, \
                 patch.object(runner, "wait_image", side_effect=[ValueError("unexpected reply"), None]):
             result = runner.restore_images(("a", "b"), {"a": "old-a", "b": "old-b"})
         self.assertEqual(command.call_count, 2)

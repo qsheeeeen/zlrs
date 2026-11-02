@@ -10,7 +10,7 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(radio LANGUAGES C)
 include("${zlrs_root}/app/CMakeLists.txt")
 
-target_sources(app PRIVATE ../app/link/test_data.c ../app/platform/test_radio.c
+target_sources(app PRIVATE control.c ../app/link/test_data.c ../app/platform/test_radio.c
  ../app/platform/test_phy_pin.c ../app/storage/test_pairing_save_fault.c)
 target_include_directories(app PRIVATE . "${zlrs_root}/tests/support")
 # Replace public interfaces only in the test image; the production firmware has no hooks.

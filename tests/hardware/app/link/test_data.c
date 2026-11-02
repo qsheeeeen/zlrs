@@ -1,11 +1,9 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
 #include <zephyr/kernel.h>
-#include <zephyr/shell/shell.h>
 #include <zephyr/sys/atomic.h>
 
 #include <errno.h>
-#include <stdlib.h>
 #include <string.h>
 
 #include "data_pattern.h"
@@ -132,9 +130,9 @@ bool __wrap_zlrs_serial_receive(const uint8_t *buf, uint16_t len)
 	return true;
 }
 
-static int cmd_data(const struct shell *sh, size_t argc, char **argv)
+int zlrs_test_data_control(struct zlrs_test_report *report, enum zlrs_test_op op, uint32_t arg)
 {
-	if (argc == 1U || (argc == 2U && strcmp(argv[1], "status") == 0)) {
+	if (op == TEST_DATA_STATUS) {
 		const uint32_t received = atomic_get(&published.received);
 		const uint32_t first = atomic_get(&published.first_len);
 		const uint32_t duration = atomic_get(&published.duration_us);
@@ -142,7 +140,7 @@ static int cmd_data(const struct shell *sh, size_t argc, char **argv)
 					      ? (uint64_t)(received - first) * 1000000U / duration
 					      : 0U;
 
-		shell_print(sh,
+		zlrs_test_print(report,
 			    "BENCH active=%u target=%u queued=%u rx=%u bad=%u duration_us=%u "
 			    "goodput_Bps=%u",
 			    (unsigned int)atomic_get(&published.active),
@@ -153,17 +151,16 @@ static int cmd_data(const struct shell *sh, size_t argc, char **argv)
 	}
 	int request;
 
-	if (argc == 3U && strcmp(argv[1], "arm") == 0) {
-		char *end;
-		const unsigned long bytes = strtoul(argv[2], &end, 0);
+	if (op == TEST_DATA_ARM) {
+		const uint32_t bytes = arg;
 
-		if (argv[2][0] == '-' || *end != '\0' || bytes == 0U || bytes > MAX_BYTES) {
+		if (bytes == 0U || bytes > MAX_BYTES) {
 			return -EINVAL;
 		}
 		request = (int)bytes;
-	} else if (argc == 2U && strcmp(argv[1], "start") == 0) {
+	} else if (op == TEST_DATA_START) {
 		request = START;
-	} else if (argc == 2U && strcmp(argv[1], "stop") == 0) {
+	} else if (op == TEST_DATA_STOP) {
 		request = STOP;
 	} else {
 		return -EINVAL;
@@ -178,8 +175,7 @@ static int cmd_data(const struct shell *sh, size_t argc, char **argv)
 	}
 	const int rc = atomic_get(&command_result);
 
-	shell_print(sh, "BENCH %s: %d", argv[1], rc);
+	zlrs_test_print(report, "BENCH %s: %d",
+		       op == TEST_DATA_ARM ? "arm" : op == TEST_DATA_START ? "start" : "stop", rc);
 	return rc;
 }
-
-SHELL_CMD_REGISTER(test_data, NULL, "RF data test: arm <bytes>, start, status, stop", cmd_data);

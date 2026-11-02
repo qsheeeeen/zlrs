@@ -29,7 +29,6 @@ target_sources(app PRIVATE
   ${zlrs_app_dir}/src/ui.c
 )
 
-target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG_SHELL app PRIVATE ${zlrs_app_dir}/src/shell.c)
 target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG_TRACE app PRIVATE ${zlrs_app_dir}/src/trace.c)
 target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG app PRIVATE ${zlrs_app_dir}/src/diagnostics.c)
 

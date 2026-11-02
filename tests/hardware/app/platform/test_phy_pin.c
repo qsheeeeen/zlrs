@@ -1,10 +1,9 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include <errno.h>
-#include <string.h>
-#include <zephyr/shell/shell.h>
 #include <zephyr/sys/atomic.h>
 
 #include "band.h"
+#include "fixtures.h"
 
 /* A fixed-PHY benchmark must not succeed by silently changing its air rate.
  * Keep search and power recovery active; suppress automatic negotiated changes.
@@ -26,17 +25,14 @@ zlrs_band_action_t __wrap_zlrs_band_policy_update(zlrs_band_policy_t *policy,
 	return action;
 }
 
-static int cmd_phy(const struct shell *sh, size_t argc, char **argv)
+int zlrs_test_phy_control(struct zlrs_test_report *report, enum zlrs_test_op op, uint32_t arg)
 {
-	if (argc == 3U && strcmp(argv[1], "pin") == 0 &&
-	    (strcmp(argv[2], "0") == 0 || strcmp(argv[2], "1") == 0)) {
-		atomic_set(&pinned, argv[2][0] == '1');
-	} else if (argc != 1U) {
+	if (op == TEST_PHY_PIN && arg <= 1U) {
+		atomic_set(&pinned, arg);
+	} else if (op != TEST_PHY_STATUS) {
 		return -EINVAL;
 	}
-	shell_print(sh, "PHY_PIN active=%u suppressed=%u", (unsigned int)atomic_get(&pinned),
+	zlrs_test_print(report, "PHY_PIN active=%u suppressed=%u", (unsigned int)atomic_get(&pinned),
 		    (unsigned int)atomic_get(&suppressed));
 	return 0;
 }
-
-SHELL_CMD_REGISTER(test_phy, NULL, "test-only fixed PHY: pin 0|1, or show state", cmd_phy);

@@ -4,6 +4,7 @@
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+from enum import IntEnum
 import contextlib
 import json
 from pathlib import Path
@@ -22,8 +23,27 @@ from unit.run import image_hash
 from zlrs_cli import positive_seconds
 from zlrs_update import image_hash_of
 import zlrs_mgmt as mgmt
+from zlrs_smp import request as smp_request
 
-ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+class Op(IntEnum):
+    RADIO_STATUS = 0
+    RADIO_START = 1
+    CHANNELS = 2
+    RX_WINDOW = 3
+    ENTROPY_STATUS = 4
+    ENTROPY_STALL = 5
+    SAVE_STATUS = 6
+    SAVE_FAULT = 7
+    DATA_STATUS = 8
+    DATA_ARM = 9
+    DATA_START = 10
+    DATA_STOP = 11
+    PHY_STATUS = 12
+    PHY_PIN = 13
+    PHY_REQUEST = 14
+    RESTORE = 15
+    RF_STATUS = 16
+
 BENCH = re.compile(r"BENCH active=(\d+) target=(\d+) queued=(\d+) rx=(\d+) bad=(\d+) "
                    r"duration_us=(\d+) goodput_Bps=(\d+)")
 RAW = re.compile(r"RAW ready=(\d+) tx=(\d+) tx_failed=(\d+) rx=(\d+) expected=(\d+) "
@@ -50,19 +70,12 @@ def wait_image(identity, expected, timeout=45):
     raise TimeoutError(f"Firmware {expected} did not return on {identity}; last observed: {observed}")
 
 
-def command(port, text):
-    port.reset_input_buffer()
-    port.write(b"\x03\r\n" + text.encode() + b"\r\n")
-    output = bytearray()
-    deadline = time.monotonic() + 0.5
-    while time.monotonic() < deadline:
-        try:
-            output.extend(port.read(4096))
-        except (OSError, serial.SerialException):
-            if text == "test_radio restore":
-                break
-            raise
-    return ANSI.sub("", output.decode(errors="replace"))
+def command(port, operation, argument=None):
+    fields = {"op": int(operation)}
+    if argument is not None:
+        fields["arg"] = argument
+    response = smp_request(port, 65, fields)
+    return response["report"] or f"result={response['result']}"
 
 
 def restore_images(identities, previous):
@@ -71,8 +84,7 @@ def restore_images(identities, previous):
     for identity in identities:
         try:
             path = f"/dev/serial/by-id/usb-zlrs_ZLRS_{identity}-if04"
-            with serial.Serial(path, 115200, timeout=0.02, write_timeout=2) as port:
-                command(port, "test_radio restore")
+            command(path, Op.RESTORE)
         except Exception as error:
             result.setdefault("restore_errors", {}).setdefault(identity, {})["request"] = str(error)
     for identity in identities:
@@ -208,7 +220,7 @@ def main():
     previous = {identity: image_hash(identity) for identity in identities}
     record = {"previous": previous, "image": expected, "rounds": [], "restored": {}}
     installed = []
-    consoles = {}
+    smp_ports = {}
     try:
         for identity in identities:
             installed.append(identity)
@@ -224,14 +236,13 @@ def main():
                 deadline = time.monotonic() + 45
                 while not path.exists():
                     if time.monotonic() > deadline:
-                        raise TimeoutError(f"No console on {identity}")
+                        raise TimeoutError(f"No MCUmgr port on {identity}")
                     time.sleep(0.1)
-                consoles[identity] = stack.enter_context(serial.Serial(
-                    str(path), 115200, timeout=0.02, write_timeout=2))
+                smp_ports[identity] = str(path)
 
-            def both(text):
+            def both(operation, argument=None):
                 return dict(zip(identities, pool.map(
-                    lambda identity: command(consoles[identity], text), identities)))
+                    lambda identity: command(smp_ports[identity], operation, argument), identities)))
 
             def parse(text, pattern, names):
                 values = {}
@@ -249,7 +260,7 @@ def main():
             def channels():
                 names = ("frequency_mhz", "tx", "tx_failed", "rx", "empty", "crc")
                 result = {}
-                for identity, output in both("test_radio channels").items():
+                for identity, output in both(Op.CHANNELS).items():
                     rows = [dict(zip(names, map(int, match.groups())))
                             for match in CHANNEL.finditer(output)]
                     if [row["frequency_mhz"] for row in rows] != list(range(2402, 2481)):
@@ -260,12 +271,12 @@ def main():
             if args.raw:
                 names = ("ready", "tx", "tx_failed", "rx", "expected", "bad",
                          "frequency_mhz", "payload_bytes", "duration_ms")
-                ready = parse("test_radio status", RAW, names)
+                ready = parse(Op.RADIO_STATUS, RAW, names)
                 if not all(value["ready"] for value in ready.values()):
                     raise RuntimeError("Both boards must wait for raw test start")
-                both("test_radio start")
+                both(Op.RADIO_START)
                 time.sleep(max(value["duration_ms"] for value in ready.values()) / 1000 + 1)
-                result = parse("test_radio status", RAW, names)
+                result = parse(Op.RADIO_STATUS, RAW, names)
                 for value in result.values():
                     if value["expected"] > 0:
                         value["quality_percent"] = value["rx"] * 100 / value["expected"]
@@ -287,11 +298,11 @@ def main():
                                  "LoRa SF6/BW1MHz", "LoRa SF7/BW1MHz")
                 steps = [(args.phy, number) for number in range(args.rounds)]
                 if args.profiles or args.phy is not None:
-                    pinned = both("test_phy pin 1")
+                    pinned = both(Op.PHY_PIN, 1)
                     if not all("PHY_PIN active=1" in output for output in pinned.values()):
                         raise RuntimeError(f"Cannot hold the requested PHY: {pinned!r}")
                     record["phy_pinned"] = True
-                    roles = both("zlrs status")
+                    roles = both(Op.RF_STATUS)
                     leaders = [identity for identity, output in roles.items()
                                if re.search(r"Role\s*:\s*Leader", output)]
                     if len(leaders) != 1:
@@ -302,12 +313,12 @@ def main():
                                  for number in range(args.rounds)]
                 for phy, number in steps:
                     if phy is not None:
-                        output = command(consoles[leader], f"zlrs phy {phy}")
+                        output = command(smp_ports[leader], Op.PHY_REQUEST, phy)
                         if f"queued profile {phy}:" not in output:
                             raise RuntimeError(f"Profile request failed: {output!r}")
                         deadline = time.monotonic() + 45
                         while True:
-                            observed = both("zlrs status")
+                            observed = both(Op.RF_STATUS)
                             ready = all(re.search(r"Modulation\s*:\s*" + re.escape(profile_names[phy]), text)
                                         and re.search(r"State\s*:\s*connected\b", text)
                                         and re.search(r"Band mode\s*:\s*auto\b", text)
@@ -324,7 +335,7 @@ def main():
                             time.sleep(0.2)
                     deadline = time.monotonic() + 20
                     while True:
-                        arm = both(f"test_data arm {args.bytes}")
+                        arm = both(Op.DATA_ARM, args.bytes)
                         if all("BENCH arm: 0" in output for output in arm.values()):
                             break
                         if time.monotonic() > deadline:
@@ -332,7 +343,7 @@ def main():
                             record["timeout_radio"] = reports("radio")
                             record["timeout_link"] = reports("link")
                             raise TimeoutError("Data links did not become ready")
-                    start = both("test_data start")
+                    start = both(Op.DATA_START)
                     if not all("BENCH start: 0" in output for output in start.values()):
                         raise RuntimeError("Cannot start both data sources")
                     poll_hz = args.status_poll_hz[number % len(args.status_poll_hz)]
@@ -346,7 +357,7 @@ def main():
                                    ("active", "pending", "calls", "first_ms", "last_ms", "min_gap_ms", "restores"))
                     fault_ms = args.entropy_stall_ms or args.pairing_save_fault_ms
                     if fault_ms:
-                        queued = both(f"test_radio {fault_command} {fault_ms}")
+                        queued = both((Op.ENTROPY_STALL if args.entropy_stall_ms else Op.SAVE_FAULT), fault_ms)
                         marker = "ENTROPY" if args.entropy_stall_ms else "SAVE_FAULT"
                         if not all(f"{marker} queued_ms={fault_ms}" in output
                                    for output in queued.values()):
@@ -357,15 +368,15 @@ def main():
                     started = time.monotonic()
                     observe_at = started
                     while True:
-                        result = parse("test_data status", BENCH, names)
+                        result = parse(Op.DATA_STATUS, BENCH, names)
                         record["last_round"] = {"round": number + 1, "nodes": result}
                         if fault is not None:
-                            observed_fault = parse(f"test_radio {fault_command}", fault_pattern, fault_names)
+                            observed_fault = parse((Op.ENTROPY_STATUS if args.entropy_stall_ms else Op.SAVE_STATUS), fault_pattern, fault_names)
                             fault["last"] = observed_fault
                             if all(value["active"] for value in observed_fault.values()):
                                 fault["active_samples"].append(result)
                         if time.monotonic() >= observe_at:
-                            status = both("zlrs status")
+                            status = both(Op.RF_STATUS)
                             record["observations"].append({
                                 "round": number + 1,
                                 "seconds": round(time.monotonic() - started, 3),
@@ -395,7 +406,7 @@ def main():
                     record["rounds"][-1]["status_poll_hz"] = poll_hz
                     record["rounds"][-1]["online_status"] = observers.stop()
                     observers.verify(phy)
-                    record["rounds"][-1]["status"] = both("zlrs status")
+                    record["rounds"][-1]["status"] = both(Op.RF_STATUS)
                     print(json.dumps(record["rounds"][-1]), flush=True)
                     if not all(value["rx"] == args.bytes and value["queued"] == args.bytes and
                                value["bad"] == 0 for value in result.values()):
@@ -414,19 +425,19 @@ def main():
                                 2 <= value["calls"] <= 5 and value["min_gap_ms"] >= 1000
                                 for value in fault["last"].values()):
                             raise RuntimeError(f"Pairing save did not back off: {fault['last']}")
-                    stopped = both("test_data stop")
+                    stopped = both(Op.DATA_STOP)
                     if not all("BENCH stop: 0" in output for output in stopped.values()):
                         raise RuntimeError("Radio queue did not drain before stop")
                 record["after"] = reports("radio")
                 record["after_link"] = reports("link")
                 record["after_channels"] = channels()
                 if record.get("phy_pinned"):
-                    record["phy_pin"] = both("test_phy")
-                    released = both("test_phy pin 0")
+                    record["phy_pin"] = both(Op.PHY_STATUS)
+                    released = both(Op.PHY_PIN, 0)
                     if not all("PHY_PIN active=0" in output for output in released.values()):
                         raise RuntimeError(f"Cannot release the requested PHY: {released!r}")
-            both("test_radio restore")
-            consoles.clear()
+            both(Op.RESTORE)
+            smp_ports.clear()
     finally:
         # A failed test still requests rollback; the app confirmation timer is the fallback.
         try:

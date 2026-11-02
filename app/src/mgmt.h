@@ -26,9 +26,6 @@ int zlrs_mgmt_init(void);
  * true asks the owner to run a session.
  * run() acknowledges host ENTER when ready; RECOVERY may reboot here. */
 bool zlrs_mgmt_process_idle(void);
-/* May be called by a shell thread; the application owner consumes it in process_idle(). */
-void zlrs_mgmt_request_session(void);
-
 /* Execute a parsed command on the owner thread in a maintenance window. */
 uint8_t zlrs_mgmt_command(uint8_t cmd, const uint8_t *payload, uint8_t len, uint8_t *out,
 			  size_t cap);

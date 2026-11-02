@@ -11,6 +11,13 @@
 
 #define ZLRS_LOG_FILES_MAX 8U
 
+/* Apply the native UART backend's host-readiness policy before processing logs. */
+#if defined(CONFIG_LOG_BACKEND_UART)
+void zlrs_log_console_sync(void);
+#else
+static inline void zlrs_log_console_sync(void) {}
+#endif
+
 typedef struct {
 	uint8_t count;
 	uint8_t newest;

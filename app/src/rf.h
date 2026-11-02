@@ -68,7 +68,7 @@ void zlrs_rf_publish_state(void);
 bool zlrs_rf_pairing(uint8_t peer_id[ZLRS_DEV_ID_LEN], uint8_t pair_salt[ZLRS_PAIR_SALT_LEN]);
 zlrs_rf_status_t zlrs_rf_status(void);
 /* Fresh chip measurements only at a paused management boundary; publishes the
- * snapshot for shell/UI readers without SPI work on their threads. */
+ * snapshot for management/UI readers without SPI work on their threads. */
 void zlrs_rf_status_refresh(void);
 /* Zero means pairing is active; -EAGAIN means retry when a full nonce is ready. */
 int zlrs_rf_pair_start(void);

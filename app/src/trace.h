@@ -37,7 +37,7 @@ struct zlrs_trace_status {
 #include <zephyr/tracing/tracing.h>
 #include <tracing_core.h>
 
-/* Reset on the preemptible caller; control/save on RF owner; stop on kernel timer. */
+/* Reset on the MCUmgr worker; control/save on RF owner; stop on kernel timer. */
 int zlrs_trace_request(enum zlrs_trace_command command, uint32_t duration_ms);
 struct zlrs_trace_status zlrs_trace_status(void);
 void zlrs_trace_process(bool maintenance);

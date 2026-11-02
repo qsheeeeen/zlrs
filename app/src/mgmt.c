@@ -46,13 +46,6 @@ ZBUS_CHAN_DEFINE(zlrs_mode_chan, struct zlrs_mode, NULL, NULL, ZBUS_OBSERVERS_EM
 
 static struct zlrs_mode mode;
 static bool mode_pending;
-static atomic_t session_requested;
-
-void zlrs_mgmt_request_session(void)
-{
-	atomic_set(&session_requested, 1);
-}
-
 static void publish_mode(void)
 {
 	if (mode_pending && zbus_chan_pub(&zlrs_mode_chan, &mode, K_NO_WAIT) == 0) {
@@ -80,7 +73,7 @@ struct cfg_port {
 
 static struct cfg_port cfg_port;
 static K_SEM_DEFINE(cfg_rx_ready, 0, 1);
-/* Only a host ENTER needs an ACK; shell entry must not send an unsolicited response. */
+/* ENTER is acknowledged after the management session is ready. */
 static bool cfg_enter_pending;
 static uint8_t cfg_tx_line[ZLRS_MGMT_FRAME_MAX_LEN];
 static uint8_t cfg_tx_pending;
@@ -197,6 +190,7 @@ static void flush_reply(void)
 
 static void mgmt_log_flush(void)
 {
+	zlrs_log_console_sync();
 	log_flush();
 
 	/* With no log thread, log_flush() drains messages but does not emit its completion
@@ -222,9 +216,6 @@ static uint8_t execute_query(uint8_t cmd, uint8_t len, uint8_t *out, size_t cap,
 bool zlrs_mgmt_process_idle(void)
 {
 	publish_mode();
-	if (atomic_cas(&session_requested, 1, 0)) {
-		return true;
-	}
 	static zlrs_mgmt_parser_t parser;
 	static bool parser_ready;
 	uint8_t byte;
@@ -777,6 +768,7 @@ int zlrs_mgmt_run(void)
 		zlrs_trace_process(true);
 		publish_mode();
 		zlrs_serial_publish_state();
+		zlrs_log_console_sync();
 		(void)log_process();
 
 		/* DATA remains queued while RF is stopped; a full USB ring applies backpressure. */

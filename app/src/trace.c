@@ -18,6 +18,9 @@
 #include <zephyr/sys/atomic.h>
 #include <zephyr/timing/timing.h>
 #include <zephyr/version.h>
+#include <mgmt/mcumgr/util/zcbor_bulk.h>
+#include <zcbor_decode.h>
+#include <zcbor_encode.h>
 #include <tracing_backend.h>
 #include <tracing_core.h>
 
@@ -29,6 +32,8 @@ BUILD_ASSERT(!IS_ENABLED(CONFIG_SMP));
 BUILD_ASSERT(IS_ENABLED(CONFIG_TRACING_SYNC) && IS_ENABLED(CONFIG_TRACING_BACKEND_RAM));
 BUILD_ASSERT(IS_ENABLED(CONFIG_TRACING_HANDLE_HOST_CMD));
 BUILD_ASSERT(!IS_ENABLED(CONFIG_TRACING_SHELL));
+BUILD_ASSERT(!IS_ENABLED(CONFIG_SHELL));
+BUILD_ASSERT(CONFIG_MCUMGR_TRANSPORT_WORKQUEUE_THREAD_PRIO >= 0);
 BUILD_ASSERT(IS_ENABLED(CONFIG_MCUMGR_GRP_FS_FILE_ACCESS_HOOK));
 BUILD_ASSERT(IS_ENABLED(CONFIG_MCUMGR_SMP_COMMAND_STATUS_HOOKS));
 
@@ -439,7 +444,7 @@ static int reset_capture(uint32_t duration_ms)
 	if (backend == NULL) {
 		return -ENODEV;
 	}
-	/* The shell thread can be preempted by RF. Clearing 64 KiB on the
+	/* The MCUmgr worker can be preempted by RF. Clearing 64 KiB on the
 	 * cooperative RF owner would delay its next slot before recording begins.
 	 * request_lock excludes another start/save until the owner acknowledges.
 	 */
@@ -630,8 +635,63 @@ static struct mgmt_callback file_callback = {
 	.event_id = MGMT_EVT_OP_FS_MGMT_FILE_ACCESS | MGMT_EVT_OP_FS_MGMT_FILE_ACCESS_DONE,
 };
 
+/* SMP group 64, command 0: read status or write a bounded capture operation. */
+static int trace_response(struct smp_streamer *ctxt, int result)
+{
+	const struct zlrs_trace_status status = zlrs_trace_status();
+	zcbor_state_t *zse = ctxt->writer->zs;
+	const bool ok =
+		zcbor_tstr_put_lit(zse, "result") && zcbor_int32_put(zse, result) &&
+		zcbor_tstr_put_lit(zse, "state") && zcbor_uint32_put(zse, status.state) &&
+		zcbor_tstr_put_lit(zse, "id") && zcbor_uint32_put(zse, status.id) &&
+		zcbor_tstr_put_lit(zse, "requested_ms") && zcbor_uint32_put(zse, status.duration_ms) &&
+		zcbor_tstr_put_lit(zse, "started_ns") && zcbor_uint64_put(zse, status.started_ns) &&
+		zcbor_tstr_put_lit(zse, "stopped_ns") && zcbor_uint64_put(zse, status.stopped_ns) &&
+		zcbor_tstr_put_lit(zse, "reason") && zcbor_uint32_put(zse, status.reason) &&
+		zcbor_tstr_put_lit(zse, "dropped") && zcbor_uint32_put(zse, status.dropped) &&
+		zcbor_tstr_put_lit(zse, "generation") && zcbor_uint32_put(zse, status.generation) &&
+		zcbor_tstr_put_lit(zse, "slot") && zcbor_int32_put(zse, status.slot) &&
+		zcbor_tstr_put_lit(zse, "error") && zcbor_int32_put(zse, status.error) &&
+		zcbor_tstr_put_lit(zse, "capacity") &&
+		zcbor_uint32_put(zse, CONFIG_RAM_TRACING_BUFFER_SIZE);
+
+	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
+}
+
+static int trace_read(struct smp_streamer *ctxt)
+{
+	return trace_response(ctxt, 0);
+}
+
+static int trace_write(struct smp_streamer *ctxt)
+{
+	uint32_t operation = UINT32_MAX;
+	uint32_t duration_ms = 50U;
+	size_t decoded;
+	struct zcbor_map_decode_key_val fields[] = {
+		ZCBOR_MAP_DECODE_KEY_DECODER("op", zcbor_uint32_decode, &operation),
+		ZCBOR_MAP_DECODE_KEY_DECODER("ms", zcbor_uint32_decode, &duration_ms),
+	};
+
+	if (zcbor_map_decode_bulk(ctxt->reader->zs, fields, ARRAY_SIZE(fields), &decoded) != 0 ||
+	    operation > ZLRS_TRACE_DISCARD) {
+		return MGMT_ERR_EINVAL;
+	}
+	return trace_response(ctxt, zlrs_trace_request(operation, duration_ms));
+}
+
+static const struct mgmt_handler trace_handlers[] = {
+	{.mh_read = trace_read, .mh_write = trace_write},
+};
+static struct mgmt_group trace_group = {
+	.mg_handlers = trace_handlers,
+	.mg_handlers_count = ARRAY_SIZE(trace_handlers),
+	.mg_group_id = 64,
+};
+
 static int trace_init(void)
 {
+	mgmt_register_group(&trace_group);
 	mgmt_callback_register(&smp_callback);
 	mgmt_callback_register(&file_callback);
 	return 0;
