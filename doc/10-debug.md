@@ -37,6 +37,11 @@ output while the host is connected.
 Fixed-channel, P0, ARQ-disabled and RAW configurations are isolation fixtures and
 must not be presented as product performance.
 
+Fatal errors use Zephyr's `CONFIG_RESET_ON_FATAL_ERROR` policy. The kernel collects
+the coredump and flushes panic logs before rebooting; MCUboot rolls back an
+unconfirmed image on that reset. The application does not override the kernel's
+fatal handler. RP2350's Cortex-M reboot implementation uses `NVIC_SystemReset()`.
+
 ## Observing a running link
 
 Management `status` reports local/peer RSSI and LQ, active-band power limits and

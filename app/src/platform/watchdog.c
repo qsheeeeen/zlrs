@@ -6,18 +6,15 @@
  *   is the image confirm bit (doc/06-firmware.md). Armed at PRE_KERNEL_1, so even a hang in the
  *   POST_KERNEL driver init gets reset, and fed from the blocking loops only — a dedicated
  *   feeding thread would defeat the point.
- * - A panic would stop the CPU on this board (Zephyr has no RESET_ON_FATAL_ERROR here), so
- *   k_sys_fatal_error_handler() at the bottom of this file reboots instead of halting.
+ * - CONFIG_RESET_ON_FATAL_ERROR makes Zephyr reboot after collecting the coredump and
+ *   flushing the logs. An unconfirmed image is then rolled back by MCUboot.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "watchdog.h"
 
-#include <zephyr/fatal.h>
 #include <zephyr/kernel.h>
-#include <zephyr/logging/log_ctrl.h>
-#include <zephyr/sys/reboot.h>
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_WATCHDOG)
 
@@ -121,27 +118,3 @@ void zlrs_watchdog_disarm(void)
 }
 
 #endif /* CONFIG_ZLRS_APP_WATCHDOG */
-
-/*
- * Fatal errors reboot instead of parking the CPU.
- *
- * Zephyr's default policy is to halt, which on this board means "off the air until someone
- * power-cycles the device": a panic inside the vendored radio HAL (lr20xx_hal_wait_on_busy()
- * calls k_oops() when BUSY never arrives) would be unrecoverable in the field.
- *
- * Rebooting is also what turns "the radio did not come up after an upgrade" into a failed
- * upgrade: an image the host has not confirmed yet still carries MCUboot's test flag, so a reset
- * before the confirm command makes the bootloader roll it back (doc/06-firmware.md). A
- * confirmed image simply comes back up.
- *
- * z_fatal_error() takes the coredump before calling this handler, so rebooting here does not
- * lose it; LOG_PANIC() flushes the log first (CONFIG_DEBUG_COREDUMP, app/prj.conf).
- */
-void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
-{
-	ARG_UNUSED(esf);
-
-	LOG_PANIC();
-	LOG_ERR("fatal error %u: rebooting", reason);
-	sys_reboot(SYS_REBOOT_COLD);
-}
