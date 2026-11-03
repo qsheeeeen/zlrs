@@ -402,6 +402,14 @@ Acceptance must cover:
   `subsys/tracing/include/tracing_backend.h` and `subsys/tracing/tracing_core.c`
   define the backend limits and lifecycle operations used by this design.
 
+The two-board button fixture (`tests/hardware/button`) exposes test-only SMP group
+67 to schedule native `gpio-keys` Input events. After configuring matching keys
+and opposite roles, confirm the fixture and run `tests/hardware/button/run.py`.
+It checks pairing before 30 seconds, rejection of a hold crossing the cutoff,
+and a late hold during bidirectional USB-to-RF DATA transfer. This exercises the
+native longpress pipeline and application gate; it does not actuate the physical
+GPIO pin. Install the normal application afterwards to remove the injection group.
+
 ## Host and tool checks
 
 ```sh
