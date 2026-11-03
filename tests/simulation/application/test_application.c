@@ -107,6 +107,14 @@ static bool fail_first_save;
 static zlrs_persist_pairing_t saved_pairing;
 static bool pairing_saved, rf_paired;
 static bool pairing_scenario, cancel_waiting_pair, expire_waiting_pair;
+static bool button_allowed = true;
+static bool close_button_window;
+
+bool zlrs_button_pairing_allowed(void)
+{
+	return button_allowed;
+}
+
 static unsigned int busy_pair_attempts;
 static int pair_result;
 static const zlrs_persist_settings_t settings = {.data_baud = 115200U};
@@ -234,6 +242,9 @@ void zlrs_rf_frame(void)
 	zassert_equal(pause_depth, 0U);
 	k_msleep(500);
 	frames++;
+	if (close_button_window && frames == 2U) {
+		button_allowed = false;
+	}
 	if (expire_waiting_pair && frames == 2U) {
 		k_msleep(30001);
 	}
@@ -303,11 +314,15 @@ ZTEST(application, test_lifecycle)
 		bool management;
 		bool expire;
 		unsigned int expected_attempts;
+		bool initially_locked;
+		bool lock_pending;
 	} cases[] = {
 		{2U, 0, false, false, 3U},
 		{100U, 0, true, false, 2U},
 		{0U, -EIO, false, false, 1U},
 		{100U, 0, false, true, 2U},
+		{0U, 0, false, false, 0U, true, false},
+		{100U, 0, false, false, 2U, false, true},
 	};
 
 	for (size_t i = 0U; i < ARRAY_SIZE(cases); i++) {
@@ -315,6 +330,8 @@ ZTEST(application, test_lifecycle)
 			0U;
 		rf_fault = fail_first_save = pairing_saved = rf_paired = false;
 		pairing_scenario = true;
+		button_allowed = !cases[i].initially_locked;
+		close_button_window = cases[i].lock_pending;
 		busy_pair_attempts = cases[i].busy_attempts;
 		pair_result = cases[i].result;
 		cancel_waiting_pair = cases[i].management;

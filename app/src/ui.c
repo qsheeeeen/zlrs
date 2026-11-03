@@ -18,13 +18,19 @@ LOG_MODULE_REGISTER(zlrs_ui, CONFIG_APP_LOG_LEVEL);
 ZBUS_CHAN_DEFINE(zlrs_input_chan, struct zlrs_input, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
 		 ZBUS_MSG_INIT(0));
 
+bool zlrs_button_pairing_allowed(void)
+{
+	return k_uptime_get() < ZLRS_BUTTON_PAIR_WINDOW_MS;
+}
+
 #if DT_NODE_EXISTS(DT_ALIAS(zlrs_pair_hold))
 static atomic_t button_holds;
 
 static void pairing_input(struct input_event *event, void *user_data)
 {
 	ARG_UNUSED(user_data);
-	if (event->type == INPUT_EV_KEY && event->code == INPUT_KEY_X && event->value == 1) {
+	if (event->type == INPUT_EV_KEY && event->code == INPUT_KEY_X && event->value == 1 &&
+	    zlrs_button_pairing_allowed()) {
 		atomic_inc(&button_holds);
 	}
 }
@@ -215,7 +221,8 @@ static void ui_thread(void *p1, void *p2, void *p3)
 		}
 		const uint32_t now_ms = k_uptime_get_32();
 #if DT_NODE_EXISTS(DT_ALIAS(zlrs_pair_hold))
-		const struct zlrs_input pending = {.button_holds = (uint32_t)atomic_get(&button_holds)};
+		const struct zlrs_input pending = {.button_holds =
+							   (uint32_t)atomic_get(&button_holds)};
 		if (pending.button_holds != input.button_holds &&
 		    zbus_chan_pub(&zlrs_input_chan, &pending, K_NO_WAIT) == 0) {
 			input = pending;

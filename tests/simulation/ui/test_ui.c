@@ -42,6 +42,28 @@ ZTEST(ui_input, test_hold_and_publication_retry)
 	pressed(false);
 	k_msleep(60);
 	zassert_equal(holds(), 2);
+	/* A hold begun before the cutoff but completed afterwards must be ignored. */
+	int64_t remaining = ZLRS_BUTTON_PAIR_WINDOW_MS - 500 - k_uptime_get();
+	zassert_true(remaining > 0, "button tests must run in the boot window");
+	k_msleep(remaining);
+	pressed(true);
+	k_msleep(1200);
+	zassert_false(zlrs_button_pairing_allowed());
+	zassert_equal(holds(), 2);
+	pressed(false);
+	k_msleep(60);
+	pressed(true);
+	k_msleep(1200);
+	pressed(false);
+	k_msleep(60);
+	zassert_equal(holds(), 2, "a new hold after the cutoff must stay disabled");
 }
 
 ZTEST_SUITE(ui_input, NULL, NULL, NULL, NULL, NULL);
+
+/* Exercise boot-time input before the LED suite advances virtual uptime. */
+void test_main(void)
+{
+	ztest_run_test_suite(ui_input, false, 1, 1, NULL);
+	ztest_run_test_suite(led_patterns, false, 1, 1, NULL);
+}

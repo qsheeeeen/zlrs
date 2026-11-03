@@ -96,11 +96,12 @@ int main(void)
 		if (zbus_chan_read(&zlrs_input_chan, &asked, K_NO_WAIT) == 0 &&
 		    asked.button_holds != button_holds_seen) {
 			button_holds_seen = asked.button_holds;
-			pair_requested = true;
+			pair_requested = zlrs_button_pairing_allowed();
 			pair_requested_at = k_uptime_get_32();
 		}
 		if (pair_requested) {
-			if ((uint32_t)(k_uptime_get_32() - pair_requested_at) >=
+			if (!zlrs_button_pairing_allowed() ||
+			    (uint32_t)(k_uptime_get_32() - pair_requested_at) >=
 				    PAIR_REQUEST_WAIT_MS ||
 			    zlrs_rf_pair_start() != -EAGAIN) {
 				pair_requested = false;
