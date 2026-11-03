@@ -47,6 +47,11 @@ hold events rather than polling GPIO or timing gestures. The UI simulation check
 short presses, a single event during a sustained hold, release/repress and retries
 when the zbus publication is locked.
 
+Settings persistence uses [Zephyr Settings](https://docs.zephyrproject.org/latest/services/storage/settings/index.html)
+with NVS. The shared storage contract tests cover native record loading, failed writes,
+full reinitialization after a read failure and resuming an interrupted reset.
+Hardware fixtures back up and restore the complete partition.
+
 ## Observing a running link
 
 Management `status` reports local/peer RSSI and LQ, active-band power limits and

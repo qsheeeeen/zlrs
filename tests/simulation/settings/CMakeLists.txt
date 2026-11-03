@@ -8,5 +8,5 @@ target_sources(app PRIVATE
   "${zlrs_root}/app/src/persist.c")
 target_include_directories(app PRIVATE "${zlrs_root}/app/src")
 
-target_link_options(app PUBLIC "-Wl,--wrap=nvs_write" "-Wl,--wrap=nvs_clear"
-  "-Wl,--wrap=nvs_mount")
+target_link_options(app PUBLIC "-Wl,--wrap=settings_save_one" "-Wl,--wrap=nvs_clear"
+    "-Wl,--wrap=settings_load_subtree")

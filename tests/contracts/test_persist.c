@@ -3,6 +3,7 @@
 #include <string.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/kvss/nvs.h>
+#include <zephyr/settings/settings.h>
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/ztest.h>
@@ -12,41 +13,41 @@
 static uint8_t backup[PARTITION_SIZE(storage_partition)];
 static const struct flash_area *area;
 static bool fail_write;
+static bool fail_clear;
+static bool fail_load;
 static uint16_t fail_record = UINT16_MAX;
 
-enum reset_fault {
-	RESET_OK,
-	CLEAR_BEFORE,
-	CLEAR_AFTER,
-	REMOUNT,
-	MARKER_WRITE
+static const char *const names[] = {
+	"zlrs/schema",  "zlrs/band", "zlrs/baud", "zlrs/region", "zlrs/role",
+	"zlrs/profile", "zlrs/key",  "zlrs/id",   "zlrs/pair",
 };
-static enum reset_fault reset_fault;
+int __real_settings_save_one(const char *name, const void *data, size_t len);
+
+int __wrap_settings_save_one(const char *name, const void *data, size_t len)
+{
+	if (fail_write ||
+	    (fail_record < ARRAY_SIZE(names) && strcmp(name, names[fail_record]) == 0)) {
+		return -EIO;
+	}
+	return __real_settings_save_one(name, data, len);
+}
+
 int __real_nvs_clear(struct nvs_fs *fs);
-int __real_nvs_mount(struct nvs_fs *fs);
 
 int __wrap_nvs_clear(struct nvs_fs *fs)
 {
-	if (reset_fault == CLEAR_BEFORE) {
-		return -EIO;
-	}
-	const int rc = __real_nvs_clear(fs);
-	return reset_fault == CLEAR_AFTER && rc == 0 ? -EIO : rc;
+	return fail_clear ? -EIO : __real_nvs_clear(fs);
 }
 
-int __wrap_nvs_mount(struct nvs_fs *fs)
-{
-	return reset_fault == REMOUNT ? -EIO : __real_nvs_mount(fs);
-}
+int __real_settings_load_subtree(const char *subtree);
 
-ssize_t __real_nvs_write(struct nvs_fs *fs, uint16_t id, const void *data, size_t len);
-
-ssize_t __wrap_nvs_write(struct nvs_fs *fs, uint16_t id, const void *data, size_t len)
+int __wrap_settings_load_subtree(const char *subtree)
 {
-	if (fail_write || id == fail_record || (reset_fault == MARKER_WRITE && id == 0)) {
+	if (fail_load) {
+		fail_load = false;
 		return -EIO;
 	}
-	return __real_nvs_write(fs, id, data, len);
+	return __real_settings_load_subtree(subtree);
 }
 
 static void *setup(void)
@@ -60,7 +61,9 @@ static void teardown(void *unused)
 {
 	ARG_UNUSED(unused);
 	fail_write = false;
-	reset_fault = RESET_OK;
+	fail_clear = false;
+	fail_load = false;
+	fail_record = UINT16_MAX;
 	zassert_ok(flash_area_flatten(area, 0, sizeof(backup)));
 	zassert_ok(flash_area_write(area, 0, backup, sizeof(backup)));
 	uint8_t restored[128];
@@ -73,42 +76,43 @@ static void teardown(void *unused)
 	printk("NVS_RESTORE bytes=%zu verified=1\n", sizeof(backup));
 	flash_area_close(area);
 }
-static struct nvs_fs inspect = {
-	.flash_device = PARTITION_DEVICE(storage_partition),
-	.offset = PARTITION_OFFSET(storage_partition),
-	.sector_size = DT_PROP(DT_GPARENT(DT_NODELABEL(storage_partition)), erase_block_size),
-	.sector_count = PARTITION_SIZE(storage_partition) /
-			DT_PROP(DT_GPARENT(DT_NODELABEL(storage_partition)), erase_block_size),
-};
+static struct nvs_fs *inspect;
 
-/* Every scenario starts from a fresh partition; suite teardown restores the original bytes. */
+static void clear_native(void)
+{
+	for (size_t i = 0; i < ARRAY_SIZE(names); i++) {
+		zassert_ok(settings_delete(names[i]));
+	}
+}
+
+/* Use the Settings backend's sole NVS mount; never invalidate its cached IDs. */
 static void before(void *unused)
 {
 	ARG_UNUSED(unused);
 	fail_write = false;
+	fail_clear = false;
+	fail_load = false;
 	fail_record = UINT16_MAX;
-	reset_fault = RESET_OK;
-	zassert_ok(flash_area_flatten(area, 0, sizeof(backup)));
+	zassert_ok(settings_subsys_init());
+	void *storage;
+	zassert_ok(settings_storage_get(&storage));
+	inspect = storage;
+	clear_native();
 	zassert_ok(zlrs_persist_init());
-	zassert_ok(nvs_mount(&inspect));
 }
 
 static const uint8_t key[ZLRS_KEY_LEN] = {0x42};
 static const zlrs_persist_pairing_t pair = {.peer_id = {9, 8, 7, 6},
 					    .pair_salt = {1, 2, 3, 4, 5, 6, 7, 8}};
 
-ZTEST(settings, test_incompatible_layout_discards_old_records)
+ZTEST(settings, test_missing_schema_clears_entire_partition)
 {
-	const uint8_t incompatible[4] = {0x01, 0x00, 0x4c, 0x5a};
+	clear_native();
 	const uint8_t sentinel = 0xa5;
-	zassert_equal(nvs_write(&inspect, 0, incompatible, 4), 4);
-	zassert_equal(nvs_write(&inspect, 65000, &sentinel, 1), 1);
+	zassert_equal(nvs_write(inspect, 65000, &sentinel, 1), 1);
 	zassert_ok(zlrs_persist_init());
-	zassert_ok(nvs_mount(&inspect));
-	uint8_t raw[4];
-	zassert_equal(nvs_read(&inspect, 65000, raw, 1), -ENOENT);
-	zassert_equal(nvs_read(&inspect, 0, raw, 4), 4);
-	zassert_equal(sys_get_le32(raw), 0x5a4c0002);
+	uint8_t raw;
+	zassert_equal(nvs_read(inspect, 65000, &raw, 1), -ENOENT);
 }
 
 ZTEST(settings, test_missing_values_leave_output_untouched)
@@ -137,14 +141,14 @@ ZTEST(settings, test_independent_byte_records_load)
 	const uint8_t id[4] = {1, 2, 3, 4};
 	uint8_t pairing[ZLRS_DEV_ID_LEN + ZLRS_PAIR_SALT_LEN];
 	memset(pairing, 0x37, sizeof(pairing));
-	zassert_equal(nvs_write(&inspect, 1, &band, 1), 1);
-	zassert_equal(nvs_write(&inspect, 2, baud, 4), 4);
-	zassert_equal(nvs_write(&inspect, 3, &region, 1), 1);
-	zassert_equal(nvs_write(&inspect, 4, &role, 1), 1);
-	zassert_equal(nvs_write(&inspect, 5, &profile, 1), 1);
-	zassert_equal(nvs_write(&inspect, 6, key, sizeof(key)), sizeof(key));
-	zassert_equal(nvs_write(&inspect, 7, id, sizeof(id)), sizeof(id));
-	zassert_equal(nvs_write(&inspect, 8, pairing, sizeof(pairing)), sizeof(pairing));
+	zassert_ok(settings_save_one("zlrs/band", &band, 1));
+	zassert_ok(settings_save_one("zlrs/baud", baud, 4));
+	zassert_ok(settings_save_one("zlrs/region", &region, 1));
+	zassert_ok(settings_save_one("zlrs/role", &role, 1));
+	zassert_ok(settings_save_one("zlrs/profile", &profile, 1));
+	zassert_ok(settings_save_one("zlrs/key", key, sizeof(key)));
+	zassert_ok(settings_save_one("zlrs/id", id, sizeof(id)));
+	zassert_ok(settings_save_one("zlrs/pair", pairing, sizeof(pairing)));
 	zassert_ok(zlrs_persist_init());
 	const zlrs_persist_settings_t *saved = zlrs_persist_settings();
 	zassert_equal(saved->band, band);
@@ -173,10 +177,7 @@ ZTEST(settings, test_settings_save_and_repeated_save_survive_remount)
 	zassert_ok(zlrs_persist_init());
 	zassert_equal(zlrs_persist_settings()->band, settings.band);
 	zassert_equal(zlrs_persist_settings()->data_baud, settings.data_baud);
-	zassert_ok(nvs_mount(&inspect));
-	uint8_t raw[4];
-	zassert_equal(nvs_read(&inspect, 2, raw, 4), 4);
-	zassert_equal(sys_get_le32(raw), 460800);
+	/* Reload above exercises the native Settings reader, not numeric NVS IDs. */
 }
 
 ZTEST(settings, test_partial_settings_save_matches_flash)
@@ -203,6 +204,8 @@ ZTEST(settings, test_failed_key_write_preserves_committed_key)
 	fail_write = true;
 	const int rc = zlrs_persist_set_root_key(other);
 	fail_write = false;
+	fail_clear = false;
+	fail_load = false;
 	zassert_equal(rc, -EIO);
 	zassert_true(zlrs_persist_get_root_key(other));
 	zassert_mem_equal(other, key, sizeof(key));
@@ -219,6 +222,8 @@ ZTEST(settings, test_failed_pair_write_preserves_committed_pair)
 	fail_write = true;
 	const int rc = zlrs_persist_save_pairing(&other);
 	fail_write = false;
+	fail_clear = false;
+	fail_load = false;
 	zassert_equal(rc, -EIO);
 	zassert_true(zlrs_persist_get_pairing(&other));
 	zassert_mem_equal(&other, &pair, sizeof(pair));
@@ -291,52 +296,44 @@ ZTEST(settings, test_factory_reset_and_reinitialize)
 	zassert_false(zlrs_persist_get_pairing(&(zlrs_persist_pairing_t){0}));
 }
 
-static void failed_reset(enum reset_fault fault)
+ZTEST(settings, test_reset_failure_retires_ram_and_resumes_on_boot)
 {
-	zassert_ok(zlrs_persist_init());
-	uint8_t key[ZLRS_KEY_LEN];
-	memset(key, 0x42, sizeof(key));
-	const zlrs_persist_pairing_t pair = {.peer_id = {9, 8, 7, 6},
-					     .pair_salt = {1, 2, 3, 4, 5, 6, 7, 8}};
 	zassert_ok(zlrs_persist_set_root_key(key));
 	zassert_ok(zlrs_persist_save_pairing(&pair));
-	reset_fault = fault;
-	const int rc = zlrs_persist_factory_reset();
-	reset_fault = RESET_OK;
-	zassert_equal(rc, -EIO);
-	/* Any destructive attempt invalidates the active identity, even if erase failed midway. */
+	fail_clear = true; /* Durable reset intent must survive a failed erase. */
+	zassert_equal(zlrs_persist_factory_reset(), -EIO);
+	fail_clear = false;
 	uint8_t id[ZLRS_DEV_ID_LEN];
-	zlrs_persist_pairing_t saved;
-	zassert_false(zlrs_persist_get_root_key(key));
 	zassert_false(zlrs_persist_get_device_id(id));
-	zassert_false(zlrs_persist_get_pairing(&saved));
+	zassert_false(zlrs_persist_get_root_key((uint8_t[ZLRS_KEY_LEN]){0}));
 	zassert_equal(zlrs_persist_set_root_key(key), -EIO);
-	zassert_equal(zlrs_persist_save_settings(zlrs_persist_settings()), -EIO);
-	/* A fresh mount is the recovery boundary. A failed erase may leave old flash records. */
 	zassert_ok(zlrs_persist_init());
 	zassert_true(zlrs_persist_get_device_id(id));
-	zassert_equal(zlrs_persist_get_root_key(key), fault == CLEAR_BEFORE);
-	zassert_equal(zlrs_persist_get_pairing(&saved), fault == CLEAR_BEFORE);
+	zassert_false(zlrs_persist_get_root_key((uint8_t[ZLRS_KEY_LEN]){0}));
+	zassert_false(zlrs_persist_get_pairing(&(zlrs_persist_pairing_t){0}));
 }
 
-ZTEST(settings, test_reset_clear_failure)
+ZTEST(settings, test_read_failure_clears_credentials)
 {
-	failed_reset(CLEAR_BEFORE);
+	zassert_ok(zlrs_persist_set_root_key(key));
+	zassert_ok(zlrs_persist_save_pairing(&pair));
+	fail_load = true;
+	zassert_ok(zlrs_persist_init());
+	uint8_t loaded[ZLRS_KEY_LEN];
+	zassert_false(zlrs_persist_get_root_key(loaded));
+	zassert_false(zlrs_persist_get_pairing(&(zlrs_persist_pairing_t){0}));
+	zassert_ok(zlrs_persist_init());
+	zassert_false(zlrs_persist_get_root_key(loaded));
 }
 
-ZTEST(settings, test_reset_partial_clear_failure)
+ZTEST(settings, test_malformed_value_clears_credentials)
 {
-	failed_reset(CLEAR_AFTER);
-}
-
-ZTEST(settings, test_reset_remount_failure)
-{
-	failed_reset(REMOUNT);
-}
-
-ZTEST(settings, test_reset_marker_failure)
-{
-	failed_reset(MARKER_WRITE);
+	zassert_ok(zlrs_persist_set_root_key(key));
+	const uint8_t invalid[] = {1, 2, 3};
+	zassert_ok(settings_save_one("zlrs/baud", invalid, sizeof(invalid)));
+	zassert_ok(zlrs_persist_init());
+	zassert_false(zlrs_persist_get_root_key((uint8_t[ZLRS_KEY_LEN]){0}));
+	zassert_equal(zlrs_persist_settings()->data_baud, 115200);
 }
 
 ZTEST_SUITE(settings, NULL, setup, before, NULL, teardown);

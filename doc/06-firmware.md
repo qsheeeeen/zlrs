@@ -233,23 +233,28 @@ reinstalling MCUboot.
 The [board reference](../boards/zlrs/rp2350_zero_core2021/README.md#flash-partitions)
 defines image slots, the 1 MiB log filesystem, 128 KiB crash area and 32 KiB NVS.
 
-| NVS record | Stored value | Bytes |
-| --- | --- | --- |
-| 0 | Layout marker `0x5A4C0002` | 4 |
-| 1 | Band mode: 0 fixed 2.4, 1 fixed SubG, 2 automatic | 1 |
-| 2 | UART baud, little endian | 4 |
-| 3 | SubG region | 1 |
-| 4 | Role | 1 |
-| 5 | Security profile | 1 |
-| 6 | Root key | 32 |
-| 7 | Device ID | 4 |
-| 8 | Peer ID and initiator/responder pairing nonces | 12 |
+Application values use Zephyr Settings with its native NVS backend. Keys live
+under `zlrs/`; values retain their explicit byte representation.
 
-Missing settings use validated defaults. Invalid record lengths or values do not
-become active settings. A missing or invalid layout marker reinitializes the
-settings area; factory reset clears it and writes a fresh marker. An unreadable
-NVS mount may require partition reinitialization, so corrupt storage cannot
-promise retention of credentials.
+| Settings key | Stored value | Bytes |
+| --- | --- | --- |
+| `zlrs/schema` | Schema marker `0x5A4C0002` (reset intent `0x5A4CFFFE`) | 4 |
+| `zlrs/band` | Band mode: 0 fixed 2.4, 1 fixed SubG, 2 automatic | 1 |
+| `zlrs/baud` | UART baud, little endian | 4 |
+| `zlrs/region` | SubG region | 1 |
+| `zlrs/role` | Role | 1 |
+| `zlrs/profile` | Security profile | 1 |
+| `zlrs/key` | Root key | 32 |
+| `zlrs/id` | Device ID | 4 |
+| `zlrs/pair` | Peer ID and initiator/responder pairing nonces | 12 |
+
+Missing optional values use validated defaults. No legacy records or older schema
+are imported. A missing/invalid schema or read failure clears the complete storage
+partition and initializes defaults and a new device identity. Root key and pairing
+must then be provisioned again. Factory reset uses the same full erase path.
+A durable reset marker prevents an interrupted erase from reactivating credentials.
+Only the NVS instance owned by Settings is used; native loading rebuilds its name
+metadata after an erase.
 
 Logs use LittleFS with up to eight 128 KiB files and overwrite the oldest file.
 Messages remain in RAM while RF runs and flush at boot or maintenance boundaries.

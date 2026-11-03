@@ -7,11 +7,12 @@
 #include <zephyr/drivers/entropy.h>
 #include <zephyr/kvss/nvs.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/settings/settings.h>
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/util.h>
 
-BUILD_ASSERT(IS_ENABLED(CONFIG_NVS), "zlrs keeps keys and pairing in NVS");
+BUILD_ASSERT(IS_ENABLED(CONFIG_SETTINGS_NVS), "zlrs settings use the native NVS backend");
 
 LOG_MODULE_REGISTER(zlrs_persist, CONFIG_APP_LOG_LEVEL);
 
@@ -28,15 +29,56 @@ enum record_id {
 	RECORD_PAIR,
 };
 
-#define NVS_LAYOUT      0x5A4C0002U
-#define PAIR_BYTES      (ZLRS_DEV_ID_LEN + ZLRS_PAIR_SALT_LEN)
-#define NVS_SECTOR_SIZE DT_PROP(DT_GPARENT(DT_NODELABEL(storage_partition)), erase_block_size)
+#define NVS_LAYOUT    0x5A4C0002U
+#define PAIR_BYTES    (ZLRS_DEV_ID_LEN + ZLRS_PAIR_SALT_LEN)
+#define RESET_PENDING 0x5A4CFFFEU
 
-static struct nvs_fs fs = {
-	.offset = PARTITION_OFFSET(storage_partition),
-	.sector_size = NVS_SECTOR_SIZE,
-	.sector_count = PARTITION_SIZE(storage_partition) / NVS_SECTOR_SIZE,
+/* Settings owns the sole NVS mount and its allocation metadata. */
+static struct nvs_fs *storage_fs;
+static bool read_failed;
+static const char *const names[] = {
+	"zlrs/schema",  "zlrs/band", "zlrs/baud", "zlrs/region", "zlrs/role",
+	"zlrs/profile", "zlrs/key",  "zlrs/id",   "zlrs/pair",
 };
+
+static struct {
+	uint8_t bytes[ZLRS_KEY_LEN];
+	size_t len;
+} records[ARRAY_SIZE(names)];
+
+static int load_setting(const char *name, size_t len, settings_read_cb read_cb, void *arg)
+{
+	for (size_t i = 0; i < ARRAY_SIZE(names); i++) {
+		if (strcmp(name, names[i] + sizeof("zlrs/") - 1U) != 0) {
+			continue;
+		}
+		const size_t expected[] = {4,         1, 4, 1, 1, 1, ZLRS_KEY_LEN, ZLRS_DEV_ID_LEN,
+					   PAIR_BYTES};
+		if (len != expected[i]) {
+			read_failed = true;
+			return -EINVAL;
+		}
+		const int rc = read_cb(arg, records[i].bytes, len);
+		if (rc < 0 || rc != len) {
+			read_failed = true;
+			return rc < 0 ? rc : -EIO;
+		}
+		records[i].len = rc == (int)len ? len : 0U;
+		return 0;
+	}
+	return -ENOENT;
+}
+
+SETTINGS_STATIC_HANDLER_DEFINE(zlrs, "zlrs", NULL, load_setting, NULL, NULL);
+
+static int read_record(enum record_id id, void *bytes, size_t size)
+{
+	if (records[id].len == 0U) {
+		return -ENOENT;
+	}
+	memcpy(bytes, records[id].bytes, MIN(size, records[id].len));
+	return records[id].len;
+}
 
 /* RAM copy of saved records/defaults; reads do not access flash. */
 static struct {
@@ -120,29 +162,71 @@ static int write_record(enum record_id id, const void *bytes, size_t size)
 	if (!ready) {
 		return -EIO;
 	}
-	const int rc = nvs_write(&fs, id, bytes, size);
-	return rc == 0 || rc == (int)size ? 0 : (rc < 0 ? rc : -EIO);
+	return settings_save_one(names[id], bytes, size);
 }
 
 static int reset_layout(void)
 {
-	/* Erase can fail after modifying flash. Retire the RAM identity before attempting it;
-	 * only a successful initialization may make surviving records active again. */
 	memset(&state, 0, sizeof(state));
 	state.settings = default_settings();
 	ready = false;
-	int rc = nvs_clear(&fs);
+	/* Mark reset before erasing, so an interrupted erase cannot reactivate credentials. */
+	uint8_t marker[4];
+	sys_put_le32(RESET_PENDING, marker);
+	int rc = settings_save_one(names[RECORD_LAYOUT], marker, sizeof(marker));
 	if (rc == 0) {
-		rc = nvs_mount(&fs);
+		rc = nvs_clear(storage_fs);
 	}
 	if (rc == 0) {
-		uint8_t marker[4];
+		rc = nvs_mount(storage_fs);
+	}
+	if (rc == 0) {
+		/* Native load prunes the erased name IDs and rebuilds its name cache. */
+		rc = settings_load_subtree("zlrs");
+	}
+	if (rc == 0) {
 		sys_put_le32(NVS_LAYOUT, marker);
-		ready = true;
-		rc = write_record(RECORD_LAYOUT, marker, sizeof(marker));
+		rc = settings_save_one(names[RECORD_LAYOUT], marker, sizeof(marker));
 	}
 	ready = rc == 0;
+	memset(records, 0, sizeof(records));
 	return rc;
+}
+
+static int load_records(void)
+{
+	memset(records, 0, sizeof(records));
+	int rc = settings_subsys_init();
+	if (rc != 0) {
+		/* No valid backend mount exists yet. Discard unreadable storage and retry. */
+		const struct flash_area *area;
+		rc = flash_area_open(PARTITION_ID(storage_partition), &area);
+		if (rc == 0) {
+			rc = flash_area_flatten(area, 0, area->fa_size);
+			flash_area_close(area);
+		}
+		if (rc == 0) {
+			rc = settings_subsys_init();
+		}
+	}
+	if (rc != 0) {
+		return rc;
+	}
+	void *storage;
+	rc = settings_storage_get(&storage);
+	if (rc != 0) {
+		return rc;
+	}
+	storage_fs = storage;
+	read_failed = false;
+	rc = settings_load_subtree("zlrs");
+	uint8_t marker[4];
+	if (rc != 0 || read_failed || read_record(RECORD_LAYOUT, marker, sizeof(marker)) != 4 ||
+	    sys_get_le32(marker) != NVS_LAYOUT) {
+		LOG_WRN("settings unreadable or schema missing; reinitializing storage");
+		return reset_layout();
+	}
+	return 0;
 }
 
 static bool id_valid(const uint8_t id[ZLRS_DEV_ID_LEN])
@@ -179,40 +263,17 @@ int zlrs_persist_init(void)
 	memset(&state, 0, sizeof(state));
 	state.settings = default_settings();
 	ready = false;
-	fs.flash_device = PARTITION_DEVICE(storage_partition);
-	int rc = nvs_mount(&fs);
-	if (rc != 0) {
-		const struct flash_area *area;
-		LOG_WRN("NVS mount failed (%d), reinitializing storage", rc);
-		rc = flash_area_open(PARTITION_ID(storage_partition), &area);
-		if (rc == 0) {
-			rc = flash_area_flatten(area, 0, area->fa_size);
-			flash_area_close(area);
-		}
-		if (rc == 0) {
-			rc = nvs_mount(&fs);
-		}
-	}
+	int rc = load_records();
 	if (rc != 0) {
 		return rc;
 	}
 	uint8_t bytes[PAIR_BYTES];
-	rc = nvs_read(&fs, RECORD_LAYOUT, bytes, 4U);
-	if (rc < 0 && rc != -ENOENT) {
-		return rc;
-	}
-	if (rc != 4 || sys_get_le32(bytes) != NVS_LAYOUT) {
-		rc = reset_layout();
-		if (rc != 0) {
-			return rc;
-		}
-	}
 	ready = true;
 	/* Load and validate the complete set of stored settings. */
 	zlrs_persist_settings_t loaded = state.settings;
 	for (enum record_id id = RECORD_BAND; id <= RECORD_PROFILE; id++) {
 		const size_t size = id == RECORD_BAUD ? 4U : 1U;
-		rc = nvs_read(&fs, id, bytes, size);
+		rc = read_record(id, bytes, size);
 		if (rc == -ENOENT) {
 			continue;
 		}
@@ -243,26 +304,12 @@ int zlrs_persist_init(void)
 			break;
 		}
 	}
-	/* The same rules apply on load and save; malformed fields keep their defaults. */
-	zlrs_persist_settings_t candidate = state.settings;
-	candidate.region = loaded.region;
-	if (settings_valid(&candidate)) {
-		state.settings = candidate;
+	if (!settings_valid(&loaded)) {
+		rc = reset_layout();
+		return rc == 0 ? zlrs_persist_init() : rc;
 	}
-#define LOAD_FIELD(field)                                                                          \
-	do {                                                                                       \
-		candidate = state.settings;                                                        \
-		candidate.field = loaded.field;                                                    \
-		if (settings_valid(&candidate)) {                                                  \
-			state.settings = candidate;                                                \
-		}                                                                                  \
-	} while (0)
-	LOAD_FIELD(band);
-	LOAD_FIELD(data_baud);
-	LOAD_FIELD(role);
-	LOAD_FIELD(profile);
-#undef LOAD_FIELD
-	rc = nvs_read(&fs, RECORD_ID, state.dev_id, sizeof(state.dev_id));
+	state.settings = loaded;
+	rc = read_record(RECORD_ID, state.dev_id, sizeof(state.dev_id));
 	if (rc < 0 && rc != -ENOENT) {
 		return rc;
 	}
@@ -277,12 +324,12 @@ int zlrs_persist_init(void)
 		}
 	}
 	state.identity_valid = true;
-	rc = nvs_read(&fs, RECORD_KEY, state.root_key, sizeof(state.root_key));
+	rc = read_record(RECORD_KEY, state.root_key, sizeof(state.root_key));
 	if (rc < 0 && rc != -ENOENT) {
 		return rc;
 	}
 	state.configured = rc == sizeof(state.root_key);
-	rc = nvs_read(&fs, RECORD_PAIR, bytes, sizeof(bytes));
+	rc = read_record(RECORD_PAIR, bytes, sizeof(bytes));
 	if (rc < 0 && rc != -ENOENT) {
 		return rc;
 	}
@@ -360,7 +407,7 @@ int zlrs_persist_erase_pairing(void)
 	if (!ready) {
 		return -EIO;
 	}
-	const int rc = nvs_delete(&fs, RECORD_PAIR);
+	const int rc = settings_delete(names[RECORD_PAIR]);
 	if (rc == 0 || rc == -ENOENT) {
 		state.paired = false;
 		memset(&state.pairing, 0, sizeof(state.pairing));
