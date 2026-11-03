@@ -22,8 +22,6 @@ struct diagnostic_report_writer {
 /* One management owner. Static storage avoids adding a large snapshot to its stack. */
 static zlrs_rf_diagnostics_t snapshot;
 static char diagnostic_report[DIAGNOSTIC_REPORT_CAPACITY];
-static uint16_t diagnostic_report_len;
-static zlrs_diagnostic_report_t diagnostic_report_id;
 
 static void diagnostic_append(struct diagnostic_report_writer *writer, const char *format, ...)
 {
@@ -356,37 +354,18 @@ static int diagnostic_render(zlrs_diagnostic_report_t report_id,
 	}
 }
 
-int zlrs_diagnostics_read(zlrs_diagnostic_report_t report_id, uint16_t offset, uint8_t *out,
-			  uint8_t capacity, uint16_t *total_len, uint8_t *written)
+int zlrs_diagnostics_report(zlrs_diagnostic_report_t report_id, const char **text)
 {
-	if ((unsigned int)report_id > ZLRS_DIAGNOSTIC_POWER || capacity == 0U) {
+	if ((unsigned int)report_id > ZLRS_DIAGNOSTIC_POWER) {
 		return -EINVAL;
 	}
-
-	if (offset == 0U) {
-		zlrs_rf_diagnostics_capture(&snapshot);
-		struct diagnostic_report_writer writer = {0};
-		const int rc = diagnostic_render(report_id, &writer);
-
-		if (rc != 0) {
-			return rc;
-		}
-		if (writer.failed) {
-			return -ENOSPC;
-		}
-		diagnostic_report_len = (uint16_t)writer.len;
-		diagnostic_report_id = report_id;
-	} else if (report_id != diagnostic_report_id || offset > diagnostic_report_len) {
-		return -EINVAL;
+	zlrs_rf_diagnostics_capture(&snapshot);
+	struct diagnostic_report_writer writer = {0};
+	const int rc = diagnostic_render(report_id, &writer);
+	if (rc != 0 || writer.failed) {
+		return rc != 0 ? rc : -ENOSPC;
 	}
-
-	const uint16_t remaining = diagnostic_report_len - offset;
-	const uint8_t chunk_len = (remaining < capacity) ? (uint8_t)remaining : capacity;
-
-	memcpy(out, &diagnostic_report[offset], chunk_len);
-	*total_len = diagnostic_report_len;
-	*written = chunk_len;
-
+	*text = diagnostic_report;
 	return 0;
 }
 #endif

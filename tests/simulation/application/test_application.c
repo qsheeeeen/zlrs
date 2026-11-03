@@ -3,7 +3,6 @@
 #include <errno.h>
 #include <string.h>
 #include <zephyr/dfu/mcuboot.h>
-#include <zephyr/retention/bootmode.h>
 #include <zephyr/sys/reboot.h>
 #include <zephyr/ztest.h>
 
@@ -27,7 +26,6 @@ static unsigned int reboots;
 static unsigned int disarms;
 static unsigned int confirm_writes;
 static int confirm_result;
-static int retention_result;
 static bool image_confirmed;
 
 bool boot_is_img_confirmed(void)
@@ -42,12 +40,6 @@ int boot_write_img_confirmed(void)
 		image_confirmed = true;
 	}
 	return confirm_result;
-}
-
-int bootmode_set(uint8_t mode)
-{
-	zassert_equal(mode, BOOT_MODE_TYPE_BOOTLOADER);
-	return retention_result;
 }
 
 void zlrs_watchdog_disarm(void)
@@ -76,7 +68,6 @@ void sys_reboot(int type)
 enum action {
 	CHECK_FAULT_ROLLBACK,
 	CHECK_TIMEOUT_ROLLBACK,
-	RECOVER,
 	RUN_APPLICATION
 };
 
@@ -91,9 +82,6 @@ static void owner(void *arg, void *unused1, void *unused2)
 		break;
 	case CHECK_TIMEOUT_ROLLBACK:
 		zlrs_boot_check_rollback(false);
-		break;
-	case RECOVER:
-		(void)zlrs_boot_recovery();
 		break;
 	case RUN_APPLICATION:
 		(void)zlrs_application_main();
@@ -271,26 +259,18 @@ ZTEST(application, test_lifecycle)
 {
 	/* A failed confirm must leave the image eligible for rollback; retry can succeed. */
 	confirm_result = -EIO;
-	zassert_equal(zlrs_boot_confirm(), -EIO);
+	zassert_equal(boot_write_img_confirmed(), -EIO);
 	zassert_false(image_confirmed);
 	run(CHECK_FAULT_ROLLBACK);
 	zassert_equal(reboots, 1U);
 	/* The fault wait has also passed the ordinary confirmation deadline. */
 	run(CHECK_TIMEOUT_ROLLBACK);
 	zassert_equal(reboots, 2U);
-	/* Failed retention must keep watchdog protection; recovery success hands off to MCUboot. */
-	retention_result = -EIO;
-	zassert_equal(zlrs_boot_recovery(), -EIO);
-	zassert_equal(disarms, 0U);
-	retention_result = 0;
-	run(RECOVER);
-	zassert_equal(disarms, 1U);
-	zassert_equal(reboots, 3U);
 	confirm_result = 0;
-	zassert_equal(zlrs_boot_confirm(), 0);
+	zassert_equal(boot_write_img_confirmed(), 0);
 	zassert_equal(confirm_writes, 2U);
 	zlrs_boot_check_rollback(true);
-	zassert_equal(reboots, 3U, "confirmed firmware must remain reachable on an RF fault");
+	zassert_equal(reboots, 2U, "confirmed firmware must remain reachable on an RF fault");
 
 	const struct zlrs_input input = {.button_holds = 1U};
 	zassert_equal(zbus_chan_pub(&zlrs_input_chan, &input, K_NO_WAIT), 0);

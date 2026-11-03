@@ -44,45 +44,13 @@ def matching_management(data_path: str) -> str | None:
 def sample_status(client) -> dict:
     return {
         "captured_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
-        "status": mgmt.status_text(client.request(mgmt.CMD_STATUS, response=mgmt.STATUS_RESP)),
+        "status": mgmt.status_text(client.request(mgmt.CMD_STATUS)["status"]),
     }
 
 
 def parse_status(sample: dict) -> dict:
     text = sample["status"] + "\n" + sample.get("ports", "")
-    patterns = {
-        "role": r"role\s+:\s+(.+)",
-        "band": r"band\s+:\s+(.+)",
-        "link": r"link\s+:\s+state (\d+), lq (\d+)%, paired (\d+)",
-        "rssi_dbm": r"signal\s+:\s+RSSI (-?\d+) dBm",
-        "peer_rssi_dbm": r"peer\s+:\s+RSSI (-?\d+) dBm, lq (\d+)%",
-        "frames": r"frames\s+:\s+TX (\d+), RX (\d+), retry (\d+)",
-        "errors": r"errors\s+:\s+CRC (\d+), tag (\d+), radio (\d+), missed slots (\d+)",
-        "rf_drop_bytes": r"data\s+:\s+RF drop (\d+) B",
-    }
     result = {"captured_at": sample["captured_at"]}
-    for key, pattern in patterns.items():
-        match = re.search(pattern, text)
-        if not match:
-            continue
-        values = match.groups()
-        if key in ("role", "band"):
-            result[key] = values[0].strip()
-        elif key == "link":
-            result.update(state=int(values[0]), lq_percent=int(values[1]),
-                          paired=bool(int(values[2])))
-        elif key == "peer_rssi_dbm":
-            result[key] = int(values[0])
-            result["peer_lq_percent"] = int(values[1])
-        elif key == "frames":
-            result.update(tx_frames=int(values[0]), rx_frames=int(values[1]),
-                          retries=int(values[2]))
-        elif key == "errors":
-            result.update(crc_errors=int(values[0]), tag_errors=int(values[1]),
-                          radio_failures=int(values[2]), missed_slots=int(values[3]))
-        else:
-            result[key] = int(values[0])
-    # Current grouped output; retain the legacy parser for older device firmware.
     grouped = dict(re.findall(r"^\s*([A-Za-z][A-Za-z /]*?)\s*:\s*(.*?)\s*$",
                               text, re.MULTILINE))
     for label, key in (("Role", "role"), ("Active band", "band"),
@@ -162,8 +130,8 @@ def main() -> int:
     try:
         data = serial.Serial(data_path, 115200, timeout=0.01, write_timeout=2)
         if management_path is not None:
-            management = serial.Serial(management_path, 115200, timeout=1, write_timeout=2)
-            client = mgmt.ManagementClient(management)
+            management = mgmt.ManagementClient(management_path, timeout=1)
+            client = management.__enter__()
         time.sleep(0.2)
         # Clear only stale host-side input before a fresh deterministic run.
         data.reset_input_buffer()
@@ -272,7 +240,7 @@ def main() -> int:
         if data is not None:
             data.close()
         if management is not None:
-            management.close()
+            management.__exit__(None, None, None)
 
         (out_dir / "transmitted.bin").write_bytes(transmitted)
         (out_dir / "received.bin").write_bytes(received)

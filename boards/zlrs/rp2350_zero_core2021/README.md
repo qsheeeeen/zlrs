@@ -31,8 +31,8 @@ LED. Radio wires use GP4–GP7 and GP13–GP15.
 | USB endpoint | Alias | Application mode |
 | --- | --- | --- |
 | DATA CDC, `if00` | `zlrs-data-cdc` | Production and debug |
-| Management CDC, `if02` | `zlrs-mgmt-cdc` | Production and debug |
-| Debug CDC, `if04` | UART kernel logs; native SMP in trace/RF tests | Debug overlay; no shell |
+| Management CDC, `if02` | `zlrs-mgmt-cdc`; native MCUmgr SMP | Production and debug |
+| Debug CDC, `if04` | UART kernel logs | Debug overlay; no shell |
 
 MCUboot exposes recovery CDC at `if00` and a console. DATA defaults to UART and
 uses USB when a host has configured the device and the bus is active; see

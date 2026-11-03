@@ -1085,7 +1085,7 @@ ZTEST(rf_results, test_state_publication_retries_and_refreshes)
 	publication_acceptance();
 }
 
-ZTEST(rf_results, test_diagnostics_snapshot_and_pagination)
+ZTEST(rf_results, test_diagnostics_snapshot)
 {
 	connected_peers();
 	zlrs_rf_pause();
@@ -1096,29 +1096,14 @@ ZTEST(rf_results, test_diagnostics_snapshot_and_pagination)
 	zassert_equal(published.radio.temperature_centi_c, 2500);
 	zassert_equal(published.radio.valid, ZLRS_LR2021_STATUS_TEMP);
 	zassert_equal(published.radio.sampled_ms, 2);
-	uint8_t chunk[80];
-	uint16_t total;
-	uint8_t written;
+	const char *text;
 	for (unsigned int report = ZLRS_DIAGNOSTIC_LINK; report <= ZLRS_DIAGNOSTIC_POWER;
 	     ++report) {
-		uint16_t offset = 0U;
-		do {
-			zassert_ok(zlrs_diagnostics_read((zlrs_diagnostic_report_t)report, offset,
-							 chunk, sizeof(chunk), &total, &written));
-			zassert_true(written > 0U);
-			offset += written;
-		} while (offset < total);
-		zassert_equal(offset, total);
-		zassert_ok(zlrs_diagnostics_read((zlrs_diagnostic_report_t)report, total, chunk,
-						 sizeof(chunk), &total, &written));
-		zassert_equal(written, 0U);
+		zassert_ok(zlrs_diagnostics_report(report, &text));
+		zassert_true(strlen(text) > 0);
+		zassert_true(strlen(text) < 4096);
 	}
-	zassert_equal(zlrs_diagnostics_read(ZLRS_DIAGNOSTIC_LINK, 1U, chunk, sizeof(chunk), &total,
-					    &written),
-		      -EINVAL);
-	zassert_equal(zlrs_diagnostics_read((zlrs_diagnostic_report_t)255, 0U, chunk, sizeof(chunk),
-					    &total, &written),
-		      -EINVAL);
+	zassert_equal(zlrs_diagnostics_report(255, &text), -EINVAL);
 	zlrs_rf_resume();
 }
 

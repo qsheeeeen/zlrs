@@ -12,6 +12,12 @@ def request(port, group, fields=None, timeout=10.0, baud=115200):
     from smpclient.generics import success
     from smpclient.transport.serial import SMPSerialTransport
 
+    class GroupErrorV1(error.ErrorV1):
+        _GROUP_ID = group
+
+    class GroupErrorV2(error.ErrorV2[error.MGMT_ERR]):
+        _GROUP_ID = group
+
     class Response(message.ReadResponse if fields is None else message.WriteResponse):
         _GROUP_ID = group
         _COMMAND_ID = 0
@@ -22,8 +28,8 @@ def request(port, group, fields=None, timeout=10.0, baud=115200):
         _GROUP_ID = group
         _COMMAND_ID = 0
         _Response = Response
-        _ErrorV1 = error.ErrorV1
-        _ErrorV2 = error.ErrorV2[error.MGMT_ERR]
+        _ErrorV1 = GroupErrorV1
+        _ErrorV2 = GroupErrorV2
         model_config = ConfigDict(extra="allow", frozen=True)
 
     async def exchange():

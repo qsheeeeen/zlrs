@@ -31,6 +31,5 @@
 		 * second port the on-board USB-C enumerates). One USB cable is enough to upgrade, no UART
 		 * adapter needed, and the GP8/GP9 UART stays with the application.
 		 */
-		zephyr,uart-mcumgr = &cdc_acm_uart0;
 	};
 };

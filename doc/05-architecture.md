@@ -19,7 +19,7 @@ preserving that context's session and delivery progress.
 | Persistence | Settings, identity, root key, pairing record | Validate and save; expose a snapshot of successfully stored values |
 | Serial DATA | USB/UART endpoints, input/output queues, selection, drops | Supply bytes and accept complete received packets |
 | USB device | Device configuration and bus availability | Supply host-presence observations independently of serial input or control lines |
-| Management | USB command framing, session, timeout and replies | Execute commands within an application-granted maintenance window |
+| Management | Native MCUmgr groups, maintenance session and timeout | Execute commands within an application-granted maintenance window |
 | RF | Link context, hardware schedule, active band, phase, duty and power | Own all radio transactions and publish observations |
 | Band policy | Quality history, dwell and probe decisions | Consume observations and request keep, planned transition or search |
 | Power policy | Feedback history and transmit setpoint | Consume peer quality and bounds; return a bounded setpoint |

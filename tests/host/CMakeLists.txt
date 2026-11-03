@@ -66,7 +66,6 @@ add_library(zlrs_test_core STATIC
   ../../app/src/power.c
   ../../app/src/band.c
   ../../app/src/pairing_save.c
-  ../../core/mgmt/mgmt.c
   ../../core/region/region.c
   ../../core/proto/crypto.c
   ../../core/proto/crc.c
@@ -97,7 +96,6 @@ function(zlrs_gtest_module module)
 endfunction()
 
 zlrs_gtest_module(proto test_crypto.cpp test_frame.cpp test_fhss.cpp test_mod.cpp)
-zlrs_gtest_module(mgmt test_mgmt.cpp)
 zlrs_gtest_module(region test_region.cpp)
 zlrs_gtest_module(policy test_power.cpp test_band.cpp test_pairing_save.cpp)
 zlrs_gtest_module(support test_data_pattern.cpp)

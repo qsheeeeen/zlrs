@@ -1,4 +1,5 @@
 / {
+ chosen { zephyr,uart-mcumgr = &mgmt_uart; };
  aliases { zlrs-data-uart = &uart0; zlrs-mgmt-cdc = &mgmt_uart; };
  mgmt_uart: management-uart {
   compatible = "zephyr,uart-emul";

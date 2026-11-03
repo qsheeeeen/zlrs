@@ -1,8 +1,0 @@
-# Copyright (c) 2026 zlrs contributors
-# SPDX-License-Identifier: Apache-2.0
-
-config ZLRS_MGMT
-	bool "Management protocol (frame and status codecs)"
-	select ZLRS_PROTO
-	help
-	  Pure C management frame and status codecs, tested on the host.

@@ -1,51 +1,63 @@
-/*
- * Management mode, see mgmt.h: the session the management protocol runs in, and the device
- * commands it carries. core/mgmt supplies the wire codecs. This module decodes and executes device commands.
- *
- * SPDX-License-Identifier: Apache-2.0
- */
-
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Product operations over native MCUmgr SMP. All RF and persistence work stays on its owner. */
 #include "mgmt.h"
-
-#include <zephyr/app_version.h>
-#include <zephyr/device.h>
-#include <zephyr/devicetree.h>
-#include <zephyr/drivers/uart.h>
-#include <zephyr/sys/ring_buffer.h>
-#include <zephyr/kernel.h>
-#include <zephyr/logging/log_backend.h>
-#include <zephyr/logging/log.h>
-#include <zephyr/logging/log_ctrl.h>
-#include <zephyr/storage/flash_map.h>
-#include <zephyr/sys/byteorder.h>
-
 #include <errno.h>
-#include <stdbool.h>
-#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
-
-#include "serial.h"
+#include <zephyr/kernel.h>
+#if defined(CONFIG_MCUMGR_GRP_OS_INFO_CUSTOM_HOOKS)
+#include <zephyr/app_version.h>
+#include <zephyr/mgmt/mcumgr/grp/os_mgmt/os_mgmt.h>
+#endif
+#include <zephyr/device.h>
+#include <zephyr/devicetree.h>
+#include <zephyr/logging/log.h>
+#include <zephyr/logging/log_ctrl.h>
+#include <zephyr/logging/log_backend.h>
+#include <zephyr/sys/atomic.h>
+#include <zephyr/sys/byteorder.h>
+#include <zephyr/mgmt/mcumgr/mgmt/mgmt.h>
+#include <zephyr/mgmt/mcumgr/mgmt/handlers.h>
+#include <zephyr/mgmt/mcumgr/mgmt/callbacks.h>
+#include <zephyr/mgmt/mcumgr/smp/smp.h>
+#include <zephyr/mgmt/mcumgr/grp/fs_mgmt/fs_mgmt_callbacks.h>
+#include <zephyr/mgmt/mcumgr/grp/os_mgmt/os_mgmt_callbacks.h>
+#include <zcbor_decode.h>
+#include <zcbor_encode.h>
+#include <mgmt/mcumgr/util/zcbor_bulk.h>
 #include "persist.h"
 #include "rf.h"
+#include "serial.h"
 #include "trace.h"
+#include "platform/watchdog.h"
+#include "zlrs/proto/crypto.h"
 #if defined(CONFIG_ZLRS_APP_DEBUG)
 #include "diagnostics.h"
 #endif
-#include "boot.h"
-#include "platform/slot_timer.h"
-#include "platform/watchdog.h"
-#include "log.h"
-#include "zlrs/mgmt/mgmt.h"
-#include "zlrs/proto/crypto.h"
 
+BUILD_ASSERT(DT_SAME_NODE(DT_CHOSEN(zephyr_uart_mcumgr), DT_ALIAS(zlrs_mgmt_cdc)),
+	     "Native SMP must use the management CDC, not the DATA or log UART");
+BUILD_ASSERT(IS_ENABLED(CONFIG_MCUMGR_GRP_FS_DL_CHUNK_SIZE_LIMIT),
+	     "FS downloads must not allocate the entire SMP netbuf on the worker stack");
 LOG_MODULE_REGISTER(zlrs_mgmt, CONFIG_APP_LOG_LEVEL);
-
 ZBUS_CHAN_DEFINE(zlrs_mode_chan, struct zlrs_mode, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
 		 ZBUS_MSG_INIT(0));
-
 static struct zlrs_mode mode;
 static bool mode_pending;
+static atomic_t session_active;
+static atomic_t last_activity;
+static K_MUTEX_DEFINE(request_lock);
+static K_SEM_DEFINE(request_pending, 0, 1);
+static K_SEM_DEFINE(request_done, 0, 1);
+
+static struct {
+	uint32_t op;
+	uint8_t value[64];
+	size_t len;
+	int result;
+	struct zlrs_mgmt_reply reply;
+} request;
+
 static void publish_mode(void)
 {
 	if (mode_pending && zbus_chan_pub(&zlrs_mode_chan, &mode, K_NO_WAIT) == 0) {
@@ -53,139 +65,9 @@ static void publish_mode(void)
 	}
 }
 
-#if IS_ENABLED(CONFIG_ZLRS_MGMT)
-
-#define MGMT_IDLE_WAIT_MS 50U
-#define ZLRS_MGMT_CHUNK   32U
-
-#define CFG_PORT_RX_RING_LEN 512U
-#define CFG_PORT_TX_RING_LEN 512U
-
-struct cfg_port {
-	const struct device *dev;
-	struct ring_buf rx;
-	struct ring_buf tx;
-	uint8_t rx_mem[CFG_PORT_RX_RING_LEN];
-	uint8_t tx_mem[CFG_PORT_TX_RING_LEN];
-	uint32_t rx_dropped;
-	bool ready;
-};
-
-static struct cfg_port cfg_port;
-static K_SEM_DEFINE(cfg_rx_ready, 0, 1);
-/* ENTER is acknowledged after the management session is ready. */
-static bool cfg_enter_pending;
-static uint8_t cfg_tx_line[ZLRS_MGMT_FRAME_MAX_LEN];
-static uint8_t cfg_tx_pending;
-
-static void cfg_port_isr(const struct device *dev, void *user_data)
-{
-	struct cfg_port *const p = user_data;
-
-	for (;;) {
-		uart_irq_update(dev);
-		if (!uart_irq_is_pending(dev)) {
-			break;
-		}
-
-		if (uart_irq_rx_ready(dev)) {
-			uint8_t chunk[32];
-			const int n = uart_fifo_read(dev, chunk, sizeof(chunk));
-
-			if (n > 0) {
-				const uint32_t written = ring_buf_put(&p->rx, chunk, (uint32_t)n);
-
-				p->rx_dropped += (uint32_t)n - written;
-				if (written > 0U) {
-					k_sem_give(&cfg_rx_ready);
-				}
-			}
-		}
-
-		if (uart_irq_tx_ready(dev)) {
-			uint8_t *claim = NULL;
-			const uint32_t claimed = MIN(ring_buf_get_ptr(&p->tx, &claim, 0U), 64U);
-
-			if (claimed == 0U) {
-				uart_irq_tx_disable(dev);
-				continue;
-			}
-
-			const int sent = uart_fifo_fill(dev, claim, (int)claimed);
-
-			ring_buf_consume(&p->tx, (sent > 0) ? (uint32_t)sent : 0U);
-		}
-	}
-}
-
 int zlrs_mgmt_init(void)
 {
-#if DT_NODE_EXISTS(DT_ALIAS(zlrs_mgmt_cdc))
-	const struct device *const dev = DEVICE_DT_GET(DT_ALIAS(zlrs_mgmt_cdc));
-
-	if (!device_is_ready(dev)) {
-		LOG_ERR("management port %s not ready", dev->name);
-		return -1;
-	}
-
-	ring_buf_init(&cfg_port.rx, sizeof(cfg_port.rx_mem), cfg_port.rx_mem);
-	ring_buf_init(&cfg_port.tx, sizeof(cfg_port.tx_mem), cfg_port.tx_mem);
-	cfg_port.dev = dev;
-
-	/* Check it: without IRQ support it is -ENOSYS/-ENOTSUP, and ignoring that loses commands */
-	if (uart_irq_callback_user_data_set(dev, cfg_port_isr, &cfg_port) != 0) {
-		LOG_ERR("management port %s: RX setup failed", dev->name);
-		cfg_port.dev = NULL;
-		return -1;
-	}
-
-	uart_irq_rx_enable(dev);
-	cfg_port.ready = true;
-
-	LOG_INF("management port ready (%s)", dev->name);
-
-	return 0;
-#else
-	LOG_WRN("no zlrs-mgmt-cdc alias: management port disabled");
-
-	return -1;
-#endif
-}
-
-static uint16_t mgmt_read(uint8_t *buf, uint16_t len)
-{
-	if (!cfg_port.ready) {
-		return 0U;
-	}
-
-	return (uint16_t)ring_buf_get(&cfg_port.rx, buf, len);
-}
-
-static uint16_t mgmt_write(const uint8_t *buf, uint16_t len)
-{
-	uint32_t written;
-
-	if (!cfg_port.ready) {
-		return 0U;
-	}
-
-	if (ring_buf_space_get(&cfg_port.tx) < len) {
-		return 0U;
-	}
-	written = ring_buf_put(&cfg_port.tx, buf, len);
-	if (written > 0U) {
-		uart_irq_tx_enable(cfg_port.dev);
-	}
-
-	return (uint16_t)written;
-}
-
-/* Keep the completed action's entire reply until the CDC ring admits it. */
-static void flush_reply(void)
-{
-	if (cfg_tx_pending != 0U && mgmt_write(cfg_tx_line, cfg_tx_pending) == cfg_tx_pending) {
-		cfg_tx_pending = 0U;
-	}
+	return 0; /* Native transport owns the UART and IRQs. */
 }
 
 static void mgmt_log_flush(void)
@@ -205,131 +87,12 @@ static void mgmt_log_flush(void)
 	}
 }
 
-static bool query_command(uint8_t cmd)
-{
-	return cmd == ZLRS_MGMT_CMD_STATUS || cmd == ZLRS_MGMT_CMD_OBSERVE ||
-	       cmd == ZLRS_MGMT_CMD_BUILD || cmd == ZLRS_MGMT_CMD_IMAGE_HASH;
-}
-
-static uint8_t execute_query(uint8_t cmd, uint8_t len, uint8_t *out, size_t cap, bool refresh);
-
-bool zlrs_mgmt_process_idle(void)
-{
-	publish_mode();
-	static zlrs_mgmt_parser_t parser;
-	static bool parser_ready;
-	uint8_t byte;
-
-	if (!parser_ready) {
-		zlrs_mgmt_parser_init(&parser);
-		parser_ready = true;
-	}
-
-	/* Stop at ENTER so any following command stays queued for the ready session. */
-	flush_reply();
-	for (uint16_t i = 0U;
-	     i < ZLRS_MGMT_CHUNK && cfg_tx_pending == 0U && mgmt_read(&byte, 1U) == 1U; i++) {
-		if (zlrs_mgmt_feed(&parser, byte) != 1) {
-			continue;
-		}
-
-		const uint8_t cmd = parser.cmd;
-		uint8_t payload[2];
-		uint8_t len;
-
-		if (cmd == ZLRS_MGMT_CMD_ENTER) {
-			cfg_enter_pending = true;
-			return true;
-		}
-		if (query_command(cmd)) {
-			cfg_tx_pending = execute_query(cmd, parser.payload_len, cfg_tx_line,
-						       sizeof(cfg_tx_line), false);
-			flush_reply();
-			/* Bound query work per frame even when the host floods the CDC. */
-			return false;
-		}
-
-		/* Recovery is available outside a session; success reboots, failure replies below. */
-		if (cmd == ZLRS_MGMT_CMD_RECOVERY) {
-			(void)zlrs_boot_recovery();
-		}
-
-		/* Mutations require a session; EXIT outside one is a no-op. */
-		payload[0] = cmd;
-		payload[1] = (cmd == ZLRS_MGMT_CMD_EXIT) ? ZLRS_MGMT_OK : ZLRS_MGMT_E_STATE;
-
-		len = zlrs_mgmt_encode(cfg_tx_line, sizeof(cfg_tx_line), ZLRS_MGMT_CMD_ACK, payload,
-				       sizeof(payload));
-		cfg_tx_pending = len;
-		flush_reply();
-	}
-
-	return false;
-}
-
-/* ---- session ------------------------------------------------------------- */
-
-static zlrs_mgmt_parser_t cfg_parser;
-
-/* Device commands: decode wire values at this boundary. */
-
-/* Wire decoding belongs here; configuration validation and persistence have one owner. */
-static int persist_result(int rc)
-{
-	if (rc == 0) {
-		return ZLRS_MGMT_OK;
-	}
-	if (rc == -EINVAL) {
-		return ZLRS_MGMT_E_PARAM;
-	}
-	return ZLRS_MGMT_E_STORE;
-}
-
-static int save_setting(uint8_t cmd, const uint8_t *value, uint8_t len)
-{
-	if (len != (cmd == ZLRS_MGMT_CMD_SET_BAUD ? 4U : 1U)) {
-		return ZLRS_MGMT_E_PARAM;
-	}
-	zlrs_persist_settings_t settings = *zlrs_persist_settings();
-	switch (cmd) {
-	case ZLRS_MGMT_CMD_SET_BAND:
-		settings.band = (zlrs_data_band_t)value[0];
-		break;
-	case ZLRS_MGMT_CMD_SET_REGION:
-		settings.region = (zlrs_region_id_t)value[0];
-		break;
-	case ZLRS_MGMT_CMD_SET_ROLE:
-		settings.role = (zlrs_role_t)value[0];
-		break;
-	case ZLRS_MGMT_CMD_SET_PROFILE:
-		settings.profile = (zlrs_profile_t)value[0];
-		break;
-	case ZLRS_MGMT_CMD_SET_BAUD:
-		settings.data_baud = (uint32_t)value[0] | (uint32_t)value[1] << 8 |
-				     (uint32_t)value[2] << 16 | (uint32_t)value[3] << 24;
-		break;
-	default:
-		return ZLRS_MGMT_E_UNKNOWN;
-	}
-	return persist_result(zlrs_persist_save_settings(&settings));
-}
-
-static int save_root_key(const uint8_t key[ZLRS_KEY_LEN])
-{
-	const int rc = zlrs_persist_set_root_key(key);
-	if (rc == 0) {
-		zlrs_rf_credentials();
-	}
-	return persist_result(rc);
-}
-
 static uint32_t read_status(zlrs_mgmt_status_t *out)
 {
 	const zlrs_rf_status_t rf = zlrs_rf_status();
 	const zlrs_persist_settings_t *const settings = zlrs_persist_settings();
 
 	*out = (zlrs_mgmt_status_t){
-		.version = ZLRS_MGMT_VERSION,
 		.role = rf.role,
 		.profile = rf.profile,
 		.state = rf.state,
@@ -397,184 +160,6 @@ static uint32_t read_status(zlrs_mgmt_status_t *out)
 	return rf.hardware_sampled_ms;
 }
 
-/*
- * MCUboot hash of the running image: read IMAGE_TLV_SHA256 from this image's TLV area.
- * The update tool tells "the image I just sent" from "already rolled back": build strings
- * can match, hashes cannot. Only MCUboot's public format is used, no internal headers.
- */
-static int read_image_hash(uint8_t out[ZLRS_MGMT_IMAGE_HASH_LEN])
-{
-
-#ifdef CONFIG_BOOTLOADER_MCUBOOT
-#define MCUBOOT_IMAGE_MAGIC    0x96f3b83dU
-#define MCUBOOT_TLV_INFO_MAGIC 0x6907U
-#define MCUBOOT_TLV_SHA256     0x10U
-
-	struct {
-		uint32_t magic;
-		uint32_t load_addr;
-		uint16_t hdr_size;
-		uint16_t protect_tlv_size;
-		uint32_t img_size;
-	} __packed hdr;
-	const struct flash_area *fa;
-	uint32_t off, tlv_end;
-
-	if (flash_area_open(PARTITION_ID(slot0_partition), &fa) != 0) {
-		return ZLRS_MGMT_E_STATE;
-	}
-
-	if (flash_area_read(fa, 0U, &hdr, sizeof(hdr)) != 0 || hdr.magic != MCUBOOT_IMAGE_MAGIC) {
-		flash_area_close(fa);
-		return ZLRS_MGMT_E_STATE;
-	}
-
-	/* The TLV area starts with an info header: magic(0x6907) + length (including these 4 bytes) */
-	off = (uint32_t)hdr.hdr_size + hdr.img_size + hdr.protect_tlv_size;
-
-	{
-		uint8_t info[4];
-		uint16_t magic;
-		uint16_t total;
-
-		if (flash_area_read(fa, off, info, sizeof(info)) != 0) {
-			flash_area_close(fa);
-			return ZLRS_MGMT_E_STATE;
-		}
-
-		magic = (uint16_t)info[0] | ((uint16_t)info[1] << 8);
-		total = (uint16_t)info[2] | ((uint16_t)info[3] << 8);
-
-		if (magic != MCUBOOT_TLV_INFO_MAGIC) {
-			flash_area_close(fa);
-			return ZLRS_MGMT_E_STATE;
-		}
-
-		tlv_end = off + total;
-		off += 4U;
-	}
-
-	while (off + 4U + ZLRS_MGMT_IMAGE_HASH_LEN <= tlv_end) {
-		uint8_t tlv[4];
-		uint16_t len;
-		uint8_t type;
-
-		if (flash_area_read(fa, off, tlv, sizeof(tlv)) != 0) {
-			break;
-		}
-		type = tlv[0];
-		len = (uint16_t)tlv[2] | ((uint16_t)tlv[3] << 8);
-
-		if (type == MCUBOOT_TLV_SHA256 && len == ZLRS_MGMT_IMAGE_HASH_LEN) {
-			const int rc = flash_area_read(fa, off + 4U, out, ZLRS_MGMT_IMAGE_HASH_LEN);
-
-			flash_area_close(fa);
-			return (rc == 0) ? ZLRS_MGMT_OK : ZLRS_MGMT_E_STATE;
-		}
-
-		/* 0xFF padding follows the last TLV; type=0xFF means stop */
-		if (type == 0xFFU) {
-			break;
-		}
-		off += 4U + len;
-	}
-
-	flash_area_close(fa);
-#endif
-
-	return ZLRS_MGMT_E_STATE;
-}
-
-static uint8_t ack_frame(uint8_t *out, size_t cap, uint8_t cmd, uint8_t status)
-{
-	const uint8_t body[2] = {cmd, status};
-	return zlrs_mgmt_encode(out, cap, ZLRS_MGMT_CMD_ACK, body, sizeof(body));
-}
-
-/* The owner services online queries between frames. Only maintenance queries refresh
- * chip observations: online status never accesses the radio SPI or the ADC.
- */
-static uint8_t execute_query(uint8_t cmd, uint8_t len, uint8_t *out, size_t cap, bool refresh)
-{
-	if (len != 0U) {
-		return ack_frame(out, cap, cmd, ZLRS_MGMT_E_PARAM);
-	}
-	switch (cmd) {
-	case ZLRS_MGMT_CMD_STATUS:
-	case ZLRS_MGMT_CMD_OBSERVE: {
-		zlrs_mgmt_status_t status;
-		uint8_t body[ZLRS_MGMT_OBSERVE_HEADER_LEN + ZLRS_MGMT_STATUS_LEN];
-		const uint8_t header =
-			cmd == ZLRS_MGMT_CMD_OBSERVE ? ZLRS_MGMT_OBSERVE_HEADER_LEN : 0U;
-		if (refresh) {
-			zlrs_rf_status_refresh();
-		}
-		const uint32_t hardware_sampled_ms = read_status(&status);
-		if (header != 0U) {
-			sys_put_le32(k_uptime_get_32(), body);
-			sys_put_le32(hardware_sampled_ms, body + 4U);
-		}
-		zlrs_mgmt_status_encode(body + header, &status);
-		return zlrs_mgmt_encode(out, cap,
-					header != 0U ? ZLRS_MGMT_CMD_OBSERVE_RESP
-						     : ZLRS_MGMT_CMD_STATUS_RESP,
-					body, header + ZLRS_MGMT_STATUS_LEN);
-	}
-	case ZLRS_MGMT_CMD_BUILD: {
-		char build[ZLRS_MGMT_BUILD_MAX_LEN];
-		(void)snprintf(build, sizeof(build), "%s", APP_VERSION_STRING);
-		return zlrs_mgmt_encode(out, cap, ZLRS_MGMT_CMD_BUILD_RESP, (const uint8_t *)build,
-					strlen(build));
-	}
-	case ZLRS_MGMT_CMD_IMAGE_HASH: {
-		uint8_t hash[ZLRS_MGMT_IMAGE_HASH_LEN];
-		const int rc = read_image_hash(hash);
-		return rc == ZLRS_MGMT_OK
-			       ? zlrs_mgmt_encode(out, cap, ZLRS_MGMT_CMD_IMAGE_HASH_RESP, hash,
-						  sizeof(hash))
-			       : ack_frame(out, cap, cmd, rc);
-	}
-	default:
-		return ack_frame(out, cap, cmd, ZLRS_MGMT_E_UNKNOWN);
-	}
-}
-
-#if defined(CONFIG_ZLRS_APP_DEBUG)
-
-static uint8_t cfg_debug_report(const uint8_t *request, uint8_t request_len, uint8_t *out,
-				size_t out_len)
-{
-	uint8_t body[ZLRS_MGMT_PAYLOAD_MAX_LEN];
-	uint16_t offset;
-	uint16_t total_len = 0U;
-	uint8_t written = 0U;
-
-	if (request_len != ZLRS_MGMT_DEBUG_REPORT_REQ_LEN) {
-		return ack_frame(out, out_len, ZLRS_MGMT_CMD_DEBUG_REPORT, ZLRS_MGMT_E_PARAM);
-	}
-
-	offset = (uint16_t)request[1] | ((uint16_t)request[2] << 8);
-	const int rc =
-		zlrs_diagnostics_read((zlrs_diagnostic_report_t)request[0], offset,
-				      &body[ZLRS_MGMT_DEBUG_REPORT_HEADER_LEN],
-				      ZLRS_MGMT_DEBUG_REPORT_CHUNK_MAX, &total_len, &written);
-
-	if (rc != 0) {
-		return ack_frame(out, out_len, ZLRS_MGMT_CMD_DEBUG_REPORT,
-				 rc == -EINVAL ? ZLRS_MGMT_E_PARAM : ZLRS_MGMT_E_STATE);
-	}
-
-	body[0] = request[0];
-	body[1] = (uint8_t)(offset & 0xFFU);
-	body[2] = (uint8_t)(offset >> 8);
-	body[3] = (uint8_t)(total_len & 0xFFU);
-	body[4] = (uint8_t)(total_len >> 8);
-
-	return zlrs_mgmt_encode(out, out_len, ZLRS_MGMT_CMD_DEBUG_REPORT_RESP, body,
-				(uint8_t)(ZLRS_MGMT_DEBUG_REPORT_HEADER_LEN + written));
-}
-#endif
-
 static uint8_t hex_nibble(char c, bool *ok)
 {
 	if (c >= '0' && c <= '9') {
@@ -591,258 +176,427 @@ static uint8_t hex_nibble(char c, bool *ok)
 	return 0U;
 }
 
-static uint8_t log_result(int rc)
+static int execute(bool maintenance)
 {
-	return rc == 0 ? ZLRS_MGMT_OK : rc == -EINVAL ? ZLRS_MGMT_E_PARAM : ZLRS_MGMT_E_STATE;
-}
-
-/* Called by the application owner inside its management maintenance window. */
-uint8_t zlrs_mgmt_command(uint8_t cmd, const uint8_t *payload, uint8_t len, uint8_t *out,
-			  size_t cap)
-{
-	int rc;
-	if (query_command(cmd)) {
-		return execute_query(cmd, len, out, cap, true);
+	struct zlrs_mgmt_reply *out = &request.reply;
+	const uint8_t *value = request.value;
+	const size_t len = request.len;
+	const uint32_t op = request.op;
+	memset(out, 0, sizeof(*out));
+	if (op == ZLRS_MGMT_CMD_STATUS || op == ZLRS_MGMT_CMD_OBSERVE) {
+		if (maintenance) {
+			zlrs_rf_status_refresh();
+		}
+		out->hardware_ms = read_status(&out->status);
+		out->uptime_ms = k_uptime_get_32();
+		return len == 0 ? 0 : -EINVAL;
 	}
-	switch (cmd) {
-#if defined(CONFIG_ZLRS_APP_DEBUG)
-	case ZLRS_MGMT_CMD_DEBUG_REPORT:
-		return cfg_debug_report(payload, len, out, cap);
-#endif
+	if (!maintenance) {
+		return op == ZLRS_MGMT_CMD_EXIT ? 0 : -EACCES;
+	}
+	switch (op) {
 	case ZLRS_MGMT_CMD_ENTER:
+		mgmt_log_flush();
+		return len == 0 ? 0 : -EINVAL;
 	case ZLRS_MGMT_CMD_EXIT:
-		return ack_frame(out, cap, cmd, ZLRS_MGMT_OK);
-	case ZLRS_MGMT_CMD_CONFIRM:
-		return ack_frame(out, cap, cmd,
-				 zlrs_boot_confirm() == 0 ? ZLRS_MGMT_OK : ZLRS_MGMT_E_STORE);
-	case ZLRS_MGMT_CMD_RECOVERY:
-		(void)zlrs_boot_recovery(); /* Success reboots. */
-		return ack_frame(out, cap, cmd, ZLRS_MGMT_E_STATE);
+		return len == 0 ? 0 : -EINVAL;
 	case ZLRS_MGMT_CMD_PAIR:
-		rc = zlrs_rf_pair_start();
-		return ack_frame(out, cap, cmd,
-				 rc == 0         ? ZLRS_MGMT_OK
-				 : rc == -EAGAIN ? ZLRS_MGMT_E_BUSY
-						 : ZLRS_MGMT_E_STATE);
-	case ZLRS_MGMT_CMD_NEW_DEV_ID:
-		if (len != 0U) {
-			return ack_frame(out, cap, cmd, ZLRS_MGMT_E_PARAM);
+		return len == 0 ? zlrs_rf_pair_start() : -EINVAL;
+	case ZLRS_MGMT_CMD_NEW_DEV_ID: {
+		if (len != 0) {
+			return -EINVAL;
 		}
-		rc = zlrs_persist_new_identity();
-		if (rc != 0) {
-			LOG_ERR("device identity update failed (%d)", rc);
-		}
+		const int rc = zlrs_persist_new_identity();
 		zlrs_rf_credentials();
-		return ack_frame(out, cap, cmd, persist_result(rc));
-	case ZLRS_MGMT_CMD_ERASE_PAIR:
-		rc = zlrs_persist_erase_pairing();
+		return rc;
+	}
+	case ZLRS_MGMT_CMD_ERASE_PAIR: {
+		if (len != 0) {
+			return -EINVAL;
+		}
+		const int rc = zlrs_persist_erase_pairing();
 		if (rc == 0) {
 			zlrs_rf_credentials();
 		}
-		return ack_frame(out, cap, cmd, persist_result(rc));
-	case ZLRS_MGMT_CMD_FACTORY_RESET:
-		rc = zlrs_persist_factory_reset();
-		/* Even a failed erase may have retired the active identity. */
+		return rc;
+	}
+	case ZLRS_MGMT_CMD_FACTORY_RESET: {
+		if (len != 0) {
+			return -EINVAL;
+		}
+		const int rc = zlrs_persist_factory_reset();
 		zlrs_rf_credentials();
-		return ack_frame(out, cap, cmd, persist_result(rc));
+		return rc;
+	}
 	case ZLRS_MGMT_CMD_SET_KEY_HEX:
 	case ZLRS_MGMT_CMD_SET_PHRASE: {
 		uint8_t key[ZLRS_KEY_LEN];
-		if (cmd == ZLRS_MGMT_CMD_SET_KEY_HEX) {
+		if (op == ZLRS_MGMT_CMD_SET_KEY_HEX) {
 			if (len != 2U * ZLRS_KEY_LEN) {
-				return ack_frame(out, cap, cmd, ZLRS_MGMT_E_PARAM);
+				return -EINVAL;
 			}
 			bool valid = true;
-			for (uint8_t i = 0; i < ZLRS_KEY_LEN; i++) {
-				const uint8_t hi = hex_nibble(payload[i * 2U], &valid);
-				const uint8_t lo = hex_nibble(payload[i * 2U + 1U], &valid);
-				key[i] = (hi << 4) | lo;
+			for (size_t i = 0; i < ZLRS_KEY_LEN; i++) {
+				const uint8_t hi = hex_nibble(value[2 * i], &valid);
+				const uint8_t lo = hex_nibble(value[2 * i + 1], &valid);
+				key[i] = hi << 4 | lo;
 			}
 			if (!valid) {
 				memset(key, 0, sizeof(key));
-				return ack_frame(out, cap, cmd, ZLRS_MGMT_E_PARAM);
+				return -EINVAL;
 			}
 		} else {
-			if (len == 0U || len > ZLRS_MGMT_PHRASE_MAX_LEN) {
-				return ack_frame(out, cap, cmd, ZLRS_MGMT_E_PARAM);
+			if (len == 0 || len > 32) {
+				return -EINVAL;
 			}
-			char phrase[ZLRS_MGMT_PHRASE_MAX_LEN + 1U];
-			memcpy(phrase, payload, len);
+			char phrase[33];
+			memcpy(phrase, value, len);
 			phrase[len] = '\0';
 			zlrs_root_key_from_phrase(phrase, key);
 			memset(phrase, 0, sizeof(phrase));
 		}
-		rc = save_root_key(key);
+		const int rc = zlrs_persist_set_root_key(key);
 		memset(key, 0, sizeof(key));
-		return ack_frame(out, cap, cmd, rc);
+		if (rc == 0) {
+			zlrs_rf_credentials();
+		}
+		return rc;
 	}
 	case ZLRS_MGMT_CMD_SET_BAND:
 	case ZLRS_MGMT_CMD_SET_BAUD:
 	case ZLRS_MGMT_CMD_SET_REGION:
 	case ZLRS_MGMT_CMD_SET_ROLE:
-	case ZLRS_MGMT_CMD_SET_PROFILE:
-		return ack_frame(out, cap, cmd, save_setting(cmd, payload, len));
-	case ZLRS_MGMT_CMD_LOG_INFO: {
-		zlrs_log_info_t info;
-		uint8_t body[2U + 6U * ZLRS_LOG_FILES_MAX];
-		rc = zlrs_log_info(&info);
-		if (rc != 0) {
-			return ack_frame(out, cap, cmd, log_result(rc));
+	case ZLRS_MGMT_CMD_SET_PROFILE: {
+		if (len != (op == ZLRS_MGMT_CMD_SET_BAUD ? 4U : 1U)) {
+			return -EINVAL;
 		}
-		body[0] = info.count;
-		body[1] = info.newest;
-		for (uint8_t i = 0; i < info.count; i++) {
-			sys_put_le16(info.num[i], body + 2U + 6U * i);
-			sys_put_le32(info.size[i], body + 4U + 6U * i);
+		zlrs_persist_settings_t settings = *zlrs_persist_settings();
+		switch (op) {
+		case ZLRS_MGMT_CMD_SET_BAND:
+			settings.band = value[0];
+			break;
+		case ZLRS_MGMT_CMD_SET_BAUD:
+			settings.data_baud = sys_get_le32(value);
+			break;
+		case ZLRS_MGMT_CMD_SET_REGION:
+			settings.region = value[0];
+			break;
+		case ZLRS_MGMT_CMD_SET_ROLE:
+			settings.role = value[0];
+			break;
+		case ZLRS_MGMT_CMD_SET_PROFILE:
+			settings.profile = value[0];
+			break;
 		}
-		return zlrs_mgmt_encode(out, cap, ZLRS_MGMT_CMD_LOG_INFO_RESP, body,
-					2U + 6U * info.count);
+		return zlrs_persist_save_settings(&settings);
 	}
-	case ZLRS_MGMT_CMD_LOG_READ: {
-		uint8_t body[5U + ZLRS_MGMT_LOG_CHUNK_MAX];
-		uint8_t got;
-		if (len != 6U || payload[5] > ZLRS_MGMT_LOG_CHUNK_MAX) {
-			return ack_frame(out, cap, cmd, ZLRS_MGMT_E_PARAM);
-		}
-		rc = zlrs_log_read(payload[0], sys_get_le32(payload + 1), payload[5], body + 5,
-				   &got);
-		if (rc != 0) {
-			return ack_frame(out, cap, cmd, log_result(rc));
-		}
-		memcpy(body, payload, 5);
-		return zlrs_mgmt_encode(out, cap, ZLRS_MGMT_CMD_LOG_DATA_RESP, body, 5U + got);
-	}
+	case ZLRS_MGMT_CMD_LOG_INFO:
+		return len == 0 ? zlrs_log_info(&out->logs) : -EINVAL;
+#if defined(CONFIG_ZLRS_APP_DEBUG)
+	case ZLRS_MGMT_CMD_DEBUG_REPORT:
+		return len == 1 ? zlrs_diagnostics_report(value[0], &out->report) : -EINVAL;
+#endif
 	default:
-		return ack_frame(out, cap, cmd, ZLRS_MGMT_E_UNKNOWN);
+		return -ENOTSUP;
 	}
 }
 
-/* ---- session ------------------------------------------------------------- */
-
-int zlrs_mgmt_run(void)
+int zlrs_mgmt_request(uint32_t op, const uint8_t *value, size_t len, struct zlrs_mgmt_reply *reply)
 {
-	const uint32_t timeout_ms = (uint32_t)CONFIG_ZLRS_APP_MGMT_TIMEOUT_S * 1000U;
-	uint32_t last_activity_ms;
-	bool exit_requested = false;
-
-	if (!cfg_port.ready) {
-		LOG_WRN("no management port: management mode unavailable");
-		return -1;
+	if (len > sizeof(request.value) || (len != 0 && value == NULL)) {
+		return -EINVAL;
 	}
-
-	/* No superframe to race here, so keep the logic as plain as possible */
-	zlrs_mgmt_parser_init(&cfg_parser);
-
-	LOG_INF("management mode: %u s idle timeout, exit on EXIT command",
-		(unsigned int)CONFIG_ZLRS_APP_MGMT_TIMEOUT_S);
-
-	/* Disarm the watchdog for the session: writing a phrase runs 100000 PBKDF2 rounds (tens of
-	 * seconds) and an 8 s watchdog would reset mid-way. A management session is attended:
-	 * re-arm on exit. */
-	zlrs_watchdog_disarm();
-
-	/* A mode, not an LED state: the LED thread decides how it looks (app/src/ui.c) */
-	mode.session = true;
-	mode_pending = true;
-	publish_mode();
-
-	/* ENTER acknowledges readiness, including the queued logs. The watchdog is already
-	 * disarmed, and the idle timeout starts only after this synchronous flush. */
-	mgmt_log_flush();
-	zlrs_trace_session(true);
-	if (cfg_enter_pending) {
-		const uint8_t len = zlrs_mgmt_command(ZLRS_MGMT_CMD_ENTER, NULL, 0U, cfg_tx_line,
-						      sizeof(cfg_tx_line));
-
-		cfg_tx_pending = len;
-		flush_reply();
-		cfg_enter_pending = false;
+	k_mutex_lock(&request_lock, K_FOREVER);
+	request.op = op;
+	request.len = len;
+	if (len) {
+		memcpy(request.value, value, len);
 	}
-	last_activity_ms = k_uptime_get_32();
-
-	while (!exit_requested && (uint32_t)(k_uptime_get_32() - last_activity_ms) < timeout_ms) {
-		uint8_t byte;
-		bool any = false;
-
-		zlrs_watchdog_feed();
-		zlrs_trace_process(true);
-		publish_mode();
-		zlrs_serial_publish_state();
-		zlrs_log_console_sync();
-		(void)log_process();
-
-		/* DATA remains queued while RF is stopped; a full USB ring applies backpressure. */
-
-		flush_reply();
-		for (uint16_t i = 0U;
-		     i < ZLRS_MGMT_CHUNK && cfg_tx_pending == 0U && mgmt_read(&byte, 1U) == 1U;
-		     i++) {
-			any = true;
-
-			const int result = zlrs_mgmt_feed(&cfg_parser, byte);
-
-			if (result != 1) {
-				continue;
-			}
-
-			last_activity_ms = k_uptime_get_32();
-
-			if (cfg_parser.cmd == ZLRS_MGMT_CMD_EXIT) {
-				exit_requested = true;
-			}
-
-			/* Repeated ENTER has the same log-flush guarantee in an existing session. */
-			if (cfg_parser.cmd == ZLRS_MGMT_CMD_ENTER) {
-				mgmt_log_flush();
-				last_activity_ms = k_uptime_get_32();
-			}
-
-			const uint8_t len = zlrs_mgmt_command(
-				cfg_parser.cmd, ZLRS_MGMT_PAYLOAD(&cfg_parser),
-				cfg_parser.payload_len, cfg_tx_line, sizeof(cfg_tx_line));
-
-			if (len > 0U) {
-				cfg_tx_pending = len;
-				flush_reply();
-			}
-		}
-
-		if (!any) {
-			/* Incoming bytes wake this wait immediately; the timeout only bounds
-			 * housekeeping latency when the host is idle. */
-			(void)k_sem_take(&cfg_rx_ready, K_MSEC(MGMT_IDLE_WAIT_MS));
-		}
+	k_sem_give(&request_pending);
+	k_sem_take(&request_done, K_FOREVER);
+	const int rc = request.result;
+	if (reply) {
+		*reply = request.reply;
 	}
-
-	LOG_INF("management mode finished");
-	zlrs_trace_session(false);
-
-	mode.session = false;
-	mode_pending = true;
-	publish_mode();
-
-	zlrs_watchdog_arm();
-
-	return exit_requested ? 0 : 1;
-}
-
-#else /* !CONFIG_ZLRS_MGMT */
-
-int zlrs_mgmt_init(void)
-{
-	return -1;
+	memset(request.value, 0, sizeof(request.value));
+	k_mutex_unlock(&request_lock);
+	return rc;
 }
 
 bool zlrs_mgmt_process_idle(void)
 {
 	publish_mode();
+	if (k_sem_take(&request_pending, K_NO_WAIT) != 0) {
+		return false;
+	}
+	if (request.op == ZLRS_MGMT_CMD_ENTER && request.len == 0) {
+		return true;
+	}
+	request.result = execute(false);
+	k_sem_give(&request_done);
 	return false;
 }
 
-/* Management protocol compiled out: the application still calls in, this says "not available" */
 int zlrs_mgmt_run(void)
 {
-	return -1;
+	zlrs_watchdog_disarm();
+	mode.session = true;
+	mode_pending = true;
+	publish_mode();
+	mgmt_log_flush();
+	zlrs_trace_session(true);
+	atomic_set(&session_active, 1);
+	atomic_set(&last_activity, k_uptime_get_32());
+	request.result = execute(true);
+	k_sem_give(&request_done);
+	bool exit_requested = false;
+	while (!exit_requested && (uint32_t)(k_uptime_get_32() - atomic_get(&last_activity)) <
+					  CONFIG_ZLRS_APP_MGMT_TIMEOUT_S * 1000U) {
+		zlrs_trace_process(true);
+		publish_mode();
+		zlrs_serial_publish_state();
+		zlrs_log_console_sync();
+		(void)log_process();
+		if (k_sem_take(&request_pending, K_MSEC(10)) == 0) {
+			request.result = execute(true);
+			exit_requested = request.op == ZLRS_MGMT_CMD_EXIT && request.result == 0;
+			atomic_set(&last_activity, k_uptime_get_32());
+			if (exit_requested) {
+				/* Close native FS transfers before resuming RF. */
+				k_msleep(CONFIG_MCUMGR_GRP_FS_FILE_AUTOMATIC_IDLE_CLOSE_TIME + 10);
+				zlrs_trace_session(false);
+				atomic_set(&session_active, 0);
+				mode.session = false;
+				mode_pending = true;
+				publish_mode();
+			}
+			k_sem_give(&request_done);
+		}
+	}
+	zlrs_trace_session(false);
+	atomic_set(&session_active, 0);
+	mode.session = false;
+	mode_pending = true;
+	publish_mode();
+	zlrs_watchdog_arm();
+	return exit_requested ? 0 : 1;
 }
 
-#endif /* CONFIG_ZLRS_MGMT */
+static int product_command(struct smp_streamer *ctxt, bool write)
+{
+	uint32_t op = ZLRS_MGMT_CMD_STATUS;
+	struct zcbor_string value = {0};
+	size_t decoded;
+	struct zcbor_map_decode_key_val fields[] = {
+		ZCBOR_MAP_DECODE_KEY_DECODER("op", zcbor_uint32_decode, &op),
+		ZCBOR_MAP_DECODE_KEY_DECODER("value", zcbor_bstr_decode, &value),
+	};
+	if (zcbor_map_decode_bulk(ctxt->reader->zs, fields, ARRAY_SIZE(fields), &decoded) != 0) {
+		return MGMT_ERR_EINVAL;
+	}
+	if (!write && (op != ZLRS_MGMT_CMD_STATUS && op != ZLRS_MGMT_CMD_OBSERVE)) {
+		return MGMT_ERR_EINVAL;
+	}
+	struct zlrs_mgmt_reply reply;
+	const int rc = zlrs_mgmt_request(op, value.value, value.len, &reply);
+	if (rc == -ENOTSUP) {
+		return MGMT_ERR_ENOTSUP;
+	}
+	zcbor_state_t *zs = ctxt->writer->zs;
+	bool ok = zcbor_tstr_put_lit(zs, "result") && zcbor_int32_put(zs, rc);
+	if (rc != 0) {
+		return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
+	}
+	if (op == ZLRS_MGMT_CMD_STATUS || op == ZLRS_MGMT_CMD_OBSERVE) {
+		ok = ok && zcbor_tstr_put_lit(zs, "uptime_ms") &&
+		     zcbor_uint32_put(zs, reply.uptime_ms) &&
+		     zcbor_tstr_put_lit(zs, "hardware_ms") &&
+		     zcbor_uint32_put(zs, reply.hardware_ms) && zcbor_tstr_put_lit(zs, "status") &&
+		     zcbor_map_start_encode(zs, 48);
+#define FIELD(name)                                                                                \
+	ok = ok && zcbor_tstr_put_lit(zs, #name) && zcbor_int64_put(zs, reply.status.name)
+		FIELD(role);
+		FIELD(state);
+		FIELD(flags);
+		FIELD(lq_percent);
+		FIELD(band);
+		FIELD(region);
+		FIELD(profile);
+		FIELD(tx_power_dbm);
+		FIELD(data_baud);
+		FIELD(rssi_dbm);
+		FIELD(peer_rssi_dbm);
+		FIELD(peer_lq_percent);
+		FIELD(active_power_dbm);
+		FIELD(power_floor_dbm);
+		FIELD(temperature_centi_c);
+		FIELD(tx_frames);
+		FIELD(rx_frames);
+		FIELD(rx_crc_errors);
+		FIELD(rx_bad_tag);
+		FIELD(tx_retries);
+		FIELD(data_drop_bytes);
+		FIELD(missed_slots);
+		FIELD(radio_fail);
+		FIELD(frequency_hz);
+		FIELD(hop_index);
+		FIELD(frame_period_us);
+		FIELD(radio_temperature_centi_c);
+		FIELD(radio_xosc_temperature_centi_c);
+		FIELD(radio_vbat_mv);
+		FIELD(radio_version_major);
+		FIELD(radio_version_minor);
+		FIELD(radio_chip_mode);
+		FIELD(radio_command_status);
+		FIELD(radio_reset_status);
+		FIELD(radio_valid);
+		FIELD(radio_errors);
+		FIELD(radio_irq);
+		FIELD(data_phy);
+#undef FIELD
+		ok = ok && zcbor_tstr_put_lit(zs, "dev_id") &&
+		     zcbor_bstr_encode_ptr(zs, reply.status.dev_id, ZLRS_DEV_ID_LEN) &&
+		     zcbor_tstr_put_lit(zs, "peer_id") &&
+		     zcbor_bstr_encode_ptr(zs, reply.status.peer_id, ZLRS_DEV_ID_LEN) &&
+		     zcbor_map_end_encode(zs, 48);
+	}
+	if (op == ZLRS_MGMT_CMD_DEBUG_REPORT) {
+		ok = ok && zcbor_tstr_put_lit(zs, "report") &&
+		     zcbor_tstr_encode_ptr(zs, reply.report, strlen(reply.report));
+	}
+	if (op == ZLRS_MGMT_CMD_LOG_INFO) {
+		ok = ok && zcbor_tstr_put_lit(zs, "files") &&
+		     zcbor_list_start_encode(zs, ZLRS_LOG_FILES_MAX);
+		for (size_t i = 0; i < reply.logs.count; i++) {
+			char path[48];
+			snprintf(path, sizeof(path), CONFIG_LOG_BACKEND_FS_DIR "/log.%04u",
+				 reply.logs.num[i]);
+			ok = ok && zcbor_map_start_encode(zs, 2) &&
+			     zcbor_tstr_put_lit(zs, "path") &&
+			     zcbor_tstr_encode_ptr(zs, path, strlen(path)) &&
+			     zcbor_tstr_put_lit(zs, "size") &&
+			     zcbor_uint32_put(zs, reply.logs.size[i]) &&
+			     zcbor_map_end_encode(zs, 2);
+		}
+		ok = ok && zcbor_list_end_encode(zs, ZLRS_LOG_FILES_MAX);
+	}
+	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
+}
+
+static int product_read(struct smp_streamer *ctxt)
+{
+	return product_command(ctxt, false);
+}
+
+static int product_write(struct smp_streamer *ctxt)
+{
+	return product_command(ctxt, true);
+}
+
+static enum mgmt_cb_return native_access(uint32_t event, enum mgmt_cb_return previous, int32_t *rc,
+					 uint16_t *group, bool *abort_more, void *data, size_t size)
+{
+	ARG_UNUSED(group);
+	ARG_UNUSED(abort_more);
+	ARG_UNUSED(size);
+	if (previous != MGMT_CB_OK) {
+		return previous;
+	}
+#if defined(CONFIG_MCUMGR_GRP_OS_INFO_CUSTOM_HOOKS)
+	if (event == MGMT_EVT_OP_OS_MGMT_INFO_APPEND) {
+		struct os_mgmt_info_append *info = data;
+		if (info->all_format_specified) {
+			const size_t room = info->buffer_size - *info->output_length;
+			const int n = snprintf((char *)info->output + *info->output_length, room,
+					       "%szlrs %s", *info->prior_output ? " " : "",
+					       APP_VERSION_STRING);
+			if (n < 0 || n >= room) {
+				*rc = MGMT_ERR_EMSGSIZE;
+				return MGMT_CB_ERROR_RC;
+			}
+			*info->output_length += n;
+			*info->prior_output = true;
+		}
+		return MGMT_CB_OK;
+	}
+#endif
+	if (event == MGMT_EVT_OP_OS_MGMT_RESET) {
+		/* Native OS reset owns boot_mode and delayed reboot; the owner parks RF first. */
+		if (!atomic_get(&session_active)) {
+			if (zlrs_mgmt_request(ZLRS_MGMT_CMD_ENTER, NULL, 0, NULL) != 0) {
+				*rc = MGMT_ERR_EBUSY;
+				return MGMT_CB_ERROR_RC;
+			}
+		}
+		return MGMT_CB_OK;
+	}
+	if (event == MGMT_EVT_OP_FS_MGMT_FILE_ACCESS) {
+		struct fs_mgmt_file_access *access = data;
+		const char *path = access->filename;
+		bool allowed = false;
+		if (strncmp(path, CONFIG_LOG_BACKEND_FS_DIR "/log.",
+			    strlen(CONFIG_LOG_BACKEND_FS_DIR "/log.")) == 0) {
+			const char *suffix = path + strlen(CONFIG_LOG_BACKEND_FS_DIR "/log.");
+			allowed = strlen(suffix) == 4;
+			for (size_t i = 0; allowed && i < 4; i++) {
+				allowed = suffix[i] >= '0' && suffix[i] <= '9';
+			}
+		}
+#if defined(CONFIG_ZLRS_APP_DEBUG_TRACE)
+		/* Trace's own callback validates committed artifact names. */
+		allowed |= strncmp(path, "/trace/", 7) == 0;
+#endif
+		if (!atomic_get(&session_active) || !allowed ||
+		    access->access == FS_MGMT_FILE_ACCESS_WRITE) {
+			*rc = MGMT_ERR_EACCESSDENIED;
+			return MGMT_CB_ERROR_RC;
+		}
+		return MGMT_CB_OK;
+	}
+	struct mgmt_evt_op_cmd_arg *cmd = data;
+	atomic_set(&last_activity, k_uptime_get_32());
+	if ((cmd->group == MGMT_GROUP_ID_IMAGE || cmd->group == MGMT_GROUP_ID_FS) &&
+	    !atomic_get(&session_active)) {
+		/* Flash and filesystem work is restricted to an explicit maintenance session. */
+		if (cmd->group == MGMT_GROUP_ID_FS || cmd->op == MGMT_OP_WRITE) {
+			*rc = MGMT_ERR_EACCESSDENIED;
+			return MGMT_CB_ERROR_RC;
+		}
+	}
+	return MGMT_CB_OK;
+}
+
+/* Event masks combine only within one MCUmgr callback group. */
+static struct mgmt_callback smp_callback = {
+	.callback = native_access,
+	.event_id = MGMT_EVT_OP_CMD_RECV,
+};
+static struct mgmt_callback fs_callback = {
+	.callback = native_access,
+	.event_id = MGMT_EVT_OP_FS_MGMT_FILE_ACCESS,
+};
+static struct mgmt_callback os_callback = {
+	.callback = native_access,
+	.event_id = MGMT_EVT_OP_OS_MGMT_RESET
+#if defined(CONFIG_MCUMGR_GRP_OS_INFO_CUSTOM_HOOKS)
+		    | MGMT_EVT_OP_OS_MGMT_INFO_APPEND
+#endif
+	,
+};
+static const struct mgmt_handler handlers[] = {
+	{.mh_read = product_read, .mh_write = product_write}};
+static struct mgmt_group product_group = {
+	.mg_handlers = handlers,
+	.mg_handlers_count = ARRAY_SIZE(handlers),
+	.mg_group_id = 66,
+};
+
+static void register_management(void)
+{
+	mgmt_register_group(&product_group);
+	mgmt_callback_register(&smp_callback);
+	mgmt_callback_register(&fs_callback);
+	mgmt_callback_register(&os_callback);
+}
+
+MCUMGR_HANDLER_DEFINE(zlrs_product, register_management);

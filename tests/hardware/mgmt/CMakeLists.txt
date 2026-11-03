@@ -7,5 +7,5 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(mgmt LANGUAGES C)
 include("${zlrs_root}/app/CMakeLists.txt")
 target_sources(app PRIVATE fixture.c)
-target_link_options(app PUBLIC "-Wl,--wrap=zlrs_boot_confirm"
- "-Wl,--wrap=boot_is_img_confirmed" "-Wl,--wrap=zlrs_boot_recovery" "-Wl,--wrap=nvs_write")
+target_link_options(app PUBLIC "-Wl,--wrap=boot_set_next"
+ "-Wl,--wrap=zlrs_boot_check_rollback" "-Wl,--wrap=bootmode_set" "-Wl,--wrap=settings_save_one")

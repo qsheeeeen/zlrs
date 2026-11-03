@@ -7,7 +7,7 @@
  *
  * The application has data and management CDCs; the bootloader keeps two:
  *   - cdc_acm_uart0 = data port -> serial recovery (mcumgr frames; `zephyr,uart-mcumgr`
- *     points at it in the board dts)
+ *     points at it in this overlay)
  *   - cdc_acm_uart2 = console -> kernel log (disabled by default, enabled here)
  *   - cdc_acm_uart1 (management) is deleted in the bootloader
  * In upgrade mode the host then sees two MCUBOOT ports: recovery first, log second.
@@ -26,6 +26,7 @@
 
 	chosen {
 		zephyr,code-partition = &boot_partition;
+		zephyr,uart-mcumgr = &cdc_acm_uart0;
 	};
 };
 

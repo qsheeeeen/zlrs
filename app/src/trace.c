@@ -40,7 +40,11 @@ BUILD_ASSERT(IS_ENABLED(CONFIG_MCUMGR_SMP_COMMAND_STATUS_HOOKS));
 /* This is the same array exported by Zephyr's documented GDB RAM dump method. */
 extern uint8_t ram_tracing[CONFIG_RAM_TRACING_BUFFER_SIZE];
 
-enum { STOP_DEADLINE = 1, STOP_MANUAL, STOP_MAINTENANCE };
+enum {
+	STOP_DEADLINE = 1,
+	STOP_MANUAL,
+	STOP_MAINTENANCE
+};
 static struct zlrs_trace_status capture = {.slot = -1};
 static uint32_t dropped_at_start;
 static bool maintenance_active;
@@ -255,7 +259,7 @@ static int discover(void)
 		}
 		json[got] = '\0';
 		const int64_t fields = json_obj_parse(json, got, artifact_fields,
-						    ARRAY_SIZE(artifact_fields), &saved);
+						      ARRAY_SIZE(artifact_fields), &saved);
 
 		if (fields != BIT_MASK(ARRAY_SIZE(artifact_fields)) ||
 		    saved.capacity != sizeof(ram_tracing) || saved.generation == 0U ||
@@ -393,19 +397,21 @@ static int save_capture(void)
 		.core_dropped = capture.dropped,
 		.capacity = sizeof(ram_tracing),
 		.event_mask = IS_ENABLED(CONFIG_TRACING_THREAD) |
-			(IS_ENABLED(CONFIG_TRACING_ISR) << 1) |
-			(IS_ENABLED(CONFIG_TRACING_SEMAPHORE) << 2) |
-			(IS_ENABLED(CONFIG_TRACING_IDLE) << 3) | BIT(4),
+			      (IS_ENABLED(CONFIG_TRACING_ISR) << 1) |
+			      (IS_ENABLED(CONFIG_TRACING_SEMAPHORE) << 2) |
+			      (IS_ENABLED(CONFIG_TRACING_IDLE) << 3) | BIT(4),
 		.started_ns = capture.started_ns,
 		.stopped_ns = capture.stopped_ns,
 		.sha256 = digest,
-		.build = APP_VERSION_STRING "-" STRINGIFY(APP_BUILD_VERSION),
-		.zephyr = KERNEL_VERSION_STRING "-" STRINGIFY(BUILD_VERSION),
-		.rf_band = DT_PROP(DT_NODELABEL(zlrs_rf), band),
-	};
+		.build = APP_VERSION_STRING
+		"-" STRINGIFY(APP_BUILD_VERSION),
+			      .zephyr = KERNEL_VERSION_STRING
+			      "-" STRINGIFY(BUILD_VERSION),
+					    .rf_band = DT_PROP(DT_NODELABEL(zlrs_rf), band),
+			      };
 
-	rc = json_obj_encode_buf(artifact_fields, ARRAY_SIZE(artifact_fields), &saved,
-				 json, sizeof(json));
+	rc = json_obj_encode_buf(artifact_fields, ARRAY_SIZE(artifact_fields), &saved, json,
+				 sizeof(json));
 	if (rc == 0) {
 		artifact_path(path, sizeof(path), slot, "capture.tmp");
 		rc = write_file(path, json, strlen(json));
@@ -430,8 +436,8 @@ static int reset_capture(uint32_t duration_ms)
 		return -EINVAL;
 	}
 	const unsigned int key = irq_lock();
-	const bool unavailable = maintenance_active ||
-		(capture.state != ZLRS_TRACE_IDLE && capture.state != ZLRS_TRACE_SAVED);
+	const bool unavailable = maintenance_active || (capture.state != ZLRS_TRACE_IDLE &&
+							capture.state != ZLRS_TRACE_SAVED);
 
 	irq_unlock(key);
 	if (unavailable) {
@@ -454,8 +460,8 @@ static int reset_capture(uint32_t duration_ms)
 
 static int start_capture(uint32_t duration_ms, bool maintenance)
 {
-	if (maintenance || (capture.state != ZLRS_TRACE_IDLE &&
-			    capture.state != ZLRS_TRACE_SAVED)) {
+	if (maintenance ||
+	    (capture.state != ZLRS_TRACE_IDLE && capture.state != ZLRS_TRACE_SAVED)) {
 		return -EBUSY;
 	}
 	const unsigned int key = irq_lock();
@@ -550,9 +556,8 @@ void zlrs_trace_process(bool maintenance)
 	k_sem_give(&request_done);
 }
 
-static enum mgmt_cb_return smp_access(uint32_t event, enum mgmt_cb_return previous,
-				     int32_t *rc, uint16_t *group, bool *abort_more,
-				     void *data, size_t size)
+static enum mgmt_cb_return smp_access(uint32_t event, enum mgmt_cb_return previous, int32_t *rc,
+				      uint16_t *group, bool *abort_more, void *data, size_t size)
 {
 	ARG_UNUSED(group);
 	ARG_UNUSED(abort_more);
@@ -574,7 +579,8 @@ static enum mgmt_cb_return smp_access(uint32_t event, enum mgmt_cb_return previo
 	}
 	const unsigned int key = irq_lock();
 	const bool allowed = maintenance_active && session_active && mounted &&
-		capture.state != ZLRS_TRACE_SAVING && capture.state != ZLRS_TRACE_CAPTURING;
+			     capture.state != ZLRS_TRACE_SAVING &&
+			     capture.state != ZLRS_TRACE_CAPTURING;
 
 	if (allowed) {
 		atomic_set(&export_active, 1);
@@ -587,9 +593,8 @@ static enum mgmt_cb_return smp_access(uint32_t event, enum mgmt_cb_return previo
 	return MGMT_CB_OK;
 }
 
-static enum mgmt_cb_return file_access(uint32_t event, enum mgmt_cb_return previous,
-				      int32_t *rc, uint16_t *group, bool *abort_more,
-				      void *data, size_t size)
+static enum mgmt_cb_return file_access(uint32_t event, enum mgmt_cb_return previous, int32_t *rc,
+				       uint16_t *group, bool *abort_more, void *data, size_t size)
 {
 	ARG_UNUSED(event);
 	ARG_UNUSED(group);
@@ -604,6 +609,9 @@ static enum mgmt_cb_return file_access(uint32_t event, enum mgmt_cb_return previ
 	}
 	if (previous != MGMT_CB_OK) {
 		return previous;
+	}
+	if (strncmp(access->filename, "/trace/", 7) != 0) {
+		return MGMT_CB_OK;
 	}
 	for (unsigned int slot = 0; slot < 2U; slot++) {
 		char path[48];
@@ -644,7 +652,8 @@ static int trace_response(struct smp_streamer *ctxt, int result)
 		zcbor_tstr_put_lit(zse, "result") && zcbor_int32_put(zse, result) &&
 		zcbor_tstr_put_lit(zse, "state") && zcbor_uint32_put(zse, status.state) &&
 		zcbor_tstr_put_lit(zse, "id") && zcbor_uint32_put(zse, status.id) &&
-		zcbor_tstr_put_lit(zse, "requested_ms") && zcbor_uint32_put(zse, status.duration_ms) &&
+		zcbor_tstr_put_lit(zse, "requested_ms") &&
+		zcbor_uint32_put(zse, status.duration_ms) &&
 		zcbor_tstr_put_lit(zse, "started_ns") && zcbor_uint64_put(zse, status.started_ns) &&
 		zcbor_tstr_put_lit(zse, "stopped_ns") && zcbor_uint64_put(zse, status.stopped_ns) &&
 		zcbor_tstr_put_lit(zse, "reason") && zcbor_uint32_put(zse, status.reason) &&

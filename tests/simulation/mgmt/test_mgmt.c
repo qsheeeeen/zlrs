@@ -1,18 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include <errno.h>
 #include <string.h>
+#include <zephyr/kernel.h>
 #include <zephyr/ztest.h>
 #include <zephyr/kvss/nvs.h>
-#include <zephyr/drivers/serial/uart_emul.h>
-#include <zephyr/drivers/uart.h>
-#include <zephyr/sys/byteorder.h>
+#include <zephyr/mgmt/mcumgr/mgmt/callbacks.h>
+#include <zephyr/mgmt/mcumgr/grp/fs_mgmt/fs_mgmt_callbacks.h>
+#include <zephyr/mgmt/mcumgr/grp/os_mgmt/os_mgmt_callbacks.h>
 #include "mgmt.h"
-#include "log.h"
 #include "persist.h"
 #include "rf.h"
-#include "zlrs/mgmt/mgmt.h"
-#include "zlrs/proto/crypto.h"
-
 static const zlrs_rf_status_t initial_rf = {
 	.role = ZLRS_ROLE_LEADER,
 	.profile = ZLRS_PROFILE_P1,
@@ -33,12 +30,10 @@ static const zlrs_rf_status_t initial_rf = {
 	.hardware_sampled_ms = 17U,
 };
 static zlrs_rf_status_t rf;
-static unsigned int credential_applies, pairs, confirms, radio_refreshes;
-static int confirm_rc;
+static unsigned int credential_applies, pairs, radio_refreshes;
 static int pair_rc;
 static bool fail_write;
 static unsigned int watchdog_disarms;
-static const struct device *const mgmt_uart = DEVICE_DT_GET(DT_ALIAS(zlrs_mgmt_cdc));
 
 ssize_t __real_nvs_write(struct nvs_fs *, uint16_t, const void *, size_t);
 
@@ -88,21 +83,6 @@ int zlrs_rf_pair_start(void)
 	return rf.configured ? pair_rc : -ENOTCONN;
 }
 
-int zlrs_boot_confirm(void)
-{
-	confirms++;
-	return confirm_rc;
-}
-
-int zlrs_boot_recovery(void)
-{
-	return -EIO;
-}
-
-void zlrs_watchdog_feed(void)
-{
-}
-
 void zlrs_watchdog_disarm(void)
 {
 	watchdog_disarms++;
@@ -112,309 +92,144 @@ void zlrs_watchdog_arm(void)
 {
 }
 
+void zlrs_log_console_sync(void)
+{
+}
+
 void zlrs_serial_publish_state(void)
 {
 }
 
-int zlrs_log_info(zlrs_log_info_t *out)
+int zlrs_log_info(zlrs_log_info_t *info)
 {
-	*out = (zlrs_log_info_t){.count = 1, .newest = 0, .num = {7}, .size = {5}};
+	memset(info, 0, sizeof(*info));
 	return 0;
 }
 
-int zlrs_log_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *out, uint8_t *got)
+static K_SEM_DEFINE(start_owner, 0, 1);
+
+static void owner(void *a, void *b, void *c)
 {
-	if (index != 0 || len == 0) {
-		return -EINVAL;
+	ARG_UNUSED(a);
+	ARG_UNUSED(b);
+	ARG_UNUSED(c);
+	k_sem_take(&start_owner, K_FOREVER);
+	for (;;) {
+		if (zlrs_mgmt_process_idle()) {
+			zlrs_mgmt_run();
+		}
+		k_msleep(1);
 	}
-	if (offset > 5) {
-		return -EIO;
-	}
-	*got = MIN(len, 5U - offset);
-	memcpy(out, "hello" + offset, *got);
-	return 0;
 }
 
-static zlrs_mgmt_parser_t request(uint8_t cmd, const uint8_t *body, uint8_t size)
-{
-	uint8_t frame[ZLRS_MGMT_FRAME_MAX_LEN];
-	const uint8_t n = zlrs_mgmt_command(cmd, body, size, frame, sizeof(frame));
-	zlrs_mgmt_parser_t parser;
-	zlrs_mgmt_parser_init(&parser);
-	int result = 0;
-	for (uint8_t i = 0; i < n; i++) {
-		result = zlrs_mgmt_feed(&parser, frame[i]);
-	}
-	zassert_equal(result, 1);
-	return parser;
-}
+K_THREAD_DEFINE(owner_tid, 4096, owner, NULL, NULL, NULL, 0, 0, 0);
 
-static void ack(uint8_t cmd, const uint8_t *body, uint8_t size, uint8_t status)
-{
-	const zlrs_mgmt_parser_t p = request(cmd, body, size);
-	zassert_equal(p.cmd, ZLRS_MGMT_CMD_ACK);
-	zassert_equal(p.payload_len, 2);
-	zassert_equal(ZLRS_MGMT_PAYLOAD(&p)[0], cmd);
-	zassert_equal(ZLRS_MGMT_PAYLOAD(&p)[1], status);
-}
-
-ZTEST(commands, test_device_commands)
+static void *setup(void)
 {
 	zassert_ok(zlrs_persist_init());
-	ack(ZLRS_MGMT_CMD_ENTER, NULL, 0, 0);
-	ack(ZLRS_MGMT_CMD_PAIR, NULL, 0, ZLRS_MGMT_E_STATE);
-	const uint8_t baud[] = {0, 0x84, 3, 0};
-	ack(ZLRS_MGMT_CMD_SET_BAUD, baud, 4, 0);
-	zassert_equal(zlrs_persist_settings()->data_baud, 230400);
-	ack(ZLRS_MGMT_CMD_SET_BAUD, baud, 3, ZLRS_MGMT_E_PARAM);
-	const uint8_t invalid = 255, subg = ZLRS_DATA_BAND_SUBG, role = ZLRS_ROLE_FOLLOWER;
-	ack(ZLRS_MGMT_CMD_SET_ROLE, &invalid, 1, ZLRS_MGMT_E_PARAM);
-	ack(ZLRS_MGMT_CMD_SET_REGION, &invalid, 1, ZLRS_MGMT_E_PARAM);
-	ack(ZLRS_MGMT_CMD_SET_BAND, &subg, 1, 0);
-	const uint8_t automatic = ZLRS_DATA_BAND_AUTO;
-	ack(ZLRS_MGMT_CMD_SET_BAND, &automatic, 1, 0);
-	zassert_equal(zlrs_persist_settings()->band, ZLRS_DATA_BAND_AUTO);
-	ack(ZLRS_MGMT_CMD_SET_ROLE, &role, 1, 0);
-	const uint8_t unsupported = ZLRS_PROFILE_P2;
-	ack(ZLRS_MGMT_CMD_SET_PROFILE, &unsupported, 1, ZLRS_MGMT_E_PARAM);
-	ack(0x7f, NULL, 0, ZLRS_MGMT_E_UNKNOWN);
-	const uint8_t new_role = ZLRS_ROLE_LEADER;
-	fail_write = true;
-	ack(ZLRS_MGMT_CMD_SET_ROLE, &new_role, 1, ZLRS_MGMT_E_STORE);
-	zassert_equal(zlrs_persist_settings()->role, ZLRS_ROLE_FOLLOWER);
-	fail_write = false;
-	uint8_t hex[64];
-	memset(hex, 'a', sizeof(hex));
-	ack(ZLRS_MGMT_CMD_SET_KEY_HEX, hex, 63, ZLRS_MGMT_E_PARAM);
-	hex[0] = 'z';
-	ack(ZLRS_MGMT_CMD_SET_KEY_HEX, hex, 64, ZLRS_MGMT_E_PARAM);
-	hex[0] = 'a';
-	ack(ZLRS_MGMT_CMD_SET_KEY_HEX, hex, 64, 0);
-	uint8_t key[ZLRS_KEY_LEN];
-	zassert_true(zlrs_persist_get_root_key(key));
-	zassert_equal(key[0], 0xAA);
-	ack(ZLRS_MGMT_CMD_SET_PHRASE, NULL, 0, ZLRS_MGMT_E_PARAM);
-	const uint8_t phrase[] = "mgmt-native";
-	ack(ZLRS_MGMT_CMD_SET_PHRASE, phrase, sizeof(phrase) - 1, 0);
-	uint8_t expected[32];
-	zlrs_root_key_from_phrase((const char *)phrase, expected);
-	zassert_true(zlrs_persist_get_root_key(key));
-	zassert_mem_equal(key, expected, sizeof(expected));
-	zassert_equal(credential_applies, 2);
-	ack(ZLRS_MGMT_CMD_PAIR, NULL, 0, 0);
-	zassert_equal(pairs, 2);
-	zlrs_mgmt_parser_t p = request(ZLRS_MGMT_CMD_STATUS, NULL, 0);
-	zlrs_mgmt_status_t status;
-	zassert_true(zlrs_mgmt_status_decode(ZLRS_MGMT_PAYLOAD(&p), p.payload_len, &status));
-	zassert_equal(p.payload_len, ZLRS_MGMT_STATUS_LEN);
-	zassert_equal(status.role,
-		      ZLRS_ROLE_LEADER); /* Running role; saved role is Follower until reboot. */
-	zassert_equal(status.data_baud, 230400);
-	zassert_equal(status.tx_power_dbm, 12);
-	zassert_equal(status.temperature_centi_c, 2675);
-	zassert_equal(status.rssi_dbm, -48);
-	zassert_equal(status.peer_rssi_dbm, -51);
-	zassert_equal(status.peer_lq_percent, 97);
-	zassert_equal(status.active_power_dbm, -9);
-	zassert_equal(status.power_floor_dbm, -17);
-	zassert_true(status.flags & ZLRS_MGMT_FLAG_POWER_FIXED);
-	zassert_equal(status.tx_frames, 1024);
-	zassert_equal(status.rx_crc_errors, 24);
-	zassert_equal(status.frequency_hz, 2478000000U);
-	zassert_equal(status.hop_index, 236);
-	zassert_equal(radio_refreshes, 1);
-	zassert_equal(status.radio_temperature_centi_c, -125);
-	zassert_equal(status.radio_xosc_temperature_centi_c, 3125);
-	zassert_equal(status.radio_vbat_mv, 3301);
-	zassert_equal(status.radio_version_major, 1);
-	zassert_equal(status.radio_version_minor, 0x18);
-	zassert_equal(status.radio_chip_mode, 2);
-	zassert_equal(status.radio_command_status, 2);
-	zassert_equal(status.radio_reset_status, 1);
-	zassert_equal(status.radio_valid, 0x3F);
-	zassert_equal(status.radio_errors, 0x8401);
-	zassert_equal(status.radio_irq, 0xFEDCBA98U);
-	p = request(ZLRS_MGMT_CMD_BUILD, NULL, 0);
-	zassert_equal(p.cmd, ZLRS_MGMT_CMD_BUILD_RESP);
-	confirm_rc = -EIO;
-	ack(ZLRS_MGMT_CMD_CONFIRM, NULL, 0, ZLRS_MGMT_E_STORE);
-	confirm_rc = 0;
-	ack(ZLRS_MGMT_CMD_CONFIRM, NULL, 0, 0);
-	zassert_equal(confirms, 2);
-	ack(ZLRS_MGMT_CMD_RECOVERY, NULL, 0, ZLRS_MGMT_E_STATE);
-	p = request(ZLRS_MGMT_CMD_LOG_INFO, NULL, 0);
-	zassert_equal(p.cmd, ZLRS_MGMT_CMD_LOG_INFO_RESP);
-	zassert_equal(p.payload_len, 8);
-	zassert_equal(ZLRS_MGMT_PAYLOAD(&p)[2], 7);
-	const uint8_t read[] = {0, 1, 0, 0, 0, 4};
-	p = request(ZLRS_MGMT_CMD_LOG_READ, read, 6);
-	zassert_equal(p.cmd, ZLRS_MGMT_CMD_LOG_DATA_RESP);
-	zassert_mem_equal(ZLRS_MGMT_PAYLOAD(&p) + 5, "ello", 4);
-	ack(ZLRS_MGMT_CMD_LOG_READ, read, 5, ZLRS_MGMT_E_PARAM);
-	const uint8_t big[] = {0, 0, 0, 0, 0, 81};
-	ack(ZLRS_MGMT_CMD_LOG_READ, big, 6, ZLRS_MGMT_E_PARAM);
-	const uint8_t io_error[] = {0, 6, 0, 0, 0, 4};
-	ack(ZLRS_MGMT_CMD_LOG_READ, io_error, 6, ZLRS_MGMT_E_STATE);
-	const uint8_t wrong_index[] = {1, 0, 0, 0, 0, 4};
-	ack(ZLRS_MGMT_CMD_LOG_READ, wrong_index, 6, ZLRS_MGMT_E_PARAM);
-	ack(ZLRS_MGMT_CMD_NEW_DEV_ID, read, 1, ZLRS_MGMT_E_PARAM);
-	uint8_t old_id[ZLRS_DEV_ID_LEN];
-	zassert_true(zlrs_persist_get_device_id(old_id));
-	fail_write = true;
-	ack(ZLRS_MGMT_CMD_NEW_DEV_ID, NULL, 0, ZLRS_MGMT_E_STORE);
-	uint8_t id[ZLRS_DEV_ID_LEN];
-	zassert_true(zlrs_persist_get_device_id(id));
-	zassert_mem_equal(id, old_id, sizeof(old_id));
-	zassert_mem_equal(rf.dev_id, old_id, sizeof(old_id));
-	fail_write = false;
-	const unsigned int before = credential_applies;
-	ack(ZLRS_MGMT_CMD_NEW_DEV_ID, NULL, 0, 0);
-	zassert_equal(credential_applies, before + 1);
-	ack(ZLRS_MGMT_CMD_ERASE_PAIR, NULL, 0, 0);
-	ack(ZLRS_MGMT_CMD_FACTORY_RESET, NULL, 0, 0);
-	zassert_false(rf.configured);
-	ack(0x7e, NULL, 0, ZLRS_MGMT_E_UNKNOWN);
-	ack(ZLRS_MGMT_CMD_EXIT, NULL, 0, 0);
-}
-
-ZTEST(commands, test_pair_busy_is_retryable)
-{
-	zassert_ok(zlrs_persist_init());
-	ack(ZLRS_MGMT_CMD_ENTER, NULL, 0, ZLRS_MGMT_OK);
-	const uint8_t key[ZLRS_KEY_LEN] = {0x42};
-	zassert_ok(zlrs_persist_set_root_key(key));
-	zlrs_rf_credentials();
-	pair_rc = -EAGAIN;
-	ack(ZLRS_MGMT_CMD_PAIR, NULL, 0, ZLRS_MGMT_E_BUSY);
-	pair_rc = 0;
-	ack(ZLRS_MGMT_CMD_PAIR, NULL, 0, ZLRS_MGMT_OK);
-	ack(ZLRS_MGMT_CMD_EXIT, NULL, 0, ZLRS_MGMT_OK);
+	zassert_ok(zlrs_mgmt_init());
+	rf = initial_rf;
+	k_sem_give(&start_owner);
+	return NULL;
 }
 
 static void before(void *unused)
 {
 	ARG_UNUSED(unused);
 	fail_write = false;
-	confirm_rc = 0;
-	pair_rc = 0;
-	credential_applies = pairs = confirms = radio_refreshes = 0;
-	watchdog_disarms = 0U;
+	zassert_ok(zlrs_mgmt_request(ZLRS_MGMT_CMD_EXIT, NULL, 0, NULL));
 	rf = initial_rf;
-	zassert_ok(zlrs_persist_init());
-	zassert_ok(zlrs_persist_factory_reset());
-	zassert_ok(zlrs_persist_init());
-	zassert_ok(zlrs_mgmt_init());
-	(void)uart_emul_flush_tx_data(mgmt_uart);
-	(void)uart_emul_flush_rx_data(mgmt_uart);
+	credential_applies = pairs = radio_refreshes = watchdog_disarms = 0;
 }
 
-ZTEST_SUITE(commands, NULL, NULL, before, NULL, NULL);
-
-static void send_online(uint8_t cmd, const uint8_t *body, uint8_t len)
+ZTEST(mgmt, test_online_snapshot_never_refreshes_radio)
 {
-	uint8_t frame[ZLRS_MGMT_FRAME_MAX_LEN];
-	const uint8_t size = zlrs_mgmt_encode(frame, sizeof(frame), cmd, body, len);
-	zassert_equal(uart_emul_put_rx_data(mgmt_uart, frame, size), size);
-	k_msleep(1);
-}
-
-static zlrs_mgmt_parser_t receive_online(void)
-{
-	zlrs_mgmt_parser_t parser;
-	zlrs_mgmt_parser_init(&parser);
-	for (unsigned int wait = 0U; wait < 100U; wait++) {
-		zassert_false(zlrs_mgmt_process_idle(), "query requested RF maintenance");
-		uint8_t byte;
-		while (uart_emul_get_tx_data(mgmt_uart, &byte, 1U) == 1U) {
-			if (zlrs_mgmt_feed(&parser, byte) == 1) {
-				return parser;
-			}
-		}
-		uart_irq_tx_enable(mgmt_uart);
-		k_msleep(1);
+	struct zlrs_mgmt_reply reply;
+	for (int i = 0; i < 3; i++) {
+		zassert_ok(zlrs_mgmt_request(ZLRS_MGMT_CMD_OBSERVE, NULL, 0, &reply));
+		zassert_equal(reply.status.frequency_hz, initial_rf.frequency_hz);
+		zassert_equal(reply.status.rssi_dbm, initial_rf.rssi_dbm);
+		zassert_equal(reply.status.tx_frames, initial_rf.tx_frames);
+		zassert_equal(reply.hardware_ms, 17);
 	}
-	zassert_unreachable("online reply did not complete");
-	return parser;
+	zassert_equal(radio_refreshes, 0);
+	zassert_equal(watchdog_disarms, 0);
+	uint8_t extra = 1;
+	zassert_equal(zlrs_mgmt_request(ZLRS_MGMT_CMD_OBSERVE, &extra, 1, &reply), -EINVAL);
+	zassert_equal(zlrs_mgmt_request(ZLRS_MGMT_CMD_PAIR, NULL, 0, NULL), -EACCES);
 }
 
-ZTEST(commands, test_online_snapshot_does_not_touch_hardware)
+ZTEST(mgmt, test_enter_mutate_exit_owner_handoff)
 {
-	send_online(ZLRS_MGMT_CMD_OBSERVE, NULL, 0U);
-	const zlrs_mgmt_parser_t reply = receive_online();
-	zassert_equal(reply.cmd, ZLRS_MGMT_CMD_OBSERVE_RESP);
-	zassert_equal(reply.payload_len, ZLRS_MGMT_OBSERVE_HEADER_LEN + ZLRS_MGMT_STATUS_LEN);
-	const uint8_t *body = ZLRS_MGMT_PAYLOAD(&reply);
-	zassert_true(sys_get_le32(body) <= k_uptime_get_32());
-	zassert_equal(sys_get_le32(body + 4U), initial_rf.hardware_sampled_ms);
-	zlrs_mgmt_status_t status;
-	zassert_true(zlrs_mgmt_status_decode(body + ZLRS_MGMT_OBSERVE_HEADER_LEN,
-					     ZLRS_MGMT_STATUS_LEN, &status));
-	zassert_equal(status.tx_frames, initial_rf.tx_frames);
-	zassert_equal(status.temperature_centi_c, initial_rf.temperature_centi_c);
-	zassert_equal(radio_refreshes, 0U);
-	zassert_equal(watchdog_disarms, 0U);
-
-	send_online(ZLRS_MGMT_CMD_STATUS, NULL, 0U);
-	const zlrs_mgmt_parser_t legacy = receive_online();
-	zassert_equal(legacy.cmd, ZLRS_MGMT_CMD_STATUS_RESP);
-	zassert_equal(legacy.payload_len, ZLRS_MGMT_STATUS_LEN);
-	send_online(ZLRS_MGMT_CMD_BUILD, NULL, 0U);
-	zassert_equal(receive_online().cmd, ZLRS_MGMT_CMD_BUILD_RESP);
+	zassert_ok(zlrs_mgmt_request(ZLRS_MGMT_CMD_ENTER, NULL, 0, NULL));
+	struct zlrs_mode mode;
+	zassert_ok(zbus_chan_read(&zlrs_mode_chan, &mode, K_MSEC(10)));
+	zassert_true(mode.session);
+	zassert_equal(watchdog_disarms, 1);
+	const uint8_t key[] = "4242424242424242424242424242424242424242424242424242424242424242";
+	zassert_ok(zlrs_mgmt_request(ZLRS_MGMT_CMD_SET_KEY_HEX, key, sizeof(key) - 1, NULL));
+	zassert_equal(credential_applies, 1);
+	zassert_ok(zlrs_mgmt_request(ZLRS_MGMT_CMD_PAIR, NULL, 0, NULL));
+	zassert_equal(pairs, 1);
+	struct zlrs_mgmt_reply reply;
+	zassert_ok(zlrs_mgmt_request(ZLRS_MGMT_CMD_STATUS, NULL, 0, &reply));
+	zassert_equal(radio_refreshes, 1);
+	zassert_ok(zlrs_mgmt_request(ZLRS_MGMT_CMD_EXIT, NULL, 0, NULL));
+	zassert_ok(zbus_chan_read(&zlrs_mode_chan, &mode, K_MSEC(10)));
+	zassert_false(mode.session);
+	zassert_equal(zlrs_mgmt_request(ZLRS_MGMT_CMD_PAIR, NULL, 0, NULL), -EACCES);
 }
 
-ZTEST(commands, test_online_rejects_mutations_and_malformed_queries)
+ZTEST(mgmt, test_invalid_and_failed_writes_do_not_apply_credentials)
 {
-	const uint8_t commands[] = {ZLRS_MGMT_CMD_PAIR, ZLRS_MGMT_CMD_FACTORY_RESET,
-				    ZLRS_MGMT_CMD_SET_KEY_HEX, ZLRS_MGMT_CMD_CONFIRM};
-	for (size_t i = 0U; i < ARRAY_SIZE(commands); i++) {
-		send_online(commands[i], NULL, 0U);
-		const zlrs_mgmt_parser_t reply = receive_online();
-		zassert_equal(reply.cmd, ZLRS_MGMT_CMD_ACK);
-		zassert_equal(ZLRS_MGMT_PAYLOAD(&reply)[0], commands[i]);
-		zassert_equal(ZLRS_MGMT_PAYLOAD(&reply)[1], ZLRS_MGMT_E_STATE);
-	}
-	const uint8_t extra = 0U;
-	send_online(ZLRS_MGMT_CMD_OBSERVE, &extra, 1U);
-	const zlrs_mgmt_parser_t bad = receive_online();
-	zassert_equal(bad.cmd, ZLRS_MGMT_CMD_ACK);
-	zassert_equal(ZLRS_MGMT_PAYLOAD(&bad)[1], ZLRS_MGMT_E_PARAM);
-	zassert_equal(pairs + confirms + credential_applies + radio_refreshes + watchdog_disarms,
-		      0U);
-}
-
-ZTEST(commands, test_online_flood_preserves_replies_under_backpressure)
-{
-	for (unsigned int i = 0U; i < 8U; i++) {
-		send_online(ZLRS_MGMT_CMD_OBSERVE, NULL, 0U);
-	}
-	/* Leave the emulated FIFO full; the owner's reply/ring must retain whole frames. */
-	for (unsigned int i = 0U; i < 16U; i++) {
-		zassert_false(zlrs_mgmt_process_idle());
-		k_msleep(1);
-	}
-	for (unsigned int i = 0U; i < 8U; i++) {
-		const zlrs_mgmt_parser_t reply = receive_online();
-		zassert_equal(reply.cmd, ZLRS_MGMT_CMD_OBSERVE_RESP);
-		zassert_equal(reply.payload_len,
-			      ZLRS_MGMT_OBSERVE_HEADER_LEN + ZLRS_MGMT_STATUS_LEN);
-	}
-	zassert_equal(radio_refreshes + watchdog_disarms, 0U);
-}
-
-ZTEST(commands, test_failed_factory_reset_invalidates_active_credentials)
-{
-	zassert_ok(zlrs_persist_init());
-	const uint8_t key[ZLRS_KEY_LEN] = {0x42};
-	zassert_ok(zlrs_persist_set_root_key(key));
-	zlrs_rf_credentials();
-	zassert_true(rf.configured);
-	ack(ZLRS_MGMT_CMD_ENTER, NULL, 0, ZLRS_MGMT_OK);
+	zassert_ok(zlrs_mgmt_request(ZLRS_MGMT_CMD_ENTER, NULL, 0, NULL));
+	const uint8_t invalid = 0xff;
+	zassert_equal(zlrs_mgmt_request(ZLRS_MGMT_CMD_SET_PROFILE, &invalid, 1, NULL), -EINVAL);
+	const uint8_t key[] = "4242424242424242424242424242424242424242424242424242424242424242";
 	fail_write = true;
-	/* Erase succeeds but writing the new layout marker fails. */
-	ack(ZLRS_MGMT_CMD_FACTORY_RESET, NULL, 0, ZLRS_MGMT_E_STORE);
+	zassert_equal(zlrs_mgmt_request(ZLRS_MGMT_CMD_SET_KEY_HEX, key, sizeof(key) - 1, NULL),
+		      -EIO);
 	fail_write = false;
-	zassert_false(rf.configured || rf.paired);
-	const uint8_t empty_id[ZLRS_DEV_ID_LEN] = {0};
-	zassert_mem_equal(rf.dev_id, empty_id, sizeof(empty_id));
-	ack(ZLRS_MGMT_CMD_EXIT, NULL, 0, ZLRS_MGMT_OK);
+	zassert_equal(credential_applies, 0);
+	zassert_equal(zlrs_mgmt_request(255, NULL, 0, NULL), -ENOTSUP);
+	zassert_ok(zlrs_mgmt_request(ZLRS_MGMT_CMD_EXIT, NULL, 0, NULL));
 }
+
+static enum mgmt_cb_return notify(uint32_t event, void *data, size_t size, int expected)
+{
+	int32_t error = 0;
+	uint16_t group = 0;
+	const enum mgmt_cb_return result = mgmt_callback_notify(event, data, size, &error, &group);
+	zassert_equal(error, expected, "event 0x%x: got %d, expected %d", event, error, expected);
+	return result;
+}
+
+ZTEST(mgmt, test_native_img_fs_and_os_callback_groups)
+{
+	struct mgmt_evt_op_cmd_arg cmd = {.group = MGMT_GROUP_ID_IMAGE, .op = MGMT_OP_WRITE};
+	zassert_equal(notify(MGMT_EVT_OP_CMD_RECV, &cmd, sizeof(cmd), MGMT_ERR_EACCESSDENIED),
+		      MGMT_CB_ERROR_RC);
+	cmd.op = MGMT_OP_READ;
+	zassert_equal(notify(MGMT_EVT_OP_CMD_RECV, &cmd, sizeof(cmd), 0), MGMT_CB_OK);
+	struct fs_mgmt_file_access file = {.filename = CONFIG_LOG_BACKEND_FS_DIR "/log.0000",
+					   .access = FS_MGMT_FILE_ACCESS_READ};
+	zassert_equal(notify(MGMT_EVT_OP_FS_MGMT_FILE_ACCESS, &file, sizeof(file),
+			     MGMT_ERR_EACCESSDENIED),
+		      MGMT_CB_ERROR_RC);
+	struct os_mgmt_reset_data reset = {0};
+	zassert_equal(notify(MGMT_EVT_OP_OS_MGMT_RESET, &reset, sizeof(reset), 0), MGMT_CB_OK);
+	zassert_equal(watchdog_disarms, 1);
+	zassert_equal(notify(MGMT_EVT_OP_FS_MGMT_FILE_ACCESS, &file, sizeof(file), 0), MGMT_CB_OK);
+	file.access = FS_MGMT_FILE_ACCESS_WRITE;
+	zassert_equal(notify(MGMT_EVT_OP_FS_MGMT_FILE_ACCESS, &file, sizeof(file),
+			     MGMT_ERR_EACCESSDENIED),
+		      MGMT_CB_ERROR_RC);
+	file.access = FS_MGMT_FILE_ACCESS_READ;
+	file.filename = "/lfs/../storage";
+	zassert_equal(notify(MGMT_EVT_OP_FS_MGMT_FILE_ACCESS, &file, sizeof(file),
+			     MGMT_ERR_EACCESSDENIED),
+		      MGMT_CB_ERROR_RC);
+	zassert_ok(zlrs_mgmt_request(ZLRS_MGMT_CMD_EXIT, NULL, 0, NULL));
+}
+
+ZTEST_SUITE(mgmt, NULL, setup, before, NULL, NULL);

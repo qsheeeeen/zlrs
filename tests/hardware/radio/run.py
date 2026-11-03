@@ -83,7 +83,7 @@ def restore_images(identities, previous):
     # Request every rollback before waiting for a board that may be unavailable.
     for identity in identities:
         try:
-            path = f"/dev/serial/by-id/usb-zlrs_ZLRS_{identity}-if04"
+            path = f"/dev/serial/by-id/usb-zlrs_ZLRS_{identity}-if02"
             command(path, Op.RESTORE)
         except Exception as error:
             result.setdefault("restore_errors", {}).setdefault(identity, {})["request"] = str(error)
@@ -122,15 +122,12 @@ class OnlineObservers:
         record = self.records[identity]
         try:
             path = f"/dev/serial/by-id/usb-zlrs_ZLRS_{identity}-if02"
-            with serial.Serial(path, 115200, timeout=2, write_timeout=2) as port:
-                client = mgmt.ManagementClient(port)
+            with mgmt.ManagementClient(path, timeout=2) as client:
                 while not self.done.is_set():
                     before = time.monotonic()
-                    payload = client.request(mgmt.CMD_OBSERVE, response=mgmt.OBSERVE_RESP)
-                    if len(payload) != mgmt.OBSERVE_HEADER_LEN + mgmt.STATUS_LEN:
-                        raise RuntimeError("Invalid online observation length")
-                    status = mgmt.decode_status(payload[mgmt.OBSERVE_HEADER_LEN:])
-                    sample = {"uptime_ms": int.from_bytes(payload[:4], "little"),
+                    payload = client.request(mgmt.CMD_OBSERVE)
+                    status = mgmt.decode_status(payload["status"])
+                    sample = {"uptime_ms": payload["uptime_ms"],
                               "tx_frames": status.tx_frames, "rx_frames": status.rx_frames,
                               "missed_slots": status.missed_slots, "radio_fail": status.radio_fail}
                     record.setdefault("first", sample)
@@ -138,7 +135,7 @@ class OnlineObservers:
                     record["latency_ms"].append((time.monotonic() - before) * 1000)
                     record["states"].add(status.state)
                     record["phys"].add(status.data_phy)
-                    record["hardware_samples"].add(int.from_bytes(payload[4:8], "little"))
+                    record["hardware_samples"].add(payload["hardware_ms"])
                     if not status.flags & 4:
                         raise RuntimeError("Online query observed a retired DATA session")
                     self.done.wait(max(0, 1 / self.hz - (time.monotonic() - before)))
@@ -232,7 +229,7 @@ def main():
                 wait_image(identity, expected)
         with contextlib.ExitStack() as stack, ThreadPoolExecutor(2) as pool:
             for identity in identities:
-                path = Path("/dev/serial/by-id") / f"usb-zlrs_ZLRS_{identity}-if04"
+                path = Path("/dev/serial/by-id") / f"usb-zlrs_ZLRS_{identity}-if02"
                 deadline = time.monotonic() + 45
                 while not path.exists():
                     if time.monotonic() > deadline:

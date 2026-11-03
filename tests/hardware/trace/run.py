@@ -40,7 +40,7 @@ def wait_hash(identity, expected, timeout=60):
 class Acceptance:
     def __init__(self, args):
         self.args = args
-        self.smp_port = f"/dev/serial/by-id/usb-zlrs_ZLRS_{args.serial}-if04"
+        self.smp_port = f"/dev/serial/by-id/usb-zlrs_ZLRS_{args.serial}-if02"
         self.output = args.out
         self.output.mkdir(parents=True, exist_ok=True)
         self.log = self.output / "control.jsonl"
@@ -67,7 +67,7 @@ class Acceptance:
         return self.control("status")
 
     def reboot(self, identity=None):
-        port = f"/dev/serial/by-id/usb-zlrs_ZLRS_{identity or self.args.serial}-if04"
+        port = f"/dev/serial/by-id/usb-zlrs_ZLRS_{identity or self.args.serial}-if02"
         subprocess.run([self.smpmgr, "--port", port, "os", "reset"],
                        check=True, capture_output=True, timeout=15)
 

@@ -16,7 +16,6 @@
 
 #include <string.h>
 
-#include "zlrs/mgmt/mgmt.h"
 #include "zlrs/link/link.h"
 #include "zlrs/proto/crypto.h"
 #include "zlrs/proto/frame.h"
@@ -228,42 +227,6 @@ static void fuzz_link_rx(rng_t *rng)
 		  0U);
 }
 
-/* ---- management frames: random streams fed byte by byte ---- */
-
-static void fuzz_byte_parsers(rng_t *rng)
-{
-	zlrs_mgmt_parser_t cfg;
-	uint32_t cfg_frames = 0U;
-	uint32_t violations = 0U;
-
-	zlrs_mgmt_parser_init(&cfg);
-
-	for (uint32_t i = 0; i < FUZZ_ITERS; i++) {
-		if ((rng_next(rng) % 64U) == 0U) {
-			zlrs_mgmt_parser_init(&cfg); /* resynchronise now and then */
-		}
-		switch (zlrs_mgmt_feed(&cfg, (uint8_t)rng_next(rng))) {
-		case 1: {
-			cfg_frames++;
-			if (cfg.payload_len > ZLRS_MGMT_PAYLOAD_MAX_LEN ||
-			    ZLRS_MGMT_PAYLOAD(&cfg) + cfg.payload_len > cfg.buf + sizeof(cfg.buf)) {
-				violations++;
-			}
-			break;
-		}
-		case 0:
-		case -1:
-			break;
-		default:
-			violations++;
-			break;
-		}
-	}
-
-	EXPECT_EQ(violations, 0U);
-	EXPECT_LT(cfg_frames, FUZZ_ITERS); /* a random stream must not produce frame after frame */
-}
-
 TEST(MalformedInput, FrameRoundTrips)
 {
 	rng_t rng{.state = 0x2545F491U};
@@ -276,11 +239,4 @@ TEST(MalformedInput, LinkRejectsMalformedInput)
 	rng_t rng{.state = 0x12345678U};
 	SCOPED_TRACE("seed=0x12345678U");
 	fuzz_link_rx(&rng);
-}
-
-TEST(MalformedInput, ManagementParserResynchronizes)
-{
-	rng_t rng{.state = 0x87654321U};
-	SCOPED_TRACE("seed=0x87654321U");
-	fuzz_byte_parsers(&rng);
 }

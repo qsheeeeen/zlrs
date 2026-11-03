@@ -1,6 +1,6 @@
 # Air and management protocols
 
-This specification defines air protocol version 12 and USB management version 5.
+This specification defines air protocol version 12 and native MCUmgr USB management.
 Peers require matching air version, band mode, SubG region, security profile and
 timing. Identity, key derivation and trust boundaries are specified in
 [security](08-security.md); service ownership in [architecture](05-architecture.md).
@@ -313,88 +313,47 @@ or pause duration reaches the contact-loss threshold. Short pauses without plans
 retain capture and active band. Accepted DATA stays queued; USB backpressure and
 UART overflow accounting remain in effect.
 
-## USB management framing
+## USB management (MCUmgr SMP)
 
-```text
-A5 5A | version(1) | command(1) | payload_length(1) | payload | CRC8(1)
-```
+All images use Zephyr's native UART SMP transport on management CDC `if02`.
+Debug CDC `if04` carries UART kernel logs. SMP owns framing, CRC, CBOR, response
+matching and file transfer offsets. No legacy management protocol is accepted.
+Local USB access remains the trust boundary.
 
-Version is 5. Payload is at most 99 bytes and a full frame at most 105. CRC8 uses
-DVB-S2 polynomial `0xD5`, initial zero, over version, command, length and payload.
-This CRC detects corruption; local USB access is the trust boundary. Multibyte
-management integers are little endian. ACK command `0x80` carries the original
-command and status: 0 success, 1 parameter, 2 state, 3 storage, 4 unknown command,
-5 temporarily busy (retry). PAIR returns busy when no complete nonce is ready;
-it reports success only after pairing has started.
+Standard groups provide OS information/reset (group 0), image state/hash/confirm
+(group 1), and read-only file downloads (group 8). OS reset with `boot_mode=1`
+requests MCUboot recovery. Image mutations and FS access require ENTER; uploads
+are performed in MCUboot recovery by the existing update workflow.
 
-| Request | ID | Payload / effect |
+Product group 66, command 0 accepts a CBOR map `{op: uint, value: bstr}` and
+returns `{result: int, ...}`. `result` is zero or negative Zephyr errno. Unsupported operations return the
+standard SMP `ENOTSUP` error. The optional
+value defaults to empty. Reads with an empty map return STATUS.
+
+| Operation | ID | Value / response |
 | --- | --- | --- |
-| ENTER / STATUS / PAIR / ERASE_PAIR | `00` / `01` / `02` / `03` | No payload |
-| SET_KEY_HEX / SET_PHRASE | `04` / `05` | 64 ASCII hex characters / 1–32 phrase bytes |
-| BUILD / IMAGE_HASH | `06` / `07` | No payload |
-| SET_BAUD | `08` | u32 baud |
-| SET_REGION / SET_ROLE / SET_PROFILE / SET_BAND | `09` / `0A` / `0B` / `0C` | One byte |
-| NEW_DEV_ID / EXIT / FACTORY_RESET / RECOVERY / CONFIRM | `0D`–`11` | No payload |
-| LOG_INFO | `12` | No payload |
-| LOG_READ | `13` | File index:u8, offset:u32, requested length:u8, at most 80 bytes |
-| DEBUG_REPORT | `14` | Report:u8, offset:u16; debug images only |
-| OBSERVE | `15` | No payload; online status with sampling times |
+| ENTER / STATUS / PAIR / ERASE_PAIR | 0 / 1 / 2 / 3 | Empty |
+| SET_KEY_HEX / SET_PHRASE | 4 / 5 | 64 hex bytes / 1–32 UTF-8 bytes |
+| SET_BAUD | 8 | Four little-endian bytes |
+| SET_REGION / SET_ROLE / SET_PROFILE / SET_BAND | 9 / 10 / 11 / 12 | One byte |
+| NEW_DEV_ID / EXIT / FACTORY_RESET | 13 / 14 / 15 | Empty |
+| LOG_INFO | 18 | Empty; `files` is an array of `{path, size}` |
+| DEBUG_REPORT | 20 | One report ID byte (0 link, 1 rate, 2 radio, 3 power); complete `report` text |
+| OBSERVE | 21 | Empty; same response as STATUS |
 
-Responses are ACK `80`, STATUS `81`, BUILD `82`, IMAGE_HASH `83`, LOG_INFO `84`,
-LOG_DATA `85`, DEBUG_REPORT `86` and OBSERVE `87`. Build text is at most 32 bytes and image hash
-is 32 bytes. LOG_INFO carries count:u8, newest index:u8, then file number:u16 and
-size:u32 pairs. LOG_DATA echoes file index and offset before the bytes.
-DEBUG_REPORT carries report:u8, offset:u16, total:u16 and at most 85 text bytes;
-report IDs 0–3 mean link, rate, radio and power.
+STATUS and OBSERVE return named CBOR `status` fields, plus `uptime_ms` and
+`hardware_ms` sampling timestamps. Field names and units match the application
+status structure in `app/src/mgmt_types.h`. IDs are byte strings; other fields are
+integers. There is no fixed byte layout or manual chunk protocol.
 
-STATUS, OBSERVE, BUILD and IMAGE_HASH also work outside a maintenance session.
-The application owner services at most one online query between frames, without
-pausing RF, refreshing chip measurements, or disarming the watchdog. Writes and
-debug report formatting still require ENTER. OBSERVE_RESP contains sample uptime:u32,
-hardware sample uptime:u32 and the unchanged 91-byte STATUS_RESP payload. The
-hardware timestamp covers the cached MCU/radio observations taken at startup or
-the last maintenance refresh; zero means unavailable. Uptime subtraction wraps
-modulo 2^32. The link fields are captured together on the owner thread.
-
-The host uses online queries by default. `--refresh` or `--keep` requests an
-explicit maintenance session. If older firmware rejects the query with state or
-unknown-command status, the host enters maintenance, uses the original command,
-and exits. Legacy STATUS_RESP remains 91 bytes and its framing is unchanged.
-
-Successful ENTER follows radio pause and synchronous log flush. Repeated ENTER
-flushes again. The session exits on EXIT or 300 seconds of inactivity. Command
-semantics and accepted settings are specified in [firmware](06-firmware.md).
+The RF owner executes one queued product request at a frame boundary. Online
+status never refreshes SPI/ADC measurements or disarms the watchdog. Mutations,
+reports and log inventory require maintenance. Successful ENTER follows RF pause
+and synchronous log flush; EXIT resumes RF. Idle sessions expire after 300 seconds.
+FS access is restricted to log files and committed trace artifacts, and rejects
+writes and other paths. `--refresh` enters maintenance for fresh measurements.
 
 ## Management status
-
-STATUS_RESP is 91 bytes, extending the original 90-byte response by one PHY byte.
-The host also decodes legacy 90-byte status with unavailable PHY information,
-so rollback to an older confirmed image remains observable. Power values are signed eight-bit dBm, RSSI and
-temperature are signed 16-bit values, and counters are u32.
-
-| Offset | Bytes | Field |
-| --- | --- | --- |
-| 0 | 4 | Management version, role, link state, flags |
-| 4 | 8 | Device ID, peer ID |
-| 12 | 4 | Local LQ, SubG hardware SKU, saved region, active-band maximum power |
-| 16 | 4 | Saved UART baud |
-| 20 | 1 | Active profile |
-| 21 | 4 | Local RSSI, peer RSSI; zero means unavailable |
-| 25 | 3 | Peer LQ, active power setpoint, effective floor |
-| 28 | 2 | MCU die temperature, 0.01 °C; `INT16_MIN` means unavailable |
-| 30 | 32 | TX frames, RX frames, CRC errors, authentication errors, ARQ retries, DATA drops, missed slots, radio failures |
-| 62 | 4 | Current FHSS schedule frequency, Hz |
-| 66 | 2 | Hop index |
-| 68 | 4 | Frame period, µs |
-| 72 | 2 | LR2021 junction temperature, 0.01 °C |
-| 74 | 2 | LR2021 XOSC-area temperature, 0.01 °C |
-| 76 | 2 | LR2021 VBAT, mV |
-| 78 | 2 | LR2021 version major, minor |
-| 80 | 3 | Chip mode, last command status, reset source |
-| 83 | 1 | Sensor/status validity bits |
-| 84 | 2 | Latched chip error mask |
-| 86 | 4 | IRQ mask at the maintenance boundary |
-| 90 | 1 | Active modulation profile ID from the radio profile table |
 
 Flags: bit 0 root key, bit 1 pairing, bit 2 valid session, bit 3 active SubG,
 bit 4 automatic mode, bit 5 acquisition, bit 6 pending plan, bit 7 debug fixed power.

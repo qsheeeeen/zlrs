@@ -63,8 +63,5 @@ typedef enum {
 	ZLRS_DIAGNOSTIC_POWER,
 } zlrs_diagnostic_report_t;
 
-/* Begin a snapshot with offset 0, then read its chunks on the owner thread.
- * Returns 0, -EINVAL for an invalid report/offset/capacity, or -ENOSPC for report overflow.
- */
-int zlrs_diagnostics_read(zlrs_diagnostic_report_t report, uint16_t offset, uint8_t *out,
-			  uint8_t capacity, uint16_t *total, uint8_t *written);
+/* Snapshot and render on the owner thread; native SMP carries the complete text. */
+int zlrs_diagnostics_report(zlrs_diagnostic_report_t report, const char **text);

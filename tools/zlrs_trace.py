@@ -17,7 +17,7 @@ def configure_parser(parser):
     parser.add_argument("action", choices=("status", *OPERATIONS))
     parser.add_argument("duration_ms", nargs="?", type=bounded_int(10, 5000))
     targets = parser.add_mutually_exclusive_group()
-    targets.add_argument("--port", help="MCUmgr serial port (debug CDC if04)")
+    targets.add_argument("--port", help="MCUmgr serial port (management CDC if02)")
     targets.add_argument("--serial", help="module USB serial-number fragment")
     parser.add_argument("--baud", type=bounded_int(1, 4000000), default=115200)
     parser.add_argument("--timeout", type=positive_seconds, default=10.0)
@@ -31,7 +31,7 @@ def main(args, parser):
         port = args.port
     else:
         management = Path(mgmt.pick_targets(args, parser)[0])
-        port = str(management.with_name(management.name.removesuffix("-if02") + "-if04"))
+        port = str(management)
     fields = None if args.action == "status" else {"op": OPERATIONS[args.action]}
     if args.duration_ms is not None:
         fields["ms"] = args.duration_ms

@@ -9,7 +9,7 @@ is specified in [air protocol](07-protocol.md).
 
 Production firmware exposes DATA USB CDC at `if00` and management CDC at `if02`.
 The debug overlay enables an additional UART console CDC for kernel output and
-logs, also used for MCUmgr serial in trace and RF test firmware. No image has an
+logs. Native MCUmgr SMP uses management CDC `if02` in all images. No image has an
 interactive shell. MCUboot has a separate
 recovery CDC at `if00`.
 The DATA UART uses the board's assigned pins and stored baud rate.

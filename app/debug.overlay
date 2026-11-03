@@ -4,21 +4,15 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Devicetree overlay for debug builds: enable the console CDC the board keeps disabled
- * (cdc_acm_uart2; UART console/kernel logs and trace-build MCUmgr serial).
+ * (cdc_acm_uart2; UART console and kernel logs).
  *
  *   west build ... -- -DEXTRA_CONF_FILE=app/debug.conf \
  *                     -DDTC_OVERLAY_FILE=app/debug.overlay
  */
 
-/ {
-	chosen {
-		zephyr,uart-mcumgr = &cdc_acm_uart2;
-	};
-};
-
 &cdc_acm_uart2 {
 	status = "okay";
-	/* Keep space for UART kernel logs and serial SMP responses. */
+	/* Keep space for UART kernel logs. */
 	tx-fifo-size = <8192>;
 	hw-flow-control;
 };

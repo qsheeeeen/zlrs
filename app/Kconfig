@@ -34,7 +34,6 @@ config ZLRS_APP_CORE
 	select ZLRS_PROTO
 	select ZLRS_LINK
 	select ZLRS_REGION
-	select ZLRS_MGMT
 	help
 	  The protocol, data link, region and management modules every image carries. Optional ports
 	  and LEDs are described by devicetree; USB is selected by the board.

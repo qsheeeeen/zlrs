@@ -29,11 +29,11 @@ class TraceControlTests(unittest.TestCase):
                                         timeout=10.0, baud=115200)
         management.assert_not_called()
 
-    def test_status_is_read_and_uses_debug_cdc(self):
+    def test_status_is_read_and_uses_management_cdc(self):
         with patch.object(zlrs_trace.mgmt, "pick_targets", return_value=["/dev/usb-device-if02"]), \
                 patch.object(zlrs_trace, "request", return_value={"result": 0, "state": 2}) as request:
             self.invoke("status", "--serial", "device")
-        request.assert_called_once_with("/dev/usb-device-if04", 64, None, timeout=10.0, baud=115200)
+        request.assert_called_once_with("/dev/usb-device-if02", 64, None, timeout=10.0, baud=115200)
 
     def test_operation_failure_is_reported(self):
         with patch.object(zlrs_trace, "request", return_value={"result": -16, "state": 1}):

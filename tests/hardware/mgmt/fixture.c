@@ -4,7 +4,10 @@
 #include <errno.h>
 #include <stdbool.h>
 #include <zephyr/init.h>
-#include <zephyr/kvss/nvs.h>
+#include <zephyr/settings/settings.h>
+#include <zephyr/retention/bootmode.h>
+#include <string.h>
+#include <bootutil/bootutil_public.h>
 #include <zephyr/storage/flash_map.h>
 
 static uint8_t backup[PARTITION_SIZE(storage_partition)];
@@ -24,36 +27,40 @@ static int snapshot(void)
 
 SYS_INIT(snapshot, APPLICATION, 0);
 
-bool __wrap_boot_is_img_confirmed(void)
+void __wrap_zlrs_boot_check_rollback(bool fault)
 {
-	return true;
+	ARG_UNUSED(fault); /* Keep the test image unconfirmed and reachable until restoration. */
 }
 
-int __wrap_zlrs_boot_confirm(void)
+int __wrap_boot_set_next(const struct flash_area *area, bool active, bool confirm)
 {
+	ARG_UNUSED(area);
+	if (!active || !confirm) {
+		return BOOT_EBADIMAGE;
+	}
 	static bool once;
 	if (!once) {
 		once = true;
-		return -EIO;
+		return BOOT_EFLASH;
 	}
 	return 0; /* Deliberately never writes image_ok. */
 }
 
-ssize_t __real_nvs_write(struct nvs_fs *, uint16_t, const void *, size_t);
+int __real_settings_save_one(const char *, const void *, size_t);
 
-ssize_t __wrap_nvs_write(struct nvs_fs *fs, uint16_t id, const void *bytes, size_t len)
+int __wrap_settings_save_one(const char *name, const void *bytes, size_t len)
 {
 	static bool once;
-	if (id == 4 && len == 1 && !once) {
+	if (strcmp(name, "zlrs/role") == 0 && len == 1 && !once) {
 		once = true;
 		return -EIO;
 	}
-	return __real_nvs_write(fs, id, bytes, len);
+	return __real_settings_save_one(name, bytes, len);
 }
 
-int __real_zlrs_boot_recovery(void);
+int __real_bootmode_set(uint8_t mode);
 
-int __wrap_zlrs_boot_recovery(void)
+int __wrap_bootmode_set(uint8_t mode)
 {
 	if (!backed_up) {
 		return -EIO;
@@ -67,5 +74,5 @@ int __wrap_zlrs_boot_recovery(void)
 		}
 		flash_area_close(area);
 	}
-	return rc == 0 ? __real_zlrs_boot_recovery() : rc;
+	return rc == 0 ? __real_bootmode_set(mode) : rc;
 }

@@ -9,8 +9,9 @@ bench logs and unresolved observations belong in validation artifacts.
 
 Production acceptance uses P1, normal hopping, ARQ, automatic or explicitly fixed
 band selection, dynamic power and watchdog. Debug builds retain the UART console
-for kernel output and logs, and add diagnostic reports. Trace builds also use
-that CDC for MCUmgr serial. The air contract stays the same. Both peers require matching protocol,
+for kernel output and logs, and add diagnostic reports. All images use the
+management CDC (`if02`) for native MCUmgr SMP. The air contract stays the same.
+Both peers require matching protocol,
 band mode, SubG region, profile and timing.
 
 Build a debug image from the repository root:
@@ -52,6 +53,12 @@ with NVS. The shared storage contract tests cover native record loading, failed 
 full reinitialization after a read failure and resuming an interrupted reset.
 Hardware fixtures back up and restore the complete partition.
 
+Management uses native MCUmgr OS/IMG/FS plus product group 66. The firmware checks
+at compile time that SMP uses the management CDC. FS download chunks are limited
+to 256 bytes because Zephyr keeps a chunk on the SMP worker stack; the 8 KiB
+transport buffer also carries complete diagnostics. File export is read-only and
+requires an explicit maintenance session. UART kernel logs use their separate CDC.
+
 ## Observing a running link
 
 Management `status` reports local/peer RSSI and LQ, active-band power limits and
@@ -63,15 +70,12 @@ Management `status` groups observations as Link,
 Radio, Signal / Power, Traffic / Errors, Device / Configuration, Sensors and
 LR2021 snapshot. Radio places the active band and modulation beside frequency,
 frame period, capture and transition state. Modulation identifies the current
-FLRC rate or LoRa SF/BW. An older firmware's 90-byte status cannot report this
-field: the host prints `not reported (upgrade device firmware)` rather than
-inferring modulation from frequency or frame period. Upgrade both peers together
-to obtain the adaptive profiles and their live status.
+FLRC rate or LoRa SF/BW. The status is a named CBOR map.
+
 
 Management `status` uses an online query without pausing RF. It reads copied
 state; chip values remain the latest boot or maintenance sample, and their age
-is shown. Use `--refresh` to pause RF and refresh chip measurements. Older
-firmware may require a management-session fallback. Standby mode at a maintenance
+is shown. Use `--refresh` to pause RF and refresh chip measurements. Standby mode at a maintenance
 boundary is expected; it is not the preceding live RX/TX mode.
 
 Sensor labels identify their source: `MCU chip temp` is the main MCU's internal
@@ -101,8 +105,7 @@ The request is volatile and normal quality policy continues after the change.
 Follower and fixed-band requests are rejected. Test both directions with queued
 DATA, lost ACKs, missed announcements and a PHY mismatch; a simulated radio must
 reject packets with mismatched rate/modulation, even at the same frequency.
-Air version 12 requires both endpoints to be upgraded together. The new host
-tool retains decoding of the previous 90-byte management status for rollback.
+Air version 12 requires both endpoints to be upgraded together. The host and device require the native SMP management protocol.
 
 Delivery, PHY reception and session readiness are separate observations. An exact
 ARQ-delivered stream does not prove zero physical loss; LQ=100 is a finite
@@ -299,7 +302,7 @@ open. Storage failure must release the saver-owned pause. Capture expiry alone
 does not initiate maintenance or a Flash write.
 
 Export through Zephyr MCUmgr filesystem management over the debug CDC using
-the native UART SMP transport, with no shell backend. This requires trace-only MCUmgr/FS
+the native UART SMP transport, with no shell backend. This uses the common MCUmgr/FS
 configuration and a standard compatible host client. Allow read-only downloads
 of committed trace artifacts through the filesystem access hook; file mutation
 remains owned by the saver. Select the 4 GiB file-size encoding option because a
@@ -341,7 +344,7 @@ python "$ZEPHYR_BASE/scripts/tracing/trace_viewer.py" \
 python tools/zlrs.py exit --serial <serial>
 ```
 
-`SMP_PORT` identifies the debug UART console/MCUmgr CDC (`if04`); management control uses `if02`.
+`SMP_PORT` identifies the management CDC (`if02`); UART kernel logs remain on debug CDC `if04`.
 Run `python tools/zlrs.py exit --serial <serial>` after downloads to resume RF.
 Compare the downloaded file's SHA-256 with `capture.json`. A padded RAM dump can
 make the viewer flag undecoded tail bytes; complete coverage requires matching
@@ -525,7 +528,7 @@ Replace the example bus IDs with those from `usbipd.exe list`, and verify that
 both change from `Shared` to `Attached`. Use each board's USB serial and
 `/dev/serial/by-id` names for tests; `/dev/ttyACM*` numbering can change at every
 enumeration. Management is application interface `if02`, the debug/unit-test
-MCUmgr serial is `if04`, and MCUboot recovery is `if00`. These modes have different
+MCUmgr serial is `if02`, and MCUboot recovery is `if00`. These modes have different
 product strings and preserve the board's USB serial.
 
 Flashing and rollback reset USB. Before a hardware run, keep one foreground

@@ -68,16 +68,6 @@ int zlrs_log_info(zlrs_log_info_t *out)
 	return -ENODEV;
 }
 
-int zlrs_log_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *out, uint8_t *out_len)
-{
-	ARG_UNUSED(index);
-	ARG_UNUSED(offset);
-	ARG_UNUSED(len);
-	ARG_UNUSED(out);
-	ARG_UNUSED(out_len);
-
-	return -ENODEV;
-}
 #else
 
 LOG_MODULE_REGISTER(zlrs_log, CONFIG_APP_LOG_LEVEL);
@@ -95,6 +85,7 @@ static struct fs_mount_t log_mnt = {
 
 static bool log_mounted;
 
+/* Retry a failed mount before reinitializing the log partition. */
 static int log_store_mount(void);
 
 /* The ring, smallest file number first: that is the order the host exports them in */
@@ -212,49 +203,7 @@ int zlrs_log_info(zlrs_log_info_t *out)
 	return 0;
 }
 
-/* One chunk of one file. The caller (management protocol) bounds len; a short tail returns short. */
-int zlrs_log_read(uint8_t index, uint32_t offset, uint8_t len, uint8_t *out, uint8_t *out_len)
-{
-	char path[sizeof(LOG_MOUNT_POINT) + 16U];
-	struct fs_file_t file;
-	ssize_t got;
-	int rc;
-
-	if (index >= log_file_count || len == 0U) {
-		return -EINVAL;
-	}
-
-	(void)snprintf(path, sizeof(path), "%s/%s%04u", LOG_MOUNT_POINT,
-		       CONFIG_LOG_BACKEND_FS_FILE_PREFIX, log_files[index].num);
-
-	fs_file_t_init(&file);
-	rc = fs_open(&file, path, FS_O_READ);
-	if (rc != 0) {
-		return rc;
-	}
-
-	rc = fs_seek(&file, (off_t)offset, FS_SEEK_SET);
-	if (rc != 0) {
-		(void)fs_close(&file);
-		return -EINVAL;
-	}
-
-	got = fs_read(&file, out, len);
-	const int close_rc = fs_close(&file);
-	if (got < 0) {
-		return (int)got;
-	}
-
-	if (close_rc != 0) {
-		return close_rc;
-	}
-	*out_len = (uint8_t)got;
-
-	return 0;
-}
-
-/* Retry before erasing: a reset during a write leaves LittleFS work to do on the next mount, and
- * that must not cost the log of the boot that went wrong. */
+/* Retry a failed mount before reinitializing the log partition. */
 static int log_store_mount(void)
 {
 	int rc = -EIO;

@@ -1,52 +1,24 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
-#
-# zlrs management tool: talks to the device over the dedicated management CDC.
-#
-#   tools/zlrs.py status --port /dev/ttyACM1
-#   tools/zlrs.py set-phrase --port /dev/ttyACM1 "correct horse battery staple"
-#   python3 tests/tools/run.py --module zlrs_mgmt   # no device: check management framing
-#
-# Read-only queries leave RF running; --refresh requests fresh chip measurements in maintenance.
-# Older firmware falls back to an explicit management session when it rejects an online query.
-# The two USB CDCs are data and management (/dev/ttyACM0/1).
-# Framing and commands: doc/07-protocol.md#usb-management-framing.
-# Public wire definitions: include/zlrs/mgmt/mgmt.h.
-#
-# Standard library only; talking to a device needs pyserial (pip install pyserial).
-
+"""Product operations over native MCUmgr; OS, IMG and FS use standard smpclient requests."""
 import argparse
 from collections import namedtuple
 from contextlib import contextmanager
-import struct
+import asyncio
 import os
 import sys
 
 from zlrs_cli import HelpFormatter, bounded_int, positive_seconds, fields, heading, notice
 
-SOF = b"\xa5\x5a"
-VERSION = 5
-# Fields follow wire order, with explicit little-endian widths and signedness.
-STATUS_FIELDS = {
-    "version": "B", "role": "B", "state": "B", "flags": "B",
-    "dev_id": "4s", "peer_id": "4s", "lq_percent": "B", "band": "B",
-    "region": "B", "tx_power_dbm": "b", "data_baud": "I", "profile": "B",
-    "rssi_dbm": "h", "peer_rssi_dbm": "h", "peer_lq_percent": "B",
-    "active_power_dbm": "b", "power_floor_dbm": "b", "temperature_centi_c": "h",
-    "tx_frames": "I", "rx_frames": "I", "rx_crc_errors": "I", "rx_bad_tag": "I",
-    "tx_retries": "I", "data_drop_bytes": "I", "missed_slots": "I", "radio_fail": "I",
-    "frequency_hz": "I", "hop_index": "H", "frame_period_us": "I",
-    "radio_temperature_centi_c": "h", "radio_xosc_temperature_centi_c": "h",
-    "radio_vbat_mv": "H", "radio_version_major": "B", "radio_version_minor": "B",
-    "radio_chip_mode": "B", "radio_command_status": "B", "radio_reset_status": "B",
-    "radio_valid": "B", "radio_errors": "H", "radio_irq": "I",
-    "data_phy": "B",
-}
-STATUS_STRUCT = struct.Struct("<" + "".join(STATUS_FIELDS.values()))
-STATUS_LEN = STATUS_STRUCT.size
+STATUS_FIELDS = ('role', 'state', 'flags', 'dev_id', 'peer_id', 'lq_percent', 'band', 'region',
+ 'tx_power_dbm', 'data_baud', 'profile', 'rssi_dbm', 'peer_rssi_dbm', 'peer_lq_percent',
+ 'active_power_dbm', 'power_floor_dbm', 'temperature_centi_c', 'tx_frames', 'rx_frames',
+ 'rx_crc_errors', 'rx_bad_tag', 'tx_retries', 'data_drop_bytes', 'missed_slots', 'radio_fail',
+ 'frequency_hz', 'hop_index', 'frame_period_us', 'radio_temperature_centi_c',
+ 'radio_xosc_temperature_centi_c', 'radio_vbat_mv', 'radio_version_major',
+ 'radio_version_minor', 'radio_chip_mode', 'radio_command_status', 'radio_reset_status',
+ 'radio_valid', 'radio_errors', 'radio_irq', 'data_phy')
 Status = namedtuple("Status", STATUS_FIELDS)
-
 
 CMD_ENTER = 0x00
 CMD_STATUS = 0x01
@@ -67,19 +39,8 @@ CMD_FACTORY_RESET = 0x0F
 CMD_RECOVERY = 0x10
 CMD_CONFIRM = 0x11
 CMD_LOG_INFO = 0x12
-CMD_LOG_READ = 0x13
 CMD_DEBUG_REPORT = 0x14
 CMD_OBSERVE = 0x15
-ACK = 0x80
-STATUS_RESP = 0x81
-BUILD_RESP = 0x82
-IMAGE_HASH_RESP = 0x83
-LOG_INFO_RESP = 0x84
-LOG_DATA_RESP = 0x85
-DEBUG_REPORT_RESP = 0x86
-OBSERVE_RESP = 0x87
-OBSERVE_HEADER_LEN = 8
-PAYLOAD_MAX_LEN = STATUS_LEN + OBSERVE_HEADER_LEN
 ONLINE_COMMANDS = {CMD_STATUS, CMD_BUILD, CMD_IMAGE_HASH}
 
 # No-payload commands share registration and encoding metadata.
@@ -98,8 +59,6 @@ SIMPLE_COMMANDS = {
 }
 
 DEBUG_REPORTS = {"link": 0, "rate": 1, "radio": 2, "power": 3}
-DEBUG_REPORT_CHUNK_MAX = 85
-DEBUG_REPORT_MAX_LEN = 4096
 
 COMMAND_MESSAGES = {
     CMD_ENTER: "Management mode entered; radio paused",
@@ -118,76 +77,26 @@ COMMAND_MESSAGES = {
     CMD_EXIT: "Management mode exited; radio resumed",
 }
 
-# One read carries at most this many bytes (a management frame's payload minus its own header)
-LOG_CHUNK_MAX = 80
-LOG_FILES_MAX = 8
-
-STATUS_NAMES = {
-    0: "ok",
-    1: "bad parameter",
-    2: "wrong state",
-    3: "storage error",
-    4: "unknown command",
-    5: "temporarily unavailable; retry the command",
-}
 
 STATE_NAMES = dict(enumerate(("unconfigured", "unpaired", "pairing", "searching", "connected")))
 REGION_NAMES = dict(enumerate(("FCC915", "EU868", "CN470", "CN433")))
 
-def crc8(data: bytes) -> int:
-    """DVB-S2 polynomial 0xD5, the same algorithm as zlrs_crc8() on the device."""
-    crc = 0
-    for byte in data:
-        crc ^= byte
-        for _ in range(8):
-            crc = ((crc << 1) ^ 0xD5) & 0xFF if crc & 0x80 else (crc << 1) & 0xFF
-    return crc
-
-
-def encode(cmd: int, payload: bytes = b"") -> bytes:
-    if len(payload) > PAYLOAD_MAX_LEN:
-        raise ValueError("payload too long")
-    body = bytes([VERSION, cmd, len(payload)]) + payload
-    return SOF + body + bytes([crc8(body)])
-
-
-def decode(frame: bytes):
-    """Return (cmd, payload); raises ValueError for a short frame or a bad CRC."""
-    if len(frame) < 6 or frame[:2] != SOF:
-        raise ValueError("bad frame header")
-    if frame[2] != VERSION:
-        raise ValueError(f"unsupported version {frame[2]}")
-    length = frame[4]
-    if len(frame) != length + 6:
-        raise ValueError("bad frame length")
-    if crc8(frame[2:-1]) != frame[-1]:
-        raise ValueError("bad crc")
-    return frame[3], frame[5:-1]
-
-
-
-def decode_status(payload: bytes) -> Status:
-    # Allow status/rollback verification against an older confirmed image.
-    if len(payload) == 90:
-        payload += b"\xff"
-    if len(payload) != STATUS_LEN:
-        raise ValueError(f"status payload must contain {STATUS_LEN} bytes")
-    return Status(*STATUS_STRUCT.unpack(payload))
+def decode_status(values) -> Status:
+    return values if isinstance(values, Status) else Status(**values)
 
 
 def read_status(client) -> Status:
-    return decode_status(client.request(CMD_STATUS, response=STATUS_RESP))
+    return decode_status(client.request(CMD_STATUS)["status"])
 
 
-def status_text(payload: bytes) -> str:
+def status_text(payload) -> str:
     status = decode_status(payload)
     flags = status.flags
     modulation = {0: "FLRC 2.6 Mbps", 1: "FLRC 650 kbps", 2: "FLRC 325 kbps",
                   3: "LoRa SF6 / BW 1 MHz", 4: "LoRa SF7 / BW 1 MHz",
                   5: "FLRC 1.3 Mbps"}.get(status.data_phy)
     if modulation is None:
-        modulation = ("not reported (upgrade device firmware)" if status.data_phy == 255
-                      else f"unknown profile ({status.data_phy})")
+        modulation = f"unknown profile ({status.data_phy})"
     sections = [
         ("Link", [("Role", "Leader" if status.role == 0 else "Follower"),
                   ("State", STATE_NAMES.get(status.state, str(status.state))),
@@ -273,119 +182,118 @@ def status_text(payload: bytes) -> str:
 
 
 
-def read_response(link):
-    """Read one frame: find SOF, then collect bytes until the length field is satisfied."""
-    buf = bytearray()
-    while True:
-        byte = link.read(1)
-        if not byte:
-            raise TimeoutError("timed out waiting for a response")
-        buf += byte
-        if len(buf) == 1 and buf[0] != 0xA5:
-            buf.clear()
-        elif len(buf) == 2 and buf[1] != 0x5A:
-            buf[:] = b"\xa5" if buf[-1] == 0xA5 else b""
-        elif len(buf) == 5 and buf[4] > PAYLOAD_MAX_LEN:
-            raise ValueError(f"response payload exceeds {PAYLOAD_MAX_LEN} bytes")
-        elif len(buf) >= 5 and len(buf) == buf[4] + 6:
-            return decode(bytes(buf))
-
-
 class ManagementError(ValueError):
-    def __init__(self, command, status):
-        super().__init__(STATUS_NAMES.get(status, hex(status)))
-        self.command = command
-        self.status = status
+    def __init__(self, command, result):
+        super().__init__(f"operation {command}: {os.strerror(-result) if result < 0 else result}")
+        self.command, self.status = command, result
+
+
+def product_request_type(fields):
+    from pydantic import ConfigDict
+    from smp import error, message
+
+    class GroupErrorV1(error.ErrorV1):
+        _GROUP_ID = 66
+
+    class GroupErrorV2(error.ErrorV2[error.MGMT_ERR]):
+        _GROUP_ID = 66
+
+    class Response(message.WriteResponse):
+        _GROUP_ID = 66
+        _COMMAND_ID = 0
+        model_config = ConfigDict(extra="allow", frozen=True)
+        result: int
+
+    class Request(message.WriteRequest):
+        _GROUP_ID = 66
+        _COMMAND_ID = 0
+        _Response = Response
+        _ErrorV1 = GroupErrorV1
+        _ErrorV2 = GroupErrorV2
+        model_config = ConfigDict(extra="allow", frozen=True)
+
+    return Request(**fields)
 
 
 class ManagementClient:
-    """One serial connection with command/ACK matching shared by all operations."""
-
-    def __init__(self, link):
-        self.link = link
+    """One standard SMP serial connection, with no application framing or retries."""
+    def __init__(self, port, baud=115200, timeout=10):
+        self.port, self.baud, self.timeout = port, baud, timeout
         self.entered = False
 
-    def request(self, command, payload=b"", response=ACK):
-        self.link.write(encode(command, payload))
-        if response is None:
-            self.link.flush()
-            return b""
-        got, body = read_response(self.link)
-        if got == ACK:
-            if len(body) != 2 or body[0] != command:
-                raise ValueError("malformed or mismatched ACK")
-            if body[1] != 0:
-                raise ManagementError(command, body[1])
-            if response != ACK:
-                raise ValueError("expected response data, received only an OK ACK")
-        elif got != response:
-            raise ValueError(f"unexpected response 0x{got:02x} for command 0x{command:02x}")
+    def __enter__(self):
+        from smpclient import SMPClient
+        from smpclient.transport.serial import SMPSerialTransport
+        self.runner = asyncio.Runner()
+        self.client = SMPClient(SMPSerialTransport(baudrate=self.baud), self.port,
+                                timeout_s=self.timeout)
+        try:
+            self.runner.run(self.client.__aenter__())
+        except BaseException:
+            self.runner.close()
+            raise
+        return self
+
+    def __exit__(self, *exc):
+        try:
+            self.runner.run(self.client.__aexit__(*exc))
+        finally:
+            self.runner.close()
+
+    def _request(self, request):
+        from smpclient.generics import success
+        response = self.runner.run(self.client.request(request))
+        if not success(response):
+            raise ValueError(f"SMP rejected request: {response}")
+        return response
+
+    def request(self, command, payload=b""):
+        from smpclient.requests.image_management import ImageStatesRead, ImageStatesWrite
+        from smpclient.requests.os_management import OSApplicationInfoRead, ResetWrite
+        if command == CMD_BUILD:
+            # Zephyr's native OS info reports application metadata via its format fields.
+            return self._request(OSApplicationInfoRead(format="a")).output
+        if command == CMD_IMAGE_HASH:
+            images = self._request(ImageStatesRead()).images
+            active = next((image for image in images if image.active), None)
+            if active is None or active.hash is None or len(active.hash) != 32:
+                raise ValueError("native IMG response has no active image hash")
+            return bytes(active.hash)
+        if command == CMD_CONFIRM:
+            self._request(ImageStatesWrite(confirm=True))
+            return {}
+        if command == CMD_RECOVERY:
+            self._request(ResetWrite(boot_mode=1))
+            return {}
+        response = self._request(product_request_type({"op": command, "value": payload}))
+        if response.result != 0:
+            raise ManagementError(command, response.result)
         if command == CMD_ENTER:
             self.entered = True
         elif command == CMD_EXIT:
             self.entered = False
-        return body
+        return response.model_extra or {}
+
+    def download(self, path):
+        return self.runner.run(self.client.download_file(path))
 
 
 @contextmanager
 def management_session(port, baud, timeout, enter=True, keep=False, observe=False):
-    import serial  # pyserial
-
-    with serial.Serial(port, baudrate=baud, timeout=timeout) as link:
-        client = ManagementClient(link)
-        failure = None
+    with ManagementClient(port, baud, timeout) as client:
+        if enter and not observe:
+            client.request(CMD_ENTER)
+        elif not observe:
+            client.entered = True  # --no-enter uses an existing maintenance session.
         try:
-            if enter and not observe:
-                client.request(CMD_ENTER)
             yield client
-        except BaseException as exc:
-            failure = exc
-            raise
         finally:
-            if not keep and (not observe or client.entered):
-                try:
-                    client.request(CMD_EXIT)
-                except (OSError, ValueError, TimeoutError) as exc:
-                    if failure is not None:
-                        notice("error", str(failure), file=sys.stderr)
-                    raise ValueError("could not leave management mode; run exit to restore "
-                                     f"the radio: {exc}") from exc
+            if not keep and client.entered:
+                client.request(CMD_EXIT)
 
 
 def read_debug_report(client, report_id: int) -> bytes:
-    """Read a debug-only text report in bounded management frames."""
-    report = bytearray()
-    offset = 0
-    total = None
-
-    while total is None or offset < total:
-        request = bytes([report_id]) + offset.to_bytes(2, "little")
-        payload = client.request(CMD_DEBUG_REPORT, request, DEBUG_REPORT_RESP)
-        if len(payload) < 5:
-            raise ValueError("short debug report response")
-
-        got_id = payload[0]
-        got_offset = int.from_bytes(payload[1:3], "little")
-        got_total = int.from_bytes(payload[3:5], "little")
-        chunk = payload[5:]
-        if got_id != report_id or got_offset != offset:
-            raise ValueError("debug report id or offset does not match the request")
-        if got_total > DEBUG_REPORT_MAX_LEN:
-            raise ValueError(f"debug report is too large ({got_total} bytes)")
-        if total is not None and got_total != total:
-            raise ValueError("debug report length changed while reading")
-        if len(chunk) > DEBUG_REPORT_CHUNK_MAX or offset + len(chunk) > got_total:
-            raise ValueError("invalid debug report chunk length")
-        if got_total > offset and not chunk:
-            raise ValueError("debug report ended before all bytes arrived")
-
-        total = got_total
-        report.extend(chunk)
-        offset += len(chunk)
-
-    if len(report) != total:
-        raise ValueError("debug report is incomplete")
-    return bytes(report)
+    return client.request(CMD_DEBUG_REPORT, bytes([report_id]))["report"].encode()
 
 
 def device_heading(port: str) -> None:
@@ -394,119 +302,54 @@ def device_heading(port: str) -> None:
     heading(f"Device: {port}")
 
 
-def talk(port: str, baud: int, frame: bytes, expect: bool, timeout: float,
-         prelude: bytes | None, quiet: bool = False, keep: bool = False,
-         refresh: bool = False) -> int:
-    command, request = decode(frame)
-    response = {CMD_STATUS: STATUS_RESP, CMD_BUILD: BUILD_RESP,
-                CMD_IMAGE_HASH: IMAGE_HASH_RESP}.get(command, ACK) if expect else None
-    online = command in ONLINE_COMMANDS and prelude is not None and not keep and not refresh
+def talk(port, baud, operation, timeout, enter=True, quiet=False, keep=False, refresh=False):
+    command, value = operation
+    online = command in ONLINE_COMMANDS and not refresh and not keep
+    enter = command not in (CMD_ENTER, CMD_EXIT, CMD_RECOVERY) and enter and not online
     try:
-        with management_session(port, baud, timeout, enter=prelude is not None,
-                                keep=keep or command in (CMD_ENTER, CMD_EXIT, CMD_RECOVERY),
-                                observe=online) as client:
+        with management_session(port, baud, timeout, enter=enter,
+                                keep=keep or command in (CMD_ENTER, CMD_RECOVERY), observe=online) as client:
             if command == CMD_DEBUG_REPORT:
-                if len(request) != 3:
-                    raise ValueError("bad debug report request")
-                report_id = request[0]
-                report_name = next((name for name, ident in DEBUG_REPORTS.items()
-                                    if ident == report_id), None)
-                if report_name is None:
-                    raise ValueError(f"unknown debug report id {report_id}")
-                heading(f"ZLRS {report_name.title()} Diagnostics")
-                print(read_debug_report(client, report_id).decode(errors="replace"), end="")
+                print(read_debug_report(client, value[0]).decode(), end="")
                 return 0
-
-            query = CMD_OBSERVE if online and command == CMD_STATUS else command
-            answer = OBSERVE_RESP if query == CMD_OBSERVE else response
-            try:
-                payload = client.request(query, request, answer)
-            except ManagementError as error:
-                if not online or error.status not in (2, 4):
-                    raise
-                client.request(CMD_ENTER)
-                payload = client.request(command, request, response)
-                query = command
-            if response is None:
-                notice("info", "Recovery requested; waiting for USB re-enumeration")
-            elif response == STATUS_RESP:
+            response = client.request(command, value)
+            if command == CMD_STATUS:
                 heading("ZLRS Status")
-                if query == CMD_OBSERVE:
-                    if len(payload) != OBSERVE_HEADER_LEN + STATUS_LEN:
-                        raise ValueError("invalid observation snapshot length")
-                    sampled_ms, hardware_ms = struct.unpack_from("<II", payload)
-                    age = (sampled_ms - hardware_ms) & 0xffffffff
-                    print("[Snapshot]")
-                    print(fields([("Device uptime", f"{sampled_ms} ms"),
-                                  ("Chip observations age", f"{age} ms" if hardware_ms else "unavailable")]))
-                    payload = payload[OBSERVE_HEADER_LEN:]
-                print(status_text(payload))
-            elif response == BUILD_RESP:
-                print(payload.decode(errors="replace"))
-            elif response == IMAGE_HASH_RESP:
-                if len(payload) != 32:
-                    raise ValueError("image hash must contain 32 bytes")
-                print(payload.hex())
+                age = (response["uptime_ms"] - response["hardware_ms"]) & 0xffffffff
+                print(fields([("Device uptime", f"{response['uptime_ms']} ms"),
+                              ("Chip observations age", f"{age} ms" if response["hardware_ms"] else "unavailable")]))
+                print(status_text(response["status"]))
+            elif command == CMD_BUILD:
+                print(response)
+            elif command == CMD_IMAGE_HASH:
+                print(response.hex())
+            elif command == CMD_RECOVERY:
+                notice("info", "Recovery requested; waiting for USB re-enumeration")
             elif not quiet:
                 notice("ok", COMMAND_MESSAGES.get(command, "Command accepted"))
         return 0
     except ImportError:
-        notice("error", "pyserial required: pip install pyserial", file=sys.stderr)
+        notice("error", "smpclient serial support required; install smpmgr", file=sys.stderr)
         return 2
     except (OSError, ValueError, TimeoutError) as exc:
         notice("error", str(exc), file=sys.stderr)
         return 1
 
 
-def dump_logs(port: str, baud: int, timeout: float, out_dir: str,
-              keep: bool = False, no_enter: bool = False) -> int:
-    """Export the log store within one management session."""
+def dump_logs(port, baud, timeout, out_dir, keep=False, no_enter=False):
     os.makedirs(out_dir, exist_ok=True)
     try:
         with management_session(port, baud, timeout, enter=not no_enter, keep=keep) as client:
-            payload = client.request(CMD_LOG_INFO, response=LOG_INFO_RESP)
-            if len(payload) < 2:
-                raise ValueError("log info is malformed")
-            count, newest = payload[:2]
-            if count > LOG_FILES_MAX or len(payload) != 2 + 6 * count:
-                raise ValueError("log info is malformed")
-            files = []
-            for i in range(count):
-                at = 2 + 6 * i
-                num = int.from_bytes(payload[at:at + 2], "little")
-                size = int.from_bytes(payload[at + 2:at + 6], "little")
-                files.append((i, num, size))
-
-            heading("ZLRS Log Export")
-            print(fields([("Files", count), ("Newest index", newest), ("Directory", out_dir)]))
-            print()
-            total = 0
-            for index, num, size in files:
-                path = os.path.join(out_dir, f"log.{num:04d}.bin")
-                written = 0
-                with open(path, "wb") as out:
-                    while written < size:
-                        want = min(LOG_CHUNK_MAX, size - written)
-                        body = bytes([index]) + written.to_bytes(4, "little") + bytes([want])
-                        try:
-                            payload = client.request(CMD_LOG_READ, body, LOG_DATA_RESP)
-                            if len(payload) < 5 or payload[:5] != body[:5]:
-                                raise ValueError("log chunk index or offset does not match")
-                            got = payload[5:]
-                            if not got or len(got) > want:
-                                raise ValueError("incomplete or oversized log chunk")
-                        except (OSError, ValueError, TimeoutError) as exc:
-                            raise ValueError(f"{path}: read failed at offset {written}: {exc}") from exc
-                        out.write(got)
-                        written += len(got)
-                print(f"  {written:>10,} bytes  {path}")
-                total += written
-        print()
-        notice("ok", f"Exported {total:,} bytes from {count} log file(s)")
+            inventory = client.request(CMD_LOG_INFO)["files"]
+            for item in inventory:
+                data = client.download(item["path"])
+                if len(data) != item["size"]:
+                    raise ValueError("log size changed during export")
+                path = os.path.join(out_dir, os.path.basename(item["path"]) + ".bin")
+                with open(path, "wb") as output:
+                    output.write(data)
+                print(f"{len(data):>10,} bytes  {path}")
         return 0
-    except ImportError:
-        notice("error", "pyserial required: pip install pyserial", file=sys.stderr)
-        return 2
     except (OSError, ValueError, TimeoutError) as exc:
         notice("error", str(exc), file=sys.stderr)
         return 1
@@ -562,6 +405,10 @@ def pick_targets(args, parser) -> list[str]:
     return [ports[0]]
 
 
+def operation(command, value=b""):
+    return command, value
+
+
 def add_options(parser, include_list=True):
     target = parser.add_mutually_exclusive_group()
 
@@ -575,8 +422,8 @@ def add_options(parser, include_list=True):
         parser.set_defaults(list=False)
     parser.add_argument("--baud", type=bounded_int(1, 4000000), default=115200, help="management connection baud rate")
     parser.add_argument("--timeout", type=positive_seconds, default=10.0,
-                        help="response timeout per frame in seconds (management entry may take several seconds)")
-    parser.add_argument("--dry-run", action="store_true", help="print the frame instead of talking to the device")
+                        help="response timeout per SMP request in seconds (management entry may take several seconds)")
+    parser.add_argument("--dry-run", action="store_true", help="print the SMP operation instead of talking to the device")
     parser.add_argument("--no-enter", action="store_true",
                         help="skip the enter-management-mode step (when already in it)")
     parser.add_argument("--keep", action="store_true",
@@ -653,16 +500,16 @@ def main(args=None, parser=None) -> int:
         parser.print_help()
         return 2
 
-    # The log dump is a sequence of requests, not one frame; it runs its own session.
+    # Native FS transfers share one explicit maintenance session.
     if args.command == "logs":
         if args.dry_run:
             print(f"[dry-run] export logs to {args.out_dir}; no files or ports opened")
             if not args.no_enter:
-                print(f"enter: {encode(CMD_ENTER).hex()}")
-            print(f"info : {encode(CMD_LOG_INFO).hex()}")
-            print("read : request chunks using offsets and lengths returned by log-info")
+                print(f"enter: {operation(CMD_ENTER)!r}")
+            print(f"info : {operation(CMD_LOG_INFO)!r}")
+            print("read : standard MCUmgr FS download")
             if not args.keep:
-                print(f"exit : {encode(CMD_EXIT).hex()}")
+                print(f"exit : {operation(CMD_EXIT)!r}")
             return 0
         targets = pick_targets(args, parser)
         rc = 0
@@ -678,53 +525,42 @@ def main(args=None, parser=None) -> int:
         return rc
 
     if args.command in SIMPLE_COMMANDS:
-        frame = encode(SIMPLE_COMMANDS[args.command][0])
-        expect = args.command != "recovery"
+        selected = operation(SIMPLE_COMMANDS[args.command][0])
     elif args.command in DEBUG_REPORTS:
-        frame = encode(CMD_DEBUG_REPORT, bytes([DEBUG_REPORTS[args.command], 0, 0]))
-        expect = True
+        selected = operation(CMD_DEBUG_REPORT, bytes([DEBUG_REPORTS[args.command]]))
     elif args.command == "set-phrase":
         payload = args.phrase.encode()
         if not 1 <= len(payload) <= 32:
             parser.error("binding phrase must contain 1..32 UTF-8 bytes")
-        frame, expect = encode(CMD_SET_PHRASE, payload), True
+        selected = operation(CMD_SET_PHRASE, payload)
     elif args.command == "set-key-hex":
         if len(args.hex_key) != 64 or any(c not in "0123456789abcdefABCDEF" for c in args.hex_key):
             parser.error("the root key must be exactly 64 hex characters")
-        frame, expect = encode(CMD_SET_KEY_HEX, args.hex_key.encode()), True
+        selected = operation(CMD_SET_KEY_HEX, args.hex_key.encode())
     elif args.command == "set-baud":
-        frame = encode(CMD_SET_BAUD, args.data_baud.to_bytes(4, "little"))
-        expect = True
+        selected = operation(CMD_SET_BAUD, args.data_baud.to_bytes(4, "little"))
     elif args.command == "set-region":
-        frame = encode(CMD_SET_REGION, bytes([args.region]))
-        expect = True
+        selected = operation(CMD_SET_REGION, bytes([args.region]))
     elif args.command == "set-role":
-        frame = encode(CMD_SET_ROLE, bytes([0 if args.role == "leader" else 1]))
-        expect = True
+        selected = operation(CMD_SET_ROLE, bytes([0 if args.role == "leader" else 1]))
     elif args.command == "set-profile":
-        frame = encode(CMD_SET_PROFILE, bytes([int(args.profile[1])]))
-        expect = True
+        selected = operation(CMD_SET_PROFILE, bytes([int(args.profile[1])]))
     elif args.command == "set-band":
-        frame = encode(CMD_SET_BAND, bytes([{"2.4": 0, "subg": 1, "auto": 2}[args.band]]))
-        expect = True
+        selected = operation(CMD_SET_BAND, bytes([{"2.4": 0, "subg": 1, "auto": 2}[args.band]]))
     else:
         parser.error(f"unknown command: {args.command}")
 
-    query_command = decode(frame)[0]
+    query_command = selected[0]
     online = (query_command in ONLINE_COMMANDS and not args.no_enter and
               not args.keep and not args.refresh)
     if args.dry_run:
         if args.command not in ("enter", "recovery", "exit") and not args.no_enter and not online:
-            print(f"enter: {encode(CMD_ENTER).hex()}")
-        command_frame = encode(CMD_OBSERVE) if online and query_command == CMD_STATUS else frame
-        print(f"cmd  : {command_frame.hex()}")
+            print(f"enter: {operation(CMD_ENTER)!r}")
+        command_operation = operation(CMD_OBSERVE) if online and query_command == CMD_STATUS else selected
+        print(f"cmd  : {command_operation!r}")
         if args.command not in ("enter", "exit", "recovery") and not args.keep and not online:
-            print(f"exit : {encode(CMD_EXIT).hex()}")
+            print(f"exit : {operation(CMD_EXIT)!r}")
         return 0
-
-    prelude = None
-    if args.command not in ("enter", "exit", "recovery") and not args.no_enter:
-        prelude = encode(CMD_ENTER)
 
     # With several modules plugged in, decide the targets first (--serial / --port / --all).
     targets = pick_targets(args, parser)
@@ -734,7 +570,7 @@ def main(args=None, parser=None) -> int:
         if len(targets) > 1:
             device_heading(port)
         try:
-            this = talk(port, args.baud, frame, expect, args.timeout, prelude, keep=args.keep,
+            this = talk(port, args.baud, selected, args.timeout, enter=not args.no_enter, keep=args.keep,
                         refresh=args.refresh)
         except (OSError, ValueError, TimeoutError) as exc:
             notice("error", f"{port}: {exc}", file=sys.stderr)

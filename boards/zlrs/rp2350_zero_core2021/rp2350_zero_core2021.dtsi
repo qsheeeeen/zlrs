@@ -21,6 +21,7 @@
 		zephyr,flash-controller = &qmi;
 		/* Console off by default: it only exists once the debug overlay enables cdc_acm_uart2 */
 		zephyr,console = &cdc_acm_uart2;
+		zephyr,uart-mcumgr = &cdc_acm_uart1;
 		zephyr,lorawan-transceiver = &lora_core2021;
 		/* Entropy comes from the zlrs TRNG driver (bounded waits, no interrupt masking; drivers/entropy) */
 		zephyr,entropy = &rng;
@@ -177,6 +178,8 @@ zephyr_udc0: &usbd {
 	};
 
 	cdc_acm_uart1: cdc_acm_uart1 {
+		hw-flow-control;
+		tx-fifo-size = <8192>;
 		compatible = "zephyr,cdc-acm-uart";
 		label = "zlrs CONFIG";
 	};

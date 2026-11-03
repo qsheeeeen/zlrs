@@ -24,7 +24,7 @@ class EntryTests(unittest.TestCase):
             rc, _ = invoke(entry, "set-baud", "420000", "--port", "fake", "--baud", "115200")
         self.assertEqual(rc, 0)
         self.assertEqual(talk.call_args_list[0].args[1], 115200)
-        self.assertEqual(entry.mgmt.decode(talk.call_args_list[0].args[2]),
+        self.assertEqual(talk.call_args_list[0].args[2],
                          (entry.mgmt.CMD_SET_BAUD, (420000).to_bytes(4, "little")))
 
     def test_bidirectional_role_commands_and_status(self):
@@ -32,10 +32,11 @@ class EntryTests(unittest.TestCase):
             with self.subTest(role=role), patch.object(entry.mgmt, "talk", return_value=0) as talk:
                 rc, _ = invoke(entry, "set-role", role, "--port", "fake")
             self.assertEqual(rc, 0)
-            self.assertEqual(entry.mgmt.decode(talk.call_args_list[0].args[2]),
+            self.assertEqual(talk.call_args_list[0].args[2],
                              (entry.mgmt.CMD_SET_ROLE, bytes([value])))
-            status = bytearray(entry.mgmt.STATUS_LEN)
-            status[1] = value
+            status = {key: 0 for key in entry.mgmt.STATUS_FIELDS}
+            status.update(dev_id=b"1234", peer_id=b"5678")
+            status["role"] = value
             output = entry.mgmt.status_text(status)
             role_line = next(line for line in output.splitlines() if "Role" in line)
             self.assertIn(label, role_line)
@@ -52,31 +53,34 @@ class EntryTests(unittest.TestCase):
         with patch.object(entry.mgmt, "talk", return_value=0) as talk:
             rc, _ = invoke(entry, "set-band", "2.4", "--port", "fake")
         self.assertEqual(rc, 0)
-        self.assertEqual(entry.mgmt.decode(talk.call_args_list[0].args[2]),
+        self.assertEqual(talk.call_args_list[0].args[2],
                          (entry.mgmt.CMD_SET_BAND, b"\x00"))
         self.assertEqual(invoke(entry, "set-band", "invalid")[0], 2)
-        status = bytearray(entry.mgmt.STATUS_LEN)
-        status[3] = 0x00
+        status = {key: 0 for key in entry.mgmt.STATUS_FIELDS}
+        status.update(dev_id=b"1234", peer_id=b"5678")
+        status["flags"] = 0x00
         self.assertIn("2.4 GHz", entry.mgmt.status_text(status))
 
     def test_subg_band_command(self):
         with patch.object(entry.mgmt, "talk", return_value=0) as talk:
             rc, _ = invoke(entry, "set-band", "subg", "--port", "fake")
         self.assertEqual(rc, 0)
-        self.assertEqual(entry.mgmt.decode(talk.call_args_list[0].args[2]),
+        self.assertEqual(talk.call_args_list[0].args[2],
                          (entry.mgmt.CMD_SET_BAND, b"\x01"))
-        status = bytearray(entry.mgmt.STATUS_LEN)
-        status[3] = 0x08
+        status = {key: 0 for key in entry.mgmt.STATUS_FIELDS}
+        status.update(dev_id=b"1234", peer_id=b"5678")
+        status["flags"] = 0x08
         self.assertIn("sub-GHz", entry.mgmt.status_text(status))
 
     def test_auto_band_command_and_live_status(self):
         with patch.object(entry.mgmt, "talk", return_value=0) as talk:
             rc, _ = invoke(entry, "set-band", "auto", "--port", "fake")
         self.assertEqual(rc, 0)
-        self.assertEqual(entry.mgmt.decode(talk.call_args_list[0].args[2]),
+        self.assertEqual(talk.call_args_list[0].args[2],
                          (entry.mgmt.CMD_SET_BAND, b"\x02"))
-        status = bytearray(entry.mgmt.STATUS_LEN)
-        status[3] = 0x78
+        status = {key: 0 for key in entry.mgmt.STATUS_FIELDS}
+        status.update(dev_id=b"1234", peer_id=b"5678")
+        status["flags"] = 0x78
         output = entry.mgmt.status_text(status)
         for value in ("sub-GHz", "auto", "searching", "scheduled"):
             self.assertIn(value, output)

@@ -18,7 +18,7 @@ class RollbackTests(unittest.TestCase):
             with self.subTest(failure=failure):
                 events = []
                 def request(port, operation):
-                    index = 0 if "_a-if04" in port else 1
+                    index = 0 if "_a-if02" in port else 1
                     events.append(("request", index))
                     self.assertEqual(operation, runner.Op.RESTORE)
                     if index == 0:
