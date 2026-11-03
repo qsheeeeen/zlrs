@@ -42,6 +42,11 @@ the coredump and flushes panic logs before rebooting; MCUboot rolls back an
 unconfirmed image on that reset. The application does not override the kernel's
 fatal handler. RP2350's Cortex-M reboot implementation uses `NVIC_SystemReset()`.
 
+Button input uses Zephyr `gpio-keys` and `input-longpress`; the application consumes
+hold events rather than polling GPIO or timing gestures. The UI simulation checks
+short presses, a single event during a sustained hold, release/repress and retries
+when the zbus publication is locked.
+
 ## Observing a running link
 
 Management `status` reports local/peer RSSI and LQ, active-band power limits and

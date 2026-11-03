@@ -1,15 +1,25 @@
 #include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/input/input-event-codes.h>
 / {
- aliases { zlrs-button = &button; zlrs-led = &led_test; };
+ aliases { zlrs-button = &button; zlrs-pair-hold = &pair_hold; zlrs-led = &led_test; };
  led_test: led-test {};
  gpio_test: gpio-test {
   compatible = "zephyr,gpio-emul";
   gpio-controller;
   #gpio-cells = <2>;
   ngpios = <1>;
+  rising-edge;
+  falling-edge;
  };
- buttons {
+ buttons: buttons {
   compatible = "gpio-keys";
-  button: button { gpios = <&gpio_test 0 GPIO_ACTIVE_HIGH>; };
+  button: button { gpios = <&gpio_test 0 GPIO_ACTIVE_HIGH>; zephyr,code = <INPUT_KEY_0>; };
+ };
+ pair_hold: pairing-hold {
+  compatible = "zephyr,input-longpress";
+  input = <&buttons>;
+  input-codes = <INPUT_KEY_0>;
+  long-codes = <INPUT_KEY_X>;
+  long-delay-ms = <1000>;
  };
 };

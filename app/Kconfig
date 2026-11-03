@@ -138,13 +138,6 @@ config ZLRS_APP_MGMT_TIMEOUT_S
 	help
 	  Management mode exits after this long without a command, see doc/06-firmware.md.
 
-config ZLRS_APP_PAIR_HOLD_MS
-	int "Hold time needed to start pairing (ms)"
-	default 1000
-	help
-	  The button has exactly one action: holding it this long starts pairing (doc/09-ux.md).
-	  There is no press-and-hold-at-boot gesture; management mode comes from the management port.
-
 endmenu
 
 menu "Pending acceptance (see doc/11-roadmap.md)"

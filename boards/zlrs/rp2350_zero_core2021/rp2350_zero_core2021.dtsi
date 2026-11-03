@@ -9,6 +9,7 @@
 
 #include <zephyr/dt-bindings/dma/rpi-pico-dma-rp2350.h>
 #include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/input/input-event-codes.h>
 #include <zephyr/dt-bindings/led/led.h>
 
 #include "rp2350_zero_core2021-pinctrl.dtsi"
@@ -31,6 +32,7 @@
 		zlrs-data-cdc = &cdc_acm_uart0;
 		zlrs-mgmt-cdc = &cdc_acm_uart1;
 		zlrs-button = &zlrs_button;
+		zlrs-pair-hold = &zlrs_pair_hold;
 		zlrs-led = &zlrs_led;
 		led-strip = &zlrs_led;
 		watchdog0 = &wdt0;
@@ -38,12 +40,20 @@
 		/* The vendor USP samples (packet_error_rate_flrc and friends) expect this alias */
 		smtc-user-button = &zlrs_button;
 	};
-	buttons {
+	zlrs_buttons: buttons {
 		compatible = "gpio-keys";
 
 		zlrs_button: zlrs-button {
 			gpios = <&gpio0 12 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+			zephyr,code = <INPUT_KEY_0>;
 		};
+	};
+	zlrs_pair_hold: pairing-hold {
+		compatible = "zephyr,input-longpress";
+		input = <&zlrs_buttons>;
+		input-codes = <INPUT_KEY_0>;
+		long-codes = <INPUT_KEY_X>;
+		long-delay-ms = <1000>;
 	};
 
 };
