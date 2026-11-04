@@ -82,7 +82,7 @@ uint16_t zlrs_frame_encode(const zlrs_frame_t *frame, uint8_t *buf, uint16_t cap
 		const zlrs_data_frame_t *const data = &frame->body.data;
 		p[0] = (uint8_t)((data->data_seq << ZLRS_DATA_SEQ_SHIFT) | data->ack);
 		p[1] = data->rssi_magnitude;
-		p[2] = data->lq_percent;
+		p[2] = data->lq_percent | (data->lq_toggle ? ZLRS_LQ_TOGGLE_MASK : 0U);
 		memcpy(p + ZLRS_DATA_PREFIX_LEN, data->bytes, payload_len - ZLRS_DATA_PREFIX_LEN);
 		break;
 	}
@@ -150,7 +150,8 @@ bool zlrs_frame_decode(zlrs_frame_t *frame, const uint8_t *buf, uint16_t len, ui
 		data->ack = p[0] & ZLRS_DATA_ACK_MASK;
 		data->data_seq = p[0] >> ZLRS_DATA_SEQ_SHIFT;
 		data->rssi_magnitude = p[1];
-		data->lq_percent = p[2];
+		data->lq_percent = p[2] & ZLRS_LQ_VALUE_MASK;
+		data->lq_toggle = (p[2] & ZLRS_LQ_TOGGLE_MASK) != 0U;
 		memcpy(data->bytes, p + ZLRS_DATA_PREFIX_LEN, payload_len - ZLRS_DATA_PREFIX_LEN);
 		break;
 	}

@@ -1,199 +1,233 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include <gtest/gtest.h>
-
 extern "C" {
 #include "power.h"
 }
 
 namespace
 {
-int8_t observe(zlrs_power_t *power, int16_t rssi, uint8_t lq, uint32_t now)
-{
-	return zlrs_power_update(power, rssi, lq, now, now);
-}
-
-uint32_t healthy(zlrs_power_t *power, uint32_t start, uint32_t duration, uint8_t quality = 100U)
-{
-	for (uint32_t elapsed = 0U; elapsed <= duration; elapsed += 250U) {
-		observe(power, -60, quality, start + elapsed);
-	}
-	return start + duration;
-}
-
 class PowerPolicy: public testing::Test
 {
       protected:
-	zlrs_power_t power{};
+	zlrs_power_t p{};
+	zlrs_power_observation_t o{};
 
 	void SetUp() override
 	{
-		zlrs_power_init(&power, 12, -17, 0U);
+		zlrs_power_init(&p, 12, -17, 0);
+		o.rssi_dbm = -60;
+		o.rssi_floor_dbm = -89;
+		o.lq_percent = 127;
+	}
+
+	int sample(uint32_t now)
+	{
+		o.now_ms = o.feedback_ms = now;
+		return zlrs_power_update(&p, &o);
+	}
+
+	void run(uint32_t start, uint32_t duration, uint32_t interval = 250)
+	{
+		for (uint32_t dt = 0; dt <= duration; dt += interval) {
+			sample(start + dt);
+		}
 	}
 };
 
-TEST_F(PowerPolicy, RequiresContinuousHealthBeforeLowering)
+TEST_F(PowerPolicy, UnknownQualityAllowsSavingAfterSettlingAndTwoSeconds)
 {
-	EXPECT_EQ(power.current_dbm, 12);
-	EXPECT_EQ(zlrs_power_update(&power, -60, 100U, 0U, 1U), 12);
-	healthy(&power, 100001U, 39750U);
-	EXPECT_EQ(power.current_dbm, 12);
-	EXPECT_EQ(observe(&power, -60, 100U, 140001U), 9);
-	EXPECT_EQ(power.lowers, 1U);
+	run(1, 2250);
+	EXPECT_EQ(p.current_dbm, 12);
+	EXPECT_EQ(sample(2501), 9);
+	EXPECT_EQ(p.lowers, 1U);
 }
 
-TEST_F(PowerPolicy, OneLostPacketInAQualityWindowStillAllowsSaving)
+TEST_F(PowerPolicy, CachedLowQualityDoesNotRepeatedlyRaiseOrResetSaving)
 {
-	healthy(&power, 1U, 39750U, 99U);
-	EXPECT_EQ(power.current_dbm, 12);
-	EXPECT_EQ(observe(&power, -60, 99U, 40001U), 9);
-	EXPECT_EQ(power.lowers, 1U);
-	EXPECT_EQ(zlrs_power_update(&power, -60, 99U, 40001U, 41001U), 12);
+	run(1, 2500);
+	o.lq_percent = 90;
+	o.lq_generation = 1;
+	EXPECT_EQ(sample(2751), 12);
+	EXPECT_EQ(p.raises, 1U);
+	run(3001, 30000);
+	EXPECT_EQ(p.current_dbm, -17);
+	EXPECT_EQ(p.raises, 1U);
 }
 
-TEST_F(PowerPolicy, TwoPercentLossRestartsSavingQualification)
+TEST_F(PowerPolicy, AmbiguousToggleBaselineIsNotAPoorWindowEvent)
 {
-	healthy(&power, 1U, 39750U, 99U);
-	EXPECT_EQ(observe(&power, -60, 98U, 40001U), 12);
-	healthy(&power, 40251U, 39750U, 99U);
-	EXPECT_EQ(power.current_dbm, 12);
-	EXPECT_EQ(observe(&power, -60, 99U, 80251U), 9);
+	run(1, 10000);
+	o.lq_percent = 49;
+	o.lq_generation = 2;
+	const int before = p.current_dbm;
+	EXPECT_EQ(sample(10251), before);
+	EXPECT_EQ(p.raises, 0U);
+	o.lq_generation++;
+	EXPECT_EQ(sample(10501), 12);
 }
 
-TEST_F(PowerPolicy, CountsDistinctPoorFeedback)
+TEST_F(PowerPolicy, EachNewLowWindowActsOnceEvenWhenValueIsUnchanged)
 {
-	healthy(&power, 100001U, 40000U);
-	ASSERT_EQ(power.current_dbm, 9);
-	healthy(&power, 140251U, 1750U);
-	EXPECT_EQ(observe(&power, -60, 98U, 142002U), 9);
-	for (uint32_t now = 142003U; now < 142050U; now++) {
-		EXPECT_EQ(zlrs_power_update(&power, -60, 98U, 142002U, now), 9);
+	run(1, 10000);
+	int before = p.current_dbm;
+	o.lq_percent = 90;
+	o.lq_generation = 1;
+	EXPECT_EQ(sample(10251), before + 3);
+	EXPECT_EQ(sample(10501), before + 3);
+	o.lq_generation++;
+	EXPECT_EQ(sample(10751), before + 6);
+	EXPECT_EQ(p.raises, 2U);
+}
+
+TEST_F(PowerPolicy, NinetyEightPercentNeverBlocksRssiSaving)
+{
+	o.lq_percent = 98;
+	for (uint32_t now = 1; now <= 30001; now += 250) {
+		o.lq_generation = now / 1250;
+		sample(now);
 	}
-	EXPECT_EQ(observe(&power, -60, 98U, 142050U), 9);
-	EXPECT_EQ(observe(&power, -96, 100U, 142051U), 12);
-	EXPECT_EQ(power.raises, 1U);
+	EXPECT_EQ(p.current_dbm, -17);
+	EXPECT_EQ(p.raises, 0U);
 }
 
-TEST_F(PowerPolicy, MarginalReceptionRestartsHealthyQualification)
+TEST_F(PowerPolicy, SevereNewQualityRestoresMaximumAndHoldsForFiveSeconds)
 {
-	healthy(&power, 142301U, 39750U);
-	EXPECT_EQ(observe(&power, -70, 100U, 182301U), 12);
-	healthy(&power, 182551U, 39750U);
-	EXPECT_EQ(observe(&power, -95, 99U, 222551U), 12);
-	healthy(&power, 222801U, 39750U);
-	EXPECT_EQ(power.current_dbm, 12);
-	EXPECT_EQ(observe(&power, -69, 100U, 262801U), 9);
+	run(1, 10000);
+	o.lq_percent = 49;
+	o.lq_generation = 1;
+	EXPECT_EQ(sample(10251), 12);
+	run(10501, 4500);
+	EXPECT_EQ(p.current_dbm, 12);
+	run(15251, 2000);
+	EXPECT_EQ(p.current_dbm, 9);
+	EXPECT_EQ(p.raises, 1U);
 }
 
-TEST_F(PowerPolicy, MissingFeedbackRestoresMaximumAtTimeout)
+TEST_F(PowerPolicy, DuplicateFeedbackCannotAdvanceQualification)
 {
-	const uint32_t finish = healthy(&power, 1U, 40000U);
-	ASSERT_EQ(power.current_dbm, 9);
-	EXPECT_EQ(zlrs_power_update(&power, -60, 100U, finish, finish + 999U), 9);
-	EXPECT_EQ(zlrs_power_update(&power, -60, 100U, finish, finish + 1000U), 12);
-	EXPECT_EQ(power.fallbacks, 1U);
-	EXPECT_EQ(zlrs_power_recover(&power, finish + 1001U), 12);
-	EXPECT_EQ(power.fallbacks, 1U);
-}
-
-TEST_F(PowerPolicy, NewFeedbackAfterUnobservedGapStillRestoresMaximum)
-{
-	healthy(&power, 300001U, 40000U);
-	ASSERT_EQ(power.current_dbm, 9);
-	EXPECT_EQ(observe(&power, -60, 100U, 341001U), 12);
-	EXPECT_EQ(power.fallbacks, 1U);
-}
-
-struct InvalidFeedback {
-	int16_t rssi;
-	uint8_t quality;
-	const char *name;
-};
-
-class InvalidPowerFeedback: public PowerPolicy, public testing::WithParamInterface<InvalidFeedback>
-{
-};
-
-TEST_P(InvalidPowerFeedback, RestoresMaximum)
-{
-	healthy(&power, 1U, 40000U);
-	ASSERT_EQ(power.current_dbm, 9);
-	EXPECT_EQ(observe(&power, GetParam().rssi, GetParam().quality, 40251U), 12);
-}
-
-INSTANTIATE_TEST_SUITE_P(InvalidInputs, InvalidPowerFeedback,
-			 testing::Values(InvalidFeedback{0, 100, "ZeroRssi"},
-					 InvalidFeedback{-256, 100, "OutOfRangeRssi"},
-					 InvalidFeedback{-60, 101, "ImpossibleQuality"}),
-			 [](const testing::TestParamInfo<InvalidFeedback> &info) {
-				 return info.param.name;
-			 });
-
-TEST_F(PowerPolicy, ExplicitRecoveryBypassesAdjustmentHold)
-{
-	healthy(&power, 1U, 40000U);
-	ASSERT_EQ(power.current_dbm, 9);
-	EXPECT_EQ(observe(&power, -255, 100U, 40002U), 9);
-	EXPECT_EQ(zlrs_power_recover(&power, 40003U), 12);
-}
-
-struct PowerRange {
-	int8_t ceiling;
-	int8_t floor;
-	const char *name;
-};
-
-class PowerBounds: public testing::TestWithParam<PowerRange>
-{
-};
-
-TEST_P(PowerBounds, LowersToFloorAndRecoversWithinLimits)
-{
-	zlrs_power_t power{};
-	const auto range = GetParam();
-	zlrs_power_init(&power, range.ceiling, range.floor, 0U);
-	uint32_t next = 1U;
-	for (unsigned int step = 0; step < 12U; step++) {
-		SCOPED_TRACE(step);
-		next = healthy(&power, next, 40000U) + 250U;
-		EXPECT_GE(power.current_dbm, range.floor);
-		EXPECT_LE(power.current_dbm, range.ceiling);
+	sample(1);
+	sample(501);
+	for (uint32_t now = 502; now < 1501; now++) {
+		o.now_ms = now;
+		EXPECT_EQ(zlrs_power_update(&p, &o), 12);
 	}
-	EXPECT_EQ(power.current_dbm, range.floor);
-	EXPECT_EQ(observe(&power, -60, 98U, next), range.floor);
-	EXPECT_EQ(observe(&power, -60, 98U, next + 250U), range.floor);
-	EXPECT_EQ(observe(&power, -60, 98U, next + 500U), range.floor + 3);
-	EXPECT_EQ(zlrs_power_recover(&power, next + 501U), range.ceiling);
+	EXPECT_EQ(p.lowers, 0U);
 }
 
-INSTANTIATE_TEST_SUITE_P(
-	HardwareAndRegionalLimits, PowerBounds,
-	testing::Values(PowerRange{12, -17, "Ism2400"}, PowerRange{22, -10, "SubgMaximum"},
-			PowerRange{14, -10, "Subg14"}, PowerRange{17, -10, "Subg17"},
-			PowerRange{10, -10, "Subg10"}),
-	[](const testing::TestParamInfo<PowerRange> &info) { return info.param.name; });
-
-TEST_F(PowerPolicy, InvertedRangeCannotLowerPower)
+TEST_F(PowerPolicy, FeedbackTimeoutAndUnobservedGapRestoreMaximum)
 {
-	zlrs_power_init(&power, -10, 0, 0U);
-	healthy(&power, 1U, 40000U);
-	EXPECT_EQ(power.current_dbm, -10);
-	EXPECT_EQ(power.lowers, 0U);
+	run(1, 2500);
+	ASSERT_EQ(p.current_dbm, 9);
+	o.now_ms = o.feedback_ms + 999;
+	EXPECT_EQ(zlrs_power_update(&p, &o), 9);
+	o.now_ms++;
+	EXPECT_EQ(zlrs_power_update(&p, &o), 12);
+	EXPECT_EQ(p.fallbacks, 1U);
+	run(5001, 2500);
+	ASSERT_EQ(p.current_dbm, 9);
+	EXPECT_EQ(sample(8501), 12);
+	EXPECT_EQ(p.fallbacks, 2U);
 }
 
-TEST_F(PowerPolicy, ReductionClampsToFloor)
+TEST_F(PowerPolicy, CachedQualityAfterFeedbackGapOnlyEstablishesBaseline)
 {
-	zlrs_power_init(&power, 1, 0, 0U);
-	healthy(&power, 1U, 40000U);
-	EXPECT_EQ(power.current_dbm, 0);
+	run(1, 2500);
+	o.lq_generation = 1;
+	o.lq_percent = 49;
+	EXPECT_EQ(sample(3501), 12);
+	run(3751, 10000);
+	EXPECT_EQ(p.raises, 0U);
+	EXPECT_LT(p.current_dbm, 12);
 }
 
-TEST_F(PowerPolicy, FeedbackTimeoutCrossesClockWrap)
+TEST_F(PowerPolicy, HysteresisPreventsAdjustmentInsideReceiveMargin)
 {
-	const uint32_t start = UINT32_MAX - 1000U;
-	zlrs_power_init(&power, 12, -17, start);
-	const uint32_t finish = healthy(&power, start, 40000U);
-	ASSERT_EQ(power.current_dbm, 9);
-	EXPECT_EQ(zlrs_power_update(&power, -60, 100U, finish, finish + 999U), 9);
-	EXPECT_EQ(zlrs_power_update(&power, -60, 100U, finish, finish + 1000U), 12);
+	o.rssi_dbm = -86;
+	run(1, 30000);
+	EXPECT_EQ(p.current_dbm, 12);
+	EXPECT_EQ(p.lowers, 0U);
+}
+
+TEST_F(PowerPolicy, WeakRssiRaisesWithoutWaitingForLqWindow)
+{
+	run(1, 10000);
+	ASSERT_LT(p.current_dbm, 12);
+	uint32_t raises = p.raises;
+	o.rssi_dbm = -100;
+	run(10251, 2000);
+	EXPECT_GT(p.raises, raises);
+}
+
+TEST_F(PowerPolicy, SingleRssiSpikeDoesNotRaise)
+{
+	run(1, 2500);
+	o.rssi_dbm = -110;
+	sample(2751);
+	o.rssi_dbm = -60;
+	run(3001, 2500);
+	EXPECT_EQ(p.raises, 0U);
+}
+
+TEST_F(PowerPolicy, SlowFrameSettlingDiscardsPreloadedObservations)
+{
+	o.settle_ms = 1500;
+	run(1, 3250);
+	EXPECT_EQ(p.current_dbm, 12);
+	EXPECT_EQ(sample(3501), 9);
+}
+
+TEST_F(PowerPolicy, FiltersByElapsedTimeRatherThanPacketCount)
+{
+	zlrs_power_t other = p;
+	o.rssi_dbm = -85;
+	run(1, 1000);
+	for (uint32_t now = 1; now <= 1001; now += 250) {
+		o.now_ms = o.feedback_ms = now;
+		zlrs_power_update(&other, &o);
+	}
+	o.rssi_dbm = -95;
+	for (uint32_t now = 1002; now <= 1251; now++) {
+		sample(now);
+	}
+	o.now_ms = o.feedback_ms = 1251;
+	zlrs_power_update(&other, &o);
+	EXPECT_NEAR(p.rssi_q8, other.rssi_q8, 256);
+	EXPECT_EQ(p.current_dbm, other.current_dbm);
+}
+
+TEST_F(PowerPolicy, WraparoundPreservesTimeoutAndAdjustmentIntervals)
+{
+	const uint32_t start = UINT32_MAX - 1000;
+	zlrs_power_init(&p, 12, -17, start);
+	run(start, 2500);
+	EXPECT_EQ(p.current_dbm, 9);
+	o.now_ms = o.feedback_ms + 1000;
+	EXPECT_EQ(zlrs_power_update(&p, &o), 12);
+}
+
+TEST_F(PowerPolicy, InvalidInputRecoversButUnavailableQualityIsAllowed)
+{
+	for (int16_t invalid : {0, -256}) {
+		SetUp();
+		run(1, 2500);
+		o.rssi_dbm = invalid;
+		EXPECT_EQ(sample(2751), 12);
+	}
+	SetUp();
+	run(1, 2500);
+	o.lq_percent = 101;
+	EXPECT_EQ(sample(2751), 12);
+}
+
+TEST_F(PowerPolicy, EveryHardwareRangeAndFinalPartialStepStayBounded)
+{
+	for (const auto [ceiling, floor] :
+	     {std::pair{12, -17}, {22, -10}, {14, -10}, {17, -10}, {10, -10}, {1, 0}, {-10, 0}}) {
+		SetUp();
+		zlrs_power_init(&p, ceiling, floor, 0);
+		run(1, 35000);
+		EXPECT_EQ(p.current_dbm, std::min(ceiling, floor));
+		EXPECT_EQ(zlrs_power_recover(&p, 35002), ceiling);
+	}
 }
 } // namespace

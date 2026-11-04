@@ -9,7 +9,7 @@
 #pragma once
 
 /* Current wire format only; SYNC must declare this exact version. */
-#define ZLRS_PROTO_VERSION 12U
+#define ZLRS_PROTO_VERSION 13U
 
 /* Frame: type/config(1) + common seq(4) + typed body + tag(0/4). */
 #define ZLRS_FRAME_HDR_LEN   5U

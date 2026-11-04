@@ -1,6 +1,6 @@
 # Air and management protocols
 
-This specification defines air protocol version 12 and native MCUmgr USB management.
+This specification defines air protocol version 13 and native MCUmgr USB management.
 Peers require matching air version, band mode, SubG region, security profile and
 timing. Identity, key derivation and trust boundaries are specified in
 [security](08-security.md); service ownership in [architecture](05-architecture.md).
@@ -18,7 +18,7 @@ byte and four sequence bytes.
 
 The first byte assigns bits 0–2 to the eight message types. For SYNC, bit 3 is
 profile and bits 4–7 are version. For every other type, bits 3–7 must be zero.
-SYNC declares version 12 and profile P0=0 or P1=1. A P1 SYNC starts with `0xCA`.
+SYNC declares version 13 and profile P0=0 or P1=1. A P1 SYNC starts with `0xDA`.
 The receiver selects tag length from its local profile and rejects a mismatching
 SYNC profile; untrusted input cannot downgrade authentication.
 
@@ -34,7 +34,7 @@ outside the union. Only identical layouts share a body:
 
 | Body | Fields |
 | --- | --- |
-| DATA_L2F / DATA_F2L | ACK:1, DATA sequence:7, RSSI:u8, LQ:u8, owned DATA byte array |
+| DATA_L2F / DATA_F2L | ACK:1, DATA sequence:7, RSSI:u8, LQ:7/update:1, owned DATA byte array |
 | SYNC | Profile:1, version:4, hop:u8, Leader nonce:u32, TDD frame index:u32, band plan |
 | PAIR_REQ | Initiator ID:4 bytes, initiator nonce:u32 |
 | PAIR_RESP / PAIR_CFM | Initiator ID:4 bytes, responder ID:4 bytes, both nonces:u32 |
@@ -109,18 +109,36 @@ Timeouts retry the same packet without discarding stream progress. A prepared
 packet carries its captured ACK; DATA accepted after preparation leaves another
 ACK pending. ARQ-disabled debug operation uses the same frame layout.
 
-RSSI is the magnitude of negative dBm, 1–255; zero means unavailable. LQ is an
-integer percentage 0–100. These describe the sending endpoint's reception of
-its peer. Local RSSI comes from accepted radio packets; peer RSSI/LQ comes from
-valid reverse DATA, including empty feedback frames. Idle quality feedback is
-scheduled at 250 ms intervals, subject to slot and duty availability.
+RSSI is the magnitude of negative dBm, 1–255; zero means unavailable. It retains
+1 dB precision and no update marker. RSSI updates on every accepted radio packet;
+a prepared transmission can carry the preceding sample. Valid reverse DATA,
+including empty feedback, reports the sender's reception of its peer. Idle
+feedback is scheduled at 250 ms intervals, subject to slot and duty availability.
+
+The existing LQ byte uses bits 0–6 for percentage 0–100 and bit 7 as a window
+update toggle. Value 127 means no completed window; 101–126 are reserved.
+Unavailable/reserved quality does not prevent valid RSSI feedback. No DATA
+prefix, payload or authentication-tag length changes. Both peers must use
+version 13; there is no version-12 compatibility path.
 
 LQ counts accepted confirmed-session DATA, same-session SYNC and valid session
 confirmation. Sequence gaps estimate expected transmission attempts. A window
 closes at at least 128 expected attempts; 128/128 is 100%, 127/128 is 99%.
+On every completion, bit 7 flips even when the percentage is unchanged. Cached
+feedback retains that bit; retransmitting a payload can carry newer feedback
+if its frame is rebuilt, while an already prepared frame retains its snapshot.
 Tracking remains continuous across window boundaries. Pairing and candidate
-handshakes do not contribute to the DATA-quality denominator. LQ is an observed
-sequence-span metric, not an end-to-end delivery percentage.
+handshakes do not contribute to the denominator. This is an observed sequence-span
+metric, not an end-to-end delivery percentage.
+
+Receivers consume each observed toggle change once. Repeated bytes are not new
+LQ measurements. First valid feedback establishes a baseline. One bit cannot
+identify two unseen window completions: a gap of min(1 s, 127 TDD periods), rounded
+down to milliseconds and bounded to at least 1 ms, invalidates marker continuity.
+A later packet establishes a baseline rather than a new control event. RAM-only
+generations advance by one for a window and skip one for an uncertain baseline,
+so power and PHY policy cannot reuse ambiguous window history. Sessions and RF
+path changes reset quality to unavailable and clear marker baselines.
 
 ## Pairing and sessions
 
@@ -248,31 +266,29 @@ are cleared and power starts at the allowed ceiling.
 
 ### Policy and recovery
 
-Fresh quality requires recent reverse feedback and available RSSI in both
-directions. Poor quality means either direction has LQ below 95% or RSSI below
-the current profile's boundary in [radio requirements](04-radio.md#automatic-24-ghz-profiles).
-SubG retains its -95 dBm boundary. The Leader policy is:
+Fresh RSSI requires recent reverse feedback and available measurements in both
+directions. The current PHY's weak boundary is specified in
+[radio requirements](04-radio.md#automatic-24-ghz-profiles); SubG uses -95 dBm.
+The Leader policy is:
 
 | Condition | Action |
 | --- | --- |
-| Fresh poor 2.4 GHz quality in either direction | Both roles restore their local TX maximum before the next transmission |
-| Poor 2.4 GHz quality continuously for 2 s at maximum, following post-boost reception and reverse feedback | Leader schedules the next more robust 2.4 GHz profile; after LoRa SF7, schedule SubG |
-| Both LQ values at least 99%, RSSI at least 6 dB above the next faster profile's boundary, continuously for 60 s | Probe that faster profile |
-| Healthy, fresh SubG feedback with both LQ values at least 99% continuously for 60 s | Probe 2.4 GHz LoRa SF7 |
+| Fresh weak 2.4 GHz RSSI in either direction | Both roles restore their local TX maximum |
+| Weakness continuously for 2 s after power settling and post-boost reception/feedback | Schedule the next more robust 2.4 GHz PHY; after LoRa SF7, schedule SubG |
+| Complete new LQ window below 95% after local TX has remained at maximum | Schedule the next more robust PHY |
+| Both valid LQ values at least 95%, RSSI at least 6 dB above the next faster boundary, continuously for 60 s | Probe that faster PHY |
+| Healthy, fresh SubG feedback with both valid LQ values at least 95% continuously for 60 s | Probe 2.4 GHz LoRa SF7 |
 | Healthy probe quality continuously for 5 s | Retain 2.4 GHz and finish probing |
 | Probe cannot capture or becomes persistently poor | Resume fallback/search |
 
-Stale or poor feedback restarts the healthy SubG interval; entering SubG alone
-does not start an unconditional 60-second return timer. The thresholds are
-product policy subject to RF calibration.
-
-Power recovery precedes downgrade qualification even when the endpoint already
-uses maximum power. Feedback timestamped before the recovery cannot start that
-qualification. Both roles hold maximum while poor quality persists; a healthy
-observation returns to normal power control. The existing reverse DATA RSSI/LQ
-feedback communicates asymmetric degradation. Power recovery changes no wire
-fields, session state, DATA sequence or replay baseline. Contact-loss searching
-continues independently when usable feedback disappears.
+For LQ-based degradation, discard the first boundary after maximum-power settling;
+only the next window is fully observed at that power. Leaving maximum, changing
+power epoch, loss of feedback or an uncertain quality baseline clears the relevant
+window qualification. Repeated low LQ cannot substitute for either boundary.
+LQ-only power actions occur once per new window, as defined in
+[firmware policy](06-firmware.md#automatic-band-operation-and-power).
+RSSI weakness holds the ceiling until recovery; stale feedback cannot qualify an
+upgrade. Power recovery changes no air fields, session or replay/ARQ state.
 
 Default contact loss is 1.5 seconds without confirmed-session reception. It
 first tries the next more robust 2.4 GHz profile, then SubG; SubG restarts the

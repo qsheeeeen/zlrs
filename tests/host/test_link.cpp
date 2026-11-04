@@ -289,6 +289,67 @@ TEST_F(Link, QualityWindowBoundary)
 	EXPECT_EQ(stats->lq_percent, 100U);
 }
 
+static void connect_saved(sim_t *sim, zlrs_profile_t profile);
+
+static void inject_quality(sim_t *sim, uint8_t quality, uint32_t now)
+{
+	uint8_t wire[ZLRS_FRAME_HDR_LEN + ZLRS_DATA_PREFIX_LEN + ZLRS_TAG_LEN];
+	zlrs_frame_t frame = {
+		.type = ZLRS_PKT_DATA_F2L,
+		.body = {.data = {.rssi_magnitude = 60U,
+				  .lq_percent = static_cast<uint8_t>(quality & ZLRS_LQ_VALUE_MASK),
+				  .lq_toggle = static_cast<uint8_t>(
+					  (quality & ZLRS_LQ_TOGGLE_MASK) != 0U)}},
+		.seq = sim->follower.link.tx_seq++};
+	ASSERT_EQ(zlrs_frame_encode(&frame, wire, sizeof(wire), sizeof(wire), ZLRS_TAG_LEN),
+		  sizeof(wire));
+	zlrs_tag(sim->follower.link.session_key_out, ZLRS_KEY_LEN, wire,
+		 sizeof(wire) - ZLRS_TAG_LEN, wire + sizeof(wire) - ZLRS_TAG_LEN);
+	zlrs_link_rx(&sim->leader.link, wire, sizeof(wire), -61, 0, now);
+}
+
+TEST_F(Link, QualityToggleSeparatesRepeatedFeedbackFromIdenticalNewWindows)
+{
+	ASSERT_NO_FATAL_FAILURE(connect_saved(&sim, ZLRS_PROFILE_P1));
+	inject_quality(&sim, ZLRS_LQ_UNAVAILABLE, sim.now_ms + 1);
+	uint32_t generation = sim.leader.link.peer_lq_generation;
+	inject_quality(&sim, 90, sim.now_ms + 2);
+	EXPECT_EQ(sim.leader.link.peer_lq_generation, ++generation);
+	inject_quality(&sim, 90, sim.now_ms + 3);
+	EXPECT_EQ(sim.leader.link.peer_lq_generation, generation);
+	inject_quality(&sim, 91, sim.now_ms + 4);
+	EXPECT_EQ(sim.leader.link.peer_lq_percent, 90U);
+	inject_quality(&sim, 90 | ZLRS_LQ_TOGGLE_MASK, sim.now_ms + 5);
+	EXPECT_EQ(sim.leader.link.peer_lq_generation, ++generation);
+	EXPECT_EQ(sim.leader.link.peer_lq_percent, 90U);
+	inject_quality(&sim, 90, sim.now_ms + 6);
+	EXPECT_EQ(sim.leader.link.peer_lq_generation, ++generation);
+}
+
+TEST_F(Link, PendingOrInvalidQualityStillRefreshesRssiAndFeedback)
+{
+	ASSERT_NO_FATAL_FAILURE(connect_saved(&sim, ZLRS_PROFILE_P1));
+	for (uint8_t quality : {127, 101, 255}) {
+		inject_quality(&sim, quality, ++sim.now_ms);
+		const auto info = zlrs_link_get_info(&sim.leader.link);
+		EXPECT_EQ(info.peer_rssi_dbm, -60);
+		EXPECT_EQ(info.last_peer_feedback_ms, sim.now_ms);
+		EXPECT_EQ(info.peer_lq_percent, ZLRS_LQ_UNAVAILABLE);
+	}
+}
+
+TEST_F(Link, AmbiguousMarkerAfterFeedbackGapEstablishesANewBaseline)
+{
+	ASSERT_NO_FATAL_FAILURE(connect_saved(&sim, ZLRS_PROFILE_P1));
+	sim.leader.link.cfg.lq_feedback_gap_ms = 500;
+	inject_quality(&sim, 90, sim.now_ms + 1);
+	const uint32_t generation = sim.leader.link.peer_lq_generation;
+	inject_quality(&sim, 90, sim.now_ms + 500);
+	EXPECT_EQ(sim.leader.link.peer_lq_generation, generation);
+	inject_quality(&sim, 90, sim.now_ms + 1000);
+	EXPECT_EQ(sim.leader.link.peer_lq_generation, generation + 2);
+}
+
 class PowerSymmetry: public Link, public testing::WithParamInterface<int>
 {
 };
@@ -324,11 +385,17 @@ TEST_P(PowerSymmetry, StrongDuplexLinkKeepsSavingWithOneOccasionalLostPacket)
 		for (unsigned int i = 0U; i < 2U; i++) {
 			const zlrs_link_info_t info = zlrs_link_get_info(nodes[i]);
 			saw_99 |= info.peer_lq_percent == 99U;
-			zlrs_link_set_power(nodes[i],
-					    zlrs_power_update(&powers[i], info.peer_rssi_dbm,
-							      info.peer_lq_percent,
-							      info.last_peer_feedback_ms,
-							      sim.now_ms));
+			zlrs_link_set_power(
+				nodes[i], ([&] {
+					zlrs_power_observation_t o = {
+						.now_ms = sim.now_ms,
+						.feedback_ms = info.last_peer_feedback_ms,
+						.lq_generation = info.peer_lq_generation,
+						.rssi_dbm = info.peer_rssi_dbm,
+						.rssi_floor_dbm = -89,
+						.lq_percent = info.peer_lq_percent};
+					return zlrs_power_update(&powers[i], &o);
+				})());
 		}
 	}
 	if (GetParam() >= 0) {
@@ -902,6 +969,8 @@ static void automatic_frame(sim_t *sim, zlrs_band_policy_t policies[2])
 				.now_ms = sim->now_ms,
 				.last_rx_ms = info.last_rx_ms,
 				.feedback_ms = info.last_peer_feedback_ms,
+				.lq_generation = link->stats.lq_generation,
+				.peer_lq_generation = info.peer_lq_generation,
 				.paired = info.paired,
 				.pairing = info.state == ZLRS_STATE_PAIRING,
 				.connected =
@@ -1190,9 +1259,9 @@ TEST_F(Link, DuplexDeliveryAndWireTranscript)
 		  follower_feedback_before);
 	/* Golden bytes for this fixed protocol scenario. */
 	EXPECT_EQ(sim.wire_packets, 200U);
-	printf("wire v12: packets=%u hash=%016llx\n", sim.wire_packets,
+	printf("wire v13: packets=%u hash=%016llx\n", sim.wire_packets,
 	       (unsigned long long)sim.wire_hash);
-	EXPECT_EQ(sim.wire_hash, UINT64_C(0xf51b1cf5bf5296b1));
+	EXPECT_EQ(sim.wire_hash, UINT64_C(0x3a98cc8bd0ecd677));
 	/* An authenticated DATA capture cannot be delivered twice, tampered with or reflected. */
 	ASSERT_GT(sim.captured_len, 0U);
 	const uint16_t received = sim.follower.received_len;

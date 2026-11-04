@@ -16,12 +16,16 @@ static void check_wire(const zlrs_frame_t *view, const uint8_t *expected, uint16
 	EXPECT_EQ(memcmp(decoded.tag, expected + size - ZLRS_TAG_LEN, ZLRS_TAG_LEN), 0);
 	ASSERT_EQ(zlrs_frame_encode(&decoded, again, sizeof(again), size, ZLRS_TAG_LEN), size);
 	EXPECT_EQ(memcmp(buf, again, size), 0);
+	if (view->type <= ZLRS_PKT_DATA_F2L) {
+		EXPECT_EQ(+decoded.body.data.lq_percent, +view->body.data.lq_percent);
+		EXPECT_EQ(+decoded.body.data.lq_toggle, +view->body.data.lq_toggle);
+	}
 	if (view->type != ZLRS_PKT_SYNC) {
 		buf[0] |= 8U;
 		EXPECT_FALSE(zlrs_frame_decode(&decoded, buf, size, ZLRS_TAG_LEN));
 		buf[0] = expected[0];
 	} else {
-		EXPECT_TRUE(decoded.body.sync.version == 12U && decoded.body.sync.profile == 1U);
+		EXPECT_TRUE(decoded.body.sync.version == 13U && decoded.body.sync.profile == 1U);
 	}
 	if (view->type >= ZLRS_PKT_SYNC) {
 		EXPECT_FALSE(zlrs_frame_decode(&decoded, buf, size - 1U, ZLRS_TAG_LEN));
@@ -35,7 +39,7 @@ static void check_wire(const zlrs_frame_t *view, const uint8_t *expected, uint16
 	}
 	ASSERT_EQ(zlrs_frame_encode(&debug, buf, sizeof(buf), size - ZLRS_TAG_LEN, 0U),
 		  size - ZLRS_TAG_LEN);
-	EXPECT_EQ(buf[0], (view->type == ZLRS_PKT_SYNC ? 0xc2U : expected[0]));
+	EXPECT_EQ(buf[0], (view->type == ZLRS_PKT_SYNC ? 0xd2U : expected[0]));
 	EXPECT_EQ(memcmp(buf + 1U, expected + 1U, size - ZLRS_TAG_LEN - 1U), 0);
 	ASSERT_TRUE(zlrs_frame_decode(&decoded, buf, size - ZLRS_TAG_LEN, 0U));
 	EXPECT_TRUE(decoded.seq == view->seq && decoded.tag[0] == 0U);
@@ -48,12 +52,13 @@ TEST(FrameCodec, IndependentWireVectorsAndLengthBounds)
 	zlrs_frame_t frame = {.type = ZLRS_PKT_DATA_L2F,
 			      .body = {.data = {.ack = 1,
 						.data_seq = 127,
-						.rssi_magnitude = 48,
+						.rssi_magnitude = 200,
 						.lq_percent = 99,
+						.lq_toggle = 1,
 						.bytes = {0x5a, 0xa5}}},
 			      .seq = 0x04030102,
 			      .tag = {0xde, 0xad, 0xbe, 0xef}};
-	const uint8_t data[] = {0, 2, 1, 3, 4, 0xff, 48, 99, 0x5a, 0xa5, 0xde, 0xad, 0xbe, 0xef};
+	const uint8_t data[] = {0, 2, 1, 3, 4, 0xff, 200, 0xe3, 0x5a, 0xa5, 0xde, 0xad, 0xbe, 0xef};
 	check_wire(&frame, data, sizeof(data));
 	frame = zlrs_frame_t{.type = ZLRS_PKT_DATA_F2L,
 			     .body = {.data = {.data_seq = 1, .lq_percent = 100}},
@@ -63,7 +68,7 @@ TEST(FrameCodec, IndependentWireVectorsAndLengthBounds)
 	check_wire(&frame, feedback, sizeof(feedback));
 	frame = zlrs_frame_t{.type = ZLRS_PKT_SYNC,
 			     .body = {.sync = {.profile = 1,
-					       .version = 12,
+					       .version = 13,
 					       .hop_index = 254,
 					       .nonce_leader = 0x11223344,
 					       .frame_index = 0x55667788,
@@ -74,7 +79,7 @@ TEST(FrameCodec, IndependentWireVectorsAndLengthBounds)
 							     .switch_frame = 0x66778899}}},
 			     .seq = 0x04030102,
 			     .tag = {0xde, 0xad, 0xbe, 0xef}};
-	const uint8_t sync[] = {0xca, 2,    1,    3,    4,    254,  0x44, 0x33,
+	const uint8_t sync[] = {0xda, 2,    1,    3,    4,    254,  0x44, 0x33,
 				0x22, 0x11, 0x88, 0x77, 0x66, 0x55, 0x0c, 0x99,
 				0x88, 0x77, 0x66, 0x21, 0xde, 0xad, 0xbe, 0xef};
 	check_wire(&frame, sync, sizeof(sync));

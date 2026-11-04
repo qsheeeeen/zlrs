@@ -28,6 +28,10 @@ typedef enum {
 #define ZLRS_DATA_ACK_MASK      0x01U
 #define ZLRS_DATA_SEQ_SHIFT     1U
 #define ZLRS_DATA_SEQ_MASK      0x7FU
+#define ZLRS_LQ_TOGGLE_MASK     0x80U
+#define ZLRS_LQ_VALUE_MASK      0x7FU
+#define ZLRS_LQ_UNAVAILABLE     0x7FU
+#define ZLRS_LQ_WINDOW_FRAMES   128U
 
 typedef enum {
 	ZLRS_PROFILE_P0 = 0, /* no authentication, debug only */
@@ -41,7 +45,8 @@ typedef struct {
 	uint8_t ack: 1; /* reverse-direction ACK */
 	uint8_t data_seq: 7;
 	uint8_t rssi_magnitude;
-	uint8_t lq_percent;
+	uint8_t lq_percent: 7; /* 0..100 or 127 unavailable */
+	uint8_t lq_toggle: 1;  /* changes on each completed quality window */
 	uint8_t bytes[ZLRS_DATA_MAX_LEN];
 } zlrs_data_frame_t;
 

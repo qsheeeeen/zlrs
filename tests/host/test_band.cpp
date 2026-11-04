@@ -69,28 +69,15 @@ TEST_P(BandProfiles, DowngradeRequiresTwoSecondsAfterPowerBoost)
 	EXPECT_EQ(p.target_phy, GetParam().phy == ZLRS_PHY_LORA_SF7 ? 0U : GetParam().phy + 1U);
 }
 
-TEST_P(BandProfiles, StaleQualityFeedbackRestartsQualification)
+TEST_P(BandProfiles, CachedLowQualityCannotBoostOrQualifyDowngrade)
 {
-	auto o = good(2300);
-	EXPECT_EQ(zlrs_band_policy_update(&p, &o), ZLRS_BAND_KEEP);
-	o = good(2400);
-	o.peer_lq_percent = 94;
-	ASSERT_EQ(zlrs_band_policy_update(&p, &o), ZLRS_BAND_BOOST);
-	o = good(4300);
-	o.peer_lq_percent = 94;
-	o.feedback_ms = 1;
-	EXPECT_EQ(zlrs_band_policy_update(&p, &o), ZLRS_BAND_KEEP);
-	o = good(4400);
-	o.peer_lq_percent = 94;
-	EXPECT_EQ(zlrs_band_policy_update(&p, &o), ZLRS_BAND_KEEP);
-	o = good(6400);
-	o.peer_lq_percent = 94;
-	EXPECT_EQ(zlrs_band_policy_update(&p, &o), ZLRS_BAND_PLAN);
-	p.leader = false;
-	EXPECT_EQ(zlrs_band_policy_update(&p, &o), ZLRS_BAND_KEEP);
-	p.automatic = false;
-	o.now_ms += 100000;
-	EXPECT_EQ(zlrs_band_policy_update(&p, &o), ZLRS_BAND_KEEP);
+	for (uint32_t now : {100U, 2400U, 6400U}) {
+		auto o = good(now);
+		o.peer_lq_percent = 90;
+		o.peer_lq_generation = 1;
+		EXPECT_EQ(zlrs_band_policy_update(&p, &o), ZLRS_BAND_KEEP);
+		EXPECT_FALSE(p.power_boosted);
+	}
 }
 
 TEST_P(BandProfiles, ContactLossAdvancesThroughEveryProfileBeforeSubg)
@@ -157,6 +144,56 @@ INSTANTIATE_TEST_SUITE_P(RolesAndDirections, BandBoost,
 					(std::get<1>(info.param) ? "Peer" : "Local");
 			 });
 
+TEST_F(BandPolicy, QualityDowngradeWaitsForAnEntireWindowAtMaximum)
+{
+	auto o = good(100);
+	o.lq_generation = o.peer_lq_generation = 10;
+	o.peer_lq_percent = 90;
+	EXPECT_EQ(zlrs_band_policy_update(&p, &o), ZLRS_BAND_KEEP);
+	o = good(2000);
+	o.peer_lq_percent = 90;
+	o.lq_generation = o.peer_lq_generation = 11;
+	EXPECT_EQ(zlrs_band_policy_update(&p, &o), ZLRS_BAND_KEEP);
+	o = good(30000);
+	o.peer_lq_percent = 90;
+	o.lq_generation = o.peer_lq_generation = 11;
+	EXPECT_EQ(zlrs_band_policy_update(&p, &o), ZLRS_BAND_KEEP);
+	o = good(40000);
+	o.peer_lq_percent = 90;
+	o.lq_generation = o.peer_lq_generation = 12;
+	EXPECT_EQ(zlrs_band_policy_update(&p, &o), ZLRS_BAND_PLAN);
+}
+
+TEST_F(BandPolicy, LoweringPowerInvalidatesPostMaximumQualityEvidence)
+{
+	auto o = good(100);
+	o.peer_lq_percent = 90;
+	o.peer_lq_generation = 1;
+	EXPECT_EQ(zlrs_band_policy_update(&p, &o), ZLRS_BAND_KEEP);
+	o.now_ms = o.last_rx_ms = o.feedback_ms = 2000;
+	o.peer_lq_generation = 2;
+	EXPECT_EQ(zlrs_band_policy_update(&p, &o), ZLRS_BAND_KEEP);
+	o.power_at_max = false;
+	o.peer_lq_generation = 3;
+	EXPECT_EQ(zlrs_band_policy_update(&p, &o), ZLRS_BAND_KEEP);
+	o.power_at_max = true;
+	o.now_ms = o.last_rx_ms = o.feedback_ms = 3000;
+	EXPECT_EQ(zlrs_band_policy_update(&p, &o), ZLRS_BAND_KEEP);
+	o.peer_lq_generation = 4;
+	o.now_ms = o.last_rx_ms = o.feedback_ms = 4000;
+	EXPECT_EQ(zlrs_band_policy_update(&p, &o), ZLRS_BAND_KEEP);
+}
+
+TEST_F(BandPolicy, UnknownQualityCannotQualifyAnUpgrade)
+{
+	p.phy = ZLRS_PHY_FLRC_650;
+	for (uint32_t now : {100U, 60100U}) {
+		auto o = good(now);
+		o.lq_percent = o.peer_lq_percent = 127;
+		EXPECT_EQ(zlrs_band_policy_update(&p, &o), ZLRS_BAND_KEEP);
+	}
+}
+
 TEST_F(BandPolicy, WeakHealthySlowLinkStaysOn24)
 {
 	p.phy = ZLRS_PHY_FLRC_325;
@@ -181,6 +218,62 @@ TEST_F(BandPolicy, UpgradeNeedsMarginAndContinuousMinute)
 	EXPECT_EQ(zlrs_band_policy_update(&p, &o), ZLRS_BAND_PLAN);
 	EXPECT_FALSE(p.target_subg);
 	EXPECT_EQ(p.target_phy, ZLRS_PHY_LORA_SF6);
+}
+
+TEST_F(BandPolicy, UpgradeToleratesSmallLossButRequiresReceiveMargin)
+{
+	for (uint8_t quality : {95, 97, 98, 99}) {
+		zlrs_band_policy_changed(&p, false, ZLRS_PHY_FLRC_650, false, 0, 0);
+		auto o = good(100);
+		o.lq_percent = o.peer_lq_percent = quality;
+		EXPECT_EQ(zlrs_band_policy_update(&p, &o), ZLRS_BAND_KEEP);
+		o.now_ms = o.last_rx_ms = o.feedback_ms = 60100;
+		EXPECT_EQ(zlrs_band_policy_update(&p, &o), ZLRS_BAND_PLAN);
+		EXPECT_EQ(p.target_phy, ZLRS_PHY_FLRC_2600);
+	}
+	zlrs_band_policy_changed(&p, false, ZLRS_PHY_FLRC_650, false, 0, 0);
+	for (uint32_t now : {100U, 60100U}) {
+		auto o = good(now);
+		o.rssi_dbm = -84; /* Below the faster PHY's -83 dBm upgrade boundary. */
+		EXPECT_EQ(zlrs_band_policy_update(&p, &o), ZLRS_BAND_KEEP);
+	}
+}
+
+TEST_F(BandPolicy, FreshPoorWindowRestartsUpgradeQualification)
+{
+	zlrs_band_policy_changed(&p, false, ZLRS_PHY_FLRC_650, false, 0, 0);
+	auto o = good(100);
+	o.peer_lq_percent = 98;
+	EXPECT_EQ(zlrs_band_policy_update(&p, &o), ZLRS_BAND_KEEP);
+	o = good(60099);
+	o.peer_lq_percent = 94;
+	o.peer_lq_generation = 1;
+	EXPECT_EQ(zlrs_band_policy_update(&p, &o), ZLRS_BAND_KEEP);
+	o = good(60100);
+	o.peer_lq_percent = 98;
+	o.peer_lq_generation = 2;
+	EXPECT_EQ(zlrs_band_policy_update(&p, &o), ZLRS_BAND_KEEP);
+	o = good(120099);
+	o.peer_lq_percent = 98;
+	o.peer_lq_generation = 3;
+	EXPECT_EQ(zlrs_band_policy_update(&p, &o), ZLRS_BAND_KEEP);
+	o = good(120100);
+	o.peer_lq_percent = 98;
+	o.peer_lq_generation = 3;
+	EXPECT_EQ(zlrs_band_policy_update(&p, &o), ZLRS_BAND_PLAN);
+}
+
+TEST_F(BandPolicy, ProbeNeedsFiveSecondsOfValidHealthyQuality)
+{
+	for (uint8_t quality : {94, 95, 127}) {
+		zlrs_band_policy_changed(&p, false, ZLRS_PHY_FLRC_650, true, 0, 0);
+		for (uint32_t now : {100U, 5100U}) {
+			auto o = good(now);
+			o.lq_percent = o.peer_lq_percent = quality;
+			EXPECT_EQ(zlrs_band_policy_update(&p, &o), ZLRS_BAND_KEEP);
+		}
+		EXPECT_EQ(p.probing, quality != 95);
+	}
 }
 
 TEST_F(BandPolicy, LeaderDwellOutlastsFollowerSweep)

@@ -104,6 +104,15 @@ static uint32_t read_status(zlrs_mgmt_status_t *out)
 		.rssi_dbm = rf.rssi_dbm,
 		.peer_rssi_dbm = rf.peer_rssi_dbm,
 		.peer_lq_percent = rf.peer_lq_percent,
+		.lq_generation = rf.lq_generation,
+		.peer_lq_generation = rf.peer_lq_generation,
+		.power_raises = rf.power_raises,
+		.power_lowers = rf.power_lowers,
+		.power_fallbacks = rf.power_fallbacks,
+		.power_changed_ms = rf.power_changed_ms,
+		.peer_feedback_ms = rf.peer_feedback_ms,
+		.power_rssi_dbm = rf.power_rssi_dbm,
+
 		.active_power_dbm = rf.tx_power_dbm,
 		.power_floor_dbm = rf.power_floor_dbm,
 		.temperature_centi_c = rf.temperature_centi_c,
@@ -412,7 +421,7 @@ static int product_command(struct smp_streamer *ctxt, bool write)
 		     zcbor_uint32_put(zs, reply.uptime_ms) &&
 		     zcbor_tstr_put_lit(zs, "hardware_ms") &&
 		     zcbor_uint32_put(zs, reply.hardware_ms) && zcbor_tstr_put_lit(zs, "status") &&
-		     zcbor_map_start_encode(zs, 48);
+		     zcbor_map_start_encode(zs, 64);
 #define FIELD(name)                                                                                \
 	ok = ok && zcbor_tstr_put_lit(zs, #name) && zcbor_int64_put(zs, reply.status.name)
 		FIELD(role);
@@ -427,6 +436,15 @@ static int product_command(struct smp_streamer *ctxt, bool write)
 		FIELD(rssi_dbm);
 		FIELD(peer_rssi_dbm);
 		FIELD(peer_lq_percent);
+		FIELD(lq_generation);
+		FIELD(peer_lq_generation);
+		FIELD(power_raises);
+		FIELD(power_lowers);
+		FIELD(power_fallbacks);
+		FIELD(power_changed_ms);
+		FIELD(peer_feedback_ms);
+		FIELD(power_rssi_dbm);
+
 		FIELD(active_power_dbm);
 		FIELD(power_floor_dbm);
 		FIELD(temperature_centi_c);
@@ -458,7 +476,7 @@ static int product_command(struct smp_streamer *ctxt, bool write)
 		     zcbor_bstr_encode_ptr(zs, reply.status.dev_id, ZLRS_DEV_ID_LEN) &&
 		     zcbor_tstr_put_lit(zs, "peer_id") &&
 		     zcbor_bstr_encode_ptr(zs, reply.status.peer_id, ZLRS_DEV_ID_LEN) &&
-		     zcbor_map_end_encode(zs, 48);
+		     zcbor_map_end_encode(zs, 64);
 	}
 	if (op == ZLRS_MGMT_CMD_DEBUG_REPORT) {
 		ok = ok && zcbor_tstr_put_lit(zs, "report") &&

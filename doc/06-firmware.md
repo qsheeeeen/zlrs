@@ -114,33 +114,51 @@ maximum before session establishment. Startup, disconnection, invalid session,
 radio capture and feedback loss restore the active band's maximum before the
 next transmission. A band change starts at the new band's maximum.
 
-Automatic 2.4 GHz degradation takes priority over normal power saving. Either
-direction crossing the current profile's poor-quality boundary immediately
-restores local TX to its allowed maximum on both roles. Reverse DATA carries
-the weak-direction RSSI/LQ to the other endpoint, which applies the same rule.
-The Leader waits for reception and reverse feedback newer than the boost, then
-requires two continuous seconds of poor feedback at maximum before planning a
-slower profile. Recovery cancels that qualification and resumes normal power
-saving. Firmware on both endpoints must implement this policy; no new air fields
-are required.
+Each endpoint uses authenticated reverse RSSI to control its own TX. RSSI updates
+on every accepted packet; preloaded DATA can carry the preceding measurement.
+Normal control filters RSSI in elapsed time (500 ms time constant), rather than
+counting packets. The weak boundary follows the active PHY's existing initial
+10 dB receive margin; the lowering boundary is 6 dB stronger. SubG uses -95/-89 dBm.
+These are initial policy values requiring RF calibration, not measured sensitivity.
 
-Power decisions run at each radio preparation boundary, independently of logging.
-Each normal adjustment requires three consecutive distinct fresh observations
-and changes the setpoint by 3 dB, bounded by the active range:
+| Observation | Decision |
+| --- | --- |
+| Filtered RSSI below the active weak boundary continuously for 500 ms | Raise 3 dB |
+| Filtered RSSI above the lowering boundary continuously for 2 s | Lower 3 dB |
+| RSSI between the two boundaries | Hold |
+| One newly completed LQ window at 50–94% | Raise once by 3 dB; suppress lowering for 2 s |
+| One newly completed LQ window below 50% | Restore maximum; suppress lowering for 5 s |
+| LQ at least 95%, or no completed window | Leave normal RSSI control active |
+| Missing/invalid RSSI or expired reverse feedback | Restore maximum immediately |
 
-| Observation | Decision | Minimum wait |
-| --- | --- | --- |
-| LQ below 99%, or RSSI below −95 dBm | Raise toward the maximum | 2 s since the last change |
-| LQ at least 99% and RSSI above −70 dBm | Lower toward the minimum | 40 s of continuously healthy feedback since the last change |
-| Other fresh feedback | Hold | — |
-| Missing/invalid feedback, or feedback at least 1 s old | Restore the maximum | Before the next transmission |
+Each actual power change discards the RSSI filter and qualification intervals.
+Only feedback received after a settling interval can qualify another RSSI action.
+Settling is at least 500 ms and two complete TDD periods, covering preloaded
+feedback. Reverse feedback expires after max(1 s, two TDD periods + 500 ms).
+Repeated reads of a feedback timestamp never advance the policy. Qualification
+and hold timers support clock wraparound. All setpoints clamp to the active range.
 
-The saving threshold tolerates one lost packet in a 128-attempt quality window;
-isolated loss must not hold one strong direction at maximum while its peer saves power.
-Repeated reads of one observation never advance qualification. Any non-healthy
-observation or feedback gap of at least one second resets the lowering interval.
-Recovery bypasses the normal raising delay and step size. Millisecond timers
-support clock wraparound. Thresholds require RF calibration against measured loss.
+LQ retains its 128-attempt windows. The existing LQ byte carries a one-bit update
+marker as specified in [the air protocol](07-protocol.md#sequence-delivery-and-quality).
+A cached low LQ neither repeats a raise nor restarts a hold or RSSI qualification.
+Each new window acts once even when its percentage equals the preceding window.
+An ambiguous marker following a feedback gap only establishes a new baseline.
+RAM generations distinguish these baselines from window completions; none of
+these counters or timestamps adds air bytes. RSSI retains its full 1 dB encoding.
+
+Automatic 2.4 GHz degradation also consumes these observations. Weak RSSI in
+either direction restores both endpoints' local TX ceilings before qualification.
+After settling and post-boost reception/reverse feedback, weakness must persist
+for two seconds before Leader plans a slower PHY. Recovery releases the ceiling.
+LQ alone no longer causes an immediate ceiling override on every feedback packet.
+An LQ-based downgrade requires local maximum power throughout a complete new
+window: the first post-settling boundary is discarded because it can contain
+lower-power history, and the next completed window must remain below 95%.
+Leaving maximum, a power epoch change or an uncertain quality baseline invalidates
+that direction's window evidence. The 60-second healthy upgrade uses valid
+bidirectional LQ at least 95% and the next PHY's 6 dB RSSI margin; an isolated
+98% window cannot strand a strong link on a slow PHY. Contact-loss searches
+remain active. Unknown LQ cannot qualify a PHY upgrade.
 
 ## Management and diagnostics
 

@@ -23,10 +23,15 @@ typedef struct {
 	bool stable, bad, good;
 	bool power_boosted;
 	uint32_t power_boost_ms;
+	bool maximum;
+	uint32_t maximum_ms, power_changed_ms, local_generation, peer_generation;
+	uint8_t local_windows, peer_windows;
 } zlrs_band_policy_t;
 
 typedef struct {
 	uint32_t now_ms, last_rx_ms, feedback_ms;
+	uint32_t lq_generation, peer_lq_generation;
+	uint32_t power_changed_ms, settle_ms;
 	bool paired, pairing, connected, acquiring, planned;
 	bool power_at_max;
 	int16_t rssi_dbm, peer_rssi_dbm;
@@ -40,3 +45,6 @@ void zlrs_band_policy_changed(zlrs_band_policy_t *policy, bool subg, zlrs_phy_t 
 void zlrs_band_policy_resume(zlrs_band_policy_t *policy, uint32_t now_ms, uint32_t last_rx_ms);
 zlrs_band_action_t zlrs_band_policy_update(zlrs_band_policy_t *policy,
 					   const zlrs_band_observation_t *observation);
+
+/* Initial per-PHY receive boundary, shared with transmit-power control. */
+int16_t zlrs_band_rssi_floor(bool subg, zlrs_phy_t phy);

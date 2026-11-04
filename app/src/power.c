@@ -1,27 +1,18 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "power.h"
-#include <stdbool.h>
 
-/* Product policy. RSSI/LQ thresholds need calibration against measured packet-error curves. */
 enum {
 	POWER_STEP_DB = 3,
-	RSSI_LOW_DBM = -95,
-	RSSI_HIGH_DBM = -70,
-	LQ_LOW = 99,
-	/* One lost packet in a 128-attempt window reports 99% until the next window.
-	 * Requiring 100% makes occasional loss prevent saving for an entire idle window.
-	 */
-	LQ_HIGH = 99,
-	FEEDBACK_SAMPLES = 3,
-	RAISE_HOLD_MS = 2000,
-	/* A 128-packet idle quality window takes about 33–37 seconds on the shipped bands. */
-	LOWER_HOLD_MS = 40000,
-	FEEDBACK_TIMEOUT_MS = 1000,
+	RSSI_HYSTERESIS_DB = 6,
+	RSSI_FILTER_MS = 500,
+	RAISE_HOLD_MS = 500,
+	LOWER_HOLD_MS = 2000,
+	LQ_RECOVERY_MS = 5000,
 };
 
-void zlrs_power_init(zlrs_power_t *power, int8_t ceiling_dbm, int8_t floor_dbm, uint32_t now_ms)
+void zlrs_power_init(zlrs_power_t *p, int8_t ceiling_dbm, int8_t floor_dbm, uint32_t now_ms)
 {
-	*power = (zlrs_power_t){
+	*p = (zlrs_power_t){
 		.floor_dbm = floor_dbm < ceiling_dbm ? floor_dbm : ceiling_dbm,
 		.ceiling_dbm = ceiling_dbm,
 		.current_dbm = ceiling_dbm,
@@ -29,89 +20,112 @@ void zlrs_power_init(zlrs_power_t *power, int8_t ceiling_dbm, int8_t floor_dbm, 
 	};
 }
 
-int8_t zlrs_power_recover(zlrs_power_t *power, uint32_t now_ms)
+int8_t zlrs_power_recover(zlrs_power_t *p, uint32_t now_ms)
 {
-	power->good = 0U;
-	power->bad = 0U;
-	power->healthy = false;
-	power->last_feedback_ms = 0U;
-	if (power->current_dbm != power->ceiling_dbm) {
-		power->current_dbm = power->ceiling_dbm;
-		power->last_change_ms = now_ms;
-		power->fallbacks++;
+	p->good = p->bad = p->filtering = p->lq_hold = false;
+	p->last_feedback_ms = 0U;
+	p->lq_generation = 0U;
+	if (p->current_dbm != p->ceiling_dbm) {
+		p->current_dbm = p->ceiling_dbm;
+		p->last_change_ms = now_ms;
+		p->fallbacks++;
 	}
-	return power->current_dbm;
+	return p->current_dbm;
 }
 
-int8_t zlrs_power_update(zlrs_power_t *power, int16_t rssi_dbm, uint8_t lq_percent,
-			 uint32_t feedback_ms, uint32_t now_ms)
+static int8_t change(zlrs_power_t *p, int next, uint32_t now_ms)
 {
-	if (feedback_ms == 0U || (uint32_t)(now_ms - feedback_ms) >= FEEDBACK_TIMEOUT_MS ||
-	    rssi_dbm >= 0 || rssi_dbm < -255 || lq_percent > 100U) {
-		return zlrs_power_recover(power, now_ms);
+	if (next > p->ceiling_dbm) {
+		next = p->ceiling_dbm;
 	}
-	if (power->last_feedback_ms != 0U &&
-	    (int32_t)(feedback_ms - power->last_feedback_ms) <= 0) {
-		return power->current_dbm;
+	if (next < p->floor_dbm) {
+		next = p->floor_dbm;
 	}
-	if (power->last_feedback_ms != 0U &&
-	    (uint32_t)(feedback_ms - power->last_feedback_ms) >= FEEDBACK_TIMEOUT_MS) {
-		zlrs_power_recover(power, now_ms);
+	if (next != p->current_dbm) {
+		p->raises += next > p->current_dbm;
+		p->lowers += next < p->current_dbm;
+		p->last_change_ms = now_ms;
+		p->current_dbm = (int8_t)next;
+		p->good = p->bad = p->filtering = false;
 	}
-	if (power->last_feedback_ms == 0U) {
-		power->last_change_ms = now_ms;
-	}
-	power->last_feedback_ms = feedback_ms;
-	const bool poor = rssi_dbm < RSSI_LOW_DBM || lq_percent < LQ_LOW;
+	return p->current_dbm;
+}
 
-	if (poor) {
-		if (power->bad < FEEDBACK_SAMPLES) {
-			power->bad++;
+int8_t zlrs_power_update(zlrs_power_t *p, const zlrs_power_observation_t *o)
+{
+	const uint32_t timeout = o->feedback_timeout_ms ? o->feedback_timeout_ms : 1000U;
+	const uint32_t settle = o->settle_ms > 500U ? o->settle_ms : 500U;
+	if (o->feedback_ms == 0U || (uint32_t)(o->now_ms - o->feedback_ms) >= timeout ||
+	    o->rssi_dbm >= 0 || o->rssi_dbm < -255 ||
+	    (o->lq_percent > 100U && o->lq_percent != 127U)) {
+		return zlrs_power_recover(p, o->now_ms);
+	}
+	if (p->last_feedback_ms != 0U && (int32_t)(o->feedback_ms - p->last_feedback_ms) <= 0) {
+		return p->current_dbm;
+	}
+	const uint32_t elapsed = o->feedback_ms - p->last_feedback_ms;
+	if (p->last_feedback_ms != 0U && elapsed >= timeout) {
+		zlrs_power_recover(p, o->now_ms);
+	}
+	if (p->last_feedback_ms == 0U) {
+		p->last_change_ms = o->now_ms;
+		/* A received cached window establishes a baseline after feedback loss. */
+		p->lq_generation = o->lq_generation;
+	}
+	p->last_feedback_ms = o->feedback_ms;
+
+	if (o->lq_generation != p->lq_generation) {
+		const bool new_window = (uint32_t)(o->lq_generation - p->lq_generation) == 1U;
+		p->lq_generation = o->lq_generation;
+		if (new_window && o->lq_percent < 95U) {
+			p->lq_hold = true;
+			p->lq_hold_ms = o->now_ms;
+			p->lq_hold_duration_ms =
+				o->lq_percent < 50U ? LQ_RECOVERY_MS : LOWER_HOLD_MS;
+			p->good = false;
+			return change(p,
+				      o->lq_percent < 50U ? p->ceiling_dbm
+							  : p->current_dbm + POWER_STEP_DB,
+				      o->now_ms);
 		}
-		power->good = 0U;
-		power->healthy = false;
-	} else if (rssi_dbm > RSSI_HIGH_DBM && lq_percent >= LQ_HIGH) {
-		if (!power->healthy) {
-			power->healthy = true;
-			power->healthy_since_ms = now_ms;
-		}
-		if (power->good < FEEDBACK_SAMPLES) {
-			power->good++;
-		}
-		power->bad = 0U;
+	}
+	if (p->lq_hold && (uint32_t)(o->now_ms - p->lq_hold_ms) >= p->lq_hold_duration_ms) {
+		p->lq_hold = false;
+	}
+	/* TX can have been encoded before the preceding RX. Discard those early samples. */
+	if ((int32_t)(o->feedback_ms - p->last_change_ms) < (int32_t)settle) {
+		p->good = p->bad = false;
+		return p->current_dbm;
+	}
+	const int32_t sample = (int32_t)o->rssi_dbm * 256;
+	if (!p->filtering) {
+		p->rssi_q8 = sample;
+		p->filtering = true;
 	} else {
-		power->good = 0U;
-		power->bad = 0U;
-		power->healthy = false;
-		return power->current_dbm;
+		p->rssi_q8 += (int32_t)(((int64_t)(sample - p->rssi_q8) * elapsed) /
+					(RSSI_FILTER_MS + elapsed));
 	}
-
-	int next = power->current_dbm;
-	if (power->bad >= FEEDBACK_SAMPLES &&
-	    (uint32_t)(now_ms - power->last_change_ms) >= RAISE_HOLD_MS) {
-		next += POWER_STEP_DB;
-		if (next > power->ceiling_dbm) {
-			next = power->ceiling_dbm;
+	if (p->rssi_q8 < (int32_t)o->rssi_floor_dbm * 256) {
+		p->good = false;
+		if (!p->bad) {
+			p->bad = true;
+			p->bad_since_ms = o->now_ms;
 		}
-		power->raises += next != power->current_dbm;
-	} else if (power->good >= FEEDBACK_SAMPLES &&
-		   (uint32_t)(now_ms - power->healthy_since_ms) >= LOWER_HOLD_MS &&
-		   (uint32_t)(now_ms - power->last_change_ms) >= LOWER_HOLD_MS) {
-		next -= POWER_STEP_DB;
-		if (next < power->floor_dbm) {
-			next = power->floor_dbm;
+		if ((uint32_t)(o->now_ms - p->bad_since_ms) >= RAISE_HOLD_MS) {
+			return change(p, p->current_dbm + POWER_STEP_DB, o->now_ms);
 		}
-		power->lowers += next != power->current_dbm;
+	} else if (p->rssi_q8 > ((int32_t)o->rssi_floor_dbm + RSSI_HYSTERESIS_DB) * 256 &&
+		   !p->lq_hold) {
+		p->bad = false;
+		if (!p->good) {
+			p->good = true;
+			p->good_since_ms = o->now_ms;
+		}
+		if ((uint32_t)(o->now_ms - p->good_since_ms) >= LOWER_HOLD_MS) {
+			return change(p, p->current_dbm - POWER_STEP_DB, o->now_ms);
+		}
 	} else {
-		return power->current_dbm;
+		p->good = p->bad = false;
 	}
-
-	if (next != power->current_dbm) {
-		power->last_change_ms = now_ms;
-		power->healthy = false;
-	}
-	power->current_dbm = (int8_t)next;
-	power->good = 0U;
-	power->bad = 0U;
-	return power->current_dbm;
+	return p->current_dbm;
 }

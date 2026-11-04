@@ -469,7 +469,7 @@ void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
 
 	link->tx_seq = 1U;
 	link->pair_tx_seq = 1U;
-	link->stats.lq_percent = 100U;
+	link_quality_reset(link);
 	link->state = ZLRS_STATE_UNCONFIGURED;
 	link->radio_acquiring = cfg->automatic_band;
 }
@@ -578,14 +578,7 @@ bool zlrs_link_reconfigure_radio(zlrs_link_t *link, const zlrs_link_cfg_t *cfg)
 	zlrs_fhss_init(&link->fhss, cfg->domain, zlrs_get_le32(seed));
 	zlrs_link_acquire_radio(link, link->last_rx_ms);
 	/* Quality/power samples belong to the old RF path; replay/ARQ state does not. */
-	link->lq_started = false;
-	link->stats.lq_rx = 0U;
-	link->stats.lq_expected = 0U;
-	link->stats.lq_percent = 100U;
-	link->stats.last_rssi = 0;
-	link->peer_rssi_dbm = 0;
-	link->peer_lq_percent = 0U;
-	link->last_peer_feedback_ms = 0U;
+	link_quality_reset(link);
 	return true;
 }
 
@@ -768,6 +761,7 @@ zlrs_link_info_t zlrs_link_get_info(const zlrs_link_t *link)
 		.session_valid = link->session_valid,
 		.peer_rssi_dbm = link->peer_rssi_dbm,
 		.peer_lq_percent = link->peer_lq_percent,
+		.peer_lq_generation = link->peer_lq_generation,
 		.last_peer_feedback_ms = link->last_peer_feedback_ms,
 		.last_rx_ms = link->last_rx_ms,
 		.accepted_rx_events = link->accepted_rx_events,

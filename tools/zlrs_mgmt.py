@@ -17,7 +17,8 @@ STATUS_FIELDS = ('role', 'state', 'flags', 'dev_id', 'peer_id', 'lq_percent', 'b
  'frequency_hz', 'hop_index', 'frame_period_us', 'radio_temperature_centi_c',
  'radio_xosc_temperature_centi_c', 'radio_vbat_mv', 'radio_version_major',
  'radio_version_minor', 'radio_chip_mode', 'radio_command_status', 'radio_reset_status',
- 'radio_valid', 'radio_errors', 'radio_irq', 'data_phy')
+ 'radio_valid', 'radio_errors', 'radio_irq', 'data_phy',
+ 'lq_generation', 'peer_lq_generation', 'power_raises', 'power_lowers', 'power_fallbacks', 'power_changed_ms', 'peer_feedback_ms', 'power_rssi_dbm')
 Status = namedtuple("Status", STATUS_FIELDS)
 
 CMD_ENTER = 0x00
@@ -114,9 +115,10 @@ def status_text(payload) -> str:
         ]),
         ("Signal / Power", [
             ("Local RSSI", f"{status.rssi_dbm} dBm" if status.rssi_dbm else "unavailable"),
-            ("Local LQ", f"{status.lq_percent}%"),
+            ("Local LQ", f"{status.lq_percent}%" if status.lq_percent <= 100 else "pending"),
             ("Peer RSSI", f"{status.peer_rssi_dbm} dBm" if status.peer_rssi_dbm else "unavailable"),
-            ("Peer LQ", f"{status.peer_lq_percent}%" if status.peer_rssi_dbm else "unavailable"),
+            ("Peer LQ", (f"{status.peer_lq_percent}%" if status.peer_lq_percent <= 100 else "pending")
+             if status.peer_rssi_dbm else "unavailable"),
             ("TX power", f"{status.active_power_dbm} dBm"),
             ("TX range", f"{status.power_floor_dbm}..{status.tx_power_dbm} dBm"),
             ("Power control", "debug fixed" if flags & 0x80 else "automatic"),

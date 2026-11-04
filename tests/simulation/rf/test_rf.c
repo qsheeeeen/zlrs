@@ -197,12 +197,17 @@ static void peer_update_band(void)
 	}
 	const uint32_t now = clock_us / 1000U;
 	const zlrs_link_info_t info = zlrs_link_get_info(&peer);
-	const int8_t next_power =
-		info.state != ZLRS_STATE_CONNECTED || info.radio_acquiring ||
-				peer_band_policy.power_boosted
-			? zlrs_power_recover(&peer_power, now)
-			: zlrs_power_update(&peer_power, info.peer_rssi_dbm, info.peer_lq_percent,
-					    info.last_peer_feedback_ms, now);
+	const zlrs_power_observation_t power_observation = {
+		.now_ms = now,
+		.feedback_ms = info.last_peer_feedback_ms,
+		.lq_generation = info.peer_lq_generation,
+		.rssi_dbm = info.peer_rssi_dbm,
+		.rssi_floor_dbm = zlrs_band_rssi_floor(peer_band_policy.subg, peer_band_policy.phy),
+		.lq_percent = info.peer_lq_percent};
+	const int8_t next_power = info.state != ZLRS_STATE_CONNECTED || info.radio_acquiring ||
+						  peer_band_policy.power_boosted
+					  ? zlrs_power_recover(&peer_power, now)
+					  : zlrs_power_update(&peer_power, &power_observation);
 	zlrs_link_set_power(&peer, next_power);
 	bool change = false, subg = false, probe = false;
 	zlrs_phy_t phy = ZLRS_PHY_FLRC_2600;
@@ -216,6 +221,9 @@ static void peer_update_band(void)
 			.now_ms = now,
 			.last_rx_ms = info.last_rx_ms,
 			.feedback_ms = info.last_peer_feedback_ms,
+			.lq_generation = peer.stats.lq_generation,
+			.peer_lq_generation = info.peer_lq_generation,
+			.power_changed_ms = peer_power.last_change_ms,
 			.paired = info.paired,
 			.pairing = info.state == ZLRS_STATE_PAIRING,
 			.connected = info.session_valid && info.state == ZLRS_STATE_CONNECTED,
@@ -624,16 +632,19 @@ static void power_before_profile_acceptance(void)
 		const uint32_t switches = zlrs_rf_status().band_switches;
 		local_rx_offset = direction == 0 ? -40 : 0;
 		peer_rx_offset = direction == 1 ? -40 : 0;
+		bool local_boosted = false, peer_boosted = false;
 		for (unsigned int n = 0; n < DIV_ROUND_UP(5000000U, period_us); n++) {
 			frames(1);
+			local_boosted |= zlrs_rf_status().tx_power_dbm == 12;
+			peer_boosted |= peer.cfg.tx_power_dbm == 12;
 			zassert_true(both_on_phy(ZLRS_PHY_FLRC_2600));
 			zassert_equal(zlrs_rf_status().band_switches, switches,
 				      "link downgraded before using its power headroom");
 			zassert_equal(local->band_plan.switch_frame, 0);
 			zassert_equal(peer.band_plan.switch_frame, 0);
 		}
-		zassert_equal(zlrs_rf_status().tx_power_dbm, 12);
-		zassert_equal(peer.cfg.tx_power_dbm, 12);
+		zassert_true(local_boosted && peer_boosted,
+			     "both endpoints must use power headroom before a downgrade");
 		local_rx_offset = peer_rx_offset = 0;
 		frames(DIV_ROUND_UP(500000U, period_us));
 	}

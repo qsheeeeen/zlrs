@@ -105,12 +105,48 @@ The request is volatile and normal quality policy continues after the change.
 Follower and fixed-band requests are rejected. Test both directions with queued
 DATA, lost ACKs, missed announcements and a PHY mismatch; a simulated radio must
 reject packets with mismatched rate/modulation, even at the same frequency.
-Air version 12 requires both endpoints to be upgraded together. The host and device require the native SMP management protocol.
+Air version 13 requires both endpoints to be upgraded together. The host and device require the native SMP management protocol.
 
 Delivery, PHY reception and session readiness are separate observations. An exact
 ARQ-delivered stream does not prove zero physical loss; LQ=100 is a finite
 sequence-span observation. CONNECTED alone does not prove bidirectional DATA
 capture.
+
+### Dynamic-power acceptance
+
+The policy and wire encoding are specified in [firmware](06-firmware.md#automatic-band-operation-and-power)
+and [protocol](07-protocol.md#sequence-delivery-and-quality), respectively.
+Online status maps expose local/peer LQ generations, power raise/lower/recovery
+counters, the filtered control RSSI, and power-change/feedback timestamps. These
+are USB observations only. Power counters restart when the RF policy is
+reinitialized, including a PHY change. LQ `pending` means no complete window exists yet.
+Use online observations for measurements; maintenance diagnostics pause RF and
+can themselves trigger the peer's feedback-loss recovery.
+
+With the same confirmed normal image installed on both paired boards:
+
+```sh
+../.venv/bin/python tests/hardware/power/run.py \
+  --leader <leader-serial> --follower <follower-serial> \
+  --out-dir build/power-normal
+```
+
+This reboots both boards, observes startup-to-floor time and 70 seconds of idle
+quality, checks 2 MiB in each direction byte-for-byte during online sampling,
+then pauses one endpoint to verify feedback-loss recovery and subsequent saving.
+USBIP users need reattachment enabled across bootloader/application reenumeration.
+
+For reproducible fault acceptance, build `tests/hardware/power` with sysbuild,
+install and confirm that image on both boards, then use the same runner with
+`--faults`. Its test-only native SMP group 67 injects dropped DATA receptions or
+RSSI values at the link-completion boundary; real LR2021 TX/RX, authentication,
+SYNC, ARQ, hopping and USB DATA remain active. The runner verifies occasional
+loss, cached low LQ, severe loss, weak-RSSI power recovery, PHY degradation and
+healthy upgrade. It also counts transmitted LQ marker flips, including flips
+with unchanged percentages. These are controlled logic tests on real boards,
+not RF attenuation, receiver-sensitivity or radiated-power measurements.
+Restore and confirm the normal image afterward; group 67 must then be absent.
+JSON results and timestamped `samples.jsonl` stay in the requested build directory.
 
 ## Bounded trace capture
 
@@ -568,6 +604,11 @@ with `UtilBindVsockAnyPort: socket failed 1` or hide device access; retry from a
 normal WSL terminal or an explicitly approved process outside that sandbox.
 
 ## Hardware acceptance
+
+Frame/codec changes, including bitfield-only refactors, require acceptance on
+both available boards. Flash the new signed image, verify and confirm each
+running-image hash, then run byte-exact bidirectional DATA and observe the changed
+feedback behavior. Keep results keyed by image hash in the build directory.
 
 Build LF/HF production and debug configurations with matching MCUboot images.
 Inspect ELF placement for critical RF, launch, GPIO timestamp, timer and crypto

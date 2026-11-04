@@ -38,6 +38,14 @@ typedef struct {
 	uint32_t frame_period_us;
 	int16_t peer_rssi_dbm;
 	uint8_t peer_lq_percent;
+	uint32_t lq_generation;
+	uint32_t peer_lq_generation;
+	uint32_t power_raises;
+	uint32_t power_lowers;
+	uint32_t power_fallbacks;
+	uint32_t power_changed_ms;
+	uint32_t peer_feedback_ms;
+	int16_t power_rssi_dbm;
 	int8_t power_floor_dbm;
 	int8_t power_ceiling_dbm;
 	uint32_t tx_frames;

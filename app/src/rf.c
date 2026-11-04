@@ -281,8 +281,19 @@ static void update_power(uint32_t now_ms)
 		atomic_set(&power_request, 0);
 #endif
 	} else {
-		next = zlrs_power_update(&power, info.peer_rssi_dbm, info.peer_lq_percent,
-					 info.last_peer_feedback_ms, now_ms);
+		const uint32_t round_ms =
+			DIV_ROUND_UP(2ULL * frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE, 1000U);
+		const zlrs_power_observation_t observation = {
+			.now_ms = now_ms,
+			.feedback_ms = info.last_peer_feedback_ms,
+			.lq_generation = info.peer_lq_generation,
+			.settle_ms = MAX(500U, round_ms),
+			.feedback_timeout_ms = MAX(1000U, round_ms + 500U),
+			.rssi_dbm = info.peer_rssi_dbm,
+			.rssi_floor_dbm = zlrs_band_rssi_floor(ZLRS_DATA_SUBG, data_phy),
+			.lq_percent = info.peer_lq_percent,
+		};
+		next = zlrs_power_update(&power, &observation);
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
 		const int request = atomic_set(&power_request, 0);
 		if (power.last_feedback_ms == 0U) {
@@ -330,6 +341,10 @@ static zlrs_link_cfg_t link_config(void)
 		.data_mtu = data_mtu,
 		.arq = IS_ENABLED(CONFIG_ZLRS_APP_DATA_ARQ) ? 1U : 0U,
 		.feedback_period_ms = 250U,
+		/* Below one minimum window: two unseen toggles cannot be treated as unchanged. */
+		.lq_feedback_gap_ms =
+			MAX(1U, MIN(1000U, 127ULL * frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE /
+						   1000U)),
 		.arq_timeout_ms = (uint16_t)MAX(
 			10U, DIV_ROUND_UP((uint64_t)frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE,
 					  1000U)),
@@ -371,7 +386,6 @@ static void load_identity(void)
 /* ---- superframe ---------------------------------------------------------- */
 
 static void pump_serial(void);
-
 
 /* RF owns protocol completion; the LR2021 adapter only returns hardware facts. */
 static bool complete_radio(zlrs_lr2021_result_t *result)
@@ -505,6 +519,12 @@ static void update_band(uint32_t now_ms)
 		.now_ms = now_ms,
 		.last_rx_ms = info.last_rx_ms,
 		.feedback_ms = info.last_peer_feedback_ms,
+		.lq_generation = stats->lq_generation,
+		.peer_lq_generation = info.peer_lq_generation,
+		.power_changed_ms = power.last_change_ms,
+		.settle_ms = MAX(
+			500U,
+			DIV_ROUND_UP(2ULL * frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE, 1000U)),
 		.paired = info.paired,
 		.pairing = info.state == ZLRS_STATE_PAIRING,
 		.connected = info.session_valid && info.state == ZLRS_STATE_CONNECTED,
@@ -588,7 +608,6 @@ static void run_slot(uint8_t slot)
 		return;
 	}
 	zlrs_lr2021_slot(slot_nominal_us + CONFIG_ZLRS_APP_TX_GUARD_US, slot_deadline_us);
-
 
 	/* Out of duty budget: give the slot up (finish as a radio failure, the link retries next
 	 * round). Only constrains the sub-G link. */
@@ -956,6 +975,14 @@ zlrs_rf_status_t zlrs_rf_status(void)
 		.frame_period_us = frame_period_us,
 		.peer_rssi_dbm = info.peer_rssi_dbm,
 		.peer_lq_percent = info.peer_lq_percent,
+		.lq_generation = stats->lq_generation,
+		.peer_lq_generation = info.peer_lq_generation,
+		.power_raises = power.raises,
+		.power_lowers = power.lowers,
+		.power_fallbacks = power.fallbacks,
+		.power_changed_ms = power.last_change_ms,
+		.peer_feedback_ms = info.last_peer_feedback_ms,
+		.power_rssi_dbm = power.filtering ? power.rssi_q8 / 256 : 0,
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
 		.power_fixed = power_fixed,
 #endif

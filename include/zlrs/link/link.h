@@ -76,6 +76,8 @@ typedef struct {
 	/* ARQ retransmit timeout (ms). 0 = ZLRS_ARQ_TIMEOUT_MS, right for sub-ms FLRC frames */
 	uint16_t arq_timeout_ms;
 	uint16_t feedback_period_ms; /* empty DATA heartbeat while idle; 0 disables it */
+	/* Safe observation gap for the one-bit quality marker; 0 uses 1000 ms. */
+	uint32_t lq_feedback_gap_ms;
 	/*
 	 * Per-frame hopping. 0 = stay on the sync channel (entry 0 of the hop table), which is how
 	 * layer isolation looks at timing and the hop table separately, see doc/10-debug.md.
@@ -149,7 +151,8 @@ typedef struct {
 	int16_t rssi_max;
 	int8_t last_snr; /* the radio stack cannot provide it under FLRC, see doc/04-radio.md */
 	/* Uplink quality: frames really received in the last window vs. what the sequence predicts */
-	uint8_t lq_percent;
+	uint8_t lq_percent;     /* 127 until the first complete window. */
+	uint32_t lq_generation; /* RAM only: completed windows since session/radio reset. */
 	uint16_t lq_rx;
 	uint16_t lq_expected;
 	/* Passthrough backpressure: bytes dropped because the air-side queue was full */
@@ -286,7 +289,9 @@ typedef struct {
 	uint32_t last_feedback_tx_ms;
 	int16_t peer_rssi_dbm;
 	uint8_t peer_lq_percent;
+	uint32_t peer_lq_generation; /* RAM only: +1 new window, +2 uncertain baseline. */
 	uint32_t last_peer_feedback_ms;
+	bool peer_lq_toggle;
 	/* ARQ receiver: last accepted data sequence determines the ACK toggle. */
 	uint8_t arq_rx_seq;
 	bool arq_rx_started;
@@ -322,6 +327,7 @@ typedef struct {
 	uint8_t peer_id[ZLRS_DEV_ID_LEN];
 	int16_t peer_rssi_dbm;
 	uint8_t peer_lq_percent;
+	uint32_t peer_lq_generation; /* RAM only: +1 new window, +2 uncertain baseline. */
 	uint32_t last_peer_feedback_ms;
 	uint32_t last_rx_ms;
 	uint32_t accepted_rx_events;

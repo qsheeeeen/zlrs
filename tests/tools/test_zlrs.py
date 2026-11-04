@@ -85,6 +85,17 @@ class EntryTests(unittest.TestCase):
         for value in ("sub-GHz", "auto", "searching", "scheduled"):
             self.assertIn(value, output)
 
+    def test_pending_quality_is_not_rendered_as_127_percent(self):
+        status = {key: 0 for key in entry.mgmt.STATUS_FIELDS}
+        status.update(dev_id=b"1234", peer_id=b"5678", lq_percent=127,
+                      peer_lq_percent=127, peer_rssi_dbm=-60)
+        output = entry.mgmt.status_text(status)
+        self.assertNotIn("127%", output)
+        self.assertEqual(output.count("pending"), 2)
+        status["peer_rssi_dbm"] = 0
+        peer = next(line for line in entry.mgmt.status_text(status).splitlines() if "Peer LQ" in line)
+        self.assertIn("unavailable", peer)
+
     def test_subcommand_help_uses_public_name(self):
         for command in ("status", "update", "recovery"):
             with self.subTest(command=command):

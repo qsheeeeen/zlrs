@@ -123,7 +123,11 @@ static void diagnostic_link(struct diagnostic_report_writer *writer, const char 
 	diagnostic_append(writer, "   /   %d dBm\n", (int)cfg->tx_power_dbm);
 	diagnostic_append(writer, "  RF frames          : TX %u   RX %u   Failed %u\n",
 			  stats->tx_frames, stats->rx_frames, stats->radio_fail);
-	if (stats->rx_frames != 0U && stats->last_rssi != 0) {
+	if (stats->rx_frames != 0U && stats->lq_percent > 100U) {
+		diagnostic_append(writer,
+				  "  Signal             : RSSI %d dBm   Link quality pending\n",
+				  (int)stats->last_rssi);
+	} else if (stats->rx_frames != 0U && stats->last_rssi != 0) {
 		diagnostic_append(writer,
 				  "  Signal             : RSSI %d dBm   Link quality %u%%\n",
 				  (int)stats->last_rssi, (unsigned int)stats->lq_percent);
@@ -337,9 +341,21 @@ static int diagnostic_render(zlrs_diagnostic_report_t report_id,
 				  "  Dynamic power      : %+d dBm (up %u, down %u, fallback %u)\n",
 				  (int)snapshot.power.current_dbm, snapshot.power.raises,
 				  snapshot.power.lowers, snapshot.power.fallbacks);
-		diagnostic_append(writer, "  Peer feedback      : RSSI %d dBm, LQ %u%%\n",
-				  (int)snapshot.link.info.peer_rssi_dbm,
-				  (unsigned int)snapshot.link.info.peer_lq_percent);
+		if (snapshot.link.info.peer_lq_percent <= 100U) {
+			diagnostic_append(writer, "  Peer feedback      : RSSI %d dBm, LQ %u%%\n",
+					  (int)snapshot.link.info.peer_rssi_dbm,
+					  (unsigned int)snapshot.link.info.peer_lq_percent);
+		} else {
+			diagnostic_append(writer,
+					  "  Peer feedback      : RSSI %d dBm, LQ pending\n",
+					  (int)snapshot.link.info.peer_rssi_dbm);
+		}
+		diagnostic_append(writer, "  Quality generation : local %u, peer %u (RAM only)\n",
+				  snapshot.link.stats.lq_generation,
+				  snapshot.link.info.peer_lq_generation);
+		diagnostic_append(writer, "  Filtered RSSI      : %d dBm%s\n",
+				  (int)(snapshot.power.rssi_q8 / 256),
+				  snapshot.power.filtering ? "" : " (settling)");
 		diagnostic_append(writer, "  SubG region cap    : %s / %+d dBm\n",
 				  snapshot.region != NULL ? snapshot.region->name : "unknown",
 				  snapshot.region != NULL ? (int)snapshot.region->max_tx_power_dbm

@@ -23,4 +23,8 @@ list(APPEND zlrs_test_wrappers zlrs_band_policy_update)
 foreach(symbol IN LISTS zlrs_test_wrappers)
   target_link_options(app PUBLIC "-Wl,--wrap=${symbol}")
 endforeach()
-zephyr_code_relocate(FILES ../app/link/test_data.c ../app/platform/test_radio.c LOCATION RAM_TEXT)
+zephyr_code_relocate(FILES ../app/link/test_data.c LOCATION RAM_TEXT)
+# Native SMP report formatting is outside the timed radio path. Keep the RF probes
+# in RAM without spending the 32 KiB hot-code budget on this control handler.
+zephyr_code_relocate(FILES ../app/platform/test_radio.c
+  FILTER "^(?!.*zlrs_test_radio_control).*" LOCATION RAM_TEXT)

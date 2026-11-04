@@ -1,8 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "internal.h"
 
-#define ZLRS_LQ_WINDOW_FRAMES 128U
-
 /* Byte queue, peer quality feedback, backpressure, ARQ and prepared DATA packets. */
 
 static bool receive_ack_bit(const zlrs_link_t *link)
@@ -46,6 +44,7 @@ static zlrs_data_frame_t *data_frame(const zlrs_link_t *link, uint8_t seq, zlrs_
 	data->ack = ack;
 	data->rssi_magnitude = rssi < 0 ? (uint8_t)(-rssi > 255 ? 255 : -rssi) : 0U;
 	data->lq_percent = link->stats.lq_percent;
+	data->lq_toggle = link->stats.lq_generation & 1U;
 	return data;
 }
 
@@ -307,10 +306,25 @@ void link_handle_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint16_t dat
 	if (link->cfg.arq) {
 		handle_ack_bit(link, data->ack != 0U, now_ms);
 	}
-	if (data->rssi_magnitude != 0U && data->lq_percent <= 100U) {
+	if (data->rssi_magnitude != 0U) {
+		const uint32_t gap_ms =
+			link->cfg.lq_feedback_gap_ms != 0U ? link->cfg.lq_feedback_gap_ms : 1000U;
+		const bool baseline = link->peer_lq_percent == ZLRS_LQ_UNAVAILABLE ||
+				      (uint32_t)(now_ms - link->last_peer_feedback_ms) >= gap_ms;
+		const uint8_t quality = data->lq_percent;
+		const bool toggle = data->lq_toggle != 0U;
+
 		link->peer_rssi_dbm = -(int16_t)data->rssi_magnitude;
-		link->peer_lq_percent = data->lq_percent;
 		link->last_peer_feedback_ms = now_ms;
+		if (quality <= 100U && (baseline || toggle != link->peer_lq_toggle)) {
+			link->peer_lq_percent = quality;
+			link->peer_lq_toggle = toggle;
+			/* A skipped RAM generation denotes an uncertain baseline, not a new window. */
+			link->peer_lq_generation +=
+				baseline && link->peer_lq_generation != 0U ? 2U : 1U;
+		} else if (quality > 100U) {
+			link->peer_lq_percent = ZLRS_LQ_UNAVAILABLE;
+		}
 	}
 	if (data_len == 0U) {
 		return;
@@ -339,6 +353,22 @@ void link_handle_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint16_t dat
 	}
 }
 
+void link_quality_reset(zlrs_link_t *link)
+{
+	link->lq_last_seq = 0U;
+	link->lq_started = false;
+	link->stats.lq_rx = 0U;
+	link->stats.lq_expected = 0U;
+	link->stats.lq_percent = ZLRS_LQ_UNAVAILABLE;
+	link->stats.lq_generation = 0U;
+	link->stats.last_rssi = 0;
+	link->peer_rssi_dbm = 0;
+	link->peer_lq_percent = ZLRS_LQ_UNAVAILABLE;
+	link->peer_lq_generation = 0U;
+	link->peer_lq_toggle = false;
+	link->last_peer_feedback_ms = 0U;
+}
+
 void link_lq_account(zlrs_link_t *link, uint32_t seq)
 {
 	uint32_t delta = seq - link->lq_last_seq;
@@ -355,6 +385,7 @@ void link_lq_account(zlrs_link_t *link, uint32_t seq)
 
 	if (expected >= ZLRS_LQ_WINDOW_FRAMES) {
 		link->stats.lq_percent = (uint8_t)(((uint64_t)link->stats.lq_rx * 100U) / expected);
+		link->stats.lq_generation++;
 		link->stats.lq_rx = 0U;
 		link->stats.lq_expected = 0U;
 	} else {
