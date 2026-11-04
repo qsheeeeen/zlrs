@@ -32,62 +32,56 @@ bad() {
 	fail=1
 }
 
-if hit=$(grep -rn '#include <zephyr/' core include 2>/dev/null); then
-	bad "core/ or include/ pulled in a Zephyr header:"
-	echo "$hit"
-fi
+# A failed search is not evidence that the tree satisfies a boundary.
+reject_matches() {
+	local message="$1" hit rc
+	shift
+	if hit=$(rg -n "$@"); then
+		bad "$message"
+		echo "$hit"
+	else
+		rc=$?
+		if [ "$rc" -ne 1 ]; then
+			bad "scan failed (exit $rc): $message"
+		fi
+	fi
+}
 
-if hit=$(grep -rn -E '\b(CONFIG_)?BOARD_[A-Z0-9_]+' app 2>/dev/null); then
-	bad "app/ knows a board name:"
-	echo "$hit"
-fi
+reject_matches "core/ or include/ pulled in a Zephyr header:" \
+	'^[[:space:]]*#[[:space:]]*include[[:space:]]*[<"]zephyr/' core include
 
-if hit=$(rg -n 'zlrs_link_t|zlrs/link/link.h|zlrs_storage_settings_' \
-	app/src/serial.c app/src/mgmt.c app/src/ui.c app/src/ui.h app/src/main.c); then
-	bad "a frontend reaches into RF or private configuration storage:"
-	echo "$hit"
-fi
+reject_matches "app/ knows a board name:" '\b(CONFIG_)?BOARD_[A-Z0-9_]+' app
 
-if hit=$(rg -n 'link_data\.' app/src/rf.c); then
-	bad "RF accesses link storage directly instead of using link operations/views:"
-	echo "$hit"
-fi
+reject_matches "a frontend reaches into RF or private configuration storage:" \
+	'zlrs_link_t|zlrs/link/link.h|zlrs_storage_settings_' \
+	app/src/serial.c app/src/mgmt.c app/src/ui.c app/src/ui.h app/src/main.c
+
+reject_matches "RF accesses link storage directly instead of using link operations/views:" \
+	'link_data\.' app/src/rf.c
 
 if [ -e app/src/state/sys_bus.c ] || [ -e app/src/state/sys_bus.h ]; then
 	bad "centralized module channels returned"
 fi
 
-if hit=$(rg -n '#include <zephyr/shell/|SHELL_(CMD|STATIC_SUBCMD|SUBCMD)|^CONFIG_SHELL=y' \
-	app tests/hardware --glob '*.[ch]' --glob '*.conf'); then
-	bad "interactive shell commands returned; use management or MCUmgr interfaces:"
-	echo "$hit"
-fi
+reject_matches "interactive shell commands returned; use management or MCUmgr interfaces:" \
+	'#[[:space:]]*include[[:space:]]*[<"]zephyr/shell/|SHELL_(CMD|STATIC_SUBCMD|SUBCMD)|^CONFIG_SHELL=y' \
+	app tests/hardware --glob '*.[ch]' --glob '*.conf'
 
 # The core region's RF design value is allowed; application RF APIs/state are not.
-if hit=$(rg -n --pcre2 '"rf.h"|zlrs_rf_(?!design_t\b)|zbus' app/src/persist.c app/src/persist.h); then
- bad "persist depends on RF or state publication:"
- echo "$hit"
-fi
+reject_matches "persist depends on RF or state publication:" \
+	--pcre2 '"rf.h"|zlrs_rf_(?!design_t\b)|zbus' app/src/persist.c app/src/persist.h
 
-if hit=$(rg -n 'zlrs/mgmt|ZLRS_MGMT' app/src/log.c app/src/log.h); then
-	bad "log storage depends on the management protocol:"
-	echo "$hit"
-fi
+reject_matches "log storage depends on the management protocol:" \
+	'zlrs/mgmt|ZLRS_MGMT' app/src/log.c app/src/log.h
 
-if hit=$(rg -n 'zlrs_link_t|zlrs_link_complete|zlrs/link/link.h' app/src/platform/lr2021.c app/src/platform/lr2021.h); then
-	bad "LR2021 hardware depends on a protocol context:"
-	echo "$hit"
-fi
+reject_matches "LR2021 hardware depends on a protocol context:" \
+	'zlrs_link_t|zlrs_link_complete|zlrs/link/link.h' app/src/platform/lr2021.c app/src/platform/lr2021.h
 
-if hit=$(rg -n 'zephyr/|zlrs/link|LOG_|CONFIG_' app/src/power.c app/src/power.h); then
-	bad "power policy depends on application wiring:"
-	echo "$hit"
-fi
+reject_matches "power policy depends on application wiring:" \
+	'zephyr/|zlrs/link|LOG_|CONFIG_' app/src/power.c app/src/power.h
 
-if hit=$(rg -n 'zlrs/mgmt|ZLRS_MGMT' app/src/rf.c app/src/diagnostics.c app/src/diagnostics.h); then
-	bad "RF or diagnostics depends on the management wire protocol:"
-	echo "$hit"
-fi
+reject_matches "RF or diagnostics depends on the management wire protocol:" \
+	'zlrs/mgmt|ZLRS_MGMT' app/src/rf.c app/src/diagnostics.c app/src/diagnostics.h
 
 for environment in host simulation hardware contracts support; do
 	case "$environment" in
@@ -96,29 +90,18 @@ for environment in host simulation hardware contracts support; do
 	hardware) foreign='host|simulation' ;;
 	*) foreign='host|simulation|hardware' ;;
 	esac
-	if hit=$(rg -n "(tests/|\.\./)($foreign)/" --glob '*.[ch]' --glob '*.cpp' --glob '*.hpp' --glob CMakeLists.txt \
-		"tests/$environment"); then
-		bad "tests/$environment borrows environment-specific sources; use contracts/ or support/:"
-		echo "$hit"
-	fi
+	reject_matches "tests/$environment borrows environment-specific sources; use contracts/ or support/:" \
+		"(tests/|\.\./)($foreign)/" --glob '*.[ch]' --glob '*.cpp' --glob '*.hpp' --glob CMakeLists.txt \
+		"tests/$environment"
 done
 
 # Shipped configurations: everything that produces a firmware image. A debug configuration is
 # the only place allowed to name a bench switch.
-shipped=$(git ls-files 'app' 'boards' | grep -E '\.(conf|defconfig)$' | grep -v -e debug)
+reject_matches "a shipped configuration carries a debug option:" \
+	'ZLRS_APP_DEBUG' app boards --glob '*.conf' --glob '*defconfig' --glob '!**/*debug*'
 
-if [ -n "$shipped" ] && hit=$(printf '%s\n' "$shipped" | xargs grep -n 'ZLRS_APP_DEBUG'); then
-	bad "a shipped configuration carries a debug option:"
-	echo "$hit"
-fi
-
-hit=$(grep -rn -e 'signed\.uf2' -e 'make-signed-uf2' doc README.md boards/*/*/README.md tools \
-	2>/dev/null)
-
-if [ -n "$hit" ]; then
-	bad "the application-as-UF2 path is forbidden:"
-	echo "$hit"
-fi
+reject_matches "the application-as-UF2 path is forbidden:" \
+	-e 'signed\.uf2' -e 'make-signed-uf2' doc README.md boards tools
 
 app_conf=app/prj.conf
 partitions=boards/zlrs/rp2350_zero_core2021/rp2350_zero_core2021_partitions.dtsi

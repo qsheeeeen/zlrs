@@ -4,13 +4,10 @@
 import asyncio
 
 
-def request(port, group, fields=None, timeout=10.0, baud=115200):
-    """Read command 0, or write its CBOR fields; preserve operation errno results."""
+def request_type(group, fields=None):
+    """Build command 0 for an application group, including its native error types."""
     from pydantic import ConfigDict
     from smp import error, message
-    from smpclient import SMPClient
-    from smpclient.generics import success
-    from smpclient.transport.serial import SMPSerialTransport
 
     class GroupErrorV1(error.ErrorV1):
         _GROUP_ID = group
@@ -32,9 +29,18 @@ def request(port, group, fields=None, timeout=10.0, baud=115200):
         _ErrorV2 = GroupErrorV2
         model_config = ConfigDict(extra="allow", frozen=True)
 
+    return Request(**(fields or {}))
+
+
+def request(port, group, fields=None, timeout=10.0, baud=115200):
+    """Read command 0, or write its CBOR fields; preserve operation errno results."""
+    from smpclient import SMPClient
+    from smpclient.generics import success
+    from smpclient.transport.serial import SMPSerialTransport
+
     async def exchange():
         async with SMPClient(SMPSerialTransport(baudrate=baud), port, timeout_s=timeout) as client:
-            response = await client.request(Request(**(fields or {})))
+            response = await client.request(request_type(group, fields))
             if not success(response):
                 raise ValueError(f"SMP group {group} rejected the request: {response}")
             return {"result": response.result, **(response.model_extra or {})}

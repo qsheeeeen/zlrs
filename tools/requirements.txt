@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+# Versions exercised by the native SMP request and CLI tests.
+pyserial==3.5
+smpmgr==0.19.1
+smpclient==7.3.0
+smp==4.1.0
+pydantic==2.13.5

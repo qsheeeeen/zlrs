@@ -9,6 +9,7 @@ import os
 import sys
 
 from zlrs_cli import HelpFormatter, bounded_int, positive_seconds, fields, heading, notice
+from zlrs_smp import request_type
 
 STATUS_FIELDS = ('role', 'state', 'flags', 'dev_id', 'peer_id', 'lq_percent', 'band', 'region',
  'tx_power_dbm', 'data_baud', 'profile', 'rssi_dbm', 'peer_rssi_dbm', 'peer_lq_percent',
@@ -190,33 +191,6 @@ class ManagementError(ValueError):
         self.command, self.status = command, result
 
 
-def product_request_type(fields):
-    from pydantic import ConfigDict
-    from smp import error, message
-
-    class GroupErrorV1(error.ErrorV1):
-        _GROUP_ID = 66
-
-    class GroupErrorV2(error.ErrorV2[error.MGMT_ERR]):
-        _GROUP_ID = 66
-
-    class Response(message.WriteResponse):
-        _GROUP_ID = 66
-        _COMMAND_ID = 0
-        model_config = ConfigDict(extra="allow", frozen=True)
-        result: int
-
-    class Request(message.WriteRequest):
-        _GROUP_ID = 66
-        _COMMAND_ID = 0
-        _Response = Response
-        _ErrorV1 = GroupErrorV1
-        _ErrorV2 = GroupErrorV2
-        model_config = ConfigDict(extra="allow", frozen=True)
-
-    return Request(**fields)
-
-
 class ManagementClient:
     """One standard SMP serial connection, with no application framing or retries."""
     def __init__(self, port, baud=115200, timeout=10):
@@ -267,7 +241,7 @@ class ManagementClient:
         if command == CMD_RECOVERY:
             self._request(ResetWrite(boot_mode=1))
             return {}
-        response = self._request(product_request_type({"op": command, "value": payload}))
+        response = self._request(request_type(66, {"op": command, "value": payload}))
         if response.result != 0:
             raise ManagementError(command, response.result)
         if command == CMD_ENTER:
@@ -304,13 +278,21 @@ def device_heading(port: str) -> None:
     heading(f"Device: {port}")
 
 
+def session_options(command, enter=True, keep=False, refresh=False):
+    """Share the maintenance decision between execution and dry-run output."""
+    online = command in ONLINE_COMMANDS and enter and not refresh and not keep
+    return {
+        "enter": enter and command not in (CMD_ENTER, CMD_EXIT, CMD_RECOVERY) and not online,
+        "keep": keep or command in (CMD_ENTER, CMD_RECOVERY),
+        "observe": online,
+    }
+
+
 def talk(port, baud, operation, timeout, enter=True, quiet=False, keep=False, refresh=False):
     command, value = operation
-    online = command in ONLINE_COMMANDS and not refresh and not keep
-    enter = command not in (CMD_ENTER, CMD_EXIT, CMD_RECOVERY) and enter and not online
     try:
-        with management_session(port, baud, timeout, enter=enter,
-                                keep=keep or command in (CMD_ENTER, CMD_RECOVERY), observe=online) as client:
+        with management_session(port, baud, timeout,
+                                **session_options(command, enter, keep, refresh)) as client:
             if command == CMD_DEBUG_REPORT:
                 print(read_debug_report(client, value[0]).decode(), end="")
                 return 0
@@ -552,15 +534,12 @@ def main(args=None, parser=None) -> int:
     else:
         parser.error(f"unknown command: {args.command}")
 
-    query_command = selected[0]
-    online = (query_command in ONLINE_COMMANDS and not args.no_enter and
-              not args.keep and not args.refresh)
     if args.dry_run:
-        if args.command not in ("enter", "recovery", "exit") and not args.no_enter and not online:
+        session = session_options(selected[0], not args.no_enter, args.keep, args.refresh)
+        if session["enter"]:
             print(f"enter: {operation(CMD_ENTER)!r}")
-        command_operation = operation(CMD_OBSERVE) if online and query_command == CMD_STATUS else selected
-        print(f"cmd  : {command_operation!r}")
-        if args.command not in ("enter", "exit", "recovery") and not args.keep and not online:
+        print(f"cmd  : {selected!r}")
+        if args.command != "exit" and not session["keep"] and not session["observe"]:
             print(f"exit : {operation(CMD_EXIT)!r}")
         return 0
 

@@ -15,7 +15,6 @@ ZBUS_CHAN_DECLARE(zlrs_mode_chan);
 
 /* Native SMP worker hands product operations to the RF owner at a frame boundary.
  * ENTER completes only after the maintenance window and log flush are ready. */
-int zlrs_mgmt_init(void);
 bool zlrs_mgmt_process_idle(void);
 int zlrs_mgmt_run(void);
 

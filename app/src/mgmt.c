@@ -26,6 +26,7 @@
 #include <zcbor_encode.h>
 #include <mgmt/mcumgr/util/zcbor_bulk.h>
 #include "persist.h"
+#include "boot.h"
 #include "rf.h"
 #include "serial.h"
 #include "trace.h"
@@ -37,6 +38,8 @@
 
 BUILD_ASSERT(DT_SAME_NODE(DT_CHOSEN(zephyr_uart_mcumgr), DT_ALIAS(zlrs_mgmt_cdc)),
 	     "Native SMP must use the management CDC, not the DATA or log UART");
+BUILD_ASSERT(IS_ENABLED(CONFIG_MCUMGR_TRANSPORT_UART),
+	     "Product management requires the native SMP UART transport");
 BUILD_ASSERT(IS_ENABLED(CONFIG_MCUMGR_GRP_FS_DL_CHUNK_SIZE_LIMIT),
 	     "FS downloads must not allocate the entire SMP netbuf on the worker stack");
 LOG_MODULE_REGISTER(zlrs_mgmt, CONFIG_APP_LOG_LEVEL);
@@ -63,11 +66,6 @@ static void publish_mode(void)
 	if (mode_pending && zbus_chan_pub(&zlrs_mode_chan, &mode, K_NO_WAIT) == 0) {
 		mode_pending = false;
 	}
-}
-
-int zlrs_mgmt_init(void)
-{
-	return 0; /* Native transport owns the UART and IRQs. */
 }
 
 static void mgmt_log_flush(void)
@@ -361,6 +359,8 @@ int zlrs_mgmt_run(void)
 	bool exit_requested = false;
 	while (!exit_requested && (uint32_t)(k_uptime_get_32() - atomic_get(&last_activity)) <
 					  CONFIG_ZLRS_APP_MGMT_TIMEOUT_S * 1000U) {
+		/* A maintenance session cannot extend an unconfirmed image's boot deadline. */
+		zlrs_boot_check_rollback(false);
 		zlrs_trace_process(true);
 		publish_mode();
 		zlrs_serial_publish_state();

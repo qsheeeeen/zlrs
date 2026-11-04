@@ -62,7 +62,6 @@ static void save_pairing(zlrs_pairing_save_t *state)
 int main(void)
 {
 	const int persist_rc = zlrs_persist_init();
-	(void)zlrs_mgmt_init();
 	const bool rf_ready = persist_rc == 0 && zlrs_rf_init() == 0;
 	if (rf_ready) {
 		(void)zlrs_serial_init(zlrs_persist_settings()->data_baud);

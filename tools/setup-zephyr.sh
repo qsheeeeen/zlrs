@@ -103,7 +103,7 @@ echo "    imgtool (MCUboot signing) dependencies"
 # (tools/zlrs.py: management, recovery and updates).
 echo "    host script dependencies (pyserial / smpmgr)"
 "${VENV_DIR}/bin/python" -m pip install --quiet --no-warn-script-location \
-	pyserial smpmgr
+	-r "${ZLRS_REPO_ROOT}/tools/requirements.txt"
 
 SDK_DIR="${ZLRS_SDK_DIR:-${HOME}/zephyr-sdk-1.0.0}"
 SDK_GCC="${SDK_DIR}/gnu/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc"

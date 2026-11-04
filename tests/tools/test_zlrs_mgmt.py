@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 from support import invoke
+import zlrs as entry
 import zlrs_mgmt as m
 
 
@@ -50,6 +51,35 @@ class ManagementTests(unittest.TestCase):
                 pass
         client.request.assert_called_once_with(m.CMD_EXIT)
 
+    def test_query_session_policy_matches_dry_run(self):
+        status = dict.fromkeys(m.STATUS_FIELDS, 0)
+        status.update(dev_id=b"1234", peer_id=b"5678")
+        for options, expected in [
+            ((), [m.CMD_STATUS]),
+            (("--no-enter",), [m.CMD_STATUS, m.CMD_EXIT]),
+            (("--refresh",), [m.CMD_ENTER, m.CMD_STATUS, m.CMD_EXIT]),
+            (("--keep",), [m.CMD_ENTER, m.CMD_STATUS]),
+            (("--no-enter", "--keep"), [m.CMD_STATUS]),
+        ]:
+            with self.subTest(options=options), patch.object(m, "ManagementClient") as factory:
+                client = factory.return_value.__enter__.return_value
+                client.entered = False
+
+                def respond(command, payload=b""):
+                    if command == m.CMD_ENTER:
+                        client.entered = True
+                    elif command == m.CMD_EXIT:
+                        client.entered = False
+                    return {"status": status, "uptime_ms": 100, "hardware_ms": 10}
+
+                client.request.side_effect = respond
+                self.assertEqual(invoke(entry, "status", "--port", "fake", *options)[0], 0)
+                self.assertEqual([call.args[0] for call in client.request.call_args_list], expected)
+                rc, output = invoke(entry, "status", "--dry-run", *options)
+                self.assertEqual(rc, 0)
+                operations = [line.split(": ", 1)[1] for line in output.splitlines()]
+                self.assertEqual(operations, [repr(m.operation(command)) for command in expected])
+
     def test_report_is_one_smp_response(self):
         client = MagicMock()
         client.request.return_value = {"report": "complete report\n"}
@@ -76,14 +106,14 @@ class ManagementTests(unittest.TestCase):
 @unittest.skipUnless(importlib.util.find_spec("smpclient"), "smpclient not installed")
 class NativeClientTests(unittest.TestCase):
     def test_product_uses_native_group_66(self):
-        request = m.product_request_type({"op": m.CMD_SET_ROLE, "value": b"\x01"})
+        request = m.request_type(66, {"op": m.CMD_SET_ROLE, "value": b"\x01"})
         self.assertEqual(request._GROUP_ID, 66)
         self.assertEqual(request._COMMAND_ID, 0)
         self.assertEqual(request.model_extra, {"op": m.CMD_SET_ROLE, "value": b"\x01"})
 
     def test_native_error_response_retains_product_group(self):
         from smp import header, error
-        request = m.product_request_type({"op": 126})
+        request = m.request_type(66, {"op": 126})
         response_header = header.Header(op=header.OP.WRITE_RSP, version=header.Version.V2,
             flags=header.Flag.UNUSED, length=5, group_id=66, sequence=0, command_id=0)
         response = request._ErrorV1(header=response_header, rc=error.MGMT_ERR.ENOTSUP)

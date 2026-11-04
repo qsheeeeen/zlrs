@@ -488,6 +488,37 @@ static void connect_saved(sim_t *sim, zlrs_profile_t profile)
 	ASSERT_TRUE(both_connected(sim));
 }
 
+TEST_P(LinkProfiles, OversizedInputPreservesStateAndAllowsValidRetry)
+{
+	ASSERT_NO_FATAL_FAILURE(connect_saved(&sim, GetParam()));
+	auto &receiver = sim.follower;
+	auto &link = receiver.link;
+	const uint8_t tag_len = zlrs_profile_tag_len(GetParam());
+	zlrs_frame_t frame = {.type = ZLRS_PKT_DATA_L2F, .seq = link.last_rx_seq + 1U};
+	memset(frame.body.data.bytes, 0xa5, sizeof(frame.body.data.bytes));
+	uint8_t bytes[ZLRS_FRAME_MAX_LEN + 1U];
+	ASSERT_EQ(zlrs_frame_encode(&frame, bytes, sizeof(bytes), ZLRS_FRAME_MAX_LEN, tag_len),
+		  ZLRS_FRAME_MAX_LEN);
+	if (tag_len != 0U) {
+		zlrs_tag(link.session_key_in, ZLRS_KEY_LEN, bytes, ZLRS_FRAME_MAX_LEN - tag_len,
+			 bytes + ZLRS_FRAME_MAX_LEN - tag_len);
+	}
+	bytes[ZLRS_FRAME_MAX_LEN] = 0x5a;
+	const uint32_t baseline = link.last_rx_seq;
+	const uint32_t accepted = link.accepted_rx_events;
+	zlrs_link_rx(&link, bytes, sizeof(bytes), -60, 0, sim.now_ms);
+	EXPECT_EQ(receiver.received_len, 0U);
+	EXPECT_EQ(link.last_rx_seq, baseline);
+	EXPECT_EQ(link.accepted_rx_events, accepted);
+	EXPECT_FALSE(link.arq_rx_started);
+	/* Rejecting the extra byte must leave the original sequence available. */
+	zlrs_link_rx(&link, bytes, ZLRS_FRAME_MAX_LEN, -60, 0, sim.now_ms);
+	EXPECT_EQ(receiver.received_len,
+		  ZLRS_FRAME_MAX_LEN - ZLRS_FRAME_HDR_LEN - ZLRS_DATA_PREFIX_LEN - tag_len);
+	EXPECT_EQ(link.last_rx_seq, frame.seq);
+	EXPECT_EQ(link.accepted_rx_events, accepted + 1U);
+}
+
 TEST_F(Link, ReplayAndCounters)
 {
 	ASSERT_NO_FATAL_FAILURE(connect_saved(&sim, ZLRS_PROFILE_P1));

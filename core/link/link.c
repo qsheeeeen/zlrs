@@ -682,7 +682,8 @@ void zlrs_link_rx(zlrs_link_t *link, const uint8_t *buf, uint16_t len, int16_t r
 		return;
 	}
 	if (len > sizeof(link->rx_buf)) {
-		len = sizeof(link->rx_buf);
+		link->stats.rx_bad_frame++;
+		return;
 	}
 
 	memcpy(link->rx_buf, buf, len);

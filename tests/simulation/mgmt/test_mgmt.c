@@ -8,6 +8,7 @@
 #include <zephyr/mgmt/mcumgr/grp/fs_mgmt/fs_mgmt_callbacks.h>
 #include <zephyr/mgmt/mcumgr/grp/os_mgmt/os_mgmt_callbacks.h>
 #include "mgmt.h"
+#include "boot.h"
 #include "persist.h"
 #include "rf.h"
 static const zlrs_rf_status_t initial_rf = {
@@ -34,6 +35,13 @@ static unsigned int credential_applies, pairs, radio_refreshes;
 static int pair_rc;
 static bool fail_write;
 static unsigned int watchdog_disarms;
+static K_SEM_DEFINE(rollback_checked, 0, 1);
+
+void zlrs_boot_check_rollback(bool fault)
+{
+	zassert_false(fault);
+	k_sem_give(&rollback_checked);
+}
 
 ssize_t __real_nvs_write(struct nvs_fs *, uint16_t, const void *, size_t);
 
@@ -127,7 +135,6 @@ K_THREAD_DEFINE(owner_tid, 4096, owner, NULL, NULL, NULL, 0, 0, 0);
 static void *setup(void)
 {
 	zassert_ok(zlrs_persist_init());
-	zassert_ok(zlrs_mgmt_init());
 	rf = initial_rf;
 	k_sem_give(&start_owner);
 	return NULL;
@@ -178,6 +185,17 @@ ZTEST(mgmt, test_enter_mutate_exit_owner_handoff)
 	zassert_ok(zbus_chan_read(&zlrs_mode_chan, &mode, K_MSEC(10)));
 	zassert_false(mode.session);
 	zassert_equal(zlrs_mgmt_request(ZLRS_MGMT_CMD_PAIR, NULL, 0, NULL), -EACCES);
+}
+
+ZTEST(mgmt, test_idle_management_keeps_checking_boot_deadline)
+{
+	zassert_ok(zlrs_mgmt_request(ZLRS_MGMT_CMD_ENTER, NULL, 0, NULL));
+	/* Drain any initial check, then require another without a product command. */
+	k_sem_reset(&rollback_checked);
+	zassert_ok(k_sem_take(&rollback_checked, K_MSEC(100)));
+	k_sem_reset(&rollback_checked);
+	zassert_ok(k_sem_take(&rollback_checked, K_MSEC(100)));
+	zassert_ok(zlrs_mgmt_request(ZLRS_MGMT_CMD_EXIT, NULL, 0, NULL));
 }
 
 ZTEST(mgmt, test_invalid_and_failed_writes_do_not_apply_credentials)

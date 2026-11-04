@@ -38,15 +38,20 @@ implementation. Malformed-input fuzzing remains a separate parser/memory check.
 
 ## Fast checks
 
-From the repository root, without a Zephyr workspace or connected devices:
+From the repository root, with a Python virtual environment active, without a
+Zephyr workspace or connected devices:
 
 ```sh
-cmake -S tests -B build/tests
+python -m pip install -r tools/requirements.txt
+cmake -S tests -B build/tests -DPython3_EXECUTABLE="$(command -v python)"
 cmake --build build/tests --parallel
 ctest --test-dir build/tests --parallel 4 --output-on-failure --output-junit results.xml
 ```
 
 This runs architecture gates, every Python tool module and every host scenario.
+Workspace setup and CI install the same pinned tool dependencies. Without them,
+the Python native SMP request tests are skipped; a passing dependency-free run
+does not validate the management client's wire types.
 GoogleTest cases are discovered individually by CTest from one executable per
 module. Every selected case runs in its own process with a timeout and independent
 result. Host C sources use C11; Zephyr firmware uses C17, and GoogleTest cases use

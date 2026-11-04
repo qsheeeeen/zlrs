@@ -155,11 +155,6 @@ int zlrs_persist_save_pairing(const zlrs_persist_pairing_t *pairing)
 	return 0;
 }
 
-int zlrs_mgmt_init(void)
-{
-	return 0;
-}
-
 bool zlrs_mgmt_process_idle(void)
 {
 	idle_calls++;
