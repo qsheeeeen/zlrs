@@ -359,7 +359,7 @@ value defaults to empty. Reads with an empty map return STATUS.
 
 STATUS and OBSERVE return named CBOR `status` fields, plus `uptime_ms` and
 `hardware_ms` sampling timestamps. Field names and units match the application
-status structure in `app/src/mgmt_types.h`. IDs are byte strings; other fields are
+status encoding in `app/src/mgmt.c`. IDs are byte strings; other fields are
 integers. There is no fixed byte layout or manual chunk protocol.
 
 The RF owner executes one queued product request at a frame boundary. Online

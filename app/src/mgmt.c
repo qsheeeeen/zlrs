@@ -16,6 +16,7 @@
 #include <zephyr/logging/log_backend.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/util.h>
 #include <zephyr/mgmt/mcumgr/mgmt/mgmt.h>
 #include <zephyr/mgmt/mcumgr/mgmt/handlers.h>
 #include <zephyr/mgmt/mcumgr/mgmt/callbacks.h>
@@ -85,102 +86,43 @@ static void mgmt_log_flush(void)
 	}
 }
 
-static uint32_t read_status(zlrs_mgmt_status_t *out)
+#define ZLRS_MGMT_FLAG_POWER_FIXED    0x80U /* volatile debug override */
+#define ZLRS_MGMT_FLAG_KEY            0x01U
+#define ZLRS_MGMT_FLAG_PAIRED         0x02U
+#define ZLRS_MGMT_FLAG_SESSION        0x04U
+#define ZLRS_MGMT_FLAG_DATA_SUBG      0x08U /* DATA currently uses sub-GHz */
+#define ZLRS_MGMT_FLAG_BAND_AUTO      0x10U
+#define ZLRS_MGMT_FLAG_BAND_ACQUIRING 0x20U
+#define ZLRS_MGMT_FLAG_BAND_PLANNED   0x40U
+
+static uint8_t status_flags(const zlrs_rf_status_t *rf)
 {
-	const zlrs_rf_status_t rf = zlrs_rf_status();
-	const zlrs_persist_settings_t *const settings = zlrs_persist_settings();
-
-	*out = (zlrs_mgmt_status_t){
-		.role = rf.role,
-		.profile = rf.profile,
-		.state = rf.state,
-		.lq_percent = rf.lq_percent,
-		.band = DT_PROP(DT_NODELABEL(zlrs_rf), band),
-		.region = settings->region,
-		.tx_power_dbm = rf.power_ceiling_dbm,
-		.data_baud = settings->data_baud,
-		.rssi_dbm = rf.rssi_dbm,
-		.peer_rssi_dbm = rf.peer_rssi_dbm,
-		.peer_lq_percent = rf.peer_lq_percent,
-		.lq_generation = rf.lq_generation,
-		.peer_lq_generation = rf.peer_lq_generation,
-		.power_raises = rf.power_raises,
-		.power_lowers = rf.power_lowers,
-		.power_fallbacks = rf.power_fallbacks,
-		.power_changed_ms = rf.power_changed_ms,
-		.peer_feedback_ms = rf.peer_feedback_ms,
-		.power_rssi_dbm = rf.power_rssi_dbm,
-
-		.active_power_dbm = rf.tx_power_dbm,
-		.power_floor_dbm = rf.power_floor_dbm,
-		.temperature_centi_c = rf.temperature_centi_c,
-		.tx_frames = rf.tx_frames,
-		.rx_frames = rf.rx_frames,
-		.rx_crc_errors = rf.rx_crc_errors,
-		.rx_bad_tag = rf.rx_bad_tag,
-		.tx_retries = rf.tx_retries,
-		.data_drop_bytes = rf.data_drop_bytes,
-		.missed_slots = rf.missed_slots,
-		.radio_fail = rf.radio_fail,
-		.frequency_hz = rf.frequency_hz,
-		.hop_index = rf.hop_index,
-		.frame_period_us = rf.frame_period_us,
-		.radio_temperature_centi_c = rf.radio.temperature_centi_c,
-		.radio_xosc_temperature_centi_c = rf.radio.xosc_temperature_centi_c,
-		.radio_vbat_mv = rf.radio.vbat_mv,
-		.radio_version_major = rf.radio.version_major,
-		.radio_version_minor = rf.radio.version_minor,
-		.radio_chip_mode = rf.radio.chip_mode,
-		.radio_command_status = rf.radio.command_status,
-		.radio_reset_status = rf.radio.reset_status,
-		.radio_valid = rf.radio.valid,
-		.radio_errors = rf.radio.errors,
-		.radio_irq = rf.radio.irq,
-		.data_phy = rf.data_phy,
-	};
-	if (rf.data_band == ZLRS_DATA_BAND_SUBG) {
-		out->flags |= ZLRS_MGMT_FLAG_DATA_SUBG;
+	uint8_t flags = 0;
+	if (rf->data_band == ZLRS_DATA_BAND_SUBG) {
+		flags |= ZLRS_MGMT_FLAG_DATA_SUBG;
 	}
-	if (rf.band_mode == ZLRS_DATA_BAND_AUTO) {
-		out->flags |= ZLRS_MGMT_FLAG_BAND_AUTO;
+	if (rf->band_mode == ZLRS_DATA_BAND_AUTO) {
+		flags |= ZLRS_MGMT_FLAG_BAND_AUTO;
 	}
-	if (rf.band_acquiring) {
-		out->flags |= ZLRS_MGMT_FLAG_BAND_ACQUIRING;
+	if (rf->band_acquiring) {
+		flags |= ZLRS_MGMT_FLAG_BAND_ACQUIRING;
 	}
-	if (rf.power_fixed) {
-		out->flags |= ZLRS_MGMT_FLAG_POWER_FIXED;
+	if (rf->power_fixed) {
+		flags |= ZLRS_MGMT_FLAG_POWER_FIXED;
 	}
-	if (rf.band_planned) {
-		out->flags |= ZLRS_MGMT_FLAG_BAND_PLANNED;
+	if (rf->band_planned) {
+		flags |= ZLRS_MGMT_FLAG_BAND_PLANNED;
 	}
-	if (rf.configured) {
-		out->flags |= ZLRS_MGMT_FLAG_KEY;
+	if (rf->configured) {
+		flags |= ZLRS_MGMT_FLAG_KEY;
 	}
-	if (rf.paired) {
-		out->flags |= ZLRS_MGMT_FLAG_PAIRED;
+	if (rf->paired) {
+		flags |= ZLRS_MGMT_FLAG_PAIRED;
 	}
-	if (rf.session_valid) {
-		out->flags |= ZLRS_MGMT_FLAG_SESSION;
+	if (rf->session_valid) {
+		flags |= ZLRS_MGMT_FLAG_SESSION;
 	}
-	memcpy(out->dev_id, rf.dev_id, ZLRS_DEV_ID_LEN);
-	memcpy(out->peer_id, rf.peer_id, ZLRS_DEV_ID_LEN);
-	return rf.hardware_sampled_ms;
-}
-
-static uint8_t hex_nibble(char c, bool *ok)
-{
-	if (c >= '0' && c <= '9') {
-		return (uint8_t)(c - '0');
-	}
-	if (c >= 'a' && c <= 'f') {
-		return (uint8_t)(c - 'a' + 10);
-	}
-	if (c >= 'A' && c <= 'F') {
-		return (uint8_t)(c - 'A' + 10);
-	}
-
-	*ok = false;
-	return 0U;
+	return flags;
 }
 
 static int execute(bool maintenance)
@@ -194,7 +136,9 @@ static int execute(bool maintenance)
 		if (maintenance) {
 			zlrs_rf_status_refresh();
 		}
-		out->hardware_ms = read_status(&out->status);
+		out->status = zlrs_rf_status();
+		out->region = zlrs_persist_settings()->region;
+		out->data_baud = zlrs_persist_settings()->data_baud;
 		out->uptime_ms = k_uptime_get_32();
 		return len == 0 ? 0 : -EINVAL;
 	}
@@ -242,13 +186,7 @@ static int execute(bool maintenance)
 			if (len != 2U * ZLRS_KEY_LEN) {
 				return -EINVAL;
 			}
-			bool valid = true;
-			for (size_t i = 0; i < ZLRS_KEY_LEN; i++) {
-				const uint8_t hi = hex_nibble(value[2 * i], &valid);
-				const uint8_t lo = hex_nibble(value[2 * i + 1], &valid);
-				key[i] = hi << 4 | lo;
-			}
-			if (!valid) {
+			if (hex2bin((const char *)value, len, key, sizeof(key)) != sizeof(key)) {
 				memset(key, 0, sizeof(key));
 				return -EINVAL;
 			}
@@ -420,57 +358,56 @@ static int product_command(struct smp_streamer *ctxt, bool write)
 		ok = ok && zcbor_tstr_put_lit(zs, "uptime_ms") &&
 		     zcbor_uint32_put(zs, reply.uptime_ms) &&
 		     zcbor_tstr_put_lit(zs, "hardware_ms") &&
-		     zcbor_uint32_put(zs, reply.hardware_ms) && zcbor_tstr_put_lit(zs, "status") &&
-		     zcbor_map_start_encode(zs, 64);
-#define FIELD(name)                                                                                \
-	ok = ok && zcbor_tstr_put_lit(zs, #name) && zcbor_int64_put(zs, reply.status.name)
-		FIELD(role);
-		FIELD(state);
-		FIELD(flags);
-		FIELD(lq_percent);
-		FIELD(band);
-		FIELD(region);
-		FIELD(profile);
-		FIELD(tx_power_dbm);
-		FIELD(data_baud);
-		FIELD(rssi_dbm);
-		FIELD(peer_rssi_dbm);
-		FIELD(peer_lq_percent);
-		FIELD(lq_generation);
-		FIELD(peer_lq_generation);
-		FIELD(power_raises);
-		FIELD(power_lowers);
-		FIELD(power_fallbacks);
-		FIELD(power_changed_ms);
-		FIELD(peer_feedback_ms);
-		FIELD(power_rssi_dbm);
+		     zcbor_uint32_put(zs, reply.status.hardware_sampled_ms) &&
+		     zcbor_tstr_put_lit(zs, "status") && zcbor_map_start_encode(zs, 64);
+#define FIELD(name, value) ok = ok && zcbor_tstr_put_lit(zs, #name) && zcbor_int64_put(zs, value)
+		FIELD(role, reply.status.role);
+		FIELD(state, reply.status.state);
+		FIELD(flags, status_flags(&reply.status));
+		FIELD(lq_percent, reply.status.lq_percent);
+		FIELD(band, DT_PROP(DT_NODELABEL(zlrs_rf), band));
+		FIELD(region, reply.region);
+		FIELD(profile, reply.status.profile);
+		FIELD(tx_power_dbm, reply.status.power_ceiling_dbm);
+		FIELD(data_baud, reply.data_baud);
+		FIELD(rssi_dbm, reply.status.rssi_dbm);
+		FIELD(peer_rssi_dbm, reply.status.peer_rssi_dbm);
+		FIELD(peer_lq_percent, reply.status.peer_lq_percent);
+		FIELD(lq_generation, reply.status.lq_generation);
+		FIELD(peer_lq_generation, reply.status.peer_lq_generation);
+		FIELD(power_raises, reply.status.power_raises);
+		FIELD(power_lowers, reply.status.power_lowers);
+		FIELD(power_fallbacks, reply.status.power_fallbacks);
+		FIELD(power_changed_ms, reply.status.power_changed_ms);
+		FIELD(peer_feedback_ms, reply.status.peer_feedback_ms);
+		FIELD(power_rssi_dbm, reply.status.power_rssi_dbm);
 
-		FIELD(active_power_dbm);
-		FIELD(power_floor_dbm);
-		FIELD(temperature_centi_c);
-		FIELD(tx_frames);
-		FIELD(rx_frames);
-		FIELD(rx_crc_errors);
-		FIELD(rx_bad_tag);
-		FIELD(tx_retries);
-		FIELD(data_drop_bytes);
-		FIELD(missed_slots);
-		FIELD(radio_fail);
-		FIELD(frequency_hz);
-		FIELD(hop_index);
-		FIELD(frame_period_us);
-		FIELD(radio_temperature_centi_c);
-		FIELD(radio_xosc_temperature_centi_c);
-		FIELD(radio_vbat_mv);
-		FIELD(radio_version_major);
-		FIELD(radio_version_minor);
-		FIELD(radio_chip_mode);
-		FIELD(radio_command_status);
-		FIELD(radio_reset_status);
-		FIELD(radio_valid);
-		FIELD(radio_errors);
-		FIELD(radio_irq);
-		FIELD(data_phy);
+		FIELD(active_power_dbm, reply.status.tx_power_dbm);
+		FIELD(power_floor_dbm, reply.status.power_floor_dbm);
+		FIELD(temperature_centi_c, reply.status.temperature_centi_c);
+		FIELD(tx_frames, reply.status.tx_frames);
+		FIELD(rx_frames, reply.status.rx_frames);
+		FIELD(rx_crc_errors, reply.status.rx_crc_errors);
+		FIELD(rx_bad_tag, reply.status.rx_bad_tag);
+		FIELD(tx_retries, reply.status.tx_retries);
+		FIELD(data_drop_bytes, reply.status.data_drop_bytes);
+		FIELD(missed_slots, reply.status.missed_slots);
+		FIELD(radio_fail, reply.status.radio_fail);
+		FIELD(frequency_hz, reply.status.frequency_hz);
+		FIELD(hop_index, reply.status.hop_index);
+		FIELD(frame_period_us, reply.status.frame_period_us);
+		FIELD(radio_temperature_centi_c, reply.status.radio.temperature_centi_c);
+		FIELD(radio_xosc_temperature_centi_c, reply.status.radio.xosc_temperature_centi_c);
+		FIELD(radio_vbat_mv, reply.status.radio.vbat_mv);
+		FIELD(radio_version_major, reply.status.radio.version_major);
+		FIELD(radio_version_minor, reply.status.radio.version_minor);
+		FIELD(radio_chip_mode, reply.status.radio.chip_mode);
+		FIELD(radio_command_status, reply.status.radio.command_status);
+		FIELD(radio_reset_status, reply.status.radio.reset_status);
+		FIELD(radio_valid, reply.status.radio.valid);
+		FIELD(radio_errors, reply.status.radio.errors);
+		FIELD(radio_irq, reply.status.radio.irq);
+		FIELD(data_phy, reply.status.data_phy);
 #undef FIELD
 		ok = ok && zcbor_tstr_put_lit(zs, "dev_id") &&
 		     zcbor_bstr_encode_ptr(zs, reply.status.dev_id, ZLRS_DEV_ID_LEN) &&

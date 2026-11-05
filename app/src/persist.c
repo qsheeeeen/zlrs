@@ -63,7 +63,7 @@ static int load_setting(const char *name, size_t len, settings_read_cb read_cb, 
 			read_failed = true;
 			return rc < 0 ? rc : -EIO;
 		}
-		records[i].len = rc == (int)len ? len : 0U;
+		records[i].len = len;
 		return 0;
 	}
 	return -ENOENT;
@@ -71,13 +71,22 @@ static int load_setting(const char *name, size_t len, settings_read_cb read_cb, 
 
 SETTINGS_STATIC_HANDLER_DEFINE(zlrs, "zlrs", NULL, load_setting, NULL, NULL);
 
-static int read_record(enum record_id id, void *bytes, size_t size)
+/* load_setting validates lengths before publishing the in-memory records. */
+static bool read_record(enum record_id id, void *bytes)
 {
 	if (records[id].len == 0U) {
-		return -ENOENT;
+		return false;
 	}
-	memcpy(bytes, records[id].bytes, MIN(size, records[id].len));
-	return records[id].len;
+	memcpy(bytes, records[id].bytes, records[id].len);
+	return true;
+}
+
+static uint32_t setting_value(enum record_id id, uint32_t fallback)
+{
+	if (records[id].len == 0U) {
+		return fallback;
+	}
+	return id == RECORD_BAUD ? sys_get_le32(records[id].bytes) : records[id].bytes[0];
 }
 
 /* RAM copy of saved records/defaults; reads do not access flash. */
@@ -221,7 +230,7 @@ static int load_records(void)
 	read_failed = false;
 	rc = settings_load_subtree("zlrs");
 	uint8_t marker[4];
-	if (rc != 0 || read_failed || read_record(RECORD_LAYOUT, marker, sizeof(marker)) != 4 ||
+	if (rc != 0 || read_failed || !read_record(RECORD_LAYOUT, marker) ||
 	    sys_get_le32(marker) != NVS_LAYOUT) {
 		LOG_WRN("settings unreadable or schema missing; reinitializing storage");
 		return reset_layout();
@@ -270,50 +279,19 @@ int zlrs_persist_init(void)
 	uint8_t bytes[PAIR_BYTES];
 	ready = true;
 	/* Load and validate the complete set of stored settings. */
-	zlrs_persist_settings_t loaded = state.settings;
-	for (enum record_id id = RECORD_BAND; id <= RECORD_PROFILE; id++) {
-		const size_t size = id == RECORD_BAUD ? 4U : 1U;
-		rc = read_record(id, bytes, size);
-		if (rc == -ENOENT) {
-			continue;
-		}
-		if (rc < 0) {
-			return rc;
-		}
-		if (rc != (int)size) {
-			LOG_WRN("invalid record length for %u", id);
-			continue;
-		}
-		switch (id) {
-		case RECORD_BAND:
-			loaded.band = (zlrs_data_band_t)bytes[0];
-			break;
-		case RECORD_BAUD:
-			loaded.data_baud = sys_get_le32(bytes);
-			break;
-		case RECORD_REGION:
-			loaded.region = (zlrs_region_id_t)bytes[0];
-			break;
-		case RECORD_ROLE:
-			loaded.role = (zlrs_role_t)bytes[0];
-			break;
-		case RECORD_PROFILE:
-			loaded.profile = (zlrs_profile_t)bytes[0];
-			break;
-		default:
-			break;
-		}
-	}
+	const zlrs_persist_settings_t loaded = {
+		.band = setting_value(RECORD_BAND, state.settings.band),
+		.data_baud = setting_value(RECORD_BAUD, state.settings.data_baud),
+		.region = setting_value(RECORD_REGION, state.settings.region),
+		.role = setting_value(RECORD_ROLE, state.settings.role),
+		.profile = setting_value(RECORD_PROFILE, state.settings.profile),
+	};
 	if (!settings_valid(&loaded)) {
 		rc = reset_layout();
 		return rc == 0 ? zlrs_persist_init() : rc;
 	}
 	state.settings = loaded;
-	rc = read_record(RECORD_ID, state.dev_id, sizeof(state.dev_id));
-	if (rc < 0 && rc != -ENOENT) {
-		return rc;
-	}
-	if (rc != sizeof(state.dev_id) || !id_valid(state.dev_id)) {
+	if (!read_record(RECORD_ID, state.dev_id) || !id_valid(state.dev_id)) {
 		rc = new_id(state.dev_id);
 		if (rc == 0) {
 			rc = write_record(RECORD_ID, state.dev_id, sizeof(state.dev_id));
@@ -324,16 +302,8 @@ int zlrs_persist_init(void)
 		}
 	}
 	state.identity_valid = true;
-	rc = read_record(RECORD_KEY, state.root_key, sizeof(state.root_key));
-	if (rc < 0 && rc != -ENOENT) {
-		return rc;
-	}
-	state.configured = rc == sizeof(state.root_key);
-	rc = read_record(RECORD_PAIR, bytes, sizeof(bytes));
-	if (rc < 0 && rc != -ENOENT) {
-		return rc;
-	}
-	state.paired = rc == PAIR_BYTES;
+	state.configured = read_record(RECORD_KEY, state.root_key);
+	state.paired = read_record(RECORD_PAIR, bytes);
 	if (state.paired) {
 		memcpy(state.pairing.peer_id, bytes, ZLRS_DEV_ID_LEN);
 		memcpy(state.pairing.pair_salt, bytes + ZLRS_DEV_ID_LEN, ZLRS_PAIR_SALT_LEN);

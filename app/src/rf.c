@@ -118,7 +118,6 @@ static uint8_t device_id[ZLRS_DEV_ID_LEN];
 static bool role_leader;
 static zlrs_profile_t active_profile;
 
-static uint32_t last_report_ms;
 static uint32_t consumed_frame;
 /* Link-loss alarm only follows a connection already established. */
 static bool ever_connected;
@@ -744,67 +743,36 @@ bool zlrs_rf_pairing(uint8_t peer_id[ZLRS_DEV_ID_LEN], uint8_t pair_salt[ZLRS_PA
 }
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
-/*
- * Debug reports use the most recent one-second window: receive windows, how many heard a frame, and
- * frames sent, all as a rate: that is the number a marginal antenna or a misaligned slot shows up
- * in, and it is what tells a receiver problem apart from a protocol one.
- */
-typedef struct {
-	uint32_t wins;
-	uint32_t hits;
-	uint32_t tx;
-} rate_snap_t;
-
-static rate_snap_t rate_snapshot(const zlrs_link_t *link)
-{
-	rate_snap_t s;
-
-	s.wins = zlrs_link_get_stats(link)->slot_rx[0] + zlrs_link_get_stats(link)->slot_rx[1];
-	s.hits = zlrs_link_get_stats(link)->slot_hit[0] + zlrs_link_get_stats(link)->slot_hit[1];
-	s.tx = zlrs_link_get_stats(link)->tx_frames;
-
-	return s;
-}
-
-/*
- * Most recent one-second window, kept up to date by report().
- */
+/* Most recent one-second window, kept up to date by report(). */
 static zlrs_rf_rate_sample_t rate_last;
-
-static void rate_update(const zlrs_link_t *link, const rate_snap_t *before, uint32_t span_ms)
-{
-	const rate_snap_t now = rate_snapshot(link);
-	const uint32_t wins = now.wins - before->wins;
-	const uint32_t hits = now.hits - before->hits;
-	const uint32_t tx = now.tx - before->tx;
-	const uint32_t span = (span_ms != 0U) ? span_ms : 1U;
-
-	rate_last.wins = wins;
-	rate_last.hits = hits;
-	rate_last.tx = tx;
-	rate_last.span_ms = span;
-	rate_last.state = zlrs_link_get_state(link);
-}
 #endif
 
 static void report(uint32_t now_ms)
 {
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
-	static rate_snap_t rate_before;
-	static uint32_t rate_ms;
-#endif
+	static uint32_t last_report_ms;
 	if ((uint32_t)(now_ms - last_report_ms) < REPORT_PERIOD_MS) {
 		return;
 	}
-	last_report_ms = now_ms;
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
-	rate_update(&link_data, &rate_before, rate_ms != 0U ? now_ms - rate_ms : REPORT_PERIOD_MS);
-	rate_before = rate_snapshot(&link_data);
-	rate_ms = now_ms;
+	static zlrs_rf_rate_sample_t before;
+	const zlrs_link_stats_t *stats = zlrs_link_get_stats(&link_data);
+	const zlrs_rf_rate_sample_t now = {
+		.wins = stats->slot_rx[0] + stats->slot_rx[1],
+		.hits = stats->slot_hit[0] + stats->slot_hit[1],
+		.tx = stats->tx_frames,
+	};
+	rate_last = (zlrs_rf_rate_sample_t){
+		.wins = now.wins - before.wins,
+		.hits = now.hits - before.hits,
+		.tx = now.tx - before.tx,
+		.span_ms = last_report_ms != 0U ? now_ms - last_report_ms : REPORT_PERIOD_MS,
+		.state = zlrs_link_get_state(&link_data),
+	};
+	before = now;
 	phase_hits = 0U;
 #endif
+	last_report_ms = now_ms;
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_STATS_LOG)
-	const zlrs_link_stats_t *stats = zlrs_link_get_stats(&link_data);
 	zlrs_lr2021_diag(&radio_diag);
 	LOG_INF("data: bytes=%u air_tx=%u air_rx=%u failed=%u drop=%u lq=%u%%", data_rx_bytes,
 		stats->tx_frames, stats->rx_frames, stats->radio_fail,

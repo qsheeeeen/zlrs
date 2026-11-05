@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Product operations over native MCUmgr; OS, IMG and FS use standard smpclient requests."""
 import argparse
+import glob
 from collections import namedtuple
 from contextlib import contextmanager
 import asyncio
@@ -223,14 +224,18 @@ class ManagementClient:
             raise ValueError(f"SMP rejected request: {response}")
         return response
 
+    def image_states(self):
+        from smpclient.requests.image_management import ImageStatesRead
+        return self._request(ImageStatesRead()).images
+
     def request(self, command, payload=b""):
-        from smpclient.requests.image_management import ImageStatesRead, ImageStatesWrite
+        from smpclient.requests.image_management import ImageStatesWrite
         from smpclient.requests.os_management import OSApplicationInfoRead, ResetWrite
         if command == CMD_BUILD:
             # Zephyr's native OS info reports application metadata via its format fields.
             return self._request(OSApplicationInfoRead(format="a")).output
         if command == CMD_IMAGE_HASH:
-            images = self._request(ImageStatesRead()).images
+            images = self.image_states()
             active = next((image for image in images if image.active), None)
             if active is None or active.hash is None or len(active.hash) != 32:
                 raise ValueError("native IMG response has no active image hash")
@@ -339,24 +344,25 @@ def dump_logs(port, baud, timeout, out_dir, keep=False, no_enter=False):
         return 1
 
 
-def app_ports() -> list[str]:
-    """Application-mode modules currently plugged in (by-id, bootloader mode excluded)."""
-    import glob
-    from pathlib import Path
-
-    out = []
-
+def find_by_id(hint: str, exclude: str | None = None, serial: str | None = None) -> list[str]:
+    """Find serial ports by their /dev/serial/by-id name (case-insensitive)."""
+    found = []
     for path in sorted(glob.glob("/dev/serial/by-id/*")):
-        name = Path(path).name.upper()
-
-        if "ZLRS" not in name or "MCUBOOT" in name:
+        name = os.path.basename(path).upper()
+        if hint.upper() not in name:
             continue
-        # Each module has several CDCs; the tool only talks to the management port (if02)
-        if not name.endswith("-IF02"):
+        if exclude is not None and exclude.upper() in name:
             continue
-        out.append(path)
+        if serial is not None and serial.upper() not in name:
+            continue
+        found.append(path)
+    return found
 
-    return out
+
+def app_ports(serial: str | None = None) -> list[str]:
+    """Application management CDCs, excluding bootloader and DATA interfaces."""
+    return [path for path in find_by_id("ZLRS", exclude="MCUBOOT", serial=serial)
+            if path.lower().endswith("-if02")]
 
 
 def pick_targets(args, parser) -> list[str]:

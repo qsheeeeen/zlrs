@@ -25,7 +25,6 @@
 # Use --client none to keep the script from uploading: it prints the command instead.
 
 import argparse
-import glob
 import hashlib
 import os
 import shutil
@@ -36,17 +35,12 @@ import sys
 import time
 from pathlib import Path
 
+from zlrs_mgmt import ManagementClient, app_ports, find_by_id
 from zlrs_cli import HelpFormatter, bounded_int, positive_seconds, fields, heading, notice, step
 
 DEFAULT_BAUD = 115200
 APP_PORT_HINT = "ZLRS"
 RECOVERY_PORT_HINT = "MCUBOOT"
-BY_ID_DIR = "/dev/serial/by-id"
-
-# The application's confirm timeout (the default of ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS in
-# app/Kconfig). Only used to inform the user, never for the verdict.
-CONFIG_CONFIRM_TIMEOUT_HINT = "60 s"
-
 
 def repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
@@ -62,29 +56,6 @@ def default_image() -> Path:
     if not build.is_absolute():
         build = workspace_root() / build
     return build / "app" / "zephyr" / "zephyr.signed.bin"
-
-
-def find_by_id(hint: str, exclude: str | None = None, serial: str | None = None) -> list[str]:
-    """Find serial ports by their /dev/serial/by-id name (case-insensitive)."""
-    found = []
-    for path in sorted(glob.glob(f"{BY_ID_DIR}/*")):
-        name = os.path.basename(path).upper()
-        if hint.upper() not in name:
-            continue
-        if exclude is not None and exclude.upper() in name:
-            continue
-        if serial is not None and serial.upper() not in name:
-            continue
-        found.append(path)
-    return found
-
-
-def app_mgmt_ports(serial: str | None = None) -> list[str]:
-    """Application management ports (the second CDC, ...-if02), optionally of one module only."""
-    return [
-        p for p in find_by_id(APP_PORT_HINT, exclude=RECOVERY_PORT_HINT, serial=serial)
-        if p.endswith("-if02")
-    ]
 
 
 def wait_for_by_id(hint: str, timeout_s: float, exclude: str | None = None,
@@ -120,70 +91,24 @@ def find_client(name: str = "smpmgr") -> str | None:
     return None
 
 
-def upload_command(client: str, port: str, image: Path, baud: int) -> list[str]:
-    """
-    smpmgr's upgrade = upload, mark for the next boot, reboot (since 0.19).
-
-    inactive_slot() works out which slot to write (serial recovery defaults to the primary slot,
-    which would overwrite the running image; naming the inactive one is what gives A/B).
-    The marker is pending, never permanent: the application decides the outcome, and without a
-    confirm command before the timeout the next reset rolls back (doc/06-firmware.md).
-
-    This script **never** passes `--confirm` to smpmgr: that marks the image permanent inside the
-    bootloader before the image has ever run, cutting rollback off. The application calls
-    `boot_write_img_confirmed()` itself once it is up and the host is talking.
-    """
-    cmd = [client, "--port", port, "--baudrate", str(baud), "upgrade"]
-    cmd.append(str(image))
-
-    return cmd
-
-
 def slot_upload_command(client: str, port: str, image: Path, baud: int,
                         slot: int) -> list[str]:
-    """
-    smpmgr's `--slot` uses MCUboot's direct-image numbering: 0/1 -> slot0, 2 -> slot1.
-    So physical slot N is passed as N + 1.
-    """
-    cmd = upload_command(client, port, image, baud)
-    cmd.insert(-1, "--slot")
-    cmd.insert(-1, str(slot + 1))
-
-    return cmd
+    # MCUboot direct-image numbering maps physical slot N to --slot N+1.
+    # Leave the image pending: only confirm after verifying the running hash.
+    return [client, "--port", port, "--baudrate", str(baud), "upgrade",
+            "--slot", str(slot + 1), str(image)]
 
 
-def inactive_slot(client: str, port: str, baud: int) -> int | None:
-    """
-    Ask MCUboot which slot is running (the active one in `image state-read`) and return the other.
-    Returns 0 when no slot is active (a blank device: the first image goes straight into slot0,
-    a pending image in slot1 would never be swapped in), and None when the answer is unreadable
-    (callers stop before uploading).
-    """
-    result = subprocess.run([client, "--port", port, "--baudrate", str(baud),
-                             "image", "state-read"],
-                            capture_output=True, text=True, check=False)
-    if result.returncode != 0:
-        raise ValueError("cannot read MCUboot image state: "
-                         + (result.stderr or result.stdout or "client failed").strip())
-    active = None
-    slot = None
-
-    for line in f"{result.stdout or ''}{result.stderr or ''}".splitlines():
-        line = line.strip()
-
-        if line.startswith("slot="):
-            slot = int(line.split("=", 1)[1].strip().rstrip(","))
-            if slot not in (0, 1):
-                raise ValueError(f"unsupported MCUboot slot {slot}")
-        elif line.startswith("active=") and line.split("=", 1)[1].strip().rstrip(",") == "True":
-            active = slot
-
-    if active is None:
-        # No active image: treat it as an install, not an upgrade. This also covers the case
-        # where MCUboot answered but every slot had active=None.
-        return 0 if slot is not None else None
-
-    return 1 - active
+def inactive_slot(port: str, baud: int) -> int | None:
+    """Read native SMP state; never infer a write target from CLI display text."""
+    with ManagementClient(port, baud) as client:
+        images = client.image_states()
+    slots = [image.slot for image in images]
+    active = [image.slot for image in images if image.active]
+    if (not slots or len(set(slots)) != len(slots) or
+            any(slot not in (0, 1) for slot in slots) or len(active) > 1):
+        return None
+    return 1 - active[0] if active else 0
 
 
 def mgmt_subcmd_command(port: str, subcmd: str) -> list[str]:
@@ -344,7 +269,7 @@ def main(args=None, parser=None) -> int:
             parser.error("pyserial required; activate the workspace venv or install pyserial")
 
     if not args.no_trigger and not args.port:
-        ports = app_mgmt_ports(args.serial)
+        ports = app_ports(args.serial)
         if len(ports) == 1:
             args.port = ports[0]
         elif not args.dry_run:
@@ -362,8 +287,10 @@ def main(args=None, parser=None) -> int:
         if args.serial and args.serial.upper() not in identity.upper():
             parser.error("--serial does not match the explicitly selected port")
         args.serial = identity
-    if args.port and args.recovery_port:
+    if args.recovery_port:
         recovery_identity = serial_of_port(args.recovery_port)
+        if recovery_identity and args.serial and args.serial.upper() not in recovery_identity.upper():
+            parser.error("--serial does not match the explicitly selected recovery port")
         if identity and recovery_identity and identity.upper() != recovery_identity.upper():
             parser.error("application and recovery ports belong to different devices")
     if not args.serial and not args.dry_run:
@@ -414,7 +341,7 @@ def main(args=None, parser=None) -> int:
         print("After boot, compare image-hash with SHA256 above, then run zlrs.py confirm.")
         notice("info", "Manual upload prepared; firmware has not been uploaded or confirmed")
         return 0
-    target_slot = inactive_slot(client, args.recovery_port, args.baud)
+    target_slot = inactive_slot(args.recovery_port, args.baud)
     if target_slot is None:
         notice("error", "cannot determine slot from MCUboot image state; upload stopped", file=sys.stderr)
         return 1

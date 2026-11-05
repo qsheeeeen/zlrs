@@ -81,11 +81,42 @@ class UpdateTests(unittest.TestCase):
             self.assertEqual(update.wait_for_by_id(update.RECOVERY_PORT_HINT, 1,
                              serial="1234", exact_serial=True), selected)
 
+    def test_recovery_identity_is_checked_even_when_application_alias_is_unknown(self):
+        recovery = "/dev/serial/by-id/usb-zlrs_ZLRS_MCUBOOT_9999-if00"
+        with patch.object(update, "find_client", return_value="smpmgr"), \
+                patch.object(update, "find_by_id", return_value=[]), \
+                patch.object(update, "run_trigger") as trigger, \
+                patch.object(update.subprocess, "run") as external:
+            rc, _ = invoke(update, *self.options, "--port", "/dev/unknown-alias",
+                           "--recovery-port", recovery)
+            self.assertEqual(rc, 2)
+            trigger.assert_not_called()
+            external.assert_not_called()
+
+    def test_slot_selection(self):
+        for states, expected in [
+            ([(0, True), (1, False)], 1), ([(0, False), (1, True)], 0),
+            ([(0, None)], 0), ([], None), ([(2, True)], None),
+            ([(0, True), (1, True)], None), ([(0, True), (0, False)], None),
+        ]:
+            with self.subTest(states=states), patch.object(update, "ManagementClient") as client:
+                client.return_value.__enter__.return_value.image_states.return_value = [
+                    Mock(slot=slot, active=active) for slot, active in states]
+                self.assertEqual(update.inactive_slot("fake", 115200), expected)
+
     def test_failed_slot_query_stops(self):
-        with patch.object(update.subprocess, "run", return_value=Mock(
-                returncode=1, stdout="slot=0\nactive=True", stderr="failed")):
+        with patch.object(update, "ManagementClient") as client:
+            client.return_value.__enter__.return_value.image_states.side_effect = ValueError("SMP failed")
             with self.assertRaises(ValueError):
-                update.inactive_slot("smpmgr", "fake", 115200)
+                update.inactive_slot("fake", 115200)
+
+    def test_ambiguous_slot_response_prevents_upload(self):
+        with patch.object(update, "find_client", return_value="smpmgr"), \
+                patch.object(update, "inactive_slot", return_value=None), \
+                patch.object(update.subprocess, "run") as external:
+            rc, _ = invoke(update, *self.options, "--no-trigger", "--recovery-port", "fake")
+            self.assertEqual(rc, 1)
+            external.assert_not_called()
 
     def test_verification_precedes_confirmation(self):
         for matching, no_confirm in [(True, False), (False, False), (False, True), (True, True)]:
@@ -130,19 +161,18 @@ class UpdateTests(unittest.TestCase):
     def test_port_patterns_separate_application_and_recovery(self):
         ports = ["/dev/serial/by-id/usb-zlrs_ZLRS_1234-if01",
                  "/dev/serial/by-id/usb-zlrs_ZLRS_MCUBOOT_1234-if01"]
-        with patch.object(update.glob, "glob", return_value=ports):
+        with patch("zlrs_mgmt.glob.glob", return_value=ports):
             self.assertEqual(update.find_by_id(update.APP_PORT_HINT,
                              exclude=update.RECOVERY_PORT_HINT), [ports[0]])
             self.assertEqual(update.find_by_id(update.RECOVERY_PORT_HINT), [ports[1]])
 
     def test_upload_command_targets_inactive_slot_and_leaves_confirmation_to_host(self):
         image = Path("zephyr.signed.bin")
-        command = update.upload_command("smpmgr", "/dev/ttyACM0", image, update.DEFAULT_BAUD)
+        command = update.slot_upload_command("smpmgr", "/dev/ttyACM0", image,
+                                             update.DEFAULT_BAUD, 1)
         self.assertEqual(command[0], "smpmgr")
         self.assertIn("upgrade", command)
         self.assertEqual(command[-1], str(image))
         self.assertNotIn("--confirm", command)
-        command = update.slot_upload_command("smpmgr", "/dev/ttyACM0", image,
-                                             update.DEFAULT_BAUD, 1)
         self.assertIn("--slot", command)
         self.assertEqual(command[command.index("--slot") + 1], "2")

@@ -5,6 +5,10 @@
 #include <zephyr/ztest.h>
 #include <zephyr/kvss/nvs.h>
 #include <zephyr/mgmt/mcumgr/mgmt/callbacks.h>
+#include <zephyr/mgmt/mcumgr/mgmt/mgmt.h>
+#include <zephyr/mgmt/mcumgr/smp/smp.h>
+#include <zcbor_decode.h>
+#include <zcbor_encode.h>
 #include <zephyr/mgmt/mcumgr/grp/fs_mgmt/fs_mgmt_callbacks.h>
 #include <zephyr/mgmt/mcumgr/grp/os_mgmt/os_mgmt_callbacks.h>
 #include "mgmt.h"
@@ -157,13 +161,75 @@ ZTEST(mgmt, test_online_snapshot_never_refreshes_radio)
 		zassert_equal(reply.status.frequency_hz, initial_rf.frequency_hz);
 		zassert_equal(reply.status.rssi_dbm, initial_rf.rssi_dbm);
 		zassert_equal(reply.status.tx_frames, initial_rf.tx_frames);
-		zassert_equal(reply.hardware_ms, 17);
+		zassert_equal(reply.status.hardware_sampled_ms, 17);
 	}
 	zassert_equal(radio_refreshes, 0);
 	zassert_equal(watchdog_disarms, 0);
 	uint8_t extra = 1;
 	zassert_equal(zlrs_mgmt_request(ZLRS_MGMT_CMD_OBSERVE, &extra, 1, &reply), -EINVAL);
 	zassert_equal(zlrs_mgmt_request(ZLRS_MGMT_CMD_PAIR, NULL, 0, NULL), -EACCES);
+}
+
+ZTEST(mgmt, test_status_wire_preserves_names_and_values)
+{
+	const uint8_t request_bytes[] = {0xa0}; /* Empty read defaults to STATUS. */
+	uint8_t response[2048];
+	struct cbor_nb_reader reader = {0};
+	struct cbor_nb_writer writer = {0};
+	struct smp_streamer stream = {.reader = &reader, .writer = &writer};
+	const struct mgmt_handler *handler = mgmt_find_handler(66, 0);
+	zassert_not_null(handler);
+	zcbor_new_decode_state(reader.zs, ARRAY_SIZE(reader.zs), request_bytes,
+			       sizeof(request_bytes), 1, NULL, 0);
+	zcbor_new_encode_state(writer.zs, ARRAY_SIZE(writer.zs), response, sizeof(response), 0);
+	zassert_true(zcbor_map_start_encode(writer.zs, 4));
+	zassert_ok(handler->mh_read(&stream));
+	zassert_true(zcbor_map_end_encode(writer.zs, 4));
+	zcbor_state_t zs[6];
+	zcbor_new_decode_state(zs, ARRAY_SIZE(zs), response, writer.zs[0].payload - response, 1,
+			       NULL, 0);
+	zassert_true(zcbor_map_start_decode(zs));
+	zassert_true(zcbor_tstr_expect_lit(zs, "result") && zcbor_int32_expect(zs, 0));
+	zassert_true(zcbor_tstr_expect_lit(zs, "uptime_ms") && zcbor_any_skip(zs, NULL));
+	zassert_true(zcbor_tstr_expect_lit(zs, "hardware_ms") && zcbor_uint32_expect(zs, 17));
+	zassert_true(zcbor_tstr_expect_lit(zs, "status") && zcbor_map_start_decode(zs));
+
+	const struct {
+		const char *name;
+		int64_t value;
+	} expected[] = {
+		{"flags", 0x80},
+		{"tx_power_dbm", 12},
+		{"active_power_dbm", -9},
+		{"rssi_dbm", -48},
+		{"frequency_hz", 2478000000LL},
+		{"region", zlrs_persist_settings()->region},
+		{"data_baud", zlrs_persist_settings()->data_baud},
+		{"radio_temperature_centi_c", 0},
+		{"radio_irq", 0},
+	};
+
+	size_t matched = 0;
+	for (size_t i = 0; i < 48; i++) {
+		struct zcbor_string name;
+		zassert_true(zcbor_tstr_decode(zs, &name));
+		bool checked = false;
+		for (size_t j = 0; j < ARRAY_SIZE(expected); j++) {
+			if (name.len == strlen(expected[j].name) &&
+			    memcmp(name.value, expected[j].name, name.len) == 0) {
+				zassert_true(zcbor_int64_expect(zs, expected[j].value), "%s",
+					     expected[j].name);
+				matched++;
+				checked = true;
+				break;
+			}
+		}
+		if (!checked) {
+			zassert_true(zcbor_any_skip(zs, NULL));
+		}
+	}
+	zassert_equal(matched, ARRAY_SIZE(expected));
+	zassert_true(zcbor_map_end_decode(zs) && zcbor_map_end_decode(zs));
 }
 
 ZTEST(mgmt, test_enter_mutate_exit_owner_handoff)
@@ -203,6 +269,12 @@ ZTEST(mgmt, test_invalid_and_failed_writes_do_not_apply_credentials)
 	zassert_ok(zlrs_mgmt_request(ZLRS_MGMT_CMD_ENTER, NULL, 0, NULL));
 	const uint8_t invalid = 0xff;
 	zassert_equal(zlrs_mgmt_request(ZLRS_MGMT_CMD_SET_PROFILE, &invalid, 1, NULL), -EINVAL);
+	uint8_t malformed_key[2 * ZLRS_KEY_LEN];
+	memset(malformed_key, '0', sizeof(malformed_key));
+	malformed_key[sizeof(malformed_key) - 1] = 'g';
+	zassert_equal(zlrs_mgmt_request(ZLRS_MGMT_CMD_SET_KEY_HEX, malformed_key,
+				      sizeof(malformed_key), NULL), -EINVAL);
+	zassert_equal(credential_applies, 0);
 	const uint8_t key[] = "4242424242424242424242424242424242424242424242424242424242424242";
 	fail_write = true;
 	zassert_equal(zlrs_mgmt_request(ZLRS_MGMT_CMD_SET_KEY_HEX, key, sizeof(key) - 1, NULL),
