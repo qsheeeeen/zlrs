@@ -49,7 +49,7 @@ ONLINE_COMMANDS = {CMD_STATUS, CMD_BUILD, CMD_IMAGE_HASH}
 # No-payload commands share registration and encoding metadata.
 SIMPLE_COMMANDS = {
     "enter": (CMD_ENTER, "enter management mode"),
-    "status": (CMD_STATUS, "read link, modulation, signal/power and configuration"),
+    "status": (CMD_STATUS, "read system and link status (--verbose for chip details)"),
     "pair": (CMD_PAIR, "start pairing on this device (start the peer too)"),
     "erase-pair": (CMD_ERASE_PAIR, "erase the peer pairing record"),
     "new-dev-id": (CMD_NEW_DEV_ID, "make a fresh device id (drops the pairing record)"),
@@ -92,62 +92,68 @@ def read_status(client) -> Status:
     return decode_status(client.request(CMD_STATUS)["status"])
 
 
-def status_text(payload) -> str:
+MODULATION_NAMES = {0: "FLRC 2.6 Mbps", 1: "FLRC 650 kbps", 2: "FLRC 325 kbps",
+                    3: "LoRa SF6 / BW 1 MHz", 4: "LoRa SF7 / BW 1 MHz",
+                    5: "FLRC 1.3 Mbps"}
+
+
+def duration(ms):
+    seconds = ms // 1000
+    days, seconds = divmod(seconds, 86400)
+    hours, seconds = divmod(seconds, 3600)
+    minutes, seconds = divmod(seconds, 60)
+    return f"{days}d {hours:02}:{minutes:02}:{seconds:02}"
+
+
+def status_text(payload, *, system=None, verbose=False) -> str:
     status = decode_status(payload)
     flags = status.flags
-    modulation = {0: "FLRC 2.6 Mbps", 1: "FLRC 650 kbps", 2: "FLRC 325 kbps",
-                  3: "LoRa SF6 / BW 1 MHz", 4: "LoRa SF7 / BW 1 MHz",
-                  5: "FLRC 1.3 Mbps"}.get(status.data_phy)
-    if modulation is None:
-        modulation = f"unknown profile ({status.data_phy})"
-    sections = [
-        ("Link", [("Role", "Leader" if status.role == 0 else "Follower"),
-                  ("State", STATE_NAMES.get(status.state, str(status.state))),
-                  ("Paired", "yes" if flags & 0x02 else "no"),
-                  ("Session", "active" if flags & 0x04 else "inactive")]),
-        ("Radio", [
-            ("Band mode", "auto" if flags & 0x10 else "fixed"),
-            ("Active band", "sub-GHz" if flags & 0x08 else "2.4 GHz"),
-            ("Modulation", modulation),
-            ("Frequency", f"{status.frequency_hz / 1000000:.3f} MHz"),
-            ("Hop index", str(status.hop_index)),
-            ("Frame period", f"{status.frame_period_us / 1000:.3f} ms"),
-            ("Capture", "searching" if flags & 0x20 else "ready"),
-            ("Transition", "scheduled" if flags & 0x40 else "none"),
-        ]),
-        ("Signal / Power", [
-            ("Local RSSI", f"{status.rssi_dbm} dBm" if status.rssi_dbm else "unavailable"),
-            ("Local LQ", f"{status.lq_percent}%" if status.lq_percent <= 100 else "pending"),
-            ("Peer RSSI", f"{status.peer_rssi_dbm} dBm" if status.peer_rssi_dbm else "unavailable"),
-            ("Peer LQ", (f"{status.peer_lq_percent}%" if status.peer_lq_percent <= 100 else "pending")
-             if status.peer_rssi_dbm else "unavailable"),
-            ("TX power", f"{status.active_power_dbm} dBm"),
-            ("TX range", f"{status.power_floor_dbm}..{status.tx_power_dbm} dBm"),
-            ("Power control", "debug fixed" if flags & 0x80 else "automatic"),
-        ]),
-        ("Traffic / Errors", [
-            ("RF frames", f"TX {status.tx_frames}, RX {status.rx_frames}"),
-            ("ARQ retries", str(status.tx_retries)),
-            ("CRC errors", str(status.rx_crc_errors)),
-            ("Auth errors", str(status.rx_bad_tag)),
-            ("Radio failures", str(status.radio_fail)),
-            ("Missed slots", str(status.missed_slots)),
-            ("Dropped data", f"{status.data_drop_bytes} bytes"),
-        ]),
-        ("Device / Configuration", [
-            ("Hardware", "HF (868/915 MHz)" if status.band else "LF (470/433 MHz)"),
-            ("Region", REGION_NAMES.get(status.region, str(status.region))),
-            ("Security profile", f"P{status.profile}"),
-            ("Device ID", status.dev_id.hex()),
-            ("Peer ID", status.peer_id.hex()),
-            ("Data UART", f"{status.data_baud or 115200} baud"),
-            ("Root key", "configured" if flags & 0x01 else "missing"),
-        ]),
+    system = system or {}
+    cpu = system.get("cpu_load_permille", -1)
+    window = system.get("cpu_window_ms", 0)
+    cpu_text = f"{cpu / 10:.1f}% (avg {window / 1000:.2f}s)" if 0 <= cpu <= 1000 and window else "unavailable"
+    uptime = duration(system["uptime_ms"]) if "uptime_ms" in system else "unavailable"
+    sampled = system.get("hardware_ms", 0)
+    age = (system.get("uptime_ms", 0) - sampled) & 0xffffffff
+
+    def signal(rssi, quality):
+        level = f"{rssi} dBm" if rssi else "unavailable"
+        lq = (f"{quality}%" if quality <= 100 else "pending")
+        return f"RSSI {level} | LQ {lq}"
+
+    def temperature(value, valid=True):
+        return f"{value / 100:.2f} C" if valid else "unavailable"
+
+    rows = [
+        ("Role", f"{'Leader' if status.role == 0 else 'Follower'} | "
+         f"{STATE_NAMES.get(status.state, status.state)} | "
+         f"{'paired' if flags & 2 else 'unpaired'} | session {'active' if flags & 4 else 'inactive'}"),
+        ("System", f"up {uptime} | CPU {cpu_text}"),
+        ("Radio", f"{'sub-GHz' if flags & 8 else '2.4 GHz'} | "
+         f"{MODULATION_NAMES.get(status.data_phy, f'unknown profile ({status.data_phy})')}"),
+        ("Channel", f"{status.frequency_hz / 1000000:.3f} MHz | hop {status.hop_index} | "
+         f"frame {status.frame_period_us / 1000:.3f} ms"),
+        ("Band", f"{'auto' if flags & 16 else 'fixed'} | capture {'searching' if flags & 32 else 'ready'} | "
+         f"switch {'scheduled' if flags & 64 else 'none'}"),
+        ("Local", signal(status.rssi_dbm, status.lq_percent)),
+        ("Peer", signal(status.peer_rssi_dbm, status.peer_lq_percent) if status.peer_rssi_dbm
+         else "RSSI unavailable | LQ unavailable"),
+        ("Power", f"{status.active_power_dbm} dBm | range {status.power_floor_dbm}..{status.tx_power_dbm} dBm | "
+         f"{'debug fixed' if flags & 128 else 'automatic'}"),
+        ("Traffic", f"TX {status.tx_frames}, RX {status.rx_frames} | retries {status.tx_retries}"),
+        ("Errors", f"CRC {status.rx_crc_errors} | auth {status.rx_bad_tag} | radio {status.radio_fail}"),
+        ("Loss", f"missed slots {status.missed_slots} | dropped {status.data_drop_bytes} bytes"),
+        ("Config", f"{'HF' if status.band else 'LF'} | {REGION_NAMES.get(status.region, status.region)} | "
+         f"P{status.profile} | key {'set' if flags & 1 else 'missing'} | UART {status.data_baud or 115200}"),
+        ("Temps", f"MCU {temperature(status.temperature_centi_c, status.temperature_centi_c != -32768)} | "
+         f"RF {temperature(status.radio_temperature_centi_c, status.radio_valid & 1)} | "
+         f"XOSC {temperature(status.radio_xosc_temperature_centi_c, status.radio_valid & 2)}"),
+        ("Sensors", f"supply {f'{status.radio_vbat_mv / 1000:.3f} V' if status.radio_valid & 4 else 'unavailable'} | "
+         f"age {duration(age) if sampled else 'unavailable'} (refresh: --refresh)"),
     ]
+    if not verbose:
+        return fields(rows)
     valid = status.radio_valid
-    radio_temp = status.radio_temperature_centi_c
-    xosc_temp = status.radio_xosc_temperature_centi_c
-    vbat = status.radio_vbat_mv
     mode, command, reset = (status.radio_chip_mode, status.radio_command_status, status.radio_reset_status)
     mode_names = {0: "sleep", 1: "standby RC", 2: "standby XOSC",
                   3: "frequency synthesis", 4: "RX", 5: "TX"}
@@ -164,14 +170,9 @@ def status_text(payload) -> str:
     error_text = ", ".join(name for bit, name in enumerate(error_names)
                            if errors & (1 << bit)) or "none"
     irq = status.radio_irq
-    sections.append(("Sensors", [
-        ("MCU chip temp", "unavailable" if status.temperature_centi_c == -32768
-         else f"{status.temperature_centi_c / 100:.2f} C"),
-        ("LR2021 chip temp", f"{radio_temp / 100:.2f} C" if valid & 0x01 else "unavailable"),
-        ("LR2021 XOSC temp", f"{xosc_temp / 100:.2f} C" if valid & 0x02 else "unavailable"),
-        ("LR2021 supply", f"{vbat / 1000:.3f} V ({vbat} mV)" if valid & 0x04 else "unavailable"),
-    ]))
-    sections.append(("LR2021 snapshot", [
+    rows.extend([
+        ("Device ID", status.dev_id.hex()),
+        ("Peer ID", status.peer_id.hex()),
         ("Chip version", f"major 0x{status.radio_version_major:02x}, minor 0x{status.radio_version_minor:02x}"
          if valid & 0x08 else "unavailable"),
         ("Chip mode", mode_names.get(mode, f"unknown ({mode})") if valid & 0x10 else "unavailable"),
@@ -181,8 +182,8 @@ def status_text(payload) -> str:
          if valid & 0x10 else "unavailable"),
         ("IRQ status", f"0x{irq:08x}" if valid & 0x10 else "unavailable"),
         ("Chip errors", f"0x{errors:04x} ({error_text})" if valid & 0x20 else "unavailable"),
-    ]))
-    return "\n\n".join(title + "\n" + fields(rows) for title, rows in sections)
+    ])
+    return fields(rows)
 
 
 
@@ -293,7 +294,7 @@ def session_options(command, enter=True, keep=False, refresh=False):
     }
 
 
-def talk(port, baud, operation, timeout, enter=True, quiet=False, keep=False, refresh=False):
+def talk(port, baud, operation, timeout, enter=True, quiet=False, keep=False, refresh=False, verbose=False):
     command, value = operation
     try:
         with management_session(port, baud, timeout,
@@ -304,10 +305,7 @@ def talk(port, baud, operation, timeout, enter=True, quiet=False, keep=False, re
             response = client.request(command, value)
             if command == CMD_STATUS:
                 heading("ZLRS Status")
-                age = (response["uptime_ms"] - response["hardware_ms"]) & 0xffffffff
-                print(fields([("Device uptime", f"{response['uptime_ms']} ms"),
-                              ("Chip observations age", f"{age} ms" if response["hardware_ms"] else "unavailable")]))
-                print(status_text(response["status"]))
+                print(status_text(response["status"], system=response, verbose=verbose))
             elif command == CMD_BUILD:
                 print(response)
             elif command == CMD_IMAGE_HASH:
@@ -432,6 +430,8 @@ def add_commands(sub, parents=()):
 
     for name, (_, description) in SIMPLE_COMMANDS.items():
         command(name, help=description, description=description)
+    commands["status"].add_argument("--verbose", action="store_true",
+                                   help="include device IDs and detailed chip observations")
     for name in DEBUG_REPORTS:
         description = ("compare per-link TX power limits and setpoints" if name == "power"
                        else f"read detailed {name} diagnostics")
@@ -558,7 +558,7 @@ def main(args=None, parser=None) -> int:
             device_heading(port)
         try:
             this = talk(port, args.baud, selected, args.timeout, enter=not args.no_enter, keep=args.keep,
-                        refresh=args.refresh)
+                        refresh=args.refresh, verbose=getattr(args, "verbose", False))
         except (OSError, ValueError, TimeoutError) as exc:
             notice("error", f"{port}: {exc}", file=sys.stderr)
             this = 1

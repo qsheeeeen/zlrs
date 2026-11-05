@@ -182,9 +182,9 @@ ZTEST(mgmt, test_status_wire_preserves_names_and_values)
 	zcbor_new_decode_state(reader.zs, ARRAY_SIZE(reader.zs), request_bytes,
 			       sizeof(request_bytes), 1, NULL, 0);
 	zcbor_new_encode_state(writer.zs, ARRAY_SIZE(writer.zs), response, sizeof(response), 0);
-	zassert_true(zcbor_map_start_encode(writer.zs, 4));
+	zassert_true(zcbor_map_start_encode(writer.zs, 6));
 	zassert_ok(handler->mh_read(&stream));
-	zassert_true(zcbor_map_end_encode(writer.zs, 4));
+	zassert_true(zcbor_map_end_encode(writer.zs, 6));
 	zcbor_state_t zs[6];
 	zcbor_new_decode_state(zs, ARRAY_SIZE(zs), response, writer.zs[0].payload - response, 1,
 			       NULL, 0);
@@ -192,6 +192,12 @@ ZTEST(mgmt, test_status_wire_preserves_names_and_values)
 	zassert_true(zcbor_tstr_expect_lit(zs, "result") && zcbor_int32_expect(zs, 0));
 	zassert_true(zcbor_tstr_expect_lit(zs, "uptime_ms") && zcbor_any_skip(zs, NULL));
 	zassert_true(zcbor_tstr_expect_lit(zs, "hardware_ms") && zcbor_uint32_expect(zs, 17));
+	int32_t cpu_load;
+	uint64_t cpu_window;
+	zassert_true(zcbor_tstr_expect_lit(zs, "cpu_load_permille") && zcbor_int32_decode(zs, &cpu_load));
+	zassert_true(cpu_load >= 0 && cpu_load <= 1000);
+	zassert_true(zcbor_tstr_expect_lit(zs, "cpu_window_ms") && zcbor_uint64_decode(zs, &cpu_window));
+	zassert_true(cpu_window <= k_uptime_get());
 	zassert_true(zcbor_tstr_expect_lit(zs, "status") && zcbor_map_start_decode(zs));
 
 	const struct {
@@ -230,6 +236,22 @@ ZTEST(mgmt, test_status_wire_preserves_names_and_values)
 	}
 	zassert_equal(matched, ARRAY_SIZE(expected));
 	zassert_true(zcbor_map_end_decode(zs) && zcbor_map_end_decode(zs));
+}
+
+ZTEST(mgmt, test_cpu_window_is_shared_by_status_and_observe)
+{
+	struct zlrs_mgmt_reply first, next;
+	zassert_ok(zlrs_mgmt_request(ZLRS_MGMT_CMD_STATUS, NULL, 0, &first));
+	k_sleep(K_MSEC(20));
+	const uint8_t extra = 1;
+	zassert_equal(zlrs_mgmt_request(ZLRS_MGMT_CMD_STATUS, &extra, 1, NULL), -EINVAL);
+	k_sleep(K_MSEC(20));
+	zassert_ok(zlrs_mgmt_request(ZLRS_MGMT_CMD_OBSERVE, NULL, 0, &next));
+	zassert_equal(next.cpu_window_ms, next.uptime_ms - first.uptime_ms);
+	zassert_true(next.cpu_window_ms >= 40);
+	zassert_true(next.cpu_load_permille >= 0 && next.cpu_load_permille <= 1000);
+	zassert_equal(radio_refreshes, 0);
+	zassert_equal(watchdog_disarms, 0);
 }
 
 ZTEST(mgmt, test_enter_mutate_exit_owner_handoff)

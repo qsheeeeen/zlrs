@@ -12,7 +12,6 @@ import datetime as dt
 import glob
 import json
 import random
-import re
 import sys
 import time
 from pathlib import Path
@@ -42,43 +41,29 @@ def matching_management(data_path: str) -> str | None:
 
 
 def sample_status(client) -> dict:
+    response = client.request(mgmt.CMD_STATUS)
+    status = mgmt.decode_status(response["status"])
+    metrics = {
+        "role": "Leader" if status.role == 0 else "Follower",
+        "band": "sub-GHz" if status.flags & 8 else "2.4 GHz",
+        "modulation": mgmt.MODULATION_NAMES.get(status.data_phy, f"unknown profile ({status.data_phy})"),
+        "state": status.state, "paired": bool(status.flags & 2),
+        "tx_frames": status.tx_frames, "rx_frames": status.rx_frames,
+        "retries": status.tx_retries, "crc_errors": status.rx_crc_errors,
+        "tag_errors": status.rx_bad_tag, "radio_failures": status.radio_fail,
+        "missed_slots": status.missed_slots, "rf_drop_bytes": status.data_drop_bytes,
+    }
+    for prefix in ("", "peer_"):
+        rssi, lq = getattr(status, prefix + "rssi_dbm"), getattr(status, prefix + "lq_percent")
+        if rssi:
+            metrics[prefix + "rssi_dbm"] = rssi
+        if lq <= 100 and (not prefix or rssi):
+            metrics[prefix + "lq_percent"] = lq
     return {
         "captured_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
-        "status": mgmt.status_text(client.request(mgmt.CMD_STATUS)["status"]),
+        "status": mgmt.status_text(status, system=response),
+        "metrics": metrics,
     }
-
-
-def parse_status(sample: dict) -> dict:
-    text = sample["status"] + "\n" + sample.get("ports", "")
-    result = {"captured_at": sample["captured_at"]}
-    grouped = dict(re.findall(r"^\s*([A-Za-z][A-Za-z /]*?)\s*:\s*(.*?)\s*$",
-                              text, re.MULTILINE))
-    for label, key in (("Role", "role"), ("Active band", "band"),
-                       ("Modulation", "modulation")):
-        if label in grouped:
-            result[key] = grouped[label]
-    state_names = ("unconfigured", "unpaired", "pairing", "searching", "connected")
-    if grouped.get("State") in state_names:
-        result["state"] = state_names.index(grouped["State"])
-    if grouped.get("Paired") in ("yes", "no"):
-        result["paired"] = grouped["Paired"] == "yes"
-    for label, key, unit in (("Local RSSI", "rssi_dbm", "dBm"),
-                             ("Peer RSSI", "peer_rssi_dbm", "dBm"),
-                             ("Local LQ", "lq_percent", "%"),
-                             ("Peer LQ", "peer_lq_percent", "%"),
-                             ("ARQ retries", "retries", ""),
-                             ("CRC errors", "crc_errors", ""),
-                             ("Auth errors", "tag_errors", ""),
-                             ("Radio failures", "radio_failures", ""),
-                             ("Missed slots", "missed_slots", ""),
-                             ("Dropped data", "rf_drop_bytes", "bytes")):
-        match = re.fullmatch(r"(-?\d+)\s*" + re.escape(unit), grouped.get(label, ""))
-        if match:
-            result[key] = int(match[1])
-    match = re.fullmatch(r"TX (\d+), RX (\d+)", grouped.get("RF frames", ""))
-    if match:
-        result.update(tx_frames=int(match[1]), rx_frames=int(match[2]))
-    return result
 
 
 def main() -> int:
@@ -139,7 +124,7 @@ def main() -> int:
         if client is not None:
             pre = sample_status(client)
             status_samples.append(pre)
-            print(parse_status(pre), flush=True)
+            print(pre["metrics"], flush=True)
         else:
             print("No management port detected; collecting DATA loopback only.", flush=True)
         print(f"Capturing {args.duration:g}s; move RX now. Output: {out_dir}", flush=True)
@@ -189,7 +174,7 @@ def main() -> int:
             if client is not None and now >= next_status:
                 sample = sample_status(client)
                 status_samples.append(sample)
-                parsed = parse_status(sample)
+                parsed = sample["metrics"]
                 print(f"status {sample['captured_at']}: {parsed}", flush=True)
                 next_status = now + args.status_interval
             if now >= next_timeline:

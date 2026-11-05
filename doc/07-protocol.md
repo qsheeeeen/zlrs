@@ -358,7 +358,12 @@ value defaults to empty. Reads with an empty map return STATUS.
 | OBSERVE | 21 | Empty; same response as STATUS |
 
 STATUS and OBSERVE return named CBOR `status` fields, plus `uptime_ms` and
-`hardware_ms` sampling timestamps. Field names and units match the application
+`hardware_ms` sampling timestamps. Top-level `cpu_load_permille` measures non-idle
+CPU time (0–1000; negative means unavailable) over `cpu_window_ms`: since boot
+on the first STATUS/OBSERVE, then since the previous successful status sample.
+All clients share this window; maintenance time is included. No sampling delay
+or periodic worker is added. `uptime_ms` and `cpu_window_ms` are 64-bit;
+`hardware_ms` wraps at 32 bits. Field names and units match the application
 status encoding in `app/src/mgmt.c`. IDs are byte strings; other fields are
 integers. There is no fixed byte layout or manual chunk protocol.
 
@@ -390,4 +395,6 @@ The schedule frequency can differ from the fixed periodic-SYNC channel.
 
 Online management status reads copied observations without SPI or RF pause and displays
 the radio sample age. Sensor observations must remain separate from live link
-quality. Validation requirements are in [development and acceptance](10-debug.md).
+quality. The CLI groups the summary into 14 rows, including CPU load and uptime;
+`status --verbose` adds device IDs and chip diagnostics. Older firmware without
+CPU measurements displays `unavailable`. Validation requirements are in [development and acceptance](10-debug.md).

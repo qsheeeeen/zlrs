@@ -56,6 +56,7 @@ class ManagementTests(unittest.TestCase):
         status.update(dev_id=b"1234", peer_id=b"5678")
         for options, expected in [
             ((), [m.CMD_STATUS]),
+            (("--verbose",), [m.CMD_STATUS]),
             (("--no-enter",), [m.CMD_STATUS, m.CMD_EXIT]),
             (("--refresh",), [m.CMD_ENTER, m.CMD_STATUS, m.CMD_EXIT]),
             (("--keep",), [m.CMD_ENTER, m.CMD_STATUS]),
@@ -79,6 +80,42 @@ class ManagementTests(unittest.TestCase):
                 self.assertEqual(rc, 0)
                 operations = [line.split(": ", 1)[1] for line in output.splitlines()]
                 self.assertEqual(operations, [repr(m.operation(command)) for command in expected])
+
+    def test_status_summary_and_verbose_chip_details(self):
+        status = dict.fromkeys(m.STATUS_FIELDS, 0)
+        status.update(dev_id=b"1234", peer_id=b"5678", radio_valid=63,
+                      temperature_centi_c=2675, radio_errors=4, radio_vbat_mv=3300)
+        system = {"uptime_ms": 90061000, "hardware_ms": 90060000,
+                  "cpu_load_permille": 217, "cpu_window_ms": 5000}
+        client = MagicMock()
+        client.request.return_value = {"status": status, **system}
+        with patch.object(m, "management_session", return_value=contextlib.nullcontext(client)):
+            rc, output = invoke(entry, "status", "--port", "fake", "--verbose")
+        self.assertEqual(rc, 0)
+        for value in ("CPU 21.7% (avg 5.00s)", "up 1d 01:01:01", "26.75 C", "3.300 V",
+                      "31323334", "35363738", "PLL lock"):
+            self.assertIn(value, output)
+        summary = m.status_text(status, system=system)
+        self.assertEqual(len(summary.splitlines()), 14)
+        self.assertTrue(all(len(line) <= 80 for line in summary.splitlines()))
+        self.assertNotIn("Device ID", summary)
+        self.assertNotIn("IRQ status", summary)
+
+    def test_status_unavailable_and_cpu_boundaries(self):
+        status = dict.fromkeys(m.STATUS_FIELDS, 0)
+        status.update(dev_id=b"1234", peer_id=b"5678", temperature_centi_c=-32768)
+        for cpu, window, expected in ((0, 1000, "0.0%"), (1000, 1000, "100.0%"),
+                                      (-34, 1000, "unavailable"), (0, 0, "unavailable")):
+            with self.subTest(cpu=cpu, window=window):
+                output = m.status_text(status, system={"cpu_load_permille": cpu, "cpu_window_ms": window})
+                self.assertIn("CPU " + expected, output)
+        output = m.status_text(status, verbose=True)
+        for value in ("CPU unavailable", "MCU unavailable", "RF unavailable",
+                      "XOSC unavailable", "supply unavailable", "age unavailable"):
+            self.assertIn(value, output)
+        self.assertNotIn("-327.68", output)
+        output = m.status_text(status, system={"uptime_ms": 0x1000003e8, "hardware_ms": 0xffffff00})
+        self.assertIn("age 0d 00:00:01", output)
 
     def test_report_is_one_smp_response(self):
         client = MagicMock()

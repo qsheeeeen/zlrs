@@ -42,7 +42,9 @@ int zlrs_mgmt_run(void);
 
 struct zlrs_mgmt_reply {
 	zlrs_rf_status_t status;
-	uint32_t uptime_ms;
+	uint64_t uptime_ms;
+	uint64_t cpu_window_ms;
+	int32_t cpu_load_permille;
 	uint32_t data_baud;
 	zlrs_region_id_t region;
 	const char *report;

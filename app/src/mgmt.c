@@ -16,6 +16,7 @@
 #include <zephyr/logging/log_backend.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/cpu_load.h>
 #include <zephyr/sys/util.h>
 #include <zephyr/mgmt/mcumgr/mgmt/mgmt.h>
 #include <zephyr/mgmt/mcumgr/mgmt/handlers.h>
@@ -133,14 +134,22 @@ static int execute(bool maintenance)
 	const uint32_t op = request.op;
 	memset(out, 0, sizeof(*out));
 	if (op == ZLRS_MGMT_CMD_STATUS || op == ZLRS_MGMT_CMD_OBSERVE) {
+		static uint64_t cpu_sampled_ms;
+		if (len != 0) {
+			return -EINVAL;
+		}
 		if (maintenance) {
 			zlrs_rf_status_refresh();
 		}
 		out->status = zlrs_rf_status();
 		out->region = zlrs_persist_settings()->region;
 		out->data_baud = zlrs_persist_settings()->data_baud;
-		out->uptime_ms = k_uptime_get_32();
-		return len == 0 ? 0 : -EINVAL;
+		/* Shared STATUS/OBSERVE window; the first sample measures since boot. */
+		out->uptime_ms = k_uptime_get();
+		out->cpu_load_permille = cpu_load_get(true);
+		out->cpu_window_ms = out->uptime_ms - cpu_sampled_ms;
+		cpu_sampled_ms = out->uptime_ms;
+		return 0;
 	}
 	if (!maintenance) {
 		return op == ZLRS_MGMT_CMD_EXIT ? 0 : -EACCES;
@@ -356,9 +365,13 @@ static int product_command(struct smp_streamer *ctxt, bool write)
 	}
 	if (op == ZLRS_MGMT_CMD_STATUS || op == ZLRS_MGMT_CMD_OBSERVE) {
 		ok = ok && zcbor_tstr_put_lit(zs, "uptime_ms") &&
-		     zcbor_uint32_put(zs, reply.uptime_ms) &&
+		     zcbor_uint64_put(zs, reply.uptime_ms) &&
 		     zcbor_tstr_put_lit(zs, "hardware_ms") &&
 		     zcbor_uint32_put(zs, reply.status.hardware_sampled_ms) &&
+		     zcbor_tstr_put_lit(zs, "cpu_load_permille") &&
+		     zcbor_int32_put(zs, reply.cpu_load_permille) &&
+		     zcbor_tstr_put_lit(zs, "cpu_window_ms") &&
+		     zcbor_uint64_put(zs, reply.cpu_window_ms) &&
 		     zcbor_tstr_put_lit(zs, "status") && zcbor_map_start_encode(zs, 64);
 #define FIELD(name, value) ok = ok && zcbor_tstr_put_lit(zs, #name) && zcbor_int64_put(zs, value)
 		FIELD(role, reply.status.role);

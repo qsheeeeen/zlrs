@@ -93,7 +93,7 @@ class EntryTests(unittest.TestCase):
         self.assertNotIn("127%", output)
         self.assertEqual(output.count("pending"), 2)
         status["peer_rssi_dbm"] = 0
-        peer = next(line for line in entry.mgmt.status_text(status).splitlines() if "Peer LQ" in line)
+        peer = next(line for line in entry.mgmt.status_text(status).splitlines() if "Peer " in line)
         self.assertIn("unavailable", peer)
 
     def test_subcommand_help_uses_public_name(self):
