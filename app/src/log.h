@@ -20,10 +20,9 @@ static inline void zlrs_log_console_sync(void) {}
 
 typedef struct {
 	uint8_t count;
-	uint8_t newest;
 	uint16_t num[ZLRS_LOG_FILES_MAX];
 	uint32_t size[ZLRS_LOG_FILES_MAX];
 } zlrs_log_info_t;
 
-/* What the store holds: file count, newest index and per-file size */
+/* What the store holds: file count and per-file size, sorted by file number */
 int zlrs_log_info(zlrs_log_info_t *out);

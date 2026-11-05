@@ -11,8 +11,8 @@ ZTEST(storage_log, test_mount_and_inventory)
 	/* The normal export API mounts on demand; no test-only mount hook is needed. */
 	zassert_equal(zlrs_log_info(&info), 0);
 	zassert_true(info.count <= ZLRS_LOG_FILES_MAX);
-	if (info.count > 0U) {
-		zassert_true(info.newest < info.count);
+	for (uint8_t i = 1U; i < info.count; i++) {
+		zassert_true(info.num[i - 1U] <= info.num[i]);
 	}
 }
 

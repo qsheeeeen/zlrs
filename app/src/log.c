@@ -88,25 +88,14 @@ static bool log_mounted;
 /* Retry a failed mount before reinitializing the log partition. */
 static int log_store_mount(void);
 
-/* The ring, smallest file number first: that is the order the host exports them in */
-struct log_file {
-	uint16_t num;
-	uint32_t size;
-};
-
-static struct log_file log_files[ZLRS_LOG_FILES_MAX];
-static uint8_t log_file_count;
-
 /* List the store, smallest file number first: the backend names files `<prefix><0000>` upward and
  * overwrites the oldest, so numeric order is the order they were written in. */
-static int log_store_scan(void)
+int zlrs_log_info(zlrs_log_info_t *out)
 {
 	struct fs_dir_t dir;
 	struct fs_dirent ent;
-	uint8_t found = 0U;
+	zlrs_log_info_t info = {0};
 	int rc;
-
-	log_file_count = 0U;
 
 	if (!log_mounted) {
 		rc = log_store_mount();
@@ -147,17 +136,18 @@ static int log_store_scan(void)
 			continue;
 		}
 
-		if (found < ZLRS_LOG_FILES_MAX) {
+		if (info.count < ZLRS_LOG_FILES_MAX) {
 			/* Insert sorted: at most a handful of files, an insertion sort is plenty */
-			uint8_t at = found;
+			uint8_t at = info.count;
 
-			while (at > 0U && log_files[at - 1U].num > num) {
-				log_files[at] = log_files[at - 1U];
+			while (at > 0U && info.num[at - 1U] > num) {
+				info.num[at] = info.num[at - 1U];
+				info.size[at] = info.size[at - 1U];
 				at--;
 			}
-			log_files[at].num = num;
-			log_files[at].size = (uint32_t)ent.size;
-			found++;
+			info.num[at] = num;
+			info.size[at] = (uint32_t)ent.size;
+			info.count++;
 		}
 	}
 
@@ -165,39 +155,16 @@ static int log_store_scan(void)
 	if (rc != 0 || close_rc != 0) {
 		return rc != 0 ? rc : close_rc;
 	}
-	log_file_count = found;
+	*out = info;
 
 	/*
 	 * One line per scan: an export that finds nothing is a different bug from one that finds the
 	 * files but cannot read them, and this is the line that tells the two apart on a serial console.
 	 */
-	if (found == 0U) {
+	if (info.count == 0U) {
 		LOG_WRN("log store: no files under %s", LOG_MOUNT_POINT);
 	} else {
-		LOG_INF("log store: %u file(s), newest log.%04u", found, log_files[found - 1U].num);
-	}
-
-	return 0;
-}
-
-/* What the export needs: how many files, which is newest, and each size. No store on this board is
- * -ENODEV, not an empty list — "nothing logged yet" and "no store here" are different answers. */
-int zlrs_log_info(zlrs_log_info_t *out)
-{
-	int rc;
-
-	rc = log_store_scan();
-	if (rc != 0) {
-		return rc;
-	}
-
-	memset(out, 0, sizeof(*out));
-	out->count = log_file_count;
-	out->newest = (log_file_count > 0U) ? (uint8_t)(log_file_count - 1U) : 0U;
-
-	for (uint8_t i = 0U; i < log_file_count; i++) {
-		out->num[i] = log_files[i].num;
-		out->size[i] = log_files[i].size;
+		LOG_INF("log store: %u file(s), newest log.%04u", info.count, info.num[info.count - 1U]);
 	}
 
 	return 0;

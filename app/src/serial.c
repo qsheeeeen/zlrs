@@ -179,18 +179,6 @@ static void data_ep_resume_rx(struct data_ep *ep)
 	}
 }
 
-/* Drop bytes from the inactive endpoint: keeping them would send stale data after a switch */
-static void data_ep_drop_rx(struct data_ep *const ep)
-{
-	uint8_t scratch[32];
-	uint32_t n;
-
-	while ((n = ring_buf_get(&ep->rx, scratch, sizeof(scratch))) > 0U) {
-		ep->rx_dropped += n;
-	}
-	data_ep_resume_rx(ep);
-}
-
 size_t zlrs_serial_state(zlrs_serial_state_t *out, size_t count)
 {
 	const struct data_ep *const active = data_active();
@@ -300,8 +288,14 @@ uint16_t zlrs_serial_read(uint8_t *buf, uint16_t len)
 			continue;
 		}
 
-		data_ep_drop_rx(
-			&data_eps[i]); /* drop bytes that arrived on the inactive endpoint */
+		/* Discard inactive input without copying it into a scratch buffer. */
+		uint8_t *ignored;
+		uint32_t n;
+		while ((n = ring_buf_get_ptr(&data_eps[i].rx, &ignored, 0U)) > 0U) {
+			ring_buf_consume(&data_eps[i].rx, n);
+			data_eps[i].rx_dropped += n;
+		}
+		data_ep_resume_rx(&data_eps[i]);
 	}
 
 	return got;
