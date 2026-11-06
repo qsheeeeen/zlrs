@@ -347,9 +347,10 @@ static zlrs_link_cfg_t link_config(void)
 		.lq_feedback_gap_ms =
 			MAX(1U, MIN(1000U, 127ULL * frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE /
 						   1000U)),
+		/* Own TX slots already leave a peer ACK opportunity. Round down so
+		 * millisecond quantization cannot postpone a retry by another frame. */
 		.arq_timeout_ms = (uint16_t)MAX(
-			10U, DIV_ROUND_UP((uint64_t)frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE,
-					  1000U)),
+			1U, (uint64_t)frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE / 1000U),
 
 		.resync_every_n = resync_every_n,
 		.automatic_band = band_mode == ZLRS_DATA_BAND_AUTO,

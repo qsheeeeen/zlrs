@@ -266,7 +266,7 @@ static void peer_update_band(void)
 				     : cfg.mod.rate_bps >= 650000U  ? 300U
 								    : 600U;
 		cfg.resync_every_n = MIN(CONFIG_ZLRS_APP_RESYNC_PERIOD_MS, 1000U) * 1000U / cadence;
-		cfg.arq_timeout_ms = MAX(10U, DIV_ROUND_UP(cadence, 1000U));
+		cfg.arq_timeout_ms = MAX(1U, cadence / 1000U);
 		zassert_true(zlrs_link_reconfigure_radio(&peer, &cfg));
 		zlrs_link_acquire_radio(&peer, now);
 		zlrs_band_policy_changed(&peer_band_policy, subg, phy, probe, now, info.last_rx_ms);
@@ -1027,6 +1027,28 @@ ZTEST(rf_results, test_tx_failure)
 	frames(50);
 	zassert_true(local->stats.radio_fail > 0);
 	zassert_equal(radio_reads, 1);
+}
+
+ZTEST(rf_results, test_failed_data_retries_next_frame)
+{
+	connected_peers();
+	/* Isolate DATA retry timing from periodic SYNC slots. */
+	local->cfg.resync_every_n = peer.cfg.resync_every_n = 0U;
+	const uint32_t retries = local->stats.tx_retries;
+	zassert_equal(zlrs_link_write(local, outgoing, sizeof(outgoing) - 1U),
+		      sizeof(outgoing) - 1U);
+	mode = TX_FAIL;
+	frames(1);
+	zassert_equal(peer_delivered, 0U);
+	zassert_true(local->arq_used != 0U);
+	mode = NORMAL;
+	frames(1);
+	zassert_equal(local->stats.tx_retries, retries + 1U,
+		      "a failed DATA must retry at the next own TX slot");
+	zassert_equal(peer_delivered, sizeof(outgoing) - 1U);
+	frames(10);
+	zassert_equal(peer_delivered, sizeof(outgoing) - 1U, "duplicate delivery");
+	zassert_equal(local->queue_count, 0U);
 }
 
 ZTEST(rf_results, test_prepare_failure)
