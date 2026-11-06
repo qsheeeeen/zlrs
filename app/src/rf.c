@@ -131,7 +131,10 @@ static bool on_data(void *ctx, const uint8_t *data, uint16_t len)
 {
 	(void)ctx;
 
-	if (!zlrs_serial_receive(data, len)) {
+	ZLRS_TRACE_EVENT("rf_deliver_begin", len, 0);
+	const bool accepted = zlrs_serial_receive(data, len);
+	ZLRS_TRACE_EVENT("rf_deliver_end", len, accepted);
+	if (!accepted) {
 		return false;
 	}
 	data_rx_bytes += len;
@@ -389,13 +392,18 @@ static void pump_serial(void);
 /* RF owns protocol completion; the LR2021 adapter only returns hardware facts. */
 static bool complete_radio(zlrs_lr2021_result_t *result)
 {
-	if (!zlrs_lr2021_process_irq(result)) {
+	ZLRS_TRACE_EVENT("rf_irq_begin", 0, 0);
+	const bool completed = zlrs_lr2021_process_irq(result);
+	ZLRS_TRACE_EVENT("rf_irq_end", 0, completed);
+	if (!completed) {
 		return false;
 	}
 	ZLRS_TRACE_EVENT("rf_rx_begin", result->done_us, result->size);
 	zlrs_link_complete(&link_data, result->status == 0 ? ZLRS_RADIO_OK : ZLRS_RADIO_FAIL,
 			   result->size, result->rssi_dbm, result->snr_db, result->completed_ms);
 	ZLRS_TRACE_EVENT("rf_rx_end", result->done_us, result->size);
+	ZLRS_TRACE_EVENT("rf_arq", zlrs_link_get_stats(&link_data)->tx_retries,
+			 zlrs_link_get_stats(&link_data)->tx_frames);
 	return true;
 }
 
@@ -619,6 +627,13 @@ static void run_slot(uint8_t slot)
 
 	const uint32_t prepare_started_us = now_us();
 
+	/* Channel and public packet metadata let two MCU histories be correlated.
+	 * arg1: TX bit 31, PHY bits 24..27, sync slot bits 16..23, length bits 0..15. */
+	ZLRS_TRACE_EVENT("rf_packet", req->freq_hz,
+			(req->is_tx ? BIT(31) : 0U) |
+			((uint32_t)zlrs_mod_phy_id(&req->mod) << 24) |
+			((uint32_t)req->sync_slot << 16) |
+			(req->is_tx ? req->size : req->max_rx_size));
 	ZLRS_TRACE_EVENT("rf_prepare_begin", slot_nominal_us, req->is_tx);
 	const int prepare_rc = zlrs_lr2021_prepare(req);
 	ZLRS_TRACE_EVENT("rf_prepare_end", slot_nominal_us, (uint32_t)prepare_rc);
@@ -648,12 +663,16 @@ static void run_slot(uint8_t slot)
 		const uint32_t next_us = slot_nominal_us + slot_budget_us;
 		const uint32_t next_ms = zlrs_slot_timer_uptime_ms(next_us);
 
+		ZLRS_TRACE_EVENT("rf_ahead_begin", next_us, 0);
 		pump_serial();
 		const uint8_t *buf = zlrs_link_prepare_data(
 			link, role_leader ? ZLRS_SLOT_DATA_A : ZLRS_SLOT_DATA_B, next_ms, &size);
+		ZLRS_TRACE_EVENT("rf_ahead_end", next_us, buf != NULL);
 
 		if (buf != NULL) {
+			ZLRS_TRACE_EVENT("rf_preload_begin", next_us, size);
 			(void)zlrs_lr2021_preload_tx(buf, size);
+			ZLRS_TRACE_EVENT("rf_preload_end", next_us, size);
 		}
 	}
 	const int32_t remaining_us = (int32_t)(slot_deadline_us - now_us());

@@ -466,12 +466,14 @@ static int fill_tx_fifo(void)
 	if (!request->is_tx || tx_fifo_used == request->size) {
 		return 0;
 	}
+	ZLRS_TRACE_EVENT("rf_tail_begin", tx_fifo_used, request->size);
 	if (!zlrs_lr2021_fifo_remaining(ZLRS_FRAME_MAX_LEN, tx_fifo_used, request->size, &tail) ||
 	    ral_set_pkt_payload(&radio.ral, request->buf + tx_fifo_used, tail) != RAL_STATUS_OK) {
 		diag.tx_fifo_errors++;
 		tx_fifo_used = 0U;
 		(void)ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC);
 		pending = false;
+		ZLRS_TRACE_EVENT("rf_tail_end", 0, 0);
 		return -EIO;
 	}
 	tx_fifo_used = request->size;
@@ -479,6 +481,7 @@ static int fill_tx_fifo(void)
 	diag.tx_fifo_bytes += tail;
 	diag.tx_fifo_ready_us_last = zlrs_slot_timer_now_us() - begin_us;
 	diag.tx_fifo_ready_us_max = MAX(diag.tx_fifo_ready_us_max, diag.tx_fifo_ready_us_last);
+	ZLRS_TRACE_EVENT("rf_tail_end", tail, request->size);
 	return 0;
 }
 
@@ -770,6 +773,7 @@ bool zlrs_lr2021_process_irq(zlrs_lr2021_result_t *out)
 		diag.empty_irq++;
 		return false;
 	}
+	ZLRS_TRACE_EVENT("rf_irq_status", event_us, irq);
 	diag.irq_last = irq;
 	diag.irq_service_us_last = zlrs_slot_timer_now_us() - event_us;
 	diag.irq_service_us_max = MAX(diag.irq_service_us_max, diag.irq_service_us_last);
@@ -826,6 +830,7 @@ bool zlrs_lr2021_process_irq(zlrs_lr2021_result_t *out)
 		const uint32_t read_us = zlrs_slot_timer_now_us();
 
 		/* Read once after modem CRC validation, then let the link verify its tag. */
+		ZLRS_TRACE_EVENT("rf_fifo_begin", event_us, 0);
 		if (ral_get_pkt_size(&radio.ral, &len) == RAL_STATUS_OK &&
 		    len <= request->max_rx_size &&
 		    (len == 0U ||
@@ -839,6 +844,7 @@ bool zlrs_lr2021_process_irq(zlrs_lr2021_result_t *out)
 		} else {
 			diag.rx_payload_errors++;
 		}
+		ZLRS_TRACE_EVENT("rf_fifo_end", event_us, len);
 		if (request->mod.lora_sf != 0U) {
 			ral_lora_rx_pkt_status_t pkt;
 			if (ral_get_lora_rx_pkt_status(&radio.ral, &pkt) == RAL_STATUS_OK) {

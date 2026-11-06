@@ -11,6 +11,7 @@
 #include <zephyr/logging/log.h>
 
 #include "sha256.h"
+#include "trace.h"
 
 BUILD_ASSERT(DT_NODE_HAS_STATUS(DT_NODELABEL(sha256), okay),
 	     "ZLRS needs an enabled SHA-256 peripheral");
@@ -36,6 +37,7 @@ void zlrs_sha256(const uint8_t *first, size_t first_len, const uint8_t *second, 
 		LOG_ERR("SHA-256 device unavailable");
 		k_panic();
 	}
+	ZLRS_TRACE_EVENT("hash_begin", first_len, second_len);
 	if (k_mutex_lock(&hash_mutex, K_FOREVER) != 0) {
 		k_panic();
 	}
@@ -63,6 +65,7 @@ void zlrs_sha256(const uint8_t *first, size_t first_len, const uint8_t *second, 
 		}
 	}
 	k_mutex_unlock(&hash_mutex);
+	ZLRS_TRACE_EVENT("hash_end", first_len, second_len);
 	if (rc != 0) {
 		/* Never turn a failed driver operation into an authentication tag. */
 		LOG_ERR("SHA-256 driver failed: %d", rc);
