@@ -29,6 +29,12 @@ class TraceControlTests(unittest.TestCase):
                                         timeout=10.0, baud=115200)
         management.assert_not_called()
 
+    def test_arm_uses_fixture_rolling_operation_without_duration(self):
+        with patch.object(zlrs_trace, "request", return_value={"result": 0, "state": 1}) as request:
+            result, response = self.invoke("arm", "--port", "smp-port")
+        self.assertEqual((result, response["state"]), (0, "capturing"))
+        request.assert_called_once_with("smp-port", 64, {"op": 4}, timeout=10.0, baud=115200)
+
     def test_status_is_read_and_uses_management_cdc(self):
         with patch.object(zlrs_trace.mgmt, "pick_targets", return_value=["/dev/usb-device-if02"]), \
                 patch.object(zlrs_trace, "request", return_value={"result": 0, "state": 2}) as request:

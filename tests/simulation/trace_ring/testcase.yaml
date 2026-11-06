@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+common:
+  harness: ztest
+  tags: [trace]
+  platform_allow: [native_sim/native/64]
+tests:
+  zlrs.trace.rolling: {}
+  zlrs.trace.rolling_non_power_of_two:
+    extra_configs:
+      - CONFIG_RAM_TRACING_BUFFER_SIZE=1000

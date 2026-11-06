@@ -10,6 +10,7 @@ enum zlrs_trace_command {
 	ZLRS_TRACE_STOP,
 	ZLRS_TRACE_SAVE,
 	ZLRS_TRACE_DISCARD,
+	ZLRS_TRACE_ARM,
 };
 
 enum zlrs_trace_state {
@@ -39,6 +40,10 @@ struct zlrs_trace_status {
 
 /* Reset on the MCUmgr worker; control/save on RF owner; stop on kernel timer. */
 int zlrs_trace_request(enum zlrs_trace_command command, uint32_t duration_ms);
+#if defined(CONFIG_ZLRS_APP_DEBUG_TRACE_ROLLING)
+/* RF owner only: freeze now, defer Flash until the trigger can reach the peer. */
+void zlrs_trace_trigger(uint32_t sequence, uint32_t elapsed_us);
+#endif
 struct zlrs_trace_status zlrs_trace_status(void);
 void zlrs_trace_process(bool maintenance);
 void zlrs_trace_maintenance(bool entering);

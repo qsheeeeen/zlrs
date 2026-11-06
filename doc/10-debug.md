@@ -215,9 +215,10 @@ under the same load before attributing a deadline miss to production firmware.
 
 The application owns only bounded capture control, persistence and its RF phase
 annotations. Zephyr owns event encoding, collection and buffering. The host uses
-Zephyr's `scripts/tracing/trace_viewer.py` with the matching CTF metadata. No
-application tracing backend, binary event format, decoder or histogram engine is
-introduced. Compiler instrumentation is a separate diagnostic configuration.
+Zephyr's `scripts/tracing/trace_viewer.py` with the matching CTF metadata. Normal
+images use the upstream RAM backend; the MCU latency fixture below changes only
+RAM retention. Both export the same CTF format and use the stock
+decoder. Compiler instrumentation is a separate diagnostic configuration.
 
 The controller is restricted to the current single-CPU application. It serializes
 all start/stop/reset/save operations. A start first disables tracing and waits
@@ -428,6 +429,33 @@ Acceptance must cover:
   the launch RAM closure audit and the existing 10 us launch-jitter bound under
   recording load. Compare DATA behavior with recording enabled and disabled;
   a trace build is not automatically evidence of production performance.
+
+### MCU latency trigger fixture
+
+Build `tests/hardware/latency` with sysbuild and the matching LF/HF board, then
+install its signed image on both paired devices. It retains the
+production DATA queue, authentication, ARQ and hopping. Group 69 controls one
+outstanding 32-byte probe and MCU echo; the initiator measures from injection
+into the link queue to delivery of the matching echo using its own hardware clock.
+The host opens only management CDCs.
+
+`trace arm` (group 64 operation 4) is available only in this fixture. Its 96 KiB
+RAM sink overwrites whole CTF records, retaining the latest history until a trigger or explicit stop.
+A threshold violation freezes the initiator and sends the probe ID and measured
+RTT to freeze the peer. Missing responses/probes also trigger after 200 ms.
+Saving starts 250 ms later at the existing RF maintenance boundary, allowing the
+trigger to reach the peer first. Export remains standard CTF with SHA-256 checks.
+The two Flash slots retain the newest and preceding committed snapshots.
+
+```sh
+python tests/hardware/latency/run.py --serial <initiator> --peer <echo> \
+  --threshold-us 20000 --seconds 60 --out build/mcu-latency-capture
+```
+
+`--delay-us 30000` explicitly injects a nonblocking MCU echo delay to validate
+triggering; leave it zero when investigating natural latency. For a temporary
+acceptance run, leave the image unconfirmed and restore afterward. On a dedicated
+bench, confirm a verified fixture to retain it across reboots.
 
 ### References
 

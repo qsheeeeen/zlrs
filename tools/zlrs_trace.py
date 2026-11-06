@@ -9,7 +9,7 @@ import zlrs_mgmt as mgmt
 from zlrs_smp import request
 
 GROUP = 64
-OPERATIONS = {"start": 0, "stop": 1, "save": 2, "discard": 3}
+OPERATIONS = {"start": 0, "stop": 1, "save": 2, "discard": 3, "arm": 4}
 STATES = ("idle", "capturing", "frozen", "saving", "saved")
 
 

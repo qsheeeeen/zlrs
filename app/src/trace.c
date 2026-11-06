@@ -43,10 +43,14 @@ extern uint8_t ram_tracing[CONFIG_RAM_TRACING_BUFFER_SIZE];
 enum {
 	STOP_DEADLINE = 1,
 	STOP_MANUAL,
-	STOP_MAINTENANCE
+	STOP_MAINTENANCE,
+	STOP_TRIGGER
 };
 static struct zlrs_trace_status capture = {.slot = -1};
 static uint32_t dropped_at_start;
+#if defined(CONFIG_ZLRS_APP_DEBUG_TRACE_ROLLING)
+static int64_t save_after_ms;
+#endif
 static bool maintenance_active;
 static bool session_active;
 static bool mounted;
@@ -116,6 +120,7 @@ static void freeze(uint32_t reason)
 	irq_unlock(key);
 }
 
+
 static void deadline(struct k_timer *timer)
 {
 	ARG_UNUSED(timer);
@@ -123,6 +128,19 @@ static void deadline(struct k_timer *timer)
 }
 
 K_TIMER_DEFINE(capture_timer, deadline, NULL);
+
+#if defined(CONFIG_ZLRS_APP_DEBUG_TRACE_ROLLING)
+void zlrs_trace_trigger(uint32_t sequence, uint32_t elapsed_us)
+{
+	if (capture.state == ZLRS_TRACE_CAPTURING) {
+		ZLRS_TRACE_EVENT("latency_trigger", sequence, elapsed_us);
+		freeze(STOP_TRIGGER);
+		k_timer_stop(&capture_timer);
+		save_after_ms = k_uptime_get() + 250;
+	}
+}
+#endif
+
 
 struct zlrs_trace_status zlrs_trace_status(void)
 {
@@ -375,6 +393,16 @@ static int save_capture(void)
 		return rc;
 	}
 	artifact_path(path, sizeof(path), slot, "channel0_0");
+	/* This inactive slot is already uncommitted. Release its old data before
+	 * writing, rather than requiring LittleFS space for a third full snapshot. */
+	rc = fs_unlink(path);
+	if (rc != 0 && rc != -ENOENT) {
+		return rc;
+	}
+	rc = tracing_backend_flush(tracing_backend_get("tracing_backend_ram"));
+	if (rc != 0) {
+		return rc;
+	}
 	zlrs_sha256(ram_tracing, sizeof(ram_tracing), NULL, 0U, expected);
 	for (size_t i = 0U; i < sizeof(expected); i++) {
 		(void)snprintf(&expected_hex[2U * i], 3U, "%02x", expected[i]);
@@ -432,7 +460,8 @@ static int save_capture(void)
 
 static int reset_capture(uint32_t duration_ms)
 {
-	if (duration_ms < 10U || duration_ms > 5000U) {
+	if ((duration_ms < 10U || duration_ms > 5000U) &&
+	    !(IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_TRACE_ROLLING) && duration_ms == 0U)) {
 		return -EINVAL;
 	}
 	const unsigned int key = irq_lock();
@@ -467,6 +496,9 @@ static int start_capture(uint32_t duration_ms, bool maintenance)
 	const unsigned int key = irq_lock();
 
 	capture.id++;
+#if defined(CONFIG_ZLRS_APP_DEBUG_TRACE_ROLLING)
+	save_after_ms = 0;
+#endif
 	capture.duration_ms = duration_ms;
 	capture.reason = 0U;
 	capture.error = 0;
@@ -477,19 +509,27 @@ static int start_capture(uint32_t duration_ms, bool maintenance)
 	capture.state = ZLRS_TRACE_CAPTURING;
 	tracing_set_enabled(true);
 	sys_trace_named_event("cap_begin", capture.id, duration_ms);
-	k_timer_start(&capture_timer, K_MSEC(duration_ms), K_NO_WAIT);
+	if (duration_ms != 0U) {
+		k_timer_start(&capture_timer, K_MSEC(duration_ms), K_NO_WAIT);
+	}
 	irq_unlock(key);
 	return 0;
 }
 
 int zlrs_trace_request(enum zlrs_trace_command command, uint32_t duration_ms)
 {
+	if (command == ZLRS_TRACE_ARM) {
+		if (!IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_TRACE_ROLLING)) {
+			return -ENOTSUP;
+		}
+		duration_ms = 0U;
+	}
 	int rc = k_mutex_lock(&request_lock, K_FOREVER);
 
 	if (rc != 0) {
 		return rc;
 	}
-	if (command == ZLRS_TRACE_START) {
+	if (command == ZLRS_TRACE_START || command == ZLRS_TRACE_ARM) {
 		rc = reset_capture(duration_ms);
 		if (rc != 0) {
 			capture.error = rc;
@@ -506,14 +546,37 @@ int zlrs_trace_request(enum zlrs_trace_command command, uint32_t duration_ms)
 	return rc;
 }
 
+static int save_frozen_capture(bool maintenance)
+{
+	capture.state = ZLRS_TRACE_SAVING;
+	if (!maintenance) {
+		zlrs_rf_pause();
+	}
+	int rc = save_capture();
+	if (!maintenance) {
+		zlrs_rf_resume();
+	}
+	capture.state = rc == 0 ? ZLRS_TRACE_SAVED : ZLRS_TRACE_FROZEN;
+	return rc;
+}
+
 void zlrs_trace_process(bool maintenance)
 {
+#if defined(CONFIG_ZLRS_APP_DEBUG_TRACE_ROLLING)
+	if (save_after_ms != 0 && k_uptime_get() >= save_after_ms) {
+		save_after_ms = 0;
+		if (capture.state == ZLRS_TRACE_FROZEN) {
+			capture.error = save_frozen_capture(maintenance);
+		}
+	}
+#endif
 	if (!atomic_cas(&request_pending, 1, 0)) {
 		return;
 	}
 	int rc = 0;
 
 	switch (requested_command) {
+	case ZLRS_TRACE_ARM:
 	case ZLRS_TRACE_START:
 		rc = start_capture(requested_duration, maintenance);
 		break;
@@ -537,15 +600,7 @@ void zlrs_trace_process(bool maintenance)
 			rc = -EBUSY;
 			break;
 		}
-		capture.state = ZLRS_TRACE_SAVING;
-		if (!maintenance) {
-			zlrs_rf_pause();
-		}
-		rc = save_capture();
-		if (!maintenance) {
-			zlrs_rf_resume();
-		}
-		capture.state = rc == 0 ? ZLRS_TRACE_SAVED : ZLRS_TRACE_FROZEN;
+		rc = save_frozen_capture(maintenance);
 		break;
 	default:
 		rc = -EINVAL;
@@ -643,7 +698,7 @@ static struct mgmt_callback file_callback = {
 	.event_id = MGMT_EVT_OP_FS_MGMT_FILE_ACCESS | MGMT_EVT_OP_FS_MGMT_FILE_ACCESS_DONE,
 };
 
-/* SMP group 64, command 0: read status or write a bounded capture operation. */
+/* SMP group 64, command 0: capture control; rolling ARM is fixture-only. */
 static int trace_response(struct smp_streamer *ctxt, int result)
 {
 	const struct zlrs_trace_status status = zlrs_trace_status();
@@ -683,7 +738,7 @@ static int trace_write(struct smp_streamer *ctxt)
 	};
 
 	if (zcbor_map_decode_bulk(ctxt->reader->zs, fields, ARRAY_SIZE(fields), &decoded) != 0 ||
-	    operation > ZLRS_TRACE_DISCARD) {
+	    operation > ZLRS_TRACE_ARM) {
 		return MGMT_ERR_EINVAL;
 	}
 	return trace_response(ctxt, zlrs_trace_request(operation, duration_ms));
