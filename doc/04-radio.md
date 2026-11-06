@@ -83,7 +83,7 @@ boundary. Ordinary SPI preparation and unbounded BUSY waits shall not run in IRQ
 context. Preparation failure cancels that transmission; late transmission is not
 allowed.
 
-The preparation reservation is 2.5 ms on 2.4 GHz and 6 ms on SubG. Slot planning
+The preparation reservation is 1.6 ms on 2.4 GHz and 6 ms on SubG. Slot planning
 also reserves 500 µs for startup, the active mode's maximum packet airtime
 (255 bytes in automatic mode, 511 in fixed FLRC) and 200 µs for completion
 margin. The radio's airtime calculation must use the same physical

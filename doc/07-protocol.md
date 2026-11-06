@@ -210,7 +210,7 @@ repeats every 100/150/300/600 ms for raw rates 2.6/1.3/0.65/0.325 Mbps. Periodic
 synchronization, acquisition and pending plans use the fixed sync channel.
 LoRa acquisition SYNC repeats every 300 ms.
 
-Slots reserve maximum-frame airtime and preparation: 2.5 ms for 2.4 GHz and 6 ms
+Slots reserve maximum-frame airtime and preparation: 1.6 ms for 2.4 GHz and 6 ms
 for SubG, plus a fixed 200 µs launch guard, startup and completion margins.
 Short packets cannot open the next slot early. Failed preparation cannot launch
 late. Actual packet length determines transmit airtime and SubG duty charge;
