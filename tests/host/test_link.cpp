@@ -37,6 +37,7 @@ typedef struct {
 	bool block_24_leader, block_24_follower, lose_band_plans;
 	int16_t rssi_24;
 	bool withhold_phase;
+	bool prepare_during_rx;
 	uint64_t wire_hash;
 	uint32_t wire_packets;
 	uint8_t captured[ZLRS_FRAME_MAX_LEN];
@@ -142,8 +143,10 @@ static void sim_slot(sim_t *sim, uint8_t slot)
 	zlrs_link_t *const leader = &sim->leader.link;
 	zlrs_link_t *const follower = &sim->follower.link;
 	uint16_t prepared_len;
-	(void)zlrs_link_prepare_data(leader, slot, sim->now_ms, &prepared_len);
-	(void)zlrs_link_prepare_data(follower, slot, sim->now_ms, &prepared_len);
+	if (!sim->prepare_during_rx) {
+		(void)zlrs_link_prepare_data(leader, slot, sim->now_ms, &prepared_len);
+		(void)zlrs_link_prepare_data(follower, slot, sim->now_ms, &prepared_len);
+	}
 	const zlrs_radio_req_t *const a = zlrs_link_slot(leader, slot, sim->now_ms);
 	const zlrs_radio_req_t *const b = zlrs_link_slot(follower, slot, sim->now_ms);
 	record_wire(sim, a, true);
@@ -155,6 +158,11 @@ static void sim_slot(sim_t *sim, uint8_t slot)
 		const zlrs_radio_req_t *const dest = a->is_tx ? b : a;
 		zlrs_link_t *const sender = a->is_tx ? leader : follower;
 		zlrs_link_t *const receiver = a->is_tx ? follower : leader;
+		if (sim->prepare_during_rx) {
+			/* Production stages the next TX before the current RX completes. */
+			(void)zlrs_link_prepare_data(receiver, slot ^ 1U, sim->now_ms + 3U,
+						     &prepared_len);
+		}
 		uint16_t *const drops = a->is_tx ? &sim->drop_leader : &sim->drop_follower;
 		uint16_t *const failures = a->is_tx ? &sim->fail_leader : &sim->fail_follower;
 		const bool failed = *failures != 0;
@@ -1310,7 +1318,7 @@ TEST_F(Link, DuplexDeliveryAndWireTranscript)
 	zlrs_link_rx(&sim.leader.link, sim.captured, sim.captured_len, -60, 0, sim.now_ms);
 	EXPECT_EQ(sim.leader.link.stats.rx_bad_tag, reflected + 1U);
 
-	/* FIFO-prepared DATA keeps its ACK snapshot; a later peer packet must leave ACK pending. */
+	/* A new ACK rebuilds into a separate buffer; the FIFO snapshot stays immutable. */
 	const uint8_t queued[] = {0x33, 0x55, 0xaa};
 	EXPECT_EQ(zlrs_link_write(&sim.leader.link, queued, sizeof(queued)), sizeof(queued));
 	uint16_t prepared_size;
@@ -1351,33 +1359,17 @@ TEST_F(Link, DuplexDeliveryAndWireTranscript)
 		zlrs_frame_t after;
 		ASSERT_TRUE(zlrs_frame_decode(&after, request->buf, request->size, ZLRS_TAG_LEN));
 		EXPECT_EQ(+after.type, ZLRS_PKT_DATA_L2F);
-		EXPECT_EQ(+before.body.data.ack, +after.body.data.ack);
-		EXPECT_TRUE(sim.leader.link.arq_ack_pending);
+		EXPECT_NE(+before.body.data.ack, +after.body.data.ack);
+		EXPECT_FALSE(sim.leader.link.arq_ack_pending);
+		EXPECT_NE(request->buf, prepared);
+		zlrs_frame_t snapshot;
+		ASSERT_TRUE(zlrs_frame_decode(&snapshot, prepared, prepared_size, ZLRS_TAG_LEN));
+		EXPECT_EQ(+snapshot.body.data.ack, +before.body.data.ack);
 		EXPECT_EQ(request->size,
 			  zlrs_frame_len(ZLRS_DATA_PREFIX_LEN + sizeof(queued), ZLRS_TAG_LEN));
 		EXPECT_EQ(memcmp(after.body.data.bytes, queued, sizeof(queued)), 0);
 		zlrs_link_complete(&sim.leader.link, ZLRS_RADIO_OK, 0U, 0, 0, sim.now_ms);
 	}
-
-	bool ack_sent = false;
-	for (unsigned int i = 0U; i < 25U && !ack_sent; ++i) {
-		zlrs_link_skip_slot(&sim.leader.link, ZLRS_SLOT_DATA_B);
-		request = zlrs_link_slot(&sim.leader.link, ZLRS_SLOT_DATA_A, sim.now_ms);
-		if (request == nullptr) {
-			continue;
-		}
-		zlrs_frame_t ack;
-		ASSERT_TRUE(zlrs_frame_decode(&ack, request->buf, request->size, ZLRS_TAG_LEN));
-		if (ack.type == ZLRS_PKT_DATA_L2F) {
-			EXPECT_EQ(request->size,
-				  zlrs_frame_len(ZLRS_DATA_PREFIX_LEN, ZLRS_TAG_LEN));
-			EXPECT_NE(+before.body.data.ack, +ack.body.data.ack);
-			EXPECT_FALSE(sim.leader.link.arq_ack_pending);
-			ack_sent = true;
-		}
-		zlrs_link_complete(&sim.leader.link, ZLRS_RADIO_OK, 0U, 0, 0, sim.now_ms);
-	}
-	EXPECT_TRUE(ack_sent);
 
 	/* A receiver reboot derives fresh session keys and re-establishes both directions. */
 	uint8_t root[ZLRS_KEY_LEN];
@@ -1409,6 +1401,116 @@ INSTANTIATE_TEST_SUITE_P(
 			BandLoss{2, "WeakSignal"}, BandLoss{3, "AnnouncementsLost"}),
 	[](const testing::TestParamInfo<BandLoss> &info) { return info.param.name; });
 
+class PreparedAck: public Link,
+		   public testing::WithParamInterface<std::tuple<zlrs_profile_t, zlrs_role_t, bool>>
+{
+};
+
+TEST_P(PreparedAck, CurrentAckPreservesSnapshotBackpressureAndFailedTxRecovery)
+{
+	const auto [profile, role, blocked] = GetParam();
+	ASSERT_NO_FATAL_FAILURE(connect_saved(&sim, profile));
+	auto *node = role == ZLRS_ROLE_LEADER ? &sim.leader : &sim.follower;
+	auto *peer = role == ZLRS_ROLE_LEADER ? &sim.follower : &sim.leader;
+	auto *link = &node->link;
+	link->cfg.resync_every_n = 0;
+	link->sess_cfm_due = false;
+	link->queue_head = ZLRS_LINK_TX_QUEUE_LEN - 2;
+	const uint8_t bytes[] = {1, 3, 5, 7, 9};
+	ASSERT_EQ(zlrs_link_write(link, bytes, sizeof(bytes)), sizeof(bytes));
+	const uint8_t slot = role == ZLRS_ROLE_LEADER ? ZLRS_SLOT_DATA_A : ZLRS_SLOT_DATA_B;
+	uint16_t size;
+	const auto *prepared = zlrs_link_prepare_data(link, slot, sim.now_ms, &size);
+	ASSERT_NE(prepared, nullptr);
+	const std::vector<uint8_t> snapshot(prepared, prepared + size);
+	zlrs_frame_t before;
+	ASSERT_TRUE(zlrs_frame_decode(&before, prepared, size, zlrs_profile_tag_len(profile)));
+	node->blocked = blocked;
+	zlrs_frame_t incoming = {};
+	incoming.type = role == ZLRS_ROLE_LEADER ? ZLRS_PKT_DATA_F2L : ZLRS_PKT_DATA_L2F;
+	incoming.seq = peer->link.tx_seq++;
+	incoming.body.data.data_seq =
+		link->arq_rx_started ? (link->arq_rx_seq + 1U) & ZLRS_DATA_SEQ_MASK : 0U;
+	incoming.body.data.bytes[0] = 0xa5;
+	const auto received = node->received_len;
+	ASSERT_NO_FATAL_FAILURE(inject(node, &incoming, ZLRS_DATA_PREFIX_LEN + 1,
+				       link->session_key_in, sim.now_ms, false));
+	EXPECT_EQ(node->received_len, received + !blocked);
+	const auto *req = zlrs_link_slot(link, slot, sim.now_ms);
+	ASSERT_NE(req, nullptr);
+	ASSERT_TRUE(req->is_tx);
+	EXPECT_EQ(req->buf == prepared, blocked);
+	EXPECT_EQ(memcmp(prepared, snapshot.data(), snapshot.size()), 0);
+	zlrs_frame_t sent;
+	ASSERT_TRUE(zlrs_frame_decode(&sent, req->buf, req->size, zlrs_profile_tag_len(profile)));
+	EXPECT_EQ(+sent.body.data.ack, before.body.data.ack ^ !blocked);
+	EXPECT_EQ(memcmp(sent.body.data.bytes, bytes, sizeof(bytes)), 0);
+	if (profile == ZLRS_PROFILE_P1) {
+		uint8_t tag[ZLRS_TAG_LEN];
+		zlrs_tag(link->session_key_out, ZLRS_KEY_LEN, req->buf, req->size - ZLRS_TAG_LEN,
+			 tag);
+		EXPECT_EQ(memcmp(tag, sent.tag, sizeof(tag)), 0);
+	}
+	zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0, 0, 0, sim.now_ms);
+	EXPECT_EQ(link->queue_count, sizeof(bytes));
+	node->blocked = false;
+	sim.prepare_during_rx = true;
+	const auto peer_received = peer->received_len;
+	for (unsigned int i = 0; i < 100 && link->queue_count != 0; i++) {
+		ASSERT_NO_FATAL_FAILURE(sim_frame(&sim));
+	}
+	EXPECT_EQ(link->queue_count, 0);
+	ASSERT_EQ(peer->received_len, peer_received + sizeof(bytes));
+	EXPECT_EQ(memcmp(peer->received + peer_received, bytes, sizeof(bytes)), 0);
+}
+
+INSTANTIATE_TEST_SUITE_P(ProfilesRolesAndBackpressure, PreparedAck,
+			 testing::Combine(testing::Values(ZLRS_PROFILE_P0, ZLRS_PROFILE_P1),
+					  testing::Values(ZLRS_ROLE_LEADER, ZLRS_ROLE_FOLLOWER),
+					  testing::Bool()),
+			 [](const testing::TestParamInfo<PreparedAck::ParamType> &info) {
+				 return "P" + std::to_string(std::get<0>(info.param)) +
+					(std::get<1>(info.param) == ZLRS_ROLE_LEADER ? "Leader"
+										     : "Follower") +
+					(std::get<2>(info.param) ? "Blocked" : "Accepted");
+			 });
+
+TEST_P(LinkProfiles, ReceiveTimePreparationAcknowledgesDuplexDataInTheNextSlot)
+{
+	ASSERT_NO_FATAL_FAILURE(connect_saved(&sim, GetParam()));
+	sim.prepare_during_rx = true;
+	for (auto *node : {&sim.leader, &sim.follower}) {
+		node->link.cfg.resync_every_n = 0;
+		node->link.sess_cfm_due = false;
+	}
+	/* Sixteen full packets in each direction should take sixteen frame periods. */
+	std::vector<uint8_t> leader_bytes(16 * 128, 0x35);
+	std::vector<uint8_t> follower_bytes(16 * 128, 0xac);
+	ASSERT_EQ(zlrs_link_write(&sim.leader.link, leader_bytes.data(), leader_bytes.size()),
+		  leader_bytes.size());
+	ASSERT_EQ(zlrs_link_write(&sim.follower.link, follower_bytes.data(), follower_bytes.size()),
+		  follower_bytes.size());
+	const auto start_ms = sim.now_ms;
+	for (unsigned int frame = 0; frame < 16; frame++) {
+		ASSERT_NO_FATAL_FAILURE(sim_frame(&sim));
+	}
+	printf("duplex ahead P%d: leader=%u follower=%u elapsed=%u ms ack_max=%u/%u ms\n",
+	       GetParam(), sim.leader.received_len, sim.follower.received_len,
+	       sim.now_ms - start_ms, sim.leader.link.stats.tx_ack_delay_ms_max,
+	       sim.follower.link.stats.tx_ack_delay_ms_max);
+	EXPECT_EQ(sim.follower.received_len, leader_bytes.size());
+	EXPECT_EQ(sim.leader.received_len, follower_bytes.size());
+	EXPECT_EQ(memcmp(sim.follower.received, leader_bytes.data(), leader_bytes.size()), 0);
+	EXPECT_EQ(memcmp(sim.leader.received, follower_bytes.data(), follower_bytes.size()), 0);
+	ASSERT_NO_FATAL_FAILURE(sim_frame(&sim)); /* ACK for the final Follower packet. */
+	for (auto *node : {&sim.leader, &sim.follower}) {
+		EXPECT_EQ(node->link.queue_count, 0);
+		EXPECT_EQ(node->link.stats.tx_staged_stale_ack_frames, 0U);
+		EXPECT_LE(node->link.stats.tx_ack_delay_ms_max, 3U);
+		EXPECT_EQ(node->link.stats.tx_retries, 0U);
+	}
+}
+
 class StreamFaults: public Link,
 		    public testing::WithParamInterface<std::tuple<zlrs_profile_t, uint32_t>>
 {
@@ -1420,6 +1522,7 @@ TEST_P(StreamFaults, DuplexStreamMatchesReferenceUnderFaultSequences)
 	SCOPED_TRACE(testing::Message() << "seed=" << seed);
 	sim.now_ms = UINT32_MAX - 1000;
 	ASSERT_NO_FATAL_FAILURE(connect_saved(&sim, profile));
+	sim.prepare_during_rx = true;
 	std::vector<uint8_t> expected[2];
 	node_t *nodes[] = {&sim.leader, &sim.follower};
 	uint32_t rng = seed;

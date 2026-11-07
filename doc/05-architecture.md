@@ -151,7 +151,8 @@ persistent records use explicit bytes, independent of compiler layout.
 
 Inputs require bounded length, version, CRC, authentication, direction, context,
 replay and FIFO checks. A prepared packet must still match its session, frame
-sequence, DATA identity and scheduled period. Its captured ACK may lag new
-received DATA; that newer ACK remains pending until a later packet carries it.
+sequence, DATA identity, scheduled period and current receive ACK. A changed ACK
+requires a rebuild into a separate buffer, preserving the preloaded snapshot
+while acknowledging accepted DATA at the next TX opportunity.
 
 Acceptance requirements are consolidated in [development and acceptance](10-debug.md).

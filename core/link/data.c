@@ -166,10 +166,14 @@ static const zlrs_radio_req_t *send_prepared_data(zlrs_link_t *link, uint32_t no
 		retry ? link->arq_used > 0U && packet->data_len == link->arq_len
 		      : link->arq_used == 0U && link->queue_count >= inflight + packet->data_len;
 
+	/* RX may have accepted DATA after this packet was preloaded into the radio.
+	 * Rebuild through tx_buf with the current ACK instead of stalling the peer for
+	 * another frame. Do not patch packet->buf: the FIFO owns that snapshot. */
 	if (!packet->valid || packet->retry != retry || !data_valid ||
-	    packet->frame_index != link->frame_index || packet->frame_seq != link->tx_seq ||
-	    packet->data_seq != data_seq || packet->data_mtu != link->cfg.data_mtu ||
-	    packet->profile != link->cfg.profile || packet->buf[0] != type ||
+	    packet->ack_bit != receive_ack_bit(link) || packet->frame_index != link->frame_index ||
+	    packet->frame_seq != link->tx_seq || packet->data_seq != data_seq ||
+	    packet->data_mtu != link->cfg.data_mtu || packet->profile != link->cfg.profile ||
+	    packet->buf[0] != type ||
 	    !zlrs_ct_equal(packet->key, link_tag_key_for(link, type, true), ZLRS_KEY_LEN)) {
 		packet->valid = false;
 		return NULL;

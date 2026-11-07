@@ -422,6 +422,7 @@ const zlrs_radio_req_t *zlrs_link_slot(zlrs_link_t *link, uint8_t slot, uint32_t
 
 /* Encode new ARQ DATA for the next assigned TX slot without advancing sender/hop state.
  * Safe while RX is pending. Returned bytes stay immutable through the resulting TX request;
+ * a changed receive ACK makes slot selection rebuild into a separate buffer instead.
  * NULL means that handshake, recovery or backpressure requires the normal path. */
 const uint8_t *zlrs_link_prepare_data(zlrs_link_t *link, uint8_t slot, uint32_t now_ms,
 				      uint16_t *size);

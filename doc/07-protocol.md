@@ -105,9 +105,11 @@ the receiver's next expected DATA sequence, initially zero. The sender removes
 its packet only when valid reverse feedback carries the corresponding ACK.
 The receiver advances DATA acceptance only after its sink accepts the whole
 packet. A repeat is not delivered twice; a full sink retains backpressure.
-Timeouts retry the same packet without discarding stream progress. A prepared
-packet carries its captured ACK; DATA accepted after preparation leaves another
-ACK pending. ARQ-disabled debug operation uses the same frame layout.
+Timeouts retry the same packet without discarding stream progress. If DATA is
+accepted after preparation, the next TX rebuilds with the current ACK rather
+than delaying the peer by another frame. The preloaded snapshot stays immutable;
+the rebuilt packet uses a separate buffer and a fresh FIFO load. Unchanged ACKs
+retain the preload path. ARQ-disabled debug operation uses the same frame layout.
 
 RSSI is the magnitude of negative dBm, 1–255; zero means unavailable. It retains
 1 dB precision and no update marker. RSSI updates on every accepted radio packet;
