@@ -662,7 +662,7 @@ data/cache placement, bound all RF/SHA/driver work or measure interrupt latency.
 
 The target unit fixture records 128 alarm deadlines while repeatedly hashing
 1024-byte buffers with the production SHA backend. Its `LAUNCH_JITTER` line reports
-the sample count, hashes, maximum lateness and the radio's 10 us acceptance budget.
+the sample count, hashes, maximum lateness and the 10 us timer-jitter target.
 It fails on an early/missing alarm or a worst-case lateness beyond that budget.
 Save this measurement with the image hash. Run with the normal USB connection;
 additional host traffic, logging and storage load require separate measured

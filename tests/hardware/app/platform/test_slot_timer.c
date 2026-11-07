@@ -109,9 +109,9 @@ ZTEST(slot_timer, test_launch_jitter_during_sha_and_entropy_load)
 	zlrs_slot_timer_stop();
 	printk("LAUNCH_JITTER samples=128 sha_bytes=1024 hashes=%u max_late_us=%u budget_us=%u "
 	       "entropy_ready=%u entropy_miss=%u\n",
-	       hashes, max_late_us, ZLRS_SLOT_TIMER_LAUNCH_MAX_LATE_US, nonce_ready, nonce_miss);
+	       hashes, max_late_us, ZLRS_SLOT_TIMER_LAUNCH_JITTER_US, nonce_ready, nonce_miss);
 	zassert_true(hashes > 0);
 	zassert_true(nonce_ready > 0 && nonce_miss > 0, "TRNG refill was not exercised");
-	zassert_true(max_late_us <= ZLRS_SLOT_TIMER_LAUNCH_MAX_LATE_US,
-		     "loaded alarm latency exceeds the radio acceptance window");
+	zassert_true(max_late_us <= ZLRS_SLOT_TIMER_LAUNCH_JITTER_US,
+		     "loaded alarm latency exceeds the jitter target");
 }

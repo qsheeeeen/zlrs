@@ -72,6 +72,24 @@ int zlrs_lr2021_launch_at(uint32_t target_us);
 /* SET_TX is polled even when FIFO transfers use DMA. */
 #define ZLRS_LR2021_STARTUP_US       500U
 #define ZLRS_LR2021_PHASE_STARTUP_US 250U
+#define ZLRS_LR2021_TX_COMMAND_US     50U
+#define ZLRS_LR2021_TX_MAX_LATE_US   100U
+
+/* Bound lateness and reserve the complete command, startup and packet airtime.
+ * Signed differences preserve deadlines across the hardware timer's wrap. */
+static inline bool zlrs_lr2021_tx_deadline(uint32_t target_us, uint32_t end_us,
+					 uint32_t airtime_us, uint32_t *latest_us)
+{
+	const int32_t slack = (int32_t)(end_us - target_us) -
+		(int32_t)(ZLRS_LR2021_TX_COMMAND_US + ZLRS_LR2021_STARTUP_US + airtime_us);
+
+	if (slack < 0) {
+		return false;
+	}
+	*latest_us = target_us + ((uint32_t)slack < ZLRS_LR2021_TX_MAX_LATE_US
+					? (uint32_t)slack : ZLRS_LR2021_TX_MAX_LATE_US);
+	return true;
+}
 
 uint32_t zlrs_lr2021_airtime_us(const zlrs_mod_cfg_t *mod, uint16_t len);
 

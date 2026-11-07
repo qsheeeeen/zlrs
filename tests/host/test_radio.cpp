@@ -42,6 +42,31 @@ TEST(RadioHelpers, PeriodicSyncAcquisition)
 	}
 }
 
+TEST(RadioHelpers, TransmitDeadlineReservesWholePacketAcrossTimerWrap)
+{
+	const uint32_t targets[] = {1234U, UINT32_MAX - 15U};
+	const uint32_t airtimes[] = {100U, 1100U, 40000U};
+	const struct { int32_t slack; bool fits; uint32_t allowed; } cases[] = {
+		{-1, false, 0U}, {0, true, 0U}, {11, true, 11U},
+		{50, true, 50U}, {100, true, 100U}, {500, true, 100U},
+	};
+	for (uint32_t target : targets) {
+		for (uint32_t airtime : airtimes) {
+			const uint32_t required = ZLRS_LR2021_TX_COMMAND_US +
+				ZLRS_LR2021_STARTUP_US + airtime;
+			for (const auto &c : cases) {
+				uint32_t latest = 0U;
+				const uint32_t end = target + required + c.slack;
+				ASSERT_EQ(zlrs_lr2021_tx_deadline(target, end, airtime, &latest), c.fits);
+				if (c.fits) {
+					EXPECT_EQ(latest - target, c.allowed);
+					EXPECT_GE(static_cast<int32_t>(end - latest - required), 0);
+				}
+			}
+		}
+	}
+}
+
 TEST(RadioHelpers, TemperatureAndFifoBounds)
 {
 	/* ADC unit values are signed 13-bit Q8.5, including below-zero temperatures. */

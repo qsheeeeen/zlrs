@@ -538,7 +538,7 @@ static spi_hw_t *const launch_spi = (spi_hw_t *)DT_REG_ADDR(DT_BUS(RADIO_NODE));
  * The RF owner blocks until fired. The ISR touches only this mailbox and hardware. */
 static volatile struct {
 	uint8_t command[5];
-	uint32_t target_us;
+	uint32_t latest_us;
 	uint32_t irq_us;
 	uint32_t begin_us;
 	uint32_t command_us;
@@ -554,8 +554,7 @@ static void __ramfunc launch_command_isr(uint32_t irq_time_us)
 
 	launch_mailbox.irq_us = irq_time_us;
 	launch_mailbox.begin_us = zlrs_slot_timer_now_us();
-	if ((int32_t)(irq_time_us - launch_mailbox.target_us) >
-	    (int32_t)ZLRS_SLOT_TIMER_LAUNCH_MAX_LATE_US) {
+	if ((int32_t)(launch_mailbox.begin_us - launch_mailbox.latest_us) > 0) {
 		result = -ETIME;
 		goto done;
 	}
@@ -576,12 +575,12 @@ static void __ramfunc launch_command_isr(uint32_t irq_time_us)
 			(void)launch_spi->dr;
 			received++;
 		}
-		if (zlrs_slot_timer_now_us() - launch_mailbox.begin_us > 50U) {
+		if (zlrs_slot_timer_now_us() - launch_mailbox.begin_us > ZLRS_LR2021_TX_COMMAND_US) {
 			goto release_cs;
 		}
 	}
 	while ((launch_spi->sr & SPI_SSPSR_BSY_BITS) != 0U) {
-		if (zlrs_slot_timer_now_us() - launch_mailbox.begin_us > 50U) {
+		if (zlrs_slot_timer_now_us() - launch_mailbox.begin_us > ZLRS_LR2021_TX_COMMAND_US) {
 			goto release_cs;
 		}
 	}
@@ -596,13 +595,18 @@ done:
 
 int zlrs_lr2021_launch_at(uint32_t target_us)
 {
-	if (!prepared || request == NULL || !request->is_tx) {
+	if (!prepared || request == NULL || !request->is_tx || !timed_slot) {
 		return -EINVAL;
 	}
 	BUILD_ASSERT(DT_NODE_HAS_COMPAT(DT_BUS(RADIO_NODE), arm_pl022));
 	BUILD_ASSERT(RADIO_CS_PIN < 32U && RADIO_BUSY_PIN < 32U);
 	BUILD_ASSERT(DT_SPI_DEV_CS_GPIOS_FLAGS(RADIO_NODE) & GPIO_ACTIVE_LOW);
 	prepared = false;
+	uint32_t latest_us;
+	if (!zlrs_lr2021_tx_deadline(target_us, slot_end_us,
+				   zlrs_lr2021_airtime_us(&request->mod, request->size), &latest_us)) {
+		return -EMSGSIZE;
+	}
 	/* SET_TX (0x020d), RTC timeout 0: identical to ral_lr20xx_set_tx(). The
 	 * command is staged in SRAM; no flash, HAL, DMA or kernel calls from the ISR. */
 	launch_mailbox.command[0] = 0x02U;
@@ -610,7 +614,7 @@ int zlrs_lr2021_launch_at(uint32_t target_us)
 	launch_mailbox.command[2] = 0U;
 	launch_mailbox.command[3] = 0U;
 	launch_mailbox.command[4] = 0U;
-	launch_mailbox.target_us = target_us;
+	launch_mailbox.latest_us = latest_us;
 	launch_mailbox.fired = false;
 	irq_pending = false;
 	idle_in_fs = false;
@@ -632,6 +636,8 @@ int zlrs_lr2021_launch_at(uint32_t target_us)
 	}
 	begin_us = launch_mailbox.begin_us;
 	ZLRS_TRACE_EVENT("rf_launch", target_us, launch_mailbox.irq_us);
+	ZLRS_TRACE_EVENT("rf_launch_result", (uint32_t)launch_mailbox.result,
+			 launch_mailbox.command_us);
 	diag.launch_irq_late_us_last = launch_mailbox.irq_us - target_us;
 	diag.launch_irq_late_us_max =
 		MAX(diag.launch_irq_late_us_max, diag.launch_irq_late_us_last);
