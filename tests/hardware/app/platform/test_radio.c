@@ -116,6 +116,7 @@ void zlrs_test_radio_apply_window_request(zlrs_link_t *link)
 
 #if CONFIG_ZLRS_TEST_RAW_MS > 0
 static zlrs_link_t raw_link;
+static uint8_t raw_payload[ZLRS_FRAME_MAX_LEN];
 static uint32_t raw_last_sequence;
 static bool raw_rx_started;
 void __wrap_zlrs_link_complete(zlrs_link_t *, int, uint16_t, int16_t, int8_t, uint32_t);
@@ -133,7 +134,7 @@ static void raw_run(void)
 		.size = tx ? CONFIG_ZLRS_TEST_RAW_PAYLOAD_BYTES : 0U,
 		.max_rx_size = tx ? 0U : ZLRS_FRAME_MAX_LEN,
 		.timeout_ms = tx ? 0U : 100U,
-		.buf = tx ? raw_link.tx_buf : raw_link.rx_buf,
+		.buf = tx ? raw_payload : raw_link.rx_buf,
 	};
 	memcpy(req.sync_word, data_link->sync_word, sizeof(req.sync_word));
 	const uint32_t started = zlrs_slot_timer_now_ms();
@@ -144,9 +145,9 @@ static void raw_run(void)
 	 * rather than sleeping until TX_DONE or a FIFO underflow. */
 	zlrs_slot_timer_start(120000U, 0U, zlrs_lr2021_wake);
 	while (zlrs_slot_timer_now_ms() - started < CONFIG_ZLRS_TEST_RAW_MS) {
-		sys_put_le32(sequence, raw_link.tx_buf);
+		sys_put_le32(sequence, raw_payload);
 		for (uint16_t i = 4U; i < CONFIG_ZLRS_TEST_RAW_PAYLOAD_BYTES; i++) {
-			raw_link.tx_buf[i] = (uint8_t)(sequence + i);
+			raw_payload[i] = (uint8_t)(sequence + i);
 		}
 		raw_link.req_is_tx = tx;
 		raw_link.req_pending = true;

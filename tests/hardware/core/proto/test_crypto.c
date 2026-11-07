@@ -9,6 +9,8 @@
 #include <string.h>
 
 #include "zlrs/proto/crypto.h"
+#include "platform/hash.h"
+#include <zephyr/crypto/crypto.h>
 #include "test_support.h"
 #include "crypto_vectors.h"
 
@@ -57,6 +59,28 @@ ZTEST(proto_crypto, test_authentication_tags)
 	}
 	printk("HMAC tags: %u vectors passed, including 507 B at offsets 0..3\n",
 	       (unsigned int)ARRAY_SIZE(hmac_vectors) + 4U);
+}
+
+ZTEST(proto_crypto, test_bounded_reservation_and_repeated_tags)
+{
+	const struct device *dev = DEVICE_DT_GET(DT_NODELABEL(sha256));
+	struct hash_ctx other = {.flags = CAP_SEPARATE_IO_BUFS | CAP_SYNC_OPS};
+	uint8_t expected[ZLRS_TAG_LEN], tag[ZLRS_TAG_LEN];
+
+	zassert_false(zlrs_hash_acquire(0U));
+	zassert_ok(hash_begin_session(dev, &other, CRYPTO_HASH_ALGO_SHA256));
+	/* A direct driver user owns the peripheral; no digest may start on failure. */
+	zassert_false(zlrs_hash_acquire(500U));
+	zassert_ok(hash_free_session(dev, &other));
+	zlrs_tag(key, 32U, data, 507U, expected);
+	zassert_true(zlrs_hash_acquire(1000U));
+	for (unsigned int i = 0U; i < 8U; i++) {
+		zlrs_tag(key, 32U, data, 507U, tag);
+		zassert_mem_equal(tag, expected, sizeof(tag));
+	}
+	zlrs_hash_release();
+	zlrs_tag(key, 32U, data, 507U, tag);
+	zassert_mem_equal(tag, expected, sizeof(tag));
 }
 
 ZTEST(proto_crypto, test_key_derivation)

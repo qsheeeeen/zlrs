@@ -5,6 +5,14 @@
 #include "zlrs/link/link.h"
 #include "zlrs/region/region.h"
 
+/* RF owner costs, including hash reservation in TX finalization. */
+typedef struct {
+	uint32_t tx_finalize_us_last, tx_finalize_us_max;
+	uint32_t tx_prepare_us_last, tx_prepare_us_max;
+	uint32_t rx_accept_us_last, rx_accept_us_max;
+	uint32_t hash_busy_tx, hash_busy_rx;
+} zlrs_rf_work_t;
+
 /* RF-internal copied observations, captured only on the owner thread. No keys/buffers. */
 typedef struct {
 	zlrs_link_cfg_t config;
@@ -40,6 +48,7 @@ typedef struct {
 	uint16_t data_mtu;
 	uint32_t skipped_frames;
 	uint32_t missed_slots;
+	zlrs_rf_work_t work;
 	uint32_t prepare_wait_skipped;
 	int32_t phase_err_us;
 	int32_t phase_last_us;

@@ -280,7 +280,7 @@ int zlrs_slot_timer_init(void)
 	timer->source = 0U;
 	timer->pause = 0U;
 	/* Capture once. Repeatedly adding rounded remaining time to k_uptime_get_32()
-	 * can move a planned slot by 1 ms and change an already preloaded ARQ decision. */
+	 * can move a planned slot by 1 ms and shift the ARQ timeout decision. */
 	uptime_offset_us = (uint64_t)k_uptime_get() * 1000U - timer_us_64();
 	IRQ_CONNECT(SLOT_TIMER_IRQ, DT_IRQ_BY_IDX(SLOT_TIMER_NODE, 0, priority), slot_timer_isr,
 		    NULL, 0);
@@ -344,7 +344,7 @@ void zlrs_slot_timer_wait_frame(uint32_t *start_us, uint32_t *frame)
 	(void)k_sem_take(&frame_sem, K_FOREVER);
 	const unsigned int key = irq_lock();
 
-	/* Publish early enough to preload the radio before the actual RF frame origin. */
+	/* Publish early enough to prepare the radio before the actual RF frame origin. */
 	*start_us = slot_clock.published_origin_us + prepare_lead_us;
 	*frame = slot_clock.frame;
 	/* An ISR between taking the token and this snapshot may publish a newer frame. */

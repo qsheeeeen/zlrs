@@ -21,7 +21,6 @@ void link_roll_session(zlrs_link_t *link, uint32_t now_ms)
 	link->sess_cfm_due = false;
 	link->sess_resp_due = false;
 	link->sess_ack_due = false;
-	link->prepared_data.valid = false;
 	link->sess_rx_seq = 0U;
 	link->band_plan.switch_frame = 0U;
 	link->band_announced = false;
@@ -65,7 +64,6 @@ static void derive_session_keys(zlrs_link_t *link)
 
 static void session_activate(zlrs_link_t *link, uint8_t hop_index)
 {
-	link->prepared_data.valid = false;
 	link->session_valid = true;
 	link->session_pending = false;
 	link->sess_resp_due = false;
@@ -75,6 +73,7 @@ static void session_activate(zlrs_link_t *link, uint8_t hop_index)
 	/* Keep the handshake's TX counter; reset only the new session's DATA/LQ state. */
 	link_quality_reset(link);
 	link->arq_used = 0U;
+	link->arq_launched = false;
 	link->arq_local_failed = false;
 	link->arq_retries = 0U;
 	link->arq_seq = 0U;

@@ -75,7 +75,8 @@ add_library(zlrs_test_core STATIC
   ../../core/link/link.c
   ../../core/link/pairing.c
   ../../core/link/session.c
-  ../../core/link/data.c)
+  ../../core/link/data.c
+  ../../core/link/packet.c)
 target_link_libraries(zlrs_test_core PUBLIC zlrs_test_options)
 
 function(zlrs_gtest_module module)

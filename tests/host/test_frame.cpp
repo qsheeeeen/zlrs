@@ -47,6 +47,47 @@ static void check_wire(const zlrs_frame_t *view, const uint8_t *expected, uint16
 	EXPECT_FALSE(zlrs_frame_decode(&decoded, buf, size - ZLRS_TAG_LEN, 0U));
 }
 
+TEST(FrameCodec, InPlaceDataLeavesPayloadAndTagUntouchedAndReturnsBorrowedView)
+{
+	for (uint8_t tag_len : {0U, ZLRS_TAG_LEN}) {
+		for (uint16_t payload = 0; payload <= ZLRS_DATA_MAX_LEN - tag_len; payload++) {
+			uint8_t buffer[ZLRS_FRAME_MAX_LEN + 2];
+			memset(buffer, 0xa5, sizeof(buffer));
+			uint8_t *wire = buffer + 1; /* Deliberately unaligned, with canaries. */
+			const zlrs_data_header_t header = {.data_seq = 127,
+							   .ack = true,
+							   .rssi_magnitude = 200,
+							   .lq_percent = 100,
+							   .lq_toggle = true};
+			const uint16_t total =
+				ZLRS_FRAME_HDR_LEN + ZLRS_DATA_PREFIX_LEN + payload + tag_len;
+			ASSERT_EQ(zlrs_frame_encode_data(wire, total, ZLRS_PKT_DATA_F2L, UINT32_MAX,
+							 &header, payload, tag_len),
+				  total);
+			EXPECT_EQ(buffer[0], 0xa5);
+			for (unsigned int n = 1 + ZLRS_FRAME_HDR_LEN + ZLRS_DATA_PREFIX_LEN;
+			     n < sizeof(buffer); n++) {
+				ASSERT_EQ(buffer[n], 0xa5);
+			}
+			zlrs_data_view_t view;
+			ASSERT_TRUE(zlrs_frame_decode_data(&view, wire, total, tag_len));
+			EXPECT_EQ(view.bytes, wire + ZLRS_FRAME_HDR_LEN + ZLRS_DATA_PREFIX_LEN);
+			EXPECT_EQ(view.tag, wire + total - tag_len);
+			EXPECT_EQ(view.len, payload);
+			EXPECT_EQ(view.seq, UINT32_MAX);
+			EXPECT_EQ(view.type, ZLRS_PKT_DATA_F2L);
+			EXPECT_EQ(view.header.data_seq, 127);
+			EXPECT_TRUE(view.header.ack);
+			EXPECT_EQ(view.header.rssi_magnitude, 200);
+			EXPECT_EQ(view.header.lq_percent, 100);
+			EXPECT_TRUE(view.header.lq_toggle);
+			EXPECT_EQ(zlrs_frame_encode_data(wire, total - 1, ZLRS_PKT_DATA_F2L, 1,
+							 &header, payload, tag_len),
+				  0);
+		}
+	}
+}
+
 TEST(FrameCodec, IndependentWireVectorsAndLengthBounds)
 {
 	zlrs_frame_t frame = {.type = ZLRS_PKT_DATA_L2F,

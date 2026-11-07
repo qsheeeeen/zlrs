@@ -28,9 +28,13 @@ static enum {
 	RX_FAIL,
 	NO_IRQ,
 	PREPARE_FAIL,
-	LAUNCH_FAIL
+	LAUNCH_FAIL,
+	HASH_BUSY,
+	RX_FIFO_LATE
 } mode;
 
+static uint32_t prepared_builds, fifo_loads, radio_close_us;
+static bool hash_held;
 static unsigned int tx_ok, tx_fail, rx_fail, rx_ok, aborts;
 static uint32_t delayed_frames;
 static unsigned int radio_reads;
@@ -364,6 +368,7 @@ uint32_t zlrs_lr2021_airtime_us(const zlrs_mod_cfg_t *mod, uint16_t len)
 
 void zlrs_lr2021_slot(uint32_t start, uint32_t end)
 {
+	radio_close_us = end;
 }
 
 void zlrs_lr2021_wake(void)
@@ -372,6 +377,18 @@ void zlrs_lr2021_wake(void)
 
 int zlrs_lr2021_prepare(const zlrs_radio_req_t *req)
 {
+	if (req->is_tx) {
+		zassert_equal(local->stats.tx_frame_builds, prepared_builds + 1U,
+			      "exactly one frame build per TX attempt");
+		zassert_false(hash_held, "hash reservation must end before SPI");
+		prepared_builds++;
+		if (mode != PREPARE_FAIL) {
+			fifo_loads++;
+		}
+	} else {
+		zassert_equal(local->stats.tx_frame_builds, prepared_builds,
+			      "RX must not construct a speculative TX");
+	}
 	if (req->is_tx) {
 		const bool subg = req->freq_hz < 1500000000U;
 		const int8_t maximum = subg ? 10 : 12;
@@ -403,9 +420,27 @@ int zlrs_lr2021_launch_at(uint32_t us)
 	return zlrs_lr2021_launch();
 }
 
-int zlrs_lr2021_preload_tx(const uint8_t *bytes, uint16_t size, uint32_t generation)
+bool zlrs_hash_acquire(uint32_t budget_us)
 {
-	return 0;
+	zassert_false(hash_held);
+	hash_held = budget_us != 0U && mode != HASH_BUSY;
+	return hash_held;
+}
+
+void zlrs_hash_release(void)
+{
+	zassert_true(hash_held);
+	hash_held = false;
+}
+
+uint32_t zlrs_lr2021_started_us(void)
+{
+	return clock_us;
+}
+
+bool zlrs_slot_timer_launch_ready(uint32_t now, uint32_t target, uint32_t lead)
+{
+	return lead > 0U && lead <= INT32_MAX && (int32_t)(target - now) >= (int32_t)lead;
 }
 
 bool zlrs_lr2021_irq_pending(void)
@@ -483,6 +518,11 @@ bool zlrs_lr2021_process_irq(zlrs_lr2021_result_t *out)
 			out->done_us = boundary_us + period_us * local->slot / ZLRS_SLOT_COUNT +
 				       CONFIG_ZLRS_APP_TX_GUARD_US + ZLRS_LR2021_PHASE_STARTUP_US +
 				       out->airtime_us + packet_phase_error_us;
+			if (mode == RX_FIFO_LATE) {
+				/* IRQ was timely; FIFO service ends after the receive window. */
+				clock_us = radio_close_us + 25U;
+				out->completed_ms = clock_us / 1000U;
+			}
 		}
 		if (other) {
 			zlrs_link_complete(&peer, ZLRS_RADIO_OK, 0, 0, 0, out->completed_ms);
@@ -823,6 +863,8 @@ static void before(void *unused)
 	frame = 0;
 	delayed_frames = 0U;
 	active = NULL;
+	prepared_builds = fifo_loads = 0U;
+	hash_held = false;
 	pending = false;
 	mode = NORMAL;
 	tx_ok = tx_fail = rx_fail = rx_ok = aborts = radio_reads = 0;
@@ -993,6 +1035,26 @@ ZTEST(rf_results, test_duplex_delivery_and_counters)
 		      rx_ok);
 }
 
+ZTEST(rf_results, test_rx_fifo_read_can_finish_after_window_close)
+{
+	if (RF_TEST_BAND_AUTO) {
+		start_automatic_peers();
+		frames(150);
+		zassert_true(both_on_band(false));
+	} else {
+		connected_peers();
+	}
+	mode = RX_FIFO_LATE;
+	source_left = sizeof(outgoing) - 1U;
+	zassert_equal(zlrs_link_write(&peer, incoming, sizeof(incoming) - 1U),
+		      sizeof(incoming) - 1U);
+	frames(100);
+	zassert_equal(delivered, sizeof(incoming) - 1U,
+		      "a timely RX must not be discarded when FIFO service crosses window close");
+	zassert_equal(peer_delivered, sizeof(outgoing) - 1U);
+	zassert_equal(local->queue_count, 0U);
+}
+
 ZTEST(rf_results, test_power_saving_and_loss_recovery)
 {
 	connected_peers();
@@ -1048,6 +1110,28 @@ ZTEST(rf_results, test_failed_data_retries_next_frame)
 	zassert_equal(peer_delivered, sizeof(outgoing) - 1U);
 	frames(10);
 	zassert_equal(peer_delivered, sizeof(outgoing) - 1U, "duplicate delivery");
+	zassert_equal(local->queue_count, 0U);
+}
+
+ZTEST(rf_results, test_hash_busy_skips_tx_without_consuming_protocol_state)
+{
+	connected_peers();
+	local->cfg.resync_every_n = peer.cfg.resync_every_n = 0U;
+	const uint32_t seq = local->tx_seq;
+	const uint32_t builds = local->stats.tx_frame_builds;
+	const uint32_t loads = fifo_loads;
+	zassert_equal(zlrs_link_write(local, outgoing, sizeof(outgoing) - 1U),
+		      sizeof(outgoing) - 1U);
+	mode = HASH_BUSY;
+	frames(1);
+	zassert_equal(local->tx_seq, seq);
+	zassert_equal(local->stats.tx_frame_builds, builds);
+	zassert_equal(fifo_loads, loads);
+	zassert_equal(local->arq_used, 0U);
+	zassert_equal(local->queue_count, sizeof(outgoing) - 1U);
+	mode = NORMAL;
+	frames(10);
+	zassert_equal(peer_delivered, sizeof(outgoing) - 1U);
 	zassert_equal(local->queue_count, 0U);
 }
 

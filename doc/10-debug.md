@@ -808,6 +808,48 @@ counters for band-only changes and an unchanged duty budget. A pending plan alon
 does not satisfy transition coverage; observation must include its execution and
 bidirectional recovery.
 
+### DATA transaction acceptance
+
+Validate [transaction ownership and execution](05-architecture.md#data-transactions)
+through operation/result contracts and the accepted application byte stream.
+Frame vectors and malformed-input tests cover codec layout and bounded receive
+views. Firmware library sources, host/benchmark builds and SRAM relocation must
+include every RF-critical packet-storage, codec and link component.
+
+The tests establish these properties:
+
+- Repeated operation selection does not mutate counters, time, packet identity
+  or entropy. Every elapsed slot advances time/hopping once, including idle and
+  skipped slots.
+- RX-time payload admission performs no TX frame encoding, authentication or
+  FIFO writes. Receive effects are accepted before selecting the next TX.
+- A received ACK selects the successor packet; backpressure and missing ACKs
+  preserve the retained packet. The selected frame carries the latest accepted
+  ACK and is finalized once per attempt. Authenticated profiles compute one tag.
+- Each successfully prepared TX has one complete FIFO load and no post-launch
+  payload write. Failed/cancelled attempts are accounted separately from air TX.
+- Submitted memory remains frozen through completion or cancellation. ACK,
+  maintenance, peer restart, counter exhaustion and band transitions preserve
+  the required user-data order and ownership.
+- Late RX processing cannot authorize late TX. Deadline, duty or hash contention
+  failure retains user bytes without producing an invalid authentication tag.
+- The byte-stream oracle passes duplex loss, duplicates, bad tags, local failures,
+  queue wrap, clock wrap and receiver backpressure.
+
+Record finalized-attempt counts, TX authentication counts, complete FIFO load
+counts/bytes, cancellations and stage durations from the same paused radio
+snapshot. Include launch margin and FIFO
+error/underflow counters. Measure hardware latency independently of host timing;
+throughput uses delivered user bytes and the complete measured interval.
+
+Hardware acceptance covers both roles, short/maximum frames, real USB queues,
+continuous duplex load, management observation/pauses, fixed SubG and automatic
+PHY/band recovery. Throughput comparisons use matched PHY, timing, power and
+workload, interleaved measurement rounds and recorded RF conditions. Timing
+reservations require measured worst-case preparation bounds. Verify restoration
+of the original image after each temporary test installation. Functional results
+and performance claims remain separate validation artifacts.
+
 ### One-sided DATA loopback
 
 For a walk test with one board attached to the host, connect the TX board's DATA CDC to the
@@ -853,8 +895,8 @@ physical direction without changing stored roles.
 
 RAW reports valid RX, failed TX, damaged payloads and expected packets between
 its first/last valid sequence. Quality excludes startup and tail outside that
-span. Use the hardware launch notification for prompt FIFO tail service and
-record underflows and timing on failure. Successful restoration or some valid
+span. Verify complete FIFO loading before launch, and record underflows and
+preparation timing on failure. Successful restoration or some valid
 packets do not establish zero PHY loss.
 
 ## Evidence requirements

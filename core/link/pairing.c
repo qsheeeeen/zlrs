@@ -147,12 +147,6 @@ static const zlrs_radio_req_t *send_pair(zlrs_link_t *link, uint8_t type, uint32
 	return req;
 }
 
-static const zlrs_radio_req_t *pair_rx(zlrs_link_t *link, uint16_t timeout_ms)
-{
-	return link_submit_rx(link, link_sync_freq_hz(link), ZLRS_SYNC_SLOT_PAIRING,
-			      pairing_sync_word, timeout_ms);
-}
-
 static void pairing_complete(zlrs_link_t *link, uint32_t now_ms)
 {
 	/* Publish the peer and salt together, only after confirmation. */
@@ -276,87 +270,54 @@ bool link_handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame, uint32
 	}
 }
 
-const zlrs_radio_req_t *link_pair_slot(zlrs_link_t *link, bool leader_slot, uint32_t now_ms)
+bool link_pair_advance(zlrs_link_t *link)
 {
-	const bool leader_side = link->cfg.role == ZLRS_ROLE_LEADER;
-
-	if (leader_slot) {
-		link->frame_index++;
+	if (link->slot != ZLRS_SLOT_DATA_A || link->cfg.role != ZLRS_ROLE_LEADER ||
+	    !link->pair_cfm_pending || link->pair_cfm_sent < ZLRS_PAIR_CFM_REPEATS) {
+		return false;
 	}
 	if (link->state == ZLRS_STATE_PAIRING) {
-		if (leader_slot) {
-			if (leader_side) {
-				if (link->pair_cfm_pending) {
-					/*
-					 * Confirmation repeats: the two ends share no slot phase while pairing, so
-					 * a single one is a coin flip. The responder repeats its answer until it
-					 * hears a confirm, and the confirm is repeated here for the same reason.
-					 */
-					if (link->pair_cfm_sent >= ZLRS_PAIR_CFM_REPEATS) {
-						pairing_complete(link, now_ms);
-						return NULL;
-					}
-					if ((uint32_t)(now_ms - link->last_pair_tx_ms) <
-					    link->cfg.pair_period_ms) {
-						return NULL;
-					}
-					const zlrs_radio_req_t *req =
-						send_pair(link, ZLRS_PKT_PAIR_CFM, link->pair_nonce,
-							  link->pair_nonce_b, now_ms);
-
-					if (req != NULL) {
-						link->pair_cfm_sent++;
-					}
-					return req;
-				}
-				if ((uint32_t)(now_ms - link->last_pair_tx_ms) <
-				    link->cfg.pair_period_ms) {
-					/* Nothing to send this slot: listen instead. The peer's phase is unknown, so
-					 * every extra window is another chance to hear it. */
-					return pair_rx(link, link_acq_timeout_ms(link));
-				}
-				return send_pair(link, ZLRS_PKT_PAIR_REQ, link->pair_nonce, 0U,
-						 now_ms);
-			}
-			return pair_rx(link, link_acq_timeout_ms(link));
-		}
-
-		if (leader_side) {
-			return pair_rx(link, link_acq_timeout_ms(link));
-		}
-		if (link->pair_wait_cfm) {
-			if ((uint32_t)(now_ms - link->last_pair_tx_ms) >=
-			    link->cfg.pair_period_ms) {
-				return send_pair(link, ZLRS_PKT_PAIR_RESP, link->pair_nonce,
-						 link->pair_nonce_b, now_ms);
-			}
-			/* Between repeats: listen, for the same reason as the initiator above */
-			return pair_rx(link, link_acq_timeout_ms(link));
-		}
-		return pair_rx(link, link_acq_timeout_ms(link));
+		pairing_complete(link, link->slot_ms);
+	} else {
+		link->pair_cfm_pending = false;
 	}
+	return true;
+}
 
-	if (link->state == ZLRS_STATE_SEARCHING && leader_side && leader_slot) {
-		if (link->pair_cfm_pending) {
-			if (link->pair_cfm_sent >= ZLRS_PAIR_CFM_REPEATS) {
-				link->pair_cfm_pending = false;
-				return NULL;
-			}
-			if ((uint32_t)(now_ms - link->last_pair_tx_ms) >=
-			    link->cfg.pair_period_ms) {
-				const zlrs_radio_req_t *req =
-					send_pair(link, ZLRS_PKT_PAIR_CFM, link->pair_nonce,
-						  link->pair_nonce_b, now_ms);
-
-				if (req != NULL) {
-					link->pair_cfm_sent++;
-				}
-				return req;
-			}
-			return NULL;
+void link_pair_plan(const zlrs_link_t *link, zlrs_link_plan_t *plan)
+{
+	const bool a = link->slot == ZLRS_SLOT_DATA_A;
+	const bool leader = link->cfg.role == ZLRS_ROLE_LEADER;
+	const bool due =
+		(uint32_t)(link->slot_ms - link->last_pair_tx_ms) >= link->cfg.pair_period_ms;
+	if (leader && a && link->pair_cfm_pending) {
+		if (due) {
+			link_plan_tx(link, plan, ZLRS_PKT_PAIR_CFM, ZLRS_PAIR_PAYLOAD_LEN,
+				     link_sync_freq_hz(link));
+		}
+	} else if (link->state == ZLRS_STATE_PAIRING) {
+		if (leader && a && due) {
+			link_plan_tx(link, plan, ZLRS_PKT_PAIR_REQ, ZLRS_PAIR_REQ_PAYLOAD_LEN,
+				     link_sync_freq_hz(link));
+		} else if (!leader && !a && link->pair_wait_cfm && due) {
+			link_plan_tx(link, plan, ZLRS_PKT_PAIR_RESP, ZLRS_PAIR_PAYLOAD_LEN,
+				     link_sync_freq_hz(link));
+		} else {
+			link_plan_rx(link, plan, link_sync_freq_hz(link), ZLRS_SYNC_SLOT_PAIRING,
+				     pairing_sync_word, link_acq_timeout_ms(link));
 		}
 	}
-	return NULL;
+	if (plan->op == ZLRS_OP_TX) {
+		plan->radio.sync_slot = ZLRS_SYNC_SLOT_PAIRING;
+		memcpy(plan->radio.sync_word, pairing_sync_word, sizeof(pairing_sync_word));
+		plan->radio.tx_power_dbm = link->cfg.pair_tx_power_dbm;
+	}
+}
+
+const zlrs_radio_req_t *link_pair_finalize(zlrs_link_t *link, uint8_t type)
+{
+	return send_pair(link, type, link->pair_nonce,
+			 type == ZLRS_PKT_PAIR_REQ ? 0U : link->pair_nonce_b, link->slot_ms);
 }
 
 void zlrs_link_set_root_key(zlrs_link_t *link, const uint8_t root_key[ZLRS_KEY_LEN],
@@ -424,7 +385,6 @@ bool zlrs_link_press(zlrs_link_t *link, uint32_t now_ms)
 	link->pair_request_valid = link->cfg.role == ZLRS_ROLE_LEADER;
 	link->pair_rx_seq = 0U;
 	link->pair_tx_seq = 1U;
-	link->prepared_data.valid = false;
 	link->session_valid = false;
 	link->session_pending = false;
 	link_set_state(link, ZLRS_STATE_PAIRING, now_ms);

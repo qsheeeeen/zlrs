@@ -25,14 +25,14 @@ static uint64_t clock_ns(void)
 }
 
 enum phase {
-	ENCODE,
+	HEADER,
 	TAG,
-	PREPARE,
-	SUBMIT,
+	PLAN,
+	FINALIZE,
 	COMPLETE
 };
 
-static const char *const names[] = {"encode", "tag", "prepare", "submit", "complete"};
+static const char *const names[] = {"header", "tag", "plan", "finalize", "complete"};
 
 static double measure(enum phase phase, uint16_t payload, unsigned long iterations,
 		      zlrs_profile_t profile)
@@ -58,36 +58,41 @@ static double measure(enum phase phase, uint16_t payload, unsigned long iteratio
 	uint8_t encoded[ZLRS_FRAME_MAX_LEN], tag[ZLRS_TAG_LEN];
 	require(zlrs_frame_encode(&frame, encoded, sizeof(encoded), len, tag_len) == len,
 		"encode packet");
+	if (phase == PLAN || phase == FINALIZE) {
+		link.arq_ack_pending = payload == 0;
+		require(zlrs_link_advance_slot(&link, ZLRS_SLOT_DATA_A, 1000), "advance plan");
+	}
 	if (phase == COMPLETE) {
 		link.arq_ack_pending = payload == 0;
 		const zlrs_radio_req_t *req = zlrs_link_slot(&link, ZLRS_SLOT_DATA_A, 1000);
 		require(req && req->is_tx && req->size == len, "prepare completion");
 	}
+	const zlrs_link_plan_t plan = zlrs_link_plan(&link);
+	const zlrs_data_header_t header = {.lq_percent = ZLRS_LQ_UNAVAILABLE};
 	const uint64_t start = clock_ns();
 	for (unsigned long i = 0; i < iterations; i++) {
 		switch (phase) {
-		case ENCODE:
+		case HEADER:
 			checksum =
-				zlrs_frame_encode(&frame, encoded, sizeof(encoded), len, tag_len);
+				zlrs_frame_encode_data(encoded, sizeof(encoded), ZLRS_PKT_DATA_L2F,
+						       1U, &header, payload, tag_len);
 			break;
 		case TAG:
 			zlrs_tag(link.session_key_out, ZLRS_KEY_LEN, encoded, len - ZLRS_TAG_LEN,
 				 tag);
 			checksum = tag[0];
 			break;
-		case PREPARE: {
-			uint16_t size;
-			const uint8_t *packet =
-				zlrs_link_prepare_data(&link, ZLRS_SLOT_DATA_A, 1000, &size);
-			checksum = packet != NULL ? size : 0;
+		case PLAN: {
+			const zlrs_link_plan_t plan = zlrs_link_plan(&link);
+			checksum = plan.op == ZLRS_OP_TX ? plan.radio.size : 0;
 			break;
 		}
-		case SUBMIT: {
-			/* Replay selection/encoding without radio completion or an ACK. */
+		case FINALIZE: {
+			/* Replay a selected TX finalization without completion or an ACK. */
 			link.req_pending = false;
 			link.arq_used = 0;
 			link.arq_ack_pending = payload == 0;
-			const zlrs_radio_req_t *req = zlrs_link_slot(&link, ZLRS_SLOT_DATA_A, 1000);
+			const zlrs_radio_req_t *req = zlrs_link_finalize(&link, &plan);
 			checksum = req != NULL && req->is_tx ? req->size : 0;
 			break;
 		}
@@ -106,9 +111,12 @@ static double measure(enum phase phase, uint16_t payload, unsigned long iteratio
 		require(payload ? link.stats.tx_data_frames == iterations
 				: link.stats.tx_ack_only_frames == iterations,
 			"completion classification");
-	} else if (phase == PREPARE || phase == SUBMIT) {
+	} else if (phase == PLAN) {
+		require(checksum == len, "planned size");
+		require(link.stats.tx_frame_builds == 0 && link.tx_seq == 1, "plan is read-only");
+	} else if (phase == FINALIZE) {
 		require(checksum == len, "built packet size");
-		const uint8_t *packet = phase == PREPARE ? link.prepared_data.buf : link.req.buf;
+		const uint8_t *packet = link.req.buf;
 		zlrs_frame_t decoded;
 		require(zlrs_frame_decode(&decoded, packet, len, tag_len), "decode built packet");
 		frame.seq = decoded.seq;
@@ -149,8 +157,8 @@ int main(int argc, char **argv)
 	bool first = true;
 	for (zlrs_profile_t profile = ZLRS_PROFILE_P0; profile <= ZLRS_PROFILE_P1; profile++) {
 		for (unsigned int i = 0; i < sizeof(payloads) / sizeof(payloads[0]); i++) {
-			for (enum phase phase = ENCODE; phase <= COMPLETE; phase++) {
-				if ((phase == PREPARE && payloads[i] == 0) ||
+			for (enum phase phase = HEADER; phase <= COMPLETE; phase++) {
+				if ((phase == PLAN && payloads[i] == 0) ||
 				    (phase == TAG && profile == ZLRS_PROFILE_P0)) {
 					continue;
 				}

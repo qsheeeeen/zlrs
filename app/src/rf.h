@@ -83,7 +83,7 @@ int zlrs_rf_pair_start(void);
 int zlrs_rf_pair_cancel(void);
 /* Reload saved credentials in a maintenance window; ordinary settings wait for reboot. */
 void zlrs_rf_credentials(void);
-/* Safe boundary: cancel radio launch and invalidate preloaded data. */
+/* Safe boundary: cancel radio launch and close the pending transaction. */
 void zlrs_rf_pause(void);
 void zlrs_rf_resume(void);
 /* Captured only while paused at a management boundary. */

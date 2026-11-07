@@ -12,6 +12,7 @@
 
 #include "sha256.h"
 #include "trace.h"
+#include "platform/hash.h"
 
 BUILD_ASSERT(DT_NODE_HAS_STATUS(DT_NODELABEL(sha256), okay),
 	     "ZLRS needs an enabled SHA-256 peripheral");
@@ -23,6 +24,55 @@ static const struct device *const hash_dev = DEVICE_DT_GET(DT_NODELABEL(sha256))
 
 /* Priority inheritance keeps a low-priority caller from delaying the RF owner. */
 K_MUTEX_DEFINE(hash_mutex);
+
+static struct hash_ctx reserved_ctx;
+static bool reserved;
+
+bool zlrs_hash_acquire(uint32_t budget_us)
+{
+	if (budget_us == 0U) {
+		return false;
+	}
+	const uint32_t started = k_cycle_get_32();
+	if (k_mutex_lock(&hash_mutex, K_USEC(budget_us)) != 0) {
+		return false;
+	}
+	__ASSERT_NO_MSG(!reserved);
+	if (!device_is_ready(hash_dev)) {
+		k_panic();
+	}
+	reserved_ctx = (struct hash_ctx){.flags = CAP_SEPARATE_IO_BUFS | CAP_SYNC_OPS};
+	while (k_cyc_to_us_floor32(k_cycle_get_32() - started) < budget_us) {
+		const int rc = hash_begin_session(hash_dev, &reserved_ctx, CRYPTO_HASH_ALGO_SHA256);
+		if (rc == 0) {
+			reserved = true;
+			return true;
+		}
+		if (rc != -EBUSY) {
+			LOG_ERR("SHA-256 reservation failed: %d", rc);
+			k_panic();
+		}
+		const uint32_t elapsed = k_cyc_to_us_floor32(k_cycle_get_32() - started);
+		if (elapsed >= budget_us) {
+			break;
+		}
+		k_usleep(MIN(50U, budget_us - elapsed));
+	}
+	k_mutex_unlock(&hash_mutex);
+	return false;
+}
+
+void zlrs_hash_release(void)
+{
+	__ASSERT_NO_MSG(reserved);
+	const int rc = hash_free_session(hash_dev, &reserved_ctx);
+	reserved = false;
+	k_mutex_unlock(&hash_mutex);
+	if (rc != 0) {
+		LOG_ERR("SHA-256 release failed: %d", rc);
+		k_panic();
+	}
+}
 
 /* Feed both spans in order without copying. The driver retains partial words and
  * SHA state across update/compute; freeing releases it for other driver/ROM users. */
@@ -41,27 +91,32 @@ void zlrs_sha256(const uint8_t *first, size_t first_len, const uint8_t *second, 
 	if (k_mutex_lock(&hash_mutex, K_FOREVER) != 0) {
 		k_panic();
 	}
-	const int64_t lock_started = k_uptime_get();
-
-	do {
-		rc = hash_begin_session(hash_dev, &ctx, CRYPTO_HASH_ALGO_SHA256);
-		if (rc != -EBUSY || k_uptime_get() - lock_started >= 100) {
-			break;
-		}
-		k_usleep(50);
-	} while (true);
+	struct hash_ctx *active = reserved ? &reserved_ctx : &ctx;
+	if (reserved) {
+		rc = 0;
+	} else {
+		const int64_t lock_started = k_uptime_get();
+		do {
+			rc = hash_begin_session(hash_dev, active, CRYPTO_HASH_ALGO_SHA256);
+			if (rc != -EBUSY || k_uptime_get() - lock_started >= 100) {
+				break;
+			}
+			k_usleep(50);
+		} while (true);
+	}
 	if (rc == 0) {
-		rc = hash_update(&ctx, &pkt);
+		rc = hash_update(active, &pkt);
 		if (rc == 0) {
 			pkt.in_buf = second;
 			pkt.in_len = second_len;
 			pkt.out_buf = out;
-			rc = hash_compute(&ctx, &pkt);
+			rc = hash_compute(active, &pkt);
 		}
-		const int free_rc = hash_free_session(hash_dev, &ctx);
-
-		if (rc == 0) {
-			rc = free_rc;
+		if (!reserved) {
+			const int free_rc = hash_free_session(hash_dev, active);
+			if (rc == 0) {
+				rc = free_rc;
+			}
 		}
 	}
 	k_mutex_unlock(&hash_mutex);

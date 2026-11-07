@@ -62,6 +62,52 @@ static bool payload_len_valid(uint8_t type, uint16_t payload_len)
 	}
 }
 
+uint16_t zlrs_frame_encode_data(uint8_t *buf, uint16_t cap, zlrs_pkt_type_t type, uint32_t seq,
+				const zlrs_data_header_t *header, uint16_t data_len,
+				uint8_t tag_len)
+{
+	const uint32_t total = ZLRS_FRAME_HDR_LEN + ZLRS_DATA_PREFIX_LEN + data_len + tag_len;
+	if (buf == NULL || header == NULL || seq == 0U ||
+	    (type != ZLRS_PKT_DATA_L2F && type != ZLRS_PKT_DATA_F2L) ||
+	    (tag_len != 0U && tag_len != ZLRS_TAG_LEN) || total > cap ||
+	    total > ZLRS_FRAME_MAX_LEN || header->data_seq > ZLRS_DATA_SEQ_MASK ||
+	    header->lq_percent > ZLRS_LQ_VALUE_MASK) {
+		return 0U;
+	}
+	buf[0] = type;
+	zlrs_put_le32(buf + 1U, seq);
+	uint8_t *p = buf + ZLRS_FRAME_HDR_LEN;
+	p[0] = (header->data_seq << ZLRS_DATA_SEQ_SHIFT) | header->ack;
+	p[1] = header->rssi_magnitude;
+	p[2] = header->lq_percent | (header->lq_toggle ? ZLRS_LQ_TOGGLE_MASK : 0U);
+	return (uint16_t)total;
+}
+
+bool zlrs_frame_decode_data(zlrs_data_view_t *view, const uint8_t *buf, uint16_t len,
+			    uint8_t tag_len)
+{
+	if (buf == NULL || view == NULL || (tag_len != 0U && tag_len != ZLRS_TAG_LEN) ||
+	    len < ZLRS_FRAME_HDR_LEN + ZLRS_DATA_PREFIX_LEN + tag_len || len > ZLRS_FRAME_MAX_LEN ||
+	    (buf[0] != ZLRS_PKT_DATA_L2F && buf[0] != ZLRS_PKT_DATA_F2L) ||
+	    zlrs_get_le32(buf + 1U) == 0U) {
+		return false;
+	}
+	const uint8_t *p = buf + ZLRS_FRAME_HDR_LEN;
+	*view = (zlrs_data_view_t){
+		.seq = zlrs_get_le32(buf + 1U),
+		.type = buf[0],
+		.header = {.data_seq = p[0] >> ZLRS_DATA_SEQ_SHIFT,
+			   .ack = (p[0] & ZLRS_DATA_ACK_MASK) != 0U,
+			   .rssi_magnitude = p[1],
+			   .lq_percent = p[2] & ZLRS_LQ_VALUE_MASK,
+			   .lq_toggle = (p[2] & ZLRS_LQ_TOGGLE_MASK) != 0U},
+		.bytes = p + ZLRS_DATA_PREFIX_LEN,
+		.tag = buf + len - tag_len,
+		.len = len - ZLRS_FRAME_HDR_LEN - ZLRS_DATA_PREFIX_LEN - tag_len,
+	};
+	return true;
+}
+
 uint16_t zlrs_frame_encode(const zlrs_frame_t *frame, uint8_t *buf, uint16_t cap, uint16_t len,
 			   uint8_t tag_len)
 {
@@ -80,9 +126,17 @@ uint16_t zlrs_frame_encode(const zlrs_frame_t *frame, uint8_t *buf, uint16_t cap
 	case ZLRS_PKT_DATA_L2F:
 	case ZLRS_PKT_DATA_F2L: {
 		const zlrs_data_frame_t *const data = &frame->body.data;
-		p[0] = (uint8_t)((data->data_seq << ZLRS_DATA_SEQ_SHIFT) | data->ack);
-		p[1] = data->rssi_magnitude;
-		p[2] = data->lq_percent | (data->lq_toggle ? ZLRS_LQ_TOGGLE_MASK : 0U);
+		const zlrs_data_header_t header = {
+			.data_seq = data->data_seq,
+			.ack = data->ack,
+			.rssi_magnitude = data->rssi_magnitude,
+			.lq_percent = data->lq_percent,
+			.lq_toggle = data->lq_toggle,
+		};
+		if (zlrs_frame_encode_data(buf, cap, frame->type, frame->seq, &header,
+					   payload_len - ZLRS_DATA_PREFIX_LEN, tag_len) == 0U) {
+			return 0U;
+		}
 		memcpy(p + ZLRS_DATA_PREFIX_LEN, data->bytes, payload_len - ZLRS_DATA_PREFIX_LEN);
 		break;
 	}

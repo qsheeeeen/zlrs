@@ -24,6 +24,7 @@
 #include "platform/slot_timer.h"
 #include "platform/watchdog.h"
 #include "platform/lr2021.h"
+#include "platform/hash.h"
 #include "platform/temperature.h"
 
 #include "zlrs/link/link.h"
@@ -76,6 +77,7 @@ static bool transition_reserved;
 #define REPORT_PERIOD_MS      1000U
 
 static zlrs_link_t link_data;
+static zlrs_rf_work_t work;
 static zlrs_mod_cfg_t data_mod;
 
 static const zlrs_rf_design_t rf_design = {
@@ -389,7 +391,7 @@ static void load_identity(void)
 static void pump_serial(void);
 
 /* RF owns protocol completion; the LR2021 adapter only returns hardware facts. */
-static bool complete_radio(zlrs_lr2021_result_t *result)
+static bool complete_radio(zlrs_lr2021_result_t *result, uint32_t accept_deadline_us)
 {
 	ZLRS_TRACE_EVENT("rf_irq_begin", 0, 0);
 	const bool completed = zlrs_lr2021_process_irq(result);
@@ -397,9 +399,28 @@ static bool complete_radio(zlrs_lr2021_result_t *result)
 	if (!completed) {
 		return false;
 	}
+	const uint32_t accept_started = zlrs_slot_timer_now_us();
+	const bool received = result->size > 0U;
 	ZLRS_TRACE_EVENT("rf_rx_begin", result->done_us, result->size);
+	bool hash_held = false;
+	if (result->status == 0 && result->size > 0U && active_profile == ZLRS_PROFILE_P1) {
+		const int32_t remaining = (int32_t)(accept_deadline_us - zlrs_slot_timer_now_us());
+		hash_held = remaining > 0 && zlrs_hash_acquire((uint32_t)remaining);
+		if (!hash_held) {
+			/* No accepted protocol effects without successful authentication. */
+			work.hash_busy_rx++;
+			result->size = 0U;
+		}
+	}
 	zlrs_link_complete(&link_data, result->status == 0 ? ZLRS_RADIO_OK : ZLRS_RADIO_FAIL,
 			   result->size, result->rssi_dbm, result->snr_db, result->completed_ms);
+	if (hash_held) {
+		zlrs_hash_release();
+	}
+	if (received) {
+		work.rx_accept_us_last = zlrs_slot_timer_now_us() - accept_started;
+		work.rx_accept_us_max = MAX(work.rx_accept_us_max, work.rx_accept_us_last);
+	}
 	ZLRS_TRACE_EVENT("rf_rx_end", result->done_us, result->size);
 	ZLRS_TRACE_EVENT("rf_arq", zlrs_link_get_stats(&link_data)->tx_retries,
 			 zlrs_link_get_stats(&link_data)->tx_frames);
@@ -407,13 +428,14 @@ static bool complete_radio(zlrs_lr2021_result_t *result)
 }
 
 /* Wait against real elapsed time. Hardware alarms wake the thread at slot deadlines. */
-static void radio_wait_done(uint32_t budget_us, zlrs_lr2021_result_t *result)
+static void radio_wait_done(uint32_t budget_us, uint32_t accept_deadline_us,
+			    zlrs_lr2021_result_t *result)
 {
 	const uint32_t deadline = zlrs_slot_timer_now_us() + budget_us;
 
 	while ((int32_t)(deadline - zlrs_slot_timer_now_us()) > 0) {
 		if (zlrs_lr2021_irq_pending()) {
-			if (complete_radio(result)) {
+			if (complete_radio(result, accept_deadline_us)) {
 				return;
 			}
 		}
@@ -554,7 +576,7 @@ static void update_band(uint32_t now_ms)
 	}
 }
 
-static void run_slot(uint8_t slot)
+static void run_slot(uint8_t slot, uint32_t next_slot_us)
 {
 	/* An idle or early-completed predecessor must not open RX in an earlier slot.
 	 * Both packet preparation and RX entry start at this slot's reserved window. */
@@ -600,29 +622,53 @@ static void run_slot(uint8_t slot)
 	ZLRS_TRACE_EVENT("rf_protocol_begin", slot_nominal_us, slot);
 
 	update_power(zlrs_slot_timer_now_ms());
-	req = zlrs_link_slot(link, link_slot, now_ms);
+	if (!zlrs_link_advance_slot(link, link_slot, now_ms)) {
+		return;
+	}
+	const zlrs_link_plan_t plan = zlrs_link_plan(link);
 	ZLRS_TRACE_EVENT("rf_protocol_end", slot_nominal_us, slot);
-
+	if (plan.op == ZLRS_OP_IDLE) {
+		(void)zlrs_link_finalize(link, &plan);
+		return;
+	}
+	const uint32_t target_us = slot_nominal_us + CONFIG_ZLRS_APP_TX_GUARD_US;
+	if ((int32_t)(slot_deadline_us - now_us()) <= 100 ||
+	    (plan.op == ZLRS_OP_TX &&
+	     !zlrs_slot_timer_launch_ready(now_us(), target_us, ZLRS_SLOT_TIMER_LAUNCH_LEAD_US))) {
+		missed_slots++;
+		return;
+	}
+	if (plan.op == ZLRS_OP_TX && on_subg &&
+	    !zlrs_duty_reserve(&duty,
+			       (zlrs_lr2021_airtime_us(&plan.radio.mod, plan.radio.size) + 999U) /
+				       1000U,
+			       now_ms)) {
+		return;
+	}
+	const uint32_t finalize_started = now_us();
+	bool hash_held = false;
+	if (plan.op == ZLRS_OP_TX && active_profile == ZLRS_PROFILE_P1) {
+		const int32_t budget =
+			(int32_t)(target_us - now_us()) - ZLRS_SLOT_TIMER_LAUNCH_LEAD_US;
+		hash_held = budget > 0 && zlrs_hash_acquire((uint32_t)budget);
+		if (!hash_held) {
+			work.hash_busy_tx++;
+			missed_slots++;
+			return;
+		}
+	}
+	req = zlrs_link_finalize(link, &plan);
+	if (hash_held) {
+		zlrs_hash_release();
+	}
 	if (req == NULL) {
 		return;
 	}
-
-	/* Advance the protocol even if the scheduled slot was missed; never send it late. */
-	if ((int32_t)(slot_deadline_us - now_us()) <= 100) {
-		missed_slots++;
-		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, now_ms);
-		return;
+	if (req->is_tx) {
+		work.tx_finalize_us_last = now_us() - finalize_started;
+		work.tx_finalize_us_max = MAX(work.tx_finalize_us_max, work.tx_finalize_us_last);
 	}
-	zlrs_lr2021_slot(slot_nominal_us + CONFIG_ZLRS_APP_TX_GUARD_US, slot_deadline_us);
-
-	/* Out of duty budget: give the slot up (finish as a radio failure, the link retries next
-	 * round). Only constrains the sub-G link. */
-	if (req->is_tx && on_subg &&
-	    !zlrs_duty_reserve(&duty, (zlrs_lr2021_airtime_us(&req->mod, req->size) + 999U) / 1000U,
-			       now_ms)) {
-		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, now_ms);
-		return;
-	}
+	zlrs_lr2021_slot(target_us, slot_deadline_us);
 
 	const uint32_t prepare_started_us = now_us();
 
@@ -636,6 +682,10 @@ static void run_slot(uint8_t slot)
 	ZLRS_TRACE_EVENT("rf_prepare_begin", slot_nominal_us, req->is_tx);
 	const int prepare_rc = zlrs_lr2021_prepare(req);
 	ZLRS_TRACE_EVENT("rf_prepare_end", slot_nominal_us, (uint32_t)prepare_rc);
+	if (req->is_tx) {
+		work.tx_prepare_us_last = now_us() - slot_start_us;
+		work.tx_prepare_us_max = MAX(work.tx_prepare_us_max, work.tx_prepare_us_last);
+	}
 	if (prepare_rc != 0) {
 		if (req->is_tx) {
 			late_prepare_entry_us = slot_start_us - prepare_at_us;
@@ -646,8 +696,7 @@ static void run_slot(uint8_t slot)
 		return;
 	}
 
-	/* Modem, authentication and FIFO prefix are ready. The timer issues SET_TX;
-	 * the owner then appends a fallback FLRC packet's tail while it is on air. */
+	/* The complete frame is immutable in FIFO; the timer only issues SET_TX. */
 	const int launch_rc =
 		req->is_tx ? zlrs_lr2021_launch_at(slot_nominal_us + CONFIG_ZLRS_APP_TX_GUARD_US)
 			   : zlrs_lr2021_launch();
@@ -657,32 +706,27 @@ static void run_slot(uint8_t slot)
 		return;
 	}
 
-	if (!req->is_tx && zlrs_link_get_state(link) == ZLRS_STATE_CONNECTED) {
-		uint16_t size;
-		const uint32_t next_us = slot_nominal_us + slot_budget_us;
-		const uint32_t next_ms = zlrs_slot_timer_uptime_ms(next_us);
-
-		ZLRS_TRACE_EVENT("rf_ahead_begin", next_us, 0);
-		pump_serial();
-		const uint8_t *buf = zlrs_link_prepare_data(
-			link, role_leader ? ZLRS_SLOT_DATA_A : ZLRS_SLOT_DATA_B, next_ms, &size);
-		ZLRS_TRACE_EVENT("rf_ahead_end", next_us, buf != NULL);
-
-		if (buf != NULL) {
-			ZLRS_TRACE_EVENT("rf_preload_begin", next_us, size);
-			(void)zlrs_lr2021_preload_tx(buf, size,
-						     zlrs_link_prepared_generation(link));
-			ZLRS_TRACE_EVENT("rf_preload_end", next_us, size);
-		}
+	if (req->is_tx) {
+		zlrs_link_tx_started(link, zlrs_slot_timer_uptime_ms(zlrs_lr2021_started_us()));
 	}
+	if (!req->is_tx) {
+		/* RX-time work only fills payload storage. RX completion resolves ACK
+		 * and packet identity before the next assigned TX is finalized. */
+		pump_serial();
+	}
+	/* Window close ends RX waiting, not protocol acceptance of an already received
+	 * frame. FIFO service/authentication may enter the next preparation window.
+	 * The next TX still rechecks its own launch budget before finalization. */
+	const uint32_t accept_deadline_us =
+		next_slot_us + CONFIG_ZLRS_APP_TX_GUARD_US - ZLRS_SLOT_TIMER_LAUNCH_LEAD_US;
 	const int32_t remaining_us = (int32_t)(slot_deadline_us - now_us());
 
 	zlrs_lr2021_result_t result = {0};
 	if (remaining_us > 0) {
-		radio_wait_done((uint32_t)remaining_us, &result);
+		radio_wait_done((uint32_t)remaining_us, accept_deadline_us, &result);
 	}
 
-	(void)complete_radio(&result);
+	(void)complete_radio(&result, accept_deadline_us);
 
 	/* If completion did not close the request, abort it before the next slot. */
 	if (zlrs_link_is_busy(link)) {
@@ -860,6 +904,7 @@ void zlrs_rf_diagnostics_capture(zlrs_rf_diagnostics_t *out)
 	out->data_mtu = data_mtu;
 	out->skipped_frames = skipped_frames;
 	out->missed_slots = missed_slots;
+	out->work = work;
 	out->prepare_wait_skipped = prepare_wait_skipped;
 	out->phase_err_us = phase_err_us;
 	out->phase_last_us = phase_last_us;
@@ -906,9 +951,9 @@ void zlrs_rf_log_snapshot(void)
 		radio_state.rx_header_errors, radio_state.rx_crc_errors,
 		radio_state.rx_length_errors, radio_state.rx_payload_errors, radio_state.rx_expired,
 		radio_state.rx_restarted);
-	LOG_INF("radio transmit: tails=%u errors=%u underflows=%u ready_max=%u",
-		radio_state.tx_fifo_tails, radio_state.tx_fifo_errors,
-		radio_state.tx_fifo_underflows, radio_state.tx_fifo_ready_us_max);
+	LOG_INF("radio transmit: loads=%u errors=%u underflows=%u load_max=%u",
+		radio_state.tx_fifo_loads, radio_state.tx_fifo_errors,
+		radio_state.tx_fifo_underflows, radio_state.tx_fifo_load_us_max);
 	zlrs_serial_state_t endpoints[2];
 	const size_t count = zlrs_serial_state(endpoints, ARRAY_SIZE(endpoints));
 	for (size_t i = 0U; i < count; i++) {
@@ -1053,11 +1098,10 @@ void zlrs_rf_pause(void)
 	pause_priority = k_thread_priority_get(k_current_get());
 	k_thread_priority_set(k_current_get(), CONFIG_MAIN_THREAD_PRIORITY);
 	if (radio_ready) {
-		zlrs_slot_timer_cancel_launch();
 		zlrs_lr2021_abort();
 	}
-	if (links_ready) {
-		zlrs_link_discard_prepared_data(&link_data);
+	if (links_ready && zlrs_link_is_busy(&link_data)) {
+		zlrs_link_complete(&link_data, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_slot_timer_now_ms());
 	}
 }
 
@@ -1120,6 +1164,7 @@ int zlrs_rf_init(void)
 #endif
 	skipped_frames = 0U;
 	missed_slots = 0U;
+	memset(&work, 0, sizeof(work));
 	/* Debug image only (gated in Kconfig, so the symbol does not exist in production builds):
 	 * USB is up, so wait for the host to open the console port — otherwise a panic log lands
 	 * on a port nobody has open. */
@@ -1285,7 +1330,7 @@ void zlrs_rf_frame(void)
 						       : zlrs_slot_timer_next_frame_us())
 				: start_us + ((uint64_t)period * (slot + 1U)) / ZLRS_SLOT_COUNT;
 		slot_deadline_us = next_us - slot_prepare_us - 100U;
-		run_slot(slot);
+		run_slot(slot, next_us);
 	}
 
 	/* Re-read time after radio completions and any preceding maintenance window. */

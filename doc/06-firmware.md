@@ -115,7 +115,7 @@ radio capture and feedback loss restore the active band's maximum before the
 next transmission. A band change starts at the new band's maximum.
 
 Each endpoint uses authenticated reverse RSSI to control its own TX. RSSI updates
-on every accepted packet; preloaded DATA can carry the preceding measurement.
+on every accepted packet; DATA reports the measurement available at finalization.
 Normal control filters RSSI in elapsed time (500 ms time constant), rather than
 counting packets. The weak boundary follows the active PHY's existing initial
 10 dB receive margin; the lowering boundary is 6 dB stronger. SubG uses -95/-89 dBm.
@@ -133,12 +133,12 @@ These are initial policy values requiring RF calibration, not measured sensitivi
 
 Each actual power change discards the RSSI filter and qualification intervals.
 Only feedback received after a settling interval can qualify another RSSI action.
-Settling is at least 500 ms and two complete TDD periods, covering preloaded
-feedback. Reverse feedback expires after max(1 s, two TDD periods + 500 ms).
+Settling is at least 500 ms and two complete TDD periods, covering feedback
+propagation in both directions. Reverse feedback expires after max(1 s, two TDD periods + 500 ms).
 Repeated reads of a feedback timestamp never advance the policy. Qualification
 and hold timers support clock wraparound. All setpoints clamp to the active range.
 
-LQ retains its 128-attempt windows. The existing LQ byte carries a one-bit update
+LQ uses 128-attempt windows. The LQ byte carries a one-bit update
 marker as specified in [the air protocol](07-protocol.md#sequence-delivery-and-quality).
 A cached low LQ neither repeats a raise nor restarts a hold or RSSI qualification.
 Each new window acts once even when its percentage equals the preceding window.

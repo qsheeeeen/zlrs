@@ -68,7 +68,25 @@ static void fuzz_frame_decode(rng_t *rng)
 			buf[0] = (uint8_t)(rng_next(rng) % 11U);
 		}
 
-		if (!zlrs_frame_decode(&frame, buf, len, tag_len)) {
+		const bool valid = zlrs_frame_decode(&frame, buf, len, tag_len);
+		zlrs_data_view_t view;
+		const bool data_valid = zlrs_frame_decode_data(&view, buf, len, tag_len);
+		const bool data_type = valid && frame.type <= ZLRS_PKT_DATA_F2L;
+		if (data_valid != data_type) {
+			violations++;
+		}
+		if (data_valid &&
+		    (view.bytes != buf + ZLRS_FRAME_HDR_LEN + ZLRS_DATA_PREFIX_LEN ||
+		     view.tag != buf + len - tag_len || view.seq != frame.seq ||
+		     view.len != len - ZLRS_FRAME_HDR_LEN - ZLRS_DATA_PREFIX_LEN - tag_len ||
+		     view.header.data_seq != frame.body.data.data_seq ||
+		     view.header.ack != frame.body.data.ack ||
+		     view.header.rssi_magnitude != frame.body.data.rssi_magnitude ||
+		     view.header.lq_percent != frame.body.data.lq_percent ||
+		     view.header.lq_toggle != frame.body.data.lq_toggle)) {
+			violations++;
+		}
+		if (!valid) {
 			continue;
 		}
 		decoded++;

@@ -25,8 +25,6 @@ typedef struct {
 	uint8_t sync_word[ZLRS_SYNC_WORD_LEN];
 	bool is_tx;
 	int8_t tx_power_dbm;
-	/* TX content version; pointer/length alone cannot identify a preload. */
-	uint32_t generation;
 	uint16_t size;        /* bytes to send */
 	uint16_t max_rx_size; /* receive buffer cap */
 	uint16_t timeout_ms;  /* receive window */

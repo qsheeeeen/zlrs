@@ -9,7 +9,7 @@ add_executable(link_bench link.c
   ../../core/proto/crypto.c ../../core/proto/frame.c ../../core/proto/fhss.c
   ../../core/proto/mod.c ../../core/region/region.c
   ../../core/link/link.c ../../core/link/pairing.c
-  ../../core/link/session.c ../../core/link/data.c)
+  ../../core/link/session.c ../../core/link/data.c ../../core/link/packet.c)
 target_include_directories(link_bench PRIVATE ../../include ../../core/proto)
 target_compile_features(link_bench PRIVATE c_std_11)
 target_compile_options(link_bench PRIVATE -Wall -Wextra -Werror)

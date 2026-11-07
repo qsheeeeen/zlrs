@@ -30,13 +30,15 @@ static const struct device *const transceiver =
 static ralf_t radio = RALF_LR20XX_INSTANTIATE(DEVICE_DT_GET(DT_CHOSEN(zephyr_lorawan_transceiver)));
 static K_SEM_DEFINE(done_sem, 0, 1);
 static const zlrs_radio_req_t *request;
-static volatile bool pending;
-static bool prepared;
+
+enum radio_job_state {
+	RADIO_IDLE,
+	RADIO_PREPARED,
+	RADIO_ARMED,
+	RADIO_ACTIVE,
+};
+static volatile enum radio_job_state job_state;
 static bool idle_in_fs;
-static const uint8_t *preloaded_buf;
-static uint16_t preloaded_size;
-static uint32_t preloaded_generation;
-static uint16_t tx_fifo_used;
 static volatile bool irq_pending;
 static volatile uint32_t irq_us;
 static uint32_t begin_us;
@@ -122,7 +124,7 @@ static ral_flrc_rx_match_sync_word_t rx_match_syncword(uint8_t slot)
 static void radio_irq(const struct device *dev)
 {
 	ARG_UNUSED(dev);
-	if (pending && !irq_pending) {
+	if (job_state == RADIO_ACTIVE && !irq_pending) {
 		irq_us = zlrs_slot_timer_now_us();
 		irq_pending = true;
 	}
@@ -338,14 +340,13 @@ int zlrs_lr2021_prepare(const zlrs_radio_req_t *req)
 	ral_irq_t stale = 0;
 	int rc;
 
-	if (pending || prepared) {
+	if (job_state != RADIO_IDLE) {
 		return -EBUSY;
 	}
 	bool reuse_fs = idle_in_fs && flrc_unchanged(req);
 
 	idle_in_fs = false;
 	request = req;
-	tx_fifo_used = 0U;
 	k_sem_reset(&done_sem);
 	if ((!reuse_fs && ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC) != RAL_STATUS_OK) ||
 	    ral_get_and_clear_irq_status(&radio.ral, &stale) != RAL_STATUS_OK) {
@@ -373,23 +374,21 @@ int zlrs_lr2021_prepare(const zlrs_radio_req_t *req)
 	}
 	/* The IRQ mask is constant and configured once by radio_init(). */
 	stages[2] = zlrs_slot_timer_now_us();
-	/* An RX-time preload already contains this immutable packet. Other TX requests
-	 * start with a fresh FIFO, including retries and packets left by an abort. */
+	/* One finalized frame, one complete FIFO load before SET_TX. */
 	if (req->is_tx) {
-		const bool preloaded = zlrs_lr2021_preload_matches(
-			req, preloaded_buf, preloaded_size, preloaded_generation);
-		const uint16_t prefix = zlrs_lr2021_tx_fifo_prefix(req->size);
-
-		preloaded_buf = NULL;
-		if (preloaded) {
-			diag.tx_preload_used++;
-			tx_fifo_used = req->size;
-		} else if (lr20xx_radio_fifo_clear_tx(radio.ral.context) != LR20XX_STATUS_OK ||
-			   ral_set_pkt_payload(&radio.ral, req->buf, prefix) != RAL_STATUS_OK) {
+		const uint32_t load_started = zlrs_slot_timer_now_us();
+		ZLRS_TRACE_EVENT("rf_fifo_tx_begin", req->size, 0);
+		if (req->size == 0U || req->size > ZLRS_FRAME_MAX_LEN ||
+		    lr20xx_radio_fifo_clear_tx(radio.ral.context) != LR20XX_STATUS_OK ||
+		    ral_set_pkt_payload(&radio.ral, req->buf, req->size) != RAL_STATUS_OK) {
+			diag.tx_fifo_errors++;
 			return -EIO;
-		} else {
-			tx_fifo_used = prefix;
 		}
+		diag.tx_fifo_loads++;
+		diag.tx_fifo_bytes += req->size;
+		diag.tx_fifo_load_us_last = zlrs_slot_timer_now_us() - load_started;
+		diag.tx_fifo_load_us_max = MAX(diag.tx_fifo_load_us_max, diag.tx_fifo_load_us_last);
+		ZLRS_TRACE_EVENT("rf_fifo_tx_end", req->size, diag.tx_fifo_load_us_last);
 	}
 	stages[3] = zlrs_slot_timer_now_us();
 	/* A completed single RX/TX returns to FS. When all settings match, FIFO access
@@ -423,68 +422,15 @@ int zlrs_lr2021_prepare(const zlrs_radio_req_t *req)
 			return -ETIME;
 		}
 	}
-	prepared = true;
+	job_state = RADIO_PREPARED;
 	idle_in_fs = true;
 	diag.fs_reused += reuse_fs;
 	if (req->is_tx) {
 		const uint32_t ready_us = zlrs_slot_timer_now_us();
 
-		diag.preload_lead_us_last =
+		diag.tx_ready_lead_us_last =
 			timed_slot && (int32_t)(tx_at_us - ready_us) > 0 ? tx_at_us - ready_us : 0U;
 	}
-	return 0;
-}
-
-int zlrs_lr2021_preload_tx(const uint8_t *buf, uint16_t size, uint32_t generation)
-{
-	const uint32_t start = zlrs_slot_timer_now_us();
-
-	preloaded_buf = NULL;
-	if (!pending || request->is_tx || prepared || buf == NULL || size == 0U ||
-	    size > ZLRS_FRAME_MAX_LEN) {
-		return -EINVAL;
-	}
-	/* FIFO access is legal during RX (LR2021 5.3); preserve modem, frequency,
-	 * IRQ state, semaphore and RX FIFO while the peer's packet is on air. */
-	if (lr20xx_radio_fifo_clear_tx(radio.ral.context) != LR20XX_STATUS_OK ||
-	    ral_set_pkt_payload(&radio.ral, buf, size) != RAL_STATUS_OK) {
-		return -EIO;
-	}
-	preloaded_buf = buf;
-	preloaded_size = size;
-	preloaded_generation = generation;
-	diag.tx_preloaded++;
-	diag.tx_preload_us_last = zlrs_slot_timer_now_us() - start;
-	diag.tx_preload_us_max = MAX(diag.tx_preload_us_max, diag.tx_preload_us_last);
-	return 0;
-}
-
-/* LR2021 5.3.2 permits writes during the same packet's transmission. The 128-byte
- * prefix covers startup and owner wakeup; SPI fills the tail faster than FLRC
- * consumes it. Only the owner calls the HAL, after the timer's SET_TX is finished. */
-static int fill_tx_fifo(void)
-{
-	uint16_t tail;
-
-	if (!request->is_tx || tx_fifo_used == request->size) {
-		return 0;
-	}
-	ZLRS_TRACE_EVENT("rf_tail_begin", tx_fifo_used, request->size);
-	if (!zlrs_lr2021_fifo_remaining(ZLRS_FRAME_MAX_LEN, tx_fifo_used, request->size, &tail) ||
-	    ral_set_pkt_payload(&radio.ral, request->buf + tx_fifo_used, tail) != RAL_STATUS_OK) {
-		diag.tx_fifo_errors++;
-		tx_fifo_used = 0U;
-		(void)ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC);
-		pending = false;
-		ZLRS_TRACE_EVENT("rf_tail_end", 0, 0);
-		return -EIO;
-	}
-	tx_fifo_used = request->size;
-	diag.tx_fifo_tails++;
-	diag.tx_fifo_bytes += tail;
-	diag.tx_fifo_ready_us_last = zlrs_slot_timer_now_us() - begin_us;
-	diag.tx_fifo_ready_us_max = MAX(diag.tx_fifo_ready_us_max, diag.tx_fifo_ready_us_last);
-	ZLRS_TRACE_EVENT("rf_tail_end", tail, request->size);
 	return 0;
 }
 
@@ -492,10 +438,10 @@ int zlrs_lr2021_launch(void)
 {
 	int rc;
 
-	if (!prepared || pending) {
+	if (job_state != RADIO_PREPARED) {
 		return -EINVAL;
 	}
-	prepared = false;
+	job_state = RADIO_IDLE;
 	if (timed_slot) {
 		if (request->is_tx && (int32_t)(zlrs_slot_timer_now_us() - tx_at_us) < 0) {
 			return -EAGAIN;
@@ -520,16 +466,16 @@ int zlrs_lr2021_launch(void)
 	}
 	irq_pending = false;
 	idle_in_fs = false;
-	pending = true;
+	job_state = RADIO_ACTIVE;
 	diag.transactions++;
 	rc = request->is_tx ? ral_set_tx(&radio.ral) : ral_set_rx(&radio.ral, 0U);
 	diag.launch_cmd_us_last = zlrs_slot_timer_now_us() - begin_us;
 	diag.launch_cmd_us_max = MAX(diag.launch_cmd_us_max, diag.launch_cmd_us_last);
 	if (rc != RAL_STATUS_OK) {
-		pending = false;
+		job_state = RADIO_IDLE;
 		return -EIO;
 	}
-	return fill_tx_fifo();
+	return 0;
 }
 
 #define RADIO_NODE     DT_CHOSEN(zephyr_lorawan_transceiver)
@@ -592,19 +538,20 @@ release_cs:
 	gpio_put(RADIO_CS_PIN, true);
 done:
 	launch_mailbox.command_us = zlrs_slot_timer_now_us() - launch_mailbox.begin_us;
+	job_state = result == 0 ? RADIO_ACTIVE : RADIO_IDLE;
 	launch_mailbox.result = result;
 	launch_mailbox.fired = true;
 }
 
 int zlrs_lr2021_launch_at(uint32_t target_us)
 {
-	if (!prepared || request == NULL || !request->is_tx || !timed_slot) {
+	if (job_state != RADIO_PREPARED || request == NULL || !request->is_tx || !timed_slot) {
 		return -EINVAL;
 	}
 	BUILD_ASSERT(DT_NODE_HAS_COMPAT(DT_BUS(RADIO_NODE), arm_pl022));
 	BUILD_ASSERT(RADIO_CS_PIN < 32U && RADIO_BUSY_PIN < 32U);
 	BUILD_ASSERT(DT_SPI_DEV_CS_GPIOS_FLAGS(RADIO_NODE) & GPIO_ACTIVE_LOW);
-	prepared = false;
+	job_state = RADIO_IDLE;
 	uint32_t latest_us;
 	if (!zlrs_lr2021_tx_deadline(target_us, slot_end_us,
 				   zlrs_lr2021_airtime_us(&request->mod, request->size), &latest_us)) {
@@ -621,9 +568,9 @@ int zlrs_lr2021_launch_at(uint32_t target_us)
 	launch_mailbox.fired = false;
 	irq_pending = false;
 	idle_in_fs = false;
-	pending = true;
+	job_state = RADIO_ARMED;
 	if (!zlrs_slot_timer_launch_at(target_us, launch_command_isr)) {
-		pending = false;
+		job_state = RADIO_IDLE;
 		return late_tx_prepare(target_us);
 	}
 	diag.transactions++;
@@ -632,7 +579,7 @@ int zlrs_lr2021_launch_at(uint32_t target_us)
 
 		if (remaining <= 0) {
 			zlrs_slot_timer_cancel_launch();
-			pending = false;
+			job_state = RADIO_IDLE;
 			return -ETIMEDOUT;
 		}
 		(void)k_sem_take(&done_sem, K_USEC(remaining));
@@ -653,14 +600,19 @@ int zlrs_lr2021_launch_at(uint32_t target_us)
 	diag.tx_launch_cmd_us_max = MAX(diag.tx_launch_cmd_us_max, diag.tx_launch_cmd_us_last);
 	diag.launch_jitter_us_max = MAX(diag.launch_jitter_us_max, diag.launch_jitter_us_last);
 	if (launch_mailbox.result != 0) {
-		pending = false;
+		job_state = RADIO_IDLE;
 		if (launch_mailbox.result == -ETIME) {
 			diag.late_starts++;
 			diag.trigger_late_starts++;
 			diag.late_trigger_irq++;
 		}
 	}
-	return launch_mailbox.result == 0 ? fill_tx_fifo() : launch_mailbox.result;
+	return launch_mailbox.result;
+}
+
+uint32_t zlrs_lr2021_started_us(void)
+{
+	return begin_us;
 }
 
 int zlrs_lr2021_init(void)
@@ -710,7 +662,7 @@ void zlrs_lr2021_read_status(zlrs_lr2021_status_t *out)
 	lr20xx_system_irq_mask_t irq;
 	uint16_t value;
 
-	__ASSERT_NO_MSG(!pending && !prepared);
+	__ASSERT_NO_MSG(job_state == RADIO_IDLE);
 	*out = (zlrs_lr2021_status_t){0};
 	/* Capture the maintenance-boundary state before issuing sensor commands. */
 	if (lr20xx_system_get_status(radio.ral.context, &stat1, &stat2, &irq) == LR20XX_STATUS_OK) {
@@ -757,7 +709,7 @@ int zlrs_lr2021_wait_us(uint32_t timeout_us)
 
 bool zlrs_lr2021_irq_pending(void)
 {
-	return pending && irq_pending;
+	return job_state == RADIO_ACTIVE && irq_pending;
 }
 
 bool zlrs_lr2021_process_irq(zlrs_lr2021_result_t *out)
@@ -769,7 +721,7 @@ bool zlrs_lr2021_process_irq(zlrs_lr2021_result_t *out)
 	int status = -EIO;
 	uint32_t airtime_us = 0U;
 
-	if (!pending || !irq_pending) {
+	if (job_state != RADIO_ACTIVE || !irq_pending) {
 		return false;
 	}
 	const uint32_t event_us = irq_us;
@@ -871,8 +823,7 @@ bool zlrs_lr2021_process_irq(zlrs_lr2021_result_t *out)
 		diag.rx_windows++;
 	}
 	/* The configured hardware fallback already returns a completed packet to FS. */
-	pending = false;
-	tx_fifo_used = 0U;
+	job_state = RADIO_IDLE;
 	idle_in_fs = status == 0 && (irq & chip_errors) == 0U;
 	*out = (zlrs_lr2021_result_t){
 		.status = status,
@@ -888,9 +839,10 @@ bool zlrs_lr2021_process_irq(zlrs_lr2021_result_t *out)
 
 void zlrs_lr2021_abort(void)
 {
+	zlrs_slot_timer_cancel_launch();
 	idle_in_fs = false;
-	preloaded_buf = NULL;
-	const bool active = pending && request != NULL;
+	const bool active =
+		(job_state == RADIO_ACTIVE || job_state == RADIO_ARMED) && request != NULL;
 	const bool tx = active && request->is_tx;
 
 	/* Read IRQs before requesting standby. A read after SET_STANDBY waits for
@@ -900,10 +852,8 @@ void zlrs_lr2021_abort(void)
 	ral_irq_t discarded = 0;
 	(void)ral_get_and_clear_irq_status(&radio.ral, &discarded);
 	(void)ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC);
-	pending = false;
+	job_state = RADIO_IDLE;
 	irq_pending = false;
-	prepared = false;
-	tx_fifo_used = 0U;
 	if (active) {
 		if (tx) {
 			diag.tx_expired++;

@@ -65,18 +65,10 @@ void zlrs_lr2021_wake(void);
 void zlrs_lr2021_slot(uint32_t tx_us, uint32_t end_us);
 /* Prepare modem and FIFO before the timer-controlled launch; no TX in prepare(). */
 int zlrs_lr2021_prepare(const zlrs_radio_req_t *req);
-/* Fill the separate TX FIFO while RX continues. In-place edits must change the
- * generation; a submitted TX remains immutable through completion/cancel. */
-int zlrs_lr2021_preload_tx(const uint8_t *buf, uint16_t size, uint32_t generation);
-
-static inline bool zlrs_lr2021_preload_matches(const zlrs_radio_req_t *req, const uint8_t *buf,
-					       uint16_t size, uint32_t generation)
-{
-	return buf != 0 && req->buf == buf && req->size == size && req->generation == generation;
-}
-
 int zlrs_lr2021_launch(void);
 int zlrs_lr2021_launch_at(uint32_t target_us);
+/* Timestamp of the SET_TX/SET_RX command, valid after a successful launch. */
+uint32_t zlrs_lr2021_started_us(void);
 /* SET_TX is polled even when FIFO transfers use DMA. */
 #define ZLRS_LR2021_STARTUP_US       500U
 #define ZLRS_LR2021_PHASE_STARTUP_US 250U
@@ -101,26 +93,6 @@ static inline bool zlrs_lr2021_tx_deadline(uint32_t target_us, uint32_t end_us,
 
 uint32_t zlrs_lr2021_airtime_us(const zlrs_mod_cfg_t *mod, uint16_t len);
 
-#define ZLRS_LR2021_TX_FIFO_PREFIX 128U
-
-/* FLRC consumes this prefix while the owner appends the authenticated tail. */
-static inline uint16_t zlrs_lr2021_tx_fifo_prefix(uint16_t size)
-{
-	return size > ZLRS_LR2021_TX_FIFO_PREFIX ? ZLRS_LR2021_TX_FIFO_PREFIX : size;
-}
-
-/* FIFO reads consume a prefix. Validate the total before subtracting it or
- * forming the next buffer pointer; leave remaining unchanged on invalid input. */
-static inline bool zlrs_lr2021_fifo_remaining(uint16_t capacity, uint16_t copied, uint32_t total,
-					      uint16_t *remaining)
-{
-	if (total > capacity || copied > total) {
-		return false;
-	}
-	*remaining = (uint16_t)(total - copied);
-	return true;
-}
-
 struct zlrs_lr2021_diag {
 	uint32_t transactions;
 	uint32_t stale_irq;
@@ -133,21 +105,17 @@ struct zlrs_lr2021_diag {
 	uint32_t submit_us_max;
 	uint32_t tx_prepare_us_last[4]; /* standby/IRQ, modem, FIFO, FS/BUSY */
 	uint32_t fs_reused;
-	uint32_t tx_preloaded;
-	uint32_t tx_preload_used;
-	uint32_t tx_preload_us_last;
-	uint32_t tx_preload_us_max;
-	uint32_t tx_fifo_tails;
+	uint32_t tx_fifo_loads;
 	uint32_t tx_fifo_bytes;
 	uint32_t tx_fifo_errors;
 	uint32_t tx_fifo_underflows;
-	uint32_t tx_fifo_ready_us_last;
-	uint32_t tx_fifo_ready_us_max;
+	uint32_t tx_fifo_load_us_last;
+	uint32_t tx_fifo_load_us_max;
 	uint32_t launch_cmd_us_last;
 	uint32_t launch_cmd_us_max;
 	uint32_t tx_launch_cmd_us_last;
 	uint32_t tx_launch_cmd_us_max;
-	uint32_t preload_lead_us_last;
+	uint32_t tx_ready_lead_us_last;
 	uint32_t launch_jitter_us_last;
 	uint32_t launch_jitter_us_max;
 	uint32_t tx_startup_us_last;

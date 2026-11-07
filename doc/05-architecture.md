@@ -71,42 +71,112 @@ Each TDD period has absolute A/B slot boundaries. A short packet cannot advance
 the next slot. Preparation failure cannot authorize a late launch. Critical RF
 and interrupt paths must execute from SRAM.
 
+### DATA transactions
+
+The RF owner processes the completed receive operation before selecting the
+following transmit operation. RX-time work admits serial bytes into packet
+payload storage. Header fields, transmission sequences, authentication and TX
+FIFO contents are finalized at the assigned TX preparation opportunity.
+
+```mermaid
+flowchart TD
+    Advance[Advance the scheduled slot exactly once] --> Plan[Select TX, RX or idle]
+    Plan -->|RX| RX[Start assigned RX window]
+    RX --> Admit[Admit serial bytes into payload storage]
+    Admit --> Wait[Wait for completion or absolute RX deadline]
+    Wait --> Accept[Validate RX and apply ACK, delivery and control events]
+    Accept --> Advance
+    Plan -->|TX| Budget[Check deadline, frame length and duty budget]
+    Budget -->|available| Finalize[Finalize one TX frame and authentication tag]
+    Finalize --> Prepare[Configure radio and load the complete TX FIFO]
+    Prepare --> Arm[Arm the fixed TX launch]
+    Arm --> Result[Process hardware result and retain unacknowledged DATA]
+    Result --> Advance
+    Plan -->|idle| Idle[Wait for the next assigned slot]
+    Budget -->|unavailable| Idle
+    Idle --> Advance
+```
+
+A received ACK makes the next queued packet eligible. Without a matching ACK,
+the retained packet is selected when retry is due. Startup and idle predecessors
+use the same TX preparation path. Pairing, session messages, SYNC, DATA and empty
+feedback share the finalize, prepare, arm and result lifecycle.
+
+The link separates slot advancement, operation selection, frame finalization and
+result handling. Each elapsed slot advances the shared frame/hopping schedule
+once, including idle and skipped slots. Operation selection is read-only: repeated
+inspection cannot consume sequences, seal payloads, generate nonces or alter the
+schedule. State-machine events obtain handshake nonces before a proof is eligible;
+entropy failure leaves that proof unavailable.
+
+A slot context contains shared frame/slot identity, hop/channel selection,
+protocol time, hardware launch target and close deadline. Protocol time and
+hardware time remain distinct. Authenticated receive events supply the only
+peer-driven changes to clock alignment. Selection and finalization execute in
+one owner operation without an intervening RX or maintenance mutation.
+
+| Component | Owned state and responsibility |
+| --- | --- |
+| Packet FIFO | Payload storage, writable tail, retained head and usable byte capacity |
+| Link state machine | Pair/session state, ARQ, replay, accepted control events and receive quality |
+| Frame codec | Wire layout, in-place DATA encoding and bounded receive views |
+| TX attempt | One finalized frame, common sequence, immutable hardware reference and completion metadata |
+| RF executor | Absolute slot deadlines, operation execution, duty and phase policy |
+| LR2021 adapter | Modem setup, complete FIFO loading, launch and hardware results |
+
+A TX attempt is finalized once from accepted protocol state. Its frame and metadata
+remain immutable from hardware submission through completion or cancellation.
+Diagnostics expose finalized attempts, TX authentication operations, complete FIFO
+loads/bytes, cancellations and preparation-stage durations. Hardware preparation
+and lifecycle details are specified in
+[radio requirements](04-radio.md#transfer-and-timing-contract).
+
 ## Delivery and maintenance
 
-The link packet FIFO retains outbound bytes until the peer acknowledges them. Serial
-output queues retain received bytes until the local host drains them. The local
-sink must accept the entire packet before the link advances its receive ACK.
+The packet FIFO owns outbound user bytes until the peer acknowledges them. The
+RF owner reserves writable space in the FIFO tail, copies serial input directly
+into that space and commits only the bytes read. Each packet has aligned
+contiguous storage with eight bytes of DATA headroom and space for its profile's
+tag. The codec writes the header and tag in place; retransmissions preserve the
+payload and DATA identity.
+
+The head packet A holds the current unacknowledged payload. Its successor B can
+receive additional user bytes while A waits for confirmation, and later packets
+retain their FIFO order. B becomes A by changing indices after ACK. A packet is
+sealed when selected for TX finalization, and its payload remains retained until
+confirmation. Header and tag writes occur only when no hardware operation refers
+to that packet. A small separate buffer holds control traffic; RX owns a separate
+bounded buffer.
+
+Static packet storage provides a 4096-byte user-data budget, including bytes
+awaiting ACK, at production MTUs of at least 128 bytes. Smaller diagnostic MTUs
+may reach the descriptor bound first. The admission API reports usable space,
+including both byte and descriptor limits. No heap allocation is used.
+
+Serial output queues retain received bytes until the local host drains them.
+The sink accepts an entire packet before the link advances its receive ACK.
 USB and flow-controlled UART input backpressure propagate when finite queues
-fill; unthrottled UART loss is counted.
-
-The RF owner reserves writable payload space in the FIFO's tail packet, then
-serial input copies directly into that space and commits only the bytes read.
-Each packet reserves eight DATA header bytes and room for the profile's tag.
-The FIFO stores payload once; encoding and retries only write header/tag bytes.
-Packet slots come from aligned static storage partitioned at the configured MTU,
-with a 4096-byte user-data budget including unacknowledged DATA. The descriptor
-bound preserves this budget for MTUs of at least 128 bytes, including two short
-sealed packets; smaller diagnostic MTUs can reach that bound first and expose
-less space through the normal backpressure API. No heap allocation is used.
-
-The head packet owns the current unacknowledged payload; its successor can be
-prepared during reverse RX, but cannot transmit until the head is acknowledged.
-Later packets remain ordered behind them. ACK releases the head slot rather than
-copying its successor. New sessions preserve packets in order and reset their
-session-specific DATA identities. Best-effort mode releases a packet only after
-successful local TX. A failed local DATA transmission is eligible for retry at
-the next legal opportunity without waiting for an ACK timeout.
+fill; unthrottled UART loss is counted. Best-effort DATA is released only after
+successful local TX. Local preparation or launch failure retains user bytes and
+allows another attempt at the next legal opportunity.
 
 Management, pairing persistence, image confirmation and log synchronization
-require a maintenance window at a frame boundary. The window cancels pending
-launches, ends hardware transactions and invalidates prepared packet encodings.
-Elapsed time advances the frame and hopping schedule on resume.
+require a maintenance window at a frame boundary. The RF owner cancels pending
+launches, ends hardware references and reports operation cancellation to the link
+before storage or log work. Elapsed time advances the frame and hopping schedule
+on resume.
 
 Maintenance and band transitions preserve accepted DATA and unacknowledged
 packets. A short management pause with no transition plan retains known radio
 capture. A pause lasting at least the band's loss threshold, or one entered with
 a pending transition, requires fresh capture and cancels the unexecuted plan.
-Credential changes and factory reset invalidate the affected active link.
+Band/PHY transitions retain session keys, ARQ identities and packet order; the
+next operation uses the selected radio parameters after the shared guard.
+
+A session change preserves retained user bytes in FIFO order and assigns
+session-specific DATA identities and authentication keys. Cross-session
+exactly-once delivery is not guaranteed. Credential changes and factory reset
+invalidate the affected active link.
 
 ## Persistence contract
 
@@ -163,17 +233,24 @@ Radio completion reports status, length, RSSI and hardware time. RF passes the
 result to the link and uses accepted protocol events for phase and contact
 tracking. Invalid authentication, sequence or nonce must not move the clock.
 
-Delivery and secure randomness report success or failure. Entropy failure blocks
-new handshake proofs without a clock or ordinary pseudorandom fallback. Wire and
-persistent records use explicit bytes, independent of compiler layout.
+DATA decoding produces small parsed fields and a const payload view into the
+RX buffer. The view is valid only during synchronous receive processing. The
+serial sink takes an owned copy before that buffer is reused. Control bodies use
+bounded owned structures. Wire and persistent records use explicit bytes,
+independent of compiler layout.
 
-Inputs require bounded length, version, CRC, authentication, direction, context,
-replay and FIFO checks. A prepared packet must still match its session, frame
-sequence, DATA identity, scheduled period and current receive ACK. A changed ACK
-updates the packet header and tag in place without copying its payload. Every
-encoding receives a content generation; FIFO reuse requires matching buffer
-address, length and generation. A changed generation forces a fresh FIFO load.
-Submitted TX memory is immutable until hardware completion or cancellation.
-Protocol work and radio operations remain serialized by the RF owner.
+Length, version, CRC, local security profile, direction, context, authentication,
+replay and FIFO bounds must pass before protocol effects are committed. Delivery
+and secure randomness report success or failure. Entropy failure blocks handshake
+proofs without a clock or ordinary pseudorandom fallback.
 
-Acceptance requirements are consolidated in [development and acceptance](10-debug.md).
+The TX authentication tag covers the final header followed by the retained
+payload. RX-derived ACK and quality fields are resolved before authentication.
+The hash engine is acquired within the remaining preparation budget; unavailable
+hardware cancels the attempt without producing a tag. Once acquired, the compute
+bound must fit the launch budget. Hardware failure cannot produce authentication
+material that the protocol treats as valid. Hash-session ownership ends before
+waiting for a radio operation.
+
+Acceptance requirements are consolidated in
+[development and acceptance](10-debug.md#data-transaction-acceptance).

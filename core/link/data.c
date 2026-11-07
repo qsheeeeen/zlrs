@@ -9,247 +9,136 @@ static bool receive_ack_bit(const zlrs_link_t *link)
 	return link->arq_rx_started && ((link->arq_rx_seq + 1U) & 1U) != 0U;
 }
 
-static uint16_t packet_stride(uint16_t mtu)
-{
-	return (uint16_t)((ZLRS_DATA_HEADROOM + mtu + ZLRS_TAG_LEN + 3U) & ~3U);
-}
-
-static uint16_t packet_limit(uint16_t mtu)
-{
-	if (mtu == 0U || mtu > ZLRS_DATA_MAX_LEN) {
-		return 0U;
-	}
-	const uint16_t count = ZLRS_LINK_TX_STORAGE_LEN / packet_stride(mtu);
-	return count < ZLRS_LINK_TX_PACKETS ? count : ZLRS_LINK_TX_PACKETS;
-}
-
-static uint16_t packet_index(const zlrs_link_t *link, uint16_t offset)
-{
-	return (uint16_t)((link->queue_head + offset) % link->tx_packet_limit);
-}
-
-static uint8_t *packet_bytes(zlrs_link_t *link, uint16_t index)
-{
-	return &link->tx_storage[index * link->tx_stride];
-}
-
-void link_release_data(zlrs_link_t *link)
-{
-	assert(link->tx_packet_count != 0U);
-	zlrs_tx_packet_t *packet = &link->tx_packets[link->queue_head];
-	link->queue_count -= packet->len;
-	packet->len = 0U;
-	packet->sealed = false;
-	link->queue_head = packet_index(link, 1U);
-	link->tx_packet_count--;
-	link->prepared_data.valid = false;
-}
-
 static void arq_commit_ack(zlrs_link_t *link)
 {
-	/* The prepared successor remains usable after its predecessor is released. */
-	const bool prepared =
-		link->prepared_data.valid && link->prepared_data.packet_index != link->queue_head;
 	link_release_data(link);
-	link->prepared_data.valid = prepared;
 	link->arq_used = 0U;
+	link->arq_launched = false;
 	link->arq_local_failed = false;
 	link->arq_seq = (uint8_t)((link->arq_seq + 1U) & ZLRS_DATA_SEQ_MASK);
 	link->arq_retries = 0U;
 }
 
 /* Payload has already been written at HEADROOM. Only mutable wire fields are
- * touched here. The resulting token identifies the exact FIFO snapshot. */
-static uint16_t encode_data(zlrs_link_t *link, uint8_t *buf, uint16_t len, uint8_t seq)
+ * touched here. The complete frame remains frozen until radio completion. */
+static uint16_t encode_data(zlrs_link_t *link, uint8_t *buf, uint16_t cap, uint16_t len,
+			    uint8_t seq)
 {
 	if (link->cfg.profile > ZLRS_PROFILE_P1 || link->tx_seq == 0U ||
 	    link->tx_seq == UINT32_MAX || len > link->cfg.data_mtu) {
 		return 0U;
 	}
-	buf[0] = link->cfg.role == ZLRS_ROLE_LEADER ? ZLRS_PKT_DATA_L2F : ZLRS_PKT_DATA_F2L;
-	zlrs_put_le32(buf + 1U, link->tx_seq);
-	buf[5] = (uint8_t)((seq << 1U) | (link->cfg.arq && receive_ack_bit(link)));
 	const int16_t rssi = link->stats.last_rssi;
-	buf[6] = rssi < 0 ? (uint8_t)(-rssi > 255 ? 255 : -rssi) : 0U;
-	buf[7] = link->stats.lq_percent | ((link->stats.lq_generation & 1U) << 7U);
-	const uint16_t size = ZLRS_DATA_HEADROOM + len;
+	const zlrs_data_header_t header = {
+		.data_seq = seq,
+		.ack = link->cfg.arq && receive_ack_bit(link),
+		.rssi_magnitude = rssi < 0 ? (uint8_t)(-rssi > 255 ? 255 : -rssi) : 0U,
+		.lq_percent = link->stats.lq_percent,
+		.lq_toggle = link->stats.lq_generation & 1U,
+	};
+	const uint8_t type =
+		link->cfg.role == ZLRS_ROLE_LEADER ? ZLRS_PKT_DATA_L2F : ZLRS_PKT_DATA_F2L;
 	const uint8_t tag_len = zlrs_profile_tag_len(link->cfg.profile);
+	const uint16_t total =
+		zlrs_frame_encode_data(buf, cap, type, link->tx_seq, &header, len, tag_len);
+	if (total == 0U) {
+		return 0U;
+	}
+	const uint16_t size = total - tag_len;
 	if (tag_len != 0U) {
 		zlrs_tag(link_tag_key_for(link, buf[0], true), ZLRS_KEY_LEN, buf, size, buf + size);
 	}
-	return size + tag_len;
+	link->stats.tx_frame_builds++;
+	link->stats.tx_auth_tags += tag_len != 0U;
+	return total;
 }
 
-static bool arq_timed_out(const zlrs_link_t *link, uint32_t now_ms)
+bool link_arq_retry_due(const zlrs_link_t *link, uint32_t now_ms)
 {
 	const uint16_t timeout =
 		link->cfg.arq_timeout_ms > 0U ? link->cfg.arq_timeout_ms : ZLRS_ARQ_TIMEOUT_MS;
 	return link->arq_used != 0U &&
-	       (link->arq_local_failed || (int32_t)(now_ms - link->arq_sent_ms) >= timeout);
+	       (link->arq_local_failed ||
+		(link->arq_launched && (int32_t)(now_ms - link->arq_sent_ms) >= timeout));
 }
 
-static void arq_commit_data(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
+static void arq_commit_data(zlrs_link_t *link, uint16_t len)
 {
 	link->arq_len = len;
-	link->arq_first_sent_ms = now_ms;
+	link->arq_launched = false;
 	link->arq_used = 1U;
 	link->arq_retries = 0U;
-	link->arq_sent_ms = now_ms;
+
 }
 
-const uint8_t *zlrs_link_prepare_data(zlrs_link_t *link, uint8_t slot, uint32_t now_ms,
-				      uint16_t *size)
-{
-	*size = 0U;
-	/* A submitted TX owns its memory until completion or cancellation. */
-	if (link->req_pending && link->req_is_tx) {
-		return NULL;
-	}
-	zlrs_prepared_data_t *prepared = &link->prepared_data;
-	prepared->valid = false;
-	const uint32_t frame = link->frame_index + (slot == ZLRS_SLOT_DATA_A ? 1U : 0U);
-	if (!link->cfg.arq || link->radio_acquiring || link->tx_packet_count == 0U ||
-	    link->state != ZLRS_STATE_CONNECTED || !link->session_valid ||
-	    slot != (link->cfg.role == ZLRS_ROLE_LEADER ? ZLRS_SLOT_DATA_A : ZLRS_SLOT_DATA_B) ||
-	    link->tx_seq == UINT32_MAX || link->sess_cfm_due ||
-	    (link->cfg.resync_every_n > 0U && frame % link->cfg.resync_every_n == 0U)) {
-		return NULL;
-	}
-	prepared->retry = arq_timed_out(link, now_ms);
-	/* The current reverse RX can acknowledge A even when its retry deadline
-	 * will expire at the next TX. Prefer B in that case; missing ACK falls
-	 * back to encoding A in place at selection time. */
-	const bool expect_ack = link->req_pending && !link->req_is_tx && !link->arq_local_failed &&
-				link->tx_packet_count > 1U;
-	const uint16_t offset = link->arq_used && (!prepared->retry || expect_ack) ? 1U : 0U;
-	if (offset != 0U) {
-		prepared->retry = false;
-	}
-	if (offset >= link->tx_packet_count) {
-		return NULL;
-	}
-	const uint16_t index = packet_index(link, offset);
-	zlrs_tx_packet_t *packet = &link->tx_packets[index];
-	packet->sealed = true;
-	prepared->buf = packet_bytes(link, index);
-	prepared->data_len = packet->len;
-	prepared->data_seq = (link->arq_seq + offset) & ZLRS_DATA_SEQ_MASK;
-	prepared->size = encode_data(link, prepared->buf, packet->len, prepared->data_seq);
-	if (prepared->size == 0U) {
-		return NULL;
-	}
-	packet->generation = ++link->tx_generation;
-	prepared->generation = packet->generation;
-	prepared->packet_index = index;
-	prepared->ack_bit = receive_ack_bit(link);
-	prepared->frame_seq = link->tx_seq;
-	prepared->frame_index = frame;
-	prepared->data_mtu = link->cfg.data_mtu;
-	prepared->profile = link->cfg.profile;
-	memcpy(prepared->key, link_tag_key_for(link, prepared->buf[0], true), ZLRS_KEY_LEN);
-	prepared->valid = true;
-	*size = prepared->size;
-	return prepared->buf;
-}
-
-uint32_t zlrs_link_prepared_generation(const zlrs_link_t *link)
-{
-	return link->prepared_data.generation;
-}
-
-void zlrs_link_discard_prepared_data(zlrs_link_t *link)
-{
-	link->prepared_data.valid = false;
-}
-
-static const zlrs_radio_req_t *send_packet(zlrs_link_t *link, uint32_t now_ms, bool retry)
+static const zlrs_radio_req_t *send_packet(zlrs_link_t *link, bool retry)
 {
 	if (link->tx_packet_count == 0U) {
 		return NULL;
 	}
 	const uint16_t index = link->queue_head;
 	zlrs_tx_packet_t *packet = &link->tx_packets[index];
-	zlrs_prepared_data_t *prepared = &link->prepared_data;
-	uint8_t *buf = packet_bytes(link, index);
-	uint16_t size;
+	uint8_t *buf = link_packet_bytes(link, index);
 	const uint8_t seq = link->cfg.arq ? link->arq_seq : 0U;
-	const bool reusable =
-		prepared->valid && prepared->packet_index == index &&
-		prepared->generation == packet->generation && prepared->retry == retry &&
-		prepared->ack_bit == receive_ack_bit(link) &&
-		prepared->frame_index == link->frame_index && prepared->frame_seq == link->tx_seq &&
-		prepared->data_seq == seq && prepared->data_len == packet->len &&
-		prepared->data_mtu == link->cfg.data_mtu &&
-		prepared->profile == link->cfg.profile &&
-		zlrs_ct_equal(prepared->key, link_tag_key_for(link, buf[0], true), ZLRS_KEY_LEN);
-	if (reusable) {
-		size = prepared->size;
-	} else {
-		size = encode_data(link, buf, packet->len, seq);
-		if (size == 0U) {
-			return NULL;
-		}
-		packet->generation = ++link->tx_generation;
+	const uint16_t size = encode_data(link, buf, ZLRS_FRAME_MAX_LEN, packet->len, seq);
+	if (size == 0U) {
+		return NULL;
 	}
 	packet->sealed = true;
-	prepared->valid = false;
 	const zlrs_radio_req_t *req = link_submit_tx(link, buf, size, link_slot_freq_hz(link),
 						     ZLRS_SYNC_SLOT_DATA, link->sync_word);
 	if (req == NULL) {
 		return NULL;
 	}
-	link->req.generation = packet->generation;
 	link->arq_local_failed = false;
 	link->tx_seq++;
-	link->arq_ack_pending = false;
 	link->pending_data_len = link->cfg.arq ? 0U : packet->len;
 	if (link->cfg.arq && !retry) {
-		arq_commit_data(link, packet->len, now_ms);
+		arq_commit_data(link, packet->len);
 	}
 	return req;
 }
 
 static const zlrs_radio_req_t *send_data_arq(zlrs_link_t *link, uint32_t now_ms)
 {
-	if (arq_timed_out(link, now_ms)) {
+	if (link_arq_retry_due(link, now_ms)) {
 		if (link->arq_retries >= ZLRS_ARQ_MAX_RETRIES) {
 			link->arq_retries = 0U;
 			link->stats.tx_arq_retry_runs++;
 		}
 		link->arq_retries++;
 		link->stats.tx_retries++;
-		const uint32_t age = now_ms - link->arq_sent_ms;
+		const uint32_t age = link->arq_launched ? now_ms - link->arq_sent_ms : 0U;
 		link->stats.tx_retry_age_ms_last = age;
 		if (age > link->stats.tx_retry_age_ms_max) {
 			link->stats.tx_retry_age_ms_max = age;
 		}
-		link->arq_sent_ms = now_ms;
-		return send_packet(link, now_ms, true);
+		return send_packet(link, true);
 	}
 	if (link->arq_used != 0U) {
 		link->stats.tx_arq_wait_stalls++;
 		return NULL;
 	}
-	return send_packet(link, now_ms, false);
+	return send_packet(link, false);
 }
 
 const zlrs_radio_req_t *link_send_empty_data(zlrs_link_t *link)
 {
-	const uint16_t size = encode_data(link, link->tx_buf, 0U, link->arq_seq);
+	const uint16_t size =
+		encode_data(link, link->tx_buf, sizeof(link->tx_buf), 0U, link->arq_seq);
 	if (size == 0U) {
 		return NULL;
 	}
 	link->tx_seq++;
-	link->arq_ack_pending = false;
 	link->pending_data_len = 0U;
-	link->last_feedback_tx_ms = link->slot_ms;
 	return link_submit_tx(link, link->tx_buf, size, link_slot_freq_hz(link),
 			      ZLRS_SYNC_SLOT_DATA, link->sync_word);
 }
 
 static void handle_ack_bit(zlrs_link_t *link, bool bit, uint32_t now_ms)
 {
-	if (link->arq_used == 0U || bit != (((link->arq_seq + 1U) & 1U) != 0U)) {
+	if (link->arq_used == 0U || !link->arq_launched ||
+	    bit != (((link->arq_seq + 1U) & 1U) != 0U)) {
 		return;
 	}
 	const int32_t elapsed = (int32_t)(now_ms - link->arq_first_sent_ms);
@@ -266,19 +155,18 @@ static void handle_ack_bit(zlrs_link_t *link, bool bit, uint32_t now_ms)
 
 const zlrs_radio_req_t *link_send_data(zlrs_link_t *link, uint32_t now_ms)
 {
-	return link->cfg.arq ? send_data_arq(link, now_ms) : send_packet(link, now_ms, false);
+	return link->cfg.arq ? send_data_arq(link, now_ms) : send_packet(link, false);
 }
 
-static bool deliver_data(zlrs_link_t *link, const zlrs_data_frame_t *data, uint16_t len)
+static bool deliver_data(zlrs_link_t *link, const uint8_t *bytes, uint16_t len)
 {
-	return link->ev.on_data != NULL && len != 0U &&
-	       link->ev.on_data(link->ev.ctx, data->bytes, len);
+	return link->ev.on_data != NULL && len != 0U && link->ev.on_data(link->ev.ctx, bytes, len);
 }
 
-void link_handle_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint16_t data_len,
-		      uint32_t now_ms)
+void link_handle_data(zlrs_link_t *link, const zlrs_data_view_t *view, uint32_t now_ms)
 {
-	const zlrs_data_frame_t *const data = &frame->body.data;
+	const zlrs_data_header_t *const data = &view->header;
+	const uint16_t data_len = view->len;
 	if (link->cfg.arq) {
 		handle_ack_bit(link, data->ack != 0U, now_ms);
 	}
@@ -318,13 +206,13 @@ void link_handle_data(zlrs_link_t *link, const zlrs_frame_t *frame, uint16_t dat
 			}
 			return;
 		}
-		if (deliver_data(link, data, data_len)) {
+		if (deliver_data(link, view->bytes, data_len)) {
 			link->arq_rx_started = true;
 			link->arq_rx_seq = seq;
 		}
 		return;
 	}
-	if (!deliver_data(link, data, data_len)) {
+	if (!deliver_data(link, view->bytes, data_len)) {
 		link->stats.data_drop_bytes += data_len;
 	}
 }
@@ -367,89 +255,4 @@ void link_lq_account(zlrs_link_t *link, uint32_t seq)
 	} else {
 		link->stats.lq_expected = (uint16_t)expected;
 	}
-}
-
-uint16_t zlrs_link_tx_space(const zlrs_link_t *link)
-{
-	const uint16_t mtu = link->cfg.data_mtu;
-	const uint16_t limit = link->tx_packet_count ? link->tx_packet_limit : packet_limit(mtu);
-	if (limit == 0U || (link->tx_packet_count && link->tx_pool_mtu != mtu)) {
-		return 0U;
-	}
-	uint32_t space = (limit - link->tx_packet_count) * mtu;
-	if (link->tx_packet_count != 0U) {
-		const zlrs_tx_packet_t *tail =
-			&link->tx_packets[packet_index(link, link->tx_packet_count - 1U)];
-		if (!tail->sealed) {
-			space += mtu - tail->len;
-		}
-	}
-	const uint16_t budget = ZLRS_LINK_TX_QUEUE_LEN - link->queue_count;
-	return space < budget ? (uint16_t)space : budget;
-}
-
-uint8_t *zlrs_link_tx_reserve(zlrs_link_t *link, uint16_t *capacity)
-{
-	*capacity = 0U;
-	assert(link->tx_claim_len == 0U);
-	const uint16_t space = zlrs_link_tx_space(link);
-	if (space == 0U) {
-		return NULL;
-	}
-	if (link->tx_packet_count == 0U) {
-		/* Empty pools can adopt a different MTU (diagnostics/tests). */
-		link->tx_stride = packet_stride(link->cfg.data_mtu);
-		link->tx_packet_limit = packet_limit(link->cfg.data_mtu);
-		link->tx_pool_mtu = link->cfg.data_mtu;
-		link->queue_head %= link->tx_packet_limit;
-	}
-	uint16_t index = packet_index(link, link->tx_packet_count);
-	if (link->tx_packet_count != 0U) {
-		const uint16_t tail = packet_index(link, link->tx_packet_count - 1U);
-		if (!link->tx_packets[tail].sealed &&
-		    link->tx_packets[tail].len < link->cfg.data_mtu) {
-			index = tail;
-		}
-	}
-	zlrs_tx_packet_t *packet = &link->tx_packets[index];
-	const uint16_t room = link->cfg.data_mtu - packet->len;
-	link->tx_claim_len = room < space ? room : space;
-	link->tx_claim_index = index;
-	*capacity = link->tx_claim_len;
-	return packet_bytes(link, index) + ZLRS_DATA_HEADROOM + packet->len;
-}
-
-void zlrs_link_tx_commit(zlrs_link_t *link, uint16_t written)
-{
-	assert(written <= link->tx_claim_len);
-	if (written != 0U) {
-		zlrs_tx_packet_t *packet = &link->tx_packets[link->tx_claim_index];
-		if (packet->len == 0U) {
-			link->tx_packet_count++;
-		}
-		packet->len += written;
-		link->queue_count += written;
-	}
-	link->tx_claim_len = 0U;
-}
-
-uint16_t zlrs_link_write(zlrs_link_t *link, const uint8_t *data, uint16_t len)
-{
-	if (data == NULL) {
-		return 0U;
-	}
-	uint16_t written = 0U;
-	while (written < len) {
-		uint16_t capacity;
-		uint8_t *dst = zlrs_link_tx_reserve(link, &capacity);
-		if (dst == NULL) {
-			break;
-		}
-		const uint16_t take = len - written < capacity ? len - written : capacity;
-		memcpy(dst, data + written, take);
-		zlrs_link_tx_commit(link, take);
-		written += take;
-	}
-	link->stats.data_drop_bytes += len - written;
-	return written;
 }

@@ -96,6 +96,16 @@ static void diagnostic_frequency(struct diagnostic_report_writer *writer, uint32
 	}
 }
 
+static void diagnostic_frame_work(struct diagnostic_report_writer *writer,
+				  const zlrs_link_stats_t *stats)
+{
+	diagnostic_append(
+		writer,
+		"  Frame work         : %u builds   %u TX tags   cancelled %u   failed %u\n",
+		stats->tx_frame_builds, stats->tx_auth_tags, stats->tx_cancelled_frames,
+		stats->tx_failed_frames);
+}
+
 static void diagnostic_link(struct diagnostic_report_writer *writer, const char *name,
 			    const zlrs_rf_link_snapshot_t *link)
 {
@@ -137,15 +147,15 @@ static void diagnostic_link(struct diagnostic_report_writer *writer, const char 
 	} else {
 		diagnostic_append(writer, "  Signal             : no received frames yet\n");
 	}
+	diagnostic_frame_work(writer, stats);
 	diagnostic_append(writer, "  RF bytes           : TX %u B   RX %u B\n", stats->tx_bytes,
 			  stats->rx_bytes);
 	diagnostic_append(writer,
 			  "  DATA               : %u packets   %u user B   full %u   ACK-only %u\n",
 			  stats->tx_data_frames, stats->tx_data_bytes, stats->tx_full_data_frames,
 			  stats->tx_ack_only_frames);
-	diagnostic_append(writer, "  ACK                : %u DATA ACKs   %u stale   %u ACK waits\n",
-			  stats->tx_data_ack_frames, stats->tx_staged_stale_ack_frames,
-			  stats->tx_arq_wait_stalls);
+	diagnostic_append(writer, "  ACK                : %u DATA ACKs   %u ACK waits\n",
+			  stats->tx_data_ack_frames, stats->tx_arq_wait_stalls);
 	diagnostic_append(writer,
 			  "  ACK timing         : retry age %u/%u ms   confirmation %u/%u ms\n",
 			  stats->tx_retry_age_ms_last, stats->tx_retry_age_ms_max,
@@ -252,6 +262,15 @@ static void diagnostic_radio(struct diagnostic_report_writer *writer)
 			  diag.irq_last, diag.stale_irq, diag.stale_irq_bits);
 
 	diagnostic_append(writer, "\n[TRANSMIT TIMING]\n");
+	diagnostic_frame_work(writer, &snapshot.link.stats);
+	diagnostic_append(writer,
+			  "  Frame finalization : last / max %u / %u us   RX accept %u / %u us\n",
+			  snapshot.work.tx_finalize_us_last, snapshot.work.tx_finalize_us_max,
+			  snapshot.work.rx_accept_us_last, snapshot.work.rx_accept_us_max);
+	diagnostic_append(writer, "  Full preparation   : last / max %u / %u us\n",
+			  snapshot.work.tx_prepare_us_last, snapshot.work.tx_prepare_us_max);
+	diagnostic_append(writer, "  Hash contention    : TX skips %u   RX drops %u\n",
+			  snapshot.work.hash_busy_tx, snapshot.work.hash_busy_rx);
 	diagnostic_append(writer, "  Late launch        : %u attempts   last / max %u / %u us\n",
 			  diag.prepare_late_starts + diag.trigger_late_starts,
 			  diag.launch_late_us_last, diag.launch_late_us_max);
@@ -268,7 +287,7 @@ static void diagnostic_radio(struct diagnostic_report_writer *writer)
 			  snapshot.late_prepare_spi_us);
 	diagnostic_append(
 		writer, "  Launch command     : last / max %u / %u us   FIFO lead %u us\n",
-		diag.launch_cmd_us_last, diag.launch_cmd_us_max, diag.preload_lead_us_last);
+		diag.launch_cmd_us_last, diag.launch_cmd_us_max, diag.tx_ready_lead_us_last);
 	diagnostic_append(writer, "  Jitter / startup   : %u / %u us   TX startup %u us\n",
 			  diag.launch_jitter_us_last, diag.launch_jitter_us_max,
 			  diag.tx_startup_us_last);
@@ -279,14 +298,11 @@ static void diagnostic_radio(struct diagnostic_report_writer *writer)
 		"  TX setup phases    : standby/IRQ %u   modem %u   FIFO %u   FS/BUSY %u us\n",
 		diag.tx_prepare_us_last[0], diag.tx_prepare_us_last[1], diag.tx_prepare_us_last[2],
 		diag.tx_prepare_us_last[3]);
-	diagnostic_append(writer, "  FIFO preload       : %u packets   %u used   %u / %u us\n",
-			  diag.tx_preloaded, diag.tx_preload_used, diag.tx_preload_us_last,
-			  diag.tx_preload_us_max);
-	diagnostic_append(writer, "  FIFO tail          : %u   %u B   errors %u   underflows %u\n",
-			  diag.tx_fifo_tails, diag.tx_fifo_bytes, diag.tx_fifo_errors,
+	diagnostic_append(writer, "  FIFO loads         : %u   %u B   errors %u   underflows %u\n",
+			  diag.tx_fifo_loads, diag.tx_fifo_bytes, diag.tx_fifo_errors,
 			  diag.tx_fifo_underflows);
-	diagnostic_append(writer, "  FIFO ready         : last / max %u / %u us\n",
-			  diag.tx_fifo_ready_us_last, diag.tx_fifo_ready_us_max);
+	diagnostic_append(writer, "  FIFO load time     : last / max %u / %u us\n",
+			  diag.tx_fifo_load_us_last, diag.tx_fifo_load_us_max);
 
 	diagnostic_append(writer, "\n[RECEIVE TIMING]\n");
 	diagnostic_append(writer,

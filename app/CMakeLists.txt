@@ -67,6 +67,7 @@ if(CONFIG_ZLRS_APP_RAM_RADIO)
     ${zlrs_app_dir}/../core/link/pairing.c
     ${zlrs_app_dir}/../core/link/session.c
     ${zlrs_app_dir}/../core/link/data.c
+    ${zlrs_app_dir}/../core/link/packet.c
     ${zlrs_app_dir}/../core/proto/crypto.c
     ${zlrs_app_dir}/../core/proto/frame.c
     ${zlrs_app_dir}/../core/proto/fhss.c

@@ -76,31 +76,76 @@ finished hardware. Power policy is specified in [firmware](06-firmware.md#automa
 
 ## Transfer and timing contract
 
-Commands and FIFO transfers use synchronous polling SPI. The RF owner prepares
-modulation, frequency, power and packet data before the fixed transmit deadline.
-A hardware timer launches the prepared SET_TX command 200 µs after the slot
+Commands and FIFO transfers use synchronous polling SPI. The RF owner resolves
+accepted RX events, selects an operation and checks time, frame length and duty
+budget before finalizing a transmit frame. Modulation, frequency, power and the
+complete frame are prepared before the fixed transmit deadline.
+
+A hardware timer launches the prepared SET_TX command 200 us after the slot
 boundary. Ordinary SPI preparation and unbounded BUSY waits shall not run in IRQ
 context. Preparation failure cancels that transmission; late transmission is not
-allowed.
+allowed. TX FIFO receives the complete finalized frame in one load before launch.
+Its contents remain fixed until transmission completes or the operation is
+cancelled; payload bytes are not appended during transmission.
 
 The preparation reservation is 1.6 ms on 2.4 GHz and 6 ms on SubG. Slot planning
-also reserves 500 µs for startup, the active mode's maximum packet airtime
-(255 bytes in automatic mode, 511 in fixed FLRC) and 200 µs for completion
-margin. The radio's airtime calculation must use the same physical
-settings as the actual modem. Short packets keep the same slot boundaries and
-consume only their actual airtime.
+also reserves 500 us for startup, the active mode's maximum packet airtime
+(255 bytes in automatic mode, 511 in fixed FLRC) and 200 us for completion margin.
+Airtime calculations use the same physical settings as the modem. Short packets
+retain fixed slot boundaries and consume only their actual airtime.
 
-A DATA frame may exceed the initially loaded FIFO prefix. Up to 128 bytes are
-loaded before launch; the remaining bytes are supplied promptly after launch.
-Tail loading must finish before FIFO underflow. Receive lengths and FIFO tails
-must be checked against capacity before subtraction or copying. Underflow,
-transfer failure and missing completion IRQs must produce a failed transaction
-and cleanup, rather than a successful delivery indication.
+### Radio operation lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> Prepared: Configure and load complete frame
+    Prepared --> Armed: Install launch alarm
+    Armed --> Active: SET_TX issued
+    Active --> Idle: TX completion
+    Prepared --> Idle: Cancel or missed deadline
+    Armed --> Idle: Cancel before launch
+    Active --> Idle: Abort or missing completion
+```
+
+RX runs Idle → Receiving → Idle on completion or its absolute close deadline.
+The single radio owner permits one RX or TX job at a time. A preparation failure
+leaves no launch armed. Missing IRQs close the operation at its original deadline.
+The RX window close ends hardware waiting. A frame already received may finish
+FIFO service and authentication during the next preparation reservation; its
+acceptance budget ends before the next launch. The next TX independently checks
+its remaining preparation and launch budget before finalization and arming.
+Cancellation ends hardware references before packet memory can change. Lengths
+are checked against buffer and FIFO capacity before access. FIFO errors,
+underflow, transfer failure and missing completions produce failed transactions
+with cleanup.
+
+A local failure after a possible transmission does not prove that the peer
+received nothing. The link retains the packet for confirmation or retransmission
+with its DATA identity preserved. Best-effort DATA is released only on successful
+local TX. The [air protocol](07-protocol.md#sequence-delivery-and-quality) defines
+transmission sequences and ACK commitments.
 
 Radio IRQs provide hardware timestamps; the RF owner performs protocol completion
 and phase correction. Critical launch, timestamp and RF processing paths run from
 SRAM. Retuning reserves a shared 12 ms frame-boundary interval as specified in the
 [air protocol](07-protocol.md#automatic-band-switching).
+
+### Preparation budget
+
+The reservation covers the complete RX-to-TX critical path: RX IRQ service,
+FIFO read, authentication, sink acceptance, operation selection, TX authentication,
+modem setup, complete FIFO loading and alarm arming. Measure each stage and the
+remaining launch margin under maximum packet sizes, duplex load, hash contention,
+management activity and recovery. Separate steady-state observations from startup
+and maintenance intervals; lifetime maxima alone do not establish the budget.
+
+For automatic FLRC 2.6 Mbps with a 255-byte maximum frame, the period is
+`3992 + 2 * preparation_us`. A 1600 us reservation gives a 7192 us period and an
+ideal P1 user-data limit of about 33788 B/s per direction at a 243-byte MTU,
+before control traffic and retries. A reservation must cover measured worst-case
+work with margin. Both peers require identical timing; a runtime timing change
+requires coordinated protocol behavior.
 
 ## Calibration and observation
 

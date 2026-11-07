@@ -26,7 +26,7 @@ The state and failure contracts include:
 | Contract | Scenarios |
 | --- | --- |
 | Pairing publishes a confirmed record | Both roles; candidate received then cancel, timeout or confirm; delayed abandoned responses; reconnect to the saved peer |
-| TX retains packet-owned bytes until commit | Both roles, ARQ/best effort, failed completions, in-place retries, generation-checked preloads, direct admission and packet-slot wrap |
+| TX retains packet-owned bytes until commit | Both roles, ARQ/best effort, failed completions, in-place retries, immutable TX attempts, direct admission and packet-slot wrap |
 | Reliable DATA matches a reference byte stream | P0/P1 and three fixed seeds; duplex writes, packet loss, duplicate frames, bad P1 tags, TX failure, backpressure, queue and clock wrap; eventual drain |
 | Destructive reset retires active credentials | Failure before/after clear, remount failure and layout-marker failure; RF refresh despite command failure; recovery through initialization |
 | Saved state matches completed writes | Independent byte records, failed key/pair writes, partial settings saves and identity-write failure after pair deletion; remount checks |
@@ -168,13 +168,14 @@ build/bench/link_bench > build/bench/link.json
 
 The optional positional argument selects 100..1000000 iterations (default 20000).
 Results include compiler version, profile and seven samples per case, with
-median/min/max nanoseconds for encoding, P1 authentication, prepared DATA,
-slot selection/encoding (`submit`) and TX completion at 0/32/128/499 payload bytes.
-Both P0 and P1 are measured; authentication applies only to P1. Submit replays
-selection without radio completion or an ACK; completion replays a prepared
-request to isolate its bookkeeping cost. Prepare measurements exclude empty
-packets. The fixture checks built packets against reference bytes and checks
-completion counters before accepting a measurement.
+median/min/max nanoseconds for in-place DATA header encoding, P1 authentication,
+read-only operation selection (`plan`), TX finalization (`finalize`) and completion
+at 0/32/128/499 payload bytes. Both P0 and P1 are measured; authentication applies
+only to P1. Finalization replays a selected TX without radio completion or an ACK;
+completion replays a finalized request to isolate its bookkeeping cost. The
+fixture verifies that planning changes no sequence or construction counter,
+checks finalized packets against reference bytes and checks completion counters
+before accepting a measurement.
 
 Compare release builds with the same compiler, CPU and load; retain both JSON
 files and commits. CI retains measurements without noisy wall-clock thresholds.

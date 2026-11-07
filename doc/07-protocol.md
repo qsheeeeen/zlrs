@@ -105,32 +105,37 @@ the receiver's next expected DATA sequence, initially zero. The sender removes
 its packet only when valid reverse feedback carries the corresponding ACK.
 The receiver advances DATA acceptance only after its sink accepts the whole
 packet. A repeat is not delivered twice; a full sink retains backpressure.
-Timeouts retry the same packet without discarding stream progress. If DATA is
-accepted after preparation, the next TX rebuilds with the current ACK rather
-than delaying the peer by another frame. Header and tag updates happen in place;
-a changed content generation requires a fresh FIFO load even when the buffer
-address and length are unchanged. An unchanged prepared encoding retains the
-preload path. Submitted TX bytes remain immutable through completion or cancellation.
-ARQ-disabled debug operation uses the same frame layout.
+Timeouts retry the same packet without discarding stream progress. RX acceptance
+and ACK handling finish before selecting the following TX. Each attempt encodes
+the selected packet, latest accepted ACK and quality fields, then computes its
+authentication tag once. Submitted TX bytes remain immutable through completion
+or cancellation. ARQ-disabled debug operation uses the same frame layout.
+
+Finalizing an attempt consumes a common sequence even if preparation or launch
+later fails; that sequence is never rolled back or reused. ARQ distinguishes a
+retained packet from an attempt awaiting ACK. Retry timing follows the actual
+local launch result, and failed preparation does not clear pending ACK feedback.
+A local failure after a possible transmission leaves DATA retained because the
+peer may have received it.
 
 RSSI is the magnitude of negative dBm, 1–255; zero means unavailable. It retains
 1 dB precision and no update marker. RSSI updates on every accepted radio packet;
-a prepared transmission can carry the preceding sample. Valid reverse DATA,
-including empty feedback, reports the sender's reception of its peer. Idle
+a transmission uses the sample available when its frame is finalized. Valid
+reverse DATA, including empty feedback, reports the sender's reception of its peer. Idle
 feedback is scheduled at 250 ms intervals, subject to slot and duty availability.
 
-The existing LQ byte uses bits 0–6 for percentage 0–100 and bit 7 as a window
+The LQ byte uses bits 0–6 for percentage 0–100 and bit 7 as a window
 update toggle. Value 127 means no completed window; 101–126 are reserved.
-Unavailable/reserved quality does not prevent valid RSSI feedback. No DATA
-prefix, payload or authentication-tag length changes. Both peers must use
-version 13; there is no version-12 compatibility path.
+Unavailable/reserved quality does not prevent valid RSSI feedback. Both peers
+require air protocol version 13.
 
 LQ counts accepted confirmed-session DATA, same-session SYNC and valid session
 confirmation. Sequence gaps estimate expected transmission attempts. A window
 closes at at least 128 expected attempts; 128/128 is 100%, 127/128 is 99%.
-On every completion, bit 7 flips even when the percentage is unchanged. Cached
-feedback retains that bit; retransmitting a payload can carry newer feedback
-if its frame is rebuilt, while an already prepared frame retains its snapshot.
+On every completion, bit 7 flips even when the percentage is unchanged. Feedback
+retains that bit until another window completes. Each DATA attempt
+encodes the feedback available at finalization; submitted frames retain those
+fields through completion or cancellation.
 Tracking remains continuous across window boundaries. Pairing and candidate
 handshakes do not contribute to the denominator. This is an observed sequence-span
 metric, not an end-to-end delivery percentage.

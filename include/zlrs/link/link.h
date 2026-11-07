@@ -100,15 +100,18 @@ typedef struct {
 } zlrs_link_events_t;
 
 typedef struct {
+	uint32_t tx_frame_builds;     /* Finalized wire frames, including cancelled attempts. */
+	uint32_t tx_cancelled_frames; /* Finalized but never launched. */
+	uint32_t tx_failed_frames;    /* Launched, local completion failed or timed out. */
+	uint32_t tx_auth_tags;        /* TX authentication only; RX validation is separate. */
 	uint32_t tx_frames;
 	uint32_t tx_bytes;
 	uint32_t tx_data_frames;
 	uint32_t tx_data_bytes; /* User bytes on air, including retransmissions. */
 	uint32_t tx_full_data_frames;
 	uint32_t tx_ack_only_frames;
-	/* ACK coverage, staging delay and stop-and-wait pressure. */
+	/* ACK coverage, confirmation delay and stop-and-wait pressure. */
 	uint32_t tx_data_ack_frames;
-	uint32_t tx_staged_stale_ack_frames;
 	uint32_t tx_arq_wait_stalls;
 	uint32_t tx_retry_age_ms_last;
 	uint32_t tx_retry_age_ms_max;
@@ -160,45 +163,43 @@ typedef struct {
 } zlrs_link_stats_t;
 
 /* Logical byte budget includes queued and unacknowledged DATA. Packet storage
- * adds head/tag/alignment room and two short sealed packets. Production MTUs
+ * adds head/tag/alignment room and one short retained packet. Production MTUs
  * are >=128; smaller diagnostic MTUs may reach the descriptor bound first. */
 #define ZLRS_LINK_TX_QUEUE_LEN 4096U
 #define ZLRS_LINK_TX_POOL_MIN_MTU 128U
 #define ZLRS_LINK_TX_PACKETS                                                                       \
-	((ZLRS_LINK_TX_QUEUE_LEN + ZLRS_LINK_TX_POOL_MIN_MTU - 1U) / ZLRS_LINK_TX_POOL_MIN_MTU + 2U)
+	((ZLRS_LINK_TX_QUEUE_LEN + ZLRS_LINK_TX_POOL_MIN_MTU - 1U) / ZLRS_LINK_TX_POOL_MIN_MTU + 1U)
 #define ZLRS_DATA_HEADROOM (ZLRS_FRAME_HDR_LEN + ZLRS_DATA_PREFIX_LEN)
 #define ZLRS_LINK_TX_STORAGE_LEN                                                                   \
-	(ZLRS_LINK_TX_QUEUE_LEN + 3U * ZLRS_FRAME_MAX_LEN +                                        \
+	(ZLRS_LINK_TX_QUEUE_LEN + 2U * ZLRS_FRAME_MAX_LEN +                                        \
 	 ZLRS_LINK_TX_PACKETS * (ZLRS_DATA_HEADROOM + ZLRS_TAG_LEN + 3U))
 
 typedef struct {
-	uint32_t generation;
 	uint16_t len;
 	bool sealed;
 } zlrs_tx_packet_t;
 
-/* Stop-and-wait ARQ: one outstanding DATA packet in each direction. */
+/* Stop-and-wait ARQ: one DATA packet awaiting acknowledgment in each direction. */
 #define ZLRS_ARQ_TIMEOUT_MS  30U
 /* Count long retry runs for diagnostics; continue retransmitting without resetting progress. */
 #define ZLRS_ARQ_MAX_RETRIES 64U
 
-/* A DATA packet encoded during RX. Sender state commits only when its TX slot runs. */
+typedef enum {
+	ZLRS_OP_IDLE,
+	ZLRS_OP_RX,
+	ZLRS_OP_TX,
+} zlrs_link_op_t;
+
+/* A read-only decision valid until the owner's next link mutation. */
 typedef struct {
-	uint8_t *buf;
-	uint32_t generation;
-	uint16_t packet_index;
-	uint8_t key[ZLRS_KEY_LEN];
+	zlrs_link_op_t op;
+	zlrs_pkt_type_t type;
+	zlrs_radio_req_t radio; /* No buffer reference until finalization. */
 	uint32_t frame_index;
-	uint16_t size;
-	uint32_t frame_seq;
-	uint8_t data_seq;
-	uint16_t data_len;
-	uint16_t data_mtu;
-	zlrs_profile_t profile;
-	bool ack_bit;
-	bool retry;
-	bool valid;
-} zlrs_prepared_data_t;
+	uint32_t now_ms;
+	uint8_t slot;
+	bool arq_wait;
+} zlrs_link_plan_t;
 
 typedef struct {
 	zlrs_link_cfg_t cfg;
@@ -285,7 +286,7 @@ typedef struct {
 	bool radio_sync_seen;
 
 	/* Packet FIFO: storage is partitioned into aligned slots at the configured MTU.
-	 * Only the head (current packet) and its successor may be sealed short. */
+	 * Only the head is sealed; the successor remains appendable until selected. */
 	alignas(uint32_t) uint8_t tx_storage[ZLRS_LINK_TX_STORAGE_LEN];
 	zlrs_tx_packet_t tx_packets[ZLRS_LINK_TX_PACKETS];
 	uint16_t tx_stride;
@@ -294,7 +295,6 @@ typedef struct {
 	uint16_t tx_pool_mtu;
 	uint16_t tx_claim_len;
 	uint16_t tx_claim_index;
-	uint32_t tx_generation;
 	uint16_t queue_head;       /* Packet index, not a byte offset. */
 	uint16_t queue_count;      /* User bytes, including the packet awaiting ACK. */
 	uint16_t pending_data_len; /* Best-effort bytes borrowed until successful TX completion. */
@@ -305,6 +305,7 @@ typedef struct {
 	uint32_t arq_first_sent_ms;
 	/* Retransmissions preserve the data sequence and payload. */
 	uint8_t arq_used;
+	bool arq_launched;     /* At least one attempt reached SET_TX. */
 	bool arq_local_failed; /* No successful local TX: retry at the next legal opportunity. */
 	uint8_t arq_retries;
 	uint32_t arq_sent_ms;
@@ -319,21 +320,22 @@ typedef struct {
 	bool arq_rx_started;
 	bool arq_ack_pending;
 
-	/* RX/TX buffers */
+	/* Small control/empty-DATA scratch and independently owned RX storage. */
 	/* Word alignment keeps the hardware SHA backend on its word-feed path. */
-	alignas(uint32_t) uint8_t tx_buf[ZLRS_FRAME_MAX_LEN];
+	alignas(uint32_t) uint8_t tx_buf[32];
 	alignas(uint32_t) uint8_t rx_buf[ZLRS_FRAME_MAX_LEN];
-	zlrs_prepared_data_t prepared_data;
 
 	/* transaction to submit next */
 	zlrs_radio_req_t req;
 	bool req_is_tx;
+	bool req_started;
 	bool req_pending;
 	/* Statistics snapshot belongs to the submitted packet, including staged DATA. */
 	bool req_is_data;
 	bool req_arq;
 	uint16_t req_data_len;
 	uint16_t req_data_mtu;
+	bool slot_idle; /* State transition consumes this slot without radio work. */
 	uint8_t slot; /* ZLRS_SLOT_*: the slot the pending transaction serves (stats and logs) */
 	uint32_t slot_ms; /* Current slot time, used for the session-confirm slot B window. */
 } zlrs_link_t;
@@ -417,9 +419,6 @@ uint16_t zlrs_link_tx_space(const zlrs_link_t *link);
 uint8_t *zlrs_link_tx_reserve(zlrs_link_t *link, uint16_t *capacity);
 void zlrs_link_tx_commit(zlrs_link_t *link, uint16_t written);
 
-/* Content token for the last successful prepare_data(), for FIFO reuse. */
-uint32_t zlrs_link_prepared_generation(const zlrs_link_t *link);
-
 /* The exact bytes the pairing KDF is fed with: both ids (sorted) then the salt (sorted) */
 #define ZLRS_PAIR_CTX_LEN (2U * ZLRS_DEV_ID_LEN + ZLRS_PAIR_SALT_LEN)
 void zlrs_link_pair_ctx(const zlrs_link_t *link, uint8_t out[ZLRS_PAIR_CTX_LEN]);
@@ -447,24 +446,23 @@ void zlrs_link_set_peer(zlrs_link_t *link, const uint8_t peer_id[ZLRS_DEV_ID_LEN
  * True accepts an attempt, not a completed pairing; the previous saved record remains visible. */
 bool zlrs_link_press(zlrs_link_t *link, uint32_t now_ms);
 
+/* Advance the assigned slot once, then inspect a read-only operation plan.
+ * Selection/finalization run in the owner without intervening link mutations. */
+bool zlrs_link_advance_slot(zlrs_link_t *link, uint8_t slot, uint32_t now_ms);
+zlrs_link_plan_t zlrs_link_plan(const zlrs_link_t *link);
+const zlrs_radio_req_t *zlrs_link_finalize(zlrs_link_t *link, const zlrs_link_plan_t *plan);
+
 /* Superframe slot: return the transaction to submit, or NULL when there is none */
 const zlrs_radio_req_t *zlrs_link_slot(zlrs_link_t *link, uint8_t slot, uint32_t now_ms);
-
-/* Encode ARQ DATA for the next assigned TX slot without advancing sender/hop state.
- * Safe while RX is pending. Slot selection may update the header/tag in place;
- * FIFO consumers must compare the generation as well as pointer and size.
- * Once submitted, bytes remain immutable through TX completion/cancellation.
- * NULL means that handshake, recovery or backpressure requires the normal path. */
-const uint8_t *zlrs_link_prepare_data(zlrs_link_t *link, uint8_t slot, uint32_t now_ms,
-				      uint16_t *size);
-
-/* After stopping radio work, discard staged encoding without losing queued/reliable data. */
-void zlrs_link_discard_prepared_data(zlrs_link_t *link);
 
 /* Advance a missed slot without building a packet, consuming data or changing session state. */
 void zlrs_link_skip_slot(zlrs_link_t *link, uint8_t slot);
 
-/* Close the outstanding radio transaction once. Ignore unsolicited/duplicate completions. */
+/* Call after successful SET_TX. Successful completion also supplies a fallback
+ * for radios without a separate launch notification. */
+void zlrs_link_tx_started(zlrs_link_t *link, uint32_t now_ms);
+
+/* Close the pending radio transaction once; ignore duplicate completions. */
 void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t rssi, int8_t snr,
 			uint32_t now_ms);
 

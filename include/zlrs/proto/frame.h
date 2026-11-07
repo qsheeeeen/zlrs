@@ -39,6 +39,32 @@ typedef enum {
 	ZLRS_PROFILE_P2 = 2, /* payload encryption remains unimplemented */
 } zlrs_profile_t;
 
+/* DATA metadata and a borrowed view. The payload/tag remain in the RX buffer. */
+typedef struct {
+	uint8_t data_seq;
+	bool ack;
+	uint8_t rssi_magnitude;
+	uint8_t lq_percent;
+	bool lq_toggle;
+} zlrs_data_header_t;
+
+typedef struct {
+	uint32_t seq;
+	zlrs_pkt_type_t type;
+	zlrs_data_header_t header;
+	const uint8_t *bytes;
+	const uint8_t *tag;
+	uint16_t len;
+} zlrs_data_view_t;
+
+/* Write only the common/DATA header; payload is already at offset eight.
+ * Reserve the returned total length, including tag space, before calling. */
+uint16_t zlrs_frame_encode_data(uint8_t *buf, uint16_t cap, zlrs_pkt_type_t type, uint32_t seq,
+				const zlrs_data_header_t *header, uint16_t data_len,
+				uint8_t tag_len);
+bool zlrs_frame_decode_data(zlrs_data_view_t *view, const uint8_t *buf, uint16_t len,
+			    uint8_t tag_len);
+
 /* Typed bodies contain only packet-specific fields. DATA owns its bytes; its
  * used length comes from the radio payload length, never an on-air size field. */
 typedef struct {
