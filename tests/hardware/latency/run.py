@@ -27,9 +27,12 @@ def main():
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--threshold-us', type=int, default=20000)
     parser.add_argument('--delay-us', type=int, default=0)
+    parser.add_argument('--launch-delay-us', type=int, default=0,
+                        help='test injection: postpone TX alarm without moving the radio deadline')
     parser.add_argument('--seconds', type=float, default=60)
     args = parser.parse_args()
-    if not 1000 <= args.threshold_us <= 100000 or not 0 <= args.delay_us <= 100000 or args.seconds <= 0:
+    if (not 1000 <= args.threshold_us <= 100000 or not 0 <= args.delay_us <= 100000
+            or not 0 <= args.launch_delay_us <= 1000 or args.seconds <= 0):
         parser.error('invalid threshold, injection delay or timeout')
     args.out.mkdir(parents=True, exist_ok=True)
     identities = [args.serial, args.peer]
@@ -78,8 +81,10 @@ def main():
     deadline = time.monotonic() + args.seconds
     samples = []
     try:
-        bench(1, {'op': 1, 'role': 1, 'threshold_us': args.threshold_us, 'delay_us': args.delay_us})
-        bench(0, {'op': 1, 'role': 0, 'threshold_us': args.threshold_us})
+        bench(1, {'op': 1, 'role': 1, 'threshold_us': args.threshold_us,
+                  'delay_us': args.delay_us, 'launch_delay_us': args.launch_delay_us})
+        bench(0, {'op': 1, 'role': 0, 'threshold_us': args.threshold_us,
+                  'launch_delay_us': args.launch_delay_us})
         while True:
             states = [trace(i) for i in range(2)]
             sample = {'host_monotonic': time.monotonic(), 'trace': states,
@@ -122,6 +127,7 @@ def main():
                             'events': len(parsed.events), 'trigger_seq': trigger['arg0'],
                             'trigger_us': trigger['arg1'], 'artifact': info})
         result = {'threshold_us': args.threshold_us, 'injected_echo_delay_us': args.delay_us,
+                  'injected_launch_delay_us': args.launch_delay_us,
                   'bench': sample['bench'], 'exports': exports,
                   'same_probe': exports[0]['trigger_seq'] == exports[1]['trigger_seq']}
         (args.out / 'result.json').write_text(json.dumps(result, indent=2))

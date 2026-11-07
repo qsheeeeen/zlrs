@@ -26,10 +26,12 @@ static struct {
 	uint16_t rx_used;
 	uint32_t seq, sent_us, last_rx_us, ready_us;
 	uint32_t count, last_us, min_us, max_us, bad, threshold_us, delay_us, phy;
+	uint32_t launch_delay_us;
 	uint64_t total_us;
 } bench;
 static atomic_t command;
 static uint32_t requested_role, requested_threshold, requested_delay;
+static uint32_t requested_launch_delay;
 static int command_result;
 K_SEM_DEFINE(command_done, 0, 1);
 
@@ -37,6 +39,14 @@ uint32_t latency_trace_overwritten(void);
 uint16_t __real_zlrs_link_tx_space(const zlrs_link_t *link);
 uint16_t __real_zlrs_serial_read(uint8_t *buf, uint16_t len);
 bool __real_zlrs_serial_receive(const uint8_t *buf, uint16_t len);
+bool __real_zlrs_slot_timer_launch_at(uint32_t target_us, void (*fire)(uint32_t));
+
+bool __wrap_zlrs_slot_timer_launch_at(uint32_t target_us, void (*fire)(uint32_t))
+{
+	/* Delay only the alarm; the radio retains its original target and deadline. */
+	return __real_zlrs_slot_timer_launch_at(
+		target_us + (bench.active ? bench.launch_delay_us : 0U), fire);
+}
 
 static void queue(uint32_t kind, uint32_t seq, uint32_t sent, uint32_t elapsed)
 {
@@ -77,6 +87,7 @@ uint16_t __wrap_zlrs_link_tx_space(const zlrs_link_t *link)
 				bench.initiator = requested_role == 0U;
 				bench.threshold_us = requested_threshold;
 				bench.delay_us = requested_delay;
+				bench.launch_delay_us = requested_launch_delay;
 			}
 		} else {
 			bench.active = false;
@@ -175,15 +186,18 @@ bool __wrap_zlrs_serial_receive(const uint8_t *buf, uint16_t len)
 static int control(struct smp_streamer *ctxt)
 {
 	uint32_t op = 0U, role = 0U, threshold = 20000U, delay = 0U;
+	uint32_t launch_delay = 0U;
 	size_t decoded;
 	struct zcbor_map_decode_key_val fields[] = {
 		ZCBOR_MAP_DECODE_KEY_DECODER("op", zcbor_uint32_decode, &op),
 		ZCBOR_MAP_DECODE_KEY_DECODER("role", zcbor_uint32_decode, &role),
 		ZCBOR_MAP_DECODE_KEY_DECODER("threshold_us", zcbor_uint32_decode, &threshold),
 		ZCBOR_MAP_DECODE_KEY_DECODER("delay_us", zcbor_uint32_decode, &delay),
+		ZCBOR_MAP_DECODE_KEY_DECODER("launch_delay_us", zcbor_uint32_decode, &launch_delay),
 	};
 	if (zcbor_map_decode_bulk(ctxt->reader->zs, fields, ARRAY_SIZE(fields), &decoded) != 0 ||
-	    op > 2U || role > 1U || threshold < 1000U || threshold > 100000U || delay > 100000U) {
+	    op > 2U || role > 1U || threshold < 1000U || threshold > 100000U || delay > 100000U ||
+	    launch_delay > 1000U) {
 		return MGMT_ERR_EINVAL;
 	}
 	int rc = 0;
@@ -191,6 +205,7 @@ static int control(struct smp_streamer *ctxt)
 		requested_role = role;
 		requested_threshold = threshold;
 		requested_delay = delay;
+		requested_launch_delay = launch_delay;
 		k_sem_reset(&command_done);
 		atomic_set(&command, op == 1U ? 1 : -1);
 		if (k_sem_take(&command_done, K_SECONDS(2)) != 0) {
@@ -218,6 +233,7 @@ static int control(struct smp_streamer *ctxt)
 	FIELD("active", status.active);
 	FIELD("overwritten", overwritten);
 	FIELD("delay_us", status.delay_us);
+	FIELD("launch_delay_us", status.launch_delay_us);
 	FIELD("threshold_us", status.threshold_us);
 	FIELD("phy", status.phy);
 #undef FIELD
