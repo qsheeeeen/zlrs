@@ -122,3 +122,21 @@ TEST(RadioHelpers, TemperatureAndFifoBounds)
 		EXPECT_EQ(memcmp(fifo, packet, size), 0);
 	}
 }
+
+TEST(RadioHelpers, PreloadRequiresContentGenerationEvenAtSameAddressAndLength)
+{
+	uint8_t bytes[32] = {};
+	zlrs_radio_req_t req = {};
+	req.buf = bytes;
+	req.size = sizeof(bytes);
+	req.generation = 7;
+	EXPECT_TRUE(zlrs_lr2021_preload_matches(&req, bytes, sizeof(bytes), 7));
+	/* Updating an ACK in place must invalidate the chip's old FIFO snapshot. */
+	bytes[5] ^= 1;
+	req.generation++;
+	EXPECT_FALSE(zlrs_lr2021_preload_matches(&req, bytes, sizeof(bytes), 7));
+	EXPECT_TRUE(zlrs_lr2021_preload_matches(&req, bytes, sizeof(bytes), 8));
+	EXPECT_FALSE(zlrs_lr2021_preload_matches(&req, nullptr, sizeof(bytes), 8));
+	EXPECT_FALSE(zlrs_lr2021_preload_matches(&req, bytes + 1, sizeof(bytes), 8));
+	EXPECT_FALSE(zlrs_lr2021_preload_matches(&req, bytes, sizeof(bytes) - 1, 8));
+}

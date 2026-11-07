@@ -65,8 +65,16 @@ void zlrs_lr2021_wake(void);
 void zlrs_lr2021_slot(uint32_t tx_us, uint32_t end_us);
 /* Prepare modem and FIFO before the timer-controlled launch; no TX in prepare(). */
 int zlrs_lr2021_prepare(const zlrs_radio_req_t *req);
-/* Fill the separate TX FIFO while RX continues. Bytes must stay immutable until prepare(). */
-int zlrs_lr2021_preload_tx(const uint8_t *buf, uint16_t size);
+/* Fill the separate TX FIFO while RX continues. In-place edits must change the
+ * generation; a submitted TX remains immutable through completion/cancel. */
+int zlrs_lr2021_preload_tx(const uint8_t *buf, uint16_t size, uint32_t generation);
+
+static inline bool zlrs_lr2021_preload_matches(const zlrs_radio_req_t *req, const uint8_t *buf,
+					       uint16_t size, uint32_t generation)
+{
+	return buf != 0 && req->buf == buf && req->size == size && req->generation == generation;
+}
+
 int zlrs_lr2021_launch(void);
 int zlrs_lr2021_launch_at(uint32_t target_us);
 /* SET_TX is polled even when FIFO transfers use DMA. */

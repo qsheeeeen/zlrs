@@ -73,8 +73,6 @@ static uint32_t band_switches;
 static bool transition_reserved;
 #define ZLRS_DATA_SUBG (data_band == ZLRS_DATA_BAND_SUBG)
 
-/* Copy batch only; the pump drains until its source or the link queue is empty. */
-#define SERIAL_PUMP_CHUNK_LEN 256U
 #define REPORT_PERIOD_MS      1000U
 
 static zlrs_link_t link_data;
@@ -672,7 +670,8 @@ static void run_slot(uint8_t slot)
 
 		if (buf != NULL) {
 			ZLRS_TRACE_EVENT("rf_preload_begin", next_us, size);
-			(void)zlrs_lr2021_preload_tx(buf, size);
+			(void)zlrs_lr2021_preload_tx(buf, size,
+						     zlrs_link_prepared_generation(link));
 			ZLRS_TRACE_EVENT("rf_preload_end", next_us, size);
 		}
 	}
@@ -727,31 +726,20 @@ static void run_slot(uint8_t slot)
 
 static void pump_serial(void)
 {
-	uint8_t chunk[SERIAL_PUMP_CHUNK_LEN];
-	uint16_t got;
-	uint16_t room;
-
-	/*
-	 * The UART ISR only fills its RX ring. The radio thread owns link_data, so feed the link queue
-	 * just before it selects a data-slot packet. Drain until either side has no room; the chunk is
-	 * only a copy buffer, not a per-slot or per-frame throughput limit.
-	 */
+	/* Keep the serial consumer and packet ownership in the RF thread. serial_read
+	 * copies straight into the final payload, leaving headroom and tag room. */
 	for (;;) {
-		room = zlrs_link_tx_space(&link_data);
-		if (room == 0U) {
+		if (zlrs_link_tx_space(&link_data) == 0U) {
 			return;
 		}
-		if (room > sizeof(chunk)) {
-			room = (uint16_t)sizeof(chunk);
+		uint16_t capacity;
+		uint8_t *payload = zlrs_link_tx_reserve(&link_data, &capacity);
+		if (payload == NULL) {
+			return;
 		}
-
-		got = zlrs_serial_read(chunk, room);
+		const uint16_t got = zlrs_serial_read(payload, capacity);
+		zlrs_link_tx_commit(&link_data, got);
 		if (got == 0U) {
-			return;
-		}
-
-		/* room was measured immediately above in this single-owner thread. */
-		if (zlrs_link_write(&link_data, chunk, got) != got) {
 			return;
 		}
 	}

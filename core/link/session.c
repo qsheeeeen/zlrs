@@ -75,6 +75,7 @@ static void session_activate(zlrs_link_t *link, uint8_t hop_index)
 	/* Keep the handshake's TX counter; reset only the new session's DATA/LQ state. */
 	link_quality_reset(link);
 	link->arq_used = 0U;
+	link->arq_local_failed = false;
 	link->arq_retries = 0U;
 	link->arq_seq = 0U;
 	link->arq_rx_started = false;

@@ -35,6 +35,7 @@ static bool prepared;
 static bool idle_in_fs;
 static const uint8_t *preloaded_buf;
 static uint16_t preloaded_size;
+static uint32_t preloaded_generation;
 static uint16_t tx_fifo_used;
 static volatile bool irq_pending;
 static volatile uint32_t irq_us;
@@ -375,7 +376,8 @@ int zlrs_lr2021_prepare(const zlrs_radio_req_t *req)
 	/* An RX-time preload already contains this immutable packet. Other TX requests
 	 * start with a fresh FIFO, including retries and packets left by an abort. */
 	if (req->is_tx) {
-		const bool preloaded = req->buf == preloaded_buf && req->size == preloaded_size;
+		const bool preloaded = zlrs_lr2021_preload_matches(
+			req, preloaded_buf, preloaded_size, preloaded_generation);
 		const uint16_t prefix = zlrs_lr2021_tx_fifo_prefix(req->size);
 
 		preloaded_buf = NULL;
@@ -433,7 +435,7 @@ int zlrs_lr2021_prepare(const zlrs_radio_req_t *req)
 	return 0;
 }
 
-int zlrs_lr2021_preload_tx(const uint8_t *buf, uint16_t size)
+int zlrs_lr2021_preload_tx(const uint8_t *buf, uint16_t size, uint32_t generation)
 {
 	const uint32_t start = zlrs_slot_timer_now_us();
 
@@ -450,6 +452,7 @@ int zlrs_lr2021_preload_tx(const uint8_t *buf, uint16_t size)
 	}
 	preloaded_buf = buf;
 	preloaded_size = size;
+	preloaded_generation = generation;
 	diag.tx_preloaded++;
 	diag.tx_preload_us_last = zlrs_slot_timer_now_us() - start;
 	diag.tx_preload_us_max = MAX(diag.tx_preload_us_max, diag.tx_preload_us_last);

@@ -26,7 +26,7 @@ The state and failure contracts include:
 | Contract | Scenarios |
 | --- | --- |
 | Pairing publishes a confirmed record | Both roles; candidate received then cancel, timeout or confirm; delayed abandoned responses; reconnect to the saved peer |
-| TX borrows queued bytes until commit | Both roles, ARQ/best effort, failed completions, retry and queue wrap |
+| TX retains packet-owned bytes until commit | Both roles, ARQ/best effort, failed completions, in-place retries, generation-checked preloads, direct admission and packet-slot wrap |
 | Reliable DATA matches a reference byte stream | P0/P1 and three fixed seeds; duplex writes, packet loss, duplicate frames, bad P1 tags, TX failure, backpressure, queue and clock wrap; eventual drain |
 | Destructive reset retires active credentials | Failure before/after clear, remount failure and layout-marker failure; RF refresh despite command failure; recovery through initialization |
 | Saved state matches completed writes | Independent byte records, failed key/pair writes, partial settings saves and identity-write failure after pair deletion; remount checks |

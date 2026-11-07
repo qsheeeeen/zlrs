@@ -852,7 +852,7 @@ TEST_P(QueueFailure, FailedTransactionsKeepTheQueuedBytes)
 	link->cfg.arq = arq;
 	link->cfg.resync_every_n = 0;
 	link->sess_cfm_due = false;
-	link->queue_head = ZLRS_LINK_TX_QUEUE_LEN - 2;
+	link->queue_head = ZLRS_LINK_TX_PACKETS - 2;
 	const uint8_t bytes[] = {1, 2, 3, 4, 5};
 	ASSERT_EQ(zlrs_link_write(link, bytes, sizeof(bytes)), sizeof(bytes));
 	const uint8_t slot = role == ZLRS_ROLE_LEADER ? ZLRS_SLOT_DATA_A : ZLRS_SLOT_DATA_B;
@@ -1318,7 +1318,7 @@ TEST_F(Link, DuplexDeliveryAndWireTranscript)
 	zlrs_link_rx(&sim.leader.link, sim.captured, sim.captured_len, -60, 0, sim.now_ms);
 	EXPECT_EQ(sim.leader.link.stats.rx_bad_tag, reflected + 1U);
 
-	/* A new ACK rebuilds into a separate buffer; the FIFO snapshot stays immutable. */
+	/* A new ACK updates the same buffer and changes its FIFO content token. */
 	const uint8_t queued[] = {0x33, 0x55, 0xaa};
 	EXPECT_EQ(zlrs_link_write(&sim.leader.link, queued, sizeof(queued)), sizeof(queued));
 	uint16_t prepared_size;
@@ -1331,6 +1331,7 @@ TEST_F(Link, DuplexDeliveryAndWireTranscript)
 		}
 	}
 	ASSERT_NE(prepared, nullptr);
+	const auto prepared_generation = zlrs_link_prepared_generation(&sim.leader.link);
 	zlrs_frame_t before;
 	ASSERT_TRUE(zlrs_frame_decode(&before, prepared, prepared_size, ZLRS_TAG_LEN));
 	uint8_t peer_frame[32];
@@ -1361,10 +1362,8 @@ TEST_F(Link, DuplexDeliveryAndWireTranscript)
 		EXPECT_EQ(+after.type, ZLRS_PKT_DATA_L2F);
 		EXPECT_NE(+before.body.data.ack, +after.body.data.ack);
 		EXPECT_FALSE(sim.leader.link.arq_ack_pending);
-		EXPECT_NE(request->buf, prepared);
-		zlrs_frame_t snapshot;
-		ASSERT_TRUE(zlrs_frame_decode(&snapshot, prepared, prepared_size, ZLRS_TAG_LEN));
-		EXPECT_EQ(+snapshot.body.data.ack, +before.body.data.ack);
+		EXPECT_EQ(request->buf, prepared);
+		EXPECT_NE(request->generation, prepared_generation);
 		EXPECT_EQ(request->size,
 			  zlrs_frame_len(ZLRS_DATA_PREFIX_LEN + sizeof(queued), ZLRS_TAG_LEN));
 		EXPECT_EQ(memcmp(after.body.data.bytes, queued, sizeof(queued)), 0);
@@ -1406,7 +1405,7 @@ class PreparedAck: public Link,
 {
 };
 
-TEST_P(PreparedAck, CurrentAckPreservesSnapshotBackpressureAndFailedTxRecovery)
+TEST_P(PreparedAck, CurrentAckUpdatesInPlaceTokenAndPreservesPayloadOnFailure)
 {
 	const auto [profile, role, blocked] = GetParam();
 	ASSERT_NO_FATAL_FAILURE(connect_saved(&sim, profile));
@@ -1415,14 +1414,14 @@ TEST_P(PreparedAck, CurrentAckPreservesSnapshotBackpressureAndFailedTxRecovery)
 	auto *link = &node->link;
 	link->cfg.resync_every_n = 0;
 	link->sess_cfm_due = false;
-	link->queue_head = ZLRS_LINK_TX_QUEUE_LEN - 2;
+	link->queue_head = ZLRS_LINK_TX_PACKETS - 2;
 	const uint8_t bytes[] = {1, 3, 5, 7, 9};
 	ASSERT_EQ(zlrs_link_write(link, bytes, sizeof(bytes)), sizeof(bytes));
 	const uint8_t slot = role == ZLRS_ROLE_LEADER ? ZLRS_SLOT_DATA_A : ZLRS_SLOT_DATA_B;
 	uint16_t size;
 	const auto *prepared = zlrs_link_prepare_data(link, slot, sim.now_ms, &size);
 	ASSERT_NE(prepared, nullptr);
-	const std::vector<uint8_t> snapshot(prepared, prepared + size);
+	const uint32_t generation = zlrs_link_prepared_generation(link);
 	zlrs_frame_t before;
 	ASSERT_TRUE(zlrs_frame_decode(&before, prepared, size, zlrs_profile_tag_len(profile)));
 	node->blocked = blocked;
@@ -1439,8 +1438,8 @@ TEST_P(PreparedAck, CurrentAckPreservesSnapshotBackpressureAndFailedTxRecovery)
 	const auto *req = zlrs_link_slot(link, slot, sim.now_ms);
 	ASSERT_NE(req, nullptr);
 	ASSERT_TRUE(req->is_tx);
-	EXPECT_EQ(req->buf == prepared, blocked);
-	EXPECT_EQ(memcmp(prepared, snapshot.data(), snapshot.size()), 0);
+	EXPECT_EQ(req->buf, prepared);
+	EXPECT_EQ(req->generation == generation, blocked);
 	zlrs_frame_t sent;
 	ASSERT_TRUE(zlrs_frame_decode(&sent, req->buf, req->size, zlrs_profile_tag_len(profile)));
 	EXPECT_EQ(+sent.body.data.ack, before.body.data.ack ^ !blocked);
@@ -1538,7 +1537,9 @@ TEST_P(StreamFaults, DuplexStreamMatchesReferenceUnderFaultSequences)
 			const auto &sender = nodes[side]->link;
 			const auto &receiver = *nodes[1 - side];
 			ASSERT_LE(sender.queue_count, ZLRS_LINK_TX_QUEUE_LEN);
-			ASSERT_LT(sender.queue_head, ZLRS_LINK_TX_QUEUE_LEN);
+			if (sender.tx_packet_limit != 0U) {
+				ASSERT_LT(sender.queue_head, sender.tx_packet_limit);
+			}
 			ASSERT_LE(sender.arq_used ? sender.arq_len : 0, sender.queue_count);
 			EXPECT_EQ(zlrs_link_tx_space(&sender) + sender.queue_count,
 				  ZLRS_LINK_TX_QUEUE_LEN);
@@ -1696,3 +1697,241 @@ INSTANTIATE_TEST_SUITE_P(ProfilesRolesAndPaths, TxAccounting,
 					std::get<2>(info.param).name +
 					(std::get<3>(info.param) ? "Full" : "Partial");
 			 });
+
+TEST_P(LinkProfiles, DirectPayloadAdmissionAndRetryKeepTheSameStorage)
+{
+	ASSERT_NO_FATAL_FAILURE(connect_saved(&sim, GetParam()));
+	auto *link = &sim.leader.link;
+	link->cfg.resync_every_n = 0;
+	link->cfg.arq_timeout_ms = 1000;
+	link->sess_cfm_due = false;
+	uint16_t capacity;
+	uint8_t *payload = zlrs_link_tx_reserve(link, &capacity);
+	ASSERT_NE(payload, nullptr);
+	ASSERT_GE(capacity, 5);
+	const uint8_t bytes[] = {9, 8, 7, 6, 5};
+	memcpy(payload, bytes, sizeof(bytes));
+	zlrs_link_tx_commit(link, sizeof(bytes));
+	EXPECT_EQ(link->queue_count, sizeof(bytes));
+	const auto *req = zlrs_link_slot(link, ZLRS_SLOT_DATA_A, sim.now_ms);
+	ASSERT_NE(req, nullptr);
+	EXPECT_EQ(req->buf + ZLRS_DATA_HEADROOM, payload);
+	const auto generation = req->generation;
+	const std::vector<uint8_t> frozen(req->buf, req->buf + req->size);
+	uint16_t prepared_size;
+	EXPECT_EQ(zlrs_link_prepare_data(link, ZLRS_SLOT_DATA_A, sim.now_ms, &prepared_size),
+		  nullptr);
+	EXPECT_EQ(zlrs_link_slot(link, ZLRS_SLOT_DATA_A, sim.now_ms), nullptr);
+	EXPECT_EQ(memcmp(req->buf, frozen.data(), frozen.size()), 0);
+	const uint32_t first_seq = link->tx_seq - 1;
+	zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0, 0, 0, sim.now_ms);
+	/* A local failure retries next opportunity, even before the ACK timeout. */
+	req = zlrs_link_slot(link, ZLRS_SLOT_DATA_A, sim.now_ms + 1);
+	ASSERT_NE(req, nullptr);
+	ASSERT_TRUE(req->is_tx);
+	EXPECT_EQ(req->buf + ZLRS_DATA_HEADROOM, payload);
+	EXPECT_NE(req->generation, generation);
+	zlrs_frame_t frame;
+	ASSERT_TRUE(
+		zlrs_frame_decode(&frame, req->buf, req->size, zlrs_profile_tag_len(GetParam())));
+	EXPECT_GT(frame.seq, first_seq);
+	EXPECT_EQ(frame.body.data.data_seq, 0);
+	EXPECT_EQ(memcmp(payload, bytes, sizeof(bytes)), 0);
+	zlrs_link_complete(link, ZLRS_RADIO_OK, 0, 0, 0, sim.now_ms + 1);
+	EXPECT_EQ(link->queue_count, sizeof(bytes));
+}
+
+TEST_P(LinkProfiles, NextBufferWaitsForAckAndBecomesCurrentWithoutPayloadCopy)
+{
+	ASSERT_NO_FATAL_FAILURE(connect_saved(&sim, GetParam()));
+	auto *link = &sim.leader.link;
+	link->cfg.resync_every_n = 0;
+	link->cfg.arq_timeout_ms = 1000;
+	link->sess_cfm_due = false;
+	const uint8_t first[] = {1, 2, 3};
+	ASSERT_EQ(zlrs_link_write(link, first, sizeof(first)), sizeof(first));
+	const auto *req = zlrs_link_slot(link, ZLRS_SLOT_DATA_A, sim.now_ms);
+	ASSERT_NE(req, nullptr);
+	const uint8_t *first_buf = req->buf;
+	zlrs_link_complete(link, ZLRS_RADIO_OK, 0, 0, 0, sim.now_ms);
+	const uint8_t next[] = {4, 5, 6, 7};
+	ASSERT_EQ(zlrs_link_write(link, next, sizeof(next)), sizeof(next));
+	uint16_t size;
+	const uint8_t *second_buf =
+		zlrs_link_prepare_data(link, ZLRS_SLOT_DATA_A, sim.now_ms + 1, &size);
+	ASSERT_NE(second_buf, nullptr);
+	EXPECT_NE(second_buf, first_buf);
+	const auto generation = zlrs_link_prepared_generation(link);
+	/* A is not acknowledged yet: selecting a slot cannot send B. */
+	req = zlrs_link_slot(link, ZLRS_SLOT_DATA_A, sim.now_ms + 1);
+	EXPECT_TRUE(req == nullptr ||
+		    req->size == ZLRS_DATA_HEADROOM + zlrs_profile_tag_len(GetParam()));
+	if (req) {
+		zlrs_link_complete(link, ZLRS_RADIO_OK, 0, 0, 0, sim.now_ms + 1);
+	}
+	/* Refresh the prepared frame's period after the deliberately unacknowledged slot. */
+	ASSERT_EQ(zlrs_link_prepare_data(link, ZLRS_SLOT_DATA_A, sim.now_ms + 2, &size),
+		  second_buf);
+	const auto second_generation = zlrs_link_prepared_generation(link);
+	zlrs_frame_t ack = {};
+	ack.type = ZLRS_PKT_DATA_F2L;
+	ack.seq = sim.follower.link.tx_seq++;
+	ack.body.data.ack = 1;
+	ASSERT_NO_FATAL_FAILURE(inject(&sim.leader, &ack, ZLRS_DATA_PREFIX_LEN,
+				       link->session_key_in, sim.now_ms + 2, false));
+	EXPECT_EQ(link->queue_count, sizeof(next));
+	req = zlrs_link_slot(link, ZLRS_SLOT_DATA_A, sim.now_ms + 2);
+	ASSERT_NE(req, nullptr);
+	EXPECT_EQ(req->buf, second_buf);
+	EXPECT_EQ(memcmp(req->buf + ZLRS_DATA_HEADROOM, next, sizeof(next)), 0);
+	EXPECT_NE(req->generation, generation);
+	EXPECT_EQ(req->generation, second_generation);
+	zlrs_frame_t frame;
+	ASSERT_TRUE(
+		zlrs_frame_decode(&frame, req->buf, req->size, zlrs_profile_tag_len(GetParam())));
+	EXPECT_EQ(frame.body.data.data_seq, 1);
+}
+
+TEST_F(Link, PacketPoolKeepsByteBudgetWithTwoShortSealedPackets)
+{
+	for (uint16_t mtu = 128; mtu <= 503; mtu++) {
+		SCOPED_TRACE(mtu);
+		auto cfg = sim.leader.link.cfg;
+		cfg.data_mtu = mtu;
+		cfg.profile = mtu > 499 ? ZLRS_PROFILE_P0 : ZLRS_PROFILE_P1;
+		zlrs_link_t link;
+		zlrs_link_init(&link, &cfg, nullptr, nullptr, nullptr);
+		zlrs_fhss_init(&link.fhss, cfg.domain, 42);
+		link.state = ZLRS_STATE_CONNECTED;
+		link.session_valid = true;
+		link.cfg.resync_every_n = 0;
+		link.cfg.arq_timeout_ms = 1000;
+		const uint8_t byte = 0x42;
+		ASSERT_EQ(zlrs_link_write(&link, &byte, 1), 1);
+		const auto *req = zlrs_link_slot(&link, ZLRS_SLOT_DATA_A, 100);
+		ASSERT_NE(req, nullptr);
+		zlrs_link_complete(&link, ZLRS_RADIO_OK, 0, 0, 0, 100);
+		ASSERT_EQ(zlrs_link_write(&link, &byte, 1), 1);
+		uint16_t size;
+		ASSERT_NE(zlrs_link_prepare_data(&link, ZLRS_SLOT_DATA_A, 101, &size), nullptr);
+		EXPECT_EQ(zlrs_link_tx_space(&link), ZLRS_LINK_TX_QUEUE_LEN - 2);
+		std::vector<uint8_t> bytes(ZLRS_LINK_TX_QUEUE_LEN - 2, 0xa5);
+		ASSERT_EQ(zlrs_link_write(&link, bytes.data(), bytes.size()), bytes.size());
+		EXPECT_EQ(link.queue_count, ZLRS_LINK_TX_QUEUE_LEN);
+		EXPECT_EQ(zlrs_link_tx_space(&link), 0);
+		EXPECT_EQ(zlrs_link_tx_reserve(&link, &size), nullptr);
+		EXPECT_EQ(size, 0);
+	}
+}
+
+TEST_F(Link, CancelledDirectReservationDoesNotAdmitBytesOrLoseCapacity)
+{
+	auto *link = &sim.leader.link;
+	uint16_t capacity;
+	uint8_t *payload = zlrs_link_tx_reserve(link, &capacity);
+	ASSERT_NE(payload, nullptr);
+	payload[0] = 0xa5;
+	zlrs_link_tx_commit(link, 0);
+	EXPECT_EQ(link->queue_count, 0);
+	EXPECT_EQ(link->tx_packet_count, 0);
+	EXPECT_EQ(zlrs_link_tx_space(link), ZLRS_LINK_TX_QUEUE_LEN);
+	EXPECT_EQ(zlrs_link_tx_reserve(link, &capacity), payload);
+	payload[0] = 0x42;
+	zlrs_link_tx_commit(link, 1);
+	EXPECT_EQ(link->queue_count, 1);
+}
+
+TEST_P(LinkProfiles, FreshSessionRetainsCurrentAndPreparedPayloadsInOrder)
+{
+	for (const auto role : {ZLRS_ROLE_LEADER, ZLRS_ROLE_FOLLOWER}) {
+		SCOPED_TRACE(role);
+		sim_init(&sim);
+		ASSERT_NO_FATAL_FAILURE(connect_saved(&sim, GetParam()));
+		auto *sender = role == ZLRS_ROLE_LEADER ? &sim.leader : &sim.follower;
+		auto *receiver = role == ZLRS_ROLE_LEADER ? &sim.follower : &sim.leader;
+		auto *link = &sender->link;
+		link->cfg.resync_every_n = 0;
+		link->sess_cfm_due = false;
+		std::vector<uint8_t> bytes(600);
+		for (size_t i = 0; i < bytes.size(); i++) {
+			bytes[i] = static_cast<uint8_t>(i * 17 + 3);
+		}
+		ASSERT_EQ(zlrs_link_write(link, bytes.data(), bytes.size()), bytes.size());
+		const auto slot = role == ZLRS_ROLE_LEADER ? ZLRS_SLOT_DATA_A : ZLRS_SLOT_DATA_B;
+		const auto *req = zlrs_link_slot(link, slot, sim.now_ms);
+		ASSERT_NE(req, nullptr);
+		zlrs_link_complete(link, ZLRS_RADIO_OK, 0, 0, 0, sim.now_ms);
+		/* Local TX completed but no bytes reached the receiver, and no ACK arrived. */
+		uint16_t size;
+		ASSERT_NE(zlrs_link_prepare_data(link, slot, sim.now_ms + 1, &size), nullptr);
+		const auto retained = link->queue_count;
+		link->tx_seq = UINT32_MAX;
+		sim.prepare_during_rx = true;
+		for (unsigned int i = 0;
+		     i < 3000 && (link->queue_count || receiver->received_len < bytes.size());
+		     i++) {
+			ASSERT_NO_FATAL_FAILURE(sim_frame(&sim));
+		}
+		EXPECT_EQ(retained, bytes.size());
+		EXPECT_EQ(link->queue_count, 0);
+		ASSERT_EQ(receiver->received_len, bytes.size());
+		EXPECT_EQ(memcmp(receiver->received, bytes.data(), bytes.size()), 0);
+	}
+}
+
+TEST_P(LinkProfiles, ReverseRxPreparesSuccessorAtRetryDeadlineAndFallsBackOnLostAck)
+{
+	for (const bool acknowledged : {false, true}) {
+		SCOPED_TRACE(acknowledged);
+		sim_init(&sim);
+		ASSERT_NO_FATAL_FAILURE(connect_saved(&sim, GetParam()));
+		auto *link = &sim.leader.link;
+		link->cfg.resync_every_n = 0;
+		link->cfg.arq_timeout_ms = 1;
+		link->sess_cfm_due = false;
+		const uint8_t first[] = {1, 2, 3};
+		const uint8_t next[] = {4, 5, 6, 7};
+		ASSERT_EQ(zlrs_link_write(link, first, sizeof(first)), sizeof(first));
+		const auto *req = zlrs_link_slot(link, ZLRS_SLOT_DATA_A, sim.now_ms);
+		ASSERT_NE(req, nullptr);
+		const auto *first_buf = req->buf;
+		zlrs_link_complete(link, ZLRS_RADIO_OK, 0, 0, 0, sim.now_ms);
+		ASSERT_EQ(zlrs_link_write(link, next, sizeof(next)), sizeof(next));
+		req = zlrs_link_slot(link, ZLRS_SLOT_DATA_B, sim.now_ms + 1);
+		ASSERT_NE(req, nullptr);
+		ASSERT_FALSE(req->is_tx);
+		uint16_t size;
+		const auto *second_buf =
+			zlrs_link_prepare_data(link, ZLRS_SLOT_DATA_A, sim.now_ms + 2, &size);
+		ASSERT_NE(second_buf, nullptr);
+		EXPECT_NE(second_buf, first_buf);
+		const auto generation = zlrs_link_prepared_generation(link);
+		if (acknowledged) {
+			zlrs_frame_t ack = {};
+			ack.type = ZLRS_PKT_DATA_F2L;
+			ack.seq = sim.follower.link.tx_seq++;
+			ack.body.data.ack = 1;
+			ASSERT_NO_FATAL_FAILURE(inject(&sim.leader, &ack, ZLRS_DATA_PREFIX_LEN,
+						       link->session_key_in, sim.now_ms + 1,
+						       false));
+		} else {
+			zlrs_link_complete(link, ZLRS_RADIO_OK, 0, 0, 0, sim.now_ms + 1);
+		}
+		req = zlrs_link_slot(link, ZLRS_SLOT_DATA_A, sim.now_ms + 2);
+		ASSERT_NE(req, nullptr);
+		ASSERT_TRUE(req->is_tx);
+		EXPECT_EQ(req->buf, acknowledged ? second_buf : first_buf);
+		if (acknowledged) {
+			EXPECT_EQ(req->generation, generation);
+		}
+		zlrs_frame_t frame;
+		ASSERT_TRUE(zlrs_frame_decode(&frame, req->buf, req->size,
+					      zlrs_profile_tag_len(GetParam())));
+		EXPECT_EQ(frame.body.data.data_seq, acknowledged ? 1 : 0);
+		EXPECT_EQ(memcmp(frame.body.data.bytes, acknowledged ? next : first,
+				 acknowledged ? sizeof(next) : sizeof(first)),
+			  0);
+		EXPECT_EQ(memcmp(second_buf + ZLRS_DATA_HEADROOM, next, sizeof(next)), 0);
+		zlrs_link_complete(link, ZLRS_RADIO_OK, 0, 0, 0, sim.now_ms + 2);
+	}
+}

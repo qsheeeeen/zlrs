@@ -73,11 +73,29 @@ and interrupt paths must execute from SRAM.
 
 ## Delivery and maintenance
 
-The link queue retains outbound bytes until the peer acknowledges them. Serial
+The link packet FIFO retains outbound bytes until the peer acknowledges them. Serial
 output queues retain received bytes until the local host drains them. The local
 sink must accept the entire packet before the link advances its receive ACK.
 USB and flow-controlled UART input backpressure propagate when finite queues
 fill; unthrottled UART loss is counted.
+
+The RF owner reserves writable payload space in the FIFO's tail packet, then
+serial input copies directly into that space and commits only the bytes read.
+Each packet reserves eight DATA header bytes and room for the profile's tag.
+The FIFO stores payload once; encoding and retries only write header/tag bytes.
+Packet slots come from aligned static storage partitioned at the configured MTU,
+with a 4096-byte user-data budget including unacknowledged DATA. The descriptor
+bound preserves this budget for MTUs of at least 128 bytes, including two short
+sealed packets; smaller diagnostic MTUs can reach that bound first and expose
+less space through the normal backpressure API. No heap allocation is used.
+
+The head packet owns the current unacknowledged payload; its successor can be
+prepared during reverse RX, but cannot transmit until the head is acknowledged.
+Later packets remain ordered behind them. ACK releases the head slot rather than
+copying its successor. New sessions preserve packets in order and reset their
+session-specific DATA identities. Best-effort mode releases a packet only after
+successful local TX. A failed local DATA transmission is eligible for retry at
+the next legal opportunity without waiting for an ACK timeout.
 
 Management, pairing persistence, image confirmation and log synchronization
 require a maintenance window at a frame boundary. The window cancels pending
@@ -152,7 +170,10 @@ persistent records use explicit bytes, independent of compiler layout.
 Inputs require bounded length, version, CRC, authentication, direction, context,
 replay and FIFO checks. A prepared packet must still match its session, frame
 sequence, DATA identity, scheduled period and current receive ACK. A changed ACK
-requires a rebuild into a separate buffer, preserving the preloaded snapshot
-while acknowledging accepted DATA at the next TX opportunity.
+updates the packet header and tag in place without copying its payload. Every
+encoding receives a content generation; FIFO reuse requires matching buffer
+address, length and generation. A changed generation forces a fresh FIFO load.
+Submitted TX memory is immutable until hardware completion or cancellation.
+Protocol work and radio operations remain serialized by the RF owner.
 
 Acceptance requirements are consolidated in [development and acceptance](10-debug.md).

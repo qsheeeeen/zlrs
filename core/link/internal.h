@@ -43,3 +43,6 @@ const zlrs_radio_req_t *link_submit_tx(zlrs_link_t *link, uint8_t *buf, uint16_t
 				       const uint8_t sync_word[ZLRS_SYNC_WORD_LEN]);
 uint32_t link_sync_freq_hz(const zlrs_link_t *link);
 const uint8_t *link_tag_key_for(const zlrs_link_t *link, uint8_t type, bool outbound);
+
+/* Release only after peer ACK (ARQ) or successful local TX (best effort). */
+void link_release_data(zlrs_link_t *link);

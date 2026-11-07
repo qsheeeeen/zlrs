@@ -159,13 +159,23 @@ typedef struct {
 	uint32_t data_drop_bytes;
 } zlrs_link_stats_t;
 
-/*
- * Bytes the link will hold for the air. ARQ keeps a frame in this queue until the peer
- * acknowledges it, so the queue has to cover that packet plus whatever the application
- * hands over in the meantime; at 512 a single 512-byte write filled it and everything after that
- * was dropped before it ever reached the air.
- */
+/* Logical byte budget includes queued and unacknowledged DATA. Packet storage
+ * adds head/tag/alignment room and two short sealed packets. Production MTUs
+ * are >=128; smaller diagnostic MTUs may reach the descriptor bound first. */
 #define ZLRS_LINK_TX_QUEUE_LEN 4096U
+#define ZLRS_LINK_TX_POOL_MIN_MTU 128U
+#define ZLRS_LINK_TX_PACKETS                                                                       \
+	((ZLRS_LINK_TX_QUEUE_LEN + ZLRS_LINK_TX_POOL_MIN_MTU - 1U) / ZLRS_LINK_TX_POOL_MIN_MTU + 2U)
+#define ZLRS_DATA_HEADROOM (ZLRS_FRAME_HDR_LEN + ZLRS_DATA_PREFIX_LEN)
+#define ZLRS_LINK_TX_STORAGE_LEN                                                                   \
+	(ZLRS_LINK_TX_QUEUE_LEN + 3U * ZLRS_FRAME_MAX_LEN +                                        \
+	 ZLRS_LINK_TX_PACKETS * (ZLRS_DATA_HEADROOM + ZLRS_TAG_LEN + 3U))
+
+typedef struct {
+	uint32_t generation;
+	uint16_t len;
+	bool sealed;
+} zlrs_tx_packet_t;
 
 /* Stop-and-wait ARQ: one outstanding DATA packet in each direction. */
 #define ZLRS_ARQ_TIMEOUT_MS  30U
@@ -174,7 +184,9 @@ typedef struct {
 
 /* A DATA packet encoded during RX. Sender state commits only when its TX slot runs. */
 typedef struct {
-	uint8_t buf[ZLRS_FRAME_MAX_LEN];
+	uint8_t *buf;
+	uint32_t generation;
+	uint16_t packet_index;
 	uint8_t key[ZLRS_KEY_LEN];
 	uint32_t frame_index;
 	uint16_t size;
@@ -272,10 +284,19 @@ typedef struct {
 	bool radio_acquiring;
 	bool radio_sync_seen;
 
-	/* passthrough queue */
-	uint8_t tx_queue[ZLRS_LINK_TX_QUEUE_LEN];
-	uint16_t queue_head;
-	uint16_t queue_count;
+	/* Packet FIFO: storage is partitioned into aligned slots at the configured MTU.
+	 * Only the head (current packet) and its successor may be sealed short. */
+	alignas(uint32_t) uint8_t tx_storage[ZLRS_LINK_TX_STORAGE_LEN];
+	zlrs_tx_packet_t tx_packets[ZLRS_LINK_TX_PACKETS];
+	uint16_t tx_stride;
+	uint16_t tx_packet_limit;
+	uint16_t tx_packet_count;
+	uint16_t tx_pool_mtu;
+	uint16_t tx_claim_len;
+	uint16_t tx_claim_index;
+	uint32_t tx_generation;
+	uint16_t queue_head;       /* Packet index, not a byte offset. */
+	uint16_t queue_count;      /* User bytes, including the packet awaiting ACK. */
 	uint16_t pending_data_len; /* Best-effort bytes borrowed until successful TX completion. */
 
 	/* ARQ sender: one packet retained until the peer ACK bit changes. */
@@ -284,6 +305,7 @@ typedef struct {
 	uint32_t arq_first_sent_ms;
 	/* Retransmissions preserve the data sequence and payload. */
 	uint8_t arq_used;
+	bool arq_local_failed; /* No successful local TX: retry at the next legal opportunity. */
 	uint8_t arq_retries;
 	uint32_t arq_sent_ms;
 	uint32_t last_feedback_tx_ms;
@@ -390,6 +412,14 @@ void zlrs_link_set_dev_id(zlrs_link_t *link, const uint8_t dev_id[ZLRS_DEV_ID_LE
  */
 uint16_t zlrs_link_tx_space(const zlrs_link_t *link);
 
+/* RF owner may write directly into the tail payload. No other link operation
+ * is allowed between reserve and commit; commit(0) cancels the reservation. */
+uint8_t *zlrs_link_tx_reserve(zlrs_link_t *link, uint16_t *capacity);
+void zlrs_link_tx_commit(zlrs_link_t *link, uint16_t written);
+
+/* Content token for the last successful prepare_data(), for FIFO reuse. */
+uint32_t zlrs_link_prepared_generation(const zlrs_link_t *link);
+
 /* The exact bytes the pairing KDF is fed with: both ids (sorted) then the salt (sorted) */
 #define ZLRS_PAIR_CTX_LEN (2U * ZLRS_DEV_ID_LEN + ZLRS_PAIR_SALT_LEN)
 void zlrs_link_pair_ctx(const zlrs_link_t *link, uint8_t out[ZLRS_PAIR_CTX_LEN]);
@@ -420,9 +450,10 @@ bool zlrs_link_press(zlrs_link_t *link, uint32_t now_ms);
 /* Superframe slot: return the transaction to submit, or NULL when there is none */
 const zlrs_radio_req_t *zlrs_link_slot(zlrs_link_t *link, uint8_t slot, uint32_t now_ms);
 
-/* Encode new ARQ DATA for the next assigned TX slot without advancing sender/hop state.
- * Safe while RX is pending. Returned bytes stay immutable through the resulting TX request;
- * a changed receive ACK makes slot selection rebuild into a separate buffer instead.
+/* Encode ARQ DATA for the next assigned TX slot without advancing sender/hop state.
+ * Safe while RX is pending. Slot selection may update the header/tag in place;
+ * FIFO consumers must compare the generation as well as pointer and size.
+ * Once submitted, bytes remain immutable through TX completion/cancellation.
  * NULL means that handshake, recovery or backpressure requires the normal path. */
 const uint8_t *zlrs_link_prepare_data(zlrs_link_t *link, uint8_t slot, uint32_t now_ms,
 				      uint16_t *size);

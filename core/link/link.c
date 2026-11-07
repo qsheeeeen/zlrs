@@ -150,6 +150,7 @@ static const zlrs_radio_req_t *make_req(zlrs_link_t *link, bool is_tx, uint8_t *
 	link->req.is_tx = is_tx;
 	link->req.tx_power_dbm = link->cfg.tx_power_dbm;
 	link->req.size = size;
+	link->req.generation = is_tx ? ++link->tx_generation : 0U;
 	link->req.max_rx_size = is_tx ? 0U : ZLRS_FRAME_MAX_LEN;
 	link->req.timeout_ms = timeout_ms;
 	link->req.buf = buf;
@@ -584,6 +585,9 @@ bool zlrs_link_reconfigure_radio(zlrs_link_t *link, const zlrs_link_cfg_t *cfg)
 
 const zlrs_radio_req_t *zlrs_link_slot(zlrs_link_t *link, uint8_t slot, uint32_t now_ms)
 {
+	if (link->req_pending) {
+		return NULL;
+	}
 	link->slot = slot;
 	link->slot_ms = now_ms;
 	if (link->tx_seq == UINT32_MAX &&
@@ -628,8 +632,10 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 		link->stats.radio_fail++;
 		link->stats.slot_fail[slot]++;
 		if (was_tx) {
-			/* Preparation borrowed bytes; only successful completion dequeues them. */
 			link->pending_data_len = 0U;
+			if (link->req_is_data && link->req_arq && link->req_data_len != 0U) {
+				link->arq_local_failed = true;
+			}
 		}
 		return;
 	}
@@ -649,9 +655,9 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 				link->stats.tx_full_data_frames += data_len == link->req_data_mtu;
 			}
 		}
-		link->queue_head = (uint16_t)((link->queue_head + link->pending_data_len) %
-					      ZLRS_LINK_TX_QUEUE_LEN);
-		link->queue_count = (uint16_t)(link->queue_count - link->pending_data_len);
+		if (link->pending_data_len != 0U) {
+			link_release_data(link);
+		}
 		link->pending_data_len = 0U;
 		return;
 	}

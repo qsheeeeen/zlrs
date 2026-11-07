@@ -403,7 +403,7 @@ int zlrs_lr2021_launch_at(uint32_t us)
 	return zlrs_lr2021_launch();
 }
 
-int zlrs_lr2021_preload_tx(const uint8_t *bytes, uint16_t size)
+int zlrs_lr2021_preload_tx(const uint8_t *bytes, uint16_t size, uint32_t generation)
 {
 	return 0;
 }
