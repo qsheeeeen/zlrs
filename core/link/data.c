@@ -36,9 +36,10 @@ static zlrs_data_frame_t *data_frame(const zlrs_link_t *link, uint8_t seq, zlrs_
 {
 	const int16_t rssi = link->stats.last_rssi;
 	const bool ack = link->cfg.arq && receive_ack_bit(link);
-	*frame = (zlrs_frame_t){
-		.type = link->cfg.role == ZLRS_ROLE_LEADER ? ZLRS_PKT_DATA_L2F : ZLRS_PKT_DATA_F2L,
-	};
+	/* Only used DATA bytes are encoded. Callers fill the payload and sequence;
+	 * avoid clearing the whole maximum-size payload for every packet/ACK. */
+	frame->type = link->cfg.role == ZLRS_ROLE_LEADER ? ZLRS_PKT_DATA_L2F : ZLRS_PKT_DATA_F2L;
+	memset(frame->tag, 0, sizeof(frame->tag));
 	zlrs_data_frame_t *const data = &frame->body.data;
 	data->data_seq = seq;
 	data->ack = ack;

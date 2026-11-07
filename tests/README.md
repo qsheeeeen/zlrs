@@ -167,11 +167,14 @@ build/bench/link_bench > build/bench/link.json
 ```
 
 The optional positional argument selects 100..1000000 iterations (default 20000).
-Results include compiler version and seven samples per case, with median/min/max
-nanoseconds for encoding, P1 authentication, prepared DATA and TX completion at
-0/32/128/499 payload bytes. Completion replays a prepared request to isolate its
-bookkeeping cost. Prepare measurements exclude empty packets. The fixture checks
-packet sizes and completion counters before accepting a measurement.
+Results include compiler version, profile and seven samples per case, with
+median/min/max nanoseconds for encoding, P1 authentication, prepared DATA,
+slot selection/encoding (`submit`) and TX completion at 0/32/128/499 payload bytes.
+Both P0 and P1 are measured; authentication applies only to P1. Submit replays
+selection without radio completion or an ACK; completion replays a prepared
+request to isolate its bookkeeping cost. Prepare measurements exclude empty
+packets. The fixture checks built packets against reference bytes and checks
+completion counters before accepting a measurement.
 
 Compare release builds with the same compiler, CPU and load; retain both JSON
 files and commits. CI retains measurements without noisy wall-clock thresholds.

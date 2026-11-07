@@ -28,16 +28,18 @@ enum phase {
 	ENCODE,
 	TAG,
 	PREPARE,
+	SUBMIT,
 	COMPLETE
 };
 
-static const char *const names[] = {"encode", "tag", "prepare", "complete"};
+static const char *const names[] = {"encode", "tag", "prepare", "submit", "complete"};
 
-static double measure(enum phase phase, uint16_t payload, unsigned long iterations)
+static double measure(enum phase phase, uint16_t payload, unsigned long iterations,
+		      zlrs_profile_t profile)
 {
 	const zlrs_link_cfg_t cfg = {.role = ZLRS_ROLE_LEADER,
 				     .domain = ZLRS_DOMAIN_ISM2400,
-				     .profile = ZLRS_PROFILE_P1,
+				     .profile = profile,
 				     .mod = {.rate_bps = 2600000},
 				     .data_mtu = 499,
 				     .arq = 1};
@@ -49,11 +51,12 @@ static double measure(enum phase phase, uint16_t payload, unsigned long iteratio
 	uint8_t bytes[499];
 	memset(bytes, 0x42, sizeof(bytes));
 	require(zlrs_link_write(&link, bytes, payload) == payload, "queue payload");
-	const uint16_t len = zlrs_frame_len(ZLRS_DATA_PREFIX_LEN + payload, ZLRS_TAG_LEN);
+	const uint8_t tag_len = zlrs_profile_tag_len(profile);
+	const uint16_t len = zlrs_frame_len(ZLRS_DATA_PREFIX_LEN + payload, tag_len);
 	zlrs_frame_t frame = {.type = ZLRS_PKT_DATA_L2F, .seq = 1};
 	memcpy(frame.body.data.bytes, bytes, payload);
 	uint8_t encoded[ZLRS_FRAME_MAX_LEN], tag[ZLRS_TAG_LEN];
-	require(zlrs_frame_encode(&frame, encoded, sizeof(encoded), len, ZLRS_TAG_LEN) == len,
+	require(zlrs_frame_encode(&frame, encoded, sizeof(encoded), len, tag_len) == len,
 		"encode packet");
 	if (phase == COMPLETE) {
 		link.arq_ack_pending = payload == 0;
@@ -64,8 +67,8 @@ static double measure(enum phase phase, uint16_t payload, unsigned long iteratio
 	for (unsigned long i = 0; i < iterations; i++) {
 		switch (phase) {
 		case ENCODE:
-			checksum = zlrs_frame_encode(&frame, encoded, sizeof(encoded), len,
-						     ZLRS_TAG_LEN);
+			checksum =
+				zlrs_frame_encode(&frame, encoded, sizeof(encoded), len, tag_len);
 			break;
 		case TAG:
 			zlrs_tag(link.session_key_out, ZLRS_KEY_LEN, encoded, len - ZLRS_TAG_LEN,
@@ -77,6 +80,15 @@ static double measure(enum phase phase, uint16_t payload, unsigned long iteratio
 			const uint8_t *packet =
 				zlrs_link_prepare_data(&link, ZLRS_SLOT_DATA_A, 1000, &size);
 			checksum = packet != NULL ? size : 0;
+			break;
+		}
+		case SUBMIT: {
+			/* Replay selection/encoding without radio completion or an ACK. */
+			link.req_pending = false;
+			link.arq_used = 0;
+			link.arq_ack_pending = payload == 0;
+			const zlrs_radio_req_t *req = zlrs_link_slot(&link, ZLRS_SLOT_DATA_A, 1000);
+			checksum = req != NULL && req->is_tx ? req->size : 0;
 			break;
 		}
 		case COMPLETE:
@@ -94,8 +106,20 @@ static double measure(enum phase phase, uint16_t payload, unsigned long iteratio
 		require(payload ? link.stats.tx_data_frames == iterations
 				: link.stats.tx_ack_only_frames == iterations,
 			"completion classification");
-	} else if (phase == PREPARE) {
-		require(checksum == len, "prepared packet size");
+	} else if (phase == PREPARE || phase == SUBMIT) {
+		require(checksum == len, "built packet size");
+		const uint8_t *packet = phase == PREPARE ? link.prepared_data.buf : link.req.buf;
+		zlrs_frame_t decoded;
+		require(zlrs_frame_decode(&decoded, packet, len, tag_len), "decode built packet");
+		frame.seq = decoded.seq;
+		frame.body.data.lq_percent = ZLRS_LQ_UNAVAILABLE;
+		require(zlrs_frame_encode(&frame, encoded, sizeof(encoded), len, tag_len) == len,
+			"encode reference packet");
+		if (tag_len != 0) {
+			zlrs_tag(link.session_key_out, ZLRS_KEY_LEN, encoded, len - tag_len,
+				 encoded + len - tag_len);
+		}
+		require(memcmp(packet, encoded, len) == 0, "built packet matches reference");
 	}
 	return ns;
 }
@@ -123,22 +147,28 @@ int main(int argc, char **argv)
 	printf("{\"compiler\":\"%s\",\"iterations\":%lu,\"samples_per_case\":%d,\"results\":[\n",
 	       __VERSION__, iterations, SAMPLES);
 	bool first = true;
-	for (unsigned int i = 0; i < sizeof(payloads) / sizeof(payloads[0]); i++) {
-		for (enum phase phase = ENCODE; phase <= COMPLETE; phase++) {
-			if (phase == PREPARE && payloads[i] == 0) {
-				continue;
+	for (zlrs_profile_t profile = ZLRS_PROFILE_P0; profile <= ZLRS_PROFILE_P1; profile++) {
+		for (unsigned int i = 0; i < sizeof(payloads) / sizeof(payloads[0]); i++) {
+			for (enum phase phase = ENCODE; phase <= COMPLETE; phase++) {
+				if ((phase == PREPARE && payloads[i] == 0) ||
+				    (phase == TAG && profile == ZLRS_PROFILE_P0)) {
+					continue;
+				}
+				/* Warm instruction/data caches. */
+				(void)measure(phase, payloads[i], 100, profile);
+				double ns[SAMPLES];
+				for (unsigned int sample = 0; sample < SAMPLES; sample++) {
+					ns[sample] =
+						measure(phase, payloads[i], iterations, profile);
+				}
+				qsort(ns, SAMPLES, sizeof(ns[0]), compare);
+				printf("%s{\"profile\":%u,\"phase\":\"%s\",\"payload_bytes\":%u,"
+				       "\"median_ns\":%.3f,"
+				       "\"min_ns\":%.3f,\"max_ns\":%.3f}",
+				       first ? "" : ",\n", profile, names[phase], payloads[i],
+				       ns[SAMPLES / 2], ns[0], ns[SAMPLES - 1]);
+				first = false;
 			}
-			(void)measure(phase, payloads[i], 100); /* Warm instruction/data caches. */
-			double ns[SAMPLES];
-			for (unsigned int sample = 0; sample < SAMPLES; sample++) {
-				ns[sample] = measure(phase, payloads[i], iterations);
-			}
-			qsort(ns, SAMPLES, sizeof(ns[0]), compare);
-			printf("%s{\"phase\":\"%s\",\"payload_bytes\":%u,\"median_ns\":%.3f,"
-			       "\"min_ns\":%.3f,\"max_ns\":%.3f}",
-			       first ? "" : ",\n", names[phase], payloads[i], ns[SAMPLES / 2],
-			       ns[0], ns[SAMPLES - 1]);
-			first = false;
 		}
 	}
 	puts("\n]}");
