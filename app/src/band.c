@@ -6,16 +6,16 @@ static uint32_t maximum(uint32_t a, uint32_t b)
 	return a > b ? a : b;
 }
 
-void zlrs_band_policy_init(zlrs_band_policy_t *p, bool automatic, bool leader, bool subg,
+void zlrs_band_policy_init(zlrs_band_policy_t *p, bool automatic, zlrs_role_t role, bool subg,
 			   uint32_t duty_window_ms, uint32_t now_ms)
 {
 	*p = (zlrs_band_policy_t){
 		.automatic = automatic,
-		.leader = leader,
+		.role = role,
 		.subg = subg,
 		.loss_ms = maximum(1500U, duty_window_ms ? duty_window_ms + 2000U : 0U),
 		/* Leader holds one profile longer than a complete Follower sweep. */
-		.dwell_ms = (leader ? ZLRS_PHY_AUTO_COUNT + 2U : 1U) *
+		.dwell_ms = (role == ZLRS_ROLE_LEADER ? ZLRS_PHY_AUTO_COUNT + 2U : 1U) *
 			    maximum(4000U, duty_window_ms ? duty_window_ms + 2000U : 0U),
 		.entered_ms = now_ms,
 		.contact_ms = now_ms};
@@ -171,7 +171,7 @@ zlrs_band_action_t zlrs_band_policy_update(zlrs_band_policy_t *p, const zlrs_ban
 	if (p->probing && p->good && (uint32_t)(o->now_ms - p->good_ms) >= 5000U) {
 		p->probing = false;
 	}
-	if (!p->leader) {
+	if (p->role != ZLRS_ROLE_LEADER) {
 		return ZLRS_BAND_KEEP;
 	}
 	if (!p->subg && (quality_poor || (p->bad && (uint32_t)(o->now_ms - p->bad_ms) >= 2000U))) {

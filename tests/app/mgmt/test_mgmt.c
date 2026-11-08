@@ -53,9 +53,9 @@ ssize_t __wrap_nvs_write(struct nvs_fs *fs, uint16_t id, const void *bytes, size
 	return fail_write ? -EIO : __real_nvs_write(fs, id, bytes, len);
 }
 
-zlrs_rf_status_t zlrs_rf_status(void)
+void zlrs_rf_status(zlrs_rf_status_t *out)
 {
-	return rf;
+	*out = rf;
 }
 
 void zlrs_rf_status_refresh(void)

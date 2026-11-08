@@ -19,6 +19,7 @@
 #include <string.h>
 
 #include "link/link.h"
+#include "link/pairing.h"
 #include "proto/crypto.h"
 #include "proto/frame.h"
 
@@ -150,7 +151,7 @@ static void fx_link_init(zlrs_link_t *link, uint8_t arq)
 	static const uint8_t peer_id[ZLRS_DEV_ID_LEN] = {0xaa, 0xbb, 0xcc, 0xdd};
 	static const uint8_t salt[ZLRS_PAIR_SALT_LEN] = {1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U};
 	const zlrs_link_cfg_t cfg = {.role = ZLRS_ROLE_LEADER,
-				     .domain = ZLRS_DOMAIN_ISM2400,
+				     .region = ZLRS_REGION_ISM2400,
 				     .profile = ZLRS_PROFILE_P1,
 				     .mod = {.rate_bps = 2600000U},
 				     .tx_power_dbm = 10,

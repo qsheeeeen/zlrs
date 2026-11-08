@@ -1,19 +1,20 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "../support/peer.h"
-#include <errno.h>
-#include <string.h>
-#include <zephyr/ztest.h>
-#include <zephyr/random/random.h>
-#include <zephyr/drivers/entropy.h>
-#include "rf.h"
-#include "persist.h"
+#include "band.h"
 #include "diagnostics.h"
-#include "serial.h"
+#include "link/link.h"
+#include "link/pairing.h"
+#include "persist.h"
 #include "platform/lr2021.h"
 #include "platform/slot_timer.h"
-#include "link/link.h"
-#include "band.h"
 #include "power.h"
+#include "rf.h"
+#include "serial.h"
+#include <errno.h>
+#include <string.h>
+#include <zephyr/drivers/entropy.h>
+#include <zephyr/random/random.h>
+#include <zephyr/ztest.h>
 
 /* Real RF and two real protocol nodes; only the clock, LR2021 and serial edges are fake. */
 static zlrs_link_t *local;
@@ -201,7 +202,8 @@ static void peer_update_band(void)
 		return;
 	}
 	const uint32_t now = clock_us / 1000U;
-	const zlrs_link_info_t info = zlrs_link_get_info(&peer);
+	zlrs_link_info_t info;
+	zlrs_link_get_info(&peer, &info);
 	const zlrs_power_observation_t power_observation = {
 		.now_ms = now,
 		.feedback_ms = info.last_peer_feedback_ms,
@@ -257,7 +259,7 @@ static void peer_update_band(void)
 	}
 	if (change) {
 		zlrs_link_cfg_t cfg = peer.cfg;
-		cfg.domain = subg ? ZLRS_DOMAIN_CN433 : ZLRS_DOMAIN_ISM2400;
+		cfg.region = subg ? ZLRS_REGION_CN433 : ZLRS_REGION_ISM2400;
 		cfg.mod = subg ? zlrs_mod_flrc(325000U) : zlrs_mod_phy(phy);
 		cfg.tx_power_dbm = subg ? 10 : 12;
 		zlrs_power_init(&peer_power, cfg.tx_power_dbm, subg ? -10 : -17, now);
@@ -563,16 +565,20 @@ static bool receive_peer(void *ctx, const uint8_t *bytes, uint16_t size)
 
 static void frames(unsigned int count)
 {
+	zlrs_rf_status_t status;
 	while (count--) {
-		const zlrs_data_band_t previous_band = zlrs_rf_status().data_band;
+		zlrs_rf_status(&status);
+		const zlrs_data_band_t previous_band = status.data_band;
 		zlrs_rf_frame();
 		zassert_false(zlrs_link_is_busy(local));
-		if (RF_TEST_BAND_AUTO && zlrs_rf_status().data_band != previous_band) {
+		zlrs_rf_status(&status);
+		if (RF_TEST_BAND_AUTO && status.data_band != previous_band) {
 			/* A transition must reach UI without waiting for the metrics timer. */
 			zlrs_rf_publish_state(false);
 			zlrs_rf_status_t published;
 			zassert_ok(zbus_chan_read(&zlrs_rf_chan, &published, K_NO_WAIT));
-			zassert_equal(published.data_band, zlrs_rf_status().data_band);
+			zlrs_rf_status(&status);
+			zassert_equal(published.data_band, status.data_band);
 			zassert_equal(published.band_mode, ZLRS_DATA_BAND_AUTO);
 		}
 	}
@@ -588,46 +594,59 @@ static bool peer_random(void *ctx, uint32_t *out)
 
 static bool both_on_band(bool subg)
 {
-	const zlrs_link_info_t other = zlrs_link_get_info(&peer);
-	const zlrs_rf_status_t status = zlrs_rf_status();
+	zlrs_link_info_t other;
+	zlrs_link_get_info(&peer, &other);
+	zlrs_rf_status_t status;
+	zlrs_rf_status(&status);
 	return status.data_band == (subg ? ZLRS_DATA_BAND_SUBG : ZLRS_DATA_BAND_24) &&
-	       peer.cfg.domain == (subg ? ZLRS_DOMAIN_CN433 : ZLRS_DOMAIN_ISM2400) &&
+	       peer.cfg.region == (subg ? ZLRS_REGION_CN433 : ZLRS_REGION_ISM2400) &&
 	       status.session_valid && other.session_valid && !status.band_acquiring &&
 	       !other.radio_acquiring;
 }
 
 static bool both_on_phy(zlrs_phy_t phy)
 {
-	return both_on_band(false) && zlrs_rf_status().data_phy == phy &&
+	zlrs_rf_status_t status;
+	zlrs_rf_status(&status);
+	return both_on_band(false) && status.data_phy == phy &&
 	       zlrs_mod_phy_id(&peer.cfg.mod) == phy;
 }
 
 static void debug_power_acceptance(void)
 {
+	zlrs_rf_status_t status;
 	frames(DIV_ROUND_UP(300000U, period_us));
 	zlrs_rf_publish_state(false);
-	const zlrs_rf_status_t before = zlrs_rf_status();
+	zlrs_rf_status_t before;
+	zlrs_rf_status(&before);
 	zassert_ok(zlrs_rf_power_request(false, before.power_floor_dbm));
 	frames(1);
-	zassert_true(zlrs_rf_status().power_fixed);
-	zassert_equal(zlrs_rf_status().tx_power_dbm, before.power_floor_dbm);
+	zlrs_rf_status(&status);
+	zassert_true(status.power_fixed);
+	zlrs_rf_status(&status);
+	zassert_equal(status.tx_power_dbm, before.power_floor_dbm);
 	zlrs_rf_publish_state(false);
 	zassert_equal(zlrs_rf_power_request(false, before.power_ceiling_dbm + 1), -EINVAL);
 	/* Capture can retain CONNECTED and a session; it must still restore maximum. */
 	zlrs_link_acquire_radio(local, clock_us / 1000U);
 	zlrs_link_acquire_radio(&peer, clock_us / 1000U);
 	frames(1);
-	zassert_equal(zlrs_rf_status().tx_power_dbm, before.power_ceiling_dbm);
-	zassert_false(zlrs_rf_status().power_fixed);
+	zlrs_rf_status(&status);
+	zassert_equal(status.tx_power_dbm, before.power_ceiling_dbm);
+	zlrs_rf_status(&status);
+	zassert_false(status.power_fixed);
 	frames(150);
 	zlrs_rf_publish_state(false);
 	zassert_ok(zlrs_rf_power_request(false, before.power_floor_dbm));
 	frames(1);
-	zassert_true(zlrs_rf_status().power_fixed);
+	zlrs_rf_status(&status);
+	zassert_true(status.power_fixed);
 	zassert_ok(zlrs_rf_power_request(true, 0));
 	frames(1);
-	zassert_false(zlrs_rf_status().power_fixed);
-	zassert_equal(zlrs_rf_status().tx_power_dbm, before.power_ceiling_dbm);
+	zlrs_rf_status(&status);
+	zassert_false(status.power_fixed);
+	zlrs_rf_status(&status);
+	zassert_equal(status.tx_power_dbm, before.power_ceiling_dbm);
 }
 
 static void publication_acceptance(void)
@@ -660,26 +679,33 @@ static void publication_acceptance(void)
 
 static void power_before_profile_acceptance(void)
 {
+	zlrs_rf_status_t status;
 	/* Simulate a wall after both ends saved power at close range. Only one
 	 * direction weakens at a time; the weak transmitter learns through DATA. */
 	for (unsigned int direction = 0; direction < 2; direction++) {
-		for (unsigned int n = 0;
-		     n < 16000 && (zlrs_rf_status().tx_power_dbm > 3 || peer.cfg.tx_power_dbm > 3);
-		     n++) {
+		for (unsigned int n = 0; n < 16000; n++) {
+			zlrs_rf_status(&status);
+			if (status.tx_power_dbm <= 3 && peer.cfg.tx_power_dbm <= 3) {
+				break;
+			}
 			frames(1);
 		}
-		zassert_true(zlrs_rf_status().tx_power_dbm <= 3 && peer.cfg.tx_power_dbm <= 3,
+		zlrs_rf_status(&status);
+		zassert_true(status.tx_power_dbm <= 3 && peer.cfg.tx_power_dbm <= 3,
 			     "both endpoints did not qualify normal power saving");
-		const uint32_t switches = zlrs_rf_status().band_switches;
+		zlrs_rf_status(&status);
+		const uint32_t switches = status.band_switches;
 		local_rx_offset = direction == 0 ? -40 : 0;
 		peer_rx_offset = direction == 1 ? -40 : 0;
 		bool local_boosted = false, peer_boosted = false;
 		for (unsigned int n = 0; n < DIV_ROUND_UP(5000000U, period_us); n++) {
 			frames(1);
-			local_boosted |= zlrs_rf_status().tx_power_dbm == 12;
+			zlrs_rf_status(&status);
+			local_boosted |= status.tx_power_dbm == 12;
 			peer_boosted |= peer.cfg.tx_power_dbm == 12;
 			zassert_true(both_on_phy(ZLRS_PHY_FLRC_2600));
-			zassert_equal(zlrs_rf_status().band_switches, switches,
+			zlrs_rf_status(&status);
+			zassert_equal(status.band_switches, switches,
 				      "link downgraded before using its power headroom");
 			zassert_equal(local->band_plan.switch_frame, 0);
 			zassert_equal(peer.band_plan.switch_frame, 0);
@@ -692,11 +718,14 @@ static void power_before_profile_acceptance(void)
 	/* Recovery also takes priority over an in-range debug power override. */
 	zassert_ok(zlrs_rf_power_request(false, 3));
 	frames(2);
-	zassert_true(zlrs_rf_status().power_fixed);
+	zlrs_rf_status(&status);
+	zassert_true(status.power_fixed);
 	peer_rx_offset = -40;
 	frames(DIV_ROUND_UP(1500000U, period_us));
-	zassert_false(zlrs_rf_status().power_fixed);
-	zassert_equal(zlrs_rf_status().tx_power_dbm, 12);
+	zlrs_rf_status(&status);
+	zassert_false(status.power_fixed);
+	zlrs_rf_status(&status);
+	zassert_equal(status.tx_power_dbm, 12);
 	zassert_true(both_on_phy(ZLRS_PHY_FLRC_2600));
 	peer_rx_offset = 0;
 	frames(DIV_ROUND_UP(500000U, period_us));
@@ -713,19 +742,21 @@ static void start_automatic_peers(void)
 	zlrs_link_set_dev_id(&peer, saved_pairing.peer_id);
 	zlrs_link_set_root_key(&peer, saved_key, clock_us / 1000U);
 	zlrs_link_set_peer(&peer, saved_id, saved_pairing.pair_salt, clock_us / 1000U);
-	zlrs_band_policy_init(&peer_band_policy, true, cfg.role == ZLRS_ROLE_LEADER, false, 0,
-			      clock_us / 1000U);
+	zlrs_band_policy_init(&peer_band_policy, true, cfg.role, false, 0, clock_us / 1000U);
 	zlrs_power_init(&peer_power, 12, -17, clock_us / 1000U);
 	zlrs_rf_start();
 }
 
 static void automatic_acceptance(void)
 {
+	zlrs_rf_status_t status;
 	start_automatic_peers();
 	frames(150);
 	zassert_true(both_on_band(false));
-	zassert_equal(zlrs_rf_status().power_floor_dbm, -17);
-	zassert_equal(zlrs_rf_status().power_ceiling_dbm, 12);
+	zlrs_rf_status(&status);
+	zassert_equal(status.power_floor_dbm, -17);
+	zlrs_rf_status(&status);
+	zassert_equal(status.power_ceiling_dbm, 12);
 	debug_power_acceptance();
 	if (RF_TEST_ROLE_FOLLOWER) {
 		/* A legal SYNC with a large physical phase error is not DATA readiness. */
@@ -773,15 +804,18 @@ static void automatic_acceptance(void)
 		frames(1);
 	}
 	zassert_true(both_on_band(true));
-	zassert_equal(zlrs_rf_status().power_floor_dbm, -10);
-	zassert_equal(zlrs_rf_status().power_ceiling_dbm, 10);
+	zlrs_rf_status(&status);
+	zassert_equal(status.power_floor_dbm, -10);
+	zlrs_rf_status(&status);
+	zassert_equal(status.power_ceiling_dbm, 10);
 	zassert_equal(delivered, sizeof(incoming) - 1U);
 	zassert_equal(peer_delivered, sizeof(outgoing) - 1U);
 	zassert_equal(local->sess_nonce_leader, nonce);
 	bool tried = false, returned = false;
 	for (unsigned int i = 0; i < 18000; i++) {
 		frames(1);
-		tried |= zlrs_rf_status().data_band == ZLRS_DATA_BAND_24;
+		zlrs_rf_status(&status);
+		tried |= status.data_band == ZLRS_DATA_BAND_24;
 		if (tried && both_on_band(true)) {
 			returned = true;
 			break;
@@ -820,7 +854,8 @@ static void automatic_acceptance(void)
 	zassert_equal(local->sess_nonce_leader, nonce);
 	zassert_equal(local->stats.data_drop_bytes, 0);
 	zassert_equal(peer.stats.data_drop_bytes, 0);
-	zassert_true(zlrs_rf_status().band_switches >= 4U);
+	zlrs_rf_status(&status);
+	zassert_true(status.band_switches >= 4U);
 	zlrs_rf_pause();
 	zlrs_rf_status_refresh();
 	zlrs_rf_resume();
@@ -891,23 +926,26 @@ static void after(void *unused)
 
 ZTEST(rf_results, test_initialization_failure_stays_off_radio)
 {
-
+	zlrs_rf_status_t status;
 	identity_valid = false;
 	zassert_equal(zlrs_rf_init(), -ENODEV);
 	zlrs_rf_pause();
 	zlrs_rf_status_refresh();
 	zassert_equal(radio_reads, 0);
-	zassert_false(zlrs_rf_status().radio.valid);
+	zlrs_rf_status(&status);
+	zassert_false(status.radio.valid);
 	zlrs_rf_resume();
 }
 
 ZTEST(rf_results, test_entropy_failure_and_recovery)
 {
+	zlrs_rf_status_t status;
 	start_peers(true);
 
 	if (!RF_TEST_ROLE_FOLLOWER) {
 		zassert_equal(zlrs_rf_pair_start(), -EAGAIN);
-		zassert_not_equal(zlrs_rf_status().state, ZLRS_STATE_PAIRING);
+		zlrs_rf_status(&status);
+		zassert_not_equal(status.state, ZLRS_STATE_PAIRING);
 	}
 	const unsigned int plain_before = plain_random_requests;
 	frames(150);
@@ -1058,20 +1096,26 @@ ZTEST(rf_results, test_rx_fifo_read_can_finish_after_window_close)
 
 ZTEST(rf_results, test_power_saving_and_loss_recovery)
 {
+	zlrs_rf_status_t status;
 	connected_peers();
 
 	debug_power_acceptance();
 	const uint32_t power_wait_frames = 60000000U / period_us;
-	for (uint32_t i = 0U; i < power_wait_frames &&
-			      zlrs_rf_status().tx_power_dbm == (RF_TEST_BAND_SUBG ? 10 : 12);
-	     ++i) {
+	for (uint32_t i = 0U; i < power_wait_frames; ++i) {
+		zlrs_rf_status(&status);
+		if (status.tx_power_dbm != (RF_TEST_BAND_SUBG ? 10 : 12)) {
+			break;
+		}
 		frames(1);
 	}
-	zassert_true(zlrs_rf_status().tx_power_dbm < (RF_TEST_BAND_SUBG ? 10 : 12));
+	zlrs_rf_status(&status);
+	zassert_true(status.tx_power_dbm < (RF_TEST_BAND_SUBG ? 10 : 12));
 	mode = RX_FAIL;
 	frames(DIV_ROUND_UP(1100000U, period_us));
-	zassert_equal(zlrs_rf_status().tx_power_dbm, RF_TEST_BAND_SUBG ? 10 : 12);
-	zassert_false(zlrs_rf_status().power_fixed);
+	zlrs_rf_status(&status);
+	zassert_equal(status.tx_power_dbm, RF_TEST_BAND_SUBG ? 10 : 12);
+	zlrs_rf_status(&status);
+	zassert_false(status.power_fixed);
 }
 
 ZTEST(rf_results, test_rx_failure)
@@ -1165,34 +1209,43 @@ ZTEST(rf_results, test_missing_irq)
 
 ZTEST(rf_results, test_pair_cancel_restores_power)
 {
+	zlrs_rf_status_t status;
 	connected_peers();
 
 	zassert_ok(zlrs_rf_pair_start());
-	zassert_equal(zlrs_rf_status().tx_power_dbm, -10);
+	zlrs_rf_status(&status);
+	zassert_equal(status.tx_power_dbm, -10);
 	frames(DIV_ROUND_UP(250000U, period_us));
 	zassert_ok(zlrs_rf_pair_cancel());
-	zassert_equal(zlrs_rf_status().tx_power_dbm, RF_TEST_BAND_SUBG ? 10 : 12);
+	zlrs_rf_status(&status);
+	zassert_equal(status.tx_power_dbm, RF_TEST_BAND_SUBG ? 10 : 12);
 }
 
 ZTEST(rf_results, test_pair_timeout_restores_power)
 {
+	zlrs_rf_status_t status;
 	connected_peers();
 
 	zassert_ok(zlrs_rf_pair_start());
 	mode = RX_FAIL;
 	frames(DIV_ROUND_UP(30100000U, period_us));
-	zassert_not_equal(zlrs_rf_status().state, ZLRS_STATE_PAIRING);
-	zassert_equal(zlrs_rf_status().tx_power_dbm, RF_TEST_BAND_SUBG ? 10 : 12);
+	zlrs_rf_status(&status);
+	zassert_not_equal(status.state, ZLRS_STATE_PAIRING);
+	zlrs_rf_status(&status);
+	zassert_equal(status.tx_power_dbm, RF_TEST_BAND_SUBG ? 10 : 12);
 }
 
 ZTEST(rf_results, test_pair_confirmation_restores_power)
 {
+	zlrs_rf_status_t status;
 	connected_peers();
 	zassert_ok(zlrs_rf_pair_start());
 	zlrs_link_press(&peer, clock_us / 1000U);
 	frames(DIV_ROUND_UP(3000000U, period_us));
-	zassert_equal(zlrs_rf_status().state, ZLRS_STATE_CONNECTED);
-	zassert_equal(zlrs_rf_status().tx_power_dbm, RF_TEST_BAND_SUBG ? 10 : 12);
+	zlrs_rf_status(&status);
+	zassert_equal(status.state, ZLRS_STATE_CONNECTED);
+	zlrs_rf_status(&status);
+	zassert_equal(status.tx_power_dbm, RF_TEST_BAND_SUBG ? 10 : 12);
 	zassert_true(local->stats.pair_req_tx + local->stats.pair_resp_tx > 0U);
 	zassert_true(local->stats.pair_cfm_tx + peer.stats.pair_cfm_tx > 0U);
 }
@@ -1265,6 +1318,7 @@ ZTEST(rf_results, test_frame_catchup_classification)
 
 ZTEST(rf_results, test_credential_removal_retires_active_session)
 {
+	zlrs_rf_status_t status;
 	connected_peers();
 	zlrs_rf_pause();
 
@@ -1273,14 +1327,18 @@ ZTEST(rf_results, test_credential_removal_retires_active_session)
 	zlrs_rf_credentials();
 	uint8_t peer_id[ZLRS_DEV_ID_LEN], salt[ZLRS_PAIR_SALT_LEN];
 	zassert_false(zlrs_rf_pairing(peer_id, salt));
-	zassert_true(zlrs_rf_status().configured);
-	zassert_false(zlrs_rf_status().paired || zlrs_rf_status().session_valid);
+	zlrs_rf_status(&status);
+	zassert_true(status.configured);
+	zlrs_rf_status(&status);
+	zassert_false(status.paired || status.session_valid);
 	/* Factory reset removes the key and ID until persist initializes again at boot. */
 	configured = identity_valid = false;
 	zlrs_rf_credentials();
-	zassert_false(zlrs_rf_status().configured);
+	zlrs_rf_status(&status);
+	zassert_false(status.configured);
 	const uint8_t empty_id[ZLRS_DEV_ID_LEN] = {0};
-	zassert_mem_equal(zlrs_rf_status().dev_id, empty_id, sizeof(empty_id));
+	zlrs_rf_status(&status);
+	zassert_mem_equal(status.dev_id, empty_id, sizeof(empty_id));
 	zlrs_rf_resume();
 }
 

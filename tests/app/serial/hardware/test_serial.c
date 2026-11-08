@@ -11,13 +11,6 @@ static const struct device *const uart = DEVICE_DT_GET(DT_ALIAS(zlrs_data_uart))
 static uint8_t bytes[256];
 static atomic_t work_ran;
 
-static zlrs_serial_state_t state(void)
-{
-	zlrs_serial_state_t s;
-	zassert_equal(zlrs_serial_state(&s, 1), 1);
-	return s;
-}
-
 static void allow_tx(struct k_timer *timer)
 {
 	ARG_UNUSED(timer);
@@ -69,6 +62,7 @@ static void cleanup(void *fixture)
 
 ZTEST(serial_hw, test_cts_blocks_tx_without_blocking_workqueue)
 {
+	zlrs_serial_state_t status;
 	/* Force the real CTS input inactive without an external UART adapter. A timer
 	 * releases it even if a regressed driver busy-waits inside the work queue. */
 	gpio_set_inover(10, GPIO_OVERRIDE_HIGH);
@@ -80,20 +74,27 @@ ZTEST(serial_hw, test_cts_blocks_tx_without_blocking_workqueue)
 	k_msleep(10);
 	const int64_t elapsed = k_uptime_get() - start;
 	const bool responsive = atomic_get(&work_ran) && elapsed < 50;
-	const bool blocked = state().tx_queued > 0U && !(uart1_hw->fr & UART_UARTFR_CTS_BITS);
+	zassert_equal(zlrs_serial_state(&status, 1), 1);
+	const bool blocked = status.tx_queued > 0U && !(uart1_hw->fr & UART_UARTFR_CTS_BITS);
 	/* Recover before assertions, so failures still reach MCUboot rollback. */
 	gpio_set_inover(10, GPIO_OVERRIDE_LOW);
-	for (int i = 0; i < 100 && state().tx_queued != 0U; i++) {
+	for (int i = 0; i < 100; i++) {
+		zassert_equal(zlrs_serial_state(&status, 1), 1);
+		if (status.tx_queued == 0U) {
+			break;
+		}
 		k_msleep(1);
 	}
 	k_msleep(30);
 	k_timer_stop(&cts_rescue);
 	gpio_set_inover(10, GPIO_OVERRIDE_NORMAL);
+	zassert_equal(zlrs_serial_state(&status, 1), 1);
 	printk("CTS blocked=%d work_responsive=%d wake_ms=%lld tx_queued=%u\n", blocked, responsive,
-	       (long long)elapsed, state().tx_queued);
+	       (long long)elapsed, status.tx_queued);
 	zassert_true(responsive, "CTS stalled the work queue for %lld ms", (long long)elapsed);
 	zassert_true(blocked, "TX did not wait for CTS");
-	zassert_equal(state().tx_queued, 0U);
+	zassert_equal(zlrs_serial_state(&status, 1), 1);
+	zassert_equal(status.tx_queued, 0U);
 }
 
 static uint8_t pattern_byte(uint32_t offset)
@@ -110,10 +111,12 @@ static void check_bytes(uint32_t offset, uint32_t count)
 
 ZTEST(serial_hw, test_rts_backpressure_and_ring_wrap)
 {
+	zlrs_serial_state_t status;
 	/* UARTCR.LBE loops TX/RX and RTS/CTS through the real peripheral. No wires
 	 * or host adapter are needed; physical cable connectivity is a separate check. */
 	hw_set_bits(&uart1_hw->cr, UART_UARTCR_LBE_BITS);
-	const zlrs_serial_state_t initial = state();
+	zlrs_serial_state_t initial;
+	zassert_equal(zlrs_serial_state(&initial, 1), 1);
 	const uint32_t total = 6147U;
 	uint32_t queued = 0U;
 	int64_t deadline = k_uptime_get() + 2000;
@@ -129,19 +132,28 @@ ZTEST(serial_hw, test_rts_backpressure_and_ring_wrap)
 		}
 	}
 	zassert_equal(queued, total);
-	while ((!state().rx_paused || state().rx_queued != 4096U) && k_uptime_get() < deadline) {
+	while (k_uptime_get() < deadline) {
+		zassert_equal(zlrs_serial_state(&status, 1), 1);
+		if (status.rx_paused && status.rx_queued == 4096U) {
+			break;
+		}
 		k_msleep(1);
 	}
-	zassert_true(state().rx_paused);
-	zassert_equal(state().rx_queued, 4096U);
+	zassert_equal(zlrs_serial_state(&status, 1), 1);
+	zassert_true(status.rx_paused);
+	zassert_equal(zlrs_serial_state(&status, 1), 1);
+	zassert_equal(status.rx_queued, 4096U);
 	k_msleep(10);
-	const zlrs_serial_state_t stalled = state();
+	zlrs_serial_state_t stalled;
+	zassert_equal(zlrs_serial_state(&stalled, 1), 1);
 	zassert_true(stalled.tx_queued > 0U);
 	zassert_false(uart1_hw->fr & UART_UARTFR_CTS_BITS);
 	zassert_true(io_bank0_hw->io[11].status & IO_BANK0_GPIO0_STATUS_OUTTOPAD_BITS);
 	k_msleep(50);
-	zassert_equal(state().tx_total, stalled.tx_total, "CTS did not stop transmission");
-	zassert_equal(state().rx_total, stalled.rx_total);
+	zassert_equal(zlrs_serial_state(&status, 1), 1);
+	zassert_equal(status.tx_total, stalled.tx_total, "CTS did not stop transmission");
+	zassert_equal(zlrs_serial_state(&status, 1), 1);
+	zassert_equal(status.rx_total, stalled.rx_total);
 
 	uint32_t received = 0U;
 	for (int cycle = 0; cycle < 4; cycle++) {
@@ -149,18 +161,25 @@ ZTEST(serial_hw, test_rts_backpressure_and_ring_wrap)
 		check_bytes(received, 63);
 		received += 63;
 		k_msleep(5);
-		zassert_true(state().rx_paused);
-		zassert_equal(state().rx_queued, 4096 - 63);
+		zassert_equal(zlrs_serial_state(&status, 1), 1);
+		zassert_true(status.rx_paused);
+		zassert_equal(zlrs_serial_state(&status, 1), 1);
+		zassert_equal(status.rx_queued, 4096 - 63);
 		zassert_equal(zlrs_serial_read(bytes, 1), 1);
 		check_bytes(received, 1);
 		received++;
 		deadline = k_uptime_get() + 100;
-		while ((!state().rx_paused || state().rx_queued != 4096U) &&
-		       k_uptime_get() < deadline) {
+		while (k_uptime_get() < deadline) {
+			zassert_equal(zlrs_serial_state(&status, 1), 1);
+			if (status.rx_paused && status.rx_queued == 4096U) {
+				break;
+			}
 			k_msleep(1);
 		}
-		zassert_true(state().rx_paused);
-		zassert_equal(state().rx_queued, 4096U);
+		zassert_equal(zlrs_serial_state(&status, 1), 1);
+		zassert_true(status.rx_paused);
+		zassert_equal(zlrs_serial_state(&status, 1), 1);
+		zassert_equal(status.rx_queued, 4096U);
 	}
 	deadline = k_uptime_get() + 2000;
 	while (received < total && k_uptime_get() < deadline) {
@@ -170,12 +189,18 @@ ZTEST(serial_hw, test_rts_backpressure_and_ring_wrap)
 		k_msleep(1);
 	}
 	zassert_equal(received, total);
-	zassert_equal(state().rx_total - initial.rx_total, total);
-	zassert_equal(state().tx_total - initial.tx_total, total);
-	zassert_equal(state().rx_dropped, initial.rx_dropped);
-	zassert_equal(state().rx_queued, 0U);
-	zassert_equal(state().tx_queued, 0U);
-	zassert_false(state().rx_paused);
+	zassert_equal(zlrs_serial_state(&status, 1), 1);
+	zassert_equal(status.rx_total - initial.rx_total, total);
+	zassert_equal(zlrs_serial_state(&status, 1), 1);
+	zassert_equal(status.tx_total - initial.tx_total, total);
+	zassert_equal(zlrs_serial_state(&status, 1), 1);
+	zassert_equal(status.rx_dropped, initial.rx_dropped);
+	zassert_equal(zlrs_serial_state(&status, 1), 1);
+	zassert_equal(status.rx_queued, 0U);
+	zassert_equal(zlrs_serial_state(&status, 1), 1);
+	zassert_equal(status.tx_queued, 0U);
+	zassert_equal(zlrs_serial_state(&status, 1), 1);
+	zassert_false(status.rx_paused);
 	zassert_ok(uart_err_check(uart));
 	printk("RTS/CTS loopback bytes=%u pause_cycles=4 dropped=0\n", received);
 }

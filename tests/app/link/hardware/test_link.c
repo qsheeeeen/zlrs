@@ -4,13 +4,14 @@
 #include <string.h>
 
 #include "link/link.h"
+#include "link/pairing.h"
 
 ZTEST(link, test_pair_key_rederivation)
 {
 	static zlrs_link_t link;
 	zlrs_link_cfg_t cfg = {
 		.role = ZLRS_ROLE_LEADER,
-		.domain = ZLRS_DOMAIN_ISM2400,
+		.region = ZLRS_REGION_ISM2400,
 
 		.profile = ZLRS_PROFILE_P1,
 		.data_mtu = 502U,

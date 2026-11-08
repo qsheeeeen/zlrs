@@ -74,7 +74,7 @@ void zlrs_rf_frame(void);
 /* Also publishes an initialization fault while main keeps management reachable. */
 void zlrs_rf_publish_state(bool force);
 bool zlrs_rf_pairing(uint8_t peer_id[ZLRS_DEV_ID_LEN], uint8_t pair_salt[ZLRS_PAIR_SALT_LEN]);
-zlrs_rf_status_t zlrs_rf_status(void);
+void zlrs_rf_status(zlrs_rf_status_t *out);
 /* Fresh chip measurements only at a paused management boundary; publishes the
  * snapshot for management/UI readers without SPI work on their threads. */
 void zlrs_rf_status_refresh(void);

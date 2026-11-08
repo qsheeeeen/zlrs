@@ -134,18 +134,14 @@ bool zlrs_persist_get_pairing(zlrs_persist_pairing_t *out)
 	return true;
 }
 
-static zlrs_persist_settings_t default_settings(void)
-{
-	return (zlrs_persist_settings_t){
-		.band = ZLRS_DATA_BAND_AUTO,
-		.region = DT_PROP(DT_NODELABEL(zlrs_rf), default_region),
-		.role = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_LEADER) ? ZLRS_ROLE_LEADER
-								: ZLRS_ROLE_FOLLOWER,
-		.profile = IS_ENABLED(CONFIG_ZLRS_APP_SECURITY_PROFILE_P0) ? ZLRS_PROFILE_P0
-									   : ZLRS_PROFILE_P1,
-		.data_baud = DT_PROP_OR(DT_ALIAS(zlrs_data_uart), current_speed, 115200U),
-	};
-}
+static const zlrs_persist_settings_t default_settings = {
+	.band = ZLRS_DATA_BAND_AUTO,
+	.region = DT_PROP(DT_NODELABEL(zlrs_rf), default_region),
+	.role = IS_ENABLED(CONFIG_ZLRS_APP_ROLE_LEADER) ? ZLRS_ROLE_LEADER : ZLRS_ROLE_FOLLOWER,
+	.profile =
+		IS_ENABLED(CONFIG_ZLRS_APP_SECURITY_PROFILE_P0) ? ZLRS_PROFILE_P0 : ZLRS_PROFILE_P1,
+	.data_baud = DT_PROP_OR(DT_ALIAS(zlrs_data_uart), current_speed, 115200U),
+};
 
 static bool settings_valid(const zlrs_persist_settings_t *s)
 {
@@ -169,7 +165,7 @@ static int write_record(enum record_id id, const void *bytes, size_t size)
 static int reset_layout(void)
 {
 	memset(&state, 0, sizeof(state));
-	state.settings = default_settings();
+	state.settings = default_settings;
 	ready = false;
 	/* Mark reset before erasing, so an interrupted erase cannot reactivate credentials. */
 	uint8_t marker[4];
@@ -262,7 +258,7 @@ static int new_id(uint8_t id[ZLRS_DEV_ID_LEN])
 int zlrs_persist_init(void)
 {
 	memset(&state, 0, sizeof(state));
-	state.settings = default_settings();
+	state.settings = default_settings;
 	ready = false;
 	int rc = load_records();
 	if (rc != 0) {

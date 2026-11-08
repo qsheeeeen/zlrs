@@ -55,7 +55,7 @@ extern "C" {
 
 typedef struct {
 	zlrs_role_t role;
-	zlrs_fhss_domain_id_t domain;
+	zlrs_region_id_t region;
 	zlrs_profile_t profile;
 	zlrs_mod_cfg_t mod;
 	int8_t tx_power_dbm;
@@ -385,36 +385,17 @@ const zlrs_link_cfg_t *zlrs_link_get_config(const zlrs_link_t *link);
 const zlrs_link_stats_t *zlrs_link_get_stats(const zlrs_link_t *link);
 zlrs_link_state_t zlrs_link_get_state(const zlrs_link_t *link);
 bool zlrs_link_is_busy(const zlrs_link_t *link);
-zlrs_link_info_t zlrs_link_get_info(const zlrs_link_t *link);
-zlrs_link_diagnostics_t zlrs_link_get_diagnostics(const zlrs_link_t *link);
-/* Only the last confirmed record is visible, including while re-pairing. */
-bool zlrs_link_get_pairing(const zlrs_link_t *link, uint8_t peer_id[ZLRS_DEV_ID_LEN],
-			   uint8_t pair_salt[ZLRS_PAIR_SALT_LEN]);
+void zlrs_link_get_info(const zlrs_link_t *link, zlrs_link_info_t *info);
+void zlrs_link_get_diagnostics(const zlrs_link_t *link, zlrs_link_diagnostics_t *out);
 
 /* Only nonce generation is injected; the caller executes each returned radio request. */
 void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
 		    bool (*random)(void *ctx, uint32_t *out), void *random_ctx,
 		    const zlrs_link_events_t *events);
 
-/* The link only joins the air once a root key has been written */
-void zlrs_link_set_root_key(zlrs_link_t *link, const uint8_t root_key[ZLRS_KEY_LEN],
-			    uint32_t now_ms);
-void zlrs_link_set_dev_id(zlrs_link_t *link, const uint8_t dev_id[ZLRS_DEV_ID_LEN]);
 
-/*
- * Room left in the air-side queue. Callers that own a byte source (a UART, a CDC) should take no
- * more than this, leaving excess bytes in their endpoint until queue space is available.
- */
-uint16_t zlrs_link_tx_space(const zlrs_link_t *link);
 
-/* RF owner may write directly into the tail payload. No other link operation
- * is allowed between reserve and commit; commit(0) cancels the reservation. */
-uint8_t *zlrs_link_tx_reserve(zlrs_link_t *link, uint16_t *capacity);
-void zlrs_link_tx_commit(zlrs_link_t *link, uint16_t written);
 
-/* The exact bytes the pairing KDF is fed with: both ids (sorted) then the salt (sorted) */
-#define ZLRS_PAIR_CTX_LEN (2U * ZLRS_DEV_ID_LEN + ZLRS_PAIR_SALT_LEN)
-void zlrs_link_pair_ctx(const zlrs_link_t *link, uint8_t out[ZLRS_PAIR_CTX_LEN]);
 
 /* Change TX power at runtime (dynamic power); effective with the next transaction */
 void zlrs_link_set_power(zlrs_link_t *link, int8_t tx_power_dbm);
@@ -427,21 +408,12 @@ void zlrs_link_acquire_radio(zlrs_link_t *link, uint32_t now_ms);
 /* RF verifies physical phase after a valid SYNC/confirm, before reverse DATA proof. */
 bool zlrs_link_radio_captured(zlrs_link_t *link);
 
-/*
- * Restore pairing from the stored record (no re-pairing after a reboot). pair_salt has to
- * match the peer's copy: the two exchanged nonces. Keys are recomputed, never stored.
- */
-void zlrs_link_set_peer(zlrs_link_t *link, const uint8_t peer_id[ZLRS_DEV_ID_LEN],
-			const uint8_t pair_salt[ZLRS_PAIR_SALT_LEN], uint32_t now_ms);
 
-/* Start pairing; false leaves the current state intact (unconfigured or entropy unavailable).
- * True accepts an attempt, not a completed pairing; the previous saved record remains visible. */
-bool zlrs_link_press(zlrs_link_t *link, uint32_t now_ms);
 
 /* Advance the assigned slot once, then inspect a read-only operation plan.
  * Selection/finalization run in the owner without intervening link mutations. */
 bool zlrs_link_advance_slot(zlrs_link_t *link, uint8_t slot, uint32_t now_ms);
-zlrs_link_plan_t zlrs_link_plan(const zlrs_link_t *link);
+void zlrs_link_plan(const zlrs_link_t *link, zlrs_link_plan_t *plan);
 const zlrs_radio_req_t *zlrs_link_finalize(zlrs_link_t *link, const zlrs_link_plan_t *plan);
 
 /* Advance a missed slot without building a packet, consuming data or changing session state. */
@@ -458,7 +430,25 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 /* Timeouts and state transitions, called once per superframe */
 void zlrs_link_tick(zlrs_link_t *link, uint32_t now_ms);
 
-bool zlrs_link_cancel_pair(zlrs_link_t *link, uint32_t now_ms);
+bool link_new_nonce(const zlrs_link_t *link, uint32_t previous, bool have_previous, uint32_t *out);
+uint32_t link_sync_freq_hz(const zlrs_link_t *link);
+uint32_t link_slot_freq_hz(const zlrs_link_t *link);
+void link_set_state(zlrs_link_t *link, zlrs_link_state_t state, uint32_t now_ms);
+uint16_t link_build_frame(zlrs_link_t *link, zlrs_frame_t *frame, uint16_t payload_len,
+			  const uint8_t *tag_key);
+const uint8_t *link_tag_key_for(const zlrs_link_t *link, uint8_t type, bool outbound);
+const zlrs_radio_req_t *link_submit_radio(zlrs_link_t *link, bool is_tx, uint8_t *buf,
+					  uint16_t size, uint32_t freq_hz, uint8_t sync_slot,
+					  const uint8_t sync_word[ZLRS_SYNC_WORD_LEN],
+					  uint16_t timeout_ms);
+uint16_t link_acq_timeout_ms(const zlrs_link_t *link);
+void link_plan_rx(const zlrs_link_t *link, zlrs_link_plan_t *plan, uint32_t freq, uint8_t sync_slot,
+		  const uint8_t *sync_word, uint16_t timeout_ms);
+void link_plan_tx(const zlrs_link_t *link, zlrs_link_plan_t *plan, uint8_t type,
+		  uint16_t payload_len, uint32_t freq);
+bool link_band_plan_valid(const zlrs_link_t *link, const zlrs_band_plan_t *plan,
+			  uint32_t frame_index);
+void link_adopt_band_plan(zlrs_link_t *link, const zlrs_band_plan_t *plan);
 
 #ifdef __cplusplus
 }

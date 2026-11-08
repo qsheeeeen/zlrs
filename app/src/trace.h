@@ -44,7 +44,7 @@ int zlrs_trace_request(enum zlrs_trace_command command, uint32_t duration_ms);
 /* RF owner only: freeze now, defer Flash until the trigger can reach the peer. */
 void zlrs_trace_trigger(uint32_t sequence, uint32_t elapsed_us);
 #endif
-struct zlrs_trace_status zlrs_trace_status(void);
+void zlrs_trace_status(struct zlrs_trace_status *status);
 void zlrs_trace_process(bool maintenance);
 void zlrs_trace_maintenance(bool entering);
 void zlrs_trace_session(bool entering);

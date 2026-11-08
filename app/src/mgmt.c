@@ -141,7 +141,7 @@ static int execute(bool maintenance)
 		if (maintenance) {
 			zlrs_rf_status_refresh();
 		}
-		out->status = zlrs_rf_status();
+		zlrs_rf_status(&out->status);
 		out->region = zlrs_persist_settings()->region;
 		out->data_baud = zlrs_persist_settings()->data_baud;
 		/* Shared STATUS/OBSERVE window; the first sample measures since boot. */

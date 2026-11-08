@@ -3,9 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
+#include "proto/limits.h"
 #include <stdbool.h>
 #include <stdint.h>
-#include "proto/limits.h"
+#include <zephyr/dt-bindings/zlrs/region.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -67,7 +68,7 @@ bool zlrs_frame_decode_data(zlrs_data_view_t *view, const uint8_t *buf, uint16_t
 
 /* Present only in authenticated synchronization/confirmation bodies. */
 typedef struct {
-	uint8_t domain: 3;
+	uint8_t region: 3;
 	uint8_t automatic: 1;
 	uint8_t target_subg: 1;
 	uint8_t phy: 3;        /* current 2.4 GHz profile; zero on SubG */

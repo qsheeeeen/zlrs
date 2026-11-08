@@ -19,21 +19,21 @@ static void message(enum usbd_msg_type type, int status)
 	zlrs_usb_message(NULL, &msg);
 }
 
-static zlrs_serial_state_t state(const struct device *dev)
+static const zlrs_serial_state_t *state(const struct device *dev, zlrs_serial_state_t states[2])
 {
-	zlrs_serial_state_t states[2];
-	size_t n = zlrs_serial_state(states, ARRAY_SIZE(states));
+	size_t n = zlrs_serial_state(states, 2);
 	for (size_t i = 0; i < n; i++) {
 		if (strcmp(states[i].name, dev->name) == 0) {
-			return states[i];
+			return &states[i];
 		}
 	}
 	zassert_unreachable("missing endpoint %s", dev->name);
-	return (zlrs_serial_state_t){0};
+	return NULL;
 }
 
 static void selected(bool host)
 {
+	zlrs_serial_state_t states[2];
 	zlrs_serial_publish_state();
 	struct zlrs_serial_status s;
 	zassert_ok(zbus_chan_read(&zlrs_serial_chan, &s, K_NO_WAIT));
@@ -42,19 +42,20 @@ static void selected(bool host)
 	zassert_equal(s.usb_active, use_usb);
 	zassert_equal(s.ready, use_usb || use_uart);
 #if DT_HAS_ALIAS(zlrs_data_cdc)
-	zassert_equal(state(usb).active, use_usb);
+	zassert_equal(state(usb, states)->active, use_usb);
 #endif
 #if DT_HAS_ALIAS(zlrs_data_uart)
-	zassert_equal(state(uart).active, use_uart);
+	zassert_equal(state(uart, states)->active, use_uart);
 #endif
 }
 
 static void wait_rx(const struct device *dev, uint32_t count)
 {
-	for (int i = 0; i < 100 && state(dev).rx_queued != count; i++) {
+	zlrs_serial_state_t states[2];
+	for (int i = 0; i < 100 && state(dev, states)->rx_queued != count; i++) {
 		k_msleep(1);
 	}
-	zassert_equal(state(dev).rx_queued, count);
+	zassert_equal(state(dev, states)->rx_queued, count);
 }
 
 static void output(const struct device *dev, const uint8_t *expected, size_t count)
@@ -136,10 +137,11 @@ ZTEST(serial, test_default_uart_before_input)
 	message(USBD_MSG_RESUME, 0);
 	selected(false);
 #if DT_HAS_ALIAS(zlrs_data_uart)
-	uint32_t tx_total = state(uart).tx_total;
+	zlrs_serial_state_t states[2];
+	uint32_t tx_total = state(uart, states)->tx_total;
 	zassert_true(zlrs_serial_receive(pattern, 33));
 	output(uart, pattern, 33);
-	zassert_equal(state(uart).tx_total, tx_total + 33);
+	zassert_equal(state(uart, states)->tx_total, tx_total + 33);
 	/* A receive-only UART sink can bootstrap a local TX-to-RX loopback. */
 	wait_rx(uart, 33);
 	zassert_equal(zlrs_serial_read(bytes, sizeof(bytes)), 33);
@@ -154,10 +156,11 @@ ZTEST(serial, test_configured_host_without_dtr_or_input)
 	message(USBD_MSG_CONFIGURATION, 1);
 	selected(true);
 #if DT_HAS_ALIAS(zlrs_data_cdc)
-	uint32_t tx_total = state(usb).tx_total;
+	zlrs_serial_state_t states[2];
+	uint32_t tx_total = state(usb, states)->tx_total;
 	zassert_true(zlrs_serial_receive(pattern, 35));
 	output(usb, pattern, 35);
-	zassert_equal(state(usb).tx_total, tx_total + 35);
+	zassert_equal(state(usb, states)->tx_total, tx_total + 35);
 	zassert_equal(uart_emul_get_tx_data(uart, bytes, sizeof(bytes)), 0);
 	message(USBD_MSG_CDC_ACM_CONTROL_LINE_STATE, 0);
 	selected(true);
@@ -222,6 +225,7 @@ ZTEST(serial, test_received_bytes_do_not_latch_usb_selection)
 ZTEST(serial, test_usb_backpressure_and_resume)
 {
 #if DT_HAS_ALIAS(zlrs_data_cdc)
+	zlrs_serial_state_t states[2];
 	message(USBD_MSG_CONFIGURATION, 1);
 	for (size_t i = 0; i < sizeof(pattern); i += 512) {
 		zassert_equal(uart_emul_put_rx_data(usb, pattern + i, 512), 512);
@@ -229,11 +233,11 @@ ZTEST(serial, test_usb_backpressure_and_resume)
 	}
 	zassert_equal(uart_emul_put_rx_data(usb, pattern, 128), 128);
 	k_msleep(2);
-	zassert_true(state(usb).rx_paused);
+	zassert_true(state(usb, states)->rx_paused);
 	zassert_equal(zlrs_serial_read(bytes, 499), 499);
 	zassert_mem_equal(bytes, pattern, 499);
 	wait_rx(usb, 4096 - 499 + 128);
-	zassert_false(state(usb).rx_paused);
+	zassert_false(state(usb, states)->rx_paused);
 	zassert_equal(zlrs_serial_read(bytes, sizeof(bytes)), 4096 - 499 + 128);
 	zassert_mem_equal(bytes, pattern + 499, 4096 - 499);
 	zassert_mem_equal(bytes + 4096 - 499, pattern, 128);
@@ -245,10 +249,11 @@ ZTEST(serial, test_usb_backpressure_and_resume)
 ZTEST(serial, test_packet_acceptance_and_output_ownership)
 {
 #if DT_HAS_ALIAS(zlrs_data_cdc)
+	zlrs_serial_state_t states[2];
 	message(USBD_MSG_CONFIGURATION, 1);
 	zassert_true(zlrs_serial_receive(pattern, sizeof(pattern)));
 	k_msleep(2);
-	zassert_equal(state(usb).tx_queued, 4096 - 64);
+	zassert_equal(state(usb, states)->tx_queued, 4096 - 64);
 	zassert_true(zlrs_serial_receive(pattern, 64));
 	zassert_false(zlrs_serial_receive(pattern, 1));
 	message(USBD_MSG_RESET, 0);
@@ -262,7 +267,7 @@ ZTEST(serial, test_packet_acceptance_and_output_ownership)
 	output(usb, pattern, sizeof(pattern));
 	output(usb, pattern, 64);
 	k_msleep(2);
-	zassert_equal(state(usb).tx_queued, 0);
+	zassert_equal(state(usb, states)->tx_queued, 0);
 	zassert_equal(uart_emul_get_tx_data(usb, bytes, sizeof(bytes)), 0);
 #else
 	ztest_test_skip();
@@ -272,7 +277,8 @@ ZTEST(serial, test_packet_acceptance_and_output_ownership)
 ZTEST(serial, test_uart_full_buffer_and_recovery)
 {
 #if DT_HAS_ALIAS(zlrs_data_uart)
-	const uint32_t dropped = state(uart).rx_dropped;
+	zlrs_serial_state_t states[2];
+	const uint32_t dropped = state(uart, states)->rx_dropped;
 	for (size_t i = 0; i < sizeof(pattern); i += 512) {
 		zassert_equal(uart_emul_put_rx_data(uart, pattern + i, 512), 512);
 		wait_rx(uart, i + 512);
@@ -280,25 +286,25 @@ ZTEST(serial, test_uart_full_buffer_and_recovery)
 	zassert_equal(uart_emul_put_rx_data(uart, pattern, 128), 128);
 	k_msleep(2);
 #if DT_PROP_OR(DT_ALIAS(zlrs_data_uart), hw_flow_control, 0)
-	zassert_true(state(uart).rx_paused);
-	zassert_equal(state(uart).rx_dropped, dropped);
+	zassert_true(state(uart, states)->rx_paused);
+	zassert_equal(state(uart, states)->rx_dropped, dropped);
 	/* A partial drain below the wakeup watermark must retain pending bytes. */
 	zassert_equal(zlrs_serial_read(bytes, 63), 63);
 	zassert_mem_equal(bytes, pattern, 63);
 	k_msleep(2);
-	zassert_true(state(uart).rx_paused);
-	zassert_equal(state(uart).rx_queued, 4096 - 63);
+	zassert_true(state(uart, states)->rx_paused);
+	zassert_equal(state(uart, states)->rx_queued, 4096 - 63);
 	zassert_equal(zlrs_serial_read(bytes, 436), 436);
 	zassert_mem_equal(bytes, pattern + 63, 436);
 	wait_rx(uart, 4096 - 499 + 128);
-	zassert_false(state(uart).rx_paused);
+	zassert_false(state(uart, states)->rx_paused);
 	zassert_equal(zlrs_serial_read(bytes, sizeof(bytes)), 4096 - 499 + 128);
 	zassert_mem_equal(bytes, pattern + 499, 4096 - 499);
 	zassert_mem_equal(bytes + 4096 - 499, pattern, 128);
-	zassert_equal(state(uart).rx_dropped, dropped);
+	zassert_equal(state(uart, states)->rx_dropped, dropped);
 #else
-	zassert_false(state(uart).rx_paused);
-	zassert_equal(state(uart).rx_dropped, dropped + 128);
+	zassert_false(state(uart, states)->rx_paused);
+	zassert_equal(state(uart, states)->rx_dropped, dropped + 128);
 	zassert_equal(zlrs_serial_read(bytes, sizeof(bytes)), sizeof(pattern));
 	zassert_mem_equal(bytes, pattern, sizeof(pattern));
 #endif

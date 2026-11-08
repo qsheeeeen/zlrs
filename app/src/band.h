@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "proto/limits.h"
 #include "proto/mod.h"
 
 typedef enum {
@@ -15,7 +16,8 @@ typedef enum {
 } zlrs_band_action_t;
 
 typedef struct {
-	bool automatic, leader, subg, probing;
+	bool automatic, subg, probing;
+	zlrs_role_t role;
 	zlrs_phy_t phy, target_phy;
 	bool target_subg;
 	uint32_t loss_ms, dwell_ms, entered_ms, contact_ms, last_rx_ms;
@@ -38,7 +40,7 @@ typedef struct {
 	uint8_t lq_percent, peer_lq_percent;
 } zlrs_band_observation_t;
 
-void zlrs_band_policy_init(zlrs_band_policy_t *policy, bool automatic, bool leader, bool subg,
+void zlrs_band_policy_init(zlrs_band_policy_t *policy, bool automatic, zlrs_role_t role, bool subg,
 			   uint32_t duty_window_ms, uint32_t now_ms);
 void zlrs_band_policy_changed(zlrs_band_policy_t *policy, bool subg, zlrs_phy_t phy, bool probe,
 			      uint32_t now_ms, uint32_t last_rx_ms);

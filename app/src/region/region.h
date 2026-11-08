@@ -12,7 +12,6 @@
 
 #include <zephyr/dt-bindings/zlrs/region.h>
 
-#include "proto/fhss.h"
 #include "proto/mod.h"
 
 #ifdef __cplusplus
@@ -21,7 +20,9 @@ extern "C" {
 
 typedef struct {
 	const char *name;
-	zlrs_fhss_domain_id_t domain;
+	uint32_t start_hz;
+	uint32_t step_hz;
+	uint8_t channel_count;
 	uint32_t low_hz; /* band edge, used to validate the channel plan */
 	uint32_t high_hz;
 	int8_t max_tx_power_dbm;
@@ -31,6 +32,8 @@ typedef struct {
 } zlrs_region_t;
 
 typedef uint8_t zlrs_region_id_t;
+
+extern const zlrs_region_t zlrs_regions[ZLRS_REGION_COUNT];
 
 typedef enum {
 	ZLRS_DATA_BAND_24 = 0,

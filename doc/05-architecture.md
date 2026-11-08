@@ -36,7 +36,11 @@ loop and management service use that interface. DATA admission, packet storage,
 ARQ and packet retirement live together in `app/src/link/data.c`; packet bytes
 and payload length have one owner. A submitted request retains its own immutable
 metadata until completion. TX and RX submit through one internal radio-request
-implementation. DATA decoding returns a borrowed view of the RX
+implementation. Each link mechanism declares its interface in its matching
+header; sibling modules include those interfaces directly. Plans and status
+snapshots fill caller-owned destinations.
+Region rules and hopping channel parameters share one table and one ID set.
+DATA decoding returns a borrowed view of the RX
 buffer; the control-frame union contains no payload array. Test peers generate
 wire input and drive the same reservation, finalization and completion interfaces
 as RF. They do not add alternate production receive or queue paths.

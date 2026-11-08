@@ -37,7 +37,7 @@ static double measure(enum phase phase, uint16_t payload, unsigned long iteratio
 		      zlrs_profile_t profile)
 {
 	const zlrs_link_cfg_t cfg = {.role = ZLRS_ROLE_LEADER,
-				     .domain = ZLRS_DOMAIN_ISM2400,
+				     .region = ZLRS_REGION_ISM2400,
 				     .profile = profile,
 				     .mod = {.rate_bps = 2600000},
 				     .data_mtu = 499,
@@ -66,7 +66,8 @@ static double measure(enum phase phase, uint16_t payload, unsigned long iteratio
 		const zlrs_radio_req_t *req = zlrs_test_slot(&link, ZLRS_SLOT_DATA_A, 1000);
 		require(req && req->is_tx && req->size == len, "prepare completion");
 	}
-	const zlrs_link_plan_t plan = zlrs_link_plan(&link);
+	zlrs_link_plan_t plan;
+	zlrs_link_plan(&link, &plan);
 	const zlrs_data_header_t header = {.lq_percent = ZLRS_LQ_UNAVAILABLE};
 	const uint64_t start = clock_ns();
 	for (unsigned long i = 0; i < iterations; i++) {
@@ -82,7 +83,8 @@ static double measure(enum phase phase, uint16_t payload, unsigned long iteratio
 			checksum = tag[0];
 			break;
 		case PLAN: {
-			const zlrs_link_plan_t plan = zlrs_link_plan(&link);
+			zlrs_link_plan_t plan;
+			zlrs_link_plan(&link, &plan);
 			checksum = plan.op == ZLRS_OP_TX ? plan.radio.size : 0;
 			break;
 		}

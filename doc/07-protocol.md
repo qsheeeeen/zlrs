@@ -236,7 +236,7 @@ Peer-restart acquisition discards the previous phase-lock samples.
 
 Automatic mode starts on 2.4 GHz with the configured compatible SubG region as
 fallback. Fixed modes do not search other bands. Pairing suspends automatic
-search. Both endpoints must agree on automatic/fixed mode and active domain.
+search. Both endpoints must agree on automatic/fixed mode and active region.
 
 ### Authenticated plan
 
@@ -244,7 +244,7 @@ Leader alone publishes coordinated plans. SYNC and SESS_CFM carry six bytes:
 
 | Bits / bytes | Meaning |
 | --- | --- |
-| First byte, bits 0–2 | Current domain, 0–4 from the domain table |
+| First byte, bits 0–2 | Current region ID, 0–4 from the region table |
 | Bit 3 | Automatic mode |
 | Bit 4 | Target band: 0 is 2.4 GHz, 1 is SubG |
 | Bits 5–7 | Reserved, zero |

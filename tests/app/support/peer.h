@@ -1,13 +1,8 @@
 /* Test peer: generate wire input and execute the production transaction API.
  * SPDX-License-Identifier: Apache-2.0 */
 #pragma once
-#ifdef __cplusplus
-extern "C" {
-#endif
-#include "link/internal.h"
-#ifdef __cplusplus
-}
-#endif
+#include "link/data.h"
+#include <string.h>
 
 static inline uint16_t zlrs_test_encode(const zlrs_frame_t *frame, uint8_t *buf, uint16_t cap,
                                        uint16_t len, uint8_t tag_len)
@@ -35,7 +30,8 @@ static inline const zlrs_radio_req_t *zlrs_test_slot(zlrs_link_t *link, uint8_t 
 	if (!zlrs_link_advance_slot(link, slot, now_ms)) {
 		return NULL;
 	}
-	const zlrs_link_plan_t plan = zlrs_link_plan(link);
+	zlrs_link_plan_t plan;
+	zlrs_link_plan(link, &plan);
 	return zlrs_link_finalize(link, &plan);
 }
 

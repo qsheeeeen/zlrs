@@ -1,5 +1,10 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#include "internal.h"
+#include "link/link.h"
+#include "link/data.h"
+#include "link/pairing.h"
+#include "link/session.h"
+#include <string.h>
+#include <zephyr/sys/byteorder.h>
 
 /* Link lifecycle, slot scheduling, frame authentication and radio completion. */
 
@@ -23,10 +28,10 @@ bool link_new_nonce(const zlrs_link_t *link, uint32_t previous, bool have_previo
 
 uint32_t link_sync_freq_hz(const zlrs_link_t *link)
 {
-	const zlrs_fhss_domain_t *domain = &zlrs_fhss_domains[link->cfg.domain];
-	const uint8_t channel = (uint8_t)(domain->channel_count / 2U);
+	const zlrs_region_t *region = &zlrs_regions[link->cfg.region];
+	const uint8_t channel = (uint8_t)(region->channel_count / 2U);
 
-	return domain->start_hz + (uint32_t)channel * domain->step_hz;
+	return region->start_hz + (uint32_t)channel * region->step_hz;
 }
 
 static bool sync_frame(const zlrs_link_t *link)
@@ -307,111 +312,117 @@ void link_plan_tx(const zlrs_link_t *link, zlrs_link_plan_t *plan, uint8_t type,
 	memcpy(plan->radio.sync_word, link->sync_word, ZLRS_SYNC_WORD_LEN);
 }
 
-zlrs_link_plan_t zlrs_link_plan(const zlrs_link_t *link)
+void zlrs_link_plan(const zlrs_link_t *link, zlrs_link_plan_t *plan)
 {
-	zlrs_link_plan_t plan = {
+	*plan = (zlrs_link_plan_t){
 		.frame_index = link->frame_index, .now_ms = link->slot_ms, .slot = link->slot};
 	if (link->req_pending || link->slot_idle) {
-		return plan;
+		return;
 	}
 	const bool a = link->slot == ZLRS_SLOT_DATA_A;
-	const bool leader = link->cfg.role == ZLRS_ROLE_LEADER;
+	const zlrs_role_t role = link->cfg.role;
 	const uint32_t now_ms = link->slot_ms;
 	const uint32_t sync_freq = link_sync_freq_hz(link);
 	if (link->state == ZLRS_STATE_PAIRING ||
 	    (link->state == ZLRS_STATE_SEARCHING && link->pair_cfm_pending)) {
-		link_pair_plan(link, &plan);
-		return plan;
+		link_pair_plan(link, plan);
+		return;
 	}
 	if (link->state == ZLRS_STATE_SEARCHING) {
-		if (leader && a) {
+		if ((role == ZLRS_ROLE_LEADER) && a) {
 			if (!link->session_pending && !link->session_valid) {
-				return plan;
+				return;
 			}
 			if (link->sess_cfm_due &&
 			    (uint32_t)(now_ms - link->last_sync_ms) < link->cfg.sync_period_ms) {
-				link_plan_tx(link, &plan, ZLRS_PKT_SESS_CFM,
+				link_plan_tx(link, plan, ZLRS_PKT_SESS_CFM,
 					     ZLRS_SESS_CFM_PAYLOAD_LEN, sync_freq);
 			} else if ((uint32_t)(now_ms - link->last_sync_ms) >=
 					   link->cfg.sync_period_ms ||
 				   sync_frame(link)) {
-				link_plan_tx(link, &plan, ZLRS_PKT_SYNC, ZLRS_SYNC_PAYLOAD_LEN,
+				link_plan_tx(link, plan, ZLRS_PKT_SYNC, ZLRS_SYNC_PAYLOAD_LEN,
 					     sync_freq);
 			}
-		} else if (a || leader) {
-			link_plan_rx(link, &plan, sync_freq, ZLRS_SYNC_SLOT_DATA, link->sync_word,
+		} else if (a || (role == ZLRS_ROLE_LEADER)) {
+			link_plan_rx(link, plan, sync_freq, ZLRS_SYNC_SLOT_DATA, link->sync_word,
 				     link_acq_timeout_ms(link));
 		} else if (link->sess_resp_due || link->session_pending) {
-			link_plan_tx(link, &plan, ZLRS_PKT_SESS_RESP, ZLRS_SESS_RESP_PAYLOAD_LEN,
+			link_plan_tx(link, plan, ZLRS_PKT_SESS_RESP, ZLRS_SESS_RESP_PAYLOAD_LEN,
 				     sync_freq);
 		}
-		return plan;
+		return;
 	}
 	if (link->state != ZLRS_STATE_CONNECTED) {
-		return plan;
+		return;
 	}
-	if (link->radio_acquiring && leader == a) {
-		if (!leader) {
-			return plan;
+	if (link->radio_acquiring && (role == ZLRS_ROLE_LEADER) == a) {
+		if (!(role == ZLRS_ROLE_LEADER)) {
+			return;
 		}
 		if (!link->sess_cfm_due) {
 			if ((uint32_t)(now_ms - link->last_sync_ms) >= link->cfg.sync_period_ms) {
-				link_plan_tx(link, &plan, ZLRS_PKT_SYNC, ZLRS_SYNC_PAYLOAD_LEN,
+				link_plan_tx(link, plan, ZLRS_PKT_SYNC, ZLRS_SYNC_PAYLOAD_LEN,
 					     sync_freq);
 			}
-			return plan;
+			return;
 		}
 	}
-	if (link->sess_ack_due && leader == a) {
-		link_plan_tx(link, &plan, leader ? ZLRS_PKT_DATA_L2F : ZLRS_PKT_DATA_F2L,
+	if (link->sess_ack_due && (role == ZLRS_ROLE_LEADER) == a) {
+		link_plan_tx(link, plan,
+			     (role == ZLRS_ROLE_LEADER) ? ZLRS_PKT_DATA_L2F : ZLRS_PKT_DATA_F2L,
 			     ZLRS_DATA_PREFIX_LEN, link_slot_freq_hz(link));
-		return plan;
+		return;
 	}
-	if (!leader && a && link->cfg.resync_every_n > 0U &&
+	if (!(role == ZLRS_ROLE_LEADER) && a && link->cfg.resync_every_n > 0U &&
 	    (uint32_t)(link->frame_index - link->last_rx_frame) > 2U * link->cfg.resync_every_n) {
-		link_plan_rx(link, &plan, sync_freq, ZLRS_SYNC_SLOT_DATA, link->sync_word,
+		link_plan_rx(link, plan, sync_freq, ZLRS_SYNC_SLOT_DATA, link->sync_word,
 			     link->cfg.rx_timeout_ms);
-		return plan;
+		return;
 	}
-	if (leader && a && link->sess_cfm_due) {
+	if ((role == ZLRS_ROLE_LEADER) && a && link->sess_cfm_due) {
 		if ((uint32_t)(now_ms - link->last_sync_ms) >= link->cfg.sync_period_ms) {
-			link_plan_tx(link, &plan, ZLRS_PKT_SYNC, ZLRS_SYNC_PAYLOAD_LEN, sync_freq);
+			link_plan_tx(link, plan, ZLRS_PKT_SYNC, ZLRS_SYNC_PAYLOAD_LEN, sync_freq);
 		} else {
-			link_plan_tx(link, &plan, ZLRS_PKT_SESS_CFM, ZLRS_SESS_CFM_PAYLOAD_LEN,
+			link_plan_tx(link, plan, ZLRS_PKT_SESS_CFM, ZLRS_SESS_CFM_PAYLOAD_LEN,
 				     sync_freq);
 		}
-		return plan;
+		return;
 	}
-	if (leader && a &&
+	if ((role == ZLRS_ROLE_LEADER) && a &&
 	    (sync_frame(link) ||
 	     ((link->radio_acquiring || link->band_announced) &&
 	      (uint32_t)(now_ms - link->last_sync_ms) >= link->cfg.sync_period_ms))) {
-		link_plan_tx(link, &plan, ZLRS_PKT_SYNC, ZLRS_SYNC_PAYLOAD_LEN, sync_freq);
-		return plan;
+		link_plan_tx(link, plan, ZLRS_PKT_SYNC, ZLRS_SYNC_PAYLOAD_LEN, sync_freq);
+		return;
 	}
-	if (leader == a) {
+	if ((role == ZLRS_ROLE_LEADER) == a) {
 		const bool retry = link->cfg.arq && link_arq_retry_due(link, now_ms);
 		const bool waiting = link->cfg.arq && link->arq_used && !retry;
 		if (!waiting && link->tx_packet_count != 0U) {
-			link_plan_tx(link, &plan, leader ? ZLRS_PKT_DATA_L2F : ZLRS_PKT_DATA_F2L,
+			link_plan_tx(link, plan,
+				     (role == ZLRS_ROLE_LEADER) ? ZLRS_PKT_DATA_L2F
+								: ZLRS_PKT_DATA_F2L,
 				     ZLRS_DATA_PREFIX_LEN + link->tx_packets[link->queue_head].len,
 				     link_slot_freq_hz(link));
 		} else if (link->cfg.arq && (link->arq_ack_pending ||
 					     (link->cfg.feedback_period_ms > 0U &&
 					      (uint32_t)(now_ms - link->last_feedback_tx_ms) >=
 						      link->cfg.feedback_period_ms))) {
-			link_plan_tx(link, &plan, leader ? ZLRS_PKT_DATA_L2F : ZLRS_PKT_DATA_F2L,
+			link_plan_tx(link, plan,
+				     (role == ZLRS_ROLE_LEADER) ? ZLRS_PKT_DATA_L2F
+								: ZLRS_PKT_DATA_F2L,
 				     ZLRS_DATA_PREFIX_LEN, link_slot_freq_hz(link));
 		}
-		plan.arq_wait = waiting;
-		return plan;
+		plan->arq_wait = waiting;
+		return;
 	}
-	const uint32_t freq = leader && (uint32_t)(now_ms - link->state_ms) < ZLRS_SESS_CONFIRM_MS
+	const uint32_t freq = (role == ZLRS_ROLE_LEADER) && (uint32_t)(now_ms - link->state_ms) <
+								    ZLRS_SESS_CONFIRM_MS
 				      ? sync_freq
 				      : link_slot_freq_hz(link);
-	link_plan_rx(link, &plan, freq, ZLRS_SYNC_SLOT_DATA, link->sync_word,
+	link_plan_rx(link, plan, freq, ZLRS_SYNC_SLOT_DATA, link->sync_word,
 		     link->cfg.rx_timeout_ms);
-	return plan;
+	return;
 }
 
 const zlrs_radio_req_t *zlrs_link_finalize(zlrs_link_t *link, const zlrs_link_plan_t *plan)
@@ -493,8 +504,8 @@ bool link_band_plan_valid(const zlrs_link_t *link, const zlrs_band_plan_t *plan,
 			  uint32_t frame_index)
 {
 	const uint8_t phy =
-		link->cfg.domain == ZLRS_DOMAIN_ISM2400 ? zlrs_mod_phy_id(&link->cfg.mod) : 0U;
-	if (plan->domain != link->cfg.domain || plan->automatic != link->cfg.automatic_band ||
+		link->cfg.region == ZLRS_REGION_ISM2400 ? zlrs_mod_phy_id(&link->cfg.mod) : 0U;
+	if (plan->region != link->cfg.region || plan->automatic != link->cfg.automatic_band ||
 	    plan->phy != phy || plan->target_phy >= ZLRS_PHY_COUNT ||
 	    (plan->automatic &&
 	     (plan->phy >= ZLRS_PHY_AUTO_COUNT || plan->target_phy >= ZLRS_PHY_AUTO_COUNT)) ||
@@ -506,7 +517,7 @@ bool link_band_plan_valid(const zlrs_link_t *link, const zlrs_band_plan_t *plan,
 	}
 	return plan->automatic && plan->switch_frame > frame_index &&
 	       plan->switch_frame - frame_index <= UINT16_MAX &&
-	       (plan->target_subg != (link->cfg.domain != ZLRS_DOMAIN_ISM2400) ||
+	       (plan->target_subg != (link->cfg.region != ZLRS_REGION_ISM2400) ||
 		(!plan->target_subg && plan->target_phy != phy));
 }
 
@@ -519,11 +530,11 @@ void link_adopt_band_plan(zlrs_link_t *link, const zlrs_band_plan_t *plan)
 void zlrs_link_acquire_radio(zlrs_link_t *link, uint32_t now_ms)
 {
 	link->band_plan = (zlrs_band_plan_t){
-		.domain = link->cfg.domain,
+		.region = link->cfg.region,
 		.automatic = link->cfg.automatic_band,
-		.phy = link->cfg.domain == ZLRS_DOMAIN_ISM2400 ? zlrs_mod_phy_id(&link->cfg.mod)
+		.phy = link->cfg.region == ZLRS_REGION_ISM2400 ? zlrs_mod_phy_id(&link->cfg.mod)
 							       : 0U,
-		.target_subg = link->cfg.domain != ZLRS_DOMAIN_ISM2400};
+		.target_subg = link->cfg.region != ZLRS_REGION_ISM2400};
 	link->band_announced = false;
 	link->radio_acquiring = true;
 	link->radio_sync_seen = false;
@@ -548,9 +559,9 @@ bool zlrs_link_plan_radio(zlrs_link_t *link, bool target_subg, zlrs_phy_t target
 	if ((unsigned int)target_phy >= ZLRS_PHY_AUTO_COUNT) {
 		return false;
 	}
-	zlrs_band_plan_t plan = {.domain = link->cfg.domain,
+	zlrs_band_plan_t plan = {.region = link->cfg.region,
 				 .automatic = 1U,
-				 .phy = link->cfg.domain == ZLRS_DOMAIN_ISM2400
+				 .phy = link->cfg.region == ZLRS_REGION_ISM2400
 						? zlrs_mod_phy_id(&link->cfg.mod)
 						: 0U,
 				 .target_phy = target_phy,
@@ -568,7 +579,7 @@ bool zlrs_link_plan_radio(zlrs_link_t *link, bool target_subg, zlrs_phy_t target
 
 bool zlrs_link_reconfigure_radio(zlrs_link_t *link, const zlrs_link_cfg_t *cfg)
 {
-	if (link->req_pending || cfg->domain >= ZLRS_DOMAIN_COUNT || cfg->role != link->cfg.role ||
+	if (link->req_pending || cfg->region >= ZLRS_REGION_COUNT || cfg->role != link->cfg.role ||
 	    cfg->profile != link->cfg.profile || cfg->arq != link->cfg.arq ||
 	    cfg->data_mtu != link->cfg.data_mtu ||
 	    cfg->automatic_band != link->cfg.automatic_band) {
@@ -577,7 +588,7 @@ bool zlrs_link_reconfigure_radio(zlrs_link_t *link, const zlrs_link_cfg_t *cfg)
 	uint8_t seed[4];
 	zlrs_kdf(link->pair_key, ZLRS_KEY_LEN, "zlrs/fhss", NULL, 0U, seed, sizeof(seed));
 	link->cfg = *cfg;
-	zlrs_fhss_init(&link->fhss, cfg->domain, sys_get_le32(seed));
+	zlrs_fhss_init(&link->fhss, cfg->region, sys_get_le32(seed));
 	zlrs_link_acquire_radio(link, link->last_rx_ms);
 	/* Quality/power samples belong to the old RF path; replay/ARQ state does not. */
 	link_quality_reset(link);
@@ -761,9 +772,9 @@ bool zlrs_link_is_busy(const zlrs_link_t *link)
 	return link->req_pending;
 }
 
-zlrs_link_info_t zlrs_link_get_info(const zlrs_link_t *link)
+void zlrs_link_get_info(const zlrs_link_t *link, zlrs_link_info_t *info)
 {
-	zlrs_link_info_t info = {
+	*info = (zlrs_link_info_t){
 		.state = link->state,
 		.configured = link->configured,
 		.paired = link->paired,
@@ -775,27 +786,15 @@ zlrs_link_info_t zlrs_link_get_info(const zlrs_link_t *link)
 		.last_rx_ms = link->last_rx_ms,
 		.accepted_rx_events = link->accepted_rx_events,
 		.frame_index = link->frame_index,
-		.frequency_hz = link->fhss.domain != NULL ? zlrs_fhss_current_hz(&link->fhss) : 0U,
+		.frequency_hz = link->fhss.region != NULL ? zlrs_fhss_current_hz(&link->fhss) : 0U,
 		.hop_index = link->fhss.index,
 		.band_plan = link->band_plan,
 		.radio_acquiring = link->radio_acquiring,
 		.radio_sync_seen = link->radio_sync_seen,
 	};
 
-	memcpy(info.dev_id, link->dev_id, sizeof(info.dev_id));
-	memcpy(info.peer_id, link->peer_id, sizeof(info.peer_id));
-	return info;
-}
-
-bool zlrs_link_get_pairing(const zlrs_link_t *link, uint8_t peer_id[ZLRS_DEV_ID_LEN],
-			   uint8_t pair_salt[ZLRS_PAIR_SALT_LEN])
-{
-	if (!link->paired) {
-		return false;
-	}
-	memcpy(peer_id, link->peer_id, ZLRS_DEV_ID_LEN);
-	memcpy(pair_salt, link->pair_salt, ZLRS_PAIR_SALT_LEN);
-	return true;
+	memcpy(info->dev_id, link->dev_id, sizeof(info->dev_id));
+	memcpy(info->peer_id, link->peer_id, sizeof(info->peer_id));
 }
 
 static uint32_t fingerprint(const uint8_t *data, size_t len)
@@ -808,9 +807,9 @@ static uint32_t fingerprint(const uint8_t *data, size_t len)
 	return hash;
 }
 
-zlrs_link_diagnostics_t zlrs_link_get_diagnostics(const zlrs_link_t *link)
+void zlrs_link_get_diagnostics(const zlrs_link_t *link, zlrs_link_diagnostics_t *out)
 {
-	return (zlrs_link_diagnostics_t){
+	*out = (zlrs_link_diagnostics_t){
 
 		.last_rx_frame = link->last_rx_frame,
 		.sess_nonce_leader = link->sess_nonce_leader,

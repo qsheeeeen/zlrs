@@ -1,5 +1,10 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#include "internal.h"
+#include "link/session.h"
+#include "link/data.h"
+#include "link/link.h"
+#include <string.h>
+#include <zephyr/sys/__assert.h>
+#include <zephyr/sys/byteorder.h>
 
 /* Session key derivation, three-step confirmation and schedule synchronization. */
 #define LABEL_SESSION "zlrs/session"
@@ -84,10 +89,10 @@ static void session_activate(zlrs_link_t *link, uint8_t hop_index)
 
 const zlrs_radio_req_t *link_send_sync(zlrs_link_t *link, uint32_t now_ms)
 {
-	link->band_plan.domain = link->cfg.domain;
+	link->band_plan.region = link->cfg.region;
 	link->band_plan.automatic = link->cfg.automatic_band;
 	link->band_plan.phy =
-		link->cfg.domain == ZLRS_DOMAIN_ISM2400 ? zlrs_mod_phy_id(&link->cfg.mod) : 0U;
+		link->cfg.region == ZLRS_REGION_ISM2400 ? zlrs_mod_phy_id(&link->cfg.mod) : 0U;
 	link->band_announced = link->band_plan.switch_frame != 0U;
 	zlrs_frame_t frame = {
 		.type = ZLRS_PKT_SYNC,
@@ -123,10 +128,10 @@ const zlrs_radio_req_t *link_send_sess_resp(zlrs_link_t *link)
 
 const zlrs_radio_req_t *link_send_sess_cfm(zlrs_link_t *link)
 {
-	link->band_plan.domain = link->cfg.domain;
+	link->band_plan.region = link->cfg.region;
 	link->band_plan.automatic = link->cfg.automatic_band;
 	link->band_plan.phy =
-		link->cfg.domain == ZLRS_DOMAIN_ISM2400 ? zlrs_mod_phy_id(&link->cfg.mod) : 0U;
+		link->cfg.region == ZLRS_REGION_ISM2400 ? zlrs_mod_phy_id(&link->cfg.mod) : 0U;
 	zlrs_frame_t frame = {
 		.type = ZLRS_PKT_SESS_CFM,
 		.body.sess_cfm = {.nonce_follower = link->sess_nonce_follower,

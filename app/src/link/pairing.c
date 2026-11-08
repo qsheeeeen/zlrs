@@ -1,5 +1,9 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#include "internal.h"
+#include "link/pairing.h"
+#include "link/link.h"
+#include "link/session.h"
+#include <string.h>
+#include <zephyr/sys/byteorder.h>
 
 /* Identity, pairing key derivation and the repeated pairing handshake. */
 static const uint8_t pairing_sync_word[ZLRS_SYNC_WORD_LEN] = {'Z', 'L', 'R', 'S'};
@@ -72,7 +76,7 @@ static void derive_pair(zlrs_link_t *link)
 
 	zlrs_kdf(link->pair_key, ZLRS_KEY_LEN, LABEL_FHSS, NULL, 0U, seed, sizeof(seed));
 	hop_seed = sys_get_le32(seed);
-	zlrs_fhss_init(&link->fhss, link->cfg.domain, hop_seed);
+	zlrs_fhss_init(&link->fhss, link->cfg.region, hop_seed);
 
 	zlrs_kdf(link->pair_key, ZLRS_KEY_LEN, LABEL_SYNC_DATA, NULL, 0U, data_word,
 		 sizeof(data_word));
@@ -282,19 +286,19 @@ bool link_pair_advance(zlrs_link_t *link)
 void link_pair_plan(const zlrs_link_t *link, zlrs_link_plan_t *plan)
 {
 	const bool a = link->slot == ZLRS_SLOT_DATA_A;
-	const bool leader = link->cfg.role == ZLRS_ROLE_LEADER;
+	const zlrs_role_t role = link->cfg.role;
 	const bool due =
 		(uint32_t)(link->slot_ms - link->last_pair_tx_ms) >= link->cfg.pair_period_ms;
-	if (leader && a && link->pair_cfm_pending) {
+	if ((role == ZLRS_ROLE_LEADER) && a && link->pair_cfm_pending) {
 		if (due) {
 			link_plan_tx(link, plan, ZLRS_PKT_PAIR_CFM, ZLRS_PAIR_PAYLOAD_LEN,
 				     link_sync_freq_hz(link));
 		}
 	} else if (link->state == ZLRS_STATE_PAIRING) {
-		if (leader && a && due) {
+		if ((role == ZLRS_ROLE_LEADER) && a && due) {
 			link_plan_tx(link, plan, ZLRS_PKT_PAIR_REQ, ZLRS_PAIR_REQ_PAYLOAD_LEN,
 				     link_sync_freq_hz(link));
-		} else if (!leader && !a && link->pair_wait_cfm && due) {
+		} else if (!(role == ZLRS_ROLE_LEADER) && !a && link->pair_wait_cfm && due) {
 			link_plan_tx(link, plan, ZLRS_PKT_PAIR_RESP, ZLRS_PAIR_PAYLOAD_LEN,
 				     link_sync_freq_hz(link));
 		} else {
@@ -394,5 +398,16 @@ bool zlrs_link_cancel_pair(zlrs_link_t *link, uint32_t now_ms)
 	link->sess_resp_due = false;
 	link->sess_cfm_due = false;
 	link_set_state(link, link->paired ? ZLRS_STATE_SEARCHING : ZLRS_STATE_UNPAIRED, now_ms);
+	return true;
+}
+
+bool zlrs_link_get_pairing(const zlrs_link_t *link, uint8_t peer_id[ZLRS_DEV_ID_LEN],
+			   uint8_t pair_salt[ZLRS_PAIR_SALT_LEN])
+{
+	if (!link->paired) {
+		return false;
+	}
+	memcpy(peer_id, link->peer_id, ZLRS_DEV_ID_LEN);
+	memcpy(pair_salt, link->pair_salt, ZLRS_PAIR_SALT_LEN);
 	return true;
 }

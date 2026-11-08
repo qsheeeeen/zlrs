@@ -113,7 +113,7 @@ ZTEST(FrameCodec, test_IndependentWireVectorsAndLengthBounds)
 					       .hop_index = 254,
 					       .nonce_leader = 0x11223344,
 					       .frame_index = 0x55667788,
-					       .band_plan = {.domain = 4,
+					       .band_plan = {.region = 4,
 							     .automatic = 1,
 							     .phy = 1,
 							     .target_phy = 4,
@@ -156,7 +156,7 @@ ZTEST(FrameCodec, test_IndependentWireVectorsAndLengthBounds)
 			     .body = {.sess_cfm = {.nonce_follower = 0x55667788,
 						   .hop_index = 0x44,
 						   .frame_index = 0x99aabbcc,
-						   .band_plan = {.domain = 4}}},
+						   .band_plan = {.region = 4}}},
 			     .seq = 0x04030102,
 			     .tag = {0xde, 0xad, 0xbe, 0xef}};
 	const uint8_t cfm[] = {7,    2,    1, 3, 4, 0x88, 0x77, 0x66, 0x55, 0x44, 0xcc, 0xbb,

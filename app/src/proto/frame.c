@@ -15,18 +15,18 @@ uint8_t zlrs_profile_tag_len(zlrs_profile_t profile)
 
 static void encode_band_plan(uint8_t *p, const zlrs_band_plan_t *plan)
 {
-	p[0] = plan->domain | (plan->automatic << 3U) | (plan->target_subg << 4U);
+	p[0] = plan->region | (plan->automatic << 3U) | (plan->target_subg << 4U);
 	sys_put_le32(plan->switch_frame, p + 1U);
 	p[5] = plan->phy | (plan->target_phy << 3U);
 }
 
 static bool decode_band_plan(zlrs_band_plan_t *plan, const uint8_t *p)
 {
-	if ((p[0] & 0xe0U) != 0U || (p[0] & 7U) > 4U || (p[5] & 0xc0U) != 0U ||
+	if ((p[0] & 0xe0U) != 0U || (p[0] & 7U) >= ZLRS_REGION_COUNT || (p[5] & 0xc0U) != 0U ||
 	    (p[5] & 7U) >= ZLRS_PHY_COUNT || ((p[5] >> 3U) & 7U) >= ZLRS_PHY_COUNT) {
 		return false;
 	}
-	*plan = (zlrs_band_plan_t){.domain = p[0] & 7U,
+	*plan = (zlrs_band_plan_t){.region = p[0] & 7U,
 				   .automatic = (p[0] >> 3U) & 1U,
 				   .target_subg = (p[0] >> 4U) & 1U,
 				   .phy = p[5] & 7U,

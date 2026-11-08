@@ -77,7 +77,8 @@ uint16_t __wrap_zlrs_link_tx_space(const zlrs_link_t *link)
 	if (op != 0) {
 		command_result = 0;
 		if (op == 1) {
-			struct zlrs_trace_status trace = zlrs_trace_status();
+			struct zlrs_trace_status trace;
+			zlrs_trace_status(&trace);
 			if (link->queue_count != 0U || link->state != ZLRS_STATE_CONNECTED ||
 			    trace.state != ZLRS_TRACE_CAPTURING || trace.duration_ms != 0U) {
 				command_result = -EBUSY;

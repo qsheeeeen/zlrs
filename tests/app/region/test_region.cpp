@@ -17,23 +17,21 @@
 ZTEST(Region, test_PredefinedPlansAreBounded)
 {
 	for (unsigned int id = 0; id < ZLRS_REGION_COUNT; id++) {
-		const auto *region = zlrs_region_get(id);
+		const auto *region = &zlrs_regions[id];
 		zassert_not_null(region);
-		zassert_true(region->domain < ZLRS_DOMAIN_COUNT);
-		const auto &domain = zlrs_fhss_domains[region->domain];
-		zexpect_true(domain.channel_count > 0);
-		zexpect_true(domain.start_hz >= region->low_hz);
-		zexpect_true(domain.start_hz + (domain.channel_count - 1) * domain.step_hz <=
+		zexpect_true(region->channel_count > 0);
+		zexpect_true(region->start_hz >= region->low_hz);
+		zexpect_true(region->start_hz + (region->channel_count - 1) * region->step_hz <=
 			     region->high_hz);
 	}
 	zexpect_is_null(zlrs_region_get(ZLRS_REGION_COUNT));
 	zexpect_is_null(zlrs_region_get(255));
 }
 
-ZTEST(Region, test_AllPredefinedRegionsCanBelongToOneBoard)
+ZTEST(Region, test_AllConfiguredRegionsAreAvailable)
 {
-	zexpect_equal(zlrs_region_supported_mask(), BIT_MASK(ZLRS_REGION_COUNT));
-	for (unsigned int id = 0; id < ZLRS_REGION_COUNT; id++) {
+	zexpect_equal(zlrs_region_supported_mask(), BIT_MASK(ZLRS_REGION_ISM2400));
+	for (unsigned int id = 0; id < ZLRS_REGION_ISM2400; id++) {
 		zexpect_not_null(zlrs_region_get(id));
 	}
 }

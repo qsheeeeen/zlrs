@@ -1,5 +1,8 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#include "internal.h"
+#include "link/data.h"
+#include "link/link.h"
+#include <string.h>
+#include <zephyr/sys/__assert.h>
 
 /* Single-owner packet FIFO and direct payload admission. */
 

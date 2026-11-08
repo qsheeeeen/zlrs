@@ -13,6 +13,8 @@
 #include <zephyr/ztest.h>
 extern "C" {
 #include "band.h"
+#include "link/data.h"
+#include "link/pairing.h"
 #include "power.h"
 }
 
@@ -79,7 +81,7 @@ static void init_node(node_t *node, zlrs_role_t role, const uint8_t dev_id[4],
 		      const uint8_t root[32])
 {
 	zlrs_link_cfg_t cfg = {.role = role,
-			       .domain = ZLRS_DOMAIN_ISM2400,
+			       .region = ZLRS_REGION_ISM2400,
 			       .profile = ZLRS_PROFILE_P1,
 			       .mod = {.rate_bps = 2600000U},
 			       .tx_power_dbm = 10,
@@ -316,7 +318,8 @@ ZTEST(Link, test_PendingOrInvalidQualityStillRefreshesRssiAndFeedback)
 	connect_saved(&sim, ZLRS_PROFILE_P1);
 	for (uint8_t quality : {127, 101, 255}) {
 		inject_quality(&sim, quality, ++sim.now_ms);
-		const auto info = zlrs_link_get_info(&sim.leader.link);
+		zlrs_link_info_t info;
+		zlrs_link_get_info(&sim.leader.link, &info);
 		zexpect_equal(info.peer_rssi_dbm, -60);
 		zexpect_equal(info.last_peer_feedback_ms, sim.now_ms);
 		zexpect_equal(info.peer_lq_percent, ZLRS_LQ_UNAVAILABLE);
@@ -389,7 +392,8 @@ ZTEST_P(PowerSymmetry, test_StrongDuplexLinkKeepsSavingWithOneOccasionalLostPack
 		}
 		sim_frame(&sim);
 		for (unsigned int i = 0U; i < 2U; i++) {
-			const zlrs_link_info_t info = zlrs_link_get_info(nodes[i]);
+			zlrs_link_info_t info;
+			zlrs_link_get_info(nodes[i], &info);
 			saw_99 |= info.peer_lq_percent == 99U;
 			zlrs_link_set_power(
 				nodes[i], ([&] {
@@ -611,7 +615,7 @@ ZTEST(Link, test_ReplayAndCounters)
 					       .hop_index = 0U,
 					       .nonce_leader = follower->sess_nonce_leader,
 					       .frame_index = index + 100U,
-					       .band_plan = {.domain = ZLRS_DOMAIN_ISM2400}}},
+					       .band_plan = {.region = ZLRS_REGION_ISM2400}}},
 			     .seq = UINT32_MAX};
 	inject(&sim.follower, &frame, ZLRS_SYNC_PAYLOAD_LEN, follower->link_auth_in, sim.now_ms,
 	       false);
@@ -631,7 +635,7 @@ ZTEST(Link, test_ReplayAndCounters)
 		.body = {.sess_cfm = {.nonce_follower = follower->sess_nonce_follower ^ 1U,
 				      .hop_index = 0U,
 				      .frame_index = index + 100U,
-				      .band_plan = {.domain = ZLRS_DOMAIN_ISM2400}}},
+				      .band_plan = {.region = ZLRS_REGION_ISM2400}}},
 		.seq = UINT32_MAX};
 	inject(&sim.follower, &frame, ZLRS_SESS_CFM_PAYLOAD_LEN, follower->session_key_in,
 	       sim.now_ms, false);
@@ -831,7 +835,7 @@ ZTEST_P(PairingCommit, test_SavedRecordChangesOnlyAfterConfirmation)
 	zexpect_equal(memcmp(saved_id, old_peer->link.dev_id, sizeof(saved_id)), 0);
 	zexpect_equal(memcmp(saved_salt, salt, sizeof(salt)), 0);
 	zexpect_equal(memcmp(link->pair_key, old_key, sizeof(old_key)), 0);
-	zexpect_equal(memcmp(zlrs_link_get_info(link).peer_id, saved_id, sizeof(saved_id)), 0);
+	zexpect_equal(memcmp((link)->peer_id, saved_id, sizeof(saved_id)), 0);
 	const uint32_t nonce_a = link->pair_nonce;
 	const uint32_t nonce_b = link->pair_nonce_b;
 	if (end == PairEnd::Cancel) {
@@ -995,7 +999,7 @@ ZTEST(Link, test_EntropyFailure)
 			      .body = {.sync = {.profile = 1U,
 						.version = ZLRS_PROTO_VERSION,
 						.nonce_leader = 42U,
-						.band_plan = {.domain = ZLRS_DOMAIN_ISM2400}}},
+						.band_plan = {.region = ZLRS_REGION_ISM2400}}},
 			      .seq = 1U};
 	inject(&sim.follower, &frame, ZLRS_SYNC_PAYLOAD_LEN, sim.follower.link.link_auth_in, 1U,
 	       false);
@@ -1046,7 +1050,7 @@ ZTEST(Link, test_NonceReuse)
 static void retune(node_t *node, bool subg, zlrs_phy_t phy)
 {
 	zlrs_link_cfg_t cfg = node->link.cfg;
-	cfg.domain = subg ? ZLRS_DOMAIN_CN433 : ZLRS_DOMAIN_ISM2400;
+	cfg.region = subg ? ZLRS_REGION_CN433 : ZLRS_REGION_ISM2400;
 	cfg.mod = subg ? zlrs_mod_flrc(325000U) : zlrs_mod_phy(phy);
 	cfg.sync_period_ms = subg ? 600U : 100U;
 	zexpect_true(zlrs_link_reconfigure_radio(&node->link, &cfg));
@@ -1058,7 +1062,8 @@ static void automatic_frame(sim_t *sim, zlrs_band_policy_t policies[2])
 	node_t *nodes[2] = {&sim->leader, &sim->follower};
 	for (unsigned int i = 0; i < 2; i++) {
 		zlrs_link_t *link = &nodes[i]->link;
-		const zlrs_link_info_t info = zlrs_link_get_info(link);
+		zlrs_link_info_t info;
+		zlrs_link_get_info(link, &info);
 		bool changed = false, target = false, probe = false;
 		zlrs_phy_t phy = ZLRS_PHY_FLRC_2600;
 		if (info.band_plan.switch_frame &&
@@ -1107,9 +1112,9 @@ static void automatic_frame(sim_t *sim, zlrs_band_policy_t policies[2])
 
 static bool captured_band(const sim_t *sim, bool subg)
 {
-	const zlrs_fhss_domain_id_t domain = subg ? ZLRS_DOMAIN_CN433 : ZLRS_DOMAIN_ISM2400;
-	return both_connected(sim) && sim->leader.link.cfg.domain == domain &&
-	       sim->follower.link.cfg.domain == domain && !sim->leader.link.radio_acquiring &&
+	const zlrs_region_id_t domain = subg ? ZLRS_REGION_CN433 : ZLRS_REGION_ISM2400;
+	return both_connected(sim) && sim->leader.link.cfg.region == domain &&
+	       sim->follower.link.cfg.region == domain && !sim->leader.link.radio_acquiring &&
 	       !sim->follower.link.radio_acquiring;
 }
 
@@ -1197,8 +1202,8 @@ ZTEST_P(AutomaticBandLink, test_PreservesSessionAndDataAcrossTransition)
 		sim_frame(&sim);
 	}
 	zlrs_band_policy_t policies[2];
-	zlrs_band_policy_init(&policies[0], true, true, false, 0, sim.now_ms);
-	zlrs_band_policy_init(&policies[1], true, false, false, 0, sim.now_ms);
+	zlrs_band_policy_init(&policies[0], true, ZLRS_ROLE_LEADER, false, 0, sim.now_ms);
+	zlrs_band_policy_init(&policies[1], true, ZLRS_ROLE_FOLLOWER, false, 0, sim.now_ms);
 	const uint32_t nonce = sim.leader.link.sess_nonce_leader;
 	const uint32_t seq = sim.leader.link.tx_seq;
 	const uint8_t payload[] = {3, 1, 4, 1, 5, 9};
@@ -1241,7 +1246,7 @@ ZTEST_P(AutomaticBandLink, test_PreservesSessionAndDataAcrossTransition)
 		bool tried = false, returned = false;
 		for (unsigned int i = 0; i < 16000; i++) {
 			automatic_frame(&sim, policies);
-			tried |= sim.leader.link.cfg.domain == ZLRS_DOMAIN_ISM2400;
+			tried |= sim.leader.link.cfg.region == ZLRS_REGION_ISM2400;
 			if (tried && captured_band(&sim, true)) {
 				returned = true;
 				break;
@@ -1280,7 +1285,7 @@ ZTEST(Link, test_BandPlanSecurity)
 					    .hop_index = static_cast<uint8_t>(follower->fhss.index),
 					    .nonce_leader = follower->sess_nonce_leader,
 					    .frame_index = index,
-					    .band_plan = {.domain = ZLRS_DOMAIN_ISM2400,
+					    .band_plan = {.region = ZLRS_REGION_ISM2400,
 							  .automatic = 1,
 							  .target_subg = 1,
 							  .switch_frame = index + 20}}},
@@ -1288,10 +1293,10 @@ ZTEST(Link, test_BandPlanSecurity)
 	inject(&sim.follower, &f, ZLRS_SYNC_PAYLOAD_LEN, follower->link_auth_in, sim.now_ms, true);
 	zexpect_true(follower->last_rx_seq == baseline && follower->band_plan.switch_frame == 0);
 	zexpect_equal(follower->stats.last_rssi, rssi);
-	f.body.sync.band_plan.domain = ZLRS_DOMAIN_CN433;
+	f.body.sync.band_plan.region = ZLRS_REGION_CN433;
 	inject(&sim.follower, &f, ZLRS_SYNC_PAYLOAD_LEN, follower->link_auth_in, sim.now_ms, false);
 	zexpect_true(follower->last_rx_seq == baseline && follower->accepted_rx_events == events);
-	f.body.sync.band_plan.domain = ZLRS_DOMAIN_ISM2400;
+	f.body.sync.band_plan.region = ZLRS_REGION_ISM2400;
 	f.body.sync.band_plan.switch_frame = index;
 	inject(&sim.follower, &f, ZLRS_SYNC_PAYLOAD_LEN, follower->link_auth_in, sim.now_ms, false);
 	zexpect_true(follower->last_rx_seq == baseline && follower->frame_index == index);
@@ -1330,9 +1335,9 @@ ZTEST(Link, test_BandPlanSecurity)
 	const zlrs_radio_req_t *req = zlrs_test_slot(follower, ZLRS_SLOT_DATA_A, sim.now_ms);
 	zassert_not_equal(req, nullptr);
 	zlrs_link_cfg_t cfg = follower->cfg;
-	cfg.domain = ZLRS_DOMAIN_CN433;
+	cfg.region = ZLRS_REGION_CN433;
 	zexpect_false(zlrs_link_reconfigure_radio(follower, &cfg) &&
-		      follower->cfg.domain == ZLRS_DOMAIN_ISM2400);
+		      follower->cfg.region == ZLRS_REGION_ISM2400);
 	zlrs_link_complete(follower, ZLRS_RADIO_OK, 0, 0, 0, sim.now_ms);
 	cfg.profile = ZLRS_PROFILE_P0;
 	zexpect_false(zlrs_link_reconfigure_radio(follower, &cfg));
@@ -1351,8 +1356,8 @@ ZTEST(Link, test_DuplexDeliveryAndWireTranscript)
 		sim_frame(&sim);
 	}
 	zassert_true(both_connected(&sim));
-	zexpect_true(zlrs_link_get_info(&sim.leader.link).paired);
-	zexpect_true(zlrs_link_get_info(&sim.follower.link).paired);
+	zexpect_true((&sim.leader.link)->paired);
+	zexpect_true((&sim.follower.link)->paired);
 	for (uint16_t i = 0U; i < sizeof(leader_data); i++) {
 		leader_data[i] = (uint8_t)(i * 37U + 11U);
 	}
@@ -1382,19 +1387,15 @@ ZTEST(Link, test_DuplexDeliveryAndWireTranscript)
 	zexpect_equal(memcmp(sim.leader.received, follower_data, sizeof(follower_data)), 0);
 	zexpect_true((zlrs_link_get_stats(&sim.leader.link)->tx_retries) > (0U));
 	zexpect_true((zlrs_link_get_stats(&sim.follower.link)->tx_retries) > (0U));
-	const uint32_t leader_feedback_before =
-		zlrs_link_get_info(&sim.leader.link).last_peer_feedback_ms;
-	const uint32_t follower_feedback_before =
-		zlrs_link_get_info(&sim.follower.link).last_peer_feedback_ms;
+	const uint32_t leader_feedback_before = (&sim.leader.link)->last_peer_feedback_ms;
+	const uint32_t follower_feedback_before = (&sim.follower.link)->last_peer_feedback_ms;
 	for (uint32_t i = 0U; i < 100U; i++) {
 		sim_frame(&sim);
 	}
-	zexpect_equal(zlrs_link_get_info(&sim.leader.link).peer_rssi_dbm, -60);
-	zexpect_equal(zlrs_link_get_info(&sim.follower.link).peer_rssi_dbm, -60);
-	zexpect_true((zlrs_link_get_info(&sim.leader.link).last_peer_feedback_ms) >
-		     (leader_feedback_before));
-	zexpect_true((zlrs_link_get_info(&sim.follower.link).last_peer_feedback_ms) >
-		     (follower_feedback_before));
+	zexpect_equal((&sim.leader.link)->peer_rssi_dbm, -60);
+	zexpect_equal((&sim.follower.link)->peer_rssi_dbm, -60);
+	zexpect_true(((&sim.leader.link)->last_peer_feedback_ms) > (leader_feedback_before));
+	zexpect_true(((&sim.follower.link)->last_peer_feedback_ms) > (follower_feedback_before));
 	/* Golden bytes include feedback pacing: payload DATA also refreshes the
 	 * feedback deadline, so a separate empty report is not needed immediately. */
 	zexpect_equal(sim.wire_packets, 192U);
@@ -1841,7 +1842,8 @@ ZTEST_P(TxAccounting, test_CountsTheSubmittedPacketExactlyOnce)
 		zassert_true(zlrs_link_advance_slot(link, slot, sim.now_ms));
 		const auto builds = link->stats.tx_frame_builds;
 		const auto seq = link->tx_seq;
-		const auto plan = zlrs_link_plan(link);
+		zlrs_link_plan_t plan;
+		zlrs_link_plan(link, &plan);
 		zexpect_equal(plan.op, ZLRS_OP_TX);
 		zexpect_equal(plan.radio.buf, nullptr);
 		zexpect_equal(plan.radio.size,
@@ -1925,7 +1927,9 @@ ZTEST_P(LinkProfiles, test_DirectPayloadAdmissionAndRetryKeepTheSameStorage)
 	const auto builds = link->stats.tx_frame_builds;
 	const std::vector<uint8_t> frozen(req->buf, req->buf + req->size);
 	zexpect_false(zlrs_link_advance_slot(link, ZLRS_SLOT_DATA_A, sim.now_ms));
-	zexpect_equal(zlrs_link_plan(link).op, ZLRS_OP_IDLE);
+	zlrs_link_plan_t idle_plan;
+	zlrs_link_plan(link, &idle_plan);
+	zexpect_equal(idle_plan.op, ZLRS_OP_IDLE);
 	zexpect_equal(zlrs_test_slot(link, ZLRS_SLOT_DATA_A, sim.now_ms), nullptr);
 	zexpect_equal(memcmp(req->buf, frozen.data(), frozen.size()), 0);
 	const uint32_t first_seq = link->tx_seq - 1;
@@ -2013,7 +2017,7 @@ ZTEST(Link, test_PacketPoolKeepsByteBudgetWithRetainedHeadAndAppendableTail)
 		cfg.profile = mtu > 499 ? ZLRS_PROFILE_P0 : ZLRS_PROFILE_P1;
 		zlrs_link_t link;
 		zlrs_link_init(&link, &cfg, nullptr, nullptr, nullptr);
-		zlrs_fhss_init(&link.fhss, cfg.domain, 42);
+		zlrs_fhss_init(&link.fhss, cfg.region, 42);
 		link.state = ZLRS_STATE_CONNECTED;
 		link.session_valid = true;
 		link.cfg.resync_every_n = 0;
@@ -2171,7 +2175,7 @@ ZTEST_P(LinkProfiles, test_PlanningIsReadOnlyAndOnlyLaunchStartsAckTimeout)
 	const auto snapshot = std::make_unique<zlrs_link_t>(*link);
 	zlrs_link_plan_t plan;
 	for (unsigned int i = 0; i < 5; i++) {
-		plan = zlrs_link_plan(link);
+		zlrs_link_plan(link, &plan);
 		zexpect_equal(plan.op, ZLRS_OP_TX);
 		zexpect_equal(plan.radio.buf, nullptr);
 		zexpect_equal(memcmp(link, snapshot.get(), sizeof(*link)), 0);
@@ -2193,9 +2197,10 @@ ZTEST_P(LinkProfiles, test_PlanningIsReadOnlyAndOnlyLaunchStartsAckTimeout)
 	zlrs_link_complete(link, ZLRS_RADIO_OK, 0, 0, 0, launch_ms + 5);
 	zexpect_equal(link->arq_sent_ms, launch_ms);
 	zassert_true(zlrs_link_advance_slot(link, ZLRS_SLOT_DATA_A, launch_ms + 29));
-	zexpect_true(zlrs_link_plan(link).arq_wait);
+	zlrs_link_plan(link, &plan);
+	zexpect_true(plan.arq_wait);
 	zassert_true(zlrs_link_advance_slot(link, ZLRS_SLOT_DATA_A, launch_ms + 30));
-	plan = zlrs_link_plan(link);
+	zlrs_link_plan(link, &plan);
 	zexpect_equal(plan.op, ZLRS_OP_TX);
 	zexpect_false(plan.arq_wait);
 }

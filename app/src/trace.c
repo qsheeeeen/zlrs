@@ -143,16 +143,15 @@ void zlrs_trace_trigger(uint32_t sequence, uint32_t elapsed_us)
 }
 #endif
 
-struct zlrs_trace_status zlrs_trace_status(void)
+void zlrs_trace_status(struct zlrs_trace_status *status)
 {
 	const unsigned int key = irq_lock();
-	struct zlrs_trace_status status = capture;
+	*status = capture;
 
-	if (status.state == ZLRS_TRACE_CAPTURING) {
-		status.dropped = tracing_packet_drop_count_get() - dropped_at_start;
+	if (status->state == ZLRS_TRACE_CAPTURING) {
+		status->dropped = tracing_packet_drop_count_get() - dropped_at_start;
 	}
 	irq_unlock(key);
-	return status;
 }
 
 void zlrs_trace_maintenance(bool entering)
@@ -701,7 +700,8 @@ static struct mgmt_callback file_callback = {
 /* SMP group 64, command 0: capture control; rolling ARM is fixture-only. */
 static int trace_response(struct smp_streamer *ctxt, int result)
 {
-	const struct zlrs_trace_status status = zlrs_trace_status();
+	struct zlrs_trace_status status;
+	zlrs_trace_status(&status);
 	zcbor_state_t *zse = ctxt->writer->zs;
 	const bool ok =
 		zcbor_tstr_put_lit(zse, "result") && zcbor_int32_put(zse, result) &&

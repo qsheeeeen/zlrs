@@ -34,9 +34,11 @@ BUILD_ASSERT((REGIONS_MASK & BIT(DT_PROP(DT_NODELABEL(zlrs_rf), default_region) 
  * FCC 15.247 uses the module ceiling of 22 dBm, ETSI EN 300 220 uses 14 dBm at 1%, CN470 17 dBm,
  * CN433 (low power) 10 dBm.
  */
-static const zlrs_region_t regions[ZLRS_REGION_COUNT] = {
+const zlrs_region_t zlrs_regions[ZLRS_REGION_COUNT] = {
 	[ZLRS_REGION_FCC915] = {.name = "FCC915",
-				.domain = ZLRS_DOMAIN_FCC915,
+				.start_hz = 902500000U,
+				.step_hz = 500000U,
+				.channel_count = 50U,
 				.low_hz = 902000000U,
 				.high_hz = 928000000U,
 				.max_tx_power_dbm = 22,
@@ -44,7 +46,9 @@ static const zlrs_region_t regions[ZLRS_REGION_COUNT] = {
 				.duty_window_ms = 0U,
 				.max_rate_bps = 2600000U},
 	[ZLRS_REGION_EU868] = {.name = "EU868",
-			       .domain = ZLRS_DOMAIN_EU868,
+			       .start_hz = 863250000U,
+			       .step_hz = 500000U,
+			       .channel_count = 13U,
 			       .low_hz = 863000000U,
 			       .high_hz = 870000000U,
 			       .max_tx_power_dbm = 14,
@@ -52,7 +56,9 @@ static const zlrs_region_t regions[ZLRS_REGION_COUNT] = {
 			       .duty_window_ms = 60000U,
 			       .max_rate_bps = 325000U},
 	[ZLRS_REGION_CN470] = {.name = "CN470",
-			       .domain = ZLRS_DOMAIN_CN470,
+			       .start_hz = 470300000U,
+			       .step_hz = 300000U,
+			       .channel_count = 96U,
 			       .low_hz = 470000000U,
 			       .high_hz = 510000000U,
 			       .max_tx_power_dbm = 17,
@@ -60,13 +66,23 @@ static const zlrs_region_t regions[ZLRS_REGION_COUNT] = {
 			       .duty_window_ms = 0U,
 			       .max_rate_bps = 325000U},
 	[ZLRS_REGION_CN433] = {.name = "CN433",
-			       .domain = ZLRS_DOMAIN_CN433,
+			       .start_hz = 433300000U,
+			       .step_hz = 300000U,
+			       .channel_count = 5U,
 			       .low_hz = 433050000U,
 			       .high_hz = 434790000U,
 			       .max_tx_power_dbm = 10,
 			       .duty_percent = 0U,
 			       .duty_window_ms = 0U,
 			       .max_rate_bps = 325000U},
+	[ZLRS_REGION_ISM2400] = {.name = "ISM2400",
+				 .start_hz = 2402000000U,
+				 .step_hz = 1000000U,
+				 .channel_count = 79U,
+				 .low_hz = 2400000000U,
+				 .high_hz = 2483500000U,
+				 .max_tx_power_dbm = 22,
+				 .max_rate_bps = 2600000U},
 };
 
 uint32_t zlrs_region_clamp_rate(const zlrs_region_t *region, uint32_t rate_bps)
@@ -89,7 +105,7 @@ const zlrs_region_t *zlrs_region_get(zlrs_region_id_t id)
 		return NULL;
 	}
 
-	return &regions[id];
+	return &zlrs_regions[id];
 }
 
 uint32_t zlrs_airtime_us(uint16_t frame_len, uint32_t rate_bps)

@@ -65,7 +65,7 @@ static const char *diagnostic_state(uint8_t state)
 
 static const char *diagnostic_bands(const zlrs_link_cfg_t *cfg)
 {
-	return cfg->domain == ZLRS_DOMAIN_ISM2400 ? "2.4 GHz" : "sub-G";
+	return cfg->region == ZLRS_REGION_ISM2400 ? "2.4 GHz" : "sub-G";
 }
 
 static void diagnostic_maintenance(struct diagnostic_report_writer *writer)

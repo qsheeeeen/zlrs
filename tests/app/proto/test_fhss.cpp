@@ -24,8 +24,8 @@ ZTEST(Fhss, test_BalancedDeterministicHopTables)
 	printf("fhss\n");
 
 	/* EU868: 13 channels, 256 / 13 = 19 blocks */
-	zlrs_fhss_init(&fhss, ZLRS_DOMAIN_EU868, 0x1234abcdU);
-	zexpect_equal(fhss.domain->channel_count, 13U);
+	zlrs_fhss_init(&fhss, ZLRS_REGION_EU868, 0x1234abcdU);
+	zexpect_equal(fhss.region->channel_count, 13U);
 	zexpect_equal(fhss.sequence_count, 247U);
 	zexpect_equal(fhss.sync_channel, 6U);
 
@@ -44,41 +44,41 @@ ZTEST(Fhss, test_BalancedDeterministicHopTables)
 	}
 
 	/* One seed gives one table on both ends; a new seed gives a new table */
-	zlrs_fhss_init(&again, ZLRS_DOMAIN_EU868, 0x1234abcdU);
+	zlrs_fhss_init(&again, ZLRS_REGION_EU868, 0x1234abcdU);
 	zexpect_equal(memcmp(fhss.sequence, again.sequence, fhss.sequence_count), 0);
-	zlrs_fhss_init(&again, ZLRS_DOMAIN_EU868, 0x1234abceU);
+	zlrs_fhss_init(&again, ZLRS_REGION_EU868, 0x1234abceU);
 	zexpect_not_equal(memcmp(fhss.sequence, again.sequence, fhss.sequence_count), 0);
 
-	zlrs_fhss_init(&fhss, ZLRS_DOMAIN_ISM2400, 0x1234abcdU);
+	zlrs_fhss_init(&fhss, ZLRS_REGION_ISM2400, 0x1234abcdU);
 	zexpect_equal(fhss.sequence_count, 237U); /* 256 / 79 = 3 blocks */
-	zexpect_equal(fhss.domain->channel_count, 79U);
+	zexpect_equal(fhss.region->channel_count, 79U);
 	zexpect_equal(fhss.sequence[fhss.index], fhss.sync_channel);
 
 	first = zlrs_fhss_current_hz(&fhss);
 	zexpect_equal(first,
-		      fhss.domain->start_hz + (uint32_t)fhss.sync_channel * fhss.domain->step_hz);
+		      fhss.region->start_hz + (uint32_t)fhss.sync_channel * fhss.region->step_hz);
 	next = zlrs_fhss_next_hz(&fhss);
 	zexpect_not_equal(next, first);
 	zexpect_equal(fhss.index, 1U);
 	zlrs_fhss_set_index(&fhss, 0U);
 	zexpect_equal(zlrs_fhss_current_hz(&fhss), first);
 	/* Each retained single-domain plan is reproducible, balanced and wraps at its own size. */
-	for (int domain = ZLRS_DOMAIN_FCC915; domain < ZLRS_DOMAIN_COUNT; ++domain) {
+	for (int domain = ZLRS_REGION_FCC915; domain < ZLRS_REGION_COUNT; ++domain) {
 		uint16_t counts[96] = {0};
-		zlrs_fhss_init(&fhss, static_cast<zlrs_fhss_domain_id_t>(domain), 0x5a5a1234U);
-		zlrs_fhss_init(&again, static_cast<zlrs_fhss_domain_id_t>(domain), 0x5a5a1234U);
+		zlrs_fhss_init(&fhss, static_cast<zlrs_region_id_t>(domain), 0x5a5a1234U);
+		zlrs_fhss_init(&again, static_cast<zlrs_region_id_t>(domain), 0x5a5a1234U);
 		zexpect_equal(memcmp(fhss.sequence, again.sequence, fhss.sequence_count), 0);
 		first = zlrs_fhss_current_hz(&fhss);
 		for (uint16_t i = 0U; i < fhss.sequence_count; ++i) {
-			zexpect_true((fhss.sequence[i]) < (fhss.domain->channel_count));
+			zexpect_true((fhss.sequence[i]) < (fhss.region->channel_count));
 			counts[fhss.sequence[i]]++;
 			(void)zlrs_fhss_next_hz(&fhss);
 		}
 		zexpect_equal(fhss.index, 0U);
 		zexpect_equal(zlrs_fhss_current_hz(&fhss), first);
-		for (uint8_t channel = 0U; channel < fhss.domain->channel_count; ++channel) {
+		for (uint8_t channel = 0U; channel < fhss.region->channel_count; ++channel) {
 			zexpect_equal(counts[channel],
-				      fhss.sequence_count / fhss.domain->channel_count);
+				      fhss.sequence_count / fhss.region->channel_count);
 		}
 	}
 }

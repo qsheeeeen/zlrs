@@ -27,7 +27,9 @@
 #include "serial.h"
 #include "trace.h"
 
+#include "link/data.h"
 #include "link/link.h"
+#include "link/pairing.h"
 #include "region/region.h"
 
 LOG_MODULE_REGISTER(zlrs_rf, CONFIG_APP_LOG_LEVEL);
@@ -104,7 +106,7 @@ static uint8_t phase_samples;
 
 static bool is_subg(void)
 {
-	return links_ready && zlrs_link_get_config(&link_data)->domain != ZLRS_DOMAIN_ISM2400;
+	return links_ready && zlrs_link_get_config(&link_data)->region != ZLRS_REGION_ISM2400;
 }
 
 static zlrs_data_band_t active_mode(void)
@@ -232,7 +234,8 @@ static void power_reset(uint32_t now_ms)
 
 static void update_power(uint32_t now_ms)
 {
-	const zlrs_link_info_t info = zlrs_link_get_info(&link_data);
+	zlrs_link_info_t info;
+	zlrs_link_get_info(&link_data, &info);
 	const bool ready =
 		info.state == ZLRS_STATE_CONNECTED && info.session_valid && !info.radio_acquiring;
 	int8_t next;
@@ -291,8 +294,8 @@ struct rf_plan {
 	uint32_t frame_period_us, slot_prepare_us;
 };
 
-static struct rf_plan link_config(zlrs_role_t role, zlrs_profile_t profile, bool automatic,
-                                 bool subg, zlrs_phy_t phy)
+static void link_config(zlrs_role_t role, zlrs_profile_t profile, bool automatic, bool subg,
+			zlrs_phy_t phy, struct rf_plan *out)
 {
 	const zlrs_mod_cfg_t mod =
 		!subg && automatic
@@ -326,15 +329,16 @@ static struct rf_plan link_config(zlrs_role_t role, zlrs_profile_t profile, bool
 	} else {
 		resync_every_n = 0U;
 	}
-	zlrs_link_cfg_t cfg = {
+	out->config = (zlrs_link_cfg_t){
 		.role = role,
-		.domain = subg ? region->domain : ZLRS_DOMAIN_ISM2400,
+		.region = subg ? region_id : ZLRS_REGION_ISM2400,
 
 		.profile = profile,
 		.hopping = IS_ENABLED(CONFIG_ZLRS_APP_FHSS) ? 1U : 0U,
 		.mod = mod,
 		.tx_power_dbm = power_maximum(subg),
-		.pair_tx_power_dbm = CLAMP(ZLRS_PAIR_POWER_DBM, power_minimum(subg), power_maximum(subg)),
+		.pair_tx_power_dbm =
+			CLAMP(ZLRS_PAIR_POWER_DBM, power_minimum(subg), power_maximum(subg)),
 		.rx_timeout_ms = 2U,
 		.acq_timeout_ms = 8U,
 		.sync_period_ms = sync_period_for_mod(&mod),
@@ -357,9 +361,10 @@ static struct rf_plan link_config(zlrs_role_t role, zlrs_profile_t profile, bool
 		.automatic_band = automatic,
 	};
 	LOG_INF("data %s: mtu=%u frame=%u us rate=%u Hz", subg ? "sub-G" : "2.4G",
-		cfg.data_mtu, frame_period_us, 1000000U / frame_period_us);
-	LOG_INF("modem: %s", zlrs_mod_phy_name(zlrs_mod_phy_id(&cfg.mod)));
-	return (struct rf_plan){cfg, frame_period_us, slot_prepare_us};
+		out->config.data_mtu, frame_period_us, 1000000U / frame_period_us);
+	LOG_INF("modem: %s", zlrs_mod_phy_name(zlrs_mod_phy_id(&out->config.mod)));
+	out->frame_period_us = frame_period_us;
+	out->slot_prepare_us = slot_prepare_us;
 }
 
 static void build_links(const zlrs_link_cfg_t *cfg)
@@ -479,8 +484,9 @@ static void change_band(zlrs_data_band_t target, zlrs_phy_t phy, bool probe, uin
 	zlrs_slot_timer_cancel_launch();
 	zlrs_lr2021_abort();
 	const zlrs_link_cfg_t *current = zlrs_link_get_config(&link_data);
-	const struct rf_plan plan = link_config(current->role, current->profile,
-		current->automatic_band, target == ZLRS_DATA_BAND_SUBG, phy);
+	struct rf_plan plan;
+	link_config(current->role, current->profile, current->automatic_band,
+		    target == ZLRS_DATA_BAND_SUBG, phy, &plan);
 	if (!zlrs_link_reconfigure_radio(&link_data, &plan.config)) {
 		return;
 	}
@@ -494,8 +500,10 @@ static void change_band(zlrs_data_band_t target, zlrs_phy_t phy, bool probe, uin
 	zlrs_slot_timer_reconfigure(frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE, slot_prepare_us,
 				    transition_reserved ? 0U : 12000U);
 	transition_reserved = false;
+	zlrs_link_info_t info;
+	zlrs_link_get_info(&link_data, &info);
 	zlrs_band_policy_changed(&band_policy, target == ZLRS_DATA_BAND_SUBG, active_phy(), probe,
-				 now_ms, zlrs_link_get_info(&link_data).last_rx_ms);
+				 now_ms, info.last_rx_ms);
 	band_switches++;
 	LOG_INF("auto band -> %s (%s), switches=%u", is_subg() ? "sub-G" : "2.4G",
 		probe ? "probe" : "capture", band_switches);
@@ -515,7 +523,8 @@ static void update_band(uint32_t now_ms)
 	if (active_mode() != ZLRS_DATA_BAND_AUTO) {
 		return;
 	}
-	const zlrs_link_info_t info = zlrs_link_get_info(&link_data);
+	zlrs_link_info_t info;
+	zlrs_link_get_info(&link_data, &info);
 	if (info.band_plan.switch_frame != 0U &&
 	    info.frame_index >= info.band_plan.switch_frame - 1U) {
 		change_band(info.band_plan.target_subg ? ZLRS_DATA_BAND_SUBG : ZLRS_DATA_BAND_24,
@@ -601,7 +610,9 @@ static void run_slot(uint8_t slot, uint32_t next_slot_us)
 	/* Slot decisions use the planned time even though construction happens before it. */
 	const uint32_t now_ms = zlrs_slot_timer_uptime_ms(slot_nominal_us);
 	const uint32_t hit_before = zlrs_link_get_stats(link)->slot_hit[link_slot];
-	const uint32_t good_before = zlrs_link_get_info(link).accepted_rx_events;
+	zlrs_link_info_t info;
+	zlrs_link_get_info(link, &info);
+	const uint32_t good_before = info.accepted_rx_events;
 	const bool on_subg = is_subg();
 	const zlrs_radio_req_t *req;
 
@@ -621,7 +632,8 @@ static void run_slot(uint8_t slot, uint32_t next_slot_us)
 	if (!zlrs_link_advance_slot(link, link_slot, now_ms)) {
 		return;
 	}
-	const zlrs_link_plan_t plan = zlrs_link_plan(link);
+	zlrs_link_plan_t plan;
+	zlrs_link_plan(link, &plan);
 	ZLRS_TRACE_EVENT("rf_protocol_end", slot_nominal_us, slot);
 	if (plan.op == ZLRS_OP_IDLE) {
 		(void)zlrs_link_finalize(link, &plan);
@@ -732,8 +744,9 @@ static void run_slot(uint8_t slot, uint32_t next_slot_us)
 				   zlrs_slot_timer_now_ms());
 	}
 
+	zlrs_link_get_info(link, &info);
 	if (zlrs_link_get_stats(link)->slot_hit[link_slot] != hit_before &&
-	    zlrs_link_get_info(link).accepted_rx_events != good_before) {
+	    info.accepted_rx_events != good_before) {
 		last_rx_any_ms = zlrs_slot_timer_now_ms();
 		/* Only Follower follows verified packets timestamped in the GPIO ISR. */
 		if (!is_leader() && !phase_adj_set && result.status == 0 && result.size > 0U) {
@@ -747,7 +760,7 @@ static void run_slot(uint8_t slot, uint32_t next_slot_us)
 
 			/* Once acquired, discard delayed IRQ outliers rather than move the clock.
 			 */
-			if (phase_samples >= 8U && !zlrs_link_get_info(link).radio_acquiring &&
+			if (phase_samples >= 8U && !info.radio_acquiring &&
 			    (err > limit || err < -limit)) {
 				return;
 			}
@@ -837,7 +850,8 @@ static void report(uint32_t now_ms)
 /* RF facts for UI and diagnostics, including failed initialization. */
 void zlrs_rf_publish_state(bool force)
 {
-	const zlrs_link_info_t info = zlrs_link_get_info(&link_data);
+	zlrs_link_info_t info;
+	zlrs_link_get_info(&link_data, &info);
 	const zlrs_link_stats_t *stats = zlrs_link_get_stats(&link_data);
 	if (info.state == ZLRS_STATE_CONNECTED) {
 		ever_connected = true;
@@ -861,7 +875,8 @@ void zlrs_rf_publish_state(bool force)
 	    published.frame_period_us == frame_period_us) {
 		return;
 	}
-	const zlrs_rf_status_t state = zlrs_rf_status();
+	zlrs_rf_status_t state;
+	zlrs_rf_status(&state);
 	if (zbus_chan_pub(&zlrs_rf_chan, &state, K_NO_WAIT) == 0) {
 		published = state;
 		have_state = true;
@@ -886,10 +901,10 @@ void zlrs_rf_diagnostics_capture(zlrs_rf_diagnostics_t *out)
 {
 	out->link = (zlrs_rf_link_snapshot_t){
 		.config = *zlrs_link_get_config(&link_data),
-		.info = zlrs_link_get_info(&link_data),
 		.stats = *zlrs_link_get_stats(&link_data),
-		.diagnostics = zlrs_link_get_diagnostics(&link_data),
 	};
+	zlrs_link_get_info(&link_data, &out->link.info);
+	zlrs_link_get_diagnostics(&link_data, &out->link.diagnostics);
 	out->rate = rate_last;
 	out->region = region;
 	out->frame_period_us = frame_period_us;
@@ -919,9 +934,11 @@ void zlrs_rf_diagnostics_capture(zlrs_rf_diagnostics_t *out)
 void zlrs_rf_log_snapshot(void)
 {
 	/* Capture production RF facts only at a safe boundary, before log persistence. */
-	const zlrs_link_info_t info = zlrs_link_get_info(&link_data);
+	zlrs_link_info_t info;
+	zlrs_link_get_info(&link_data, &info);
 	const zlrs_link_stats_t *stats = zlrs_link_get_stats(&link_data);
-	const zlrs_link_diagnostics_t data = zlrs_link_get_diagnostics(&link_data);
+	zlrs_link_diagnostics_t data;
+	zlrs_link_get_diagnostics(&link_data, &data);
 	LOG_INF("data snapshot: state=%u tx=%u rx=%u fail=%u tag=%u sync=%u/%u resp=%u/%u "
 		"cfm=%u/%u queue=%u arq=%u frame=%u last_rx=%u pending=%u",
 		zlrs_link_get_state(&link_data), stats->tx_frames, stats->rx_frames,
@@ -956,13 +973,14 @@ void zlrs_rf_log_snapshot(void)
 	}
 }
 
-zlrs_rf_status_t zlrs_rf_status(void)
+void zlrs_rf_status(zlrs_rf_status_t *out)
 {
-	const zlrs_link_info_t info = zlrs_link_get_info(&link_data);
+	zlrs_link_info_t info;
+	zlrs_link_get_info(&link_data, &info);
 	const zlrs_link_stats_t *stats = zlrs_link_get_stats(&link_data);
 	zlrs_lr2021_diag_t radio;
 	zlrs_lr2021_diag(&radio);
-	zlrs_rf_status_t out = {
+	*out = (zlrs_rf_status_t){
 		.role = zlrs_link_get_config(&link_data)->role,
 		.profile = zlrs_link_get_config(&link_data)->profile,
 		.data_band = (is_subg() ? ZLRS_DATA_BAND_SUBG : ZLRS_DATA_BAND_24),
@@ -1015,9 +1033,8 @@ zlrs_rf_status_t zlrs_rf_status(void)
 		.temperature_centi_c = temperature_centi_c,
 		.hardware_sampled_ms = hardware_sampled_ms,
 	};
-	memcpy(out.dev_id, info.dev_id, sizeof(out.dev_id));
-	memcpy(out.peer_id, info.peer_id, sizeof(out.peer_id));
-	return out;
+	memcpy(out->dev_id, info.dev_id, sizeof(out->dev_id));
+	memcpy(out->peer_id, info.peer_id, sizeof(out->peer_id));
 }
 
 void zlrs_rf_status_refresh(void)
@@ -1032,7 +1049,12 @@ void zlrs_rf_status_refresh(void)
 int zlrs_rf_pair_start(void)
 {
 	zlrs_link_t *link = &link_data;
-	if (!links_ready || !zlrs_link_get_info(link).configured) {
+	if (!links_ready) {
+		return -ENOTCONN;
+	}
+	zlrs_link_info_t info;
+	zlrs_link_get_info(link, &info);
+	if (!info.configured) {
 		return -ENOTCONN;
 	}
 	if (zlrs_link_get_state(link) != ZLRS_STATE_PAIRING) {
@@ -1087,7 +1109,12 @@ void zlrs_rf_pause(void)
 #endif
 	paused = true;
 	paused_at_ms = zlrs_slot_timer_now_ms();
-	pause_had_plan = links_ready && zlrs_link_get_info(&link_data).band_plan.switch_frame != 0U;
+	pause_had_plan = false;
+	if (links_ready) {
+		zlrs_link_info_t info;
+		zlrs_link_get_info(&link_data, &info);
+		pause_had_plan = info.band_plan.switch_frame != 0U;
+	}
 	pause_priority = k_thread_priority_get(k_current_get());
 	k_thread_priority_set(k_current_get(), CONFIG_MAIN_THREAD_PRIORITY);
 	if (radio_ready) {
@@ -1109,8 +1136,9 @@ void zlrs_rf_resume(void)
 		if (pause_had_plan || (uint32_t)(now_ms - paused_at_ms) >= band_policy.loss_ms) {
 			zlrs_link_acquire_radio(&link_data, now_ms);
 			phase_samples = 0U;
-			zlrs_band_policy_resume(&band_policy, now_ms,
-						zlrs_link_get_info(&link_data).last_rx_ms);
+			zlrs_link_info_t info;
+			zlrs_link_get_info(&link_data, &info);
+			zlrs_band_policy_resume(&band_policy, now_ms, info.last_rx_ms);
 		}
 	}
 	if (links_ready) {
@@ -1223,9 +1251,8 @@ int zlrs_rf_init(void)
 		return -EINVAL;
 	}
 	zlrs_duty_init(&duty, region, 0U);
-	zlrs_band_policy_init(&band_policy, automatic,
-			      (settings->role == ZLRS_ROLE_LEADER), subg,
-			      region->duty_window_ms, zlrs_slot_timer_now_ms());
+	zlrs_band_policy_init(&band_policy, automatic, settings->role, subg, region->duty_window_ms,
+			      zlrs_slot_timer_now_ms());
 	band_switches = 0U;
 	/* The status LED comes up on its own thread and reads the state it renders: nothing to
 	 * init here (app/src/ui.c, rf.h) */
@@ -1236,8 +1263,9 @@ int zlrs_rf_init(void)
 		return rc;
 	}
 
-	const struct rf_plan plan = link_config(settings->role, settings->profile,
-		automatic, subg, ZLRS_PHY_FLRC_2600);
+	struct rf_plan plan;
+
+	link_config(settings->role, settings->profile, automatic, subg, ZLRS_PHY_FLRC_2600, &plan);
 	frame_period_us = plan.frame_period_us;
 	slot_prepare_us = plan.slot_prepare_us;
 	build_links(&plan.config);
@@ -1297,7 +1325,8 @@ void zlrs_rf_frame(void)
 	transition_reserved = false;
 
 	for (uint8_t slot = 0U; slot < ZLRS_SLOT_COUNT; slot++) {
-		const zlrs_link_info_t info = zlrs_link_get_info(&link_data);
+		zlrs_link_info_t info;
+		zlrs_link_get_info(&link_data, &info);
 		if (active_mode() == ZLRS_DATA_BAND_AUTO && !transition_reserved &&
 		    info.band_plan.switch_frame != 0U &&
 		    info.band_plan.switch_frame == info.frame_index + (slot == 0U ? 2U : 1U)) {
@@ -1323,7 +1352,8 @@ void zlrs_rf_frame(void)
 
 	if (!is_leader()) {
 		const zlrs_link_cfg_t *const cfg = zlrs_link_get_config(&link_data);
-		const zlrs_link_info_t info = zlrs_link_get_info(&link_data);
+		zlrs_link_info_t info;
+		zlrs_link_get_info(&link_data, &info);
 		const bool acquiring = info.radio_acquiring || info.state == ZLRS_STATE_SEARCHING;
 		const uint32_t capture_wait_ms =
 			info.radio_sync_seen
