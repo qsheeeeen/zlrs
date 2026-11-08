@@ -77,23 +77,6 @@ void link_set_state(zlrs_link_t *link, zlrs_link_state_t state, uint32_t now_ms)
 	}
 }
 
-static uint16_t link_encode_frame(const zlrs_link_t *link, uint8_t *buf, const zlrs_frame_t *frame,
-				  uint16_t payload_len, const uint8_t *tag_key)
-{
-	if (link->cfg.profile > ZLRS_PROFILE_P1 ||
-	    payload_len > ZLRS_PAYLOAD_MAX_LEN - zlrs_profile_tag_len(link->cfg.profile)) {
-		return 0U;
-	}
-	const uint8_t tag_len = zlrs_profile_tag_len(link->cfg.profile);
-	const uint16_t len = zlrs_frame_len(payload_len, tag_len);
-	const uint16_t total = zlrs_frame_encode(frame, buf, sizeof(link->tx_buf), len, tag_len);
-	if (total != 0U && tag_len != 0U) {
-		const uint16_t mac_len = total - tag_len;
-		zlrs_tag(tag_key, ZLRS_KEY_LEN, buf, mac_len, buf + mac_len);
-	}
-	return total;
-}
-
 uint16_t link_build_frame(zlrs_link_t *link, zlrs_frame_t *frame, uint16_t payload_len,
 			  const uint8_t *tag_key)
 {
@@ -105,7 +88,18 @@ uint16_t link_build_frame(zlrs_link_t *link, zlrs_frame_t *frame, uint16_t paylo
 		return 0U;
 	}
 	frame->seq = *counter;
-	const uint16_t total = link_encode_frame(link, link->tx_buf, frame, payload_len, tag_key);
+	if (link->cfg.profile > ZLRS_PROFILE_P1 ||
+	    payload_len > ZLRS_PAYLOAD_MAX_LEN - zlrs_profile_tag_len(link->cfg.profile)) {
+		return 0U;
+	}
+	const uint8_t tag_len = zlrs_profile_tag_len(link->cfg.profile);
+	const uint16_t len = zlrs_frame_len(payload_len, tag_len);
+	const uint16_t total =
+		zlrs_frame_encode(frame, link->tx_buf, sizeof(link->tx_buf), len, tag_len);
+	if (total != 0U && tag_len != 0U) {
+		const uint16_t mac_len = total - tag_len;
+		zlrs_tag(tag_key, ZLRS_KEY_LEN, link->tx_buf, mac_len, link->tx_buf + mac_len);
+	}
 	if (total > 0U) {
 		(*counter)++;
 		link->stats.tx_frame_builds++;
@@ -136,12 +130,12 @@ const uint8_t *link_tag_key_for(const zlrs_link_t *link, uint8_t type, bool outb
 	}
 }
 
-static const zlrs_radio_req_t *make_req(zlrs_link_t *link, bool is_tx, uint8_t *buf, uint16_t size,
-					uint32_t freq_hz, uint8_t sync_slot,
-					const uint8_t sync_word[ZLRS_SYNC_WORD_LEN],
-					uint16_t timeout_ms)
+const zlrs_radio_req_t *link_submit_radio(zlrs_link_t *link, bool is_tx, uint8_t *buf,
+					  uint16_t size, uint32_t freq_hz, uint8_t sync_slot,
+					  const uint8_t sync_word[ZLRS_SYNC_WORD_LEN],
+					  uint16_t timeout_ms)
 {
-	if (link->req_pending) {
+	if (link->req_pending || (is_tx && size == 0U)) {
 		return NULL;
 	}
 
@@ -167,24 +161,6 @@ static const zlrs_radio_req_t *make_req(zlrs_link_t *link, bool is_tx, uint8_t *
 	link->req_pending = true;
 
 	return &link->req;
-}
-
-const zlrs_radio_req_t *link_submit_tx(zlrs_link_t *link, uint8_t *buf, uint16_t len,
-				       uint32_t freq_hz, uint8_t sync_slot,
-				       const uint8_t sync_word[ZLRS_SYNC_WORD_LEN])
-{
-	if (len == 0U) {
-		return NULL;
-	}
-
-	return make_req(link, true, buf, len, freq_hz, sync_slot, sync_word, 0U);
-}
-
-const zlrs_radio_req_t *link_submit_rx(zlrs_link_t *link, uint32_t freq_hz, uint8_t sync_slot,
-				       const uint8_t sync_word[ZLRS_SYNC_WORD_LEN],
-				       uint16_t timeout_ms)
-{
-	return make_req(link, false, link->rx_buf, 0U, freq_hz, sync_slot, sync_word, timeout_ms);
 }
 
 uint16_t link_acq_timeout_ms(const zlrs_link_t *link)
@@ -449,8 +425,9 @@ const zlrs_radio_req_t *zlrs_link_finalize(zlrs_link_t *link, const zlrs_link_pl
 		return NULL;
 	}
 	if (plan->op == ZLRS_OP_RX) {
-		return link_submit_rx(link, plan->radio.freq_hz, plan->radio.sync_slot,
-				      plan->radio.sync_word, plan->radio.timeout_ms);
+		return link_submit_radio(link, false, link->rx_buf, 0U, plan->radio.freq_hz,
+					 plan->radio.sync_slot, plan->radio.sync_word,
+					 plan->radio.timeout_ms);
 	}
 	switch (plan->type) {
 	case ZLRS_PKT_PAIR_REQ:
@@ -563,11 +540,6 @@ bool zlrs_link_radio_captured(zlrs_link_t *link)
 	link->radio_acquiring = false;
 	link->sess_ack_due = true;
 	return true;
-}
-
-bool zlrs_link_plan_band(zlrs_link_t *link, bool target_subg, uint32_t switch_frame)
-{
-	return zlrs_link_plan_radio(link, target_subg, ZLRS_PHY_FLRC_2600, switch_frame);
 }
 
 bool zlrs_link_plan_radio(zlrs_link_t *link, bool target_subg, zlrs_phy_t target_phy,

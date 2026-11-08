@@ -211,8 +211,9 @@ static const zlrs_radio_req_t *send_packet(zlrs_link_t *link, bool retry)
 		return NULL;
 	}
 	packet->sealed = true;
-	const zlrs_radio_req_t *req = link_submit_tx(link, buf, size, link_slot_freq_hz(link),
-						     ZLRS_SYNC_SLOT_DATA, link->sync_word);
+	const zlrs_radio_req_t *req =
+		link_submit_radio(link, true, buf, size, link_slot_freq_hz(link),
+				  ZLRS_SYNC_SLOT_DATA, link->sync_word, 0U);
 	if (req == NULL) {
 		return NULL;
 	}
@@ -255,8 +256,8 @@ const zlrs_radio_req_t *link_send_empty_data(zlrs_link_t *link)
 		return NULL;
 	}
 	link->tx_seq++;
-	return link_submit_tx(link, link->tx_buf, size, link_slot_freq_hz(link),
-			      ZLRS_SYNC_SLOT_DATA, link->sync_word);
+	return link_submit_radio(link, true, link->tx_buf, size, link_slot_freq_hz(link),
+				 ZLRS_SYNC_SLOT_DATA, link->sync_word, 0U);
 }
 
 static void handle_ack_bit(zlrs_link_t *link, bool bit, uint32_t now_ms)

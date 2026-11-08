@@ -65,7 +65,6 @@ static uint32_t slot_prepare_us = CONFIG_ZLRS_APP_PREPARE_US;
 static zlrs_band_policy_t band_policy;
 static uint32_t band_switches;
 static bool transition_reserved;
-#define ZLRS_DATA_SUBG is_subg()
 
 #define REPORT_PERIOD_MS 1000U
 
@@ -110,8 +109,9 @@ static bool is_subg(void)
 
 static zlrs_data_band_t active_mode(void)
 {
-	return zlrs_link_get_config(&link_data)->automatic_band ? ZLRS_DATA_BAND_AUTO
-		: (ZLRS_DATA_SUBG ? ZLRS_DATA_BAND_SUBG : ZLRS_DATA_BAND_24);
+	return zlrs_link_get_config(&link_data)->automatic_band
+		       ? ZLRS_DATA_BAND_AUTO
+		       : (is_subg() ? ZLRS_DATA_BAND_SUBG : ZLRS_DATA_BAND_24);
 }
 
 static bool is_leader(void)
@@ -121,8 +121,8 @@ static bool is_leader(void)
 
 static zlrs_phy_t active_phy(void)
 {
-	return ZLRS_DATA_SUBG ? ZLRS_PHY_FLRC_2600
-			      : zlrs_mod_phy_id(&zlrs_link_get_config(&link_data)->mod);
+	return is_subg() ? ZLRS_PHY_FLRC_2600
+			 : zlrs_mod_phy_id(&zlrs_link_get_config(&link_data)->mod);
 }
 
 /* ---- link callbacks (run on the link thread) ------------------------------ */
@@ -223,7 +223,7 @@ static int8_t power_maximum(bool subg)
 
 static void power_reset(uint32_t now_ms)
 {
-	zlrs_power_init(&power, power_maximum(ZLRS_DATA_SUBG), power_minimum(ZLRS_DATA_SUBG), now_ms);
+	zlrs_power_init(&power, power_maximum(is_subg()), power_minimum(is_subg()), now_ms);
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
 	power_fixed = false;
 	atomic_set(&power_request, 0);
@@ -255,7 +255,7 @@ static void update_power(uint32_t now_ms)
 			.settle_ms = MAX(500U, round_ms),
 			.feedback_timeout_ms = MAX(1000U, round_ms + 500U),
 			.rssi_dbm = info.peer_rssi_dbm,
-			.rssi_floor_dbm = zlrs_band_rssi_floor(ZLRS_DATA_SUBG, active_phy()),
+			.rssi_floor_dbm = zlrs_band_rssi_floor(is_subg(), active_phy()),
 			.lq_percent = info.peer_lq_percent,
 		};
 		next = zlrs_power_update(&power, &observation);
@@ -474,11 +474,6 @@ static int32_t phase_err_us;    /* residual the last correction was computed fro
 static uint32_t phase_hits;     /* corrections since the last report */
 static uint32_t last_rx_any_ms; /* any verified DATA reception: the scan trigger */
 
-static uint32_t now_us(void)
-{
-	return zlrs_slot_timer_now_us();
-}
-
 static void change_band(zlrs_data_band_t target, zlrs_phy_t phy, bool probe, uint32_t now_ms)
 {
 	zlrs_slot_timer_cancel_launch();
@@ -502,7 +497,7 @@ static void change_band(zlrs_data_band_t target, zlrs_phy_t phy, bool probe, uin
 	zlrs_band_policy_changed(&band_policy, target == ZLRS_DATA_BAND_SUBG, active_phy(), probe,
 				 now_ms, zlrs_link_get_info(&link_data).last_rx_ms);
 	band_switches++;
-	LOG_INF("auto band -> %s (%s), switches=%u", ZLRS_DATA_SUBG ? "sub-G" : "2.4G",
+	LOG_INF("auto band -> %s (%s), switches=%u", is_subg() ? "sub-G" : "2.4G",
 		probe ? "probe" : "capture", band_switches);
 }
 
@@ -526,7 +521,7 @@ static void update_band(uint32_t now_ms)
 		change_band(info.band_plan.target_subg ? ZLRS_DATA_BAND_SUBG : ZLRS_DATA_BAND_24,
 			    info.band_plan.target_phy,
 			    !info.band_plan.target_subg &&
-				    (ZLRS_DATA_SUBG || info.band_plan.target_phy < active_phy()),
+				    (is_subg() || info.band_plan.target_phy < active_phy()),
 			    now_ms);
 		return;
 	}
@@ -535,7 +530,7 @@ static void update_band(uint32_t now_ms)
 	if (requested != 0 && info.session_valid && info.state == ZLRS_STATE_CONNECTED &&
 	    !info.radio_acquiring && info.band_plan.switch_frame == 0U) {
 		const zlrs_phy_t phy = requested - 1;
-		if ((!ZLRS_DATA_SUBG && phy == active_phy()) ||
+		if ((!is_subg() && phy == active_phy()) ||
 		    plan_radio(false, phy, info.frame_index)) {
 			(void)atomic_cas(&phy_request, requested, 0);
 		}
@@ -589,7 +584,7 @@ static void run_slot(uint8_t slot, uint32_t next_slot_us)
 			      (is_leader() == (slot == ZLRS_SLOT_DATA_A));
 
 	if (early_tx) {
-		timing = (struct zlrs_slot_timer_wait){.wake_us = now_us()};
+		timing = (struct zlrs_slot_timer_wait){.wake_us = zlrs_slot_timer_now_us()};
 	} else {
 		zlrs_slot_timer_wait_until(prepare_at_us, &timing);
 	}
@@ -602,17 +597,17 @@ static void run_slot(uint8_t slot, uint32_t next_slot_us)
 
 	const uint8_t link_slot = slot;
 	zlrs_link_t *link = &link_data;
-	const uint32_t slot_start_us = now_us();
+	const uint32_t slot_start_us = zlrs_slot_timer_now_us();
 	/* Slot decisions use the planned time even though construction happens before it. */
 	const uint32_t now_ms = zlrs_slot_timer_uptime_ms(slot_nominal_us);
 	const uint32_t hit_before = zlrs_link_get_stats(link)->slot_hit[link_slot];
 	const uint32_t good_before = zlrs_link_get_info(link).accepted_rx_events;
-	const bool on_subg = ZLRS_DATA_SUBG;
+	const bool on_subg = is_subg();
 	const zlrs_radio_req_t *req;
 
 	/* Disabled slots stay idle; acquisition outside assigned slots corrupts phase/hop
 	 * alignment. */
-	if ((int32_t)(slot_deadline_us - now_us()) <= 100) {
+	if ((int32_t)(slot_deadline_us - zlrs_slot_timer_now_us()) <= 100) {
 		missed_slots++;
 		zlrs_link_skip_slot(link, link_slot);
 		return;
@@ -633,9 +628,10 @@ static void run_slot(uint8_t slot, uint32_t next_slot_us)
 		return;
 	}
 	const uint32_t target_us = slot_nominal_us + CONFIG_ZLRS_APP_TX_GUARD_US;
-	if ((int32_t)(slot_deadline_us - now_us()) <= 100 ||
+	if ((int32_t)(slot_deadline_us - zlrs_slot_timer_now_us()) <= 100 ||
 	    (plan.op == ZLRS_OP_TX &&
-	     !zlrs_slot_timer_launch_ready(now_us(), target_us, ZLRS_SLOT_TIMER_LAUNCH_LEAD_US))) {
+	     !zlrs_slot_timer_launch_ready(zlrs_slot_timer_now_us(), target_us,
+					   ZLRS_SLOT_TIMER_LAUNCH_LEAD_US))) {
 		missed_slots++;
 		return;
 	}
@@ -646,11 +642,11 @@ static void run_slot(uint8_t slot, uint32_t next_slot_us)
 			       now_ms)) {
 		return;
 	}
-	const uint32_t finalize_started = now_us();
+	const uint32_t finalize_started = zlrs_slot_timer_now_us();
 	bool hash_held = false;
 	if (plan.op == ZLRS_OP_TX && zlrs_link_get_config(&link_data)->profile == ZLRS_PROFILE_P1) {
-		const int32_t budget =
-			(int32_t)(target_us - now_us()) - ZLRS_SLOT_TIMER_LAUNCH_LEAD_US;
+		const int32_t budget = (int32_t)(target_us - zlrs_slot_timer_now_us()) -
+				       ZLRS_SLOT_TIMER_LAUNCH_LEAD_US;
 		hash_held = budget > 0 && zlrs_hash_acquire((uint32_t)budget);
 		if (!hash_held) {
 			work.hash_busy_tx++;
@@ -666,12 +662,12 @@ static void run_slot(uint8_t slot, uint32_t next_slot_us)
 		return;
 	}
 	if (req->is_tx) {
-		work.tx_finalize_us_last = now_us() - finalize_started;
+		work.tx_finalize_us_last = zlrs_slot_timer_now_us() - finalize_started;
 		work.tx_finalize_us_max = MAX(work.tx_finalize_us_max, work.tx_finalize_us_last);
 	}
 	zlrs_lr2021_slot(target_us, slot_deadline_us);
 
-	const uint32_t prepare_started_us = now_us();
+	const uint32_t prepare_started_us = zlrs_slot_timer_now_us();
 
 	/* Channel and public packet metadata let two MCU histories be correlated.
 	 * arg1: TX bit 31, PHY bits 24..27, sync slot bits 16..23, length bits 0..15. */
@@ -684,14 +680,14 @@ static void run_slot(uint8_t slot, uint32_t next_slot_us)
 	const int prepare_rc = zlrs_lr2021_prepare(req);
 	ZLRS_TRACE_EVENT("rf_prepare_end", slot_nominal_us, (uint32_t)prepare_rc);
 	if (req->is_tx) {
-		work.tx_prepare_us_last = now_us() - slot_start_us;
+		work.tx_prepare_us_last = zlrs_slot_timer_now_us() - slot_start_us;
 		work.tx_prepare_us_max = MAX(work.tx_prepare_us_max, work.tx_prepare_us_last);
 	}
 	if (prepare_rc != 0) {
 		if (req->is_tx) {
 			late_prepare_entry_us = slot_start_us - prepare_at_us;
 			late_prepare_build_us = prepare_started_us - slot_start_us;
-			late_prepare_spi_us = now_us() - prepare_started_us;
+			late_prepare_spi_us = zlrs_slot_timer_now_us() - prepare_started_us;
 		}
 		zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0U, 0, 0, zlrs_slot_timer_now_ms());
 		return;
@@ -720,7 +716,7 @@ static void run_slot(uint8_t slot, uint32_t next_slot_us)
 	 * The next TX still rechecks its own launch budget before finalization. */
 	const uint32_t accept_deadline_us =
 		next_slot_us + CONFIG_ZLRS_APP_TX_GUARD_US - ZLRS_SLOT_TIMER_LAUNCH_LEAD_US;
-	const int32_t remaining_us = (int32_t)(slot_deadline_us - now_us());
+	const int32_t remaining_us = (int32_t)(slot_deadline_us - zlrs_slot_timer_now_us());
 
 	zlrs_lr2021_result_t result = {0};
 	if (remaining_us > 0) {
@@ -839,7 +835,7 @@ static void report(uint32_t now_ms)
 }
 
 /* RF facts for UI and diagnostics, including failed initialization. */
-static void publish_state(bool force)
+void zlrs_rf_publish_state(bool force)
 {
 	const zlrs_link_info_t info = zlrs_link_get_info(&link_data);
 	const zlrs_link_stats_t *stats = zlrs_link_get_stats(&link_data);
@@ -856,7 +852,8 @@ static void publish_state(bool force)
 	/* Only LED inputs wake UI immediately. Full metrics remain available at 1 Hz. */
 	if (!force && have_state && (uint32_t)(now_ms - published_ms) < REPORT_PERIOD_MS &&
 	    published.role == (zlrs_link_get_config(&link_data)->role) &&
-	    published.data_band == (ZLRS_DATA_SUBG ? ZLRS_DATA_BAND_SUBG : ZLRS_DATA_BAND_24) && published.band_mode == active_mode() &&
+	    published.data_band == (is_subg() ? ZLRS_DATA_BAND_SUBG : ZLRS_DATA_BAND_24) &&
+	    published.band_mode == active_mode() &&
 	    published.data_phy == zlrs_mod_phy_id(&zlrs_link_get_config(&link_data)->mod) &&
 	    published.state == info.state && published.link_lost == lost &&
 	    published.fault == !radio_ready && published.lq_percent == stats->lq_percent &&
@@ -870,11 +867,6 @@ static void publish_state(bool force)
 		have_state = true;
 		published_ms = now_ms;
 	}
-}
-
-void zlrs_rf_publish_state(void)
-{
-	publish_state(false);
 }
 
 #if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
@@ -973,7 +965,7 @@ zlrs_rf_status_t zlrs_rf_status(void)
 	zlrs_rf_status_t out = {
 		.role = zlrs_link_get_config(&link_data)->role,
 		.profile = zlrs_link_get_config(&link_data)->profile,
-		.data_band = (ZLRS_DATA_SUBG ? ZLRS_DATA_BAND_SUBG : ZLRS_DATA_BAND_24),
+		.data_band = (is_subg() ? ZLRS_DATA_BAND_SUBG : ZLRS_DATA_BAND_24),
 		.band_mode = active_mode(),
 		.data_phy = zlrs_mod_phy_id(&zlrs_link_get_config(&link_data)->mod),
 		.band_acquiring = info.radio_acquiring,
@@ -1034,7 +1026,7 @@ void zlrs_rf_status_refresh(void)
 	if (radio_ready) {
 		refresh_hardware_status();
 	}
-	publish_state(true);
+	zlrs_rf_publish_state(true);
 }
 
 int zlrs_rf_pair_start(void)
@@ -1050,7 +1042,7 @@ int zlrs_rf_pair_start(void)
 			return random_error != 0 ? random_error : -EIO;
 		}
 		if (active_mode() == ZLRS_DATA_BAND_AUTO &&
-		    (ZLRS_DATA_SUBG || active_phy() != ZLRS_PHY_FLRC_2600)) {
+		    (is_subg() || active_phy() != ZLRS_PHY_FLRC_2600)) {
 			change_band(ZLRS_DATA_BAND_24, ZLRS_PHY_FLRC_2600, false,
 				    zlrs_slot_timer_now_ms());
 		}

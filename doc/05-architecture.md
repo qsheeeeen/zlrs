@@ -35,7 +35,8 @@ rollback and deferred pairing writes share the application-loop owner. The main
 loop and management service use that interface. DATA admission, packet storage,
 ARQ and packet retirement live together in `app/src/link/data.c`; packet bytes
 and payload length have one owner. A submitted request retains its own immutable
-metadata until completion. DATA decoding returns a borrowed view of the RX
+metadata until completion. TX and RX submit through one internal radio-request
+implementation. DATA decoding returns a borrowed view of the RX
 buffer; the control-frame union contains no payload array. Test peers generate
 wire input and drive the same reservation, finalization and completion interfaces
 as RF. They do not add alternate production receive or queue paths.

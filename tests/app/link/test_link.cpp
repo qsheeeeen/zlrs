@@ -1310,8 +1310,8 @@ ZTEST(Link, test_BandPlanSecurity)
 	inject(&sim.follower, &f, ZLRS_SYNC_PAYLOAD_LEN, follower->link_auth_in, sim.now_ms, false);
 	zexpect_true(follower->band_plan.switch_frame == index + 20 &&
 		     follower->accepted_rx_events == events + 1);
-	zexpect_false(zlrs_link_plan_band(follower, true, index + 20));
-	zexpect_false(zlrs_link_plan_band(&sim.leader.link, true, 0));
+	zexpect_false(zlrs_link_plan_radio(follower, true, ZLRS_PHY_FLRC_2600, index + 20));
+	zexpect_false(zlrs_link_plan_radio(&sim.leader.link, true, ZLRS_PHY_FLRC_2600, 0));
 	/* Same-band PHY plans are authenticated and cannot lie about the current PHY. */
 	f.seq = baseline + 2U;
 	f.body.sync.band_plan.target_subg = 0U;

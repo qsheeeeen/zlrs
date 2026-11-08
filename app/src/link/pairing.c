@@ -52,11 +52,6 @@ static void ordered_pair_salt(const zlrs_link_t *link, uint8_t out[ZLRS_PAIR_SAL
 	sys_put_le32(b, &out[4]);
 }
 
-static void derive_auth(zlrs_link_t *link)
-{
-	zlrs_kdf(link->root_key, ZLRS_KEY_LEN, LABEL_AUTH, NULL, 0U, link->auth_key, ZLRS_KEY_LEN);
-}
-
 static void derive_pair(zlrs_link_t *link)
 {
 	uint8_t ctx[ZLRS_PAIR_CTX_LEN];
@@ -107,9 +102,10 @@ static void pair_payload_fill(const zlrs_link_t *link, zlrs_pair_frame_t *out, u
 	out->nonce_b = nonce_b;
 }
 
-static const zlrs_radio_req_t *send_pair(zlrs_link_t *link, uint8_t type, uint32_t nonce_a,
-					 uint32_t nonce_b, uint32_t now_ms)
+const zlrs_radio_req_t *link_pair_finalize(zlrs_link_t *link, uint8_t type)
 {
+	const uint32_t nonce_a = link->pair_nonce;
+	const uint32_t nonce_b = type == ZLRS_PKT_PAIR_REQ ? 0U : link->pair_nonce_b;
 	zlrs_frame_t frame = {.type = type};
 	uint16_t payload_len;
 
@@ -136,11 +132,11 @@ static const zlrs_radio_req_t *send_pair(zlrs_link_t *link, uint8_t type, uint32
 
 	const uint16_t len =
 		link_build_frame(link, &frame, payload_len, link_tag_key_for(link, type, true));
-	link->last_pair_tx_ms = now_ms;
+	link->last_pair_tx_ms = link->slot_ms;
 
 	const zlrs_radio_req_t *req =
-		link_submit_tx(link, link->tx_buf, len, link_sync_freq_hz(link),
-			       ZLRS_SYNC_SLOT_PAIRING, pairing_sync_word);
+		link_submit_radio(link, true, link->tx_buf, len, link_sync_freq_hz(link),
+				  ZLRS_SYNC_SLOT_PAIRING, pairing_sync_word, 0U);
 	if (req != NULL) {
 		link->req.tx_power_dbm = link->cfg.pair_tx_power_dbm;
 	}
@@ -313,18 +309,12 @@ void link_pair_plan(const zlrs_link_t *link, zlrs_link_plan_t *plan)
 	}
 }
 
-const zlrs_radio_req_t *link_pair_finalize(zlrs_link_t *link, uint8_t type)
-{
-	return send_pair(link, type, link->pair_nonce,
-			 type == ZLRS_PKT_PAIR_REQ ? 0U : link->pair_nonce_b, link->slot_ms);
-}
-
 void zlrs_link_set_root_key(zlrs_link_t *link, const uint8_t root_key[ZLRS_KEY_LEN],
 			    uint32_t now_ms)
 {
 	memcpy(link->root_key, root_key, ZLRS_KEY_LEN);
 	link->configured = true;
-	derive_auth(link);
+	zlrs_kdf(link->root_key, ZLRS_KEY_LEN, LABEL_AUTH, NULL, 0U, link->auth_key, ZLRS_KEY_LEN);
 
 	if (link->paired) {
 		derive_pair(link);

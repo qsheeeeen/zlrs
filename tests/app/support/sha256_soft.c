@@ -9,7 +9,6 @@
 
 #include <string.h>
 
-#define SHA256_LEN       ZLRS_SHA256_LEN
 #define SHA256_BLOCK_LEN 64U
 
 typedef struct {
@@ -122,7 +121,7 @@ static void sha256_update(zlrs_sha256_ctx_t *ctx, const void *data, size_t len)
 	}
 }
 
-static void sha256_final(zlrs_sha256_ctx_t *ctx, uint8_t out[SHA256_LEN])
+static void sha256_final(zlrs_sha256_ctx_t *ctx, uint8_t out[ZLRS_SHA256_LEN])
 {
 	const uint64_t bits = ctx->bit_len;
 	uint8_t pad[SHA256_BLOCK_LEN * 2U];

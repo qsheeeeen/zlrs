@@ -51,16 +51,19 @@ ZTEST(Crypto, test_PhraseVectors)
 	printf("crypto: phrase derivation\n");
 
 	/* Vector from Python hashlib.pbkdf2_hmac('sha256', phrase, b'zlrs/kdf/v1', 1e5, 32) */
-	zlrs_root_key_from_phrase("correct horse battery staple", key);
+	zlrs_pbkdf2_sha256("correct horse battery staple", (const uint8_t *)ZLRS_KDF_V1_SALT,
+			   sizeof(ZLRS_KDF_V1_SALT) - 1U, ZLRS_KDF_V1_ITERATIONS, key);
 	zexpect_true(HexEquals(key, sizeof(key),
 			       "039690ebe7c3c9f237d80555d083e7a48f781b7a537156a6d0e501f49d60f726"));
 
-	zlrs_root_key_from_phrase("hello", key);
+	zlrs_pbkdf2_sha256("hello", (const uint8_t *)ZLRS_KDF_V1_SALT,
+			   sizeof(ZLRS_KDF_V1_SALT) - 1U, ZLRS_KDF_V1_ITERATIONS, key);
 	zexpect_true(HexEquals(key, sizeof(key),
 			       "7e7363b218016d1f319a6389fa20aaf53d2fe21056ffe30566cc3b874e6073f8"));
 
 	/* The same phrase must derive the same key every time (tool and device each do it once) */
-	zlrs_root_key_from_phrase("hello", key);
+	zlrs_pbkdf2_sha256("hello", (const uint8_t *)ZLRS_KDF_V1_SALT,
+			   sizeof(ZLRS_KDF_V1_SALT) - 1U, ZLRS_KDF_V1_ITERATIONS, key);
 	zexpect_true(HexEquals(key, sizeof(key),
 			       "7e7363b218016d1f319a6389fa20aaf53d2fe21056ffe30566cc3b874e6073f8"));
 }

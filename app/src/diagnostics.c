@@ -80,12 +80,6 @@ static void diagnostic_maintenance(struct diagnostic_report_writer *writer)
 			  snapshot.maintenance.skipped_without_maintenance);
 }
 
-static void diagnostic_phy(struct diagnostic_report_writer *writer, const zlrs_mod_cfg_t *mod)
-{
-	diagnostic_append(writer, "FLRC, %u.%03u Mbps", mod->rate_bps / 1000000U,
-			  (mod->rate_bps / 1000U) % 1000U);
-}
-
 static void diagnostic_frequency(struct diagnostic_report_writer *writer, uint32_t hz)
 {
 	if (hz >= 1000000000U) {
@@ -129,7 +123,8 @@ static void diagnostic_link(struct diagnostic_report_writer *writer, const char 
 	diagnostic_append(writer, "   Hop: %u   Frame: %u\n", (unsigned int)info.hop_index,
 			  info.frame_index);
 	diagnostic_append(writer, "  PHY / TX setpoint  : ");
-	diagnostic_phy(writer, &cfg->mod);
+	diagnostic_append(writer, "FLRC, %u.%03u Mbps", cfg->mod.rate_bps / 1000000U,
+			  (cfg->mod.rate_bps / 1000U) % 1000U);
 	diagnostic_append(writer, "   /   %d dBm\n", (int)cfg->tx_power_dbm);
 	diagnostic_append(writer, "  RF frames          : TX %u   RX %u   Failed %u\n",
 			  stats->tx_frames, stats->rx_frames, stats->radio_fail);

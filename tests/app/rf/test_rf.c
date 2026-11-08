@@ -569,7 +569,7 @@ static void frames(unsigned int count)
 		zassert_false(zlrs_link_is_busy(local));
 		if (RF_TEST_BAND_AUTO && zlrs_rf_status().data_band != previous_band) {
 			/* A transition must reach UI without waiting for the metrics timer. */
-			zlrs_rf_publish_state();
+			zlrs_rf_publish_state(false);
 			zlrs_rf_status_t published;
 			zassert_ok(zbus_chan_read(&zlrs_rf_chan, &published, K_NO_WAIT));
 			zassert_equal(published.data_band, zlrs_rf_status().data_band);
@@ -605,13 +605,13 @@ static bool both_on_phy(zlrs_phy_t phy)
 static void debug_power_acceptance(void)
 {
 	frames(DIV_ROUND_UP(300000U, period_us));
-	zlrs_rf_publish_state();
+	zlrs_rf_publish_state(false);
 	const zlrs_rf_status_t before = zlrs_rf_status();
 	zassert_ok(zlrs_rf_power_request(false, before.power_floor_dbm));
 	frames(1);
 	zassert_true(zlrs_rf_status().power_fixed);
 	zassert_equal(zlrs_rf_status().tx_power_dbm, before.power_floor_dbm);
-	zlrs_rf_publish_state();
+	zlrs_rf_publish_state(false);
 	zassert_equal(zlrs_rf_power_request(false, before.power_ceiling_dbm + 1), -EINVAL);
 	/* Capture can retain CONNECTED and a session; it must still restore maximum. */
 	zlrs_link_acquire_radio(local, clock_us / 1000U);
@@ -620,7 +620,7 @@ static void debug_power_acceptance(void)
 	zassert_equal(zlrs_rf_status().tx_power_dbm, before.power_ceiling_dbm);
 	zassert_false(zlrs_rf_status().power_fixed);
 	frames(150);
-	zlrs_rf_publish_state();
+	zlrs_rf_publish_state(false);
 	zassert_ok(zlrs_rf_power_request(false, before.power_floor_dbm));
 	frames(1);
 	zassert_true(zlrs_rf_status().power_fixed);
@@ -632,27 +632,27 @@ static void debug_power_acceptance(void)
 
 static void publication_acceptance(void)
 {
-	zlrs_rf_publish_state();
+	zlrs_rf_publish_state(false);
 	zlrs_rf_status_t before, after;
 	zassert_ok(zbus_chan_read(&zlrs_rf_chan, &before, K_NO_WAIT));
 	/* Counters refresh at 1 Hz even without an LED input change. */
 	local->stats.tx_frames++;
-	zlrs_rf_publish_state();
+	zlrs_rf_publish_state(false);
 	zassert_ok(zbus_chan_read(&zlrs_rf_chan, &after, K_NO_WAIT));
 	zassert_equal(after.tx_frames, before.tx_frames);
 	k_msleep(1001);
-	zlrs_rf_publish_state();
+	zlrs_rf_publish_state(false);
 	zassert_ok(zbus_chan_read(&zlrs_rf_chan, &after, K_NO_WAIT));
 	zassert_equal(after.tx_frames, local->stats.tx_frames);
 	/* Failed publication must retry the same change at the next boundary. */
 	const uint8_t quality = local->stats.lq_percent;
 	local->stats.lq_percent = quality == 1U ? 2U : 1U;
 	zassert_ok(zbus_chan_claim(&zlrs_rf_chan, K_NO_WAIT));
-	zlrs_rf_publish_state();
+	zlrs_rf_publish_state(false);
 	zassert_equal(((const zlrs_rf_status_t *)zbus_chan_const_msg(&zlrs_rf_chan))->lq_percent,
 		      quality);
 	zassert_ok(zbus_chan_finish(&zlrs_rf_chan));
-	zlrs_rf_publish_state();
+	zlrs_rf_publish_state(false);
 	zassert_ok(zbus_chan_read(&zlrs_rf_chan, &after, K_NO_WAIT));
 	zassert_equal(after.lq_percent, local->stats.lq_percent);
 	local->stats.lq_percent = quality;

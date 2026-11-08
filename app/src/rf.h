@@ -72,7 +72,7 @@ int zlrs_rf_init(void);
 void zlrs_rf_start(void);
 void zlrs_rf_frame(void);
 /* Also publishes an initialization fault while main keeps management reachable. */
-void zlrs_rf_publish_state(void);
+void zlrs_rf_publish_state(bool force);
 bool zlrs_rf_pairing(uint8_t peer_id[ZLRS_DEV_ID_LEN], uint8_t pair_salt[ZLRS_PAIR_SALT_LEN]);
 zlrs_rf_status_t zlrs_rf_status(void);
 /* Fresh chip measurements only at a paused management boundary; publishes the

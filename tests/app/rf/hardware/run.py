@@ -100,7 +100,7 @@ def restore_images(identities, previous):
 def debug_report(identity, name):
     path = f"/dev/serial/by-id/usb-zlrs_ZLRS_{identity}-if02"
     with mgmt.management_session(path, 115200, 2) as client:
-        return mgmt.read_debug_report(client, mgmt.DEBUG_REPORTS[name]).decode()
+        return client.request(mgmt.CMD_DEBUG_REPORT, bytes([mgmt.DEBUG_REPORTS[name]]))["report"]
 
 
 class OnlineObservers:

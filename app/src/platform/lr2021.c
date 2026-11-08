@@ -477,10 +477,8 @@ int zlrs_lr2021_launch(void)
 	return 0;
 }
 
-#define RADIO_NODE     DT_CHOSEN(zephyr_lorawan_transceiver)
-#define RADIO_CS_PIN   DT_SPI_DEV_CS_GPIOS_PIN(RADIO_NODE)
-#define RADIO_BUSY_PIN DT_GPIO_PIN(RADIO_NODE, busy_gpios)
-static spi_hw_t *const launch_spi = (spi_hw_t *)DT_REG_ADDR(DT_BUS(RADIO_NODE));
+static spi_hw_t *const launch_spi =
+	(spi_hw_t *)DT_REG_ADDR(DT_BUS(DT_CHOSEN(zephyr_lorawan_transceiver)));
 
 /* Published only after the RAL has completed every SPI/DMA preparation operation.
  * The RF owner blocks until fired. The ISR touches only this mailbox and hardware. */
@@ -508,12 +506,12 @@ static void __ramfunc launch_command_isr(uint32_t irq_time_us)
 	}
 	/* The public RAL preparation leaves SPI idle and the LR2021 in FS, BUSY low.
 	 * Reject an unexpected bus state rather than interfere with another transfer. */
-	if (gpio_get(RADIO_BUSY_PIN) ||
+	if (gpio_get(DT_GPIO_PIN(DT_CHOSEN(zephyr_lorawan_transceiver), busy_gpios)) ||
 	    (launch_spi->sr & (SPI_SSPSR_BSY_BITS | SPI_SSPSR_RNE_BITS)) != 0U ||
 	    (launch_spi->cr1 & SPI_SSPCR1_SSE_BITS) == 0U) {
 		goto done;
 	}
-	gpio_put(RADIO_CS_PIN, false);
+	gpio_put(DT_SPI_DEV_CS_GPIOS_PIN(DT_CHOSEN(zephyr_lorawan_transceiver)), false);
 	while (received < sizeof(launch_mailbox.command)) {
 		if (sent < sizeof(launch_mailbox.command) &&
 		    (launch_spi->sr & SPI_SSPSR_TNF_BITS) != 0U) {
@@ -534,7 +532,7 @@ static void __ramfunc launch_command_isr(uint32_t irq_time_us)
 	}
 	result = 0;
 release_cs:
-	gpio_put(RADIO_CS_PIN, true);
+	gpio_put(DT_SPI_DEV_CS_GPIOS_PIN(DT_CHOSEN(zephyr_lorawan_transceiver)), true);
 done:
 	launch_mailbox.command_us = zlrs_slot_timer_now_us() - launch_mailbox.begin_us;
 	job_state = result == 0 ? RADIO_ACTIVE : RADIO_IDLE;
@@ -547,9 +545,11 @@ int zlrs_lr2021_launch_at(uint32_t target_us)
 	if (job_state != RADIO_PREPARED || request == NULL || !request->is_tx || slot_end_us == 0U) {
 		return -EINVAL;
 	}
-	BUILD_ASSERT(DT_NODE_HAS_COMPAT(DT_BUS(RADIO_NODE), arm_pl022));
-	BUILD_ASSERT(RADIO_CS_PIN < 32U && RADIO_BUSY_PIN < 32U);
-	BUILD_ASSERT(DT_SPI_DEV_CS_GPIOS_FLAGS(RADIO_NODE) & GPIO_ACTIVE_LOW);
+	BUILD_ASSERT(DT_NODE_HAS_COMPAT(DT_BUS(DT_CHOSEN(zephyr_lorawan_transceiver)), arm_pl022));
+	BUILD_ASSERT(DT_SPI_DEV_CS_GPIOS_PIN(DT_CHOSEN(zephyr_lorawan_transceiver)) < 32U &&
+		     DT_GPIO_PIN(DT_CHOSEN(zephyr_lorawan_transceiver), busy_gpios) < 32U);
+	BUILD_ASSERT(DT_SPI_DEV_CS_GPIOS_FLAGS(DT_CHOSEN(zephyr_lorawan_transceiver)) &
+		     GPIO_ACTIVE_LOW);
 	job_state = RADIO_IDLE;
 	uint32_t latest_us;
 	if (!zlrs_lr2021_tx_deadline(target_us, slot_end_us,

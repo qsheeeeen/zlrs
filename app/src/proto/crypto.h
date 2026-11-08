@@ -39,11 +39,9 @@ void zlrs_tag(const uint8_t *key, size_t key_len, const uint8_t *data, size_t le
 void zlrs_pbkdf2_sha256(const char *phrase, const uint8_t *salt, size_t salt_len,
 			uint32_t iterations, uint8_t out[ZLRS_KEY_LEN]);
 
-/* Same rule with the release salt and iteration count, used by management mode */
+/* Release derivation parameters used by management mode. */
 #define ZLRS_KDF_V1_SALT       "zlrs/kdf/v1"
 #define ZLRS_KDF_V1_ITERATIONS 100000U
-
-void zlrs_root_key_from_phrase(const char *phrase, uint8_t out[ZLRS_KEY_LEN]);
 
 /* Constant-time comparison, to avoid timing side channels */
 bool zlrs_ct_equal(const uint8_t *a, const uint8_t *b, size_t len);

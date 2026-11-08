@@ -80,7 +80,7 @@ int main(void)
 
 	for (;;) {
 		zlrs_watchdog_feed();
-		zlrs_rf_publish_state();
+		zlrs_rf_publish_state(false);
 		zlrs_serial_publish_state();
 		zlrs_lifecycle_check_rollback(!rf_ready,
 					      CONFIG_ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS);

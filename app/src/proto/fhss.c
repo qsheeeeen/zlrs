@@ -118,8 +118,9 @@ void zlrs_fhss_init(zlrs_fhss_t *fhss, zlrs_fhss_domain_id_t domain_id, uint32_t
 					      fhss->sequence);
 }
 
-static uint32_t freq_hz(const zlrs_fhss_t *fhss, uint8_t channel)
+uint32_t zlrs_fhss_current_hz(const zlrs_fhss_t *fhss)
 {
+	uint8_t channel = fhss->sequence[fhss->index];
 	if (fhss->domain == NULL) {
 		return 0U; /* not initialised with a key yet */
 	}
@@ -129,11 +130,6 @@ static uint32_t freq_hz(const zlrs_fhss_t *fhss, uint8_t channel)
 	}
 
 	return fhss->domain->start_hz + (uint32_t)channel * fhss->domain->step_hz;
-}
-
-uint32_t zlrs_fhss_current_hz(const zlrs_fhss_t *fhss)
-{
-	return freq_hz(fhss, fhss->sequence[fhss->index]);
 }
 
 uint32_t zlrs_fhss_next_hz(zlrs_fhss_t *fhss)

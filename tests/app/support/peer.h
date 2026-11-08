@@ -50,8 +50,9 @@ static inline void zlrs_test_rx(zlrs_link_t *link, const uint8_t *buf, uint16_t 
 		return;
 	}
 	if (!link->req_pending) {
-		(void)link_submit_rx(link, link_sync_freq_hz(link), ZLRS_SYNC_SLOT_DATA,
-		                     link->sync_word, link->cfg.rx_timeout_ms);
+		(void)link_submit_radio(link, false, link->rx_buf, 0U, link_sync_freq_hz(link),
+					ZLRS_SYNC_SLOT_DATA, link->sync_word,
+					link->cfg.rx_timeout_ms);
 	}
 	memcpy(link->req.buf, buf, len);
 	zlrs_link_complete(link, ZLRS_RADIO_OK, len, rssi, snr, now_ms);

@@ -276,9 +276,6 @@ def management_session(port, baud, timeout, enter=True, keep=False, observe=Fals
                 client.request(CMD_EXIT)
 
 
-def read_debug_report(client, report_id: int) -> bytes:
-    return client.request(CMD_DEBUG_REPORT, bytes([report_id]))["report"].encode()
-
 
 def device_heading(port: str) -> None:
     """Separate each target block in multi-device output."""
@@ -301,10 +298,10 @@ def talk(port, baud, operation, timeout, enter=True, quiet=False, keep=False, re
     try:
         with management_session(port, baud, timeout,
                                 **session_options(command, enter, keep, refresh)) as client:
-            if command == CMD_DEBUG_REPORT:
-                print(read_debug_report(client, value[0]).decode(), end="")
-                return 0
             response = client.request(command, value)
+            if command == CMD_DEBUG_REPORT:
+                print(response["report"], end="")
+                return 0
             if command == CMD_STATUS:
                 heading("ZLRS Status")
                 print(status_text(response["status"], system=response, verbose=verbose))
@@ -394,9 +391,6 @@ def pick_targets(args, parser) -> list[str]:
             + "\n  ".join(ports))
     return [ports[0]]
 
-
-def operation(command, value=b""):
-    return command, value
 
 
 def add_options(parser, include_list=True):
@@ -497,11 +491,11 @@ def main(args=None, parser=None) -> int:
         if args.dry_run:
             print(f"[dry-run] export logs to {args.out_dir}; no files or ports opened")
             if not args.no_enter:
-                print(f"enter: {operation(CMD_ENTER)!r}")
-            print(f"info : {operation(CMD_LOG_INFO)!r}")
+                print(f"enter: {(CMD_ENTER, b'')!r}")
+            print(f"info : {(CMD_LOG_INFO, b'')!r}")
             print("read : standard MCUmgr FS download")
             if not args.keep:
-                print(f"exit : {operation(CMD_EXIT)!r}")
+                print(f"exit : {(CMD_EXIT, b'')!r}")
             return 0
         targets = pick_targets(args, parser)
         rc = 0
@@ -517,38 +511,38 @@ def main(args=None, parser=None) -> int:
         return rc
 
     if args.command in SIMPLE_COMMANDS:
-        selected = operation(SIMPLE_COMMANDS[args.command][0])
+        selected = (SIMPLE_COMMANDS[args.command][0], b'')
     elif args.command in DEBUG_REPORTS:
-        selected = operation(CMD_DEBUG_REPORT, bytes([DEBUG_REPORTS[args.command]]))
+        selected = (CMD_DEBUG_REPORT, bytes([DEBUG_REPORTS[args.command]]))
     elif args.command == "set-phrase":
         payload = args.phrase.encode()
         if not 1 <= len(payload) <= 32:
             parser.error("binding phrase must contain 1..32 UTF-8 bytes")
-        selected = operation(CMD_SET_PHRASE, payload)
+        selected = (CMD_SET_PHRASE, payload)
     elif args.command == "set-key-hex":
         if len(args.hex_key) != 64 or any(c not in "0123456789abcdefABCDEF" for c in args.hex_key):
             parser.error("the root key must be exactly 64 hex characters")
-        selected = operation(CMD_SET_KEY_HEX, args.hex_key.encode())
+        selected = (CMD_SET_KEY_HEX, args.hex_key.encode())
     elif args.command == "set-baud":
-        selected = operation(CMD_SET_BAUD, args.data_baud.to_bytes(4, "little"))
+        selected = (CMD_SET_BAUD, args.data_baud.to_bytes(4, "little"))
     elif args.command == "set-region":
-        selected = operation(CMD_SET_REGION, bytes([args.region]))
+        selected = (CMD_SET_REGION, bytes([args.region]))
     elif args.command == "set-role":
-        selected = operation(CMD_SET_ROLE, bytes([0 if args.role == "leader" else 1]))
+        selected = (CMD_SET_ROLE, bytes([0 if args.role == "leader" else 1]))
     elif args.command == "set-profile":
-        selected = operation(CMD_SET_PROFILE, bytes([int(args.profile[1])]))
+        selected = (CMD_SET_PROFILE, bytes([int(args.profile[1])]))
     elif args.command == "set-band":
-        selected = operation(CMD_SET_BAND, bytes([{"2.4": 0, "subg": 1, "auto": 2}[args.band]]))
+        selected = (CMD_SET_BAND, bytes([{"2.4": 0, "subg": 1, "auto": 2}[args.band]]))
     else:
         parser.error(f"unknown command: {args.command}")
 
     if args.dry_run:
         session = session_options(selected[0], not args.no_enter, args.keep, args.refresh)
         if session["enter"]:
-            print(f"enter: {operation(CMD_ENTER)!r}")
+            print(f"enter: {(CMD_ENTER, b'')!r}")
         print(f"cmd  : {selected!r}")
         if args.command != "exit" and not session["keep"] and not session["observe"]:
-            print(f"exit : {operation(CMD_EXIT)!r}")
+            print(f"exit : {(CMD_EXIT, b'')!r}")
         return 0
 
     # With several modules plugged in, decide the targets first (--serial / --port / --all).

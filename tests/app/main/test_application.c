@@ -211,8 +211,9 @@ void zlrs_rf_start(void)
 	starts++;
 }
 
-void zlrs_rf_publish_state(void)
+void zlrs_rf_publish_state(bool force)
 {
+	ARG_UNUSED(force);
 	publications++;
 }
 

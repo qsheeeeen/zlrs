@@ -2,6 +2,7 @@
 import contextlib
 import errno
 import importlib.util
+import io
 from pathlib import Path
 import tempfile
 import unittest
@@ -79,7 +80,7 @@ class ManagementTests(unittest.TestCase):
                 rc, output = invoke(entry, "status", "--dry-run", *options)
                 self.assertEqual(rc, 0)
                 operations = [line.split(": ", 1)[1] for line in output.splitlines()]
-                self.assertEqual(operations, [repr(m.operation(command)) for command in expected])
+                self.assertEqual(operations, [repr((command, b"")) for command in expected])
 
     def test_status_summary_and_verbose_chip_details(self):
         status = dict.fromkeys(m.STATUS_FIELDS, 0)
@@ -123,7 +124,10 @@ class ManagementTests(unittest.TestCase):
     def test_report_is_one_smp_response(self):
         client = MagicMock()
         client.request.return_value = {"report": "complete report\n"}
-        self.assertEqual(m.read_debug_report(client, 3), b"complete report\n")
+        with patch.object(m, "management_session", return_value=contextlib.nullcontext(client)), \
+                patch("sys.stdout", new_callable=io.StringIO) as output:
+            self.assertEqual(m.talk("fake", 115200, (m.CMD_DEBUG_REPORT, b"\x03"), 1), 0)
+            self.assertEqual(output.getvalue(), "complete report\n")
         client.request.assert_called_once_with(m.CMD_DEBUG_REPORT, b"\x03")
 
     def test_logs_use_standard_fs_download(self):

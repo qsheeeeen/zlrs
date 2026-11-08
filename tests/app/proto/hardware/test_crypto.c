@@ -120,7 +120,8 @@ ZTEST(proto_crypto, test_production_passphrase)
 	uint8_t out[SHA256_LEN];
 	const int64_t started = k_uptime_get();
 
-	zlrs_root_key_from_phrase("ZLRS hardware KDF timing", out);
+	zlrs_pbkdf2_sha256("ZLRS hardware KDF timing", (const uint8_t *)ZLRS_KDF_V1_SALT,
+			   sizeof(ZLRS_KDF_V1_SALT) - 1U, ZLRS_KDF_V1_ITERATIONS, out);
 	printk("PBKDF2 %u rounds: %lld ms\n", ZLRS_KDF_V1_ITERATIONS,
 	       (long long)(k_uptime_get() - started));
 	zlrs_test_check_hex(out, sizeof(out),

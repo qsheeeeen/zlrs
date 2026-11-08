@@ -15,9 +15,6 @@
 #include <zephyr/irq.h>
 #include <zephyr/kernel.h>
 
-#define SLOT_TIMER_NODE  DT_ALIAS(zlrs_slot_timer)
-#define SLOT_TIMER_IRQ   DT_IRQ_BY_IDX(SLOT_TIMER_NODE, 0, irq)
-#define LAUNCH_TIMER_IRQ DT_IRQ_BY_IDX(SLOT_TIMER_NODE, 3, irq)
 
 struct slot_clock {
 	uint32_t period_us;
@@ -105,9 +102,9 @@ static uint32_t slot_clock_timestamp_ms(uint64_t uptime_offset_us, uint64_t time
 	return (uint32_t)((uptime_offset_us + timer_us + delta_us) / 1000U);
 }
 
-static timer_hw_t *const timer = (timer_hw_t *)DT_REG_ADDR(SLOT_TIMER_NODE);
-static const struct device *const clk = DEVICE_DT_GET(DT_CLOCKS_CTLR(SLOT_TIMER_NODE));
-static const struct reset_dt_spec reset = RESET_DT_SPEC_GET(SLOT_TIMER_NODE);
+static timer_hw_t *const timer = (timer_hw_t *)DT_REG_ADDR(DT_ALIAS(zlrs_slot_timer));
+static const struct device *const clk = DEVICE_DT_GET(DT_CLOCKS_CTLR(DT_ALIAS(zlrs_slot_timer)));
+static const struct reset_dt_spec reset = RESET_DT_SPEC_GET(DT_ALIAS(zlrs_slot_timer));
 static K_SEM_DEFINE(frame_sem, 0, 1);
 static K_SEM_DEFINE(delay_sem, 0, 1);
 static struct slot_clock slot_clock;
@@ -206,12 +203,12 @@ static void __ramfunc __attribute__((interrupt("IRQ"))) launch_timer_isr(void)
 
 void zlrs_slot_timer_cancel_launch(void)
 {
-	irq_disable(LAUNCH_TIMER_IRQ);
+	irq_disable(DT_IRQ_BY_IDX(DT_ALIAS(zlrs_slot_timer), 3, irq));
 	hw_clear_bits(&timer->inte, 8U);
 	timer->armed = 8U;
 	timer->intr = 8U;
 	hw_clear_bits(&timer->intf, 8U);
-	NVIC_ClearPendingIRQ(LAUNCH_TIMER_IRQ);
+	NVIC_ClearPendingIRQ(DT_IRQ_BY_IDX(DT_ALIAS(zlrs_slot_timer), 3, irq));
 }
 
 bool zlrs_slot_timer_launch_at(uint32_t target_us, void (*fire)(uint32_t irq_us))
@@ -228,7 +225,7 @@ bool zlrs_slot_timer_launch_at(uint32_t target_us, void (*fire)(uint32_t irq_us)
 		zlrs_slot_timer_cancel_launch();
 		return false;
 	}
-	irq_enable(LAUNCH_TIMER_IRQ);
+	irq_enable(DT_IRQ_BY_IDX(DT_ALIAS(zlrs_slot_timer), 3, irq));
 	return true;
 }
 
@@ -263,12 +260,14 @@ int zlrs_slot_timer_init(void)
 	if (!device_is_ready(clk)) {
 		return -ENODEV;
 	}
-	rc = clock_control_on(clk, (clock_control_subsys_t)DT_CLOCKS_CELL(SLOT_TIMER_NODE, clk_id));
+	rc = clock_control_on(
+		clk, (clock_control_subsys_t)DT_CLOCKS_CELL(DT_ALIAS(zlrs_slot_timer), clk_id));
 	if (rc < 0) {
 		return rc;
 	}
 	rc = clock_control_get_rate(
-		clk, (clock_control_subsys_t)DT_CLOCKS_CELL(SLOT_TIMER_NODE, clk_id), &rate);
+		clk, (clock_control_subsys_t)DT_CLOCKS_CELL(DT_ALIAS(zlrs_slot_timer), clk_id),
+		&rate);
 	if (rc < 0 || rate % 1000000U != 0U) {
 		return -EINVAL;
 	}
@@ -282,16 +281,17 @@ int zlrs_slot_timer_init(void)
 	/* Capture once. Repeatedly adding rounded remaining time to k_uptime_get_32()
 	 * can move a planned slot by 1 ms and shift the ARQ timeout decision. */
 	uptime_offset_us = (uint64_t)k_uptime_get() * 1000U - timer_us_64();
-	IRQ_CONNECT(SLOT_TIMER_IRQ, DT_IRQ_BY_IDX(SLOT_TIMER_NODE, 0, priority), slot_timer_isr,
-		    NULL, 0);
-	IRQ_CONNECT(DT_IRQ_BY_IDX(SLOT_TIMER_NODE, 1, irq),
-		    DT_IRQ_BY_IDX(SLOT_TIMER_NODE, 1, priority), delay_isr, NULL, 0);
-	IRQ_CONNECT(DT_IRQ_BY_IDX(SLOT_TIMER_NODE, 2, irq),
-		    DT_IRQ_BY_IDX(SLOT_TIMER_NODE, 2, priority), deadline_isr, NULL, 0);
-	IRQ_DIRECT_CONNECT(LAUNCH_TIMER_IRQ, 0, launch_timer_isr, IRQ_ZERO_LATENCY);
-	irq_enable(DT_IRQ_BY_IDX(SLOT_TIMER_NODE, 2, irq));
-	irq_enable(SLOT_TIMER_IRQ);
-	irq_enable(DT_IRQ_BY_IDX(SLOT_TIMER_NODE, 1, irq));
+	IRQ_CONNECT(DT_IRQ_BY_IDX(DT_ALIAS(zlrs_slot_timer), 0, irq),
+		    DT_IRQ_BY_IDX(DT_ALIAS(zlrs_slot_timer), 0, priority), slot_timer_isr, NULL, 0);
+	IRQ_CONNECT(DT_IRQ_BY_IDX(DT_ALIAS(zlrs_slot_timer), 1, irq),
+		    DT_IRQ_BY_IDX(DT_ALIAS(zlrs_slot_timer), 1, priority), delay_isr, NULL, 0);
+	IRQ_CONNECT(DT_IRQ_BY_IDX(DT_ALIAS(zlrs_slot_timer), 2, irq),
+		    DT_IRQ_BY_IDX(DT_ALIAS(zlrs_slot_timer), 2, priority), deadline_isr, NULL, 0);
+	IRQ_DIRECT_CONNECT(DT_IRQ_BY_IDX(DT_ALIAS(zlrs_slot_timer), 3, irq), 0, launch_timer_isr,
+			   IRQ_ZERO_LATENCY);
+	irq_enable(DT_IRQ_BY_IDX(DT_ALIAS(zlrs_slot_timer), 2, irq));
+	irq_enable(DT_IRQ_BY_IDX(DT_ALIAS(zlrs_slot_timer), 0, irq));
+	irq_enable(DT_IRQ_BY_IDX(DT_ALIAS(zlrs_slot_timer), 1, irq));
 	return 0;
 }
 

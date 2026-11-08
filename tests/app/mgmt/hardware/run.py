@@ -81,7 +81,7 @@ def exercise(port, export_dir=None, log_limit=None):
             assert 'denied' in str(exc).lower() or 'err' in str(exc).lower(), str(exc)
         else:
             raise AssertionError('FS escaped read-only export paths')
-        assert m.read_debug_report(client, 3)
+        assert client.request(m.CMD_DEBUG_REPORT, bytes([3]))["report"]
         command(m.CMD_SET_KEY_HEX, b'a' * 63, -errno.EINVAL)
         command(m.CMD_SET_KEY_HEX, b'a' * 64)
         command(m.CMD_SET_PHRASE, b'mgmt-hardware')

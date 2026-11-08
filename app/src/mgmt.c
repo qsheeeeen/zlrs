@@ -206,7 +206,9 @@ static int execute(bool maintenance)
 			char phrase[33];
 			memcpy(phrase, value, len);
 			phrase[len] = '\0';
-			zlrs_root_key_from_phrase(phrase, key);
+			zlrs_pbkdf2_sha256(phrase, (const uint8_t *)ZLRS_KDF_V1_SALT,
+					   sizeof(ZLRS_KDF_V1_SALT) - 1U, ZLRS_KDF_V1_ITERATIONS,
+					   key);
 			memset(phrase, 0, sizeof(phrase));
 		}
 		const int rc = zlrs_persist_set_root_key(key);

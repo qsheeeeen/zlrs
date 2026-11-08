@@ -34,12 +34,6 @@ ZBUS_CHAN_DEFINE(zlrs_serial_chan, struct zlrs_serial_status, NULL, NULL, ZBUS_O
 #define DATA_RX_RING_LEN 4096U
 #define DATA_TX_RING_LEN 4096U
 
-#if DT_NODE_EXISTS(DT_ALIAS(zlrs_data_uart))
-#define DATA_UART_FLOW_CONTROL DT_PROP_OR(DT_ALIAS(zlrs_data_uart), hw_flow_control, 0)
-#else
-#define DATA_UART_FLOW_CONTROL 0
-#endif
-
 /* One buffer set per endpoint; dev == NULL means the alias is not wired */
 struct data_ep {
 	const struct device *dev;
@@ -100,7 +94,9 @@ static void data_isr(const struct device *dev, void *user_data)
 			/* Keep bytes in the peripheral FIFO when the application ring is full:
 			 * USB NAKs its OUT endpoint; a flow-controlled UART deasserts RTS at its
 			 * FIFO watermark. An unthrottled UART still drains and counts drops. */
-			if (room == 0U && (ep == &data_eps[DATA_USB] || DATA_UART_FLOW_CONTROL)) {
+			if (room == 0U &&
+			    (ep == &data_eps[DATA_USB] ||
+			     DT_PROP_OR(DT_ALIAS(zlrs_data_uart), hw_flow_control, 0))) {
 				const unsigned int key = irq_lock();
 
 				if (ring_buf_space_get(&ep->rx) == 0U) {

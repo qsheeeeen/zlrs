@@ -10,19 +10,19 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/sys/util.h>
 
-#define RADIO_NODE DT_NODELABEL(zlrs_rf)
-#if DT_NODE_EXISTS(RADIO_NODE)
+#if DT_NODE_EXISTS(DT_NODELABEL(zlrs_rf))
 #define REGION_BIT(node, prop, index) | BIT(DT_PROP_BY_IDX(node, prop, index) & 31U)
-#define REGIONS_MASK                  (0U DT_FOREACH_PROP_ELEM(RADIO_NODE, regions, REGION_BIT))
+#define REGIONS_MASK                  (0U DT_FOREACH_PROP_ELEM(DT_NODELABEL(zlrs_rf), regions, REGION_BIT))
 #define CHECK_REGION(node, prop, index)                                                            \
 	BUILD_ASSERT((unsigned int)DT_PROP_BY_IDX(node, prop, index) < ZLRS_REGION_COUNT,          \
 		     "unsupported predefined region ID");
-DT_FOREACH_PROP_ELEM(RADIO_NODE, regions, CHECK_REGION)
-BUILD_ASSERT(DT_PROP_LEN(RADIO_NODE, regions) > 0, "empty supported region set");
-BUILD_ASSERT(__builtin_popcount(REGIONS_MASK) == DT_PROP_LEN(RADIO_NODE, regions),
+DT_FOREACH_PROP_ELEM(DT_NODELABEL(zlrs_rf), regions, CHECK_REGION)
+BUILD_ASSERT(DT_PROP_LEN(DT_NODELABEL(zlrs_rf), regions) > 0, "empty supported region set");
+BUILD_ASSERT(__builtin_popcount(REGIONS_MASK) == DT_PROP_LEN(DT_NODELABEL(zlrs_rf), regions),
 	     "duplicate supported region ID");
-BUILD_ASSERT(DT_PROP(RADIO_NODE, default_region) < ZLRS_REGION_COUNT, "unknown default region");
-BUILD_ASSERT((REGIONS_MASK & BIT(DT_PROP(RADIO_NODE, default_region) & 31U)) != 0U,
+BUILD_ASSERT(DT_PROP(DT_NODELABEL(zlrs_rf), default_region) < ZLRS_REGION_COUNT,
+	     "unknown default region");
+BUILD_ASSERT((REGIONS_MASK & BIT(DT_PROP(DT_NODELABEL(zlrs_rf), default_region) & 31U)) != 0U,
 	     "default region must belong to regions");
 #else
 /* Headless component fixtures have no radio and permit no region selection. */
@@ -114,8 +114,10 @@ uint32_t zlrs_airtime_ms(uint16_t frame_len, uint32_t rate_bps)
 }
 
 /* Frames per second: the budget comes from the duty cap, each frame costs its airtime */
-static uint32_t max_frames_for_airtime(const zlrs_region_t *region, uint32_t airtime_us)
+uint32_t zlrs_region_max_frames_per_s(const zlrs_region_t *region, uint32_t rate_bps,
+				      uint16_t frame_len)
 {
+	const uint32_t airtime_us = zlrs_airtime_us(frame_len, rate_bps);
 	uint64_t budget_us;
 
 	if (region == NULL || region->duty_percent == 0U || airtime_us == 0U) {
@@ -126,12 +128,6 @@ static uint32_t max_frames_for_airtime(const zlrs_region_t *region, uint32_t air
 	budget_us = (uint64_t)region->duty_percent * 10000U;
 
 	return (uint32_t)(budget_us / airtime_us);
-}
-
-uint32_t zlrs_region_max_frames_per_s(const zlrs_region_t *region, uint32_t rate_bps,
-				      uint16_t frame_len)
-{
-	return max_frames_for_airtime(region, zlrs_airtime_us(frame_len, rate_bps));
 }
 
 void zlrs_duty_init(zlrs_duty_t *duty, const zlrs_region_t *region, uint32_t now_ms)

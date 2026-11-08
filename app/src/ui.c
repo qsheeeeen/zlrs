@@ -41,13 +41,6 @@ INPUT_CALLBACK_DEFINE(DEVICE_DT_GET(DT_ALIAS(zlrs_pair_hold)), pairing_input, NU
 /* 20 Hz looks continuous to the eye and costs nothing on the strip (doc/09-ux.md) */
 #define LED_REFRESH_MS 50U
 
-/* Debug images attenuate the complete frame so the bench pixel is not glaring. */
-#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
-#define LED_OUTPUT_BRIGHTNESS_PERCENT CONFIG_ZLRS_APP_DEBUG_LED_BRIGHTNESS_PERCENT
-#else
-#define LED_OUTPUT_BRIGHTNESS_PERCENT 100U
-#endif
-
 /*
  * A management session is only worth showing once it survives a tool round-trip: the update tool
  * and `zlrs-mgmt.py` open a session per command and leave within ~100 ms, and flashing white for
@@ -65,7 +58,6 @@ INPUT_CALLBACK_DEFINE(DEVICE_DT_GET(DT_ALIAS(zlrs_pair_hold)), pairing_input, NU
  * it runs only while the link thread is blocked, and the link thread preempts it again the moment
  * it wakes. A strip write therefore never stretches a slot.
  */
-#define UI_THREAD_PRIORITY   K_PRIO_PREEMPT(7)
 #define UI_THREAD_STACK_SIZE 2048U
 #define UI_THREAD_NAME       "zlrs_ui"
 
@@ -163,9 +155,16 @@ static int led_write(struct led_rgb color)
 		return -1; /* no status LED on this board */
 	}
 
-	pixels[0].r = (uint8_t)(((uint16_t)color.r * LED_OUTPUT_BRIGHTNESS_PERCENT) / 100U);
-	pixels[0].g = (uint8_t)(((uint16_t)color.g * LED_OUTPUT_BRIGHTNESS_PERCENT) / 100U);
-	pixels[0].b = (uint8_t)(((uint16_t)color.b * LED_OUTPUT_BRIGHTNESS_PERCENT) / 100U);
+	pixels[0] = color;
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
+	/* Attenuate the complete frame in bench images. */
+	pixels[0].r = (uint8_t)(((uint16_t)color.r * CONFIG_ZLRS_APP_DEBUG_LED_BRIGHTNESS_PERCENT) /
+				100U);
+	pixels[0].g = (uint8_t)(((uint16_t)color.g * CONFIG_ZLRS_APP_DEBUG_LED_BRIGHTNESS_PERCENT) /
+				100U);
+	pixels[0].b = (uint8_t)(((uint16_t)color.b * CONFIG_ZLRS_APP_DEBUG_LED_BRIGHTNESS_PERCENT) /
+				100U);
+#endif
 
 	/*
 	 * A failed strip write has to be reported: the LED is the only local feedback, and when the
@@ -269,5 +268,5 @@ static void ui_thread(void *p1, void *p2, void *p3)
 	}
 }
 
-K_THREAD_DEFINE(zlrs_ui_tid, UI_THREAD_STACK_SIZE, ui_thread, NULL, NULL, NULL, UI_THREAD_PRIORITY,
+K_THREAD_DEFINE(zlrs_ui_tid, UI_THREAD_STACK_SIZE, ui_thread, NULL, NULL, NULL, K_PRIO_PREEMPT(7),
 		0, 0);
