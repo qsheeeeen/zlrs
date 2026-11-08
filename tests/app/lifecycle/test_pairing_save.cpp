@@ -6,7 +6,7 @@
 
 namespace
 {
-const zlrs_persist_pairing_t pairing = {.peer_id = {1, 2, 3, 4}, .pair_salt = {5, 6, 7, 8}};
+const zlrs_pairing_t pairing = {.peer_id = {1, 2, 3, 4}, .pair_salt = {5, 6, 7, 8}};
 
 ZTEST(PairingSave, test_PersistentFailureBacksOffAndCapsRetries)
 {

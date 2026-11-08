@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+#include "persist.h"
 #include <errno.h>
 #include <string.h>
 #include <zephyr/devicetree.h>
@@ -7,7 +8,6 @@
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/ztest.h>
-#include "persist.h"
 
 /* Preserve the entire real partition, including NVS metadata, before destructive fixture cases. */
 static uint8_t backup[PARTITION_SIZE(storage_partition)];
@@ -102,7 +102,7 @@ static void before(void *unused)
 }
 
 static const uint8_t key[ZLRS_KEY_LEN] = {0x42};
-static const zlrs_persist_pairing_t pair = {.peer_id = {9, 8, 7, 6},
+static const zlrs_pairing_t pair = {.peer_id = {9, 8, 7, 6},
 					    .pair_salt = {1, 2, 3, 4, 5, 6, 7, 8}};
 
 ZTEST(settings, test_missing_schema_clears_entire_partition)
@@ -115,19 +115,14 @@ ZTEST(settings, test_missing_schema_clears_entire_partition)
 	zassert_equal(nvs_read(inspect, 65000, &raw, 1), -ENOENT);
 }
 
-ZTEST(settings, test_missing_values_leave_output_untouched)
+ZTEST(settings, test_missing_credentials_are_unavailable)
 {
-	uint8_t saved_key[ZLRS_KEY_LEN], saved_id[ZLRS_DEV_ID_LEN];
-	zlrs_persist_pairing_t saved_pair;
-	uint8_t untouched[ZLRS_KEY_LEN];
-	memset(untouched, 0xa5, sizeof(untouched));
-	memset(saved_key, 0xa5, sizeof(saved_key));
-	memset(&saved_pair, 0xa5, sizeof(saved_pair));
-	zassert_true(zlrs_persist_get_device_id(saved_id));
-	zassert_false(zlrs_persist_get_root_key(saved_key));
-	zassert_false(zlrs_persist_get_pairing(&saved_pair));
-	zassert_mem_equal(saved_key, untouched, sizeof(saved_key));
-	zassert_mem_equal(&saved_pair, untouched, sizeof(saved_pair));
+	const zlrs_persist_state_t *saved = zlrs_persist_state();
+	zassert_true(saved->identity_valid);
+	zassert_false(saved->configured || saved->paired);
+	const uint8_t empty[ZLRS_KEY_LEN] = {0};
+	zassert_mem_equal(saved->root_key, empty, sizeof(saved->root_key));
+	zassert_mem_equal(&saved->pairing, empty, sizeof(saved->pairing));
 }
 
 ZTEST(settings, test_independent_byte_records_load)
@@ -148,17 +143,20 @@ ZTEST(settings, test_independent_byte_records_load)
 	zassert_ok(settings_save_one("zlrs/id", id, sizeof(id)));
 	zassert_ok(settings_save_one("zlrs/pair", pairing, sizeof(pairing)));
 	zassert_ok(zlrs_persist_init());
-	const zlrs_persist_settings_t *saved = zlrs_persist_settings();
+	const zlrs_persist_settings_t *saved = &zlrs_persist_state()->settings;
 	zassert_equal(saved->band, band);
 	zassert_equal(saved->data_baud, 230400);
 	zassert_equal(saved->role, role);
 	zassert_equal(saved->region, region);
 	zassert_equal(saved->profile, profile);
 	uint8_t saved_key[ZLRS_KEY_LEN], saved_id[ZLRS_DEV_ID_LEN];
-	zlrs_persist_pairing_t saved_pair;
-	zassert_true(zlrs_persist_get_root_key(saved_key));
-	zassert_true(zlrs_persist_get_device_id(saved_id));
-	zassert_true(zlrs_persist_get_pairing(&saved_pair));
+	zlrs_pairing_t saved_pair;
+	zassert_true(zlrs_persist_state()->configured);
+	memcpy(saved_key, zlrs_persist_state()->root_key, ZLRS_KEY_LEN);
+	zassert_true(zlrs_persist_state()->identity_valid);
+	memcpy(saved_id, zlrs_persist_state()->dev_id, ZLRS_DEV_ID_LEN);
+	zassert_true(zlrs_persist_state()->paired);
+	memcpy(&saved_pair, &zlrs_persist_state()->pairing, sizeof(zlrs_pairing_t));
 	zassert_mem_equal(saved_key, key, sizeof(key));
 	zassert_mem_equal(saved_id, id, sizeof(id));
 	zassert_mem_equal(saved_pair.peer_id, pairing, ZLRS_DEV_ID_LEN);
@@ -167,31 +165,31 @@ ZTEST(settings, test_independent_byte_records_load)
 
 ZTEST(settings, test_settings_save_and_repeated_save_survive_remount)
 {
-	zlrs_persist_settings_t settings = *zlrs_persist_settings();
+	zlrs_persist_settings_t settings = zlrs_persist_state()->settings;
 	settings.band = ZLRS_DATA_BAND_AUTO;
 	settings.data_baud = 460800;
 	zassert_ok(zlrs_persist_save_settings(&settings));
 	zassert_ok(zlrs_persist_save_settings(&settings));
 	zassert_ok(zlrs_persist_init());
-	zassert_equal(zlrs_persist_settings()->band, settings.band);
-	zassert_equal(zlrs_persist_settings()->data_baud, settings.data_baud);
+	zassert_equal(zlrs_persist_state()->settings.band, settings.band);
+	zassert_equal(zlrs_persist_state()->settings.data_baud, settings.data_baud);
 	/* Reload above exercises the native Settings reader, not numeric NVS IDs. */
 }
 
 ZTEST(settings, test_partial_settings_save_matches_flash)
 {
-	const zlrs_persist_settings_t old = *zlrs_persist_settings();
+	const zlrs_persist_settings_t old = zlrs_persist_state()->settings;
 	zlrs_persist_settings_t settings = old;
 	settings.band = old.band == ZLRS_DATA_BAND_24 ? ZLRS_DATA_BAND_AUTO : ZLRS_DATA_BAND_24;
 	settings.data_baud = old.data_baud == 460800 ? 230400 : 460800;
 	fail_record = 2;
 	zassert_equal(zlrs_persist_save_settings(&settings), -EIO);
 	fail_record = UINT16_MAX;
-	zassert_equal(zlrs_persist_settings()->band, settings.band);
-	zassert_equal(zlrs_persist_settings()->data_baud, old.data_baud);
+	zassert_equal(zlrs_persist_state()->settings.band, settings.band);
+	zassert_equal(zlrs_persist_state()->settings.data_baud, old.data_baud);
 	zassert_ok(zlrs_persist_init());
-	zassert_equal(zlrs_persist_settings()->band, settings.band);
-	zassert_equal(zlrs_persist_settings()->data_baud, old.data_baud);
+	zassert_equal(zlrs_persist_state()->settings.band, settings.band);
+	zassert_equal(zlrs_persist_state()->settings.data_baud, old.data_baud);
 }
 
 ZTEST(settings, test_failed_key_write_preserves_committed_key)
@@ -205,17 +203,19 @@ ZTEST(settings, test_failed_key_write_preserves_committed_key)
 	fail_clear = false;
 	fail_load = false;
 	zassert_equal(rc, -EIO);
-	zassert_true(zlrs_persist_get_root_key(other));
+	zassert_true(zlrs_persist_state()->configured);
+	memcpy(other, zlrs_persist_state()->root_key, ZLRS_KEY_LEN);
 	zassert_mem_equal(other, key, sizeof(key));
 	zassert_ok(zlrs_persist_init());
-	zassert_true(zlrs_persist_get_root_key(other));
+	zassert_true(zlrs_persist_state()->configured);
+	memcpy(other, zlrs_persist_state()->root_key, ZLRS_KEY_LEN);
 	zassert_mem_equal(other, key, sizeof(key));
 }
 
 ZTEST(settings, test_failed_pair_write_preserves_committed_pair)
 {
 	zassert_ok(zlrs_persist_save_pairing(&pair));
-	zlrs_persist_pairing_t other = pair;
+	zlrs_pairing_t other = pair;
 	other.peer_id[0] ^= 0xff;
 	fail_write = true;
 	const int rc = zlrs_persist_save_pairing(&other);
@@ -223,22 +223,24 @@ ZTEST(settings, test_failed_pair_write_preserves_committed_pair)
 	fail_clear = false;
 	fail_load = false;
 	zassert_equal(rc, -EIO);
-	zassert_true(zlrs_persist_get_pairing(&other));
+	zassert_true(zlrs_persist_state()->paired);
+	memcpy(&other, &zlrs_persist_state()->pairing, sizeof(zlrs_pairing_t));
 	zassert_mem_equal(&other, &pair, sizeof(pair));
 	zassert_ok(zlrs_persist_init());
-	zassert_true(zlrs_persist_get_pairing(&other));
+	zassert_true(zlrs_persist_state()->paired);
+	memcpy(&other, &zlrs_persist_state()->pairing, sizeof(zlrs_pairing_t));
 	zassert_mem_equal(&other, &pair, sizeof(pair));
 }
 
 ZTEST(settings, test_invalid_settings_are_rejected)
 {
-	zlrs_persist_settings_t settings = *zlrs_persist_settings();
+	zlrs_persist_settings_t settings = zlrs_persist_state()->settings;
 	settings.profile = ZLRS_PROFILE_P2;
 	zassert_equal(zlrs_persist_save_settings(&settings), -EINVAL);
-	settings = *zlrs_persist_settings();
+	settings = zlrs_persist_state()->settings;
 	settings.region = (zlrs_region_id_t)255;
 	zassert_equal(zlrs_persist_save_settings(&settings), -EINVAL);
-	settings = *zlrs_persist_settings();
+	settings = zlrs_persist_state()->settings;
 	settings.data_baud = 1;
 	zassert_equal(zlrs_persist_save_settings(&settings), -EINVAL);
 }
@@ -252,7 +254,7 @@ ZTEST(settings, test_region_selection_is_restricted_to_compiled_set)
 	}
 	zassert_equal(zlrs_region_supported_mask(), expected_mask);
 	for (unsigned int id = 0; id < ZLRS_REGION_COUNT; id++) {
-		zlrs_persist_settings_t candidate = *zlrs_persist_settings();
+		zlrs_persist_settings_t candidate = zlrs_persist_state()->settings;
 		const zlrs_persist_settings_t before = candidate;
 		candidate.region = (zlrs_region_id_t)id;
 		const bool allowed = (expected_mask & BIT(id)) != 0U;
@@ -260,15 +262,15 @@ ZTEST(settings, test_region_selection_is_restricted_to_compiled_set)
 		if (allowed) {
 			zassert_ok(zlrs_persist_save_settings(&candidate));
 			zassert_ok(zlrs_persist_init());
-			zassert_equal(zlrs_persist_settings()->region, candidate.region);
+			zassert_equal(zlrs_persist_state()->settings.region, candidate.region);
 		} else {
 			zassert_equal(zlrs_persist_save_settings(&candidate), -EINVAL);
-			zassert_mem_equal(zlrs_persist_settings(), &before, sizeof(before));
+			zassert_mem_equal(&zlrs_persist_state()->settings, &before, sizeof(before));
 			/* An old or externally written record cannot bypass board capabilities. */
 			const uint8_t raw = id;
 			zassert_ok(settings_save_one("zlrs/region", &raw, sizeof(raw)));
 			zassert_ok(zlrs_persist_init());
-			zassert_equal(zlrs_persist_settings()->region,
+			zassert_equal(zlrs_persist_state()->settings.region,
 				      DT_PROP(DT_NODELABEL(zlrs_rf), default_region));
 		}
 	}
@@ -278,13 +280,15 @@ ZTEST(settings, test_new_identity_invalidates_pairing)
 {
 	zassert_ok(zlrs_persist_save_pairing(&pair));
 	uint8_t old_id[ZLRS_DEV_ID_LEN], id[ZLRS_DEV_ID_LEN];
-	zassert_true(zlrs_persist_get_device_id(old_id));
+	zassert_true(zlrs_persist_state()->identity_valid);
+	memcpy(old_id, zlrs_persist_state()->dev_id, ZLRS_DEV_ID_LEN);
 	zassert_ok(zlrs_persist_new_identity());
-	zassert_false(zlrs_persist_get_pairing(&(zlrs_persist_pairing_t){0}));
-	zassert_true(zlrs_persist_get_device_id(id));
+	zassert_false(zlrs_persist_state()->paired);
+	zassert_true(zlrs_persist_state()->identity_valid);
+	memcpy(id, zlrs_persist_state()->dev_id, ZLRS_DEV_ID_LEN);
 	zassert_not_equal(memcmp(id, old_id, sizeof(id)), 0);
 	zassert_ok(zlrs_persist_init());
-	zassert_false(zlrs_persist_get_pairing(&(zlrs_persist_pairing_t){0}));
+	zassert_false(zlrs_persist_state()->paired);
 	zassert_ok(zlrs_persist_erase_pairing());
 	zassert_ok(zlrs_persist_erase_pairing());
 }
@@ -293,17 +297,20 @@ ZTEST(settings, test_failed_identity_write_keeps_old_id_with_pair_removed)
 {
 	zassert_ok(zlrs_persist_save_pairing(&pair));
 	uint8_t old_id[ZLRS_DEV_ID_LEN], id[ZLRS_DEV_ID_LEN];
-	zassert_true(zlrs_persist_get_device_id(old_id));
+	zassert_true(zlrs_persist_state()->identity_valid);
+	memcpy(old_id, zlrs_persist_state()->dev_id, ZLRS_DEV_ID_LEN);
 	fail_record = 7;
 	const int rc = zlrs_persist_new_identity();
 	fail_record = UINT16_MAX;
 	zassert_equal(rc, -EIO);
-	zassert_false(zlrs_persist_get_pairing(&(zlrs_persist_pairing_t){0}));
-	zassert_true(zlrs_persist_get_device_id(id));
+	zassert_false(zlrs_persist_state()->paired);
+	zassert_true(zlrs_persist_state()->identity_valid);
+	memcpy(id, zlrs_persist_state()->dev_id, ZLRS_DEV_ID_LEN);
 	zassert_mem_equal(id, old_id, sizeof(id));
 	zassert_ok(zlrs_persist_init());
-	zassert_false(zlrs_persist_get_pairing(&(zlrs_persist_pairing_t){0}));
-	zassert_true(zlrs_persist_get_device_id(id));
+	zassert_false(zlrs_persist_state()->paired);
+	zassert_true(zlrs_persist_state()->identity_valid);
+	memcpy(id, zlrs_persist_state()->dev_id, ZLRS_DEV_ID_LEN);
 	zassert_mem_equal(id, old_id, sizeof(id));
 }
 
@@ -312,17 +319,17 @@ ZTEST(settings, test_factory_reset_and_reinitialize)
 	zassert_ok(zlrs_persist_set_root_key(key));
 	zassert_ok(zlrs_persist_save_pairing(&pair));
 	zassert_ok(zlrs_persist_factory_reset());
-	uint8_t saved_key[ZLRS_KEY_LEN], saved_id[ZLRS_DEV_ID_LEN];
-	zassert_false(zlrs_persist_get_root_key(saved_key));
-	zassert_false(zlrs_persist_get_pairing(&(zlrs_persist_pairing_t){0}));
-	memset(saved_id, 0xa5, sizeof(saved_id));
-	zassert_false(zlrs_persist_get_device_id(saved_id));
-	const uint8_t untouched[ZLRS_DEV_ID_LEN] = {0xa5, 0xa5, 0xa5, 0xa5};
-	zassert_mem_equal(saved_id, untouched, sizeof(saved_id));
+	uint8_t saved_id[ZLRS_DEV_ID_LEN];
+	zassert_false(zlrs_persist_state()->configured);
+	zassert_false(zlrs_persist_state()->paired);
+	zassert_false(zlrs_persist_state()->identity_valid);
+	const uint8_t empty[ZLRS_DEV_ID_LEN] = {0};
+	zassert_mem_equal(zlrs_persist_state()->dev_id, empty, sizeof(empty));
 	zassert_ok(zlrs_persist_init());
-	zassert_true(zlrs_persist_get_device_id(saved_id));
-	zassert_false(zlrs_persist_get_root_key(saved_key));
-	zassert_false(zlrs_persist_get_pairing(&(zlrs_persist_pairing_t){0}));
+	zassert_true(zlrs_persist_state()->identity_valid);
+	memcpy(saved_id, zlrs_persist_state()->dev_id, ZLRS_DEV_ID_LEN);
+	zassert_false(zlrs_persist_state()->configured);
+	zassert_false(zlrs_persist_state()->paired);
 }
 
 ZTEST(settings, test_reset_failure_retires_ram_and_resumes_on_boot)
@@ -332,14 +339,13 @@ ZTEST(settings, test_reset_failure_retires_ram_and_resumes_on_boot)
 	fail_clear = true; /* Durable reset intent must survive a failed erase. */
 	zassert_equal(zlrs_persist_factory_reset(), -EIO);
 	fail_clear = false;
-	uint8_t id[ZLRS_DEV_ID_LEN];
-	zassert_false(zlrs_persist_get_device_id(id));
-	zassert_false(zlrs_persist_get_root_key((uint8_t[ZLRS_KEY_LEN]){0}));
+	zassert_false(zlrs_persist_state()->identity_valid);
+	zassert_false(zlrs_persist_state()->configured);
 	zassert_equal(zlrs_persist_set_root_key(key), -EIO);
 	zassert_ok(zlrs_persist_init());
-	zassert_true(zlrs_persist_get_device_id(id));
-	zassert_false(zlrs_persist_get_root_key((uint8_t[ZLRS_KEY_LEN]){0}));
-	zassert_false(zlrs_persist_get_pairing(&(zlrs_persist_pairing_t){0}));
+	zassert_true(zlrs_persist_state()->identity_valid);
+	zassert_false(zlrs_persist_state()->configured);
+	zassert_false(zlrs_persist_state()->paired);
 }
 
 ZTEST(settings, test_read_failure_clears_credentials)
@@ -348,11 +354,10 @@ ZTEST(settings, test_read_failure_clears_credentials)
 	zassert_ok(zlrs_persist_save_pairing(&pair));
 	fail_load = true;
 	zassert_ok(zlrs_persist_init());
-	uint8_t loaded[ZLRS_KEY_LEN];
-	zassert_false(zlrs_persist_get_root_key(loaded));
-	zassert_false(zlrs_persist_get_pairing(&(zlrs_persist_pairing_t){0}));
+	zassert_false(zlrs_persist_state()->configured);
+	zassert_false(zlrs_persist_state()->paired);
 	zassert_ok(zlrs_persist_init());
-	zassert_false(zlrs_persist_get_root_key(loaded));
+	zassert_false(zlrs_persist_state()->configured);
 }
 
 ZTEST(settings, test_malformed_value_clears_credentials)
@@ -361,8 +366,8 @@ ZTEST(settings, test_malformed_value_clears_credentials)
 	const uint8_t invalid[] = {1, 2, 3};
 	zassert_ok(settings_save_one("zlrs/baud", invalid, sizeof(invalid)));
 	zassert_ok(zlrs_persist_init());
-	zassert_false(zlrs_persist_get_root_key((uint8_t[ZLRS_KEY_LEN]){0}));
-	zassert_equal(zlrs_persist_settings()->data_baud, 115200);
+	zassert_false(zlrs_persist_state()->configured);
+	zassert_equal(zlrs_persist_state()->settings.data_baud, 115200);
 }
 
 ZTEST_SUITE(settings, NULL, setup, before, NULL, teardown);

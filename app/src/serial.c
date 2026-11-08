@@ -88,8 +88,8 @@ static void data_isr(const struct device *dev, void *user_data)
 		}
 
 		if (uart_irq_rx_ready(dev)) {
-			uint8_t chunk[64];
-			const uint32_t room = ring_buf_space_get(&ep->rx);
+			uint8_t discard[64], *target;
+			const uint32_t room = ring_buf_put_ptr(&ep->rx, &target, 0U);
 
 			/* Keep bytes in the peripheral FIFO when the application ring is full:
 			 * USB NAKs its OUT endpoint; a flow-controlled UART deasserts RTS at its
@@ -106,14 +106,14 @@ static void data_isr(const struct device *dev, void *user_data)
 				irq_unlock(key);
 				continue;
 			}
-			const uint32_t want = room > 0U ? MIN(room, sizeof(chunk)) : sizeof(chunk);
-			const int n = uart_fifo_read(dev, chunk, want);
+			const uint32_t want =
+				room > 0U ? MIN(room, sizeof(discard)) : sizeof(discard);
+			const int n = uart_fifo_read(dev, room > 0U ? target : discard, want);
 
 			if (n > 0) {
-				const uint32_t written = ring_buf_put(&ep->rx, chunk, (uint32_t)n);
-
+				ring_buf_commit(&ep->rx, room > 0U ? (uint32_t)n : 0U);
 				ep->rx_total += (uint32_t)n;
-				ep->rx_dropped += (uint32_t)n - written;
+				ep->rx_dropped += room > 0U ? 0U : (uint32_t)n;
 			}
 		}
 
@@ -121,24 +121,15 @@ static void data_isr(const struct device *dev, void *user_data)
 			uint8_t *claim = NULL;
 			const uint32_t claimed = MIN(ring_buf_get_ptr(&ep->tx, &claim, 0U), 64U);
 
-			if (claimed == 0U) {
-				/* A timer can preempt a CDC callback and enqueue output. Recheck under
-				 * the IRQ lock so this callback cannot disable that new TX wakeup. */
-				const unsigned int key = irq_lock();
-
-				if (ring_buf_is_empty(&ep->tx)) {
-					uart_irq_tx_disable(dev);
+			if (claimed > 0U) {
+				const int sent = uart_fifo_fill(dev, claim, (int)claimed);
+				if (sent > 0) {
+					ep->tx_total += (uint32_t)sent;
+					ring_buf_consume(&ep->tx, (uint32_t)sent);
 				}
-				irq_unlock(key);
-				continue;
 			}
-
-			const int sent = uart_fifo_fill(dev, claim, (int)claimed);
-			if (sent > 0) {
-				ep->tx_total += (uint32_t)sent;
-			}
-
-			ring_buf_consume(&ep->tx, (sent > 0) ? (uint32_t)sent : 0U);
+			/* Recheck empty and drained queues under the same lock: a timer
+			 * can enqueue output while this CDC callback is preempted. */
 			const unsigned int key = irq_lock();
 
 			if (ring_buf_is_empty(&ep->tx)) {

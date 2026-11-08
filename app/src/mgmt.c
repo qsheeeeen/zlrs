@@ -10,6 +10,7 @@
 #include <zephyr/mgmt/mcumgr/grp/os_mgmt/os_mgmt.h>
 #endif
 #include "lifecycle.h"
+#include "log.h"
 #include "persist.h"
 #include "platform/watchdog.h"
 #include "proto/crypto.h"
@@ -60,7 +61,14 @@ static struct {
 	uint8_t value[64];
 	size_t len;
 	int result;
-	struct zlrs_mgmt_reply reply;
+	zcbor_state_t *writer;
+
+	struct {
+		uint64_t uptime_ms, cpu_window_ms;
+		int32_t cpu_load_permille;
+		const char *report;
+		zlrs_log_info_t logs;
+	} reply;
 } request;
 
 static void publish_mode(void)
@@ -96,39 +104,21 @@ static void mgmt_log_flush(void)
 #define ZLRS_MGMT_FLAG_BAND_ACQUIRING 0x20U
 #define ZLRS_MGMT_FLAG_BAND_PLANNED   0x40U
 
-static uint8_t status_flags(const zlrs_rf_status_t *rf)
+static uint8_t status_flags(const zlrs_rf_state_t *rf)
 {
-	uint8_t flags = 0;
-	if (rf->data_band == ZLRS_DATA_BAND_SUBG) {
-		flags |= ZLRS_MGMT_FLAG_DATA_SUBG;
-	}
-	if (rf->band_mode == ZLRS_DATA_BAND_AUTO) {
-		flags |= ZLRS_MGMT_FLAG_BAND_AUTO;
-	}
-	if (rf->band_acquiring) {
-		flags |= ZLRS_MGMT_FLAG_BAND_ACQUIRING;
-	}
-	if (rf->power_fixed) {
-		flags |= ZLRS_MGMT_FLAG_POWER_FIXED;
-	}
-	if (rf->band_planned) {
-		flags |= ZLRS_MGMT_FLAG_BAND_PLANNED;
-	}
-	if (rf->configured) {
-		flags |= ZLRS_MGMT_FLAG_KEY;
-	}
-	if (rf->paired) {
-		flags |= ZLRS_MGMT_FLAG_PAIRED;
-	}
-	if (rf->session_valid) {
-		flags |= ZLRS_MGMT_FLAG_SESSION;
-	}
-	return flags;
+	return (rf->link->cfg.region != ZLRS_REGION_ISM2400 ? ZLRS_MGMT_FLAG_DATA_SUBG : 0U) |
+	       (rf->band_mode == ZLRS_DATA_BAND_AUTO ? ZLRS_MGMT_FLAG_BAND_AUTO : 0U) |
+	       (rf->link->radio_acquiring ? ZLRS_MGMT_FLAG_BAND_ACQUIRING : 0U) |
+	       (rf->power_fixed ? ZLRS_MGMT_FLAG_POWER_FIXED : 0U) |
+	       (rf->link->band_plan.switch_frame != 0U ? ZLRS_MGMT_FLAG_BAND_PLANNED : 0U) |
+	       (rf->link->configured ? ZLRS_MGMT_FLAG_KEY : 0U) |
+	       (rf->link->paired ? ZLRS_MGMT_FLAG_PAIRED : 0U) |
+	       (rf->link->session_valid ? ZLRS_MGMT_FLAG_SESSION : 0U);
 }
 
-static int execute(bool maintenance)
+static int operation(bool maintenance)
 {
-	struct zlrs_mgmt_reply *out = &request.reply;
+	__typeof__(request.reply) *out = &request.reply;
 	const uint8_t *value = request.value;
 	const size_t len = request.len;
 	const uint32_t op = request.op;
@@ -141,9 +131,6 @@ static int execute(bool maintenance)
 		if (maintenance) {
 			zlrs_rf_status_refresh();
 		}
-		zlrs_rf_status(&out->status);
-		out->region = zlrs_persist_settings()->region;
-		out->data_baud = zlrs_persist_settings()->data_baud;
 		/* Shared STATUS/OBSERVE window; the first sample measures since boot. */
 		out->uptime_ms = k_uptime_get();
 		out->cpu_load_permille = cpu_load_get(true);
@@ -154,40 +141,36 @@ static int execute(bool maintenance)
 	if (!maintenance) {
 		return op == ZLRS_MGMT_CMD_EXIT ? 0 : -EACCES;
 	}
+	if (len != 0 &&
+	    (op == ZLRS_MGMT_CMD_ENTER || op == ZLRS_MGMT_CMD_EXIT || op == ZLRS_MGMT_CMD_PAIR ||
+	     op == ZLRS_MGMT_CMD_NEW_DEV_ID || op == ZLRS_MGMT_CMD_ERASE_PAIR ||
+	     op == ZLRS_MGMT_CMD_FACTORY_RESET || op == ZLRS_MGMT_CMD_LOG_INFO)) {
+		return -EINVAL;
+	}
+
 	switch (op) {
 	case ZLRS_MGMT_CMD_ENTER:
 		mgmt_log_flush();
-		return len == 0 ? 0 : -EINVAL;
+		return 0;
 	case ZLRS_MGMT_CMD_EXIT:
-		return len == 0 ? 0 : -EINVAL;
+		return 0;
 	case ZLRS_MGMT_CMD_PAIR:
-		return len == 0 ? zlrs_rf_pair_start() : -EINVAL;
-	case ZLRS_MGMT_CMD_NEW_DEV_ID: {
-		if (len != 0) {
-			return -EINVAL;
-		}
-		const int rc = zlrs_persist_new_identity();
+		return zlrs_rf_pair_start();
+	case ZLRS_MGMT_CMD_NEW_DEV_ID:
+	case ZLRS_MGMT_CMD_FACTORY_RESET: {
+		const int rc = op == ZLRS_MGMT_CMD_NEW_DEV_ID ? zlrs_persist_new_identity()
+							      : zlrs_persist_factory_reset();
 		zlrs_rf_credentials();
 		return rc;
 	}
 	case ZLRS_MGMT_CMD_ERASE_PAIR: {
-		if (len != 0) {
-			return -EINVAL;
-		}
 		const int rc = zlrs_persist_erase_pairing();
 		if (rc == 0) {
 			zlrs_rf_credentials();
 		}
 		return rc;
 	}
-	case ZLRS_MGMT_CMD_FACTORY_RESET: {
-		if (len != 0) {
-			return -EINVAL;
-		}
-		const int rc = zlrs_persist_factory_reset();
-		zlrs_rf_credentials();
-		return rc;
-	}
+
 	case ZLRS_MGMT_CMD_SET_KEY_HEX:
 	case ZLRS_MGMT_CMD_SET_PHRASE: {
 		uint8_t key[ZLRS_KEY_LEN];
@@ -226,7 +209,7 @@ static int execute(bool maintenance)
 		if (len != (op == ZLRS_MGMT_CMD_SET_BAUD ? 4U : 1U)) {
 			return -EINVAL;
 		}
-		zlrs_persist_settings_t settings = *zlrs_persist_settings();
+		zlrs_persist_settings_t settings = zlrs_persist_state()->settings;
 		switch (op) {
 		case ZLRS_MGMT_CMD_SET_BAND:
 			settings.band = value[0];
@@ -247,7 +230,7 @@ static int execute(bool maintenance)
 		return zlrs_persist_save_settings(&settings);
 	}
 	case ZLRS_MGMT_CMD_LOG_INFO:
-		return len == 0 ? zlrs_log_info(&out->logs) : -EINVAL;
+		return zlrs_log_info(&out->logs);
 #if defined(CONFIG_ZLRS_APP_DEBUG)
 	case ZLRS_MGMT_CMD_DEBUG_REPORT:
 		return len == 1 ? zlrs_diagnostics_report(value[0], &out->report) : -EINVAL;
@@ -257,13 +240,23 @@ static int execute(bool maintenance)
 	}
 }
 
-int zlrs_mgmt_request(uint32_t op, const uint8_t *value, size_t len, struct zlrs_mgmt_reply *reply)
+static int encode_response(zcbor_state_t *zs, int rc);
+
+static void complete_request(bool maintenance)
+{
+	const int rc = operation(maintenance);
+	request.result = request.writer != NULL ? encode_response(request.writer, rc) : rc;
+	k_sem_give(&request_done);
+}
+
+static int submit(uint32_t op, const uint8_t *value, size_t len, zcbor_state_t *writer)
 {
 	if (len > sizeof(request.value) || (len != 0 && value == NULL)) {
-		return -EINVAL;
+		return writer != NULL ? encode_response(writer, -EINVAL) : -EINVAL;
 	}
 	k_mutex_lock(&request_lock, K_FOREVER);
 	request.op = op;
+	request.writer = writer;
 	request.len = len;
 	if (len) {
 		memcpy(request.value, value, len);
@@ -271,9 +264,6 @@ int zlrs_mgmt_request(uint32_t op, const uint8_t *value, size_t len, struct zlrs
 	k_sem_give(&request_pending);
 	k_sem_take(&request_done, K_FOREVER);
 	const int rc = request.result;
-	if (reply) {
-		*reply = request.reply;
-	}
 	memset(request.value, 0, sizeof(request.value));
 	k_mutex_unlock(&request_lock);
 	return rc;
@@ -288,8 +278,7 @@ bool zlrs_mgmt_process_idle(void)
 	if (request.op == ZLRS_MGMT_CMD_ENTER && request.len == 0) {
 		return true;
 	}
-	request.result = execute(false);
-	k_sem_give(&request_done);
+	complete_request(false);
 	return false;
 }
 
@@ -303,8 +292,7 @@ int zlrs_mgmt_run(void)
 	zlrs_trace_session(true);
 	atomic_set(&session_active, 1);
 	atomic_set(&last_activity, k_uptime_get_32());
-	request.result = execute(true);
-	k_sem_give(&request_done);
+	complete_request(true);
 	bool exit_requested = false;
 	while (!exit_requested && (uint32_t)(k_uptime_get_32() - atomic_get(&last_activity)) <
 					  CONFIG_ZLRS_APP_MGMT_TIMEOUT_S * 1000U) {
@@ -316,19 +304,17 @@ int zlrs_mgmt_run(void)
 		zlrs_log_console_sync();
 		(void)log_process();
 		if (k_sem_take(&request_pending, K_MSEC(10)) == 0) {
-			request.result = execute(true);
-			exit_requested = request.op == ZLRS_MGMT_CMD_EXIT && request.result == 0;
+			const int rc = operation(true);
+			request.result =
+				request.writer != NULL ? encode_response(request.writer, rc) : rc;
+			exit_requested = request.op == ZLRS_MGMT_CMD_EXIT && rc == 0;
 			atomic_set(&last_activity, k_uptime_get_32());
 			if (exit_requested) {
-				/* Close native FS transfers before resuming RF. */
+				/* A successful EXIT is acknowledged only after common session cleanup. */
 				k_msleep(CONFIG_MCUMGR_GRP_FS_FILE_AUTOMATIC_IDLE_CLOSE_TIME + 10);
-				zlrs_trace_session(false);
-				atomic_set(&session_active, 0);
-				mode.session = false;
-				mode_pending = true;
-				publish_mode();
+			} else {
+				k_sem_give(&request_done);
 			}
-			k_sem_give(&request_done);
 		}
 	}
 	zlrs_trace_session(false);
@@ -336,6 +322,9 @@ int zlrs_mgmt_run(void)
 	mode.session = false;
 	mode_pending = true;
 	publish_mode();
+	if (exit_requested) {
+		k_sem_give(&request_done);
+	}
 	zlrs_watchdog_arm();
 	return exit_requested ? 0 : 1;
 }
@@ -355,97 +344,112 @@ static int product_command(struct smp_streamer *ctxt, bool write)
 	if (!write && (op != ZLRS_MGMT_CMD_STATUS && op != ZLRS_MGMT_CMD_OBSERVE)) {
 		return MGMT_ERR_EINVAL;
 	}
-	struct zlrs_mgmt_reply reply;
-	const int rc = zlrs_mgmt_request(op, value.value, value.len, &reply);
+	return submit(op, value.value, value.len, ctxt->writer->zs);
+}
+
+static int encode_response(zcbor_state_t *zs, int rc)
+{
 	if (rc == -ENOTSUP) {
 		return MGMT_ERR_ENOTSUP;
 	}
-	zcbor_state_t *zs = ctxt->writer->zs;
 	bool ok = zcbor_tstr_put_lit(zs, "result") && zcbor_int32_put(zs, rc);
 	if (rc != 0) {
 		return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
 	}
+	const uint32_t op = request.op;
 	if (op == ZLRS_MGMT_CMD_STATUS || op == ZLRS_MGMT_CMD_OBSERVE) {
+		const zlrs_rf_state_t *rf = zlrs_rf_state();
+		const zlrs_link_status_t *link = rf->link;
+		const zlrs_lr2021_diag_t *radio = zlrs_lr2021_diag();
 		ok = ok && zcbor_tstr_put_lit(zs, "uptime_ms") &&
-		     zcbor_uint64_put(zs, reply.uptime_ms) &&
+		     zcbor_uint64_put(zs, request.reply.uptime_ms) &&
 		     zcbor_tstr_put_lit(zs, "hardware_ms") &&
-		     zcbor_uint32_put(zs, reply.status.hardware_sampled_ms) &&
+		     zcbor_uint32_put(zs, rf->hardware_sampled_ms) &&
 		     zcbor_tstr_put_lit(zs, "cpu_load_permille") &&
-		     zcbor_int32_put(zs, reply.cpu_load_permille) &&
+		     zcbor_int32_put(zs, request.reply.cpu_load_permille) &&
 		     zcbor_tstr_put_lit(zs, "cpu_window_ms") &&
-		     zcbor_uint64_put(zs, reply.cpu_window_ms) &&
+		     zcbor_uint64_put(zs, request.reply.cpu_window_ms) &&
 		     zcbor_tstr_put_lit(zs, "status") && zcbor_map_start_encode(zs, 64);
-#define FIELD(name, value) ok = ok && zcbor_tstr_put_lit(zs, #name) && zcbor_int64_put(zs, value)
-		FIELD(role, reply.status.role);
-		FIELD(state, reply.status.state);
-		FIELD(flags, status_flags(&reply.status));
-		FIELD(lq_percent, reply.status.lq_percent);
-		FIELD(regions, zlrs_region_supported_mask());
-		FIELD(region, reply.region);
-		FIELD(profile, reply.status.profile);
-		FIELD(tx_power_dbm, reply.status.power_ceiling_dbm);
-		FIELD(data_baud, reply.data_baud);
-		FIELD(rssi_dbm, reply.status.rssi_dbm);
-		FIELD(peer_rssi_dbm, reply.status.peer_rssi_dbm);
-		FIELD(peer_lq_percent, reply.status.peer_lq_percent);
-		FIELD(lq_generation, reply.status.lq_generation);
-		FIELD(peer_lq_generation, reply.status.peer_lq_generation);
-		FIELD(power_raises, reply.status.power_raises);
-		FIELD(power_lowers, reply.status.power_lowers);
-		FIELD(power_fallbacks, reply.status.power_fallbacks);
-		FIELD(power_changed_ms, reply.status.power_changed_ms);
-		FIELD(peer_feedback_ms, reply.status.peer_feedback_ms);
-		FIELD(power_rssi_dbm, reply.status.power_rssi_dbm);
 
-		FIELD(active_power_dbm, reply.status.tx_power_dbm);
-		FIELD(power_floor_dbm, reply.status.power_floor_dbm);
-		FIELD(temperature_centi_c, reply.status.temperature_centi_c);
-		FIELD(tx_frames, reply.status.tx_frames);
-		FIELD(rx_frames, reply.status.rx_frames);
-		FIELD(rx_crc_errors, reply.status.rx_crc_errors);
-		FIELD(rx_bad_tag, reply.status.rx_bad_tag);
-		FIELD(tx_retries, reply.status.tx_retries);
-		FIELD(data_drop_bytes, reply.status.data_drop_bytes);
-		FIELD(missed_slots, reply.status.missed_slots);
-		FIELD(radio_fail, reply.status.radio_fail);
-		FIELD(frequency_hz, reply.status.frequency_hz);
-		FIELD(hop_index, reply.status.hop_index);
-		FIELD(frame_period_us, reply.status.frame_period_us);
-		FIELD(radio_temperature_centi_c, reply.status.radio.temperature_centi_c);
-		FIELD(radio_xosc_temperature_centi_c, reply.status.radio.xosc_temperature_centi_c);
-		FIELD(radio_vbat_mv, reply.status.radio.vbat_mv);
-		FIELD(radio_version_major, reply.status.radio.version_major);
-		FIELD(radio_version_minor, reply.status.radio.version_minor);
-		FIELD(radio_chip_mode, reply.status.radio.chip_mode);
-		FIELD(radio_command_status, reply.status.radio.command_status);
-		FIELD(radio_reset_status, reply.status.radio.reset_status);
-		FIELD(radio_valid, reply.status.radio.valid);
-		FIELD(radio_errors, reply.status.radio.errors);
-		FIELD(radio_irq, reply.status.radio.irq);
-		FIELD(data_phy, reply.status.data_phy);
-#undef FIELD
+		const struct {
+			const char *name;
+			int64_t value;
+		} fields[] = {
+			{"role", link->cfg.role},
+			{"state", link->state},
+			{"flags", status_flags(rf)},
+			{"lq_percent", link->stats.lq_percent},
+			{"regions", zlrs_region_supported_mask()},
+			{"region", zlrs_persist_state()->settings.region},
+			{"profile", link->cfg.profile},
+			{"tx_power_dbm", rf->power.ceiling_dbm},
+			{"data_baud", zlrs_persist_state()->settings.data_baud},
+			{"rssi_dbm", link->stats.last_rssi},
+			{"peer_rssi_dbm", link->peer_rssi_dbm},
+			{"peer_lq_percent", link->peer_lq_percent},
+			{"lq_generation", link->stats.lq_generation},
+			{"peer_lq_generation", link->peer_lq_generation},
+			{"power_raises", rf->power.raises},
+			{"power_lowers", rf->power.lowers},
+			{"power_fallbacks", rf->power.fallbacks},
+			{"power_changed_ms", rf->power.last_change_ms},
+			{"peer_feedback_ms", link->last_peer_feedback_ms},
+			{"power_rssi_dbm", rf->power.filtering ? rf->power.rssi_q8 / 256 : 0},
+			{"active_power_dbm",
+			 rf->links_ready ? link->cfg.tx_power_dbm : rf->power.ceiling_dbm},
+			{"power_floor_dbm", rf->power.floor_dbm},
+			{"temperature_centi_c", rf->temperature_centi_c},
+			{"tx_frames", link->stats.tx_frames},
+			{"rx_frames", link->stats.rx_frames},
+			{"rx_crc_errors", radio->rx_crc_errors},
+			{"rx_bad_tag", link->stats.rx_bad_tag},
+			{"tx_retries", link->stats.tx_retries},
+			{"data_drop_bytes", link->stats.data_drop_bytes},
+			{"missed_slots", rf->missed_slots},
+			{"radio_fail", link->stats.radio_fail},
+			{"frequency_hz", zlrs_fhss_current_hz(&link->fhss)},
+			{"hop_index", link->fhss.index},
+			{"frame_period_us", rf->frame_period_us},
+			{"radio_temperature_centi_c", rf->radio.temperature_centi_c},
+			{"radio_xosc_temperature_centi_c", rf->radio.xosc_temperature_centi_c},
+			{"radio_vbat_mv", rf->radio.vbat_mv},
+			{"radio_version_major", rf->radio.version_major},
+			{"radio_version_minor", rf->radio.version_minor},
+			{"radio_chip_mode", rf->radio.chip_mode},
+			{"radio_command_status", rf->radio.command_status},
+			{"radio_reset_status", rf->radio.reset_status},
+			{"radio_valid", rf->radio.valid},
+			{"radio_errors", rf->radio.errors},
+			{"radio_irq", rf->radio.irq},
+			{"data_phy", link->cfg.phy},
+		};
+
+		for (size_t i = 0; ok && i < ARRAY_SIZE(fields); i++) {
+			ok = zcbor_tstr_encode_ptr(zs, fields[i].name, strlen(fields[i].name)) &&
+			     zcbor_int64_put(zs, fields[i].value);
+		}
 		ok = ok && zcbor_tstr_put_lit(zs, "dev_id") &&
-		     zcbor_bstr_encode_ptr(zs, reply.status.dev_id, ZLRS_DEV_ID_LEN) &&
+		     zcbor_bstr_encode_ptr(zs, link->dev_id, ZLRS_DEV_ID_LEN) &&
 		     zcbor_tstr_put_lit(zs, "peer_id") &&
-		     zcbor_bstr_encode_ptr(zs, reply.status.peer_id, ZLRS_DEV_ID_LEN) &&
+		     zcbor_bstr_encode_ptr(zs, link->pairing.peer_id, ZLRS_DEV_ID_LEN) &&
 		     zcbor_map_end_encode(zs, 64);
 	}
 	if (op == ZLRS_MGMT_CMD_DEBUG_REPORT) {
 		ok = ok && zcbor_tstr_put_lit(zs, "report") &&
-		     zcbor_tstr_encode_ptr(zs, reply.report, strlen(reply.report));
+		     zcbor_tstr_encode_ptr(zs, request.reply.report, strlen(request.reply.report));
 	}
 	if (op == ZLRS_MGMT_CMD_LOG_INFO) {
 		ok = ok && zcbor_tstr_put_lit(zs, "files") &&
 		     zcbor_list_start_encode(zs, ZLRS_LOG_FILES_MAX);
-		for (size_t i = 0; i < reply.logs.count; i++) {
+		for (size_t i = 0; i < request.reply.logs.count; i++) {
 			char path[48];
 			snprintf(path, sizeof(path), CONFIG_LOG_BACKEND_FS_DIR "/log.%04u",
-				 reply.logs.num[i]);
+				 request.reply.logs.num[i]);
 			ok = ok && zcbor_map_start_encode(zs, 2) &&
 			     zcbor_tstr_put_lit(zs, "path") &&
 			     zcbor_tstr_encode_ptr(zs, path, strlen(path)) &&
 			     zcbor_tstr_put_lit(zs, "size") &&
-			     zcbor_uint32_put(zs, reply.logs.size[i]) &&
+			     zcbor_uint32_put(zs, request.reply.logs.size[i]) &&
 			     zcbor_map_end_encode(zs, 2);
 		}
 		ok = ok && zcbor_list_end_encode(zs, ZLRS_LOG_FILES_MAX);
@@ -493,7 +497,7 @@ static enum mgmt_cb_return native_access(uint32_t event, enum mgmt_cb_return pre
 	if (event == MGMT_EVT_OP_OS_MGMT_RESET) {
 		/* Native OS reset owns boot_mode and delayed reboot; the owner parks RF first. */
 		if (!atomic_get(&session_active)) {
-			if (zlrs_mgmt_request(ZLRS_MGMT_CMD_ENTER, NULL, 0, NULL) != 0) {
+			if (submit(ZLRS_MGMT_CMD_ENTER, NULL, 0, NULL) != 0) {
 				*rc = MGMT_ERR_EBUSY;
 				return MGMT_CB_ERROR_RC;
 			}

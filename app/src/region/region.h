@@ -62,22 +62,6 @@ void zlrs_duty_init(zlrs_duty_t *duty, const zlrs_region_t *region, uint32_t now
 /* Ask for airtime_ms of transmit budget: true books it, false counts a denial */
 bool zlrs_duty_reserve(zlrs_duty_t *duty, uint32_t airtime_ms, uint32_t now_ms);
 
-/* Remaining airtime in this window (ms); UINT32_MAX when unlimited (may roll the window) */
-uint32_t zlrs_duty_remaining_ms(zlrs_duty_t *duty, uint32_t now_ms);
-
-/* Estimate airtime from frame length and rate (us, rounded up), used for duty and planning */
-uint32_t zlrs_airtime_us(uint16_t frame_len, uint32_t rate_bps);
-
-/* Same estimate in milliseconds (rounded up), used by the duty accounting */
-uint32_t zlrs_airtime_ms(uint16_t frame_len, uint32_t rate_bps);
-
-/*
- * How many frames per second this region allows at the given frame length and rate.
- * UINT32_MAX when the duty cycle is not limited.
- */
-uint32_t zlrs_region_max_frames_per_s(const zlrs_region_t *region, uint32_t rate_bps,
-				      uint16_t frame_len);
-
 #ifdef __cplusplus
 }
 #endif

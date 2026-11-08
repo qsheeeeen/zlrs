@@ -4,40 +4,40 @@
  *
  * Modulation tiers and the airtime model (app/src/proto/mod.c).
  *
- * Where the expected values come from:
- *   - FLRC and zlrs_airtime_us() in app/src/region must agree (one model, two call sites)
+ * Expected airtimes are independent numerical vectors for each PHY.
  */
 
-#include <zephyr/ztest.h>
-#include <initializer_list>
 #include <cstdint>
 #include <cstdio>
+#include <initializer_list>
+#include <zephyr/ztest.h>
 
 #include "proto/mod.h"
 #include "region/region.h"
 
-/* FLRC: point-by-point agreement with the region layer's model */
-ZTEST(Modulation, test_FlrcMatchesRegionModel)
+/* Independent FLRC estimates in us for 7, 31, 128 and 255 wire bytes. */
+ZTEST(Modulation, test_FlrcAirtimeVectors)
 {
-	static const uint32_t rates[] = {2600000U, 1300000U, 650000U, 325000U};
-	static const uint16_t lens[] = {7U, 31U, 128U, 255U};
-	const zlrs_mod_cfg_t no_rate = zlrs_mod_flrc(0U);
+	static const uint16_t lengths[] = {7U, 31U, 128U, 255U};
 
-	printf("mod: flrc airtime matches region model\n");
+	static const struct {
+		zlrs_phy_t phy;
+		uint32_t expected[4];
+	} vectors[] = {
+		{ZLRS_PHY_FLRC_2600, {34U, 108U, 407U, 797U}},
+		{ZLRS_PHY_FLRC_1300, {68U, 216U, 813U, 1594U}},
+		{ZLRS_PHY_FLRC_650, {136U, 431U, 1625U, 3188U}},
+		{ZLRS_PHY_FLRC_325, {271U, 862U, 3250U, 6376U}},
+	};
 
-	for (uint8_t i = 0U; i < sizeof(rates) / sizeof(rates[0]); i++) {
-		const zlrs_mod_cfg_t mod = zlrs_mod_flrc(rates[i]);
-
-		for (uint8_t j = 0U; j < sizeof(lens) / sizeof(lens[0]); j++) {
-			zexpect_equal(zlrs_mod_airtime_us(&mod, lens[j]),
-				      zlrs_airtime_us(lens[j], rates[i]));
-			zexpect_equal(zlrs_mod_airtime_ms(&mod, lens[j]),
-				      zlrs_airtime_ms(lens[j], rates[i]));
+	for (const auto &vector : vectors) {
+		for (size_t i = 0; i < ARRAY_SIZE(lengths); i++) {
+			zexpect_equal(zlrs_phy_airtime_us(vector.phy, lengths[i]),
+				      vector.expected[i]);
 		}
 	}
-
-	/* No rate (0) cannot be computed: return 0 instead of dividing by zero */
-	zexpect_equal(zlrs_mod_airtime_us(&no_rate, 31U), 0U);
+	zexpect_equal(zlrs_phy_for_rate(0U), ZLRS_PHY_COUNT);
+	zexpect_equal(zlrs_phy_airtime_us(ZLRS_PHY_COUNT, 31U), 0U);
 }
 
 ZTEST(Modulation, test_LoRaVectorsAndProfileIds)
@@ -53,15 +53,17 @@ ZTEST(Modulation, test_LoRaVectorsAndProfileIds)
 		     {255U, 29199U, 50463U}};
 
 	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
-		const zlrs_mod_cfg_t sf6 = zlrs_mod_lora(6U), sf7 = zlrs_mod_lora(7U);
-		zexpect_equal(zlrs_mod_airtime_us(&sf6, cases[i].len), cases[i].sf6);
-		zexpect_equal(zlrs_mod_airtime_us(&sf7, cases[i].len), cases[i].sf7);
-		zexpect_equal(zlrs_mod_airtime_us(&sf7, 256U), 0U);
+		const zlrs_phy_t sf6 = ZLRS_PHY_LORA_SF6, sf7 = ZLRS_PHY_LORA_SF7;
+		zexpect_equal(zlrs_phy_airtime_us(sf6, cases[i].len), cases[i].sf6);
+		zexpect_equal(zlrs_phy_airtime_us(sf7, cases[i].len), cases[i].sf7);
+		zexpect_equal(zlrs_phy_airtime_us(sf7, 256U), 0U);
 	}
+	static const char *const names[] = {"FLRC 2.6 Mbps",   "FLRC 650 kbps",   "FLRC 325 kbps",
+					    "LoRa SF6/BW1MHz", "LoRa SF7/BW1MHz", "FLRC 1.3 Mbps"};
 	for (unsigned int phy = 0; phy < ZLRS_PHY_COUNT; phy++) {
-		const zlrs_mod_cfg_t mod = zlrs_mod_phy(static_cast<zlrs_phy_t>(phy));
-		zexpect_equal(zlrs_mod_phy_id(&mod), phy);
+		zexpect_str_equal(zlrs_phy_name(static_cast<zlrs_phy_t>(phy)), names[phy]);
 	}
+	zexpect_str_equal(zlrs_phy_name(ZLRS_PHY_COUNT), "unknown");
 }
 
 ZTEST_SUITE(Modulation, NULL, NULL, NULL, NULL, NULL);

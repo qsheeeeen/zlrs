@@ -99,7 +99,7 @@ static struct led_rgb alternate(struct led_rgb first, struct led_rgb second, uin
 	return now_ms % period_ms < period_ms / 2U ? first : second;
 }
 
-static struct led_rgb led_color(const zlrs_rf_status_t *link, bool mgmt_mode, bool drop_recent,
+static struct led_rgb led_color(const zlrs_rf_event_t *link, bool mgmt_mode, bool drop_recent,
 				uint32_t now_ms)
 {
 	const struct led_rgb theme = link->role == ZLRS_ROLE_LEADER ? blue : green;
@@ -187,7 +187,7 @@ static int led_write(struct led_rgb color)
 static void ui_thread(void *p1, void *p2, void *p3)
 {
 	const struct zbus_channel *chan;
-	zlrs_rf_status_t link = {0};
+	zlrs_rf_event_t link = {0};
 	struct zlrs_mode mode = {0};
 	struct zlrs_serial_status data = {0};
 	uint32_t drop_bytes = 0U;

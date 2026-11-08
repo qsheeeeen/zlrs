@@ -1,6 +1,6 @@
 /*
  * Crash protection: the RP2350 hardware watchdog plus the fatal-error policy, on in every image
- * (CONFIG_ZLRS_APP_WATCHDOG, set in app/prj.conf).
+ * in every application image.
  *
  * - The watchdog turns a hang into a reset. It does not roll back by itself: the rollback verdict
  *   is the image confirm bit (doc/06-firmware.md). Armed at PRE_KERNEL_1, so even a hang in the
@@ -15,8 +15,6 @@
 #include "watchdog.h"
 
 #include <zephyr/kernel.h>
-
-#if IS_ENABLED(CONFIG_ZLRS_APP_WATCHDOG)
 
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
@@ -99,22 +97,3 @@ void zlrs_watchdog_disarm(void)
 		LOG_INF("watchdog disarmed");
 	}
 }
-
-#else /* !CONFIG_ZLRS_APP_WATCHDOG */
-
-void zlrs_watchdog_arm(void)
-{
-	/* Disabled: empty implementation */
-}
-
-void zlrs_watchdog_feed(void)
-{
-	/* Disabled: empty implementation so call sites need no conditionals */
-}
-
-void zlrs_watchdog_disarm(void)
-{
-	/* Disabled: empty implementation */
-}
-
-#endif /* CONFIG_ZLRS_APP_WATCHDOG */

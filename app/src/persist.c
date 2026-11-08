@@ -36,34 +36,74 @@ enum record_id {
 /* Settings owns the sole NVS mount and its allocation metadata. */
 static struct nvs_fs *storage_fs;
 static bool read_failed;
-static const char *const names[] = {
-	"zlrs/schema",  "zlrs/band", "zlrs/baud", "zlrs/region", "zlrs/role",
-	"zlrs/profile", "zlrs/key",  "zlrs/id",   "zlrs/pair",
+
+/* RAM copy of saved records/defaults; reads do not access flash. */
+static zlrs_persist_state_t state;
+
+static uint32_t present;
+static uint32_t schema;
+
+static const struct {
+	const char *name;
+	void *target;
+	uint8_t size;
+	uint8_t wire_size;
+} records[] = {
+	[RECORD_LAYOUT] = {"zlrs/schema", &schema, sizeof(schema), 4},
+	[RECORD_BAND] = {"zlrs/band", &state.settings.band, sizeof(state.settings.band), 1},
+	[RECORD_BAUD] = {"zlrs/baud", &state.settings.data_baud, sizeof(state.settings.data_baud),
+			 4},
+	[RECORD_REGION] = {"zlrs/region", &state.settings.region, sizeof(state.settings.region), 1},
+	[RECORD_ROLE] = {"zlrs/role", &state.settings.role, sizeof(state.settings.role), 1},
+	[RECORD_PROFILE] = {"zlrs/profile", &state.settings.profile, sizeof(state.settings.profile),
+			    1},
+	[RECORD_KEY] = {"zlrs/key", state.root_key, sizeof(state.root_key), ZLRS_KEY_LEN},
+	[RECORD_ID] = {"zlrs/id", state.dev_id, sizeof(state.dev_id), ZLRS_DEV_ID_LEN},
+	[RECORD_PAIR] = {"zlrs/pair", &state.pairing, sizeof(state.pairing), PAIR_BYTES},
 };
 
-static struct {
-	uint8_t bytes[ZLRS_KEY_LEN];
-	size_t len;
-} records[ARRAY_SIZE(names)];
+BUILD_ASSERT(sizeof(state.pairing) == PAIR_BYTES, "pairing records contain only byte arrays");
+
+/* Integer records have a stable little-endian wire representation, regardless of enum width. */
+static uint32_t scalar_value(const void *data, size_t size)
+{
+	uint32_t value = 0;
+	if (size == 1) {
+		return *(const uint8_t *)data;
+	}
+	if (size == 2) {
+		uint16_t half;
+		memcpy(&half, data, sizeof(half));
+		return half;
+	}
+	memcpy(&value, data, sizeof(value));
+	return value;
+}
 
 static int load_setting(const char *name, size_t len, settings_read_cb read_cb, void *arg)
 {
-	for (size_t i = 0; i < ARRAY_SIZE(names); i++) {
-		if (strcmp(name, names[i] + sizeof("zlrs/") - 1U) != 0) {
+	for (size_t i = 0; i < ARRAY_SIZE(records); i++) {
+		if (strcmp(name, records[i].name + sizeof("zlrs/") - 1U) != 0) {
 			continue;
 		}
-		const size_t expected[] = {4,         1, 4, 1, 1, 1, ZLRS_KEY_LEN, ZLRS_DEV_ID_LEN,
-					   PAIR_BYTES};
-		if (len != expected[i]) {
-			read_failed = true;
-			return -EINVAL;
-		}
-		const int rc = read_cb(arg, records[i].bytes, len);
+		uint8_t bytes[ZLRS_KEY_LEN];
+		int rc = len == records[i].wire_size ? read_cb(arg, bytes, len) : -EINVAL;
 		if (rc < 0 || rc != len) {
 			read_failed = true;
 			return rc < 0 ? rc : -EIO;
 		}
-		records[i].len = len;
+		if (i <= RECORD_PROFILE && records[i].size != 1) {
+			const uint32_t value = len == 4 ? sys_get_le32(bytes) : bytes[0];
+			if (records[i].size == 2) {
+				const uint16_t half = value;
+				memcpy(records[i].target, &half, sizeof(half));
+			} else {
+				memcpy(records[i].target, &value, sizeof(value));
+			}
+		} else {
+			memcpy(records[i].target, bytes, len);
+		}
+		present |= BIT(i);
 		return 0;
 	}
 	return -ENOENT;
@@ -71,67 +111,11 @@ static int load_setting(const char *name, size_t len, settings_read_cb read_cb, 
 
 SETTINGS_STATIC_HANDLER_DEFINE(zlrs, "zlrs", NULL, load_setting, NULL, NULL);
 
-/* load_setting validates lengths before publishing the in-memory records. */
-static bool read_record(enum record_id id, void *bytes)
-{
-	if (records[id].len == 0U) {
-		return false;
-	}
-	memcpy(bytes, records[id].bytes, records[id].len);
-	return true;
-}
-
-static uint32_t setting_value(enum record_id id, uint32_t fallback)
-{
-	if (records[id].len == 0U) {
-		return fallback;
-	}
-	return id == RECORD_BAUD ? sys_get_le32(records[id].bytes) : records[id].bytes[0];
-}
-
-/* RAM copy of saved records/defaults; reads do not access flash. */
-static struct {
-	zlrs_persist_settings_t settings;
-	uint8_t dev_id[ZLRS_DEV_ID_LEN];
-	uint8_t root_key[ZLRS_KEY_LEN];
-	zlrs_persist_pairing_t pairing;
-	bool identity_valid;
-	bool configured;
-	bool paired;
-} state;
-
 static bool ready;
 
-const zlrs_persist_settings_t *zlrs_persist_settings(void)
+const zlrs_persist_state_t *zlrs_persist_state(void)
 {
-	return &state.settings;
-}
-
-bool zlrs_persist_get_device_id(uint8_t out[ZLRS_DEV_ID_LEN])
-{
-	if (!state.identity_valid) {
-		return false;
-	}
-	memcpy(out, state.dev_id, ZLRS_DEV_ID_LEN);
-	return true;
-}
-
-bool zlrs_persist_get_root_key(uint8_t out[ZLRS_KEY_LEN])
-{
-	if (!state.configured) {
-		return false;
-	}
-	memcpy(out, state.root_key, ZLRS_KEY_LEN);
-	return true;
-}
-
-bool zlrs_persist_get_pairing(zlrs_persist_pairing_t *out)
-{
-	if (!state.paired) {
-		return false;
-	}
-	*out = state.pairing;
-	return true;
+	return &state;
 }
 
 static const zlrs_persist_settings_t default_settings = {
@@ -159,7 +143,7 @@ static int write_record(enum record_id id, const void *bytes, size_t size)
 	if (!ready) {
 		return -EIO;
 	}
-	return settings_save_one(names[id], bytes, size);
+	return settings_save_one(records[id].name, bytes, size);
 }
 
 static int reset_layout(void)
@@ -170,7 +154,7 @@ static int reset_layout(void)
 	/* Mark reset before erasing, so an interrupted erase cannot reactivate credentials. */
 	uint8_t marker[4];
 	sys_put_le32(RESET_PENDING, marker);
-	int rc = settings_save_one(names[RECORD_LAYOUT], marker, sizeof(marker));
+	int rc = settings_save_one(records[RECORD_LAYOUT].name, marker, sizeof(marker));
 	if (rc == 0) {
 		rc = nvs_clear(storage_fs);
 	}
@@ -183,16 +167,18 @@ static int reset_layout(void)
 	}
 	if (rc == 0) {
 		sys_put_le32(NVS_LAYOUT, marker);
-		rc = settings_save_one(names[RECORD_LAYOUT], marker, sizeof(marker));
+		rc = settings_save_one(records[RECORD_LAYOUT].name, marker, sizeof(marker));
 	}
 	ready = rc == 0;
-	memset(records, 0, sizeof(records));
+	present = 0;
+	schema = 0;
 	return rc;
 }
 
 static int load_records(void)
 {
-	memset(records, 0, sizeof(records));
+	present = 0;
+	schema = 0;
 	int rc = settings_subsys_init();
 	if (rc != 0) {
 		/* No valid backend mount exists yet. Discard unreadable storage and retry. */
@@ -217,9 +203,7 @@ static int load_records(void)
 	storage_fs = storage;
 	read_failed = false;
 	rc = settings_load_subtree("zlrs");
-	uint8_t marker[4];
-	if (rc != 0 || read_failed || !read_record(RECORD_LAYOUT, marker) ||
-	    sys_get_le32(marker) != NVS_LAYOUT) {
+	if (rc != 0 || read_failed || schema != NVS_LAYOUT) {
 		LOG_WRN("settings unreadable or schema missing; reinitializing storage");
 		return reset_layout();
 	}
@@ -264,22 +248,12 @@ int zlrs_persist_init(void)
 	if (rc != 0) {
 		return rc;
 	}
-	uint8_t bytes[PAIR_BYTES];
 	ready = true;
-	/* Load and validate the complete set of stored settings. */
-	const zlrs_persist_settings_t loaded = {
-		.band = setting_value(RECORD_BAND, state.settings.band),
-		.data_baud = setting_value(RECORD_BAUD, state.settings.data_baud),
-		.region = setting_value(RECORD_REGION, state.settings.region),
-		.role = setting_value(RECORD_ROLE, state.settings.role),
-		.profile = setting_value(RECORD_PROFILE, state.settings.profile),
-	};
-	if (!settings_valid(&loaded)) {
+	if (!settings_valid(&state.settings)) {
 		rc = reset_layout();
 		return rc == 0 ? zlrs_persist_init() : rc;
 	}
-	state.settings = loaded;
-	if (!read_record(RECORD_ID, state.dev_id) || !id_valid(state.dev_id)) {
+	if ((present & BIT(RECORD_ID)) == 0 || !id_valid(state.dev_id)) {
 		rc = new_id(state.dev_id);
 		if (rc == 0) {
 			rc = write_record(RECORD_ID, state.dev_id, sizeof(state.dev_id));
@@ -290,12 +264,8 @@ int zlrs_persist_init(void)
 		}
 	}
 	state.identity_valid = true;
-	state.configured = read_record(RECORD_KEY, state.root_key);
-	state.paired = read_record(RECORD_PAIR, bytes);
-	if (state.paired) {
-		memcpy(state.pairing.peer_id, bytes, ZLRS_DEV_ID_LEN);
-		memcpy(state.pairing.pair_salt, bytes + ZLRS_DEV_ID_LEN, ZLRS_PAIR_SALT_LEN);
-	}
+	state.configured = (present & BIT(RECORD_KEY)) != 0;
+	state.paired = (present & BIT(RECORD_PAIR)) != 0;
 	return 0;
 }
 
@@ -307,33 +277,21 @@ int zlrs_persist_save_settings(const zlrs_persist_settings_t *s)
 	if (!settings_valid(s)) {
 		return -EINVAL;
 	}
-	uint8_t bytes[4];
-	int rc;
-	/* Each setting has its own record. Reflect every successful write, including partial saves. */
-#define SAVE_FIELD(field, id)                                                                      \
-	do {                                                                                       \
-		if (state.settings.field != s->field) {                                            \
-			bytes[0] = (uint8_t)s->field;                                              \
-			rc = write_record(id, bytes, 1U);                                          \
-			if (rc != 0) {                                                             \
-				return rc;                                                         \
-			}                                                                          \
-			state.settings.field = s->field;                                           \
-		}                                                                                  \
-	} while (0)
-	SAVE_FIELD(band, RECORD_BAND);
-	if (state.settings.data_baud != s->data_baud) {
-		sys_put_le32(s->data_baud, bytes);
-		rc = write_record(RECORD_BAUD, bytes, sizeof(bytes));
+	/* Commit in record order and adopt each successful write, including partial saves. */
+	for (enum record_id id = RECORD_BAND; id <= RECORD_PROFILE; id++) {
+		const void *value = (const uint8_t *)s + ((const uint8_t *)records[id].target -
+							  (const uint8_t *)&state.settings);
+		if (memcmp(value, records[id].target, records[id].size) == 0) {
+			continue;
+		}
+		uint8_t bytes[4];
+		sys_put_le32(scalar_value(value, records[id].size), bytes);
+		int rc = write_record(id, bytes, records[id].wire_size);
 		if (rc != 0) {
 			return rc;
 		}
-		state.settings.data_baud = s->data_baud;
+		memcpy(records[id].target, value, records[id].size);
 	}
-	SAVE_FIELD(region, RECORD_REGION);
-	SAVE_FIELD(role, RECORD_ROLE);
-	SAVE_FIELD(profile, RECORD_PROFILE);
-#undef SAVE_FIELD
 	return 0;
 }
 
@@ -347,12 +305,9 @@ int zlrs_persist_set_root_key(const uint8_t key[ZLRS_KEY_LEN])
 	return rc;
 }
 
-int zlrs_persist_save_pairing(const zlrs_persist_pairing_t *pair)
+int zlrs_persist_save_pairing(const zlrs_pairing_t *pair)
 {
-	uint8_t bytes[PAIR_BYTES];
-	memcpy(bytes, pair->peer_id, ZLRS_DEV_ID_LEN);
-	memcpy(bytes + ZLRS_DEV_ID_LEN, pair->pair_salt, ZLRS_PAIR_SALT_LEN);
-	const int rc = write_record(RECORD_PAIR, bytes, sizeof(bytes));
+	const int rc = write_record(RECORD_PAIR, pair, sizeof(*pair));
 	if (rc == 0) {
 		state.pairing = *pair;
 		state.paired = true;
@@ -365,7 +320,7 @@ int zlrs_persist_erase_pairing(void)
 	if (!ready) {
 		return -EIO;
 	}
-	const int rc = settings_delete(names[RECORD_PAIR]);
+	const int rc = settings_delete(records[RECORD_PAIR].name);
 	if (rc == 0 || rc == -ENOENT) {
 		state.paired = false;
 		memset(&state.pairing, 0, sizeof(state.pairing));

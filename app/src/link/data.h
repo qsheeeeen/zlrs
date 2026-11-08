@@ -24,9 +24,8 @@ void link_complete_data(zlrs_link_t *link, bool success, uint32_t now_ms);
 
 bool link_arq_retry_due(const zlrs_link_t *link, uint32_t now_ms);
 
-const zlrs_radio_req_t *link_send_empty_data(zlrs_link_t *link);
-
-const zlrs_radio_req_t *link_send_data(zlrs_link_t *link, uint32_t now_ms);
+/* Build the selected payload in place; the link owner submits the planned radio request. */
+uint8_t *link_build_data(zlrs_link_t *link, uint16_t data_len, uint16_t *size);
 
 void link_handle_data(zlrs_link_t *link, const zlrs_data_view_t *view, uint32_t now_ms);
 

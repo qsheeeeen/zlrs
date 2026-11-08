@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /* Test image only. Real RF/CRC/auth/ARQ stay active; faults alter accepted RX facts. */
 #include "link/link.h"
-#include <mgmt/mcumgr/util/zcbor_bulk.h>
 #include <zcbor_decode.h>
+#include <mgmt/mcumgr/util/zcbor_bulk.h>
 #include <zcbor_encode.h>
 #include <zephyr/kernel.h>
 #include <zephyr/mgmt/mcumgr/mgmt/handlers.h>
@@ -20,7 +20,7 @@ void __real_zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, i
 void __wrap_zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t rssi,
 			       int8_t snr, uint32_t now_ms)
 {
-	if (link->req_pending && link->req.is_tx && status == ZLRS_RADIO_OK && link->req_is_data &&
+	if (link->status.busy && link->req.is_tx && status == ZLRS_RADIO_OK && link->req_is_data &&
 	    link->req.size >= ZLRS_FRAME_HDR_LEN + ZLRS_DATA_PREFIX_LEN) {
 		const uint8_t quality = link->req.buf[ZLRS_FRAME_HDR_LEN + 2U];
 		atomic_inc(&tx_feedback);
@@ -34,7 +34,7 @@ void __wrap_zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, i
 		quality_started = true;
 		previous_quality = quality;
 	}
-	if (link->req_pending && !link->req.is_tx && status == ZLRS_RADIO_OK && rx_len > 0U) {
+	if (link->status.busy && !link->req.is_tx && status == ZLRS_RADIO_OK && rx_len > 0U) {
 		const uint32_t count = (uint32_t)atomic_inc(&received) + 1U;
 		const bool active =
 			(int32_t)((uint32_t)atomic_get(&expires_ms) - k_uptime_get_32()) > 0;

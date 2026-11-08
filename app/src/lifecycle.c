@@ -34,14 +34,13 @@ void zlrs_lifecycle_check_rollback(bool fault, uint32_t timeout_ms)
 #define RETRY_MIN_MS 1000U
 #define RETRY_MAX_MS 30000U
 
-static bool same_pairing(const zlrs_persist_pairing_t *a, const zlrs_persist_pairing_t *b)
+static bool same_pairing(const zlrs_pairing_t *a, const zlrs_pairing_t *b)
 {
-	return b != NULL && memcmp(a->peer_id, b->peer_id, sizeof(a->peer_id)) == 0 &&
-	       memcmp(a->pair_salt, b->pair_salt, sizeof(a->pair_salt)) == 0;
+	return b != NULL && memcmp(a, b, sizeof(*a)) == 0;
 }
 
-bool zlrs_pairing_save_due(zlrs_pairing_save_t *state, const zlrs_persist_pairing_t *live,
-			   const zlrs_persist_pairing_t *saved, uint32_t now_ms)
+bool zlrs_pairing_save_due(zlrs_pairing_save_t *state, const zlrs_pairing_t *live,
+			   const zlrs_pairing_t *saved, uint32_t now_ms)
 {
 	if (live == NULL || same_pairing(live, saved)) {
 		*state = (zlrs_pairing_save_t){0};

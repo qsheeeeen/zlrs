@@ -1,23 +1,23 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /* MCU-to-MCU probes through the production byte queue, authentication and ARQ. */
-#include <errno.h>
-#include <string.h>
-#include <zephyr/kernel.h>
-#include <zephyr/sys/atomic.h>
-#include <zephyr/sys/byteorder.h>
-#include <zephyr/mgmt/mcumgr/mgmt/mgmt.h>
-#include <zephyr/mgmt/mcumgr/mgmt/handlers.h>
-#include <mgmt/mcumgr/util/zcbor_bulk.h>
-#include <zcbor_decode.h>
-#include <zcbor_encode.h>
 #include "link/link.h"
 #include "platform/slot_timer.h"
 #include "trace.h"
+#include <errno.h>
+#include <string.h>
+#include <zcbor_decode.h>
+#include <mgmt/mcumgr/util/zcbor_bulk.h>
+#include <zcbor_encode.h>
+#include <zephyr/kernel.h>
+#include <zephyr/mgmt/mcumgr/mgmt/handlers.h>
+#include <zephyr/mgmt/mcumgr/mgmt/mgmt.h>
+#include <zephyr/sys/atomic.h>
+#include <zephyr/sys/byteorder.h>
 
-#define BYTES 32U
-#define MAGIC 0x4c52545aU
-#define PING 1U
-#define PONG 2U
+#define BYTES   32U
+#define MAGIC   0x4c52545aU
+#define PING    1U
+#define PONG    2U
 #define TRIGGER 3U
 
 static struct {
@@ -29,6 +29,7 @@ static struct {
 	uint32_t launch_delay_us;
 	uint64_t total_us;
 } bench;
+
 static atomic_t command;
 static uint32_t requested_role, requested_threshold, requested_delay;
 static uint32_t requested_launch_delay;
@@ -79,7 +80,8 @@ uint16_t __wrap_zlrs_link_tx_space(const zlrs_link_t *link)
 		if (op == 1) {
 			struct zlrs_trace_status trace;
 			zlrs_trace_status(&trace);
-			if (link->queue_count != 0U || link->state != ZLRS_STATE_CONNECTED ||
+			if (link->status.queue_count != 0U ||
+			    link->status.state != ZLRS_STATE_CONNECTED ||
 			    trace.state != ZLRS_TRACE_CAPTURING || trace.duration_ms != 0U) {
 				command_result = -EBUSY;
 			} else {
@@ -96,10 +98,11 @@ uint16_t __wrap_zlrs_link_tx_space(const zlrs_link_t *link)
 		k_sem_give(&command_done);
 	}
 	if (bench.active && !bench.triggered) {
-		bench.phy = zlrs_mod_phy_id(&link->cfg.mod);
+		bench.phy = link->status.cfg.phy;
 		uint32_t now = zlrs_slot_timer_now_us();
 		if ((bench.initiator && bench.waiting && now - bench.sent_us > 200000U) ||
-		    (!bench.initiator && bench.last_rx_us != 0U && now - bench.last_rx_us > 200000U)) {
+		    (!bench.initiator && bench.last_rx_us != 0U &&
+		     now - bench.last_rx_us > 200000U)) {
 			trigger(200000U);
 		} else if (bench.initiator && !bench.waiting && !bench.queued) {
 			queue(PING, ++bench.seq, 0U, 0U);
@@ -241,7 +244,12 @@ static int control(struct smp_streamer *ctxt)
 	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
 }
 static const struct mgmt_handler handlers[] = {{.mh_write = control}};
-static struct mgmt_group group = {.mg_handlers = handlers, .mg_handlers_count = 1,
-	.mg_group_id = 69};
-static void register_control(void) { mgmt_register_group(&group); }
+static struct mgmt_group group = {
+	.mg_handlers = handlers, .mg_handlers_count = 1, .mg_group_id = 69};
+
+static void register_control(void)
+{
+	mgmt_register_group(&group);
+}
+
 MCUMGR_HANDLER_DEFINE(zlrs_latency_test, register_control);

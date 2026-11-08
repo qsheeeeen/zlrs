@@ -58,6 +58,9 @@ at compile time that SMP uses the management CDC. FS download chunks are limited
 to 256 bytes because Zephyr keeps a chunk on the SMP worker stack; the 8 KiB
 transport buffer also carries complete diagnostics. File export is read-only and
 requires an explicit maintenance session. UART kernel logs use their separate CDC.
+The SMP worker submits a bounded request and waits while the application owner
+executes it and encodes the response from its read-only RF, link and persistence
+views. Live pointers and credentials do not cross the UI channels.
 
 ## Observing a running link
 

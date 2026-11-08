@@ -1,16 +1,16 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /* Exercise the real UI thread through its zbus inputs and LED driver output. */
+#include "mgmt.h"
+#include "rf.h"
+#include "serial.h"
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 #include <zephyr/drivers/led_strip.h>
 #include <zephyr/kernel.h>
 #include <zephyr/ztest.h>
-#include "rf.h"
-#include "mgmt.h"
-#include "serial.h"
 
-ZBUS_CHAN_DEFINE(zlrs_rf_chan, zlrs_rf_status_t, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
+ZBUS_CHAN_DEFINE(zlrs_rf_chan, zlrs_rf_event_t, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
 		 ZBUS_MSG_INIT(0));
 ZBUS_CHAN_DEFINE(zlrs_mode_chan, struct zlrs_mode, NULL, NULL, ZBUS_OBSERVERS_EMPTY,
 		 ZBUS_MSG_INIT(0));
@@ -27,7 +27,7 @@ static size_t sample_count;
 static struct led_rgb last;
 static uint32_t writes;
 static bool reject_next;
-static zlrs_rf_status_t link;
+static zlrs_rf_event_t link;
 static struct zlrs_mode mode;
 static struct zlrs_serial_status serial;
 /* Hardware forwards captured output to the real pixel; native_sim has no strip alias. */
@@ -237,7 +237,7 @@ static void expect_connected(struct led_rgb theme, uint8_t flashes, uint32_t bea
 static void before(void *fixture)
 {
 	ARG_UNUSED(fixture);
-	link = (zlrs_rf_status_t){.role = ZLRS_ROLE_FOLLOWER,
+	link = (zlrs_rf_event_t){.role = ZLRS_ROLE_FOLLOWER,
 				  .state = ZLRS_STATE_CONNECTED,
 				  .data_band = ZLRS_DATA_BAND_24,
 				  .band_mode = ZLRS_DATA_BAND_24,

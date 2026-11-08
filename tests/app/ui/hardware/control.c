@@ -4,8 +4,8 @@
 #include <zephyr/kernel.h>
 #include <zephyr/mgmt/mcumgr/mgmt/mgmt.h>
 #include <zephyr/mgmt/mcumgr/mgmt/handlers.h>
-#include <mgmt/mcumgr/util/zcbor_bulk.h>
 #include <zcbor_decode.h>
+#include <mgmt/mcumgr/util/zcbor_bulk.h>
 #include <zcbor_encode.h>
 #include "rf.h"
 #include "ui.h"
@@ -30,7 +30,7 @@ static K_WORK_DELAYABLE_DEFINE(release_work, release);
 static int status(struct smp_streamer *ctxt)
 {
 	struct zlrs_input input = {0};
-	zlrs_rf_status_t rf = {0};
+	zlrs_rf_event_t rf = {0};
 	zbus_chan_read(&zlrs_input_chan, &input, K_MSEC(10));
 	zbus_chan_read(&zlrs_rf_chan, &rf, K_MSEC(10));
 	zcbor_state_t *zs = ctxt->writer->zs;

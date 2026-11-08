@@ -52,13 +52,14 @@ uint16_t __wrap_zlrs_link_tx_space(const zlrs_link_t *link)
 		int rc = 0;
 
 		if (request > 0) {
-			if (link->queue_count != 0U || link->state != ZLRS_STATE_CONNECTED ||
-			    link->sess_cfm_due) {
+			if (link->status.queue_count != 0U ||
+			    link->status.state != ZLRS_STATE_CONNECTED ||
+			    link->status.sess_cfm_due) {
 				rc = -EBUSY;
 			} else {
 				memset(&stream, 0, sizeof(stream));
 				stream.active = true;
-				stream.role_leader = link->cfg.role == ZLRS_ROLE_LEADER;
+				stream.role_leader = link->status.cfg.role == ZLRS_ROLE_LEADER;
 				stream.target = (uint32_t)request;
 				atomic_set(&published.active, 1);
 				atomic_set(&published.target, request);
@@ -75,7 +76,7 @@ uint16_t __wrap_zlrs_link_tx_space(const zlrs_link_t *link)
 				stream.started = true;
 			}
 		} else if (request == STOP) {
-			if (link->queue_count != 0U) {
+			if (link->status.queue_count != 0U) {
 				rc = -EBUSY;
 			} else {
 				stream.active = false;
@@ -141,12 +142,12 @@ int zlrs_test_data_control(struct zlrs_test_report *report, enum zlrs_test_op op
 					      : 0U;
 
 		zlrs_test_print(report,
-			    "BENCH active=%u target=%u queued=%u rx=%u bad=%u duration_us=%u "
-			    "goodput_Bps=%u",
-			    (unsigned int)atomic_get(&published.active),
-			    (unsigned int)atomic_get(&published.target),
-			    (unsigned int)atomic_get(&published.generated), received,
-			    (unsigned int)atomic_get(&published.bad), duration, rate);
+				"BENCH active=%u target=%u queued=%u rx=%u bad=%u duration_us=%u "
+				"goodput_Bps=%u",
+				(unsigned int)atomic_get(&published.active),
+				(unsigned int)atomic_get(&published.target),
+				(unsigned int)atomic_get(&published.generated), received,
+				(unsigned int)atomic_get(&published.bad), duration, rate);
 		return 0;
 	}
 	int request;
@@ -176,6 +177,9 @@ int zlrs_test_data_control(struct zlrs_test_report *report, enum zlrs_test_op op
 	const int rc = atomic_get(&command_result);
 
 	zlrs_test_print(report, "BENCH %s: %d",
-		       op == TEST_DATA_ARM ? "arm" : op == TEST_DATA_START ? "start" : "stop", rc);
+			op == TEST_DATA_ARM     ? "arm"
+			: op == TEST_DATA_START ? "start"
+						: "stop",
+			rc);
 	return rc;
 }

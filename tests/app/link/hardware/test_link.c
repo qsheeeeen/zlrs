@@ -1,10 +1,10 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
-#include <zephyr/ztest.h>
 #include <string.h>
+#include <zephyr/ztest.h>
 
 #include "link/link.h"
-#include "link/pairing.h"
+#include "link/handshake.h"
 
 ZTEST(link, test_pair_key_rederivation)
 {
@@ -22,7 +22,7 @@ ZTEST(link, test_pair_key_rederivation)
 	const uint8_t root[ZLRS_KEY_LEN] = {1U};
 	uint8_t first[ZLRS_KEY_LEN];
 
-	cfg.mod = zlrs_mod_flrc(2600000U);
+	cfg.phy = ZLRS_PHY_FLRC_2600;
 	zlrs_link_init(&link, &cfg, NULL, NULL, NULL);
 	zlrs_link_set_dev_id(&link, dev_id);
 	zlrs_link_set_root_key(&link, root, 0U);

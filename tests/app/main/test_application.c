@@ -104,7 +104,7 @@ static bool rf_fault;
 static unsigned int starts, frames, idle_calls, sessions, pairing_requests, saves, publications;
 static unsigned int pause_depth;
 static bool fail_first_save;
-static zlrs_persist_pairing_t saved_pairing;
+static zlrs_pairing_t saved_pairing;
 static bool pairing_saved, rf_paired;
 static bool pairing_scenario, cancel_waiting_pair, expire_waiting_pair;
 static bool button_allowed = true;
@@ -118,7 +118,7 @@ bool zlrs_button_pairing_allowed(void)
 static unsigned int busy_pair_attempts;
 static int pair_result;
 static const zlrs_persist_settings_t settings = {.data_baud = 115200U};
-static const zlrs_persist_pairing_t paired = {
+static const zlrs_pairing_t paired = {
 	.peer_id = {1, 2, 3, 4},
 	.pair_salt = {5, 6, 7, 8},
 };
@@ -128,21 +128,15 @@ int zlrs_persist_init(void)
 	return 0;
 }
 
-const zlrs_persist_settings_t *zlrs_persist_settings(void)
+const zlrs_persist_state_t *zlrs_persist_state(void)
 {
-	return &settings;
+	static zlrs_persist_state_t state;
+	state = (zlrs_persist_state_t){
+		.settings = settings, .pairing = saved_pairing, .paired = pairing_saved};
+	return &state;
 }
 
-bool zlrs_persist_get_pairing(zlrs_persist_pairing_t *out)
-{
-	if (!pairing_saved) {
-		return false;
-	}
-	*out = saved_pairing;
-	return true;
-}
-
-int zlrs_persist_save_pairing(const zlrs_persist_pairing_t *pairing)
+int zlrs_persist_save_pairing(const zlrs_pairing_t *pairing)
 {
 	zassert_equal(pause_depth, 1U,
 		      "pairing must be saved in an application maintenance window");
@@ -202,8 +196,7 @@ int zlrs_rf_init(void)
 void zlrs_rf_credentials(void)
 {
 	zassert_equal(pause_depth, 1U);
-	zlrs_persist_pairing_t pairing;
-	rf_paired = zlrs_persist_get_pairing(&pairing);
+	rf_paired = zlrs_persist_state()->paired;
 }
 
 void zlrs_rf_start(void)
@@ -223,14 +216,12 @@ int zlrs_rf_pair_start(void)
 	return pairing_requests <= busy_pair_attempts ? -EAGAIN : pair_result;
 }
 
-bool zlrs_rf_pairing(uint8_t peer_id[ZLRS_DEV_ID_LEN], uint8_t salt[ZLRS_PAIR_SALT_LEN])
+const zlrs_rf_state_t *zlrs_rf_state(void)
 {
-	if (!rf_paired) {
-		return false;
-	}
-	memcpy(peer_id, paired.peer_id, sizeof(paired.peer_id));
-	memcpy(salt, paired.pair_salt, sizeof(paired.pair_salt));
-	return true;
+	static zlrs_link_status_t link;
+	static const zlrs_rf_state_t state = {.link = &link};
+	link = (zlrs_link_status_t){.paired = rf_paired, .pairing = paired};
+	return &state;
 }
 
 void zlrs_rf_frame(void)

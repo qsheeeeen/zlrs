@@ -3,8 +3,8 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/atomic.h>
 
-#include "persist.h"
 #include "fixtures.h"
+#include "persist.h"
 
 static atomic_t requested_ms;
 static atomic_t active;
@@ -12,18 +12,23 @@ static atomic_t restores;
 static struct k_spinlock trace_lock;
 static uint32_t started_ms, calls, first_ms, last_ms, min_gap_ms;
 
-bool __real_zlrs_persist_get_pairing(zlrs_persist_pairing_t *out);
-int __real_zlrs_persist_save_pairing(const zlrs_persist_pairing_t *pairing);
+const zlrs_persist_state_t *__real_zlrs_persist_state(void);
+int __real_zlrs_persist_save_pairing(const zlrs_pairing_t *pairing);
 
-bool __wrap_zlrs_persist_get_pairing(zlrs_persist_pairing_t *out)
+const zlrs_persist_state_t *__wrap_zlrs_persist_state(void)
 {
-	/* Preserve the real credentials. Hide their saved copy only while EIOs
-	 * exercise the real application's retry scheduling during physical DATA.
-	 */
-	return !atomic_get(&active) && __real_zlrs_persist_get_pairing(out);
+	const zlrs_persist_state_t *saved = __real_zlrs_persist_state();
+	if (!atomic_get(&active)) {
+		return saved;
+	}
+	/* Hide only the committed pair while exercising real write retries. */
+	static zlrs_persist_state_t hidden;
+	hidden = *saved;
+	hidden.paired = false;
+	return &hidden;
 }
 
-int __wrap_zlrs_persist_save_pairing(const zlrs_persist_pairing_t *pairing)
+int __wrap_zlrs_persist_save_pairing(const zlrs_pairing_t *pairing)
 {
 	if (!atomic_get(&active)) {
 		return __real_zlrs_persist_save_pairing(pairing);
@@ -64,8 +69,8 @@ void zlrs_test_pairing_save_fault_apply(void)
 	}
 }
 
-int zlrs_test_pairing_save_fault_control(struct zlrs_test_report *report,
-				       enum zlrs_test_op op, uint32_t arg)
+int zlrs_test_pairing_save_fault_control(struct zlrs_test_report *report, enum zlrs_test_op op,
+					 uint32_t arg)
 {
 	if (op == TEST_SAVE_FAULT) {
 		const unsigned long ms = arg;
@@ -85,11 +90,11 @@ int zlrs_test_pairing_save_fault_control(struct zlrs_test_report *report,
 	k_spinlock_key_t key = k_spin_lock(&trace_lock);
 	const uint32_t count = calls, first = first_ms, last = last_ms, gap = min_gap_ms;
 	k_spin_unlock(&trace_lock, key);
-	zlrs_test_print(report,
-		    "SAVE_FAULT active=%u pending=%u calls=%u first_ms=%u last_ms=%u min_gap_ms=%u "
-		    "restores=%u",
-		    (unsigned int)atomic_get(&active),
-		    (unsigned int)(atomic_get(&requested_ms) != 0), count, first, last, gap,
-		    (unsigned int)atomic_get(&restores));
+	zlrs_test_print(
+		report,
+		"SAVE_FAULT active=%u pending=%u calls=%u first_ms=%u last_ms=%u min_gap_ms=%u "
+		"restores=%u",
+		(unsigned int)atomic_get(&active), (unsigned int)(atomic_get(&requested_ms) != 0),
+		count, first, last, gap, (unsigned int)atomic_get(&restores));
 	return 0;
 }

@@ -9,6 +9,7 @@
  */
 
 #pragma once
+#include "platform/timing.h"
 
 #include <stdalign.h>
 #include <stdbool.h>
@@ -57,7 +58,7 @@ typedef struct {
 	zlrs_role_t role;
 	zlrs_region_id_t region;
 	zlrs_profile_t profile;
-	zlrs_mod_cfg_t mod;
+	zlrs_phy_t phy;
 	int8_t tx_power_dbm;
 	int8_t pair_tx_power_dbm; /* Dedicated setpoint for every pairing transmission. */
 	uint16_t rx_timeout_ms;   /* one receive window */
@@ -114,10 +115,8 @@ typedef struct {
 	/* ACK coverage, confirmation delay and stop-and-wait pressure. */
 	uint32_t tx_data_ack_frames;
 	uint32_t tx_arq_wait_stalls;
-	uint32_t tx_retry_age_ms_last;
-	uint32_t tx_retry_age_ms_max;
-	uint32_t tx_ack_delay_ms_last;
-	uint32_t tx_ack_delay_ms_max;
+	zlrs_timing_t tx_retry_age_ms;
+	zlrs_timing_t tx_ack_delay_ms;
 	uint32_t tx_ack_delay_ms_sum;
 	uint32_t tx_ack_entries;
 	uint32_t rx_frames;
@@ -204,26 +203,63 @@ typedef struct {
 	bool arq_wait;
 } zlrs_link_plan_t;
 
+/* Canonical non-secret link state. Owner-thread views expire at the next mutation. */
 typedef struct {
 	zlrs_link_cfg_t cfg;
+	zlrs_link_stats_t stats;
+	bool configured;
+	uint8_t dev_id[ZLRS_DEV_ID_LEN];
+	bool paired;
+	zlrs_pairing_t pairing;
+	bool session_valid;
+	uint32_t sess_nonce_leader;   /* Leader nonce */
+	uint32_t sess_nonce_follower; /* Follower nonce */
+	bool sess_cfm_due;            /* Leader: SESS_CFM due in slot A */
+	zlrs_link_state_t state;
+	uint32_t last_rx_ms;
+	uint32_t accepted_rx_events;
+	uint32_t last_rx_frame; /* Authenticated DATA hop epoch, for sparse-SYNC reacquisition. */
+	uint32_t pair_nonce;    /* pairing: initiator nonce_a */
+	uint32_t pair_nonce_b;  /* pairing: responder nonce_b */
+	bool pair_cfm_pending;  /* Leader got PAIR_RESP: PAIR_CFM due in slot A */
+	uint8_t pair_cfm_sent;  /* PAIR_CFM of this handshake already sent */
+	uint32_t frame_index;   /* DATA_A slots run */
+	zlrs_fhss_t fhss;
+	zlrs_band_plan_t band_plan;
+	bool radio_acquiring;
+	bool radio_sync_seen;
+	uint16_t queue_count; /* User bytes, including the packet awaiting ACK. */
+	uint8_t arq_seq;
+	uint8_t arq_used;
+	int16_t peer_rssi_dbm;
+	uint8_t peer_lq_percent;
+	uint32_t peer_lq_generation; /* RAM only: +1 new window, +2 uncertain baseline. */
+	uint32_t last_peer_feedback_ms;
+	uint8_t arq_rx_seq;
+	bool arq_ack_pending;
+	bool busy;
+} zlrs_link_status_t;
+
+/* Policy consumers borrow the same facts with an explicit observation clock. */
+typedef struct {
+	const zlrs_link_status_t *link;
+	uint32_t now_ms, settle_ms;
+} zlrs_link_observation_t;
+
+typedef struct {
+	zlrs_link_status_t status;
 	bool (*random)(void *ctx, uint32_t *out);
 	void *random_ctx;
 	zlrs_link_events_t ev;
-	zlrs_link_stats_t stats;
 
 	/* configuration and keys */
-	bool configured;
-	uint8_t dev_id[ZLRS_DEV_ID_LEN];
 	uint8_t root_key[ZLRS_KEY_LEN];
 	uint8_t auth_key[ZLRS_KEY_LEN];
-	bool paired;
-	uint8_t peer_id[ZLRS_DEV_ID_LEN];
 	/*
 	 * The two nonces exchanged while pairing (initiator first) feed the pair_key derivation and
 	 * are stored with the pairing record: every pairing replaces them, so old captures can no
 	 * longer reproduce a session. See doc/08-security.md#cryptographic-parameters.
 	 */
-	uint8_t pair_salt[ZLRS_PAIR_SALT_LEN];
 	uint8_t pair_key[ZLRS_KEY_LEN];
 	/*
 	 * Per-frame tag keys are direction-split (sender -> receiver) with both dev_ids as context:
@@ -236,55 +272,36 @@ typedef struct {
 	uint8_t sync_word[ZLRS_SYNC_WORD_LEN];
 	uint8_t session_key_out[ZLRS_KEY_LEN];
 	uint8_t session_key_in[ZLRS_KEY_LEN];
-	bool session_valid;
 	/*
 	 * Session setup mirrors pairing (doc/07-protocol.md): the initiator offers nonce_leader,
 	 * the responder answers with nonce_follower, both feed the KDF, and the last message
 	 * carries nonce_follower to prove the peer derived the same key. Follower only adopts the
 	 * session after that proof, so replaying an old SYNC yields no old session key.
 	 */
-	bool session_pending;         /* Leader waits for response; Follower waits for confirm */
-	uint32_t sess_rx_seq;         /* Candidate handshake's receive baseline. */
-	bool sess_nonce_valid;        /* A local nonce has been drawn before, including zero. */
-	bool sess_resp_due;           /* Follower: SESS_RESP due in slot B */
-	bool sess_cfm_due;            /* Leader: SESS_CFM due in slot A */
-	bool sess_ack_due;            /* Received DATA: session-key authenticated empty ACK due */
-	uint32_t sess_sync_frame;     /* Last DATA confirm's shared frame index. */
-	uint32_t sess_nonce_leader;   /* Leader nonce */
-	uint32_t sess_nonce_follower; /* Follower nonce */
+	bool session_pending;     /* Leader waits for response; Follower waits for confirm */
+	uint32_t sess_rx_seq;     /* Candidate handshake's receive baseline. */
+	bool sess_nonce_valid;    /* A local nonce has been drawn before, including zero. */
+	bool sess_ack_due;        /* Received DATA: session-key authenticated empty ACK due */
+	uint32_t sess_sync_frame; /* Last DATA confirm's shared frame index. */
 
 	/* Pending handshake identity is never exposed as the committed peer above. */
 	uint8_t pair_peer_id[ZLRS_DEV_ID_LEN];
-	uint32_t pair_nonce;   /* pairing: initiator nonce_a */
-	uint32_t pair_nonce_b; /* pairing: responder nonce_b */
 
 	/* state and timing */
-	zlrs_link_state_t state;
 	uint32_t state_ms;
-	uint32_t last_rx_ms;
-	uint32_t accepted_rx_events;
-	uint32_t last_rx_frame; /* Authenticated DATA hop epoch, for sparse-SYNC reacquisition. */
 	uint32_t last_sync_ms;
 	uint32_t last_pair_tx_ms;
 
-	bool pair_cfm_pending;    /* Leader got PAIR_RESP: PAIR_CFM due in slot A */
-	uint8_t pair_cfm_sent;    /* PAIR_CFM of this handshake already sent */
-	bool pair_wait_cfm;       /* Follower answered PAIR_RESP, waiting for PAIR_CFM */
-	bool pair_request_valid;  /* A responder request exists, including nonce_a == 0. */
-	bool pair_nonce_valid;    /* A local pairing nonce exists independently of pending state. */
-	uint32_t pair_rx_seq;     /* Pairing exchange's receive baseline. */
-	uint32_t pair_tx_seq;     /* Pairing attempts, including delayed confirms after pairing. */
+	bool pair_request_valid; /* A responder request exists, including nonce_a == 0. */
+	bool pair_nonce_valid;   /* A local pairing nonce exists independently of pending state. */
+	uint32_t pair_rx_seq;    /* Pairing exchange's receive baseline. */
+	uint32_t pair_tx_seq;    /* Pairing attempts, including delayed confirms after pairing. */
 
 	/* sequence numbers and hopping */
 	uint32_t tx_seq; /* Next attempt, starting at one; never wraps. */
 	uint32_t last_rx_seq;
 	uint32_t lq_last_seq;
-	uint32_t frame_index; /* DATA_A slots run */
-	zlrs_fhss_t fhss;
-	zlrs_band_plan_t band_plan;
 	bool band_announced;
-	bool radio_acquiring;
-	bool radio_sync_seen;
 
 	/* Packet FIFO: storage is partitioned into aligned slots at the configured MTU.
 	 * Only the head is sealed; the successor remains appendable until selected. */
@@ -296,28 +313,19 @@ typedef struct {
 	uint16_t tx_pool_mtu;
 	uint16_t tx_claim_len;
 	uint16_t tx_claim_index;
-	uint16_t queue_head;  /* Packet index, not a byte offset. */
-	uint16_t queue_count; /* User bytes, including the packet awaiting ACK. */
+	uint16_t queue_head; /* Packet index, not a byte offset. */
 
 	/* ARQ sender: one packet retained until the peer ACK bit changes. */
-	uint8_t arq_seq;
 	uint32_t arq_first_sent_ms;
 	/* Retransmissions preserve the data sequence and payload. */
-	uint8_t arq_used;
 	bool arq_launched;     /* At least one attempt reached SET_TX. */
 	bool arq_local_failed; /* No successful local TX: retry at the next legal opportunity. */
 	uint8_t arq_retries;
 	uint32_t arq_sent_ms;
 	uint32_t last_feedback_tx_ms;
-	int16_t peer_rssi_dbm;
-	uint8_t peer_lq_percent;
-	uint32_t peer_lq_generation; /* RAM only: +1 new window, +2 uncertain baseline. */
-	uint32_t last_peer_feedback_ms;
 	bool peer_lq_toggle;
 	/* ARQ receiver: last accepted data sequence determines the ACK toggle. */
-	uint8_t arq_rx_seq;
 	bool arq_rx_started;
-	bool arq_ack_pending;
 
 	/* Small control/empty-DATA scratch and independently owned RX storage. */
 	/* Word alignment keeps the hardware SHA backend on its word-feed path. */
@@ -327,7 +335,6 @@ typedef struct {
 	/* transaction to submit next */
 	zlrs_radio_req_t req;
 	bool req_started;
-	bool req_pending;
 	/* Statistics snapshot belongs to the submitted packet, including staged DATA. */
 	bool req_is_data;
 	bool req_arq;
@@ -338,64 +345,15 @@ typedef struct {
 	uint32_t slot_ms; /* Current slot time, used for the session-confirm slot B window. */
 } zlrs_link_t;
 
-/* Storage layout above allows static allocation. Consumers use the functions below;
- * mutable protocol state belongs to app/src/link, not application service modules. */
-typedef struct {
-	zlrs_link_state_t state;
-	bool configured;
-	bool paired;
-	bool session_valid;
-	uint8_t dev_id[ZLRS_DEV_ID_LEN];
-	uint8_t peer_id[ZLRS_DEV_ID_LEN];
-	int16_t peer_rssi_dbm;
-	uint8_t peer_lq_percent;
-	uint32_t peer_lq_generation; /* RAM only: +1 new window, +2 uncertain baseline. */
-	uint32_t last_peer_feedback_ms;
-	uint32_t last_rx_ms;
-	uint32_t accepted_rx_events;
-	uint32_t frame_index;
-	uint32_t frequency_hz;
-	uint16_t hop_index;
-	zlrs_band_plan_t band_plan;
-	bool radio_acquiring;
-	bool radio_sync_seen;
-} zlrs_link_info_t;
-
-/* Diagnostic values, without borrowed protocol buffers or key material. */
-typedef struct {
-	uint32_t last_rx_frame;
-	uint32_t sess_nonce_leader;
-	uint32_t sess_nonce_follower;
-	bool sess_cfm_due;
-	uint16_t queue_count;
-	uint16_t arq_used;
-	uint16_t arq_seq;
-	uint16_t arq_rx_seq;
-	bool arq_ack_pending;
-	bool pair_wait_cfm;
-	bool pair_cfm_pending;
-	uint8_t pair_cfm_sent;
-	uint32_t pair_nonce;
-	uint32_t pair_nonce_b;
-	uint32_t pair_fingerprint;
-} zlrs_link_diagnostics_t;
-
+/* Storage layout permits static allocation; frontends consume const owner-thread views. */
 /* Read-only views are valid on the link owner thread; do not retain across async work. */
-const zlrs_link_cfg_t *zlrs_link_get_config(const zlrs_link_t *link);
-const zlrs_link_stats_t *zlrs_link_get_stats(const zlrs_link_t *link);
-zlrs_link_state_t zlrs_link_get_state(const zlrs_link_t *link);
-bool zlrs_link_is_busy(const zlrs_link_t *link);
-void zlrs_link_get_info(const zlrs_link_t *link, zlrs_link_info_t *info);
-void zlrs_link_get_diagnostics(const zlrs_link_t *link, zlrs_link_diagnostics_t *out);
+
+const zlrs_link_status_t *zlrs_link_status(const zlrs_link_t *link);
 
 /* Only nonce generation is injected; the caller executes each returned radio request. */
 void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
 		    bool (*random)(void *ctx, uint32_t *out), void *random_ctx,
 		    const zlrs_link_events_t *events);
-
-
-
-
 
 /* Change TX power at runtime (dynamic power); effective with the next transaction */
 void zlrs_link_set_power(zlrs_link_t *link, int8_t tx_power_dbm);
@@ -407,8 +365,6 @@ bool zlrs_link_plan_radio(zlrs_link_t *link, bool target_subg, zlrs_phy_t target
 void zlrs_link_acquire_radio(zlrs_link_t *link, uint32_t now_ms);
 /* RF verifies physical phase after a valid SYNC/confirm, before reverse DATA proof. */
 bool zlrs_link_radio_captured(zlrs_link_t *link);
-
-
 
 /* Advance the assigned slot once, then inspect a read-only operation plan.
  * Selection/finalization run in the owner without intervening link mutations. */
@@ -430,22 +386,18 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 /* Timeouts and state transitions, called once per superframe */
 void zlrs_link_tick(zlrs_link_t *link, uint32_t now_ms);
 
-bool link_new_nonce(const zlrs_link_t *link, uint32_t previous, bool have_previous, uint32_t *out);
+bool link_verify_frame(zlrs_link_t *link, const zlrs_frame_t *frame, uint16_t len);
+
+bool link_new_nonce(const zlrs_link_t *link, uint32_t previous, bool *have_previous, uint32_t *out);
 uint32_t link_sync_freq_hz(const zlrs_link_t *link);
 uint32_t link_slot_freq_hz(const zlrs_link_t *link);
 void link_set_state(zlrs_link_t *link, zlrs_link_state_t state, uint32_t now_ms);
-uint16_t link_build_frame(zlrs_link_t *link, zlrs_frame_t *frame, uint16_t payload_len,
-			  const uint8_t *tag_key);
+uint16_t link_build_frame(zlrs_link_t *link, zlrs_frame_t *frame, uint8_t *buf, uint16_t data_len);
 const uint8_t *link_tag_key_for(const zlrs_link_t *link, uint8_t type, bool outbound);
-const zlrs_radio_req_t *link_submit_radio(zlrs_link_t *link, bool is_tx, uint8_t *buf,
-					  uint16_t size, uint32_t freq_hz, uint8_t sync_slot,
-					  const uint8_t sync_word[ZLRS_SYNC_WORD_LEN],
-					  uint16_t timeout_ms);
 uint16_t link_acq_timeout_ms(const zlrs_link_t *link);
 void link_plan_rx(const zlrs_link_t *link, zlrs_link_plan_t *plan, uint32_t freq, uint8_t sync_slot,
-		  const uint8_t *sync_word, uint16_t timeout_ms);
-void link_plan_tx(const zlrs_link_t *link, zlrs_link_plan_t *plan, uint8_t type,
-		  uint16_t payload_len, uint32_t freq);
+		  uint16_t timeout_ms);
+void link_plan_tx(const zlrs_link_t *link, zlrs_link_plan_t *plan, uint8_t type, uint16_t data_len);
 bool link_band_plan_valid(const zlrs_link_t *link, const zlrs_band_plan_t *plan,
 			  uint32_t frame_index);
 void link_adopt_band_plan(zlrs_link_t *link, const zlrs_band_plan_t *plan);

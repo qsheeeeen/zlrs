@@ -12,12 +12,15 @@ static atomic_t pinned;
 static atomic_t suppressed;
 
 zlrs_band_action_t __real_zlrs_band_policy_update(zlrs_band_policy_t *policy,
-						  const zlrs_band_observation_t *observation);
+						  const zlrs_link_observation_t *observation,
+						  const zlrs_power_t *power);
 
 zlrs_band_action_t __wrap_zlrs_band_policy_update(zlrs_band_policy_t *policy,
-						  const zlrs_band_observation_t *observation)
+						  const zlrs_link_observation_t *observation,
+						  const zlrs_power_t *power)
 {
-	const zlrs_band_action_t action = __real_zlrs_band_policy_update(policy, observation);
+	const zlrs_band_action_t action =
+		__real_zlrs_band_policy_update(policy, observation, power);
 	if (atomic_get(&pinned) && action == ZLRS_BAND_PLAN) {
 		atomic_inc(&suppressed);
 		return ZLRS_BAND_KEEP;
@@ -32,7 +35,7 @@ int zlrs_test_phy_control(struct zlrs_test_report *report, enum zlrs_test_op op,
 	} else if (op != TEST_PHY_STATUS) {
 		return -EINVAL;
 	}
-	zlrs_test_print(report, "PHY_PIN active=%u suppressed=%u", (unsigned int)atomic_get(&pinned),
-		    (unsigned int)atomic_get(&suppressed));
+	zlrs_test_print(report, "PHY_PIN active=%u suppressed=%u",
+			(unsigned int)atomic_get(&pinned), (unsigned int)atomic_get(&suppressed));
 	return 0;
 }

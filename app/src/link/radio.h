@@ -20,7 +20,7 @@ extern "C" {
 typedef struct {
 	uint32_t freq_hz; /* carrier frequency */
 	/* Active modulation and rate selected for this DATA link. */
-	zlrs_mod_cfg_t mod;
+	zlrs_phy_t phy;
 	uint8_t sync_slot; /* hardware sync word slot (1-based): 1 DATA, 2 pairing */
 	uint8_t sync_word[ZLRS_SYNC_WORD_LEN];
 	bool is_tx;

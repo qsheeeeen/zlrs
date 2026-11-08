@@ -29,7 +29,6 @@ typedef struct {
 void zlrs_fhss_init(zlrs_fhss_t *fhss, zlrs_region_id_t region_id, uint32_t seed);
 
 uint32_t zlrs_fhss_current_hz(const zlrs_fhss_t *fhss);
-uint32_t zlrs_fhss_next_hz(zlrs_fhss_t *fhss);
 
 void zlrs_fhss_set_index(zlrs_fhss_t *fhss, uint16_t index);
 

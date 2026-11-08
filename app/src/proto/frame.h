@@ -40,6 +40,26 @@ typedef enum {
 	ZLRS_PROFILE_P2 = 2, /* payload encryption remains unimplemented */
 } zlrs_profile_t;
 
+typedef enum {
+	ZLRS_AUTH_ROOT,
+	ZLRS_AUTH_LINK,
+	ZLRS_AUTH_SESSION,
+	ZLRS_AUTH_DATA,
+} zlrs_auth_t;
+
+typedef struct {
+	uint8_t payload_len; /* DATA prefix minimum; fixed length for control packets. */
+	zlrs_auth_t auth;
+} zlrs_packet_layout_t;
+
+extern const zlrs_packet_layout_t zlrs_packet_layouts[ZLRS_FRAME_TYPE_MASK + 1U];
+
+/* Committed peer identity and handshake salt, shared by link and persistence. */
+typedef struct {
+	uint8_t peer_id[ZLRS_DEV_ID_LEN];
+	uint8_t pair_salt[ZLRS_PAIR_SALT_LEN];
+} zlrs_pairing_t;
+
 /* DATA metadata and a borrowed view. The payload/tag remain in the RX buffer. */
 typedef struct {
 	uint8_t data_seq;
@@ -50,21 +70,11 @@ typedef struct {
 } zlrs_data_header_t;
 
 typedef struct {
-	uint32_t seq;
-	zlrs_pkt_type_t type;
 	zlrs_data_header_t header;
 	const uint8_t *bytes;
 	const uint8_t *tag;
 	uint16_t len;
 } zlrs_data_view_t;
-
-/* Write only the common/DATA header; payload is already at offset eight.
- * Reserve the returned total length, including tag space, before calling. */
-uint16_t zlrs_frame_encode_data(uint8_t *buf, uint16_t cap, zlrs_pkt_type_t type, uint32_t seq,
-				const zlrs_data_header_t *header, uint16_t data_len,
-				uint8_t tag_len);
-bool zlrs_frame_decode_data(zlrs_data_view_t *view, const uint8_t *buf, uint16_t len,
-			    uint8_t tag_len);
 
 /* Present only in authenticated synchronization/confirmation bodies. */
 typedef struct {
@@ -80,15 +90,10 @@ typedef struct {
 	uint8_t profile: 1;
 	uint8_t version: 4;
 	uint8_t hop_index;
-	uint32_t nonce_leader;
+	uint32_t nonce;       /* Leader challenge in SYNC, follower proof in SESS_CFM. */
 	uint32_t frame_index; /* shared TDD period count, including idle periods */
 	zlrs_band_plan_t band_plan;
-} zlrs_sync_frame_t;
-
-typedef struct {
-	uint8_t dev_a[ZLRS_DEV_ID_LEN];
-	uint32_t nonce_a;
-} zlrs_pair_request_frame_t;
+} zlrs_schedule_frame_t;
 
 typedef struct {
 	uint8_t dev_a[ZLRS_DEV_ID_LEN];
@@ -103,22 +108,13 @@ typedef struct {
 } zlrs_session_response_frame_t;
 
 typedef struct {
-	uint32_t nonce_follower;
-	uint8_t hop_index;
-	uint32_t frame_index; /* shared TDD period count */
-	zlrs_band_plan_t band_plan;
-} zlrs_session_confirm_frame_t;
-
-typedef struct {
 	uint8_t type: ZLRS_FRAME_TYPE_BITS;
 
 	union {
 		zlrs_data_view_t data; /* Borrowed DATA metadata and payload. */
-		zlrs_sync_frame_t sync;
-		zlrs_pair_request_frame_t pair_req;
+		zlrs_schedule_frame_t schedule;
 		zlrs_pair_frame_t pair; /* PAIR_RESP / PAIR_CFM validate all four fields */
 		zlrs_session_response_frame_t sess_resp;
-		zlrs_session_confirm_frame_t sess_cfm;
 	} body;
 
 	uint32_t seq; /* common per-direction counter; zero is never transmitted */
@@ -128,7 +124,7 @@ typedef struct {
 uint8_t zlrs_profile_tag_len(zlrs_profile_t profile);
 uint16_t zlrs_frame_len(uint16_t payload_len, uint8_t tag_len);
 /* len is the complete radio payload length, including common fields and tag.
- * Encodes control frames only; DATA uses the in-place encoder above.
+ * DATA writes only its headers: payload and tag storage remain untouched.
  * Fixed bodies require exact lengths.
  * Only the selected body's used bytes are encoded; unused capacity is omitted. */
 uint16_t zlrs_frame_encode(const zlrs_frame_t *frame, uint8_t *buf, uint16_t cap, uint16_t len,

@@ -49,6 +49,7 @@ if(NOT ZLRS_TEST_ENTROPY_ONLY AND NOT ZLRS_TEST_UI_ONLY)
     "${zlrs_root}/tests/app/ui/test_led.c"
     "${zlrs_root}/app/src/persist.c"
     "${zlrs_root}/app/src/power.c"
+    "${zlrs_root}/app/src/band.c"
     "${zlrs_root}/app/src/platform/slot_timer.c"
     "${zlrs_root}/app/src/ui.c"
     "${zlrs_root}/app/src/log.c"

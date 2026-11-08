@@ -26,7 +26,7 @@ preserving that context's session and delivery progress.
 | User interface | Button sampling, long press, LED priority and cadence | Consume observations and publish cumulative input events |
 | Upgrade lifecycle | Confirmation, deadline and recovery entry | Report confirmation only after its flash write succeeds |
 | Log storage | Filesystem availability, file metadata and byte reads | Expose storage operations independently of management encoding |
-| Diagnostics | Formatting of public observations | Read copied observations rather than another owner's mutable context |
+| Diagnostics | Formatting of public observations | Read borrowed observations synchronously in the service owner |
 | Application protocol | Wire encoding, pairing, sessions, FHSS, ARQ and replay | Zephyr application modules with explicit instances, time and transaction results |
 | Hardware adaptation | SPI, FIFO, IRQ timestamps, timer, crypto, entropy and sensors | Return hardware results without owning protocol state |
 
@@ -37,8 +37,10 @@ ARQ and packet retirement live together in `app/src/link/data.c`; packet bytes
 and payload length have one owner. A submitted request retains its own immutable
 metadata until completion. TX and RX submit through one internal radio-request
 implementation. Each link mechanism declares its interface in its matching
-header; sibling modules include those interfaces directly. Plans and status
-snapshots fill caller-owned destinations.
+header; sibling modules include those interfaces directly. Plans fill caller-owned
+destinations. Link, RF and persistence expose canonical read-only views within
+their owning context. Cross-thread events own their values;
+management responses are encoded by the paused application owner.
 Region rules and hopping channel parameters share one table and one ID set.
 DATA decoding returns a borrowed view of the RX
 buffer; the control-frame union contains no payload array. Test peers generate
@@ -218,10 +220,11 @@ invalidate the affected active link.
 | Role, band mode, region, profile, UART baud | Active modem, current power, duty budget, observations |
 | Device identity, root key, peer ID, pairing salt | Session keys, replay baselines, ARQ and queues |
 
-Missing records and flash errors are distinct outcomes. Reads return the loaded
-snapshot and leave caller output unchanged when a value is absent. Every
-successful write updates its corresponding saved value; a failed write must not
-claim success. Multi-record settings writes are not a transaction.
+Missing records and flash errors are distinct outcomes. Persistence exposes one
+read-only view of loaded settings and credentials, with validity flags for identity,
+configuration and pairing. Every successful write updates its corresponding saved
+value; a failed write must not claim success. Multi-record settings writes are not
+a transaction.
 
 Ordinary settings apply at boot. Root-key replacement, identity replacement,
 pairing deletion and factory reset invalidate running credentials within the same
@@ -238,7 +241,7 @@ remains authoritative; a channel is an observation, not shared mutable state.
 
 | Channel | Publisher | Content |
 | --- | --- | --- |
-| RF | RF owner | Role, active band, mode, capture, transition, link, quality, power, faults and radio observations |
+| RF | RF owner | Role, active band, mode, PHY, capture, transition, link, quality, power bounds, faults and dropped bytes |
 | Serial | Serial service | Availability, selected endpoint, backpressure and dropped bytes |
 | Management | Management service | Whether a management session is active |
 | Input | UI | Cumulative long-press count |
@@ -249,11 +252,12 @@ publication is retried at a later boundary without blocking RF. A cumulative inp
 count preserves requests across notification coalescing; the application consumes
 it in the owning context.
 
-RF publishes on changes to LED inputs (role, link state, loss/fault, quality,
-dropped bytes and initialization readiness), and refreshes the complete status at
-least once per second. Management measurement refresh forces a publication.
-Routine status uses lightweight link observations; key fingerprints and handshake
-details are collected only for explicit diagnostic reports or maintenance logs.
+RF publishes when UI inputs change and retries failed publication at a later
+boundary. Its event contains only the values needed by the UI and asynchronous
+command validation. Management reads canonical owner views while RF is paused;
+periodic hardware sampling does not publish a second copy of the full metrics.
+Key fingerprints and handshake details are rendered only for explicit diagnostic
+reports or maintenance logs.
 
 One low-priority UI thread samples input every 20 ms and renders the LED at 20 Hz.
 It releases channel locks before hardware output and writes only changed colors

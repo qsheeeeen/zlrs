@@ -23,6 +23,7 @@
 #include <zephyr/mgmt/mcumgr/mgmt/mgmt.h>
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/sys/atomic.h>
+#include <zephyr/sys/util.h>
 #include <zephyr/timing/timing.h>
 #include <zephyr/version.h>
 
@@ -228,13 +229,7 @@ static int file_digest(const char *path, char hex[65])
 		rc = -EBADMSG;
 	}
 	if (rc == 0) {
-		static const char digits[] = "0123456789abcdef";
-
-		for (size_t i = 0; i < sizeof(digest); i++) {
-			hex[2U * i] = digits[digest[i] >> 4];
-			hex[2U * i + 1U] = digits[digest[i] & 15U];
-		}
-		hex[64] = '\0';
+		(void)bin2hex(digest, sizeof(digest), hex, 65);
 	}
 	return rc;
 }
@@ -404,9 +399,7 @@ static int save_capture(void)
 		return rc;
 	}
 	zlrs_sha256(ram_tracing, sizeof(ram_tracing), NULL, 0U, expected);
-	for (size_t i = 0U; i < sizeof(expected); i++) {
-		(void)snprintf(&expected_hex[2U * i], 3U, "%02x", expected[i]);
-	}
+	(void)bin2hex(expected, sizeof(expected), expected_hex, sizeof(expected_hex));
 	rc = write_file(path, ram_tracing, sizeof(ram_tracing));
 	if (rc == 0) {
 		rc = file_digest(path, digest);

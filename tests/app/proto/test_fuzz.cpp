@@ -11,15 +11,15 @@
  */
 #include "../support/peer.h"
 
-#include <zephyr/ztest.h>
-#include <initializer_list>
 #include <cstdint>
 #include <cstdio>
+#include <initializer_list>
+#include <zephyr/ztest.h>
 
 #include <string.h>
 
 #include "link/link.h"
-#include "link/pairing.h"
+#include "link/handshake.h"
 #include "proto/crypto.h"
 #include "proto/frame.h"
 
@@ -72,21 +72,10 @@ static void fuzz_frame_decode(rng_t *rng)
 		}
 
 		const bool valid = zlrs_frame_decode(&frame, buf, len, tag_len);
-		zlrs_data_view_t view;
-		const bool data_valid = zlrs_frame_decode_data(&view, buf, len, tag_len);
-		const bool data_type = valid && frame.type <= ZLRS_PKT_DATA_F2L;
-		if (data_valid != data_type) {
-			violations++;
-		}
-		if (data_valid &&
-		    (view.bytes != buf + ZLRS_FRAME_HDR_LEN + ZLRS_DATA_PREFIX_LEN ||
-		     view.tag != buf + len - tag_len || view.seq != frame.seq ||
-		     view.len != len - ZLRS_FRAME_HDR_LEN - ZLRS_DATA_PREFIX_LEN - tag_len ||
-		     view.header.data_seq != frame.body.data.header.data_seq ||
-		     view.header.ack != frame.body.data.header.ack ||
-		     view.header.rssi_magnitude != frame.body.data.header.rssi_magnitude ||
-		     view.header.lq_percent != frame.body.data.header.lq_percent ||
-		     view.header.lq_toggle != frame.body.data.header.lq_toggle)) {
+		if (valid && frame.type <= ZLRS_PKT_DATA_F2L &&
+		    (frame.body.data.bytes != buf + ZLRS_DATA_HEADROOM ||
+		     frame.body.data.tag != buf + len - tag_len ||
+		     frame.body.data.len != len - ZLRS_DATA_HEADROOM - tag_len)) {
 			violations++;
 		}
 		if (!valid) {
@@ -153,7 +142,7 @@ static void fx_link_init(zlrs_link_t *link, uint8_t arq)
 	const zlrs_link_cfg_t cfg = {.role = ZLRS_ROLE_LEADER,
 				     .region = ZLRS_REGION_ISM2400,
 				     .profile = ZLRS_PROFILE_P1,
-				     .mod = {.rate_bps = 2600000U},
+				     .phy = ZLRS_PHY_FLRC_2600,
 				     .tx_power_dbm = 10,
 				     .rx_timeout_ms = 2U,
 				     .sync_period_ms = 2000U,
@@ -177,14 +166,7 @@ static uint16_t fx_make_frame(rng_t *rng, uint8_t *out, uint16_t cap, const uint
 {
 	/* Construct bytes independently of the typed encoder. */
 	const uint8_t type = (uint8_t)(rng_next(rng) % 11U);
-	const uint16_t fixed[] = {0,
-				  0,
-				  ZLRS_SYNC_PAYLOAD_LEN,
-				  ZLRS_PAIR_REQ_PAYLOAD_LEN,
-				  ZLRS_PAIR_PAYLOAD_LEN,
-				  ZLRS_PAIR_PAYLOAD_LEN,
-				  ZLRS_SESS_RESP_PAYLOAD_LEN,
-				  ZLRS_SESS_CFM_PAYLOAD_LEN};
+	const uint16_t fixed[] = {0, 0, 15U, 8U, 16U, 16U, 8U, 15U};
 	const uint16_t payload_len =
 		type >= ZLRS_PKT_SYNC && type <= ZLRS_PKT_SESS_CFM
 			? fixed[type]
@@ -236,15 +218,15 @@ static void fuzz_link_rx(rng_t *rng)
 		zlrs_test_rx(link, buf, len, -60, 0, now_ms);
 
 		/* The state machine must end in a legal state */
-		if (link->state > ZLRS_STATE_CONNECTED) {
+		if (link->status.state > ZLRS_STATE_CONNECTED) {
 			violations++;
 		}
 	}
 
 	zexpect_equal(violations, 0U);
 	/* Something was rejected, so the parser really ran */
-	zexpect_true((best_effort.stats.rx_bad_frame + best_effort.stats.rx_bad_tag +
-		      arq.stats.rx_bad_frame + arq.stats.rx_bad_tag) > (0U));
+	zexpect_true((best_effort.status.stats.rx_bad_frame + best_effort.status.stats.rx_bad_tag +
+		      arq.status.stats.rx_bad_frame + arq.status.stats.rx_bad_tag) > (0U));
 }
 
 ZTEST(MalformedInput, test_FrameRoundTrips)

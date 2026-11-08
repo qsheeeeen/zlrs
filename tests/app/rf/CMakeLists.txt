@@ -7,7 +7,6 @@ include("${zlrs_root}/app/src/CMakeLists.txt")
 target_sources(app PRIVATE
   "${zlrs_root}/tests/app/rf/test_rf.c"
   "${zlrs_root}/app/src/rf.c"
-  "${zlrs_root}/app/src/platform/temperature.c"
   "${zlrs_root}/app/src/diagnostics.c"
   "${zlrs_root}/app/src/power.c"
   "${zlrs_root}/app/src/band.c"

@@ -23,7 +23,6 @@ target_sources(app PRIVATE
   ${zlrs_app_dir}/src/platform/sha256.c
   ${zlrs_app_dir}/src/platform/slot_timer.c
   ${zlrs_app_dir}/src/platform/watchdog.c
-  ${zlrs_app_dir}/src/platform/temperature.c
   ${zlrs_app_dir}/src/platform/lr2021.c
   ${zlrs_app_dir}/src/log.c
   ${zlrs_app_dir}/src/ui.c
@@ -69,8 +68,7 @@ if(CONFIG_CODE_DATA_RELOCATION)
     ${zlrs_app_dir}/src/power.c
     ${zlrs_app_dir}/src/band.c
     ${zlrs_app_dir}/src/link/link.c
-    ${zlrs_app_dir}/src/link/pairing.c
-    ${zlrs_app_dir}/src/link/session.c
+    ${zlrs_app_dir}/src/link/handshake.c
     ${zlrs_app_dir}/src/link/data.c
     ${zlrs_app_dir}/src/proto/crypto.c
     ${zlrs_app_dir}/src/proto/frame.c

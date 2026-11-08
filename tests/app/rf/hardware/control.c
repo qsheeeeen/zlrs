@@ -2,11 +2,11 @@
 #include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
-#include <zephyr/mgmt/mcumgr/mgmt/mgmt.h>
-#include <zephyr/mgmt/mcumgr/mgmt/handlers.h>
-#include <mgmt/mcumgr/util/zcbor_bulk.h>
 #include <zcbor_decode.h>
+#include <mgmt/mcumgr/util/zcbor_bulk.h>
 #include <zcbor_encode.h>
+#include <zephyr/mgmt/mcumgr/mgmt/handlers.h>
+#include <zephyr/mgmt/mcumgr/mgmt/mgmt.h>
 
 #include "fixtures.h"
 #include "rf.h"
@@ -32,7 +32,7 @@ void zlrs_test_print(struct zlrs_test_report *out, const char *format, ...)
 
 static int rf_status(void)
 {
-	zlrs_rf_status_t status;
+	zlrs_rf_event_t status;
 	const int rc = zbus_chan_read(&zlrs_rf_chan, &status, K_MSEC(10));
 	static const char *const states[] = {
 		"unconfigured", "unpaired", "pairing", "searching", "connected",
@@ -41,14 +41,15 @@ static int rf_status(void)
 	if (rc != 0) {
 		return rc;
 	}
-	zlrs_test_print(&report, "Role : %s\nState : %s\nModulation : %s\nBand mode : %s\n"
-		       "Capture : %s\nTransition : %s",
-		       status.role == ZLRS_ROLE_LEADER ? "Leader" : "Follower",
-		       status.state < ARRAY_SIZE(states) ? states[status.state] : "unknown",
-		       zlrs_mod_phy_name(status.data_phy),
-		       status.band_mode == ZLRS_DATA_BAND_AUTO ? "auto" : "fixed",
-		       status.band_acquiring ? "searching" : "ready",
-		       status.band_planned ? "scheduled" : "none");
+	zlrs_test_print(&report,
+			"Role : %s\nState : %s\nModulation : %s\nBand mode : %s\n"
+			"Capture : %s\nTransition : %s",
+			status.role == ZLRS_ROLE_LEADER ? "Leader" : "Follower",
+			status.state < ARRAY_SIZE(states) ? states[status.state] : "unknown",
+			zlrs_phy_name(status.data_phy),
+			status.band_mode == ZLRS_DATA_BAND_AUTO ? "auto" : "fixed",
+			status.band_acquiring ? "searching" : "ready",
+			status.band_planned ? "scheduled" : "none");
 	return 0;
 }
 
@@ -77,7 +78,7 @@ static int control(struct smp_streamer *ctxt)
 	} else if (op == TEST_PHY_REQUEST) {
 		rc = arg <= ZLRS_PHY_LORA_SF7 ? zlrs_rf_phy_request(arg) : -EINVAL;
 		if (rc == 0) {
-			zlrs_test_print(&report, "queued profile %u: %s", arg, zlrs_mod_phy_name(arg));
+			zlrs_test_print(&report, "queued profile %u: %s", arg, zlrs_phy_name(arg));
 		}
 	} else if (op == TEST_RF_STATUS) {
 		rc = rf_status();
@@ -85,10 +86,9 @@ static int control(struct smp_streamer *ctxt)
 		rc = zlrs_test_radio_control(&report, op, arg);
 	}
 	zcbor_state_t *zse = ctxt->writer->zs;
-	const bool ok = !report.truncated &&
-		zcbor_tstr_put_lit(zse, "result") && zcbor_int32_put(zse, rc) &&
-		zcbor_tstr_put_lit(zse, "report") && zcbor_tstr_put_term(zse, report.text,
-								 sizeof(report.text));
+	const bool ok = !report.truncated && zcbor_tstr_put_lit(zse, "result") &&
+			zcbor_int32_put(zse, rc) && zcbor_tstr_put_lit(zse, "report") &&
+			zcbor_tstr_put_term(zse, report.text, sizeof(report.text));
 
 	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
 }

@@ -6,10 +6,10 @@
  * duty is accounted over a sliding window and overruns are refused and counted.
  */
 
-#include <zephyr/ztest.h>
-#include <initializer_list>
 #include <cstdint>
 #include <cstdio>
+#include <initializer_list>
+#include <zephyr/ztest.h>
 
 #include "region/region.h"
 #include <zephyr/sys/util.h>
@@ -56,47 +56,6 @@ ZTEST(Region, test_RateCeilings)
 	zexpect_equal(zlrs_region_clamp_rate(nullptr, 1300000U), 1300000U);
 }
 
-ZTEST(Region, test_AirtimeRounding)
-{
-	printf("region: airtime\n");
-
-	/* 128 bytes at 1.3 Mbps: (128+4)*8 bit = 812.3 us, rounded up to 813 us */
-	zexpect_equal(zlrs_airtime_us(128U, 1300000U), 813U);
-	/* The same frame at 0.325 Mbps is about 3.25 ms */
-	zexpect_equal(zlrs_airtime_us(128U, 325000U), 3250U);
-	/* 128 bytes at 1.3 Mbps: (128+4)*8 bit ~ 812 us, rounded up to 1 ms */
-	zexpect_equal(zlrs_airtime_ms(128U, 1300000U), 1U);
-	/* The same frame at 0.325 Mbps is about 3.25 ms */
-	zexpect_equal(zlrs_airtime_ms(128U, 325000U), 4U);
-	/* No accounting when the rate is unknown */
-	zexpect_equal(zlrs_airtime_ms(128U, 0U), 0U);
-	zexpect_equal(zlrs_airtime_us(128U, 0U), 0U);
-}
-
-/* Region duty limits maximum DATA frame cadence in constrained bands */
-ZTEST(Region, test_MaximumCadence)
-{
-	/* 31-byte data frame at 1.3 Mbps: (31+4)*8/1.3e6 = 215.4 us, rounded up to 216 us */
-	printf("region: max frame rate\n");
-
-	zexpect_equal(zlrs_airtime_us(31U, 1300000U), 216U);
-
-	/* 1% -> 10000 us/s -> 10000/216 = 46 frames per second */
-	zexpect_equal(
-		zlrs_region_max_frames_per_s(zlrs_region_get(ZLRS_REGION_EU868), 1300000U, 31U),
-		46U);
-	/* Unlimited-duty regions: as fast as you like */
-	zexpect_equal(
-		zlrs_region_max_frames_per_s(zlrs_region_get(ZLRS_REGION_FCC915), 1300000U, 31U),
-		UINT32_MAX);
-	zexpect_equal(
-		zlrs_region_max_frames_per_s(zlrs_region_get(ZLRS_REGION_CN470), 1300000U, 31U),
-		UINT32_MAX);
-	/* No ceiling when the rate is unknown (the layer above decides) */
-	zexpect_equal(zlrs_region_max_frames_per_s(zlrs_region_get(ZLRS_REGION_EU868), 0U, 31U),
-		      UINT32_MAX);
-}
-
 ZTEST(Region, test_DutyBudgetAndWindowReset)
 {
 	const zlrs_region_t *eu = zlrs_region_get(ZLRS_REGION_EU868);
@@ -109,27 +68,27 @@ ZTEST(Region, test_DutyBudgetAndWindowReset)
 	/* EU868: 1% of 60 s = 600 ms of budget */
 	zlrs_duty_init(&duty, eu, now);
 	zexpect_true(duty.window_ms != 0U);
-	zexpect_equal(zlrs_duty_remaining_ms(&duty, now), 600U);
+	zexpect_equal(duty.budget_ms - duty.used_ms, 600U);
 
 	/* One 4 ms transmission leaves 596 ms */
 	zexpect_true(zlrs_duty_reserve(&duty, 4U, now));
-	zexpect_equal(zlrs_duty_remaining_ms(&duty, now), 596U);
+	zexpect_equal(duty.budget_ms - duty.used_ms, 596U);
 
 	/* Spend the rest in 100 ms chunks; the next attempt is refused and counted */
 	for (uint8_t i = 0U; i < 5U; i++) {
 		zexpect_true(zlrs_duty_reserve(&duty, 100U, now));
 	}
-	zexpect_equal(zlrs_duty_remaining_ms(&duty, now), 96U);
+	zexpect_equal(duty.budget_ms - duty.used_ms, 96U);
 	zexpect_false(zlrs_duty_reserve(&duty, 100U, now));
 	zexpect_true(zlrs_duty_reserve(&duty, 96U, now));
-	zexpect_equal(zlrs_duty_remaining_ms(&duty, now), 0U);
+	zexpect_equal(duty.budget_ms - duty.used_ms, 0U);
 	zexpect_false(zlrs_duty_reserve(&duty, 1U, now));
 	zexpect_equal(duty.denied, 2U); /* that 100 ms attempt was refused too */
 
 	/* New window: the budget is back */
 	now += 60001U;
-	zexpect_equal(zlrs_duty_remaining_ms(&duty, now), 600U);
 	zexpect_true(zlrs_duty_reserve(&duty, 4U, now));
+	zexpect_equal(duty.budget_ms - duty.used_ms, 596U);
 
 	/* FCC915 has no duty limit: transmit freely, no counter moves */
 	zlrs_duty_init(&duty, fcc, now);
@@ -137,7 +96,7 @@ ZTEST(Region, test_DutyBudgetAndWindowReset)
 	for (uint8_t i = 0U; i < 5U; i++) {
 		zexpect_true(zlrs_duty_reserve(&duty, 4U, now));
 	}
-	zexpect_equal(zlrs_duty_remaining_ms(&duty, now), UINT32_MAX);
+	zexpect_equal(duty.used_ms, 0U);
 	zexpect_equal(duty.denied, 0U);
 }
 

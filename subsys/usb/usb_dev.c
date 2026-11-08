@@ -11,11 +11,11 @@
  */
 
 #include <zephyr/device.h>
+#include <zephyr/drivers/reset.h>
+#include <zephyr/dt-bindings/reset/rp2350_reset.h>
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
-#include <zephyr/drivers/reset.h>
-#include <zephyr/dt-bindings/reset/rp2350_reset.h>
 #include <zephyr/usb/usbd.h>
 
 #include "usb_state.h"
@@ -85,56 +85,22 @@ static int zlrs_usb_init(void)
 		(void)reset_line_deassert(usbctrl_reset.dev, usbctrl_reset.id);
 	}
 
-	/*
-	 * USB is optional (doc/06-firmware.md): on failure warn but carry on — a non-zero SYS_INIT
-	 * stops the whole system, and a board that only needs UART or the air should survive it.
-	 */
-	err = zlrs_usb_add_descriptors();
-	if (err != 0) {
-		LOG_ERR("usb init failed at descriptors (%d); continuing without USB", err);
-		return 0;
-	}
-
-	/*
-	 * The speed follows the controller: RP2350 is full speed, HS only shows up where supported.
-	 * Registration has to happen before usbd_init() or the configuration comes up empty.
-	 */
+	/* Register every CDC before initializing or enabling the device. */
 	if (USBD_SUPPORTS_HIGH_SPEED && usbd_caps_speed(&zlrs_usbd) == USBD_SPEED_HS) {
 		speed = USBD_SPEED_HS;
-
-		err = usbd_add_configuration(&zlrs_usbd, speed, &zlrs_usb_hs_config);
-	} else {
-		err = usbd_add_configuration(&zlrs_usbd, speed, &zlrs_usb_fs_config);
 	}
-	if (err != 0) {
-		LOG_ERR("usb configuration add failed (%d); continuing without USB", err);
+	if ((err = zlrs_usb_add_descriptors()) != 0 ||
+	    (err = usbd_add_configuration(&zlrs_usbd, speed,
+					  speed == USBD_SPEED_HS ? &zlrs_usb_hs_config
+								 : &zlrs_usb_fs_config)) != 0 ||
+	    (err = usbd_register_all_classes(&zlrs_usbd, speed, 1U, NULL)) != 0) {
+		LOG_ERR("usb descriptors/configuration failed (%d); continuing without USB", err);
 		return 0;
 	}
-
-	/* The devicetree CDCs are instances in the usbd_class section: register them all at once */
-	err = usbd_register_all_classes(&zlrs_usbd, speed, 1U, NULL);
-	if (err != 0) {
-		LOG_ERR("usb class registration failed (%d); continuing without USB", err);
-		return 0;
-	}
-
 	zlrs_usb_class_codes(speed);
-
-	err = usbd_msg_register_cb(&zlrs_usbd, zlrs_usb_message);
-	if (err != 0) {
-		LOG_ERR("usb message registration failed (%d); continuing without USB", err);
-		return 0;
-	}
-
-	err = usbd_init(&zlrs_usbd);
-	if (err != 0) {
-		LOG_ERR("usbd init failed (%d); continuing without USB", err);
-		return 0;
-	}
-
-	err = usbd_enable(&zlrs_usbd);
-	if (err != 0) {
-		LOG_ERR("usbd enable failed (%d); continuing without USB", err);
+	if ((err = usbd_msg_register_cb(&zlrs_usbd, zlrs_usb_message)) != 0 ||
+	    (err = usbd_init(&zlrs_usbd)) != 0 || (err = usbd_enable(&zlrs_usbd)) != 0) {
+		LOG_ERR("usb initialization failed (%d); continuing without USB", err);
 		return 0;
 	}
 

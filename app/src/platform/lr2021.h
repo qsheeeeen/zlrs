@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
+#include "platform/timing.h"
 
 #include "link/radio.h"
 
@@ -66,32 +67,33 @@ void zlrs_lr2021_slot(uint32_t tx_us, uint32_t end_us);
 /* Prepare modem and FIFO before the timer-controlled launch; no TX in prepare(). */
 int zlrs_lr2021_prepare(const zlrs_radio_req_t *req);
 int zlrs_lr2021_launch(void);
-int zlrs_lr2021_launch_at(uint32_t target_us);
 /* Timestamp of the SET_TX/SET_RX command, valid after a successful launch. */
 uint32_t zlrs_lr2021_started_us(void);
 /* SET_TX is polled even when FIFO transfers use DMA. */
 #define ZLRS_LR2021_STARTUP_US       500U
 #define ZLRS_LR2021_PHASE_STARTUP_US 250U
-#define ZLRS_LR2021_TX_COMMAND_US     50U
+#define ZLRS_LR2021_TX_COMMAND_US    50U
 #define ZLRS_LR2021_TX_MAX_LATE_US   100U
 
 /* Bound lateness and reserve the complete command, startup and packet airtime.
  * Signed differences preserve deadlines across the hardware timer's wrap. */
-static inline bool zlrs_lr2021_tx_deadline(uint32_t target_us, uint32_t end_us,
-					 uint32_t airtime_us, uint32_t *latest_us)
+static inline bool zlrs_lr2021_tx_deadline(uint32_t target_us, uint32_t end_us, uint32_t airtime_us,
+					   uint32_t *latest_us)
 {
-	const int32_t slack = (int32_t)(end_us - target_us) -
+	const int32_t slack =
+		(int32_t)(end_us - target_us) -
 		(int32_t)(ZLRS_LR2021_TX_COMMAND_US + ZLRS_LR2021_STARTUP_US + airtime_us);
 
 	if (slack < 0) {
 		return false;
 	}
 	*latest_us = target_us + ((uint32_t)slack < ZLRS_LR2021_TX_MAX_LATE_US
-					? (uint32_t)slack : ZLRS_LR2021_TX_MAX_LATE_US);
+					  ? (uint32_t)slack
+					  : ZLRS_LR2021_TX_MAX_LATE_US);
 	return true;
 }
 
-uint32_t zlrs_lr2021_airtime_us(const zlrs_mod_cfg_t *mod, uint16_t len);
+uint32_t zlrs_lr2021_airtime_us(zlrs_phy_t phy, uint16_t len);
 
 struct zlrs_lr2021_diag {
 	uint32_t transactions;
@@ -100,25 +102,19 @@ struct zlrs_lr2021_diag {
 	uint32_t overruns;
 	uint32_t rx_us_last;
 	uint32_t tx_us_last;
-	uint32_t submit_us_last;
-	uint32_t submit_us_max;
-	uint32_t tx_prepare_us_last[4]; /* standby/IRQ, modem, FIFO, FS/BUSY */
+	zlrs_timing_t submit_us;
+	uint32_t tx_stage_us[4]; /* standby/IRQ, modem, FIFO, FS/BUSY */
 	uint32_t fs_reused;
 	uint32_t tx_fifo_loads;
 	uint32_t tx_fifo_bytes;
 	uint32_t tx_fifo_errors;
 	uint32_t tx_fifo_underflows;
-	uint32_t tx_fifo_load_us_last;
-	uint32_t tx_fifo_load_us_max;
-	uint32_t launch_cmd_us_last;
-	uint32_t launch_cmd_us_max;
-	uint32_t tx_launch_cmd_us_last;
-	uint32_t tx_launch_cmd_us_max;
+	zlrs_timing_t tx_fifo_load_us;
+	zlrs_timing_t launch_cmd_us;
+	zlrs_timing_t tx_launch_cmd_us;
 	uint32_t tx_ready_lead_us_last;
-	uint32_t launch_jitter_us_last;
-	uint32_t launch_jitter_us_max;
-	uint32_t tx_startup_us_last;
-	uint32_t tx_startup_us_max;
+	zlrs_timing_t launch_jitter_us;
+	zlrs_timing_t tx_startup_us;
 	uint32_t rx_header_errors;
 	uint32_t rx_crc_errors;
 	uint32_t rx_length_errors;
@@ -127,21 +123,16 @@ struct zlrs_lr2021_diag {
 	uint32_t rx_expired;
 	uint32_t rx_incomplete;
 	uint32_t tx_expired;
-	uint32_t irq_service_us_last;
-	uint32_t irq_service_us_max;
+	zlrs_timing_t irq_service_us;
 	uint32_t late_starts;
 	uint32_t prepare_late_starts;
 	uint32_t trigger_late_starts;
-	uint32_t launch_irq_late_us_last;
-	uint32_t launch_irq_late_us_max;
-	uint32_t launch_wake_us_last;
-	uint32_t launch_wake_us_max;
+	zlrs_timing_t launch_irq_late_us;
+	zlrs_timing_t launch_wake_us;
 	uint32_t late_trigger_irq;
 	uint32_t rx_fifo_bytes;
-	uint32_t rx_fifo_us_last;
-	uint32_t rx_fifo_us_max;
-	uint32_t launch_late_us_last;
-	uint32_t launch_late_us_max;
+	zlrs_timing_t rx_fifo_us;
+	zlrs_timing_t launch_late_us;
 	uint32_t tx_done;
 	uint32_t rx_packets;
 	uint32_t empty_irq;
@@ -150,4 +141,4 @@ struct zlrs_lr2021_diag {
 	uint32_t chip_error_freq_hz;
 };
 typedef struct zlrs_lr2021_diag zlrs_lr2021_diag_t;
-void zlrs_lr2021_diag(zlrs_lr2021_diag_t *out);
+const zlrs_lr2021_diag_t *zlrs_lr2021_diag(void);

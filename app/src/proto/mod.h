@@ -25,16 +25,16 @@ typedef enum {
 typedef struct {
 	uint32_t rate_bps;
 	uint8_t lora_sf;
-} zlrs_mod_cfg_t;
+	uint16_t sync_period_ms;
+	int16_t rssi_floor_dbm;
+	const char *name;
+} zlrs_phy_spec_t;
 
-zlrs_mod_cfg_t zlrs_mod_flrc(uint32_t rate_bps);
-zlrs_mod_cfg_t zlrs_mod_lora(uint8_t sf);
-zlrs_mod_cfg_t zlrs_mod_phy(zlrs_phy_t phy);
-zlrs_phy_t zlrs_mod_phy_id(const zlrs_mod_cfg_t *mod);
-const char *zlrs_mod_phy_name(zlrs_phy_t phy);
+extern const zlrs_phy_spec_t zlrs_phys[ZLRS_PHY_COUNT];
+zlrs_phy_t zlrs_phy_for_rate(uint32_t rate_bps);
+const char *zlrs_phy_name(zlrs_phy_t phy);
 /* Portable FLRC estimate; exact airtime for the shipped LoRa profiles. Invalid = zero. */
-uint32_t zlrs_mod_airtime_us(const zlrs_mod_cfg_t *mod, uint16_t frame_len);
-uint32_t zlrs_mod_airtime_ms(const zlrs_mod_cfg_t *mod, uint16_t frame_len);
+uint32_t zlrs_phy_airtime_us(zlrs_phy_t phy, uint16_t frame_len);
 
 #ifdef __cplusplus
 }

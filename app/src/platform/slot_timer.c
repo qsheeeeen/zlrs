@@ -15,7 +15,6 @@
 #include <zephyr/irq.h>
 #include <zephyr/kernel.h>
 
-
 struct slot_clock {
 	uint32_t period_us;
 	uint32_t origin_us;
@@ -32,11 +31,6 @@ static uint32_t slot_clock_offset(uint32_t period_us, uint8_t slot)
 	return (uint32_t)(((uint64_t)period_us * slot) / ZLRS_SLOT_COUNT);
 }
 
-static bool slot_clock_due(const struct slot_clock *clock, uint32_t now_us)
-{
-	return (int32_t)(now_us - clock->next_us) >= 0;
-}
-
 bool zlrs_slot_timer_launch_ready(uint32_t now_us, uint32_t target_us, uint32_t lead_us)
 {
 	return lead_us > 0U && lead_us <= INT32_MAX &&
@@ -47,7 +41,7 @@ static uint32_t slot_clock_advance(struct slot_clock *clock, uint32_t now_us)
 {
 	uint32_t boundaries = 0U;
 
-	while (slot_clock_due(clock, now_us)) {
+	while ((int32_t)(now_us - clock->next_us) >= 0) {
 		if (clock->slot == 0U) {
 			clock->published_origin_us = clock->origin_us;
 			clock->frame++;
@@ -64,13 +58,6 @@ static uint32_t slot_clock_advance(struct slot_clock *clock, uint32_t now_us)
 		boundaries++;
 	}
 	return boundaries;
-}
-
-static void slot_clock_shift(struct slot_clock *clock, int32_t shift_us)
-{
-	const int32_t limit = (int32_t)(clock->period_us / 16U);
-
-	clock->shift_us = shift_us > limit ? limit : (shift_us < -limit ? -limit : shift_us);
 }
 
 static uint32_t slot_clock_next_origin(const struct slot_clock *clock)
@@ -92,14 +79,6 @@ uint32_t zlrs_slot_timer_scan_delay_ms(uint32_t cadence_us, uint16_t sync_every_
 	const uint32_t gap_ms = (uint32_t)((gap_us + 999U) / 1000U);
 
 	return gap_ms > minimum_ms ? gap_ms : minimum_ms;
-}
-
-static uint32_t slot_clock_timestamp_ms(uint64_t uptime_offset_us, uint64_t timer_us,
-					uint32_t deadline_us)
-{
-	const int32_t delta_us = (int32_t)(deadline_us - (uint32_t)timer_us);
-
-	return (uint32_t)((uptime_offset_us + timer_us + delta_us) / 1000U);
 }
 
 static timer_hw_t *const timer = (timer_hw_t *)DT_REG_ADDR(DT_ALIAS(zlrs_slot_timer));
@@ -145,9 +124,10 @@ static void slot_timer_isr(const void *arg)
 	const uint32_t now = zlrs_slot_timer_now_us();
 	const uint32_t before = slot_clock.frame;
 
-	if (slot_clock_due(&slot_clock, now)) {
-		stats.irq_late_us_max = MAX(stats.irq_late_us_max, now - slot_clock.next_us);
-		const uint32_t elapsed = slot_clock_advance(&slot_clock, now);
+	const uint32_t lateness = now - slot_clock.next_us;
+	const uint32_t elapsed = slot_clock_advance(&slot_clock, now);
+	if (elapsed != 0U) {
+		stats.irq_late_us_max = MAX(stats.irq_late_us_max, lateness);
 
 		stats.boundaries += elapsed;
 		stats.missed_boundaries += elapsed - 1U;
@@ -248,7 +228,8 @@ void zlrs_slot_timer_shift(int32_t shift_us)
 {
 	const unsigned int key = irq_lock();
 
-	slot_clock_shift(&slot_clock, shift_us);
+	const int32_t limit = (int32_t)(slot_clock.period_us / 16U);
+	slot_clock.shift_us = CLAMP(shift_us, -limit, limit);
 	irq_unlock(key);
 }
 
@@ -312,7 +293,9 @@ void zlrs_slot_timer_stop(void)
 
 uint32_t zlrs_slot_timer_uptime_ms(uint32_t deadline_us)
 {
-	return slot_clock_timestamp_ms(uptime_offset_us, timer_us_64(), deadline_us);
+	const uint64_t now = timer_us_64();
+	const int32_t delta = (int32_t)(deadline_us - (uint32_t)now);
+	return (uint32_t)((uptime_offset_us + now + delta) / 1000U);
 }
 
 uint32_t zlrs_slot_timer_now_ms(void)

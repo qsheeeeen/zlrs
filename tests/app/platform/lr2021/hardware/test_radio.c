@@ -108,8 +108,8 @@ void zlrs_test_radio_apply_window_request(zlrs_link_t *link)
 	if (request != 0) {
 		const uint16_t ms = (uint16_t)(request - 1);
 
-		link->cfg.rx_timeout_ms = ms == 0U ? default_rx_ms : ms;
-		link->cfg.acq_timeout_ms = ms == 0U ? default_acq_ms : ms;
+		link->status.cfg.rx_timeout_ms = ms == 0U ? default_rx_ms : ms;
+		link->status.cfg.acq_timeout_ms = ms == 0U ? default_acq_ms : ms;
 		k_sem_give(&window_done);
 	}
 }
@@ -123,14 +123,14 @@ void __wrap_zlrs_link_complete(zlrs_link_t *, int, uint16_t, int16_t, int8_t, ui
 
 static void raw_run(void)
 {
-	const bool tx = (data_link->cfg.role == ZLRS_ROLE_LEADER) !=
+	const bool tx = (data_link->status.cfg.role == ZLRS_ROLE_LEADER) !=
 			IS_ENABLED(CONFIG_ZLRS_TEST_RAW_REVERSE);
 	zlrs_radio_req_t req = {
 		.freq_hz = CONFIG_ZLRS_TEST_RAW_FREQ_MHZ * 1000000U,
-		.mod = data_link->cfg.mod,
+		.phy = data_link->status.cfg.phy,
 		.sync_slot = ZLRS_SYNC_SLOT_DATA,
 		.is_tx = tx,
-		.tx_power_dbm = data_link->cfg.tx_power_dbm,
+		.tx_power_dbm = data_link->status.cfg.tx_power_dbm,
 		.size = tx ? CONFIG_ZLRS_TEST_RAW_PAYLOAD_BYTES : 0U,
 		.max_rx_size = tx ? 0U : ZLRS_FRAME_MAX_LEN,
 		.timeout_ms = tx ? 0U : 100U,
@@ -150,7 +150,7 @@ static void raw_run(void)
 			raw_payload[i] = (uint8_t)(sequence + i);
 		}
 		raw_link.req.is_tx = tx;
-		raw_link.req_pending = true;
+		raw_link.status.busy = true;
 		const uint32_t deadline = zlrs_slot_timer_now_us() + 120000U;
 		const uint32_t target = zlrs_slot_timer_now_us() +
 					CONFIG_ZLRS_APP_DATA_24_PREPARE_US +
@@ -158,9 +158,8 @@ static void raw_run(void)
 
 		/* Prepare before the timer-controlled TX target, as the application does. */
 		zlrs_lr2021_slot(target, deadline);
-		if (zlrs_lr2021_prepare(&req) == 0 &&
-		    (tx ? zlrs_lr2021_launch_at(target) : zlrs_lr2021_launch()) == 0) {
-			while (raw_link.req_pending &&
+		if (zlrs_lr2021_prepare(&req) == 0 && zlrs_lr2021_launch() == 0) {
+			while (raw_link.status.busy &&
 			       (int32_t)(deadline - zlrs_slot_timer_now_us()) > 0) {
 				zlrs_lr2021_result_t result;
 				if (zlrs_lr2021_process_irq(&result)) {
@@ -173,14 +172,14 @@ static void raw_run(void)
 				}
 				const int32_t remaining = deadline - zlrs_slot_timer_now_us();
 
-				if (raw_link.req_pending && remaining > 0) {
+				if (raw_link.status.busy && remaining > 0) {
 					(void)zlrs_lr2021_wait_us((uint32_t)remaining);
 				}
 			}
 		}
-		if (raw_link.req_pending) {
+		if (raw_link.status.busy) {
 			zlrs_lr2021_abort();
-			raw_link.req_pending = false;
+			raw_link.status.busy = false;
 			if (tx) {
 				atomic_inc(&raw_tx_failed);
 			}
@@ -191,9 +190,8 @@ static void raw_run(void)
 	/* Test startup ends before the production timer/superframe starts. */
 	zlrs_lr2021_abort();
 	zlrs_slot_timer_stop();
-	zlrs_lr2021_diag_t diag;
-	zlrs_lr2021_diag(&diag);
-	channel_crc_previous = diag.rx_crc_errors;
+	const zlrs_lr2021_diag_t *diag = zlrs_lr2021_diag();
+	channel_crc_previous = diag->rx_crc_errors;
 }
 
 int __wrap_zlrs_lr2021_init(void)
@@ -222,7 +220,7 @@ void __wrap_zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, i
 {
 #if CONFIG_ZLRS_TEST_RAW_MS > 0
 	if (link == &raw_link) {
-		link->req_pending = false;
+		link->status.busy = false;
 		if (status != ZLRS_RADIO_OK) {
 			if (link->req.is_tx) {
 				atomic_inc(&raw_tx_failed);
@@ -256,12 +254,11 @@ void __wrap_zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, i
 		return;
 	}
 #endif
-	zlrs_lr2021_diag_t diag;
-	zlrs_lr2021_diag(&diag);
-	const uint32_t crc = diag.rx_crc_errors - channel_crc_previous;
+	const zlrs_lr2021_diag_t *diag = zlrs_lr2021_diag();
+	const uint32_t crc = diag->rx_crc_errors - channel_crc_previous;
 	const uint32_t frequency = link->req.freq_hz;
 
-	channel_crc_previous = diag.rx_crc_errors;
+	channel_crc_previous = diag->rx_crc_errors;
 	if (frequency >= 2402000000U && frequency <= 2480000000U && frequency % 1000000U == 0U) {
 		const uint8_t index = (uint8_t)(frequency / 1000000U - 2402U);
 

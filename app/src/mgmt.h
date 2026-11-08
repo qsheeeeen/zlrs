@@ -36,20 +36,3 @@ int zlrs_mgmt_run(void);
 #define ZLRS_MGMT_CMD_LOG_INFO      0x12U /* what the log store holds */
 #define ZLRS_MGMT_CMD_DEBUG_REPORT  0x14U /* debug image only: one report id byte */
 #define ZLRS_MGMT_CMD_OBSERVE       0x15U /* timestamped status without pausing RF */
-
-#include "log.h"
-#include "rf.h"
-
-struct zlrs_mgmt_reply {
-	zlrs_rf_status_t status;
-	uint64_t uptime_ms;
-	uint64_t cpu_window_ms;
-	int32_t cpu_load_permille;
-	uint32_t data_baud;
-	zlrs_region_id_t region;
-	const char *report;
-	zlrs_log_info_t logs;
-};
-
-/* Synchronous, serialized request; call from a preemptible service thread. */
-int zlrs_mgmt_request(uint32_t op, const uint8_t *value, size_t len, struct zlrs_mgmt_reply *reply);

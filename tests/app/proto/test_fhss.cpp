@@ -3,11 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <zephyr/ztest.h>
-#include <initializer_list>
 #include <cstdint>
 #include <cstdio>
+#include <initializer_list>
 #include <string.h>
+#include <zephyr/ztest.h>
 
 #include "proto/fhss.h"
 
@@ -57,7 +57,8 @@ ZTEST(Fhss, test_BalancedDeterministicHopTables)
 	first = zlrs_fhss_current_hz(&fhss);
 	zexpect_equal(first,
 		      fhss.region->start_hz + (uint32_t)fhss.sync_channel * fhss.region->step_hz);
-	next = zlrs_fhss_next_hz(&fhss);
+	zlrs_fhss_set_index(&fhss, fhss.index + 1U);
+	next = zlrs_fhss_current_hz(&fhss);
 	zexpect_not_equal(next, first);
 	zexpect_equal(fhss.index, 1U);
 	zlrs_fhss_set_index(&fhss, 0U);
@@ -72,7 +73,7 @@ ZTEST(Fhss, test_BalancedDeterministicHopTables)
 		for (uint16_t i = 0U; i < fhss.sequence_count; ++i) {
 			zexpect_true((fhss.sequence[i]) < (fhss.region->channel_count));
 			counts[fhss.sequence[i]]++;
-			(void)zlrs_fhss_next_hz(&fhss);
+			zlrs_fhss_set_index(&fhss, fhss.index + 1U);
 		}
 		zexpect_equal(fhss.index, 0U);
 		zexpect_equal(zlrs_fhss_current_hz(&fhss), first);
