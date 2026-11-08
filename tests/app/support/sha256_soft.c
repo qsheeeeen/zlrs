@@ -5,7 +5,7 @@
  * exactly as in firmware; this file replaces only the hardware hash operation.
  */
 
-#include "proto/sha256.h"
+#include "platform/sha256.h"
 
 #include <string.h>
 

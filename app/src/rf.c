@@ -7,25 +7,25 @@
 
 #include <zephyr/app_version.h>
 #include <zephyr/devicetree.h>
+#include <zephyr/drivers/entropy.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
-#include <zephyr/drivers/entropy.h>
 
-#include <string.h>
 #include <errno.h>
+#include <string.h>
 
-#include "persist.h"
-#include "serial.h"
-#include "rf.h"
-#include "diagnostics.h"
-#include "power.h"
 #include "band.h"
-#include "trace.h"
-#include "platform/slot_timer.h"
-#include "platform/watchdog.h"
+#include "diagnostics.h"
+#include "persist.h"
 #include "platform/lr2021.h"
-#include "platform/hash.h"
+#include "platform/sha256.h"
+#include "platform/slot_timer.h"
 #include "platform/temperature.h"
+#include "platform/watchdog.h"
+#include "power.h"
+#include "rf.h"
+#include "serial.h"
+#include "trace.h"
 
 #include "link/link.h"
 #include "region/region.h"
@@ -60,25 +60,19 @@ static uint32_t paused_at_ms;
 static bool pause_had_plan;
 
 /* Two alternating DATA slots per timer frame. */
-static uint32_t data_rate_hz;
 static uint32_t frame_period_us;
-static uint32_t slot_budget_us;
 static uint32_t slot_prepare_us = CONFIG_ZLRS_APP_PREPARE_US;
-static uint16_t resync_every_n;
-static uint16_t data_mtu;
 static zlrs_data_band_t data_band = ZLRS_DATA_BAND_24;
 static zlrs_data_band_t band_mode;
-static zlrs_phy_t data_phy;
 static zlrs_band_policy_t band_policy;
 static uint32_t band_switches;
 static bool transition_reserved;
 #define ZLRS_DATA_SUBG (data_band == ZLRS_DATA_BAND_SUBG)
 
-#define REPORT_PERIOD_MS      1000U
+#define REPORT_PERIOD_MS 1000U
 
 static zlrs_link_t link_data;
 static zlrs_rf_work_t work;
-static zlrs_mod_cfg_t data_mod;
 
 /* Region: picks the band, the power ceiling and the duty accounting */
 static const zlrs_region_t *region;
@@ -105,19 +99,23 @@ static zlrs_duty_t duty;
  * See doc/08-security.md#identity-and-threat-model. */
 static uint8_t device_id[ZLRS_DEV_ID_LEN];
 
-/*
- * Role and security profile: runtime settings with a compile-time default (set-role /
- * set-profile, doc/06-firmware.md). Loaded once at boot, before the links are built.
- */
-static bool role_leader;
-static zlrs_profile_t active_profile;
-
 static uint32_t consumed_frame;
 /* Link-loss alarm only follows a connection already established. */
 static bool ever_connected;
 
 static uint32_t data_rx_bytes;
 static uint8_t phase_samples;
+
+static bool is_leader(void)
+{
+	return zlrs_link_get_config(&link_data)->role == ZLRS_ROLE_LEADER;
+}
+
+static zlrs_phy_t active_phy(void)
+{
+	return ZLRS_DATA_SUBG ? ZLRS_PHY_FLRC_2600
+			      : zlrs_mod_phy_id(&zlrs_link_get_config(&link_data)->mod);
+}
 
 /* ---- link callbacks (run on the link thread) ------------------------------ */
 
@@ -178,43 +176,6 @@ static uint16_t sync_period_for_mod(const zlrs_mod_cfg_t *mod)
 		return 150U;
 	}
 	return mod->rate_bps >= 650000U ? 300U : 600U;
-}
-
-static void plan_init(void)
-{
-	data_mod = !ZLRS_DATA_SUBG && band_mode == ZLRS_DATA_BAND_AUTO
-			   ? zlrs_mod_phy(data_phy)
-			   : zlrs_mod_flrc(ZLRS_DATA_SUBG
-						   ? zlrs_region_clamp_rate(
-							     region, CONFIG_ZLRS_APP_DATA_RATE_BPS)
-						   : CONFIG_ZLRS_APP_DATA_RATE_BPS);
-	slot_prepare_us =
-		ZLRS_DATA_SUBG ? CONFIG_ZLRS_APP_PREPARE_US : CONFIG_ZLRS_APP_DATA_24_PREPARE_US;
-	/* A common MTU preserves outstanding ARQ packets across FLRC/LoRa changes. */
-	const uint16_t max_frame =
-		band_mode == ZLRS_DATA_BAND_AUTO ? ZLRS_LORA_FRAME_MAX_LEN : ZLRS_FRAME_MAX_LEN;
-	data_mtu = max_frame - ZLRS_FRAME_HDR_LEN - ZLRS_DATA_PREFIX_LEN -
-		   zlrs_profile_tag_len(active_profile);
-	slot_budget_us = slot_prepare_us + CONFIG_ZLRS_APP_TX_GUARD_US + ZLRS_LR2021_STARTUP_US +
-			 zlrs_lr2021_airtime_us(&data_mod, max_frame) + 200U;
-	frame_period_us = ZLRS_SLOT_COUNT * slot_budget_us;
-	data_rate_hz = 1000000U / frame_period_us;
-	if (CONFIG_ZLRS_APP_RESYNC_PERIOD_MS > 0 || band_mode == ZLRS_DATA_BAND_AUTO) {
-		const uint32_t sync_ms =
-			band_mode == ZLRS_DATA_BAND_AUTO
-				? (CONFIG_ZLRS_APP_RESYNC_PERIOD_MS > 0
-					   ? MIN(CONFIG_ZLRS_APP_RESYNC_PERIOD_MS, 1000U)
-					   : 1000U)
-				: CONFIG_ZLRS_APP_RESYNC_PERIOD_MS;
-		const uint32_t frames =
-			(sync_ms * 1000U) / (frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE);
-		resync_every_n = (uint16_t)MAX(frames, 1U);
-	} else {
-		resync_every_n = 0U;
-	}
-	LOG_INF("data %s: mtu=%u frame=%u us rate=%u Hz", ZLRS_DATA_SUBG ? "sub-G" : "2.4G",
-		data_mtu, frame_period_us, data_rate_hz);
-	LOG_INF("modem: %s", zlrs_mod_phy_name(zlrs_mod_phy_id(&data_mod)));
 }
 
 /* ---- link setup ---------------------------------------------------------- */
@@ -286,7 +247,7 @@ static void update_power(uint32_t now_ms)
 			.settle_ms = MAX(500U, round_ms),
 			.feedback_timeout_ms = MAX(1000U, round_ms + 500U),
 			.rssi_dbm = info.peer_rssi_dbm,
-			.rssi_floor_dbm = zlrs_band_rssi_floor(ZLRS_DATA_SUBG, data_phy),
+			.rssi_floor_dbm = zlrs_band_rssi_floor(ZLRS_DATA_SUBG, active_phy()),
 			.lq_percent = info.peer_lq_percent,
 		};
 		next = zlrs_power_update(&power, &observation);
@@ -317,24 +278,56 @@ static void update_power(uint32_t now_ms)
 	zlrs_link_set_power(&link_data, next);
 }
 
-static zlrs_link_cfg_t link_config(void)
+static zlrs_link_cfg_t link_config(zlrs_role_t role, zlrs_profile_t profile, zlrs_phy_t phy)
 {
+	const zlrs_mod_cfg_t mod =
+		!ZLRS_DATA_SUBG && band_mode == ZLRS_DATA_BAND_AUTO
+			? zlrs_mod_phy(phy)
+			: zlrs_mod_flrc(ZLRS_DATA_SUBG
+						? zlrs_region_clamp_rate(
+							  region, CONFIG_ZLRS_APP_DATA_RATE_BPS)
+						: CONFIG_ZLRS_APP_DATA_RATE_BPS);
+	slot_prepare_us =
+		ZLRS_DATA_SUBG ? CONFIG_ZLRS_APP_PREPARE_US : CONFIG_ZLRS_APP_DATA_24_PREPARE_US;
+	/* A common MTU preserves outstanding ARQ packets across FLRC/LoRa changes. */
+	const uint16_t max_frame =
+		band_mode == ZLRS_DATA_BAND_AUTO ? ZLRS_LORA_FRAME_MAX_LEN : ZLRS_FRAME_MAX_LEN;
+	const uint16_t mtu = max_frame - ZLRS_FRAME_HDR_LEN - ZLRS_DATA_PREFIX_LEN -
+			     zlrs_profile_tag_len(profile);
+	const uint32_t slot_budget = slot_prepare_us + CONFIG_ZLRS_APP_TX_GUARD_US +
+				     ZLRS_LR2021_STARTUP_US +
+				     zlrs_lr2021_airtime_us(&mod, max_frame) + 200U;
+	frame_period_us = ZLRS_SLOT_COUNT * slot_budget;
+	uint16_t resync_every_n;
+	if (CONFIG_ZLRS_APP_RESYNC_PERIOD_MS > 0 || band_mode == ZLRS_DATA_BAND_AUTO) {
+		const uint32_t sync_ms =
+			band_mode == ZLRS_DATA_BAND_AUTO
+				? (CONFIG_ZLRS_APP_RESYNC_PERIOD_MS > 0
+					   ? MIN(CONFIG_ZLRS_APP_RESYNC_PERIOD_MS, 1000U)
+					   : 1000U)
+				: CONFIG_ZLRS_APP_RESYNC_PERIOD_MS;
+		const uint32_t frames =
+			(sync_ms * 1000U) / (frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE);
+		resync_every_n = (uint16_t)MAX(frames, 1U);
+	} else {
+		resync_every_n = 0U;
+	}
 	zlrs_link_cfg_t cfg = {
-		.role = role_leader ? ZLRS_ROLE_LEADER : ZLRS_ROLE_FOLLOWER,
+		.role = role,
 		.domain = ZLRS_DATA_SUBG ? region->domain : ZLRS_DOMAIN_ISM2400,
 
-		.profile = active_profile,
+		.profile = profile,
 		.hopping = IS_ENABLED(CONFIG_ZLRS_APP_FHSS) ? 1U : 0U,
-		.mod = data_mod,
+		.mod = mod,
 		.tx_power_dbm = power_maximum(),
 		.pair_tx_power_dbm = CLAMP(ZLRS_PAIR_POWER_DBM, power_minimum(), power_maximum()),
 		.rx_timeout_ms = 2U,
 		.acq_timeout_ms = 8U,
-		.sync_period_ms = sync_period_for_mod(&data_mod),
+		.sync_period_ms = sync_period_for_mod(&mod),
 		.peer_timeout_ms = 0U,
 		.pair_period_ms = 100U,
 		.pair_window_ms = 30000U,
-		.data_mtu = data_mtu,
+		.data_mtu = mtu,
 		.arq = IS_ENABLED(CONFIG_ZLRS_APP_DATA_ARQ) ? 1U : 0U,
 		.feedback_period_ms = 250U,
 		/* Below one minimum window: two unseen toggles cannot be treated as unchanged. */
@@ -343,18 +336,21 @@ static zlrs_link_cfg_t link_config(void)
 						   1000U)),
 		/* Own TX slots already leave a peer ACK opportunity. Round down so
 		 * millisecond quantization cannot postpone a retry by another frame. */
-		.arq_timeout_ms = (uint16_t)MAX(
-			1U, (uint64_t)frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE / 1000U),
+		.arq_timeout_ms = (uint16_t)MAX(1U, (uint64_t)frame_period_us *
+							    CONFIG_ZLRS_APP_PACING_SCALE / 1000U),
 
 		.resync_every_n = resync_every_n,
 		.automatic_band = band_mode == ZLRS_DATA_BAND_AUTO,
 	};
+	LOG_INF("data %s: mtu=%u frame=%u us rate=%u Hz", ZLRS_DATA_SUBG ? "sub-G" : "2.4G",
+		cfg.data_mtu, frame_period_us, 1000000U / frame_period_us);
+	LOG_INF("modem: %s", zlrs_mod_phy_name(zlrs_mod_phy_id(&cfg.mod)));
 	return cfg;
 }
 
-static void build_links(void)
+static void build_links(zlrs_role_t role, zlrs_profile_t profile, zlrs_phy_t phy)
 {
-	const zlrs_link_cfg_t cfg = link_config();
+	const zlrs_link_cfg_t cfg = link_config(role, profile, phy);
 	const zlrs_link_events_t events = {
 		.on_data = on_data,
 		.on_state = on_state,
@@ -397,7 +393,8 @@ static bool complete_radio(zlrs_lr2021_result_t *result, uint32_t accept_deadlin
 	const bool received = result->size > 0U;
 	ZLRS_TRACE_EVENT("rf_rx_begin", result->done_us, result->size);
 	bool hash_held = false;
-	if (result->status == 0 && result->size > 0U && active_profile == ZLRS_PROFILE_P1) {
+	if (result->status == 0 && result->size > 0U &&
+	    zlrs_link_get_config(&link_data)->profile == ZLRS_PROFILE_P1) {
 		const int32_t remaining = (int32_t)(accept_deadline_us - zlrs_slot_timer_now_us());
 		hash_held = remaining > 0 && zlrs_hash_acquire((uint32_t)remaining);
 		if (!hash_held) {
@@ -475,15 +472,15 @@ static void change_band(zlrs_data_band_t target, zlrs_phy_t phy, bool probe, uin
 	zlrs_slot_timer_cancel_launch();
 	zlrs_lr2021_abort();
 	const zlrs_data_band_t previous = data_band;
-	const zlrs_phy_t previous_phy = data_phy;
+	const uint32_t previous_period = frame_period_us;
+	const uint32_t previous_prepare = slot_prepare_us;
 	data_band = target;
-	data_phy = target == ZLRS_DATA_BAND_SUBG ? ZLRS_PHY_FLRC_2600 : phy;
-	plan_init();
-	const zlrs_link_cfg_t cfg = link_config();
+	const zlrs_link_cfg_t cfg = link_config(zlrs_link_get_config(&link_data)->role,
+				      zlrs_link_get_config(&link_data)->profile, phy);
 	if (!zlrs_link_reconfigure_radio(&link_data, &cfg)) {
 		data_band = previous;
-		data_phy = previous_phy;
-		plan_init();
+		frame_period_us = previous_period;
+		slot_prepare_us = previous_prepare;
 		return;
 	}
 	zlrs_link_acquire_radio(&link_data, now_ms);
@@ -494,7 +491,7 @@ static void change_band(zlrs_data_band_t target, zlrs_phy_t phy, bool probe, uin
 	zlrs_slot_timer_reconfigure(frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE, slot_prepare_us,
 				    transition_reserved ? 0U : 12000U);
 	transition_reserved = false;
-	zlrs_band_policy_changed(&band_policy, target == ZLRS_DATA_BAND_SUBG, data_phy, probe,
+	zlrs_band_policy_changed(&band_policy, target == ZLRS_DATA_BAND_SUBG, active_phy(), probe,
 				 now_ms, zlrs_link_get_info(&link_data).last_rx_ms);
 	band_switches++;
 	LOG_INF("auto band -> %s (%s), switches=%u", ZLRS_DATA_SUBG ? "sub-G" : "2.4G",
@@ -504,7 +501,8 @@ static void change_band(zlrs_data_band_t target, zlrs_phy_t phy, bool probe, uin
 static bool plan_radio(bool subg, zlrs_phy_t phy, uint32_t frame_index)
 {
 	const uint64_t period = (uint64_t)frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE;
-	const uint32_t lead = resync_every_n + DIV_ROUND_UP(500000U, period);
+	const uint32_t lead =
+		zlrs_link_get_config(&link_data)->resync_every_n + DIV_ROUND_UP(500000U, period);
 	return lead <= UINT16_MAX && frame_index < UINT32_MAX - lead &&
 	       zlrs_link_plan_radio(&link_data, subg, phy, frame_index + lead);
 }
@@ -520,7 +518,7 @@ static void update_band(uint32_t now_ms)
 		change_band(info.band_plan.target_subg ? ZLRS_DATA_BAND_SUBG : ZLRS_DATA_BAND_24,
 			    info.band_plan.target_phy,
 			    !info.band_plan.target_subg &&
-				    (ZLRS_DATA_SUBG || info.band_plan.target_phy < data_phy),
+				    (ZLRS_DATA_SUBG || info.band_plan.target_phy < active_phy()),
 			    now_ms);
 		return;
 	}
@@ -529,7 +527,7 @@ static void update_band(uint32_t now_ms)
 	if (requested != 0 && info.session_valid && info.state == ZLRS_STATE_CONNECTED &&
 	    !info.radio_acquiring && info.band_plan.switch_frame == 0U) {
 		const zlrs_phy_t phy = requested - 1;
-		if ((!ZLRS_DATA_SUBG && phy == data_phy) ||
+		if ((!ZLRS_DATA_SUBG && phy == active_phy()) ||
 		    plan_radio(false, phy, info.frame_index)) {
 			(void)atomic_cas(&phy_request, requested, 0);
 		}
@@ -580,7 +578,7 @@ static void run_slot(uint8_t slot, uint32_t next_slot_us)
 	/* A completed RX leaves a safe opportunity to build our next TX immediately.
 	 * RX entry still waits for its own window; searching/pairing retain that rule. */
 	const bool early_tx = zlrs_link_get_state(&link_data) == ZLRS_STATE_CONNECTED &&
-			      (role_leader == (slot == ZLRS_SLOT_DATA_A));
+			      (is_leader() == (slot == ZLRS_SLOT_DATA_A));
 
 	if (early_tx) {
 		timing = (struct zlrs_slot_timer_wait){.wake_us = now_us()};
@@ -604,7 +602,8 @@ static void run_slot(uint8_t slot, uint32_t next_slot_us)
 	const bool on_subg = ZLRS_DATA_SUBG;
 	const zlrs_radio_req_t *req;
 
-	/* Disabled slots stay idle; acquisition outside assigned slots corrupts phase/hop alignment. */
+	/* Disabled slots stay idle; acquisition outside assigned slots corrupts phase/hop
+	 * alignment. */
 	if ((int32_t)(slot_deadline_us - now_us()) <= 100) {
 		missed_slots++;
 		zlrs_link_skip_slot(link, link_slot);
@@ -641,7 +640,7 @@ static void run_slot(uint8_t slot, uint32_t next_slot_us)
 	}
 	const uint32_t finalize_started = now_us();
 	bool hash_held = false;
-	if (plan.op == ZLRS_OP_TX && active_profile == ZLRS_PROFILE_P1) {
+	if (plan.op == ZLRS_OP_TX && zlrs_link_get_config(&link_data)->profile == ZLRS_PROFILE_P1) {
 		const int32_t budget =
 			(int32_t)(target_us - now_us()) - ZLRS_SLOT_TIMER_LAUNCH_LEAD_US;
 		hash_held = budget > 0 && zlrs_hash_acquire((uint32_t)budget);
@@ -669,10 +668,10 @@ static void run_slot(uint8_t slot, uint32_t next_slot_us)
 	/* Channel and public packet metadata let two MCU histories be correlated.
 	 * arg1: TX bit 31, PHY bits 24..27, sync slot bits 16..23, length bits 0..15. */
 	ZLRS_TRACE_EVENT("rf_packet", req->freq_hz,
-			(req->is_tx ? BIT(31) : 0U) |
-			((uint32_t)zlrs_mod_phy_id(&req->mod) << 24) |
-			((uint32_t)req->sync_slot << 16) |
-			(req->is_tx ? req->size : req->max_rx_size));
+			 (req->is_tx ? BIT(31) : 0U) |
+				 ((uint32_t)zlrs_mod_phy_id(&req->mod) << 24) |
+				 ((uint32_t)req->sync_slot << 16) |
+				 (req->is_tx ? req->size : req->max_rx_size));
 	ZLRS_TRACE_EVENT("rf_prepare_begin", slot_nominal_us, req->is_tx);
 	const int prepare_rc = zlrs_lr2021_prepare(req);
 	ZLRS_TRACE_EVENT("rf_prepare_end", slot_nominal_us, (uint32_t)prepare_rc);
@@ -733,15 +732,17 @@ static void run_slot(uint8_t slot, uint32_t next_slot_us)
 	    zlrs_link_get_info(link).accepted_rx_events != good_before) {
 		last_rx_any_ms = zlrs_slot_timer_now_ms();
 		/* Only Follower follows verified packets timestamped in the GPIO ISR. */
-		if (!role_leader && !phase_adj_set && result.status == 0 && result.size > 0U) {
-			/* Include SPI command transfer and synthesizer/PA startup in the phase origin. */
+		if (!is_leader() && !phase_adj_set && result.status == 0 && result.size > 0U) {
+			/* Include SPI command transfer and synthesizer/PA startup in the phase
+			 * origin. */
 			const uint32_t expected = slot_nominal_us + CONFIG_ZLRS_APP_TX_GUARD_US +
 						  ZLRS_LR2021_PHASE_STARTUP_US;
 			const int32_t err =
 				(int32_t)(result.done_us - result.airtime_us - expected);
 			const int32_t limit = (int32_t)frame_period_us / 16;
 
-			/* Once acquired, discard delayed IRQ outliers rather than move the clock. */
+			/* Once acquired, discard delayed IRQ outliers rather than move the clock.
+			 */
 			if (phase_samples >= 8U && !zlrs_link_get_info(link).radio_acquiring &&
 			    (err > limit || err < -limit)) {
 				return;
@@ -846,11 +847,11 @@ static void publish_state(bool force)
 
 	/* Only LED inputs wake UI immediately. Full metrics remain available at 1 Hz. */
 	if (!force && have_state && (uint32_t)(now_ms - published_ms) < REPORT_PERIOD_MS &&
-	    published.role == (role_leader ? ZLRS_ROLE_LEADER : ZLRS_ROLE_FOLLOWER) &&
+	    published.role == (zlrs_link_get_config(&link_data)->role) &&
 	    published.data_band == data_band && published.band_mode == band_mode &&
-	    published.data_phy == zlrs_mod_phy_id(&data_mod) && published.state == info.state &&
-	    published.link_lost == lost && published.fault == !radio_ready &&
-	    published.lq_percent == stats->lq_percent &&
+	    published.data_phy == zlrs_mod_phy_id(&zlrs_link_get_config(&link_data)->mod) &&
+	    published.state == info.state && published.link_lost == lost &&
+	    published.fault == !radio_ready && published.lq_percent == stats->lq_percent &&
 	    published.data_drop_bytes == stats->data_drop_bytes &&
 	    published.frame_period_us == frame_period_us) {
 		return;
@@ -874,7 +875,7 @@ int zlrs_rf_phy_request(unsigned int phy)
 	if (phy >= ZLRS_PHY_AUTO_COUNT) {
 		return -EINVAL;
 	}
-	if (band_mode != ZLRS_DATA_BAND_AUTO || !role_leader) {
+	if (band_mode != ZLRS_DATA_BAND_AUTO || !is_leader()) {
 		return -EPERM;
 	}
 	atomic_set(&phy_request, phy + 1U);
@@ -890,12 +891,9 @@ void zlrs_rf_diagnostics_capture(zlrs_rf_diagnostics_t *out)
 		.diagnostics = zlrs_link_get_diagnostics(&link_data),
 	};
 	out->rate = rate_last;
-	out->data_mod = data_mod;
 	out->region = region;
 	out->frame_period_us = frame_period_us;
-	out->slot_budget_us = slot_budget_us;
 	out->slot_prepare_us = slot_prepare_us;
-	out->data_mtu = data_mtu;
 	out->skipped_frames = skipped_frames;
 	out->missed_slots = missed_slots;
 	out->work = work;
@@ -964,11 +962,11 @@ zlrs_rf_status_t zlrs_rf_status(void)
 	zlrs_lr2021_diag_t radio;
 	zlrs_lr2021_diag(&radio);
 	zlrs_rf_status_t out = {
-		.role = role_leader ? ZLRS_ROLE_LEADER : ZLRS_ROLE_FOLLOWER,
-		.profile = active_profile,
+		.role = zlrs_link_get_config(&link_data)->role,
+		.profile = zlrs_link_get_config(&link_data)->profile,
 		.data_band = data_band,
 		.band_mode = band_mode,
-		.data_phy = zlrs_mod_phy_id(&data_mod),
+		.data_phy = zlrs_mod_phy_id(&zlrs_link_get_config(&link_data)->mod),
 		.band_acquiring = info.radio_acquiring,
 		.band_planned = info.band_plan.switch_frame != 0U,
 		.band_switches = band_switches,
@@ -1043,7 +1041,7 @@ int zlrs_rf_pair_start(void)
 			return random_error != 0 ? random_error : -EIO;
 		}
 		if (band_mode == ZLRS_DATA_BAND_AUTO &&
-		    (ZLRS_DATA_SUBG || data_phy != ZLRS_PHY_FLRC_2600)) {
+		    (ZLRS_DATA_SUBG || active_phy() != ZLRS_PHY_FLRC_2600)) {
 			change_band(ZLRS_DATA_BAND_24, ZLRS_PHY_FLRC_2600, false,
 				    zlrs_slot_timer_now_ms());
 		}
@@ -1071,7 +1069,8 @@ void zlrs_rf_credentials(void)
 		memset(device_id, 0, sizeof(device_id));
 	}
 	if (links_ready) {
-		build_links();
+		build_links(zlrs_link_get_config(&link_data)->role,
+			    zlrs_link_get_config(&link_data)->profile, active_phy());
 		load_identity();
 		ever_connected = false;
 	}
@@ -1164,8 +1163,8 @@ int zlrs_rf_init(void)
 	 * on a port nobody has open. */
 	/*
 	 * Debug image only: wait for the host to open the console port. Feed the watchdog while
-	 * waiting — it is armed before main() runs, so a wait longer than its timeout would reset the
-	 * device mid-boot (and look exactly like a broken image).
+	 * waiting — it is armed before main() runs, so a wait longer than its timeout would reset
+	 * the device mid-boot (and look exactly like a broken image).
 	 */
 #ifdef CONFIG_ZLRS_APP_DEBUG_BOOT_DELAY_MS
 	for (uint32_t waited = 0U; waited < (uint32_t)CONFIG_ZLRS_APP_DEBUG_BOOT_DELAY_MS;
@@ -1195,11 +1194,8 @@ int zlrs_rf_init(void)
 	 */
 	const zlrs_persist_settings_t *const settings = zlrs_persist_settings();
 	band_mode = settings->band;
-	data_phy = ZLRS_PHY_FLRC_2600;
 	data_band = band_mode == ZLRS_DATA_BAND_SUBG ? ZLRS_DATA_BAND_SUBG : ZLRS_DATA_BAND_24;
 	region_id = settings->region;
-	role_leader = settings->role == ZLRS_ROLE_LEADER;
-	active_profile = settings->profile;
 	LOG_INF("data band: %s", ZLRS_DATA_SUBG ? "sub-G" : "2.4G");
 	region = zlrs_region_get(region_id);
 	if (region == NULL) {
@@ -1209,11 +1205,13 @@ int zlrs_rf_init(void)
 	LOG_INF("region %s, supported regions 0x%02x", region->name,
 		(unsigned int)zlrs_region_supported_mask());
 
-	LOG_INF("role %s, profile P%u", role_leader ? "Leader" : "Follower",
-		(unsigned int)active_profile);
+	LOG_INF("role %s, profile P%u",
+		(settings->role == ZLRS_ROLE_LEADER) ? "Leader" : "Follower",
+		(unsigned int)settings->profile);
 
-	/* Bench switches: with these off the link is no longer production-shaped, so say so at boot */
-	if (active_profile != ZLRS_PROFILE_P1) {
+	/* Bench switches: with these off the link is no longer production-shaped, so say so at boot
+	 */
+	if (settings->profile != ZLRS_PROFILE_P1) {
 		LOG_WRN("isolation: security profile P0, frames carry no tag");
 	}
 	if (!IS_ENABLED(CONFIG_ZLRS_APP_FHSS)) {
@@ -1225,8 +1223,9 @@ int zlrs_rf_init(void)
 	}
 	power_reset(zlrs_slot_timer_now_ms());
 	zlrs_duty_init(&duty, region, 0U);
-	zlrs_band_policy_init(&band_policy, band_mode == ZLRS_DATA_BAND_AUTO, role_leader,
-			      ZLRS_DATA_SUBG, region->duty_window_ms, zlrs_slot_timer_now_ms());
+	zlrs_band_policy_init(&band_policy, band_mode == ZLRS_DATA_BAND_AUTO,
+			      (settings->role == ZLRS_ROLE_LEADER), ZLRS_DATA_SUBG,
+			      region->duty_window_ms, zlrs_slot_timer_now_ms());
 	band_switches = 0U;
 	/* The status LED comes up on its own thread and reads the state it renders: nothing to
 	 * init here (app/src/ui.c, rf.h) */
@@ -1237,8 +1236,7 @@ int zlrs_rf_init(void)
 		return rc;
 	}
 
-	plan_init();
-	build_links();
+	build_links(settings->role, settings->profile, ZLRS_PHY_FLRC_2600);
 	links_ready = true;
 	load_identity();
 
@@ -1256,8 +1254,8 @@ int zlrs_rf_init(void)
 
 void zlrs_rf_start(void)
 {
-	LOG_INF("entering data loop: %u Hz (%s)", (unsigned int)data_rate_hz,
-		role_leader ? "Leader" : "Follower");
+	LOG_INF("entering data loop: %u Hz (%s)", (unsigned int)(1000000U / frame_period_us),
+		is_leader() ? "Leader" : "Follower");
 	zlrs_slot_timer_start(frame_period_us * CONFIG_ZLRS_APP_PACING_SCALE, slot_prepare_us,
 			      zlrs_lr2021_wake);
 	consumed_frame = 0U;
@@ -1320,7 +1318,7 @@ void zlrs_rf_frame(void)
 	update_power(now_ms);
 	report(now_ms);
 
-	if (!role_leader) {
+	if (!is_leader()) {
 		const zlrs_link_cfg_t *const cfg = zlrs_link_get_config(&link_data);
 		const zlrs_link_info_t info = zlrs_link_get_info(&link_data);
 		const bool acquiring = info.radio_acquiring || info.state == ZLRS_STATE_SEARCHING;

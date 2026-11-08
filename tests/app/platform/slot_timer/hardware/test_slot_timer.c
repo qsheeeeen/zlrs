@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
-#include <zephyr/ztest.h>
-#include <zephyr/drivers/entropy.h>
 #include <stdalign.h>
+#include <zephyr/drivers/entropy.h>
+#include <zephyr/ztest.h>
 
+#include "platform/sha256.h"
 #include "platform/slot_timer.h"
-#include "proto/sha256.h"
 
 ZTEST(slot_timer, test_launch_deadline_guard)
 {

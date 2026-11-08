@@ -1,20 +1,18 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+#include "lifecycle.h"
+#include "mgmt.h"
+#include "persist.h"
+#include "rf.h"
 #include <errno.h>
 #include <string.h>
+#include <zcbor_decode.h>
+#include <zcbor_encode.h>
 #include <zephyr/kernel.h>
-#include <zephyr/ztest.h>
 #include <zephyr/kvss/nvs.h>
 #include <zephyr/mgmt/mcumgr/mgmt/callbacks.h>
 #include <zephyr/mgmt/mcumgr/mgmt/mgmt.h>
 #include <zephyr/mgmt/mcumgr/smp/smp.h>
-#include <zcbor_decode.h>
-#include <zcbor_encode.h>
-#include <zephyr/mgmt/mcumgr/grp/fs_mgmt/fs_mgmt_callbacks.h>
-#include <zephyr/mgmt/mcumgr/grp/os_mgmt/os_mgmt_callbacks.h>
-#include "mgmt.h"
-#include "boot.h"
-#include "persist.h"
-#include "rf.h"
+#include <zephyr/ztest.h>
 static const zlrs_rf_status_t initial_rf = {
 	.role = ZLRS_ROLE_LEADER,
 	.profile = ZLRS_PROFILE_P1,
@@ -41,8 +39,9 @@ static bool fail_write;
 static unsigned int watchdog_disarms;
 static K_SEM_DEFINE(rollback_checked, 0, 1);
 
-void zlrs_boot_check_rollback(bool fault)
+void zlrs_lifecycle_check_rollback(bool fault, uint32_t timeout_ms)
 {
+	ARG_UNUSED(timeout_ms);
 	zassert_false(fault);
 	k_sem_give(&rollback_checked);
 }
@@ -194,9 +193,11 @@ ZTEST(mgmt, test_status_wire_preserves_names_and_values)
 	zassert_true(zcbor_tstr_expect_lit(zs, "hardware_ms") && zcbor_uint32_expect(zs, 17));
 	int32_t cpu_load = 0;
 	uint64_t cpu_window = 0;
-	zassert_true(zcbor_tstr_expect_lit(zs, "cpu_load_permille") && zcbor_int32_decode(zs, &cpu_load));
+	zassert_true(zcbor_tstr_expect_lit(zs, "cpu_load_permille") &&
+		     zcbor_int32_decode(zs, &cpu_load));
 	zassert_true(cpu_load >= 0 && cpu_load <= 1000);
-	zassert_true(zcbor_tstr_expect_lit(zs, "cpu_window_ms") && zcbor_uint64_decode(zs, &cpu_window));
+	zassert_true(zcbor_tstr_expect_lit(zs, "cpu_window_ms") &&
+		     zcbor_uint64_decode(zs, &cpu_window));
 	zassert_true(cpu_window <= k_uptime_get());
 	zassert_true(zcbor_tstr_expect_lit(zs, "status") && zcbor_map_start_decode(zs));
 
@@ -296,7 +297,8 @@ ZTEST(mgmt, test_invalid_and_failed_writes_do_not_apply_credentials)
 	memset(malformed_key, '0', sizeof(malformed_key));
 	malformed_key[sizeof(malformed_key) - 1] = 'g';
 	zassert_equal(zlrs_mgmt_request(ZLRS_MGMT_CMD_SET_KEY_HEX, malformed_key,
-				      sizeof(malformed_key), NULL), -EINVAL);
+					sizeof(malformed_key), NULL),
+		      -EINVAL);
 	zassert_equal(credential_applies, 0);
 	const uint8_t key[] = "4242424242424242424242424242424242424242424242424242424242424242";
 	fail_write = true;

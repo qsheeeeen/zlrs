@@ -1,5 +1,6 @@
 /*
- * Link layer: one instance per link, running the state machine and superframe slots (doc/07-protocol.md).
+ * Link layer: one instance per link, running the state machine and superframe slots
+ * (doc/07-protocol.md).
  *
  * Each superframe: zlrs_link_slot() hands out a transaction, the caller runs it and
  * zlrs_link_complete() closes it; zlrs_link_tick() handles timeouts and state changes.
@@ -9,15 +10,15 @@
 
 #pragma once
 
-#include <stdbool.h>
 #include <stdalign.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "link/radio.h"
-#include "proto/limits.h"
 #include "proto/crypto.h"
 #include "proto/fhss.h"
 #include "proto/frame.h"
+#include "proto/limits.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -61,10 +62,10 @@ typedef struct {
 	int8_t pair_tx_power_dbm; /* Dedicated setpoint for every pairing transmission. */
 	uint16_t rx_timeout_ms;   /* one receive window */
 	/*
-	 * Receive window while pairing or searching (0 = rx_timeout_ms). Acquisition happens before the
-	 * two ends share a slot phase, so it needs a longer window than steady state: a short window
-	 * catches the peer only by luck, and a handshake that depends on luck is what keeps two boards
-	 * that are otherwise fine from ever pairing.
+	 * Receive window while pairing or searching (0 = rx_timeout_ms). Acquisition happens before
+	 * the two ends share a slot phase, so it needs a longer window than steady state: a short
+	 * window catches the peer only by luck, and a handshake that depends on luck is what keeps
+	 * two boards that are otherwise fine from ever pairing.
 	 */
 	uint16_t acq_timeout_ms;
 	uint16_t sync_period_ms;  /* SYNC period while SEARCHING */
@@ -140,7 +141,8 @@ typedef struct {
 	uint32_t sess_cfm_tx;       /* Leader: confirmations sent */
 	uint32_t hop_resync;        /* hop-index corrections received through SYNC */
 	uint32_t hop_advances;      /* times this link moved its hop index by itself */
-	/* Pairing handshake frames sent and received, per message type: this handshake loses frames */
+	/* Pairing handshake frames sent and received, per message type: this handshake loses frames
+	 */
 	uint32_t pair_req_tx;
 	uint32_t pair_resp_tx;
 	uint32_t pair_cfm_tx;
@@ -153,7 +155,8 @@ typedef struct {
 	int16_t rssi_min; /* weakest and strongest frame heard: the bench looks at the spread */
 	int16_t rssi_max;
 	int8_t last_snr; /* the radio stack cannot provide it under FLRC, see doc/04-radio.md */
-	/* Uplink quality: frames really received in the last window vs. what the sequence predicts */
+	/* Uplink quality: frames really received in the last window vs. what the sequence predicts
+	 */
 	uint8_t lq_percent;     /* 127 until the first complete window. */
 	uint32_t lq_generation; /* RAM only: completed windows since session/radio reset. */
 	uint16_t lq_rx;
@@ -235,10 +238,10 @@ typedef struct {
 	uint8_t session_key_in[ZLRS_KEY_LEN];
 	bool session_valid;
 	/*
-	 * Session setup mirrors pairing (doc/07-protocol.md): the initiator offers nonce_leader, the
-	 * responder answers with nonce_follower, both feed the KDF, and the last message carries nonce_follower
-	 * to prove the peer derived the same key. Follower only adopts the session after that proof,
-	 * so replaying an old SYNC yields no old session key.
+	 * Session setup mirrors pairing (doc/07-protocol.md): the initiator offers nonce_leader,
+	 * the responder answers with nonce_follower, both feed the KDF, and the last message
+	 * carries nonce_follower to prove the peer derived the same key. Follower only adopts the
+	 * session after that proof, so replaying an old SYNC yields no old session key.
 	 */
 	bool session_pending;         /* Leader waits for response; Follower waits for confirm */
 	uint32_t sess_rx_seq;         /* Candidate handshake's receive baseline. */
@@ -263,15 +266,15 @@ typedef struct {
 	uint32_t last_rx_frame; /* Authenticated DATA hop epoch, for sparse-SYNC reacquisition. */
 	uint32_t last_sync_ms;
 	uint32_t last_pair_tx_ms;
-	uint32_t
-		last_pair_rx_ms; /* last PAIR_RESP: tells a repeated answer from a silent responder */
-	bool pair_cfm_pending;   /* Leader got PAIR_RESP: PAIR_CFM due in slot A */
-	uint8_t pair_cfm_sent;   /* PAIR_CFM of this handshake already sent */
-	bool pair_wait_cfm;      /* Follower answered PAIR_RESP, waiting for PAIR_CFM */
-	bool pair_request_valid; /* A responder request exists, including nonce_a == 0. */
-	bool pair_nonce_valid;   /* A local pairing nonce exists independently of pending state. */
-	uint32_t pair_rx_seq;    /* Pairing exchange's receive baseline. */
-	uint32_t pair_tx_seq;    /* Pairing attempts, including delayed confirms after pairing. */
+	uint32_t last_pair_rx_ms; /* last PAIR_RESP: tells a repeated answer from a silent responder
+				   */
+	bool pair_cfm_pending;    /* Leader got PAIR_RESP: PAIR_CFM due in slot A */
+	uint8_t pair_cfm_sent;    /* PAIR_CFM of this handshake already sent */
+	bool pair_wait_cfm;       /* Follower answered PAIR_RESP, waiting for PAIR_CFM */
+	bool pair_request_valid;  /* A responder request exists, including nonce_a == 0. */
+	bool pair_nonce_valid;    /* A local pairing nonce exists independently of pending state. */
+	uint32_t pair_rx_seq;     /* Pairing exchange's receive baseline. */
+	uint32_t pair_tx_seq;     /* Pairing attempts, including delayed confirms after pairing. */
 
 	/* sequence numbers and hopping */
 	uint32_t tx_seq; /* Next attempt, starting at one; never wraps. */
@@ -295,13 +298,11 @@ typedef struct {
 	uint16_t tx_pool_mtu;
 	uint16_t tx_claim_len;
 	uint16_t tx_claim_index;
-	uint16_t queue_head;       /* Packet index, not a byte offset. */
-	uint16_t queue_count;      /* User bytes, including the packet awaiting ACK. */
-	uint16_t pending_data_len; /* Best-effort bytes borrowed until successful TX completion. */
+	uint16_t queue_head;  /* Packet index, not a byte offset. */
+	uint16_t queue_count; /* User bytes, including the packet awaiting ACK. */
 
 	/* ARQ sender: one packet retained until the peer ACK bit changes. */
 	uint8_t arq_seq;
-	uint16_t arq_len;
 	uint32_t arq_first_sent_ms;
 	/* Retransmissions preserve the data sequence and payload. */
 	uint8_t arq_used;
@@ -327,7 +328,6 @@ typedef struct {
 
 	/* transaction to submit next */
 	zlrs_radio_req_t req;
-	bool req_is_tx;
 	bool req_started;
 	bool req_pending;
 	/* Statistics snapshot belongs to the submitted packet, including staged DATA. */

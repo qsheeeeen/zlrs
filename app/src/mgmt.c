@@ -9,31 +9,31 @@
 #include <zephyr/app_version.h>
 #include <zephyr/mgmt/mcumgr/grp/os_mgmt/os_mgmt.h>
 #endif
+#include "lifecycle.h"
+#include "persist.h"
+#include "platform/watchdog.h"
+#include "proto/crypto.h"
+#include "rf.h"
+#include "serial.h"
+#include "trace.h"
+#include <zcbor_decode.h>
+#include <zcbor_encode.h>
+
+#include <mgmt/mcumgr/util/zcbor_bulk.h>
+
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/logging/log.h>
-#include <zephyr/logging/log_ctrl.h>
 #include <zephyr/logging/log_backend.h>
+#include <zephyr/logging/log_ctrl.h>
+#include <zephyr/mgmt/mcumgr/mgmt/callbacks.h>
+#include <zephyr/mgmt/mcumgr/mgmt/handlers.h>
+#include <zephyr/mgmt/mcumgr/mgmt/mgmt.h>
+#include <zephyr/mgmt/mcumgr/smp/smp.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/cpu_load.h>
 #include <zephyr/sys/util.h>
-#include <zephyr/mgmt/mcumgr/mgmt/mgmt.h>
-#include <zephyr/mgmt/mcumgr/mgmt/handlers.h>
-#include <zephyr/mgmt/mcumgr/mgmt/callbacks.h>
-#include <zephyr/mgmt/mcumgr/smp/smp.h>
-#include <zephyr/mgmt/mcumgr/grp/fs_mgmt/fs_mgmt_callbacks.h>
-#include <zephyr/mgmt/mcumgr/grp/os_mgmt/os_mgmt_callbacks.h>
-#include <zcbor_decode.h>
-#include <zcbor_encode.h>
-#include <mgmt/mcumgr/util/zcbor_bulk.h>
-#include "persist.h"
-#include "boot.h"
-#include "rf.h"
-#include "serial.h"
-#include "trace.h"
-#include "platform/watchdog.h"
-#include "proto/crypto.h"
 #if defined(CONFIG_ZLRS_APP_DEBUG)
 #include "diagnostics.h"
 #endif
@@ -307,7 +307,7 @@ int zlrs_mgmt_run(void)
 	while (!exit_requested && (uint32_t)(k_uptime_get_32() - atomic_get(&last_activity)) <
 					  CONFIG_ZLRS_APP_MGMT_TIMEOUT_S * 1000U) {
 		/* A maintenance session cannot extend an unconfirmed image's boot deadline. */
-		zlrs_boot_check_rollback(false);
+		zlrs_lifecycle_check_rollback(false, CONFIG_ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS);
 		zlrs_trace_process(true);
 		publish_mode();
 		zlrs_serial_publish_state();

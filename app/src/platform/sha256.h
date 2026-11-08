@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -17,3 +18,8 @@
  * return bytes that the protocol could accept as an authentication tag or key. */
 void zlrs_sha256(const uint8_t *first, size_t first_len, const uint8_t *second, size_t second_len,
 		 uint8_t out[ZLRS_SHA256_LEN]);
+
+/* Reserve the hash peripheral for the current RF operation, including nested
+ * protocol digests. The caller releases it before any radio wait. */
+bool zlrs_hash_acquire(uint32_t budget_us);
+void zlrs_hash_release(void);

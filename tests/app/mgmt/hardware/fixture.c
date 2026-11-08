@@ -1,13 +1,14 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /* Never confirm this image. Real commands/NVS/RF/USB run; recovery restores the NVS snapshot
- * and MCUboot restores the original firmware. Only confirmation and one write are fault-injected. */
+ * and MCUboot restores the original firmware. Only confirmation and one write are fault-injected.
+ */
+#include <bootutil/bootutil_public.h>
 #include <errno.h>
 #include <stdbool.h>
-#include <zephyr/init.h>
-#include <zephyr/settings/settings.h>
-#include <zephyr/retention/bootmode.h>
 #include <string.h>
-#include <bootutil/bootutil_public.h>
+#include <zephyr/init.h>
+#include <zephyr/retention/bootmode.h>
+#include <zephyr/settings/settings.h>
 #include <zephyr/storage/flash_map.h>
 
 static uint8_t backup[PARTITION_SIZE(storage_partition)];
@@ -27,9 +28,11 @@ static int snapshot(void)
 
 SYS_INIT(snapshot, APPLICATION, 0);
 
-void __wrap_zlrs_boot_check_rollback(bool fault)
+void __wrap_zlrs_lifecycle_check_rollback(bool fault, uint32_t timeout_ms)
 {
-	ARG_UNUSED(fault); /* Keep the test image unconfirmed and reachable until restoration. */
+	ARG_UNUSED(fault);
+	ARG_UNUSED(
+		timeout_ms); /* Keep the test image unconfirmed and reachable until restoration. */
 }
 
 int __wrap_boot_set_next(const struct flash_area *area, bool active, bool confirm)

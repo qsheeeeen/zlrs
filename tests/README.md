@@ -8,7 +8,7 @@ fixtures and their runners live in its `hardware/` subdirectory.
 | Location | Responsibility | Executor |
 | --- | --- | --- |
 | `tools/` | Commands, wire decoding, update decisions and device selection | Python unittest |
-| `app/proto`, `app/link`, `app/region`, `app/band`, `app/power` | Protocol vectors, paired-link scenarios and policy | Aggregate Zephyr application in `app/unit` |
+| `app/proto`, `app/link`, `app/region`, `app/band`, `app/power`, `app/lifecycle` | Protocol vectors, paired-link scenarios and policy | Aggregate Zephyr application in `app/unit` |
 | `app/persist`, `app/mgmt`, `app/rf`, `app/serial`, `app/ui`, `app/main`, `app/trace` | Component integration and lifecycle | Twister on `native_sim/native/64` |
 | `app/*/hardware` | Peripheral behavior, physical timing, RF/DATA and rollback | Explicit board runners |
 | `app/unit/hardware` | Target component acceptance, including driver tests | Zephyr Ztest on the board |
@@ -16,6 +16,7 @@ fixtures and their runners live in its `hardware/` subdirectory.
 | `app/link/bench` | Protocol and DATA cost measurements | Zephyr native application, JSON measurements |
 
 All C/C++ firmware, protocol scenarios and benchmarks build through Zephyr.
+Board fixtures share MCUboot configuration through `app/support/sysbuild.cmake`.
 Application protocol sources and their private headers live together under
 `app/src/link`, `app/src/proto` and `app/src/region` and compile into the `app`
 target. Native protocol tests use two real link instances with controlled radio,

@@ -18,7 +18,7 @@ target_sources(app PRIVATE
   "${zlrs_root}/tests/app/link/hardware/test_data.c"
   "${zlrs_root}/tests/app/platform/lr2021/hardware/test_radio.c"
   "${zlrs_root}/tests/app/rf/hardware/test_phy_pin.c"
-  "${zlrs_root}/tests/app/pairing_save/hardware/test_pairing_save_fault.c"
+  "${zlrs_root}/tests/app/lifecycle/hardware/test_pairing_save_fault.c"
 )
 target_include_directories(app PRIVATE
   .

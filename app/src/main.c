@@ -6,16 +6,15 @@
 
 #include <errno.h>
 
-#include "boot.h"
-#include "persist.h"
-#include "pairing_save.h"
-#include "serial.h"
+#include "lifecycle.h"
+#include "log.h"
 #include "mgmt.h"
+#include "persist.h"
 #include "platform/watchdog.h"
 #include "rf.h"
-#include "ui.h"
+#include "serial.h"
 #include "trace.h"
-#include "log.h"
+#include "ui.h"
 
 LOG_MODULE_REGISTER(zlrs_main, CONFIG_APP_LOG_LEVEL);
 
@@ -83,7 +82,8 @@ int main(void)
 		zlrs_watchdog_feed();
 		zlrs_rf_publish_state();
 		zlrs_serial_publish_state();
-		zlrs_boot_check_rollback(!rf_ready);
+		zlrs_lifecycle_check_rollback(!rf_ready,
+					      CONFIG_ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS);
 		zlrs_trace_process(false);
 		if (zlrs_mgmt_process_idle()) {
 			/* Explicit management commands supersede a waiting button request. */

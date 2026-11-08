@@ -13,13 +13,13 @@ target_sources(app PRIVATE
   "${zlrs_root}/tests/app/proto/test_fuzz.cpp"
   "${zlrs_root}/tests/app/link/test_link.cpp"
   "${zlrs_root}/tests/app/proto/test_mod.cpp"
-  "${zlrs_root}/tests/app/pairing_save/test_pairing_save.cpp"
+  "${zlrs_root}/tests/app/lifecycle/test_pairing_save.cpp"
   "${zlrs_root}/tests/app/power/test_power.cpp"
   "${zlrs_root}/tests/app/platform/lr2021/test_helpers.cpp"
   "${zlrs_root}/tests/app/region/test_region.cpp"
   "${zlrs_root}/app/src/power.c"
   "${zlrs_root}/app/src/band.c"
-  "${zlrs_root}/app/src/pairing_save.c"
+  "${zlrs_root}/app/src/lifecycle.c"
   "${zlrs_root}/tests/app/support/sha256_soft.c"
 )
 target_include_directories(app PRIVATE

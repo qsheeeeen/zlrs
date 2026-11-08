@@ -40,12 +40,9 @@ typedef struct {
 typedef struct {
 	zlrs_rf_link_snapshot_t link;
 	zlrs_rf_rate_sample_t rate;
-	zlrs_mod_cfg_t data_mod;
 	const zlrs_region_t *region; /* immutable region table */
 	uint32_t frame_period_us;
-	uint32_t slot_budget_us;
 	uint32_t slot_prepare_us;
-	uint16_t data_mtu;
 	uint32_t skipped_frames;
 	uint32_t missed_slots;
 	zlrs_rf_work_t work;

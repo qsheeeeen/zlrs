@@ -30,6 +30,18 @@ preserving that context's session and delivery progress.
 | Application protocol | Wire encoding, pairing, sessions, FHSS, ARQ and replay | Zephyr application modules with explicit instances, time and transaction results |
 | Hardware adaptation | SPI, FIFO, IRQ timestamps, timer, crypto, entropy and sensors | Return hardware results without owning protocol state |
 
+Application lifecycle helpers live in `app/src/lifecycle.c`: image-confirmation
+rollback and deferred pairing writes share the application-loop owner. The main
+loop and management service use that interface. DATA admission, packet storage,
+ARQ and packet retirement live together in `app/src/link/data.c`; packet bytes
+and payload length have one owner. A submitted request retains its own immutable
+metadata until completion.
+
+RF builds the adopted link configuration once per modem change. Role, profile,
+modulation, MTU and resynchronization interval are read from that configuration;
+RF retains the slot clock and preparation deadlines it owns. SHA digest and
+peripheral reservation operations share `app/src/platform/sha256.h`.
+
 Board descriptions define peripheral availability, electrical assignments and the
 `zlrs,radio` node’s `regions` array. The region module owns the predefined plans
 and restricts lookup to this compiled array. Persistence and RF use that same

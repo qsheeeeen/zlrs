@@ -6,3 +6,7 @@ config ZLRS_APP_MGMT_TIMEOUT_S
 module = APP
 module-str = app
 source "subsys/logging/Kconfig.template.log_config"
+
+config ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS
+	int
+	default 1000

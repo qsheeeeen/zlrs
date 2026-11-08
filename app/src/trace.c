@@ -6,28 +6,30 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <tracing_backend.h>
+#include <tracing_core.h>
+#include <zcbor_decode.h>
+#include <zcbor_encode.h>
+
+#include <mgmt/mcumgr/util/zcbor_bulk.h>
+
 #include <zephyr/app_version.h>
 #include <zephyr/crypto/crypto.h>
 #include <zephyr/data/json.h>
 #include <zephyr/fs/fs.h>
 #include <zephyr/fs/littlefs.h>
-#include <zephyr/mgmt/mcumgr/mgmt/callbacks.h>
 #include <zephyr/mgmt/mcumgr/grp/fs_mgmt/fs_mgmt.h>
+#include <zephyr/mgmt/mcumgr/mgmt/callbacks.h>
 #include <zephyr/mgmt/mcumgr/mgmt/mgmt.h>
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/timing/timing.h>
 #include <zephyr/version.h>
-#include <mgmt/mcumgr/util/zcbor_bulk.h>
-#include <zcbor_decode.h>
-#include <zcbor_encode.h>
-#include <tracing_backend.h>
-#include <tracing_core.h>
 
-#include "rf.h"
-#include "region/region.h"
+#include "platform/sha256.h"
 #include "platform/watchdog.h"
-#include "proto/sha256.h"
+#include "region/region.h"
+#include "rf.h"
 
 BUILD_ASSERT(!IS_ENABLED(CONFIG_SMP));
 BUILD_ASSERT(IS_ENABLED(CONFIG_TRACING_SYNC) && IS_ENABLED(CONFIG_TRACING_BACKEND_RAM));
@@ -433,8 +435,7 @@ static int save_capture(void)
 		.build = APP_VERSION_STRING
 		"-" STRINGIFY(APP_BUILD_VERSION),
 			      .zephyr = KERNEL_VERSION_STRING
-			      "-" STRINGIFY(BUILD_VERSION),
-					    .regions = zlrs_region_supported_mask(),
+			      "-" STRINGIFY(BUILD_VERSION), .regions = zlrs_region_supported_mask(),
 			      };
 
 	rc = json_obj_encode_buf(artifact_fields, ARRAY_SIZE(artifact_fields), &saved, json,

@@ -71,7 +71,8 @@ void link_set_state(zlrs_link_t *link, zlrs_link_state_t state, uint32_t now_ms)
 	/* Leader is the authority: every return to SEARCHING rolls a new session nonce. */
 	if (state == ZLRS_STATE_SEARCHING && link->cfg.role == ZLRS_ROLE_LEADER) {
 		link_roll_session(link, now_ms);
-		/* Send a SYNC right away instead of waiting a full period, to shorten the reconnect */
+		/* Send a SYNC right away instead of waiting a full period, to shorten the reconnect
+		 */
 		link->last_sync_ms = (uint32_t)(now_ms - link->cfg.sync_period_ms);
 	}
 }
@@ -154,7 +155,6 @@ static const zlrs_radio_req_t *make_req(zlrs_link_t *link, bool is_tx, uint8_t *
 	link->req.max_rx_size = is_tx ? 0U : ZLRS_FRAME_MAX_LEN;
 	link->req.timeout_ms = timeout_ms;
 	link->req.buf = buf;
-	link->req_is_tx = is_tx;
 	/* The encoder has already validated TX shape. Snapshot the actual request buffer,
 	 * which may be the staged packet rather than tx_buf, without decoding/copying it. */
 	link->req_is_data = is_tx && (buf[0] == ZLRS_PKT_DATA_L2F || buf[0] == ZLRS_PKT_DATA_F2L);
@@ -226,9 +226,9 @@ static int handle_control_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 	if (frame.type == ZLRS_PKT_PAIR_REQ || frame.type == ZLRS_PKT_PAIR_RESP ||
 	    frame.type == ZLRS_PKT_PAIR_CFM) {
 		/*
-		 * SEARCHING as well: the responder repeats its answer until the confirmation arrives, and
-		 * an initiator that already moved on has to be able to answer that repeat with another
-		 * confirmation (the handshake has no other acknowledgement).
+		 * SEARCHING as well: the responder repeats its answer until the confirmation
+		 * arrives, and an initiator that already moved on has to be able to answer that
+		 * repeat with another confirmation (the handshake has no other acknowledgement).
 		 */
 		if (link->state != ZLRS_STATE_PAIRING && link->state != ZLRS_STATE_SEARCHING) {
 			return -1;
@@ -669,7 +669,7 @@ void zlrs_link_skip_slot(zlrs_link_t *link, uint8_t slot)
 
 void zlrs_link_tx_started(zlrs_link_t *link, uint32_t now_ms)
 {
-	if (!link->req_pending || !link->req_is_tx || link->req_started) {
+	if (!link->req_pending || !link->req.is_tx || link->req_started) {
 		return;
 	}
 	link->req_started = true;
@@ -697,7 +697,7 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 	if (status == ZLRS_RADIO_OK) {
 		zlrs_link_tx_started(link, now_ms);
 	}
-	const bool was_tx = link->req_is_tx;
+	const bool was_tx = link->req.is_tx;
 	const uint8_t slot = (link->slot < ZLRS_SLOT_COUNT) ? link->slot : 0U;
 
 	link->req_pending = false;
@@ -708,10 +708,7 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 		if (was_tx) {
 			link->stats.tx_cancelled_frames += !link->req_started;
 			link->stats.tx_failed_frames += link->req_started;
-			link->pending_data_len = 0U;
-			if (link->req_is_data && link->req_arq && link->req_data_len != 0U) {
-				link->arq_local_failed = true;
-			}
+			link_complete_data(link, false, now_ms);
 		}
 		return;
 	}
@@ -720,24 +717,7 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 		link->stats.slot_tx[slot]++;
 		link->stats.tx_frames++;
 		link->stats.tx_bytes = (uint32_t)(link->stats.tx_bytes + link->req.size);
-		if (link->req_is_data) {
-			link->arq_ack_pending = false;
-			link->sess_ack_due = false;
-			link->last_feedback_tx_ms = now_ms;
-			const uint16_t data_len = link->req_data_len;
-			if (data_len == 0U) {
-				link->stats.tx_ack_only_frames++;
-			} else {
-				link->stats.tx_data_frames++;
-				link->stats.tx_data_ack_frames += link->req_arq;
-				link->stats.tx_data_bytes += data_len;
-				link->stats.tx_full_data_frames += data_len == link->req_data_mtu;
-			}
-		}
-		if (link->pending_data_len != 0U) {
-			link_release_data(link);
-		}
-		link->pending_data_len = 0U;
+		link_complete_data(link, true, now_ms);
 		return;
 	}
 
@@ -763,7 +743,7 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 void zlrs_link_rx(zlrs_link_t *link, const uint8_t *buf, uint16_t len, int16_t rssi, int8_t snr,
 		  uint32_t now_ms)
 {
-	if (buf == NULL || len == 0U || (link->req_pending && link->req_is_tx)) {
+	if (buf == NULL || len == 0U || (link->req_pending && link->req.is_tx)) {
 		return;
 	}
 	if (len > sizeof(link->rx_buf)) {
@@ -798,10 +778,10 @@ void zlrs_link_tick(zlrs_link_t *link, uint32_t now_ms)
 
 	case ZLRS_STATE_CONNECTED:
 		/*
-		 * Grace after entering CONNECTED: the peer may still be leaving SEARCHING (it needs to
-		 * hear one of our confirms), and its first data frame cannot arrive until it does. Running
-		 * the peer-loss check inside that window would roll a new session and restart the
-		 * handshake before it ever had a chance to finish.
+		 * Grace after entering CONNECTED: the peer may still be leaving SEARCHING (it needs
+		 * to hear one of our confirms), and its first data frame cannot arrive until it
+		 * does. Running the peer-loss check inside that window would roll a new session and
+		 * restart the handshake before it ever had a chance to finish.
 		 */
 		if ((uint32_t)(now_ms - link->state_ms) <= ZLRS_SESS_CONFIRM_MS) {
 			break;

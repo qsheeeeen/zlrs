@@ -15,4 +15,4 @@ target_sources(app PRIVATE
   "${zlrs_root}/tests/app/mgmt/hardware/fixture.c"
 )
 target_link_options(app PUBLIC "-Wl,--wrap=boot_set_next"
- "-Wl,--wrap=zlrs_boot_check_rollback" "-Wl,--wrap=bootmode_set" "-Wl,--wrap=settings_save_one")
+ "-Wl,--wrap=zlrs_lifecycle_check_rollback" "-Wl,--wrap=bootmode_set" "-Wl,--wrap=settings_save_one")

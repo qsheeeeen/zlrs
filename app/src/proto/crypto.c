@@ -6,7 +6,7 @@
  */
 
 #include "proto/crypto.h"
-#include "sha256.h"
+#include "platform/sha256.h"
 
 #include <stdalign.h>
 #include <string.h>

@@ -444,7 +444,7 @@ def add_commands(sub, parents=()):
     key.add_argument("hex_key", help="64 hex characters")
     baud = command("set-baud", help="set the data UART baud rate", description="set the data UART baud rate")
     baud.add_argument("data_baud", type=bounded_int(9600, 4000000), help="data UART baud rate")
-    region = command("set-region", help="select a region compatible with the HF/LF board", description="select a region compatible with the HF/LF board")
+    region = command("set-region", help="select a region from the board’s regions set", description="select a region from the board’s regions set")
     region.add_argument("region", type=int, choices=[0, 1, 2, 3],
                         help="0=FCC915 1=EU868 2=CN470 3=CN433")
     role = command("set-role", help="select the Leader or Follower role",

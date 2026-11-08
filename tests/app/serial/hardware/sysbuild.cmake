@@ -1,2 +1,2 @@
 # SPDX-License-Identifier: Apache-2.0
-include("${CMAKE_CURRENT_LIST_DIR}/../../unit/hardware/sysbuild.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/../../support/sysbuild.cmake")

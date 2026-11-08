@@ -8,11 +8,11 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "proto/crypto.h"
-#include "platform/hash.h"
-#include <zephyr/crypto/crypto.h>
-#include "test_support.h"
 #include "crypto_vectors.h"
+#include "platform/sha256.h"
+#include "proto/crypto.h"
+#include "test_support.h"
+#include <zephyr/crypto/crypto.h>
 
 #define SHA256_LEN 32U
 

@@ -6,8 +6,7 @@ get_filename_component(zlrs_root "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE
 target_sources(app PRIVATE
   "${zlrs_root}/tests/app/main/test_application.c"
   "${zlrs_root}/app/src/main.c"
-  "${zlrs_root}/app/src/pairing_save.c"
-  "${zlrs_root}/app/src/boot.c"
+  "${zlrs_root}/app/src/lifecycle.c"
 )
 set_source_files_properties("${zlrs_root}/app/src/main.c"
   PROPERTIES COMPILE_DEFINITIONS "main=zlrs_application_main")

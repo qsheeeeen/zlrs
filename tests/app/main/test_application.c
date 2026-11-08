@@ -6,12 +6,12 @@
 #include <zephyr/sys/reboot.h>
 #include <zephyr/ztest.h>
 
-#include "boot.h"
-#include "persist.h"
-#include "serial.h"
+#include "lifecycle.h"
 #include "mgmt.h"
+#include "persist.h"
 #include "platform/watchdog.h"
 #include "rf.h"
+#include "serial.h"
 #include "ui.h"
 
 int zlrs_application_main(void);
@@ -78,10 +78,10 @@ static void owner(void *arg, void *unused1, void *unused2)
 	ARG_UNUSED(unused2);
 	switch (action) {
 	case CHECK_FAULT_ROLLBACK:
-		zlrs_boot_check_rollback(true);
+		zlrs_lifecycle_check_rollback(true, CONFIG_ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS);
 		break;
 	case CHECK_TIMEOUT_ROLLBACK:
-		zlrs_boot_check_rollback(false);
+		zlrs_lifecycle_check_rollback(false, CONFIG_ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS);
 		break;
 	case RUN_APPLICATION:
 		(void)zlrs_application_main();
@@ -275,7 +275,7 @@ ZTEST(application, test_lifecycle)
 	confirm_result = 0;
 	zassert_equal(boot_write_img_confirmed(), 0);
 	zassert_equal(confirm_writes, 2U);
-	zlrs_boot_check_rollback(true);
+	zlrs_lifecycle_check_rollback(true, CONFIG_ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS);
 	zassert_equal(reboots, 2U, "confirmed firmware must remain reachable on an RF fault");
 
 	const struct zlrs_input input = {.button_holds = 1U};

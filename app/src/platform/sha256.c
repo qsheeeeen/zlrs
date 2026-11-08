@@ -10,9 +10,8 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
-#include "proto/sha256.h"
+#include "platform/sha256.h"
 #include "trace.h"
-#include "platform/hash.h"
 
 BUILD_ASSERT(DT_NODE_HAS_STATUS(DT_NODELABEL(sha256), okay),
 	     "ZLRS needs an enabled SHA-256 peripheral");

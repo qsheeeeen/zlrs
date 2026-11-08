@@ -1,15 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /* Two-node DATA-only simulation: pairing, sessions, duplex ARQ and backpressure. */
-#include <zephyr/ztest.h>
-#include <initializer_list>
-#include <cstdint>
-#include <cstdlib>
-#include <cstdio>
-#include <tuple>
-#include <memory>
-#include <vector>
-#include <string.h>
 #include "link/link.h"
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <initializer_list>
+#include <memory>
+#include <string.h>
+#include <tuple>
+#include <vector>
+#include <zephyr/ztest.h>
 extern "C" {
 #include "band.h"
 #include "power.h"
@@ -565,7 +565,6 @@ ZTEST(Link, test_ReplayAndCounters)
 	zexpect_equal(zlrs_link_write(leader, &byte, 1U), 1U);
 	leader->arq_used = 1U;
 	leader->arq_launched = true;
-	leader->arq_len = 1U;
 	leader->arq_seq = 0U;
 	leader->last_rx_seq = 32770U;
 	zlrs_frame_t frame = {.type = ZLRS_PKT_DATA_F2L,
@@ -637,7 +636,6 @@ ZTEST(Link, test_ReplayAndCounters)
 	zexpect_true(follower->last_rx_seq == baseline && follower->last_rx_ms == last_ms);
 	zexpect_equal(zlrs_link_write(follower, &byte, 1U), 1U);
 	follower->arq_used = 1U;
-	follower->arq_len = 1U;
 	follower->arq_seq = 9U;
 	frame.seq = baseline + 1U;
 	frame.body.sess_cfm.nonce_follower = follower->sess_nonce_follower;
@@ -1670,7 +1668,8 @@ ZTEST_P(StreamFaults, test_DuplexStreamMatchesReferenceUnderFaultSequences)
 				zassert_true((sender.queue_head) < (sender.tx_packet_limit),
 					     "seed=%u step=%u", seed, step);
 			}
-			zassert_true((sender.arq_used ? sender.arq_len : 0) <= (sender.queue_count),
+			zassert_true((sender.arq_used ? sender.tx_packets[sender.queue_head].len
+						      : 0) <= (sender.queue_count),
 				     "seed=%u step=%u", seed, step);
 			zexpect_equal(zlrs_link_tx_space(&sender) + sender.queue_count,
 				      ZLRS_LINK_TX_QUEUE_LEN, "seed=%u step=%u", seed, step);
@@ -1681,7 +1680,8 @@ ZTEST_P(StreamFaults, test_DuplexStreamMatchesReferenceUnderFaultSequences)
 						     receiver.received_len),
 					      0, "seed=%u step=%u", seed, step);
 			}
-			/* Queued includes delivered bytes awaiting ACK, so delivery can be ahead. */
+			/* Queued includes delivered bytes awaiting ACK, so delivery can be ahead.
+			 */
 			zassert_true((expected[side].size() - receiver.received_len) <=
 					     (sender.queue_count),
 				     "seed=%u step=%u", seed, step);

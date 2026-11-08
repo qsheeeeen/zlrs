@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
+#include <hardware/structs/trng.h>
+#include <zephyr/drivers/entropy.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/reboot.h>
-#include <zephyr/drivers/entropy.h>
-#include <hardware/structs/trng.h>
 
 #include <errno.h>
 #include <stdlib.h>
@@ -149,7 +149,7 @@ static void raw_run(void)
 		for (uint16_t i = 4U; i < CONFIG_ZLRS_TEST_RAW_PAYLOAD_BYTES; i++) {
 			raw_payload[i] = (uint8_t)(sequence + i);
 		}
-		raw_link.req_is_tx = tx;
+		raw_link.req.is_tx = tx;
 		raw_link.req_pending = true;
 		const uint32_t deadline = zlrs_slot_timer_now_us() + 120000U;
 		const uint32_t target = zlrs_slot_timer_now_us() +
@@ -224,12 +224,12 @@ void __wrap_zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, i
 	if (link == &raw_link) {
 		link->req_pending = false;
 		if (status != ZLRS_RADIO_OK) {
-			if (link->req_is_tx) {
+			if (link->req.is_tx) {
 				atomic_inc(&raw_tx_failed);
 			}
 			return;
 		}
-		if (link->req_is_tx) {
+		if (link->req.is_tx) {
 			atomic_inc(&raw_tx);
 		} else {
 			if (rx_len != CONFIG_ZLRS_TEST_RAW_PAYLOAD_BYTES) {
@@ -266,7 +266,7 @@ void __wrap_zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, i
 		const uint8_t index = (uint8_t)(frequency / 1000000U - 2402U);
 
 		atomic_add(&channels[index].crc, crc);
-		if (link->req_is_tx) {
+		if (link->req.is_tx) {
 			atomic_inc(status == ZLRS_RADIO_OK ? &channels[index].tx
 							   : &channels[index].tx_failed);
 		} else {
@@ -303,14 +303,15 @@ int zlrs_test_radio_control(struct zlrs_test_report *report, enum zlrs_test_op o
 			zlrs_test_print(report, "ENTROPY queued_ms=%lu", ms);
 			return 0;
 		}
-		zlrs_test_print(report,
-			    "ENTROPY active=%u pending=%u calls=%u empty=%u max_us=%u restores=%u",
-			    (unsigned int)atomic_get(&entropy_active),
-			    (unsigned int)(atomic_get(&entropy_request) != 0),
-			    (unsigned int)atomic_get(&entropy_calls),
-			    (unsigned int)atomic_get(&entropy_empty),
-			    (unsigned int)atomic_get(&entropy_max_us),
-			    (unsigned int)atomic_get(&entropy_restores));
+		zlrs_test_print(
+			report,
+			"ENTROPY active=%u pending=%u calls=%u empty=%u max_us=%u restores=%u",
+			(unsigned int)atomic_get(&entropy_active),
+			(unsigned int)(atomic_get(&entropy_request) != 0),
+			(unsigned int)atomic_get(&entropy_calls),
+			(unsigned int)atomic_get(&entropy_empty),
+			(unsigned int)atomic_get(&entropy_max_us),
+			(unsigned int)atomic_get(&entropy_restores));
 		return 0;
 	}
 	if (op == TEST_CHANNELS) {
@@ -358,12 +359,12 @@ int zlrs_test_radio_control(struct zlrs_test_report *report, enum zlrs_test_op o
 		return -EINVAL;
 	}
 	zlrs_test_print(report,
-		    "RAW ready=%u tx=%u tx_failed=%u rx=%u expected=%u bad=%u "
-		    "frequency_mhz=%u payload_bytes=%u duration_ms=%u",
-		    (unsigned int)atomic_get(&raw_ready), (unsigned int)atomic_get(&raw_tx),
-		    (unsigned int)atomic_get(&raw_tx_failed), (unsigned int)atomic_get(&raw_rx),
-		    (unsigned int)atomic_get(&raw_expected), (unsigned int)atomic_get(&raw_bad),
-		    CONFIG_ZLRS_TEST_RAW_FREQ_MHZ, CONFIG_ZLRS_TEST_RAW_PAYLOAD_BYTES,
-		    CONFIG_ZLRS_TEST_RAW_MS);
+			"RAW ready=%u tx=%u tx_failed=%u rx=%u expected=%u bad=%u "
+			"frequency_mhz=%u payload_bytes=%u duration_ms=%u",
+			(unsigned int)atomic_get(&raw_ready), (unsigned int)atomic_get(&raw_tx),
+			(unsigned int)atomic_get(&raw_tx_failed), (unsigned int)atomic_get(&raw_rx),
+			(unsigned int)atomic_get(&raw_expected), (unsigned int)atomic_get(&raw_bad),
+			CONFIG_ZLRS_TEST_RAW_FREQ_MHZ, CONFIG_ZLRS_TEST_RAW_PAYLOAD_BYTES,
+			CONFIG_ZLRS_TEST_RAW_MS);
 	return 0;
 }

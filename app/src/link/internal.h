@@ -2,9 +2,9 @@
  * SPDX-License-Identifier: Apache-2.0 */
 #pragma once
 #include "link/link.h"
-#include <zephyr/sys/byteorder.h>
-#include <zephyr/sys/__assert.h>
 #include <string.h>
+#include <zephyr/sys/__assert.h>
+#include <zephyr/sys/byteorder.h>
 
 uint16_t link_acq_timeout_ms(const zlrs_link_t *link);
 bool link_band_plan_valid(const zlrs_link_t *link, const zlrs_band_plan_t *plan,
@@ -47,8 +47,7 @@ const zlrs_radio_req_t *link_submit_tx(zlrs_link_t *link, uint8_t *buf, uint16_t
 uint32_t link_sync_freq_hz(const zlrs_link_t *link);
 const uint8_t *link_tag_key_for(const zlrs_link_t *link, uint8_t type, bool outbound);
 
-/* Release only after peer ACK (ARQ) or successful local TX (best effort). */
-void link_release_data(zlrs_link_t *link);
+/* Complete the immutable DATA attempt and retire best-effort bytes on success. */
+void link_complete_data(zlrs_link_t *link, bool success, uint32_t now_ms);
 
-uint8_t *link_packet_bytes(zlrs_link_t *link, uint16_t index);
 bool link_arq_retry_due(const zlrs_link_t *link, uint32_t now_ms);

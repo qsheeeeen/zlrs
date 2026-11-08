@@ -2,7 +2,7 @@
 #include <zephyr/ztest.h>
 #include <initializer_list>
 
-#include "pairing_save.h"
+#include "lifecycle.h"
 
 namespace
 {
