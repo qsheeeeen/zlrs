@@ -35,11 +35,16 @@ rollback and deferred pairing writes share the application-loop owner. The main
 loop and management service use that interface. DATA admission, packet storage,
 ARQ and packet retirement live together in `app/src/link/data.c`; packet bytes
 and payload length have one owner. A submitted request retains its own immutable
-metadata until completion.
+metadata until completion. DATA decoding returns a borrowed view of the RX
+buffer; the control-frame union contains no payload array. Test peers generate
+wire input and drive the same reservation, finalization and completion interfaces
+as RF. They do not add alternate production receive or queue paths.
 
 RF builds the adopted link configuration once per modem change. Role, profile,
 modulation, MTU and resynchronization interval are read from that configuration;
-RF retains the slot clock and preparation deadlines it owns. SHA digest and
+RF retains the slot clock and preparation deadlines it owns. Candidate modem
+configuration and timing are built locally and adopted together after validation.
+Current band mode and active band follow the adopted link configuration. SHA digest and
 peripheral reservation operations share `app/src/platform/sha256.h`.
 
 Board descriptions define peripheral availability, electrical assignments and the

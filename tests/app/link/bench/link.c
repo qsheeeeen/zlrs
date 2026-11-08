@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+#include "../../support/peer.h"
 #include <zephyr/ztest.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -48,13 +49,13 @@ static double measure(enum phase phase, uint16_t payload, unsigned long iteratio
 	link.state = ZLRS_STATE_CONNECTED;
 	uint8_t bytes[499];
 	memset(bytes, 0x42, sizeof(bytes));
-	require(zlrs_link_write(&link, bytes, payload) == payload, "queue payload");
+	require(zlrs_test_write(&link, bytes, payload) == payload, "queue payload");
 	const uint8_t tag_len = zlrs_profile_tag_len(profile);
 	const uint16_t len = zlrs_frame_len(ZLRS_DATA_PREFIX_LEN + payload, tag_len);
 	zlrs_frame_t frame = {.type = ZLRS_PKT_DATA_L2F, .seq = 1};
-	memcpy(frame.body.data.bytes, bytes, payload);
+	frame.body.data.bytes = bytes;
 	uint8_t encoded[ZLRS_FRAME_MAX_LEN], tag[ZLRS_TAG_LEN];
-	require(zlrs_frame_encode(&frame, encoded, sizeof(encoded), len, tag_len) == len,
+	require(zlrs_test_encode(&frame, encoded, sizeof(encoded), len, tag_len) == len,
 		"encode packet");
 	if (phase == PLAN || phase == FINALIZE) {
 		link.arq_ack_pending = payload == 0;
@@ -62,7 +63,7 @@ static double measure(enum phase phase, uint16_t payload, unsigned long iteratio
 	}
 	if (phase == COMPLETE) {
 		link.arq_ack_pending = payload == 0;
-		const zlrs_radio_req_t *req = zlrs_link_slot(&link, ZLRS_SLOT_DATA_A, 1000);
+		const zlrs_radio_req_t *req = zlrs_test_slot(&link, ZLRS_SLOT_DATA_A, 1000);
 		require(req && req->is_tx && req->size == len, "prepare completion");
 	}
 	const zlrs_link_plan_t plan = zlrs_link_plan(&link);
@@ -118,8 +119,8 @@ static double measure(enum phase phase, uint16_t payload, unsigned long iteratio
 		zlrs_frame_t decoded;
 		require(zlrs_frame_decode(&decoded, packet, len, tag_len), "decode built packet");
 		frame.seq = decoded.seq;
-		frame.body.data.lq_percent = ZLRS_LQ_UNAVAILABLE;
-		require(zlrs_frame_encode(&frame, encoded, sizeof(encoded), len, tag_len) == len,
+		frame.body.data.header.lq_percent = ZLRS_LQ_UNAVAILABLE;
+		require(zlrs_test_encode(&frame, encoded, sizeof(encoded), len, tag_len) == len,
 			"encode reference packet");
 		if (tag_len != 0) {
 			zlrs_tag(link.session_key_out, ZLRS_KEY_LEN, encoded, len - tag_len,

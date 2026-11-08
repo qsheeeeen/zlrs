@@ -102,27 +102,6 @@ void zlrs_link_tx_commit(zlrs_link_t *link, uint16_t written)
 	link->tx_claim_len = 0U;
 }
 
-uint16_t zlrs_link_write(zlrs_link_t *link, const uint8_t *data, uint16_t len)
-{
-	if (data == NULL) {
-		return 0U;
-	}
-	uint16_t written = 0U;
-	while (written < len) {
-		uint16_t capacity;
-		uint8_t *dst = zlrs_link_tx_reserve(link, &capacity);
-		if (dst == NULL) {
-			break;
-		}
-		const uint16_t take = len - written < capacity ? len - written : capacity;
-		memcpy(dst, data + written, take);
-		zlrs_link_tx_commit(link, take);
-		written += take;
-	}
-	link->stats.data_drop_bytes += len - written;
-	return written;
-}
-
 /* Packet storage owns user bytes from admission until ACK (or best-effort TX).
  * Headers and tags are rebuilt in place; retrying never copies the payload. */
 
@@ -366,7 +345,6 @@ void link_handle_data(zlrs_link_t *link, const zlrs_data_view_t *view, uint32_t 
 void link_quality_reset(zlrs_link_t *link)
 {
 	link->lq_last_seq = 0U;
-	link->lq_started = false;
 	link->stats.lq_rx = 0U;
 	link->stats.lq_expected = 0U;
 	link->stats.lq_percent = ZLRS_LQ_UNAVAILABLE;
@@ -383,10 +361,9 @@ void link_lq_account(zlrs_link_t *link, uint32_t seq)
 {
 	uint32_t delta = seq - link->lq_last_seq;
 
-	if (!link->lq_started) {
+	if (link->lq_last_seq == 0U) {
 		/* Only the first sample of a session has no preceding sequence to compare. */
 		delta = 1U;
-		link->lq_started = true;
 	}
 
 	link->lq_last_seq = seq;

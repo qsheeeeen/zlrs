@@ -65,17 +65,6 @@ uint16_t zlrs_frame_encode_data(uint8_t *buf, uint16_t cap, zlrs_pkt_type_t type
 bool zlrs_frame_decode_data(zlrs_data_view_t *view, const uint8_t *buf, uint16_t len,
 			    uint8_t tag_len);
 
-/* Typed bodies contain only packet-specific fields. DATA owns its bytes; its
- * used length comes from the radio payload length, never an on-air size field. */
-typedef struct {
-	uint8_t ack: 1; /* reverse-direction ACK */
-	uint8_t data_seq: 7;
-	uint8_t rssi_magnitude;
-	uint8_t lq_percent: 7; /* 0..100 or 127 unavailable */
-	uint8_t lq_toggle: 1;  /* changes on each completed quality window */
-	uint8_t bytes[ZLRS_DATA_MAX_LEN];
-} zlrs_data_frame_t;
-
 /* Present only in authenticated synchronization/confirmation bodies. */
 typedef struct {
 	uint8_t domain: 3;
@@ -123,7 +112,7 @@ typedef struct {
 	uint8_t type: ZLRS_FRAME_TYPE_BITS;
 
 	union {
-		zlrs_data_frame_t data; /* DATA_L2F / DATA_F2L share this body layout */
+		zlrs_data_view_t data; /* Borrowed DATA metadata and payload. */
 		zlrs_sync_frame_t sync;
 		zlrs_pair_request_frame_t pair_req;
 		zlrs_pair_frame_t pair; /* PAIR_RESP / PAIR_CFM validate all four fields */
@@ -138,7 +127,8 @@ typedef struct {
 uint8_t zlrs_profile_tag_len(zlrs_profile_t profile);
 uint16_t zlrs_frame_len(uint16_t payload_len, uint8_t tag_len);
 /* len is the complete radio payload length, including common fields and tag.
- * Fixed bodies require exact lengths. DATA length is inferred from len.
+ * Encodes control frames only; DATA uses the in-place encoder above.
+ * Fixed bodies require exact lengths.
  * Only the selected body's used bytes are encoded; unused capacity is omitted. */
 uint16_t zlrs_frame_encode(const zlrs_frame_t *frame, uint8_t *buf, uint16_t cap, uint16_t len,
 			   uint8_t tag_len);

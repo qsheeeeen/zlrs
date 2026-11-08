@@ -111,7 +111,7 @@ bool zlrs_frame_decode_data(zlrs_data_view_t *view, const uint8_t *buf, uint16_t
 uint16_t zlrs_frame_encode(const zlrs_frame_t *frame, uint8_t *buf, uint16_t cap, uint16_t len,
 			   uint8_t tag_len)
 {
-	if (frame->seq == 0U || len > cap || len > ZLRS_FRAME_MAX_LEN ||
+	if (frame->type <= ZLRS_PKT_DATA_F2L || frame->seq == 0U || len > cap || len > ZLRS_FRAME_MAX_LEN ||
 	    len < ZLRS_FRAME_HDR_LEN + tag_len || (tag_len != 0U && tag_len != ZLRS_TAG_LEN)) {
 		return 0U;
 	}
@@ -123,23 +123,6 @@ uint16_t zlrs_frame_encode(const zlrs_frame_t *frame, uint8_t *buf, uint16_t cap
 	sys_put_le32(frame->seq, buf + 1U);
 	uint8_t *const p = buf + ZLRS_FRAME_HDR_LEN;
 	switch (frame->type) {
-	case ZLRS_PKT_DATA_L2F:
-	case ZLRS_PKT_DATA_F2L: {
-		const zlrs_data_frame_t *const data = &frame->body.data;
-		const zlrs_data_header_t header = {
-			.data_seq = data->data_seq,
-			.ack = data->ack,
-			.rssi_magnitude = data->rssi_magnitude,
-			.lq_percent = data->lq_percent,
-			.lq_toggle = data->lq_toggle,
-		};
-		if (zlrs_frame_encode_data(buf, cap, frame->type, frame->seq, &header,
-					   payload_len - ZLRS_DATA_PREFIX_LEN, tag_len) == 0U) {
-			return 0U;
-		}
-		memcpy(p + ZLRS_DATA_PREFIX_LEN, data->bytes, payload_len - ZLRS_DATA_PREFIX_LEN);
-		break;
-	}
 	case ZLRS_PKT_SYNC:
 		buf[0] |= (uint8_t)((frame->body.sync.profile << ZLRS_SYNC_PROFILE_SHIFT) |
 				    (frame->body.sync.version << ZLRS_SYNC_VERSION_SHIFT));
@@ -199,16 +182,8 @@ bool zlrs_frame_decode(zlrs_frame_t *frame, const uint8_t *buf, uint16_t len, ui
 	memcpy(frame->tag, p + payload_len, tag_len);
 	switch (frame->type) {
 	case ZLRS_PKT_DATA_L2F:
-	case ZLRS_PKT_DATA_F2L: {
-		zlrs_data_frame_t *const data = &frame->body.data;
-		data->ack = p[0] & ZLRS_DATA_ACK_MASK;
-		data->data_seq = p[0] >> ZLRS_DATA_SEQ_SHIFT;
-		data->rssi_magnitude = p[1];
-		data->lq_percent = p[2] & ZLRS_LQ_VALUE_MASK;
-		data->lq_toggle = (p[2] & ZLRS_LQ_TOGGLE_MASK) != 0U;
-		memcpy(data->bytes, p + ZLRS_DATA_PREFIX_LEN, payload_len - ZLRS_DATA_PREFIX_LEN);
-		break;
-	}
+	case ZLRS_PKT_DATA_F2L:
+		return zlrs_frame_decode_data(&frame->body.data, buf, len, tag_len);
 	case ZLRS_PKT_SYNC:
 		frame->body.sync.version = buf[0] >> ZLRS_SYNC_VERSION_SHIFT;
 		frame->body.sync.profile = (buf[0] >> ZLRS_SYNC_PROFILE_SHIFT) & 1U;

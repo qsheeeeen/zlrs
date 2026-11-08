@@ -110,7 +110,7 @@ ZTEST(Region, test_DutyBudgetAndWindowReset)
 
 	/* EU868: 1% of 60 s = 600 ms of budget */
 	zlrs_duty_init(&duty, eu, now);
-	zexpect_true(duty.limited);
+	zexpect_true(duty.window_ms != 0U);
 	zexpect_equal(zlrs_duty_remaining_ms(&duty, now), 600U);
 
 	/* One 4 ms transmission leaves 596 ms */
@@ -135,7 +135,7 @@ ZTEST(Region, test_DutyBudgetAndWindowReset)
 
 	/* FCC915 has no duty limit: transmit freely, no counter moves */
 	zlrs_duty_init(&duty, fcc, now);
-	zexpect_false(duty.limited);
+	zexpect_false(duty.window_ms != 0U);
 	for (uint8_t i = 0U; i < 5U; i++) {
 		zexpect_true(zlrs_duty_reserve(&duty, 4U, now));
 	}

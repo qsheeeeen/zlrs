@@ -136,10 +136,9 @@ uint32_t zlrs_region_max_frames_per_s(const zlrs_region_t *region, uint32_t rate
 
 void zlrs_duty_init(zlrs_duty_t *duty, const zlrs_region_t *region, uint32_t now_ms)
 {
-	duty->window_ms = (region != NULL) ? region->duty_window_ms : 0U;
-	duty->limit_percent = (region != NULL) ? region->duty_percent : 0U;
-	duty->limited =
-		(region != NULL) && (region->duty_percent > 0U) && (region->duty_window_ms > 0U);
+	duty->window_ms = region != NULL && region->duty_percent != 0U ? region->duty_window_ms : 0U;
+	duty->budget_ms = region != NULL ? (duty->window_ms / 100U) * region->duty_percent : 0U;
+
 	duty->window_start_ms = now_ms;
 	duty->used_ms = 0U;
 	duty->denied = 0U;
@@ -147,7 +146,7 @@ void zlrs_duty_init(zlrs_duty_t *duty, const zlrs_region_t *region, uint32_t now
 
 static void duty_roll(zlrs_duty_t *duty, uint32_t now_ms)
 {
-	if (!duty->limited) {
+	if (duty->window_ms == 0U) {
 		return;
 	}
 
@@ -159,25 +158,22 @@ static void duty_roll(zlrs_duty_t *duty, uint32_t now_ms)
 
 uint32_t zlrs_duty_remaining_ms(zlrs_duty_t *duty, uint32_t now_ms)
 {
-	uint32_t budget;
-
-	if (!duty->limited) {
+	if (duty->window_ms == 0U) {
 		return UINT32_MAX;
 	}
 
 	duty_roll(duty, now_ms);
 
-	budget = (duty->window_ms / 100U) * duty->limit_percent;
-	if (duty->used_ms >= budget) {
+	if (duty->used_ms >= duty->budget_ms) {
 		return 0U;
 	}
 
-	return budget - duty->used_ms;
+	return duty->budget_ms - duty->used_ms;
 }
 
 bool zlrs_duty_reserve(zlrs_duty_t *duty, uint32_t airtime_ms, uint32_t now_ms)
 {
-	if (!duty->limited) {
+	if (duty->window_ms == 0U) {
 		return true;
 	}
 

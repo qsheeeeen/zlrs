@@ -240,7 +240,7 @@ ZTEST(PowerPolicy, test_InvalidInputRecoversButUnavailableQualityIsAllowed)
 ZTEST(PowerPolicy, test_EveryHardwareRangeAndFinalPartialStepStayBounded)
 {
 	reset_PowerPolicy();
-	for (const auto [ceiling, floor] :
+	for (const auto &[ceiling, floor] :
 	     {std::pair{12, -17}, {22, -10}, {14, -10}, {17, -10}, {10, -10}, {1, 0}, {-10, 0}}) {
 		reset_PowerPolicy();
 		zlrs_power_init(&p, ceiling, floor, 0);

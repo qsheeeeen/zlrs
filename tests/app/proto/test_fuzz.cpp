@@ -9,6 +9,7 @@
  * (`ctest --test-dir build/host`), so overruns and UB surface immediately. For more rounds, set
  * `-DZLRS_HOST_FUZZ_ITERS=2000000` when configuring the CMake project.
  */
+#include "../support/peer.h"
 
 #include <zephyr/ztest.h>
 #include <initializer_list>
@@ -80,18 +81,18 @@ static void fuzz_frame_decode(rng_t *rng)
 		    (view.bytes != buf + ZLRS_FRAME_HDR_LEN + ZLRS_DATA_PREFIX_LEN ||
 		     view.tag != buf + len - tag_len || view.seq != frame.seq ||
 		     view.len != len - ZLRS_FRAME_HDR_LEN - ZLRS_DATA_PREFIX_LEN - tag_len ||
-		     view.header.data_seq != frame.body.data.data_seq ||
-		     view.header.ack != frame.body.data.ack ||
-		     view.header.rssi_magnitude != frame.body.data.rssi_magnitude ||
-		     view.header.lq_percent != frame.body.data.lq_percent ||
-		     view.header.lq_toggle != frame.body.data.lq_toggle)) {
+		     view.header.data_seq != frame.body.data.header.data_seq ||
+		     view.header.ack != frame.body.data.header.ack ||
+		     view.header.rssi_magnitude != frame.body.data.header.rssi_magnitude ||
+		     view.header.lq_percent != frame.body.data.header.lq_percent ||
+		     view.header.lq_toggle != frame.body.data.header.lq_toggle)) {
 			violations++;
 		}
 		if (!valid) {
 			continue;
 		}
 		decoded++;
-		const zlrs_data_frame_t *const data = &frame.body.data;
+		const zlrs_data_view_t *const data = &frame.body.data;
 
 		if ((frame.type == ZLRS_PKT_DATA_L2F || frame.type == ZLRS_PKT_DATA_F2L) &&
 		    memcmp(data->bytes, buf + ZLRS_FRAME_HDR_LEN + ZLRS_DATA_PREFIX_LEN,
@@ -103,7 +104,7 @@ static void fuzz_frame_decode(rng_t *rng)
 		}
 
 		/* Decode and encode again: byte-identical, tag included */
-		if (zlrs_frame_encode(&frame, pack, sizeof(pack), len, tag_len) != len) {
+		if (zlrs_test_encode(&frame, pack, sizeof(pack), len, tag_len) != len) {
 			violations++;
 		} else if (memcmp(pack, buf, len) != 0) {
 			violations++;
@@ -231,7 +232,7 @@ static void fuzz_link_rx(rng_t *rng)
 		}
 
 		now_ms += 7U;
-		zlrs_link_rx(link, buf, len, -60, 0, now_ms);
+		zlrs_test_rx(link, buf, len, -60, 0, now_ms);
 
 		/* The state machine must end in a legal state */
 		if (link->state > ZLRS_STATE_CONNECTED) {

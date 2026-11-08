@@ -98,7 +98,6 @@ struct zlrs_lr2021_diag {
 	uint32_t stale_irq;
 	uint32_t stale_irq_bits;
 	uint32_t overruns;
-	uint32_t rx_windows;
 	uint32_t rx_us_last;
 	uint32_t tx_us_last;
 	uint32_t submit_us_last;
@@ -138,7 +137,6 @@ struct zlrs_lr2021_diag {
 	uint32_t launch_wake_us_last;
 	uint32_t launch_wake_us_max;
 	uint32_t late_trigger_irq;
-	uint32_t late_trigger_wake;
 	uint32_t rx_fifo_bytes;
 	uint32_t rx_fifo_us_last;
 	uint32_t rx_fifo_us_max;

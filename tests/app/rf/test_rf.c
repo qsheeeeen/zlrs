@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+#include "../support/peer.h"
 #include <errno.h>
 #include <string.h>
 #include <zephyr/ztest.h>
@@ -483,7 +484,7 @@ bool zlrs_lr2021_process_irq(zlrs_lr2021_result_t *out)
 	while (peer_next_slot < local->slot) {
 		zlrs_link_skip_slot(&peer, peer_next_slot++);
 	}
-	const zlrs_radio_req_t *other = zlrs_link_slot(&peer, local->slot, out->completed_ms);
+	const zlrs_radio_req_t *other = zlrs_test_slot(&peer, local->slot, out->completed_ms);
 	peer_next_slot = local->slot + 1U;
 	if (active->is_tx) {
 		tx_ok++;
@@ -763,7 +764,7 @@ static void automatic_acceptance(void)
 	rssi_24 = -42;
 	block_24 = true;
 	source_left = sizeof(outgoing) - 1U;
-	zassert_equal(zlrs_link_write(&peer, incoming, sizeof(incoming) - 1U),
+	zassert_equal(zlrs_test_write(&peer, incoming, sizeof(incoming) - 1U),
 		      sizeof(incoming) - 1U);
 	for (unsigned int i = 0; i < 30000 && (!both_on_band(true) || source_left ||
 					       delivered != sizeof(incoming) - 1U ||
@@ -1023,7 +1024,7 @@ ZTEST(rf_results, test_duplex_delivery_and_counters)
 	connected_peers();
 
 	source_left = sizeof(outgoing) - 1U;
-	zassert_equal(zlrs_link_write(&peer, incoming, sizeof(incoming) - 1U),
+	zassert_equal(zlrs_test_write(&peer, incoming, sizeof(incoming) - 1U),
 		      sizeof(incoming) - 1U);
 	frames(100);
 	zassert_equal(delivered, sizeof(incoming) - 1U);
@@ -1046,7 +1047,7 @@ ZTEST(rf_results, test_rx_fifo_read_can_finish_after_window_close)
 	}
 	mode = RX_FIFO_LATE;
 	source_left = sizeof(outgoing) - 1U;
-	zassert_equal(zlrs_link_write(&peer, incoming, sizeof(incoming) - 1U),
+	zassert_equal(zlrs_test_write(&peer, incoming, sizeof(incoming) - 1U),
 		      sizeof(incoming) - 1U);
 	frames(100);
 	zassert_equal(delivered, sizeof(incoming) - 1U,
@@ -1097,7 +1098,7 @@ ZTEST(rf_results, test_failed_data_retries_next_frame)
 	/* Isolate DATA retry timing from periodic SYNC slots. */
 	local->cfg.resync_every_n = peer.cfg.resync_every_n = 0U;
 	const uint32_t retries = local->stats.tx_retries;
-	zassert_equal(zlrs_link_write(local, outgoing, sizeof(outgoing) - 1U),
+	zassert_equal(zlrs_test_write(local, outgoing, sizeof(outgoing) - 1U),
 		      sizeof(outgoing) - 1U);
 	mode = TX_FAIL;
 	frames(1);
@@ -1120,7 +1121,7 @@ ZTEST(rf_results, test_hash_busy_skips_tx_without_consuming_protocol_state)
 	const uint32_t seq = local->tx_seq;
 	const uint32_t builds = local->stats.tx_frame_builds;
 	const uint32_t loads = fifo_loads;
-	zassert_equal(zlrs_link_write(local, outgoing, sizeof(outgoing) - 1U),
+	zassert_equal(zlrs_test_write(local, outgoing, sizeof(outgoing) - 1U),
 		      sizeof(outgoing) - 1U);
 	mode = HASH_BUSY;
 	frames(1);

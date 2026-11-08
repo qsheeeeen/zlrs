@@ -50,8 +50,7 @@ typedef struct {
 	uint32_t window_ms;
 	uint32_t window_start_ms;
 	uint32_t used_ms;
-	uint8_t limit_percent;
-	bool limited;
+	uint32_t budget_ms;
 	uint32_t denied; /* denied transmissions, kept for observability */
 } zlrs_duty_t;
 

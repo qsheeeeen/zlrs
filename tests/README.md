@@ -17,6 +17,9 @@ fixtures and their runners live in its `hardware/` subdirectory.
 
 All C/C++ firmware, protocol scenarios and benchmarks build through Zephyr.
 Board fixtures share MCUboot configuration through `app/support/sysbuild.cmake`.
+`app/support/peer.h` generates peer frames and drives production link operations;
+production link code exposes no test-only bulk-write, combined-slot or RX-injection
+entry points. DATA vectors and fuzz cases verify borrowed payload boundaries.
 Application protocol sources and their private headers live together under
 `app/src/link`, `app/src/proto` and `app/src/region` and compile into the `app`
 target. Native protocol tests use two real link instances with controlled radio,
@@ -95,7 +98,8 @@ python "$ZEPHYR_BASE/scripts/twister" \
 
 Reports live in `twister.json`, `twister.xml` and `twister_report.xml` under the
 output directory. Each configuration retains `build.log`, `handler.log` and
-`handler_stderr.log` for build and runtime diagnosis. The tool and simulation jobs in
+`handler_stderr.log` for build and runtime diagnosis. The tools job installs ripgrep explicitly and uploads gate and unittest logs.
+The tool and simulation jobs in
 `.github/workflows/build.yml` fail on test errors and upload their reports.
 The separate firmware workflow runs on PRs and main pushes, builds signed target
 images and fails on build errors or timed-launch RAM audit failures. Its artifacts

@@ -237,7 +237,6 @@ bool link_handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame, uint32
 		link->pair_rx_seq = frame->seq;
 		memcpy(link->pair_peer_id, pair->dev_b, ZLRS_DEV_ID_LEN);
 		link->pair_nonce_b = pair->nonce_b;
-		link->last_pair_rx_ms = now_ms;
 		link->pair_cfm_pending = true;
 		return true;
 

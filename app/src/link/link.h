@@ -2,7 +2,7 @@
  * Link layer: one instance per link, running the state machine and superframe slots
  * (doc/07-protocol.md).
  *
- * Each superframe: zlrs_link_slot() hands out a transaction, the caller runs it and
+ * Each superframe: advance, plan and finalize produce a transaction; the caller runs it and
  * zlrs_link_complete() closes it; zlrs_link_tick() handles timeouts and state changes.
  *
  * SPDX-License-Identifier: Apache-2.0
@@ -252,7 +252,7 @@ typedef struct {
 	uint32_t sess_sync_frame;     /* Last DATA confirm's shared frame index. */
 	uint32_t sess_nonce_leader;   /* Leader nonce */
 	uint32_t sess_nonce_follower; /* Follower nonce */
-	uint16_t sess_hop;            /* hop index of this session */
+
 	/* Pending handshake identity is never exposed as the committed peer above. */
 	uint8_t pair_peer_id[ZLRS_DEV_ID_LEN];
 	uint32_t pair_nonce;   /* pairing: initiator nonce_a */
@@ -266,8 +266,7 @@ typedef struct {
 	uint32_t last_rx_frame; /* Authenticated DATA hop epoch, for sparse-SYNC reacquisition. */
 	uint32_t last_sync_ms;
 	uint32_t last_pair_tx_ms;
-	uint32_t last_pair_rx_ms; /* last PAIR_RESP: tells a repeated answer from a silent responder
-				   */
+
 	bool pair_cfm_pending;    /* Leader got PAIR_RESP: PAIR_CFM due in slot A */
 	uint8_t pair_cfm_sent;    /* PAIR_CFM of this handshake already sent */
 	bool pair_wait_cfm;       /* Follower answered PAIR_RESP, waiting for PAIR_CFM */
@@ -280,7 +279,6 @@ typedef struct {
 	uint32_t tx_seq; /* Next attempt, starting at one; never wraps. */
 	uint32_t last_rx_seq;
 	uint32_t lq_last_seq;
-	bool lq_started;
 	uint32_t frame_index; /* DATA_A slots run */
 	zlrs_fhss_t fhss;
 	zlrs_band_plan_t band_plan;
@@ -365,13 +363,10 @@ typedef struct {
 
 /* Diagnostic values, without borrowed protocol buffers or key material. */
 typedef struct {
-	uint32_t frequency_hz;
-	uint32_t frame_index;
 	uint32_t last_rx_frame;
 	uint32_t sess_nonce_leader;
 	uint32_t sess_nonce_follower;
 	bool sess_cfm_due;
-	uint16_t hop_index;
 	uint16_t queue_count;
 	uint16_t arq_used;
 	uint16_t arq_seq;
@@ -382,9 +377,7 @@ typedef struct {
 	uint8_t pair_cfm_sent;
 	uint32_t pair_nonce;
 	uint32_t pair_nonce_b;
-	uint32_t root_fingerprint;
 	uint32_t pair_fingerprint;
-	uint32_t sync_fingerprint;
 } zlrs_link_diagnostics_t;
 
 /* Read-only views are valid on the link owner thread; do not retain across async work. */
@@ -410,7 +403,7 @@ void zlrs_link_set_dev_id(zlrs_link_t *link, const uint8_t dev_id[ZLRS_DEV_ID_LE
 
 /*
  * Room left in the air-side queue. Callers that own a byte source (a UART, a CDC) should take no
- * more than this: zlrs_link_write() drops the tail it cannot take, and dropped input is gone.
+ * more than this, leaving excess bytes in their endpoint until queue space is available.
  */
 uint16_t zlrs_link_tx_space(const zlrs_link_t *link);
 
@@ -452,9 +445,6 @@ bool zlrs_link_advance_slot(zlrs_link_t *link, uint8_t slot, uint32_t now_ms);
 zlrs_link_plan_t zlrs_link_plan(const zlrs_link_t *link);
 const zlrs_radio_req_t *zlrs_link_finalize(zlrs_link_t *link, const zlrs_link_plan_t *plan);
 
-/* Superframe slot: return the transaction to submit, or NULL when there is none */
-const zlrs_radio_req_t *zlrs_link_slot(zlrs_link_t *link, uint8_t slot, uint32_t now_ms);
-
 /* Advance a missed slot without building a packet, consuming data or changing session state. */
 void zlrs_link_skip_slot(zlrs_link_t *link, uint8_t slot);
 
@@ -466,18 +456,8 @@ void zlrs_link_tx_started(zlrs_link_t *link, uint32_t now_ms);
 void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t rssi, int8_t snr,
 			uint32_t now_ms);
 
-/*
- * Inject a frame directly, equivalent to "the radio received len bytes". The normal path
- * through zlrs_link_complete() ends up here too; bypass receivers and host tests use it.
- */
-void zlrs_link_rx(zlrs_link_t *link, const uint8_t *buf, uint16_t len, int16_t rssi, int8_t snr,
-		  uint32_t now_ms);
-
 /* Timeouts and state transitions, called once per superframe */
 void zlrs_link_tick(zlrs_link_t *link, uint32_t now_ms);
-
-/* Queue passthrough data (RX and TX), returns the number of bytes written */
-uint16_t zlrs_link_write(zlrs_link_t *link, const uint8_t *data, uint16_t len);
 
 bool zlrs_link_cancel_pair(zlrs_link_t *link, uint32_t now_ms);
 

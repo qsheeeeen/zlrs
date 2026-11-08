@@ -114,7 +114,7 @@ static void diagnostic_link(struct diagnostic_report_writer *writer, const char 
 
 	const zlrs_link_stats_t *const stats = &link->stats;
 	const zlrs_link_diagnostics_t diagnostics = link->diagnostics;
-	const uint32_t frequency_hz = diagnostics.frequency_hz;
+	const uint32_t frequency_hz = info.frequency_hz;
 
 	diagnostic_append(writer, "\n[%s LINK]\n", name);
 	diagnostic_append(writer, "  Hopping bands      : %s\n", diagnostic_bands(cfg));
@@ -126,8 +126,8 @@ static void diagnostic_link(struct diagnostic_report_writer *writer, const char 
 			  info.session_valid ? "active" : "inactive", (unsigned int)cfg->profile);
 	diagnostic_append(writer, "  Frequency          : ");
 	diagnostic_frequency(writer, frequency_hz);
-	diagnostic_append(writer, "   Hop: %u   Frame: %u\n", (unsigned int)diagnostics.hop_index,
-			  diagnostics.frame_index);
+	diagnostic_append(writer, "   Hop: %u   Frame: %u\n", (unsigned int)info.hop_index,
+			  info.frame_index);
 	diagnostic_append(writer, "  PHY / TX setpoint  : ");
 	diagnostic_phy(writer, &cfg->mod);
 	diagnostic_append(writer, "   /   %d dBm\n", (int)cfg->tx_power_dbm);
@@ -279,9 +279,6 @@ static void diagnostic_radio(struct diagnostic_report_writer *writer)
 	diagnostic_append(writer, "  Launch IRQ delay   : last / max %u / %u us   Late IRQ %u\n",
 			  diag.launch_irq_late_us_last, diag.launch_irq_late_us_max,
 			  diag.late_trigger_irq);
-	diagnostic_append(writer, "  Launch wake delay  : last / max %u / %u us   Late wake %u\n",
-			  diag.launch_wake_us_last, diag.launch_wake_us_max,
-			  diag.late_trigger_wake);
 	diagnostic_append(writer, "  Preparation cost   : entry %u us   build %u us   SPI %u us\n",
 			  snapshot.late_prepare_entry_us, snapshot.late_prepare_build_us,
 			  snapshot.late_prepare_spi_us);

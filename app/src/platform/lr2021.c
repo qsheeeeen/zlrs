@@ -44,11 +44,12 @@ static volatile uint32_t irq_us;
 static uint32_t begin_us;
 static uint32_t slot_end_us;
 static uint32_t tx_at_us;
-static bool timed_slot;
-static bool cfg_valid;
-static ralf_params_flrc_t flrc_cfg;
-static bool lora_valid;
-static ralf_params_lora_t lora_cfg;
+enum modem_type { MODEM_UNKNOWN, MODEM_FLRC, MODEM_LORA };
+static enum modem_type modem;
+static union {
+	ralf_params_flrc_t flrc;
+	ralf_params_lora_t lora;
+} modem_cfg;
 static bool sync_valid[3];
 static uint8_t sync_words[3][ZLRS_SYNC_WORD_LEN];
 static bool tx_cfg_valid;
@@ -140,8 +141,7 @@ void zlrs_lr2021_slot(uint32_t tx_us, uint32_t end_us)
 {
 	tx_at_us = tx_us;
 	slot_end_us = end_us;
-	timed_slot = end_us != 0U;
-	if (timed_slot) {
+	if ((slot_end_us != 0U)) {
 		zlrs_slot_timer_deadline(end_us);
 	}
 }
@@ -212,8 +212,7 @@ static int setup_frequency(uint32_t freq_hz)
 static int setup_flrc(const zlrs_radio_req_t *req)
 {
 	ralf_params_flrc_t cfg;
-	const bool full = !cfg_valid;
-	lora_valid = false;
+	const bool full = modem != MODEM_FLRC;
 
 	make_flrc(&req->mod, req->is_tx ? req->size : req->max_rx_size, &cfg);
 	cfg.rf_freq_in_hz = req->freq_hz;
@@ -221,19 +220,19 @@ static int setup_flrc(const zlrs_radio_req_t *req)
 	cfg.pkt_params.match_sync_word = rx_match_syncword(req->sync_slot);
 
 	/* Packet type, modem, frequency, packet format and sync words have separate lifetimes. */
-	cfg_valid = false;
+	modem = MODEM_UNKNOWN;
 	if (full && ral_set_pkt_type(&radio.ral, RAL_PKT_TYPE_FLRC) != RAL_STATUS_OK) {
 		return -EIO;
 	}
-	if ((full || cfg.rf_freq_in_hz != flrc_cfg.rf_freq_in_hz) &&
+	if ((full || cfg.rf_freq_in_hz != modem_cfg.flrc.rf_freq_in_hz) &&
 	    setup_frequency(cfg.rf_freq_in_hz) != 0) {
 		return -EIO;
 	}
-	if ((full || memcmp(&cfg.mod_params, &flrc_cfg.mod_params, sizeof(cfg.mod_params)) != 0) &&
+	if ((full || memcmp(&cfg.mod_params, &modem_cfg.flrc.mod_params, sizeof(cfg.mod_params)) != 0) &&
 	    ral_set_flrc_mod_params(&radio.ral, &cfg.mod_params) != RAL_STATUS_OK) {
 		return -EIO;
 	}
-	if ((full || memcmp(&cfg.pkt_params, &flrc_cfg.pkt_params, sizeof(cfg.pkt_params)) != 0) &&
+	if ((full || memcmp(&cfg.pkt_params, &modem_cfg.flrc.pkt_params, sizeof(cfg.pkt_params)) != 0) &&
 	    ral_set_flrc_pkt_params(&radio.ral, &cfg.pkt_params) != RAL_STATUS_OK) {
 		return -EIO;
 	}
@@ -257,15 +256,15 @@ static int setup_flrc(const zlrs_radio_req_t *req)
 	}
 	memcpy(sync_words[id], req->sync_word, ZLRS_SYNC_WORD_LEN);
 	sync_valid[id] = true;
-	flrc_cfg = cfg;
-	cfg_valid = true;
+	modem_cfg.flrc = cfg;
+	modem = MODEM_FLRC;
 	return setup_tx_power(req);
 }
 
 static int setup_lora(const zlrs_radio_req_t *req)
 {
 	ralf_params_lora_t cfg;
-	const bool full = !lora_valid;
+	const bool full = modem != MODEM_LORA;
 
 	if ((req->mod.lora_sf != 6U && req->mod.lora_sf != 7U) ||
 	    (req->is_tx && req->size > ZLRS_LORA_FRAME_MAX_LEN)) {
@@ -276,22 +275,21 @@ static int setup_lora(const zlrs_radio_req_t *req)
 	cfg.sync_word =
 		req->sync_word[0] ^ req->sync_word[1] ^ req->sync_word[2] ^ req->sync_word[3];
 	/* Switching packet type invalidates the other modem's retained configuration. */
-	cfg_valid = false;
-	lora_valid = false;
+	modem = MODEM_UNKNOWN;
 	if ((full && ral_set_pkt_type(&radio.ral, RAL_PKT_TYPE_LORA) != RAL_STATUS_OK) ||
-	    ((full || cfg.rf_freq_in_hz != lora_cfg.rf_freq_in_hz) &&
+	    ((full || cfg.rf_freq_in_hz != modem_cfg.lora.rf_freq_in_hz) &&
 	     setup_frequency(cfg.rf_freq_in_hz) != 0) ||
-	    ((full || memcmp(&cfg.mod_params, &lora_cfg.mod_params, sizeof(cfg.mod_params)) != 0) &&
+	    ((full || memcmp(&cfg.mod_params, &modem_cfg.lora.mod_params, sizeof(cfg.mod_params)) != 0) &&
 	     ral_set_lora_mod_params(&radio.ral, &cfg.mod_params) != RAL_STATUS_OK) ||
-	    ((full || memcmp(&cfg.pkt_params, &lora_cfg.pkt_params, sizeof(cfg.pkt_params)) != 0) &&
+	    ((full || memcmp(&cfg.pkt_params, &modem_cfg.lora.pkt_params, sizeof(cfg.pkt_params)) != 0) &&
 	     ral_set_lora_pkt_params(&radio.ral, &cfg.pkt_params) != RAL_STATUS_OK) ||
-	    ((full || cfg.sync_word != lora_cfg.sync_word) &&
+	    ((full || cfg.sync_word != modem_cfg.lora.sync_word) &&
 	     ral_set_lora_sync_word(&radio.ral, cfg.sync_word) != RAL_STATUS_OK) ||
 	    (full && ral_set_lora_symb_nb_timeout(&radio.ral, 0U) != RAL_STATUS_OK)) {
 		return -EIO;
 	}
-	lora_cfg = cfg;
-	lora_valid = true;
+	modem_cfg.lora = cfg;
+	modem = MODEM_LORA;
 	return setup_tx_power(req);
 }
 
@@ -300,27 +298,27 @@ static bool flrc_unchanged(const zlrs_radio_req_t *req)
 	if (req->mod.lora_sf != 0U) {
 		ralf_params_lora_t cfg;
 		make_lora(&req->mod, req->is_tx ? req->size : req->max_rx_size, &cfg);
-		return lora_valid && tx_cfg_valid && tx_cfg_power == req->tx_power_dbm &&
-		       req->freq_hz == lora_cfg.rf_freq_in_hz &&
+		return modem == MODEM_LORA && tx_cfg_valid && tx_cfg_power == req->tx_power_dbm &&
+		       req->freq_hz == modem_cfg.lora.rf_freq_in_hz &&
 		       (req->sync_word[0] ^ req->sync_word[1] ^ req->sync_word[2] ^
-			req->sync_word[3]) == lora_cfg.sync_word &&
-		       memcmp(&cfg.mod_params, &lora_cfg.mod_params, sizeof(cfg.mod_params)) == 0 &&
-		       memcmp(&cfg.pkt_params, &lora_cfg.pkt_params, sizeof(cfg.pkt_params)) == 0;
+			req->sync_word[3]) == modem_cfg.lora.sync_word &&
+		       memcmp(&cfg.mod_params, &modem_cfg.lora.mod_params, sizeof(cfg.mod_params)) == 0 &&
+		       memcmp(&cfg.pkt_params, &modem_cfg.lora.pkt_params, sizeof(cfg.pkt_params)) == 0;
 	}
 	ralf_params_flrc_t cfg;
 	const uint8_t id = (uint8_t)req->sync_slot - 1U;
 
-	if (!cfg_valid || !tx_cfg_valid || tx_cfg_power != req->tx_power_dbm ||
+	if (modem != MODEM_FLRC || !tx_cfg_valid || tx_cfg_power != req->tx_power_dbm ||
 	    id >= ARRAY_SIZE(sync_valid) || !sync_valid[id] ||
-	    req->freq_hz != flrc_cfg.rf_freq_in_hz ||
+	    req->freq_hz != modem_cfg.flrc.rf_freq_in_hz ||
 	    memcmp(sync_words[id], req->sync_word, ZLRS_SYNC_WORD_LEN) != 0) {
 		return false;
 	}
 	make_flrc(&req->mod, req->is_tx ? req->size : req->max_rx_size, &cfg);
 	cfg.pkt_params.tx_syncword = tx_syncword(req->sync_slot);
 	cfg.pkt_params.match_sync_word = rx_match_syncword(req->sync_slot);
-	return memcmp(&cfg.mod_params, &flrc_cfg.mod_params, sizeof(cfg.mod_params)) == 0 &&
-	       memcmp(&cfg.pkt_params, &flrc_cfg.pkt_params, sizeof(cfg.pkt_params)) == 0;
+	return memcmp(&cfg.mod_params, &modem_cfg.flrc.mod_params, sizeof(cfg.mod_params)) == 0 &&
+	       memcmp(&cfg.pkt_params, &modem_cfg.flrc.pkt_params, sizeof(cfg.pkt_params)) == 0;
 }
 
 static int late_tx_prepare(uint32_t target_us)
@@ -355,7 +353,8 @@ int zlrs_lr2021_prepare(const zlrs_radio_req_t *req)
 	if ((stale & (RAL_IRQ_CMD_ERROR | RAL_IRQ_ERROR)) != 0U) {
 		(void)lr20xx_system_get_errors(radio.ral.context, &diag.chip_errors);
 		diag.chip_error_freq_hz =
-			lora_valid ? lora_cfg.rf_freq_in_hz : flrc_cfg.rf_freq_in_hz;
+			modem == MODEM_LORA ? modem_cfg.lora.rf_freq_in_hz
+			: modem == MODEM_FLRC ? modem_cfg.flrc.rf_freq_in_hz : 0U;
 		(void)lr20xx_system_clear_errors(radio.ral.context);
 		if (reuse_fs &&
 		    ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC) != RAL_STATUS_OK) {
@@ -405,7 +404,7 @@ int zlrs_lr2021_prepare(const zlrs_radio_req_t *req)
 	}
 	diag.submit_us_last = stages[4] - start;
 	diag.submit_us_max = MAX(diag.submit_us_max, diag.submit_us_last);
-	if (timed_slot) {
+	if ((slot_end_us != 0U)) {
 		if (req->is_tx) {
 			/* TX has a fixed launch point; receivers configure before it. */
 			if (!zlrs_slot_timer_launch_ready(zlrs_slot_timer_now_us(), tx_at_us,
@@ -429,7 +428,7 @@ int zlrs_lr2021_prepare(const zlrs_radio_req_t *req)
 		const uint32_t ready_us = zlrs_slot_timer_now_us();
 
 		diag.tx_ready_lead_us_last =
-			timed_slot && (int32_t)(tx_at_us - ready_us) > 0 ? tx_at_us - ready_us : 0U;
+			(slot_end_us != 0U) && (int32_t)(tx_at_us - ready_us) > 0 ? tx_at_us - ready_us : 0U;
 	}
 	return 0;
 }
@@ -442,7 +441,7 @@ int zlrs_lr2021_launch(void)
 		return -EINVAL;
 	}
 	job_state = RADIO_IDLE;
-	if (timed_slot) {
+	if ((slot_end_us != 0U)) {
 		if (request->is_tx && (int32_t)(zlrs_slot_timer_now_us() - tx_at_us) < 0) {
 			return -EAGAIN;
 		}
@@ -459,7 +458,7 @@ int zlrs_lr2021_launch(void)
 		}
 	}
 	begin_us = zlrs_slot_timer_now_us();
-	if (timed_slot && request->is_tx) {
+	if ((slot_end_us != 0U) && request->is_tx) {
 		diag.launch_jitter_us_last = begin_us - tx_at_us;
 		diag.launch_jitter_us_max =
 			MAX(diag.launch_jitter_us_max, diag.launch_jitter_us_last);
@@ -545,7 +544,7 @@ done:
 
 int zlrs_lr2021_launch_at(uint32_t target_us)
 {
-	if (job_state != RADIO_PREPARED || request == NULL || !request->is_tx || !timed_slot) {
+	if (job_state != RADIO_PREPARED || request == NULL || !request->is_tx || slot_end_us == 0U) {
 		return -EINVAL;
 	}
 	BUILD_ASSERT(DT_NODE_HAS_COMPAT(DT_BUS(RADIO_NODE), arm_pl022));
@@ -769,7 +768,7 @@ bool zlrs_lr2021_process_irq(zlrs_lr2021_result_t *out)
 	 * open for a later valid packet; the RAL clears the RX FIFO before restarting.
 	 * No timer boundary or protocol completion is moved by this retry. */
 	if (!request->is_tx && (irq & frame_errors) != 0U && (irq & chip_errors) == 0U &&
-	    (!timed_slot || (int32_t)(slot_end_us - zlrs_slot_timer_now_us()) > 0)) {
+	    (slot_end_us == 0U || (int32_t)(slot_end_us - zlrs_slot_timer_now_us()) > 0)) {
 		if (ral_set_rx(&radio.ral, 0U) == RAL_STATUS_OK) {
 			diag.rx_restarted++;
 			return false;
@@ -820,7 +819,6 @@ bool zlrs_lr2021_process_irq(zlrs_lr2021_result_t *out)
 		}
 
 		diag.rx_us_last = event_us - begin_us;
-		diag.rx_windows++;
 	}
 	/* The configured hardware fallback already returns a completed packet to FS. */
 	job_state = RADIO_IDLE;
@@ -865,7 +863,7 @@ void zlrs_lr2021_abort(void)
 		}
 	}
 	k_sem_reset(&done_sem);
-	timed_slot = false;
+	slot_end_us = 0U;
 	diag.overruns++;
 }
 

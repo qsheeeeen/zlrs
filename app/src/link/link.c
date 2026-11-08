@@ -649,15 +649,6 @@ bool zlrs_link_advance_slot(zlrs_link_t *link, uint8_t slot, uint32_t now_ms)
 	return true;
 }
 
-const zlrs_radio_req_t *zlrs_link_slot(zlrs_link_t *link, uint8_t slot, uint32_t now_ms)
-{
-	if (!zlrs_link_advance_slot(link, slot, now_ms)) {
-		return NULL;
-	}
-	const zlrs_link_plan_t plan = zlrs_link_plan(link);
-	return zlrs_link_finalize(link, &plan);
-}
-
 void zlrs_link_skip_slot(zlrs_link_t *link, uint8_t slot)
 {
 	link->slot = slot;
@@ -737,26 +728,6 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 			link->stats.last_snr = snr;
 			link->accepted_rx_events++;
 		}
-	}
-}
-
-void zlrs_link_rx(zlrs_link_t *link, const uint8_t *buf, uint16_t len, int16_t rssi, int8_t snr,
-		  uint32_t now_ms)
-{
-	if (buf == NULL || len == 0U || (link->req_pending && link->req.is_tx)) {
-		return;
-	}
-	if (len > sizeof(link->rx_buf)) {
-		link->stats.rx_bad_frame++;
-		return;
-	}
-
-	memcpy(link->rx_buf, buf, len);
-	link->req_pending = false;
-	if (handle_rx(link, len, now_ms) == 0) {
-		link->stats.last_rssi = rssi;
-		link->stats.last_snr = snr;
-		link->accepted_rx_events++;
 	}
 }
 
@@ -868,13 +839,12 @@ static uint32_t fingerprint(const uint8_t *data, size_t len)
 zlrs_link_diagnostics_t zlrs_link_get_diagnostics(const zlrs_link_t *link)
 {
 	return (zlrs_link_diagnostics_t){
-		.frequency_hz = link->fhss.domain != NULL ? zlrs_fhss_current_hz(&link->fhss) : 0U,
-		.frame_index = link->frame_index,
+
 		.last_rx_frame = link->last_rx_frame,
 		.sess_nonce_leader = link->sess_nonce_leader,
 		.sess_nonce_follower = link->sess_nonce_follower,
 		.sess_cfm_due = link->sess_cfm_due,
-		.hop_index = link->fhss.index,
+
 		.queue_count = link->queue_count,
 		.arq_used = link->arq_used,
 		.arq_seq = link->arq_seq,
@@ -885,8 +855,6 @@ zlrs_link_diagnostics_t zlrs_link_get_diagnostics(const zlrs_link_t *link)
 		.pair_cfm_sent = link->pair_cfm_sent,
 		.pair_nonce = link->pair_nonce,
 		.pair_nonce_b = link->pair_nonce_b,
-		.root_fingerprint = fingerprint(link->root_key, sizeof(link->root_key)),
 		.pair_fingerprint = fingerprint(link->pair_key, sizeof(link->pair_key)),
-		.sync_fingerprint = fingerprint(link->sync_word, sizeof(link->sync_word)),
 	};
 }

@@ -205,7 +205,6 @@ bool link_handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now
 		}
 		link->sess_nonce_leader = nonce;
 		link->sess_nonce_follower = nonce_follower;
-		link->sess_hop = hop;
 		link->tx_seq = 1U;
 		derive_session_keys(link);
 		link->session_pending = true;

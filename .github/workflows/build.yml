@@ -25,12 +25,26 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ripgrep
       - name: host tool dependencies
         run: python -m pip install -r tools/requirements.txt
       - name: tools and architecture
         run: |
-          bash tests/gates.sh
-          python tests/tools/run.py
+          set -o pipefail
+          mkdir -p build
+          bash tests/gates.sh 2>&1 | tee build/gates.log
+          python tests/tools/run.py 2>&1 | tee build/tools.log
+      - name: upload tool results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tool-results
+          path: |
+            build/gates.log
+            build/tools.log
 
   simulation:
     runs-on: ubuntu-24.04
