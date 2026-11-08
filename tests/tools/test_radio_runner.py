@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location("hardware_radio_runner", ROOT / "tests/hardware/radio/run.py")
+SPEC = importlib.util.spec_from_file_location("hardware_radio_runner", ROOT / "tests/app/rf/hardware/run.py")
 runner = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(runner)
 

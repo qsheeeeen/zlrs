@@ -49,14 +49,14 @@ jobs:
       - name: Zephyr workspace and test dependencies
         run: |
           zlrs/tools/setup-zephyr.sh "$GITHUB_WORKSPACE"
-          .venv/bin/python -m pip install -r zlrs/tests/simulation/requirements.txt
+          .venv/bin/python -m pip install -r zlrs/tests/app/requirements.txt
       - name: complete native simulation matrix
         run: |
           source zlrs/tools/zephyr-env.sh
           export ZEPHYR_TOOLCHAIN_VARIANT=host
           unset ZEPHYR_SDK_INSTALL_DIR
           python "$ZEPHYR_BASE/scripts/twister" \
-            -T zlrs/tests/simulation -p native_sim/native/64 \
+            -T zlrs/tests/app -p native_sim/native/64 --exclude-tag benchmark \
             --outdir build/simulation --jobs 2 --inline-logs
       - name: native performance measurements
         run: |
@@ -64,7 +64,7 @@ jobs:
           export ZEPHYR_TOOLCHAIN_VARIANT=host
           unset ZEPHYR_SDK_INSTALL_DIR
           python "$ZEPHYR_BASE/scripts/twister" \
-            -T zlrs/tests/bench -p native_sim/native/64 \
+            -T zlrs/tests/app/link/bench -p native_sim/native/64 \
             --outdir build/bench --inline-logs
       - name: upload simulation results
         if: always()

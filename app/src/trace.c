@@ -25,6 +25,7 @@
 #include <tracing_core.h>
 
 #include "rf.h"
+#include "region/region.h"
 #include "platform/watchdog.h"
 #include "proto/sha256.h"
 
@@ -86,7 +87,7 @@ struct artifact {
 	const char *sha256;
 	const char *build;
 	const char *zephyr;
-	uint32_t rf_band;
+	uint32_t regions;
 };
 
 static const struct json_obj_descr artifact_fields[] = {
@@ -102,7 +103,7 @@ static const struct json_obj_descr artifact_fields[] = {
 	JSON_OBJ_DESCR_PRIM(struct artifact, sha256, JSON_TOK_STRING),
 	JSON_OBJ_DESCR_PRIM(struct artifact, build, JSON_TOK_STRING),
 	JSON_OBJ_DESCR_PRIM(struct artifact, zephyr, JSON_TOK_STRING),
-	JSON_OBJ_DESCR_PRIM(struct artifact, rf_band, JSON_TOK_NUMBER),
+	JSON_OBJ_DESCR_PRIM(struct artifact, regions, JSON_TOK_NUMBER),
 };
 
 static void freeze(uint32_t reason)
@@ -119,7 +120,6 @@ static void freeze(uint32_t reason)
 	}
 	irq_unlock(key);
 }
-
 
 static void deadline(struct k_timer *timer)
 {
@@ -140,7 +140,6 @@ void zlrs_trace_trigger(uint32_t sequence, uint32_t elapsed_us)
 	}
 }
 #endif
-
 
 struct zlrs_trace_status zlrs_trace_status(void)
 {
@@ -435,7 +434,7 @@ static int save_capture(void)
 		"-" STRINGIFY(APP_BUILD_VERSION),
 			      .zephyr = KERNEL_VERSION_STRING
 			      "-" STRINGIFY(BUILD_VERSION),
-					    .rf_band = DT_PROP(DT_NODELABEL(zlrs_rf), band),
+					    .regions = zlrs_region_supported_mask(),
 			      };
 
 	rc = json_obj_encode_buf(artifact_fields, ARRAY_SIZE(artifact_fields), &saved, json,

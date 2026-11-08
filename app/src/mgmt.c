@@ -378,7 +378,7 @@ static int product_command(struct smp_streamer *ctxt, bool write)
 		FIELD(state, reply.status.state);
 		FIELD(flags, status_flags(&reply.status));
 		FIELD(lq_percent, reply.status.lq_percent);
-		FIELD(band, DT_PROP(DT_NODELABEL(zlrs_rf), band));
+		FIELD(regions, zlrs_region_supported_mask());
 		FIELD(region, reply.region);
 		FIELD(profile, reply.status.profile);
 		FIELD(tx_power_dbm, reply.status.power_ceiling_dbm);

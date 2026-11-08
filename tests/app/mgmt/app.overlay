@@ -1,0 +1,21 @@
+#include <zephyr/dt-bindings/zlrs/region.h>
+/ {
+	chosen { zephyr,uart-mcumgr = &mgmt_uart; };
+	aliases { zlrs-data-uart = &uart0; zlrs-mgmt-cdc = &mgmt_uart; };
+	mgmt_uart: management-uart {
+		compatible = "zephyr,uart-emul";
+		current-speed = <115200>;
+		tx-fifo-size = <64>;
+		rx-fifo-size = <1024>;
+	};
+	zlrs_rf: radio-config {
+		compatible = "zlrs,radio";
+		ism2400-min-tx-power-dbm = <(-17)>;
+		ism2400-max-tx-power-dbm = <12>;
+		subg-min-tx-power-dbm = <(-10)>;
+		subg-max-tx-power-dbm = <22>;
+		regions = <ZLRS_REGION_CN470 ZLRS_REGION_CN433>;
+		default-region = <ZLRS_REGION_CN433>;
+	};
+};
+&uart0 { current-speed = <115200>; };

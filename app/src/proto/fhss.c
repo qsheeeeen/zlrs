@@ -22,8 +22,8 @@ const zlrs_fhss_domain_t zlrs_fhss_domains[ZLRS_DOMAIN_COUNT] = {
 			       .step_hz = 500000U,
 			       .channel_count = 13U},
 	/*
-	 * 470-510 MHz: the main band of the Core2021 LF variant. A 300 kHz step matches the FLRC
-	 * bandwidth (0.325 Mbps DSB is 300 kHz wide).
+	 * 470-510 MHz: a 300 kHz step matches the FLRC bandwidth
+	 * (0.325 Mbps DSB is 300 kHz wide).
 	 */
 	[ZLRS_DOMAIN_CN470] = {.name = "CN470",
 			       .start_hz = 470300000U,

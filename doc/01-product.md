@@ -21,7 +21,7 @@ loss of contact and probes a return to 2.4 GHz after sustained healthy SubG
 feedback. Band changes preserve the session and queued, unacknowledged data.
 Transmission pauses while the new radio timing is acquired.
 
-The SubG region must match the module's LF or HF hardware. Both endpoints require
+The SubG region must belong to the board's compiled `regions` array. Both endpoints require
 matching band mode, SubG region, security profile and air protocol version.
 
 ## Interfaces and configuration

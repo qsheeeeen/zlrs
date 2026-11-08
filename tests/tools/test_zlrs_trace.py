@@ -83,7 +83,7 @@ class TraceControlTests(unittest.TestCase):
 class TraceRollbackTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        path = Path(__file__).resolve().parents[1] / "hardware/trace/run.py"
+        path = Path(__file__).resolve().parents[1] / "app/trace/hardware/run.py"
         spec = importlib.util.spec_from_file_location("hardware_trace_runner", path)
         cls.runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.runner)

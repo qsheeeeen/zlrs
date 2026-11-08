@@ -1,0 +1,46 @@
+# Copyright (c) 2026 zlrs contributors
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  Board radio configuration. regions lists
+  exactly the predefined channel plans selectable at runtime. Calibration and
+  power bounds describe the physical radio independently of regional rules.
+
+compatible: "zlrs,radio"
+
+properties:
+  regions:
+    type: array
+    required: true
+    description: |
+      Nonempty set of channel-plan IDs from zephyr/dt-bindings/zlrs/region.h.
+      A board may declare any subset, including all predefined regions.
+
+  default-region:
+    type: int
+    required: true
+    description: |
+      Region used until NVS holds one (0 = FCC915, 1 = EU868, 2 = CN470, 3 =
+      CN433). It must belong to regions. This is only the initial
+      selection; runtime settings remain restricted to the declared set.
+    enum: [0, 1, 2, 3]
+
+  ism2400-min-tx-power-dbm:
+    type: int
+    required: true
+    description: Minimum calibrated 2.4 GHz transmit setpoint
+
+  ism2400-max-tx-power-dbm:
+    type: int
+    required: true
+    description: Maximum allowed 2.4 GHz transmit setpoint for this board
+
+  subg-min-tx-power-dbm:
+    type: int
+    required: true
+    description: Minimum calibrated SubG transmit setpoint
+
+  subg-max-tx-power-dbm:
+    type: int
+    required: true
+    description: Maximum allowed SubG transmit setpoint before regional policy

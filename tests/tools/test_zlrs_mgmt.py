@@ -95,8 +95,11 @@ class ManagementTests(unittest.TestCase):
         for value in ("CPU 21.7% (avg 5.00s)", "up 1d 01:01:01", "26.75 C", "3.300 V",
                       "31323334", "35363738", "PLL lock"):
             self.assertIn(value, output)
+        status["regions"] = (1 << 0) | (1 << 3)
         summary = m.status_text(status, system=system)
-        self.assertEqual(len(summary.splitlines()), 14)
+        self.assertIn("FCC915, CN433", summary)
+        self.assertNotIn("EU868", summary)
+        self.assertEqual(len(summary.splitlines()), 15)
         self.assertTrue(all(len(line) <= 80 for line in summary.splitlines()))
         self.assertNotIn("Device ID", summary)
         self.assertNotIn("IRQ status", summary)

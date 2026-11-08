@@ -9,24 +9,20 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <zephyr/dt-bindings/zlrs/region.h>
 #include "rp2350_zero_core2021.dtsi"
 
 / {
-	/*
-	 * Radio design: HF. The region has to fit inside this band and range (see
-	 * app/src/region). It cannot live in /chosen: DT macros do not read
-	 * custom-prefixed chosen properties.
-	 */
+	/* Compile-time set of selectable predefined channel plans. */
 	zlrs_rf: zlrs-rf {
-		compatible = "zlrs,rf-design";
+		compatible = "zlrs,radio";
 		ism2400-min-tx-power-dbm = <(-17)>;
 		ism2400-max-tx-power-dbm = <12>;
 		subg-min-tx-power-dbm = <(-10)>;
 		subg-max-tx-power-dbm = <22>;
-		band = <1>;
-		low-hz = <850000000>;
-		high-hz = <930000000>;
-		default-region = <0>; /* FCC915 */
+
+		regions = <ZLRS_REGION_FCC915 ZLRS_REGION_EU868>;
+		default-region = <ZLRS_REGION_FCC915>; /* FCC915 */
 	};
 };
 

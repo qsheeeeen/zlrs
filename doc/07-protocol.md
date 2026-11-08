@@ -388,8 +388,14 @@ writes and other paths. `--refresh` enters maintenance for fresh measurements.
 Flags: bit 0 root key, bit 1 pairing, bit 2 valid session, bit 3 active SubG,
 bit 4 automatic mode, bit 5 acquisition, bit 6 pending plan, bit 7 debug fixed power.
 Roles are Leader=0/Follower=1. States are unconfigured=0, unpaired=1, pairing=2, searching=3,
-connected=4. Hardware SKU is LF=0/HF=1. Acquisition can coexist with CONNECTED and
-a valid session; those flags do not prove DATA is ready.
+connected=4. Acquisition can coexist with CONNECTED and a valid session; those
+flags do not prove DATA is ready.
+
+`region` is the selected region ID. `regions` is the board's compiled selection
+set encoded as a bit mask: bit 0 FCC915, bit 1 EU868, bit 2 CN470, bit 3 CN433.
+For example, `regions = 0x09` permits FCC915 and CN433; `0x0f` permits all four.
+SET_REGION accepts one ID from this set. The devicetree `regions` property uses
+an ID array; the management response uses the equivalent bit mask.
 
 Validity bits identify junction temperature (0), XOSC temperature (1), VBAT (2),
 version (3), mode/command/reset/IRQ (4) and chip errors (5). Unset means unavailable,

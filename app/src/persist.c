@@ -102,12 +102,6 @@ static struct {
 
 static bool ready;
 
-static const zlrs_rf_design_t rf_design = {
-	.band = DT_PROP(DT_NODELABEL(zlrs_rf), band),
-	.low_hz = DT_PROP(DT_NODELABEL(zlrs_rf), low_hz),
-	.high_hz = DT_PROP(DT_NODELABEL(zlrs_rf), high_hz),
-};
-
 const zlrs_persist_settings_t *zlrs_persist_settings(void)
 {
 	return &state.settings;
@@ -161,9 +155,7 @@ static bool settings_valid(const zlrs_persist_settings_t *s)
 	       (s->profile == ZLRS_PROFILE_P1 ||
 		(s->profile == ZLRS_PROFILE_P0 && IS_ENABLED(CONFIG_ZLRS_APP_DEBUG))) &&
 	       s->data_baud >= 9600U && s->data_baud <= 4000000U &&
-	       zlrs_region_get(s->region) != NULL &&
-	       zlrs_region_validate(zlrs_region_get(s->region), &rf_design,
-				    zlrs_region_get(s->region)->max_tx_power_dbm) == 0;
+	       zlrs_region_get(s->region) != NULL;
 }
 
 static int write_record(enum record_id id, const void *bytes, size_t size)

@@ -1,0 +1,6 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+#include <zephyr/dt-bindings/zlrs/region.h>
+&zlrs_rf {
+	regions = <ZLRS_REGION_FCC915 ZLRS_REGION_CN433>;
+	default-region = <ZLRS_REGION_CN433>;
+};

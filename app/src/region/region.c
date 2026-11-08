@@ -7,16 +7,36 @@
 #include "region/region.h"
 
 #include <stddef.h>
+#include <zephyr/devicetree.h>
+#include <zephyr/sys/util.h>
+
+#define RADIO_NODE DT_NODELABEL(zlrs_rf)
+#if DT_NODE_EXISTS(RADIO_NODE)
+#define REGION_BIT(node, prop, index) | BIT(DT_PROP_BY_IDX(node, prop, index) & 31U)
+#define REGIONS_MASK                  (0U DT_FOREACH_PROP_ELEM(RADIO_NODE, regions, REGION_BIT))
+#define CHECK_REGION(node, prop, index)                                                            \
+	BUILD_ASSERT((unsigned int)DT_PROP_BY_IDX(node, prop, index) < ZLRS_REGION_COUNT,          \
+		     "unsupported predefined region ID");
+DT_FOREACH_PROP_ELEM(RADIO_NODE, regions, CHECK_REGION)
+BUILD_ASSERT(DT_PROP_LEN(RADIO_NODE, regions) > 0, "empty supported region set");
+BUILD_ASSERT(__builtin_popcount(REGIONS_MASK) == DT_PROP_LEN(RADIO_NODE, regions),
+	     "duplicate supported region ID");
+BUILD_ASSERT(DT_PROP(RADIO_NODE, default_region) < ZLRS_REGION_COUNT, "unknown default region");
+BUILD_ASSERT((REGIONS_MASK & BIT(DT_PROP(RADIO_NODE, default_region) & 31U)) != 0U,
+	     "default region must belong to regions");
+#else
+/* Headless component fixtures have no radio and permit no region selection. */
+#define REGIONS_MASK 0U
+#endif
 
 /*
  * Power and rate ceilings are conservative values for the usual sub-bands (check local rules):
  * FCC 15.247 uses the module ceiling of 22 dBm, ETSI EN 300 220 uses 14 dBm at 1%, CN470 17 dBm,
- * CN433 (low power) 10 dBm. The band is a hardware property: FCC915/EU868 need HF, the rest LF.
+ * CN433 (low power) 10 dBm.
  */
 static const zlrs_region_t regions[ZLRS_REGION_COUNT] = {
 	[ZLRS_REGION_FCC915] = {.name = "FCC915",
 				.domain = ZLRS_DOMAIN_FCC915,
-				.band = ZLRS_BAND_SUBG_HF,
 				.low_hz = 902000000U,
 				.high_hz = 928000000U,
 				.max_tx_power_dbm = 22,
@@ -25,7 +45,6 @@ static const zlrs_region_t regions[ZLRS_REGION_COUNT] = {
 				.max_rate_bps = 2600000U},
 	[ZLRS_REGION_EU868] = {.name = "EU868",
 			       .domain = ZLRS_DOMAIN_EU868,
-			       .band = ZLRS_BAND_SUBG_HF,
 			       .low_hz = 863000000U,
 			       .high_hz = 870000000U,
 			       .max_tx_power_dbm = 14,
@@ -34,7 +53,6 @@ static const zlrs_region_t regions[ZLRS_REGION_COUNT] = {
 			       .max_rate_bps = 325000U},
 	[ZLRS_REGION_CN470] = {.name = "CN470",
 			       .domain = ZLRS_DOMAIN_CN470,
-			       .band = ZLRS_BAND_SUBG_LF,
 			       .low_hz = 470000000U,
 			       .high_hz = 510000000U,
 			       .max_tx_power_dbm = 17,
@@ -43,7 +61,6 @@ static const zlrs_region_t regions[ZLRS_REGION_COUNT] = {
 			       .max_rate_bps = 325000U},
 	[ZLRS_REGION_CN433] = {.name = "CN433",
 			       .domain = ZLRS_DOMAIN_CN433,
-			       .band = ZLRS_BAND_SUBG_LF,
 			       .low_hz = 433050000U,
 			       .high_hz = 434790000U,
 			       .max_tx_power_dbm = 10,
@@ -61,49 +78,18 @@ uint32_t zlrs_region_clamp_rate(const zlrs_region_t *region, uint32_t rate_bps)
 	return (rate_bps > region->max_rate_bps) ? region->max_rate_bps : rate_bps;
 }
 
+uint32_t zlrs_region_supported_mask(void)
+{
+	return REGIONS_MASK;
+}
+
 const zlrs_region_t *zlrs_region_get(zlrs_region_id_t id)
 {
-	if ((unsigned int)id >= ZLRS_REGION_COUNT) {
+	if ((unsigned int)id >= ZLRS_REGION_COUNT || (REGIONS_MASK & BIT(id)) == 0U) {
 		return NULL;
 	}
 
 	return &regions[id];
-}
-
-int zlrs_region_validate(const zlrs_region_t *region, const zlrs_rf_design_t *rf,
-			 int8_t tx_power_dbm)
-{
-	const zlrs_fhss_domain_t *domain;
-	uint32_t first;
-	uint32_t last;
-
-	if (region == NULL || rf == NULL || region->domain >= ZLRS_DOMAIN_COUNT) {
-		return -1;
-	}
-	/* The radio design has to be the band the region needs: LF cannot do 915, HF cannot do 470/433 */
-	if (region->band != rf->band) {
-		return -5;
-	}
-	/* And it has to actually cover the region's band edges, not merely claim the right SKU */
-	if (region->low_hz < rf->low_hz || region->high_hz > rf->high_hz) {
-		return -6;
-	}
-	if (tx_power_dbm > region->max_tx_power_dbm) {
-		return -2;
-	}
-
-	domain = &zlrs_fhss_domains[region->domain];
-	if (domain->channel_count == 0U) {
-		return -3;
-	}
-
-	first = domain->start_hz;
-	last = domain->start_hz + (uint32_t)(domain->channel_count - 1U) * domain->step_hz;
-	if (first < region->low_hz || last > region->high_hz) {
-		return -4;
-	}
-
-	return 0;
 }
 
 uint32_t zlrs_airtime_us(uint16_t frame_len, uint32_t rate_bps)

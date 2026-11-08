@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+common:
+  harness: ztest
+  tags: [settings, nvs]
+  platform_allow: [native_sim/native/64]
+tests:
+  zlrs.settings.layout: {}
+  zlrs.settings.all_regions:
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE=all-regions.overlay
+  zlrs.settings.disjoint_regions:
+    extra_args:
+      - EXTRA_DTC_OVERLAY_FILE=disjoint-regions.overlay

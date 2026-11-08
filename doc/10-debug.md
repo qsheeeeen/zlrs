@@ -126,7 +126,7 @@ can themselves trigger the peer's feedback-loss recovery.
 With the same confirmed normal image installed on both paired boards:
 
 ```sh
-../.venv/bin/python tests/hardware/power/run.py \
+../.venv/bin/python tests/app/power/hardware/run.py \
   --leader <leader-serial> --follower <follower-serial> \
   --out-dir build/power-normal
 ```
@@ -136,7 +136,7 @@ quality, checks 2 MiB in each direction byte-for-byte during online sampling,
 then pauses one endpoint to verify feedback-loss recovery and subsequent saving.
 USBIP users need reattachment enabled across bootloader/application reenumeration.
 
-For reproducible fault acceptance, build `tests/hardware/power` with sysbuild,
+For reproducible fault acceptance, build `tests/app/power/hardware` with sysbuild,
 install and confirm that image on both boards, then use the same runner with
 `--faults`. Its test-only native SMP group 67 injects dropped DATA receptions or
 RSSI values at the link-completion boundary; real LR2021 TX/RX, authentication,
@@ -316,8 +316,10 @@ LF/HF production and trace builds use this shared partition geometry.
 
 Keep two bounded generations. Each contains `channel0_0`, the raw RAM snapshot,
 and `capture.json`, containing the capture ID, application and Zephyr revisions,
-RF hardware band from devicetree, event selection, RAM capacity and SHA-256,
-requested/actual times, stop reason and core drop-count delta. The event mask describes requested
+the board's `regions` bit mask, event selection, RAM capacity and SHA-256,
+requested/actual times, stop reason and core drop-count delta. `regions` uses the
+same encoding as management status: bits 0–3 select FCC915, EU868, CN470 and
+CN433. The event mask describes requested
 switches: bits 0–4 mean thread, ISR, semaphore, idle and named events. It does not
 imply that other hooks are absent. The JSON describes the artifact;
 it does not wrap or alter the CTF bytes. Archive the build's CTF `metadata` file
@@ -405,7 +407,7 @@ buffer reset happens before `cap_begin`, so a startup stall can be absent from
 the CTF stream itself.
 
 ```sh
-python tests/hardware/trace/run.py --serial <Leader-serial> --peer <Follower-serial> \
+python tests/app/trace/hardware/run.py --serial <Leader-serial> --peer <Follower-serial> \
   --image build/trace-debug/app/zephyr/zephyr.signed.bin \
   --out build/trace-acceptance
 ```
@@ -432,7 +434,7 @@ Acceptance must cover:
 
 ### MCU latency trigger fixture
 
-Build `tests/hardware/latency` with sysbuild and the matching LF/HF board, then
+Build `tests/app/trace/latency` with sysbuild and the matching LF/HF board, then
 install its signed image on both paired devices. It retains the
 production DATA queue, authentication, ARQ and hopping. Group 69 controls one
 outstanding 32-byte probe and MCU echo; the initiator measures from injection
@@ -448,7 +450,7 @@ trigger to reach the peer first. Export remains standard CTF with SHA-256 checks
 The two Flash slots retain the newest and preceding committed snapshots.
 
 ```sh
-python tests/hardware/latency/run.py --serial <initiator> --peer <echo> \
+python tests/app/trace/latency/run.py --serial <initiator> --peer <echo> \
   --threshold-us 20000 --seconds 60 --out build/mcu-latency-capture
 ```
 
@@ -466,9 +468,9 @@ bench, confirm a verified fixture to retain it across reboots.
   `subsys/tracing/include/tracing_backend.h` and `subsys/tracing/tracing_core.c`
   define the backend limits and lifecycle operations used by this design.
 
-The two-board button fixture (`tests/hardware/button`) exposes test-only SMP group
+The two-board button fixture (`tests/app/ui/hardware`) exposes test-only SMP group
 67 to schedule native `gpio-keys` Input events. After configuring matching keys
-and opposite roles, confirm the fixture and run `tests/hardware/button/run.py`.
+and opposite roles, confirm the fixture and run `tests/app/ui/hardware/run.py`.
 It checks pairing before 30 seconds, rejection of a hold crossing the cutoff,
 and a late hold during bidirectional USB-to-RF DATA transfer. This exercises the
 native longpress pipeline and application gate; it does not actuate the physical
@@ -481,7 +483,7 @@ bash tests/gates.sh
 python tests/tools/run.py
 ```
 
-The [test system](../tests/README.md) defines environment ownership, shared
+The [test system](../tests/README.md) defines source ownership, shared
 contracts, test selection and result artifacts. C/C++ protocol and policy
 checks use Zephyr Ztest on `native_sim/native/64`, including AddressSanitizer
 and UBSan. Required coverage
@@ -530,11 +532,11 @@ build and working directory, including simulated flash:
 
 ```sh
 source tools/zephyr-env.sh
-python -m pip install -r tests/simulation/requirements.txt
+python -m pip install -r tests/app/requirements.txt
 export ZEPHYR_TOOLCHAIN_VARIANT=host
 unset ZEPHYR_SDK_INSTALL_DIR
 python "$ZEPHYR_BASE/scripts/twister" \
-  -T tests/simulation -p native_sim/native/64 \
+  -T tests/app -p native_sim/native/64 --exclude-tag benchmark \
   --outdir build/simulation --jobs 2 --inline-logs
 ```
 
@@ -681,9 +683,9 @@ logs, radio operations and timer behavior:
 
 ```sh
 west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33_0/lf \
-  tests/hardware/unit -d build/unit
-python3 tests/hardware/unit/run.py --serial <serial> \
-  --image build/unit/unit/zephyr/zephyr.signed.bin --log build/unit.log
+  tests/app/unit/hardware -d build/unit
+python3 tests/app/unit/hardware/run.py --serial <serial> \
+  --image build/unit/hardware/zephyr/zephyr.signed.bin --log build/unit.log
 ```
 
 For LED-only acceptance without settings or persistence test cases, build the
@@ -692,9 +694,9 @@ take about 150 seconds, so the runner and hardware harness allow 300 seconds:
 
 ```sh
 west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33_0/lf \
-  tests/hardware/unit -d build/unit-ui -- -Dunit_ZLRS_TEST_UI_ONLY=ON
-python3 tests/hardware/unit/run.py --serial <serial> \
-  --image build/unit-ui/unit/zephyr/zephyr.signed.bin --log build/unit-ui.log
+  tests/app/unit/hardware -d build/unit-ui -- -Dhardware_ZLRS_TEST_UI_ONLY=ON
+python3 tests/app/unit/hardware/run.py --serial <serial> \
+  --image build/unit-ui/hardware/zephyr/zephyr.signed.bin --log build/unit-ui.log
 ```
 
 The LED fixture records UI output timestamps and forwards accepted frames to the
@@ -714,18 +716,18 @@ failure, confirmation retry, identity generation, pairing deletion and reset:
 
 ```sh
 west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33_0/lf \
-  tests/hardware/mgmt -d build/mgmt-hardware
-python3 tests/hardware/mgmt/run.py --serial <serial>
+  tests/app/mgmt/hardware -d build/mgmt-hardware
+python3 tests/app/mgmt/hardware/run.py --serial <serial>
 ```
 
-See the [management fixture](../tests/hardware/mgmt/README.md) for restoration
+See the [management fixture](../tests/app/mgmt/hardware/README.md) for restoration
 requirements. Initialization-fault acceptance uses a separate image:
 
 ```sh
 west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33_0/lf \
-  tests/hardware/application -d build/application-fault
-python3 tests/hardware/application/run.py --serial <serial> \
-  --image build/application-fault/application/zephyr/zephyr.signed.bin \
+  tests/app/main/hardware -d build/application-fault
+python3 tests/app/main/hardware/run.py --serial <serial> \
+  --image build/application-fault/hardware/zephyr/zephyr.signed.bin \
   --log build/application-fault.log
 ```
 
@@ -747,10 +749,10 @@ CONFIG_ZLRS_APP_FHSS=y
 CONFIG_ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS=600000
 EOF
 west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33_0/lf \
-  tests/hardware/radio -d build/radio-phy -- \
-  -Dradio_EXTRA_CONF_FILE="$PWD/build/phy-acceptance.conf"
-python3 tests/hardware/radio/run.py --serial <Leader-serial> --peer <Follower-serial> \
-  --image build/radio-phy/radio/zephyr/zephyr.signed.bin \
+  tests/app/rf/hardware -d build/radio-phy -- \
+  -Dhardware_EXTRA_CONF_FILE="$PWD/build/phy-acceptance.conf"
+python3 tests/app/rf/hardware/run.py --serial <Leader-serial> --peer <Follower-serial> \
+  --image build/radio-phy/hardware/zephyr/zephyr.signed.bin \
   --profiles --bytes 8193 --rounds 1 --timeout 45 --log build/radio-phy.json
 ```
 
@@ -765,8 +767,8 @@ describe owner scheduling context. Timer and radio launch IRQ delays remain
 separate observations. Compare fixed-PHY rounds on the same image and load:
 
 ```sh
-python3 tests/hardware/radio/run.py --serial <Leader-serial> --peer <Follower-serial> \
-  --image build/radio-phy/radio/zephyr/zephyr.signed.bin \
+python3 tests/app/rf/hardware/run.py --serial <Leader-serial> --peer <Follower-serial> \
+  --image build/radio-phy/hardware/zephyr/zephyr.signed.bin \
   --phy 0 --status-poll-hz 0 50 0 --bytes 524289 --rounds 3 \
   --timeout 90 --log build/radio-timing.json
 ```
@@ -775,8 +777,8 @@ The same radio fixture can stall both TRNGs while DATA continues. Use one
 sustained round, with enough bytes to cover the entire fault window:
 
 ```sh
-python3 tests/hardware/radio/run.py --serial <Leader-serial> --peer <Follower-serial> \
-  --image build/radio-phy/radio/zephyr/zephyr.signed.bin \
+python3 tests/app/rf/hardware/run.py --serial <Leader-serial> --peer <Follower-serial> \
+  --image build/radio-phy/hardware/zephyr/zephyr.signed.bin \
   --bytes 262145 --rounds 1 --entropy-stall-ms 3500 --timeout 60 \
   --log build/radio-entropy-stall.json
 ```
@@ -791,7 +793,7 @@ consumers, short reads, IRQ calls, deadline/recovery and other workqueue activit
 Use paired product images and deterministic bytes:
 
 ```sh
-python3 tests/hardware/app/link/test_data.py \
+python3 tests/app/link/hardware/test_data.py \
   --leader-port <Leader-serial> --follower-port <Follower-serial> --bytes 8192 --rounds 2
 ```
 
@@ -871,8 +873,8 @@ management session.
 
 ```sh
 west build --sysbuild -b rp2350_zero_core2021/rp2350a/m33_0/lf \
-  tests/hardware/radio -d build/radio
-python3 tests/hardware/radio/run.py --serial <Leader-serial> --peer <Follower-serial> \
+  tests/app/rf/hardware -d build/radio
+python3 tests/app/rf/hardware/run.py --serial <Leader-serial> --peer <Follower-serial> \
   --log build/radio.json --timeout 60
 ```
 
@@ -887,7 +889,7 @@ authentication; empty windows include peer silence and are not packet-error rate
 SubG operation leaves those bins empty.
 
 RAW testing requires a separate build with
-`-Dradio_EXTRA_CONF_FILE="$PWD/tests/hardware/radio/raw.conf"` and runner options
+`-Dhardware_EXTRA_CONF_FILE="$PWD/tests/app/rf/hardware/raw.conf"` and runner options
 `--image <signed-image> --raw`. Select fixed 2.4 GHz first. RAW uses the configured
 modem and paired sync word; its defaults are 2441 MHz and a 32-byte
 sequence-numbered payload, configurable from 6–511 bytes. A reverse fixture swaps

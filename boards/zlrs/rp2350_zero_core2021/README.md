@@ -47,8 +47,23 @@ uses USB when a host has configured the device and the bus is active; see
 
 Both targets support the same 2.4 GHz path and use sysbuild with MCUboot.
 Cortex-M33 is supported; Hazard3 is not a build target for this board.
-The RF design shall declare SKU, coverage and default region. Regional edges,
-channel centers and configured power must fit that design before transmission.
+The `zlrs,radio` node declares `regions`, `default-region` and calibrated
+power limits. Region IDs come from `zephyr/dt-bindings/zlrs/region.h`. Runtime
+selection is restricted to this compiled set; SKU names belong to board assembly
+and calibration. The LF target declares
+`regions = <ZLRS_REGION_CN470 ZLRS_REGION_CN433>` and defaults to CN433; the HF
+target declares `regions = <ZLRS_REGION_FCC915 ZLRS_REGION_EU868>` and defaults
+to FCC915. A board covering all predefined plans declares:
+
+```dts
+regions = <ZLRS_REGION_FCC915 ZLRS_REGION_EU868
+           ZLRS_REGION_CN470 ZLRS_REGION_CN433>;
+default-region = <ZLRS_REGION_FCC915>;
+```
+
+The array must be nonempty and contain unique predefined IDs. `default-region`
+must belong to it. Management status and trace encode this array in the `regions`
+field as a bit mask, with bit positions equal to region IDs.
 
 Core2021 uses a crystal, DC/DC mode, internal low-frequency RC, zero TX-power
 offset and receiver boost 7. Crystal operation has no TCXO wake-up reservation.

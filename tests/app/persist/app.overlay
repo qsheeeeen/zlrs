@@ -1,0 +1,14 @@
+#include <zephyr/dt-bindings/zlrs/region.h>
+/ {
+	aliases { zlrs-data-uart = &uart0; };
+	zlrs_rf: radio-config {
+		compatible = "zlrs,radio";
+		ism2400-min-tx-power-dbm = <(-17)>;
+		ism2400-max-tx-power-dbm = <12>;
+		subg-min-tx-power-dbm = <(-10)>;
+		subg-max-tx-power-dbm = <22>;
+		regions = <ZLRS_REGION_CN470 ZLRS_REGION_CN433>;
+		default-region = <ZLRS_REGION_CN433>;
+	};
+};
+&uart0 { current-speed = <115200>; };

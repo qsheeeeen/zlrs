@@ -59,15 +59,27 @@ Fixed FLRC retains its 511-byte frame limit. Slot reservations use the actual
 mode's frame limit and modem airtime. The smaller automatic MTU trades some
 peak throughput for safe transitions without discarding queued DATA.
 
-| Region | Module SKU | Configured band limits | Raw-rate ceiling | TX ceiling | Duty policy |
-| --- | --- | --- | --- | --- | --- |
-| FCC915 | HF | 902–928 MHz | 2.6 Mbps | 22 dBm | No software duty cap |
-| EU868 | HF | 863–870 MHz | 0.325 Mbps | 14 dBm | 1% over 60 s |
-| CN470 | LF | 470–510 MHz | 0.325 Mbps | 17 dBm | No software duty cap |
-| CN433 | LF | 433.05–434.79 MHz | 0.325 Mbps | 10 dBm | No software duty cap |
+| Region | Configured band limits | Raw-rate ceiling | TX ceiling | Duty policy |
+| --- | --- | --- | --- | --- |
+| FCC915 | 902–928 MHz | 2.6 Mbps | 22 dBm | No software duty cap |
+| EU868 | 863–870 MHz | 0.325 Mbps | 14 dBm | 1% over 60 s |
+| CN470 | 470–510 MHz | 0.325 Mbps | 17 dBm | No software duty cap |
+| CN433 | 433.05–434.79 MHz | 0.325 Mbps | 10 dBm | No software duty cap |
 
-These are ZLRS operating policies, not a certification claim. The region must fit
-the board's declared SubG coverage. Each board declares minimum and maximum
+These are ZLRS operating policies, not a certification claim. Region IDs are
+defined in `include/zephyr/dt-bindings/zlrs/region.h`: FCC915 = 0, EU868 = 1,
+CN470 = 2 and CN433 = 3. The board's `zlrs,radio` node declares `regions` as an
+array of these IDs and chooses `default-region` from that array. The build rejects
+an empty array, duplicate or unknown IDs, and a default outside the array.
+
+`zlrs_region_get()` returns a plan only when its ID belongs to the compiled
+`regions` array. RF initialization, settings writes and settings loading use this
+same selection boundary. Unsupported writes fail without changing saved settings.
+An unsupported saved region makes the stored settings invalid and follows the
+[storage reset policy](06-firmware.md#persistent-storage-and-logs).
+A full-band board lists all four IDs; application code selects plans by ID.
+
+Each board declares minimum and maximum
 transmit setpoints for both paths. The prototype range is −17 to +12 dBm on
 2.4 GHz and −10 to +22 dBm on SubG. The effective SubG maximum is the smaller of
 the board maximum and regional ceiling; the SubG region does not constrain the

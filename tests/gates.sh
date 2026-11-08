@@ -15,7 +15,7 @@
 #      the log_partition in the board's flash layout, or the ring either wastes flash or
 #      overwrites the coredump partition next to it (doc/06-firmware.md).
 #   5. RF owns link instances; frontends use business interfaces and own their channels.
-#   6. test environments share contracts and support, never another environment's sources.
+#   6. tests/app follows firmware modules; tests/tools checks host scripts.
 #
 # Usage: tests/gates.sh
 
@@ -60,11 +60,11 @@ fi
 
 reject_matches "interactive shell commands returned; use management or MCUmgr interfaces:" \
 	'#[[:space:]]*include[[:space:]]*[<"]zephyr/shell/|SHELL_(CMD|STATIC_SUBCMD|SUBCMD)|^CONFIG_SHELL=y' \
-	app tests/hardware --glob '*.[ch]' --glob '*.conf'
+	app tests/app --glob '*.[ch]' --glob '*.conf'
 
-# The core region's RF design value is allowed; application RF APIs/state are not.
+# Persistence validates settings without depending on the RF owner.
 reject_matches "persist depends on RF or state publication:" \
-	--pcre2 '"rf.h"|zlrs_rf_(?!design_t\b)|zbus' app/src/persist.c app/src/persist.h
+	--pcre2 '"rf.h"|zlrs_rf_|zbus' app/src/persist.c app/src/persist.h
 
 reject_matches "log storage depends on the management protocol:" \
 	'zlrs/mgmt|ZLRS_MGMT' app/src/log.c app/src/log.h
@@ -74,17 +74,6 @@ reject_matches "LR2021 hardware depends on a protocol context:" \
 
 reject_matches "RF or diagnostics depends on the management wire protocol:" \
 	'zlrs/mgmt|ZLRS_MGMT' app/src/rf.c app/src/diagnostics.c app/src/diagnostics.h
-
-for environment in simulation hardware contracts support; do
-	case "$environment" in
-	simulation) foreign='hardware' ;;
-	hardware) foreign='simulation' ;;
-	*) foreign='simulation|hardware' ;;
-	esac
-	reject_matches "tests/$environment borrows environment-specific sources; use contracts/ or support/:" \
-		"(tests/|\.\./)($foreign)/" --glob '*.[ch]' --glob '*.cpp' --glob '*.hpp' --glob CMakeLists.txt \
-		"tests/$environment"
-done
 
 # Shipped configurations: everything that produces a firmware image. A debug configuration is
 # the only place allowed to name a bench switch.

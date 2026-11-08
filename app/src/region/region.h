@@ -1,6 +1,6 @@
 /*
  * Region layer: turns "where is this used" into a channel plan, power ceiling and duty
- * cap (doc/07-protocol.md). Validation at boot and limiting before TX are separate.
+ * cap (doc/07-protocol.md). Selection is restricted to the board-defined region set.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -10,6 +10,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include <zephyr/dt-bindings/zlrs/region.h>
+
 #include "proto/fhss.h"
 #include "proto/mod.h"
 
@@ -17,16 +19,9 @@
 extern "C" {
 #endif
 
-/* sub-G hardware: LF covers 410-510 MHz, HF covers 850-930 MHz (two SKUs) */
-typedef enum {
-	ZLRS_BAND_SUBG_LF = 0,
-	ZLRS_BAND_SUBG_HF = 1,
-} zlrs_band_t;
-
 typedef struct {
 	const char *name;
 	zlrs_fhss_domain_id_t domain;
-	zlrs_band_t band;
 	uint32_t low_hz; /* band edge, used to validate the channel plan */
 	uint32_t high_hz;
 	int8_t max_tx_power_dbm;
@@ -35,25 +30,7 @@ typedef struct {
 	uint32_t max_rate_bps;   /* rate ceiling implied by the band width */
 } zlrs_region_t;
 
-/*
- * The radio design a region has to fit: which sub-G hardware this is plus the
- * frequency range that hardware can actually reach. The board declares it
- * (devicetree node zlrs_rf), the region table declares the rules, and
- * validation checks one against the other instead of matching a board name.
- */
-typedef struct {
-	zlrs_band_t band;
-	uint32_t low_hz; /* coverage of the radio design */
-	uint32_t high_hz;
-} zlrs_rf_design_t;
-
-typedef enum {
-	ZLRS_REGION_FCC915 = 0,
-	ZLRS_REGION_EU868,
-	ZLRS_REGION_CN470,
-	ZLRS_REGION_CN433,
-	ZLRS_REGION_COUNT
-} zlrs_region_id_t;
+typedef uint8_t zlrs_region_id_t;
 
 typedef enum {
 	ZLRS_DATA_BAND_24 = 0,
@@ -61,16 +38,9 @@ typedef enum {
 	ZLRS_DATA_BAND_AUTO = 2 /* policy choice; active band remains 0 or 1 */
 } zlrs_data_band_t;
 
+/* Lookup succeeds only for a known region enabled by this board's devicetree. */
 const zlrs_region_t *zlrs_region_get(zlrs_region_id_t id);
-
-/*
- * Check that region, radio design, channel plan and TX power agree with each other: the
- * design has to be the right band and cover the region's band edges, every channel has to
- * fit the band, power has to respect the ceiling. Returns 0 when fine, negative otherwise
- * (the value only feeds the log). -5 = wrong band, -6 = design does not cover the region.
- */
-int zlrs_region_validate(const zlrs_region_t *region, const zlrs_rf_design_t *rf,
-			 int8_t tx_power_dbm);
+uint32_t zlrs_region_supported_mask(void);
 
 /* Rate ceiling from the band width: clamp the configured value, return what is usable */
 uint32_t zlrs_region_clamp_rate(const zlrs_region_t *region, uint32_t rate_bps);

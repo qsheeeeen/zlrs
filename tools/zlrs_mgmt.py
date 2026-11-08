@@ -12,7 +12,7 @@ import sys
 from zlrs_cli import HelpFormatter, bounded_int, positive_seconds, fields, heading, notice
 from zlrs_smp import request_type
 
-STATUS_FIELDS = ('role', 'state', 'flags', 'dev_id', 'peer_id', 'lq_percent', 'band', 'region',
+STATUS_FIELDS = ('role', 'state', 'flags', 'dev_id', 'peer_id', 'lq_percent', 'regions', 'region',
  'tx_power_dbm', 'data_baud', 'profile', 'rssi_dbm', 'peer_rssi_dbm', 'peer_lq_percent',
  'active_power_dbm', 'power_floor_dbm', 'temperature_centi_c', 'tx_frames', 'rx_frames',
  'rx_crc_errors', 'rx_bad_tag', 'tx_retries', 'data_drop_bytes', 'missed_slots', 'radio_fail',
@@ -143,8 +143,10 @@ def status_text(payload, *, system=None, verbose=False) -> str:
         ("Traffic", f"TX {status.tx_frames}, RX {status.rx_frames} | retries {status.tx_retries}"),
         ("Errors", f"CRC {status.rx_crc_errors} | auth {status.rx_bad_tag} | radio {status.radio_fail}"),
         ("Loss", f"missed slots {status.missed_slots} | dropped {status.data_drop_bytes} bytes"),
-        ("Config", f"{'HF' if status.band else 'LF'} | {REGION_NAMES.get(status.region, status.region)} | "
+        ("Config", f"{REGION_NAMES.get(status.region, status.region)} | "
          f"P{status.profile} | key {'set' if flags & 1 else 'missing'} | UART {status.data_baud or 115200}"),
+        ("Regions", ", ".join(name for id, name in REGION_NAMES.items()
+                               if status.regions & (1 << id)) or "none"),
         ("Temps", f"MCU {temperature(status.temperature_centi_c, status.temperature_centi_c != -32768)} | "
          f"RF {temperature(status.radio_temperature_centi_c, status.radio_valid & 1)} | "
          f"XOSC {temperature(status.radio_xosc_temperature_centi_c, status.radio_valid & 2)}"),

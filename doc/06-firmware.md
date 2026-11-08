@@ -77,7 +77,7 @@ protocol version, band mode, SubG region, profile and timing are required.
 | --- | --- |
 | `set-band` | `auto`, `2.4`, `subg`; default `auto` |
 | `set-role` | `leader`, `follower`; default Leader |
-| `set-region` | 0 FCC915, 1 EU868, 2 CN470, 3 CN433; must fit the module SKU |
+| `set-region` | 0 FCC915, 1 EU868, 2 CN470, 3 CN433; must belong to the board’s compiled `regions` array |
 | `set-baud` | 9600–4000000; default 115200 |
 | `set-profile` | `p1` in production; debug also accepts `p0`; `p2` is unsupported |
 | `set-phrase` | 1–32 UTF-8 bytes, derived on the device |
@@ -266,8 +266,14 @@ under `zlrs/`; values retain their explicit byte representation.
 | `zlrs/id` | Device ID | 4 |
 | `zlrs/pair` | Peer ID and initiator/responder pairing nonces | 12 |
 
+The selected region is stored as one byte under `zlrs/region`; the board's
+`regions` array is compiled into the firmware. Management status exposes that
+array as a `regions` bit mask. `set-region` rejects an ID outside the array without
+changing saved settings. A missing region record uses `default-region`.
+
 Missing optional values use validated defaults. No legacy records or older schema
-are imported. A missing/invalid schema or read failure clears the complete storage
+are imported. A missing/invalid schema, invalid stored settings (including a region
+outside `regions`) or read failure clears the complete storage
 partition and initializes defaults and a new device identity. Root key and pairing
 must then be provisioned again. Factory reset uses the same full erase path.
 A durable reset marker prevents an interrupted erase from reactivating credentials.

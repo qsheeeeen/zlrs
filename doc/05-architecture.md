@@ -30,9 +30,12 @@ preserving that context's session and delivery progress.
 | Application protocol | Wire encoding, pairing, sessions, FHSS, ARQ and replay | Zephyr application modules with explicit instances, time and transaction results |
 | Hardware adaptation | SPI, FIFO, IRQ timestamps, timer, crypto, entropy and sensors | Return hardware results without owning protocol state |
 
-Board descriptions define peripheral availability, electrical assignments and RF
-coverage. Application services use those capabilities without branching on board
-names. All application C/C++ sources and tests use the Zephyr build. Link, frame
+Board descriptions define peripheral availability, electrical assignments and the
+`zlrs,radio` node’s `regions` array. The region module owns the predefined plans
+and restricts lookup to this compiled array. Persistence and RF use that same
+lookup; board assembly and calibration own the hardware SKU.
+
+All application C/C++ sources and tests use the Zephyr build. Link, frame
 codec and region sources and their private headers live under `app/src/` and
 compile directly into the application target through one unconditional source
 list shared by the application and relevant test fixtures. Mandatory protocol

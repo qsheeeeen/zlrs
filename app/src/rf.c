@@ -80,12 +80,6 @@ static zlrs_link_t link_data;
 static zlrs_rf_work_t work;
 static zlrs_mod_cfg_t data_mod;
 
-static const zlrs_rf_design_t rf_design = {
-	.band = DT_PROP(DT_NODELABEL(zlrs_rf), band),
-	.low_hz = DT_PROP(DT_NODELABEL(zlrs_rf), low_hz),
-	.high_hz = DT_PROP(DT_NODELABEL(zlrs_rf), high_hz),
-};
-
 /* Region: picks the band, the power ceiling and the duty accounting */
 static const zlrs_region_t *region;
 static zlrs_region_id_t region_id;
@@ -1209,23 +1203,11 @@ int zlrs_rf_init(void)
 	LOG_INF("data band: %s", ZLRS_DATA_SUBG ? "sub-G" : "2.4G");
 	region = zlrs_region_get(region_id);
 	if (region == NULL) {
-		LOG_ERR("unknown region %d", region_id);
+		LOG_ERR("unsupported region %d", region_id);
 		return -EINVAL;
 	}
-	/* The first two things to look at on the bench: which SKU this board is, which region it runs */
-	LOG_INF("board: sub-G %s (band %d), region %s",
-		rf_design.band == ZLRS_BAND_SUBG_LF ? "LF" : "HF", rf_design.band, region->name);
-	LOG_INF("hardware: ports=%s%s usb=%c btn=%c led=%c wdt=%c rf=%s(%u-%u MHz)",
-		DT_NODE_EXISTS(DT_ALIAS(zlrs_data_uart)) || DT_NODE_EXISTS(DT_ALIAS(zlrs_data_cdc))
-			? "data"
-			: "",
-		DT_NODE_EXISTS(DT_ALIAS(zlrs_mgmt_cdc)) ? ",cfg" : "",
-		IS_ENABLED(CONFIG_ZLRS_USB) ? 'y' : 'n',
-		DT_NODE_EXISTS(DT_ALIAS(zlrs_button)) ? 'y' : 'n',
-		DT_NODE_EXISTS(DT_ALIAS(zlrs_led)) ? 'y' : 'n',
-		DT_NODE_EXISTS(DT_ALIAS(watchdog0)) ? 'y' : 'n',
-		rf_design.band == ZLRS_BAND_SUBG_LF ? "LF" : "HF", rf_design.low_hz / 1000000U,
-		rf_design.high_hz / 1000000U);
+	LOG_INF("region %s, supported regions 0x%02x", region->name,
+		(unsigned int)zlrs_region_supported_mask());
 
 	LOG_INF("role %s, profile P%u", role_leader ? "Leader" : "Follower",
 		(unsigned int)active_profile);
@@ -1237,9 +1219,8 @@ int zlrs_rf_init(void)
 	if (!IS_ENABLED(CONFIG_ZLRS_APP_FHSS)) {
 		LOG_WRN("isolation: hopping off, every frame stays on the sync channel");
 	}
-	if (zlrs_region_validate(region, &rf_design, region->max_tx_power_dbm) != 0 ||
-	    power_minimum() > power_maximum()) {
-		LOG_ERR("region %s is incompatible with radio design", region->name);
+	if (power_minimum() > power_maximum()) {
+		LOG_ERR("region %s is not supported by this board", region->name);
 		return -EINVAL;
 	}
 	power_reset(zlrs_slot_timer_now_ms());
