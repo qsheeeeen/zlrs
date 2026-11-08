@@ -477,14 +477,14 @@ GPIO pin. Install the normal application afterwards to remove the injection grou
 ## Host and tool checks
 
 ```sh
-cmake -S tests -B build/tests
-cmake --build build/tests --parallel
-ctest --test-dir build/tests --parallel 4 --output-on-failure --output-junit results.xml
+bash tests/gates.sh
+python tests/tools/run.py
 ```
 
 The [test system](../tests/README.md) defines environment ownership, shared
-contracts, test selection and result artifacts. Fast checks run without a
-Zephyr workspace and use AddressSanitizer/UBSan by default. Required coverage
+contracts, test selection and result artifacts. C/C++ protocol and policy
+checks use Zephyr Ztest on `native_sim/native/64`, including AddressSanitizer
+and UBSan. Required coverage
 includes:
 
 - Independent byte vectors for all eight air types, first-byte bit allocation,
@@ -510,7 +510,7 @@ includes:
 
 Tool checks validate commands, accepted lengths/values, status decoding, device
 selection, bootloader-port discovery and hash/confirmation verdicts. Tree gates
-enforce pure protocol boundaries, board-independent application services, debug
+enforce application ownership, board-independent services, debug
 isolation, signed application installation and log-partition sizing.
 
 ## Native Zephyr acceptance
@@ -813,7 +813,7 @@ bidirectional recovery.
 Validate [transaction ownership and execution](05-architecture.md#data-transactions)
 through operation/result contracts and the accepted application byte stream.
 Frame vectors and malformed-input tests cover codec layout and bounded receive
-views. Firmware library sources, host/benchmark builds and SRAM relocation must
+views. Application source registration, native test/benchmark builds and SRAM relocation must
 include every RF-critical packet-storage, codec and link component.
 
 The tests establish these properties:
@@ -901,7 +901,7 @@ packets do not establish zero PHY loss.
 
 ## Evidence requirements
 
-Acceptance proceeds through host checks, native scenarios, SKU/build checks and
+Acceptance proceeds through tool checks, native scenarios, SKU/build checks and
 hardware scenarios. Record the tested source revision, resolved configuration,
 image file hash, MCUboot payload hash, device identities, commands, observations,
 byte comparisons and failures in a separate result directory. Report coverage

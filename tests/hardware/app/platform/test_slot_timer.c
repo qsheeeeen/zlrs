@@ -5,7 +5,7 @@
 #include <stdalign.h>
 
 #include "platform/slot_timer.h"
-#include "sha256.h"
+#include "proto/sha256.h"
 
 ZTEST(slot_timer, test_launch_deadline_guard)
 {

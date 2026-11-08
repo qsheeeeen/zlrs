@@ -192,8 +192,8 @@ ZTEST(mgmt, test_status_wire_preserves_names_and_values)
 	zassert_true(zcbor_tstr_expect_lit(zs, "result") && zcbor_int32_expect(zs, 0));
 	zassert_true(zcbor_tstr_expect_lit(zs, "uptime_ms") && zcbor_any_skip(zs, NULL));
 	zassert_true(zcbor_tstr_expect_lit(zs, "hardware_ms") && zcbor_uint32_expect(zs, 17));
-	int32_t cpu_load;
-	uint64_t cpu_window;
+	int32_t cpu_load = 0;
+	uint64_t cpu_window = 0;
 	zassert_true(zcbor_tstr_expect_lit(zs, "cpu_load_permille") && zcbor_int32_decode(zs, &cpu_load));
 	zassert_true(cpu_load >= 0 && cpu_load <= 1000);
 	zassert_true(zcbor_tstr_expect_lit(zs, "cpu_window_ms") && zcbor_uint64_decode(zs, &cpu_window));

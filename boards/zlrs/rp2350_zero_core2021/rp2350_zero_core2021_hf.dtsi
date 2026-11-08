@@ -14,7 +14,7 @@
 / {
 	/*
 	 * Radio design: HF. The region has to fit inside this band and range (see
-	 * core/region). It cannot live in /chosen: DT macros do not read
+	 * app/src/region). It cannot live in /chosen: DT macros do not read
 	 * custom-prefixed chosen properties.
 	 */
 	zlrs_rf: zlrs-rf {

@@ -10,7 +10,7 @@
 #include <mgmt/mcumgr/util/zcbor_bulk.h>
 #include <zcbor_decode.h>
 #include <zcbor_encode.h>
-#include "zlrs/link/link.h"
+#include "link/link.h"
 #include "platform/slot_timer.h"
 #include "trace.h"
 

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #pragma once
 
-#include "zlrs/link/link.h"
+#include "link/link.h"
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>

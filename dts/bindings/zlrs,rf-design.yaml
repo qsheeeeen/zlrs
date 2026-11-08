@@ -4,7 +4,7 @@
 description: |
   The radio design: which sub-G hardware this board carries and the frequency
   range it can actually reach. A region is accepted when its band and band
-  edges fit inside this design (see zlrs_region_validate() in core/region), so
+  edges fit inside this design (see zlrs_region_validate() in app/src/region), so
   the software validates hardware capability instead of a board name.
 
   The node is declared once per board variant (HF or LF SKU) and also carries

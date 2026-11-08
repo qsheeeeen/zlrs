@@ -2,8 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 config ZLRS_RP2350_SHA256
-	bool "ZLRS RP2350 SHA-256 Crypto driver"
-	default y
+	def_bool y
 	depends on DT_HAS_ZLRS_RP2350_SHA256_ENABLED && CRYPTO && SOC_RP2350A_M33_0
 	select PICOSDK_USE_SHA256
 	help

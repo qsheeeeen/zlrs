@@ -26,7 +26,7 @@
 
 #include "rf.h"
 #include "platform/watchdog.h"
-#include "sha256.h"
+#include "proto/sha256.h"
 
 BUILD_ASSERT(!IS_ENABLED(CONFIG_SMP));
 BUILD_ASSERT(IS_ENABLED(CONFIG_TRACING_SYNC) && IS_ENABLED(CONFIG_TRACING_BACKEND_RAM));

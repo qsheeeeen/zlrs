@@ -4,20 +4,18 @@
 #
 # Tree checks that need no build (doc/10-debug.md#host-and-tool-checks):
 #
-#   1. core/ and its public headers stay free of Zephyr. They compile on the host; that is
-#      what makes the protocol testable and keeps the platform out of the link layer.
-#   2. app/ never branches on a board. Modules read hardware properties and aliases directly
+#   1. app/ never branches on a board. Modules read hardware properties and aliases directly
 #      from devicetree, so supporting a board is a devicetree job, not a code change.
-#   3. shipped configurations carry no ZLRS_APP_DEBUG_* option. Those exist for bench images;
+#   2. shipped configurations carry no ZLRS_APP_DEBUG_* option. Those exist for bench images;
 #      the marker symbol CONFIG_ZLRS_APP_DEBUG lives in app/debug.conf only.
-#   4. the application is never installed as a UF2: BOOTSEL carries the bootloader image only,
+#   3. the application is never installed as a UF2: BOOTSEL carries the bootloader image only,
 #      every application image goes through the bootloader (doc/06-firmware.md). A document or
 #      tool that brings the app-UF2 path back fails here.
-#   5. the log ring fits its partition: the file backend's FILE_SIZE × FILES_LIMIT has to equal
+#   4. the log ring fits its partition: the file backend's FILE_SIZE × FILES_LIMIT has to equal
 #      the log_partition in the board's flash layout, or the ring either wastes flash or
 #      overwrites the coredump partition next to it (doc/06-firmware.md).
-#   6. RF owns link instances; frontends use business interfaces and own their channels.
-#   7. test environments share contracts and support, never another environment's sources.
+#   5. RF owns link instances; frontends use business interfaces and own their channels.
+#   6. test environments share contracts and support, never another environment's sources.
 #
 # Usage: tests/gates.sh
 
@@ -47,13 +45,10 @@ reject_matches() {
 	fi
 }
 
-reject_matches "core/ or include/ pulled in a Zephyr header:" \
-	'^[[:space:]]*#[[:space:]]*include[[:space:]]*[<"]zephyr/' core include
-
 reject_matches "app/ knows a board name:" '\b(CONFIG_)?BOARD_[A-Z0-9_]+' app
 
 reject_matches "a frontend reaches into RF or private configuration storage:" \
-	'zlrs_link_t|zlrs/link/link.h|zlrs_storage_settings_' \
+	'zlrs_link_t|link/link.h|zlrs_storage_settings_' \
 	app/src/serial.c app/src/mgmt.c app/src/ui.c app/src/ui.h app/src/main.c
 
 reject_matches "RF accesses link storage directly instead of using link operations/views:" \
@@ -75,20 +70,16 @@ reject_matches "log storage depends on the management protocol:" \
 	'zlrs/mgmt|ZLRS_MGMT' app/src/log.c app/src/log.h
 
 reject_matches "LR2021 hardware depends on a protocol context:" \
-	'zlrs_link_t|zlrs_link_complete|zlrs/link/link.h' app/src/platform/lr2021.c app/src/platform/lr2021.h
-
-reject_matches "power policy depends on application wiring:" \
-	'zephyr/|zlrs/link|LOG_|CONFIG_' app/src/power.c app/src/power.h
+	'zlrs_link_t|zlrs_link_complete|link/link.h' app/src/platform/lr2021.c app/src/platform/lr2021.h
 
 reject_matches "RF or diagnostics depends on the management wire protocol:" \
 	'zlrs/mgmt|ZLRS_MGMT' app/src/rf.c app/src/diagnostics.c app/src/diagnostics.h
 
-for environment in host simulation hardware contracts support; do
+for environment in simulation hardware contracts support; do
 	case "$environment" in
-	host) foreign='simulation|hardware' ;;
-	simulation) foreign='host|hardware' ;;
-	hardware) foreign='host|simulation' ;;
-	*) foreign='host|simulation|hardware' ;;
+	simulation) foreign='hardware' ;;
+	hardware) foreign='simulation' ;;
+	*) foreign='simulation|hardware' ;;
 	esac
 	reject_matches "tests/$environment borrows environment-specific sources; use contracts/ or support/:" \
 		"(tests/|\.\./)($foreign)/" --glob '*.[ch]' --glob '*.cpp' --glob '*.hpp' --glob CMakeLists.txt \
@@ -138,7 +129,7 @@ for board in boards/zlrs/rp2350_zero_core2021/*_hf.dtsi boards/zlrs/rp2350_zero_
 done
 
 if [ "$fail" -eq 0 ]; then
-	echo "gates: ok (core is pure C, app knows no boards, no debug option in shipped configs, log ring matches its partition)"
+	echo "gates: ok (Zephyr application ownership, app knows no boards, no debug option in shipped configs, log ring matches its partition)"
 fi
 
 exit "$fail"

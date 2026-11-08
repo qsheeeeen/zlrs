@@ -3,8 +3,8 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include "zlrs/proto/frame.h"
-#include "zlrs/region/region.h"
+#include "proto/frame.h"
+#include "region/region.h"
 
 typedef struct {
 	zlrs_data_band_t band;

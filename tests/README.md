@@ -7,19 +7,20 @@ enforces this boundary.
 
 | Location | Responsibility | Real code | Replaced boundary | Executor |
 | --- | --- | --- | --- | --- |
-| `host/` | Protocol vectors, state transitions, delivery invariants and pure policies | `core/`, band and power policies | SHA backend, deterministic radio/clock/entropy | GoogleTest/CTest, ASan/UBSan |
-| `tools/` | Host commands, wire decoding, update decisions and device selection | Python device tools | Ports, subprocesses and device responses | Python unittest through CTest |
+| `tools/` | Host commands, wire decoding, update decisions and device selection | Python device tools | Ports, subprocesses and device responses | Python unittest |
 | `simulation/` | Zephyr component integration and application lifecycle | Application owners, threads, zbus, NVS, UART emulation and protocol peers | Physical radio, flash, GPIO and external devices | Twister on `native_sim/native/64` |
 | `hardware/` | Peripheral behavior, physical timing, RF/data transfer and firmware rollback | Target firmware and peripherals | Only the boundary named by each fixture | Explicit board-specific runners |
 | `contracts/` | Identical behavior required on native and hardware backends | Persistence and UI components | Backend selected by the including test application | Included by simulation/hardware CMake |
 | `support/` | Software SHA backend and deterministic DATA patterns | Test implementations only | No scenario ownership | Linked by consumers |
-| `bench/` | Reproducible host cost measurements | Protocol codec, authentication and DATA paths | Software SHA and steady-state link fixture | Standalone release executable, JSON results |
+| `bench/` | Reproducible host cost measurements | Protocol codec, authentication and DATA paths | Software SHA and steady-state link fixture | Zephyr native Ztest application, JSON measurements |
 
-Host link tests use two real protocol peers. Native RF tests use the real RF
-owner and protocol peers behind simulated radio/clock/serial edges. Keeping
-those levels separate makes a protocol failure distinguishable from an owner
-or Zephyr integration failure. Passing either level does not establish RF
-performance or hardware timing.
+All C/C++ firmware, protocol scenarios and benchmarks build through Zephyr.
+Application protocol sources and their private headers live together under
+`app/src/link`, `app/src/proto` and `app/src/region` and compile into the `app`
+target. Native protocol tests use two real link instances with controlled radio,
+time, entropy and sinks. RF scenarios additionally run the real RF owner. These
+fixtures replace physical boundaries while keeping production application code.
+Neither native level establishes hardware timing or over-the-air performance.
 
 The state and failure contracts include:
 
@@ -36,72 +37,22 @@ The stream test reports its seed, step and generator state on failure. Its oracl
 is the accepted application byte stream, independent of packet encoding or ARQ
 implementation. Malformed-input fuzzing remains a separate parser/memory check.
 
-## Fast checks
+## Tool and tree checks
 
-From the repository root, with a Python virtual environment active, without a
-Zephyr workspace or connected devices:
+Python device-tool checks and source ownership gates need no target hardware:
 
 ```sh
 python -m pip install -r tools/requirements.txt
-cmake -S tests -B build/tests -DPython3_EXECUTABLE="$(command -v python)"
-cmake --build build/tests --parallel
-ctest --test-dir build/tests --parallel 4 --output-on-failure --output-junit results.xml
+bash tests/gates.sh
+python tests/tools/run.py
 ```
 
-This runs architecture gates, every Python tool module and every host scenario.
-Workspace setup and CI install the same pinned tool dependencies. Without them,
-the Python native SMP request tests are skipped; a passing dependency-free run
-does not validate the management client's wire types.
-GoogleTest cases are discovered individually by CTest from one executable per
-module. Every selected case runs in its own process with a timeout and independent
-result. Host C sources use C11; Zephyr firmware uses C17, and GoogleTest cases use
-C++20. ASan and UBSan are enabled by default; CI additionally enables LeakSanitizer with
-`-DZLRS_HOST_LEAKS=ON`.
+Tool modules run independently and test command validation, wire decoding,
+transport selection and update decisions. Gates check application ownership,
+board independence, debug isolation and firmware/storage constraints. Protocol
+modules may use Zephyr APIs directly.
 
-GoogleTest 1.18.0 is fetched once during CMake configuration, with a pinned
-archive hash. For offline builds, prefetch its source and configure with
-`-DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/absolute/path/to/googletest-1.18.0`.
-
-List or select tests using CTest:
-
-```sh
-ctest --test-dir build/tests -N
-ctest --test-dir build/tests -L link --output-on-failure
-ctest --test-dir build/tests -R '^host.link.Link.PairingContext$' --output-on-failure
-ctest --test-dir build/tests --rerun-failed --output-on-failure
-```
-
-Host labels use `host.<module>`, including `host.proto`, `host.link`, `host.policy`
-and `host.fuzz`. CTest label filters are regular expressions: `-L host` selects
-all host cases and `-L link` selects the link module. The other labels are `tools`
-and `architecture`. The host-only CMake entry at `tests/host` remains available.
-Python tool modules are discovered from `tools/test_*.py` and run in separate
-processes; they must not depend on another module's import side effects.
-
-The `MalformedInput` cases are deterministic stress tests, with separate fixed
-seeds and `ZLRS_HOST_FUZZ_ITERS` configurable in CMake. Inputs reach the maximum
-frame length and one byte beyond it; control-frame shapes use current protocol
-lengths. These cases check parser robustness;
-successful protocol transitions and recovery need named stateful scenarios.
-The number of random inputs is not a functional coverage claim.
-
-Link fixtures own both nodes, fake time, packet-loss controls, receive sinks and
-wire captures. `SetUp()` resets all of them before every case. Profile and loss
-variants use named `TEST_P` parameters. The link binary also supports repeated,
-shuffled execution to check for order-dependent state:
-
-```sh
-build/tests/host/link_tests --gtest_shuffle --gtest_repeat=3 --gtest_random_seed=2026
-```
-
-Use `ASSERT_*` for setup and decoding preconditions, `EXPECT_*` for independent
-observations, and `SCOPED_TRACE` for loop context. Existing C callbacks and radio
-fakes remain the protocol boundary; GoogleMock is not a dependency.
-
-CTest writes `results.xml` and `Testing/Temporary/LastTest.log` under the build
-directory. Use `--output-on-failure` for the failing scenario's assertions.
-
-## Zephyr integration checks
+## Zephyr native checks
 
 Set up the workspace as described in the main README, then run from the
 repository root:
@@ -117,11 +68,14 @@ python "$ZEPHYR_BASE/scripts/twister" \
 ```
 
 Native tests use the host compiler. Clearing the SDK hint allows this command
-to run without an ARM toolchain installation.
+to run without an ARM toolchain installation. The C and C++ native compilers
+must belong to the same toolchain; add `-x TOOLCHAIN_VARIANT_COMPILER=llvm`
+to select Clang.
 
 The `testcase.yaml` files are the sole configuration matrix. CI runs this same
 command and does not enumerate roles, bands or endpoints separately. The matrix
-contains application lifecycle, persistence, management, UI, five serial
+contains protocol vectors, paired-link and policy scenarios, application lifecycle,
+persistence, management, UI, five serial
 endpoint configurations, and six RF configurations: both roles in fixed 2.4 GHz,
 fixed SubG and automatic modes. Twister gives every configuration a separate
 build and working directory, including its simulated flash file.
@@ -139,7 +93,7 @@ python "$ZEPHYR_BASE/scripts/twister" \
 
 Reports live in `twister.json`, `twister.xml` and `twister_report.xml` under the
 output directory. Each configuration retains `build.log`, `handler.log` and
-`handler_stderr.log` for build and runtime diagnosis. Both test jobs in
+`handler_stderr.log` for build and runtime diagnosis. The tool and simulation jobs in
 `.github/workflows/build.yml` fail on test errors and upload their reports.
 The separate firmware workflow runs on PRs and main pushes, builds signed target
 images and fails on build errors or timed-launch RAM audit failures. Its artifacts
@@ -152,30 +106,36 @@ the original partition once and restores it after all cases. To audit order
 independence, select `-T tests/simulation/rf -T tests/simulation/settings
 -T tests/simulation/mgmt` and add `-x CONFIG_ZTEST_SHUFFLE=y` (Zephyr also
 repeats cases and suites in this mode). Application boot and asynchronous UI
-acceptance use their normal single-boot execution. Host link cases can be audited in one
-process with `link_tests --gtest_shuffle --gtest_repeat=3 --gtest_random_seed=2026`.
+acceptance use their normal single-boot execution. Protocol scenarios register
+role, profile, backpressure and fault-seed combinations as separate Ztest cases.
+Each case resets its state and reports the fault seed and step on stream-oracle
+failure. Select `-T tests/simulation/protocol` to run that fixture alone.
+
+Protocol checks enable AddressSanitizer and UBSan through Zephyr Kconfig. Use
+`zassert_*` for required preconditions and `zexpect_*` for independent observations.
+Malformed-input loops use fixed seeds and `CONFIG_ZLRS_TEST_FUZZ_ITERATIONS`
+inputs per scenario, exercising maximum and overlong frames;
+their iteration count is not a functional coverage claim.
 
 ## Performance measurements
 
-Build benchmarks separately so sanitizer instrumentation and GoogleTest do not
-affect the measurements:
+The benchmark is a Zephyr native application, selected separately from the
+sanitized functional matrix:
 
 ```sh
-cmake -S tests/bench -B build/bench -DCMAKE_BUILD_TYPE=Release
-cmake --build build/bench --parallel
-build/bench/link_bench > build/bench/link.json
+source tools/zephyr-env.sh
+python "$ZEPHYR_BASE/scripts/twister" \
+  -T tests/bench -p native_sim/native/64 \
+  --outdir build/bench --inline-logs
 ```
 
-The optional positional argument selects 100..1000000 iterations (default 20000).
-Results include compiler version, profile and seven samples per case, with
-median/min/max nanoseconds for in-place DATA header encoding, P1 authentication,
-read-only operation selection (`plan`), TX finalization (`finalize`) and completion
-at 0/32/128/499 payload bytes. Both P0 and P1 are measured; authentication applies
-only to P1. Finalization replays a selected TX without radio completion or an ACK;
-completion replays a finalized request to isolate its bookkeeping cost. The
-fixture verifies that planning changes no sequence or construction counter,
-checks finalized packets against reference bytes and checks completion counters
-before accepting a measurement.
+`CONFIG_ZLRS_BENCH_ITERATIONS` selects 100..1000000 iterations (default 20000).
+The handler log contains JSON with compiler version, profile and seven samples
+per case: median/min/max nanoseconds for in-place DATA header encoding, P1
+authentication, read-only selection, finalization and completion at
+0/32/128/499 payload bytes. The fixture verifies that selection changes no
+sequence or construction counter, checks finalized packets against reference
+bytes and checks completion counters before accepting a measurement.
 
 Compare release builds with the same compiler, CPU and load; retain both JSON
 files and commits. CI retains measurements without noisy wall-clock thresholds.
@@ -186,7 +146,7 @@ and over-the-air throughput require the hardware fixtures below.
 
 Hardware runners stay explicit because their inputs include board serial
 identities, signed fixture images, physical connections and a log destination.
-They are not part of CTest discovery or the native test root.
+They are not part of the native test root.
 
 | Fixture | Responsibility |
 | --- | --- |
@@ -220,9 +180,10 @@ python tests/hardware/unit/run.py --serial <serial> \
 
 ## Adding a test
 
-Choose the lowest environment that can observe the behavior. Pure calculations
-and protocol state belong in `host/`; Zephyr ownership and interactions belong
-in `simulation/`; peripheral and timing claims require `hardware/`. Put a shared
+Choose the smallest fixture that can observe the behavior. Protocol vectors,
+state transitions and policies belong in `simulation/protocol`; service
+interactions belong in their corresponding `simulation/` fixture. Peripheral
+and timing claims require `hardware/`. Put a shared
 contract in `contracts/` only when multiple backends run the same assertions.
 
 Name a scenario after the invariant it establishes. Set up its own initial
@@ -239,8 +200,9 @@ unchanged. Test both roles and relevant configuration variants. Do not replace
 these observations with assertion counts, fuzz iterations or a wire transcript
 hash alone.
 
-Add host `TEST`, `TEST_F` or `TEST_P` cases to the owning module; discovery is
-automatic. Add a new source file to that module in `host/CMakeLists.txt` and native
-configurations to their `testcase.yaml`. Add a named regression to the owning level when fixing a
-defect. Fake only the component's external boundary; an owner integration test
-must keep the real components whose interaction it claims to verify.
+Add named `ZTEST` scenarios and Zephyr value-parameterized tests to the owning
+fixture, list source files individually in its CMake file, and add configurations
+to `testcase.yaml`. Keep each parameter combination individually registered so a
+failure identifies its role, profile and fault. Fake only the component's
+external boundary; an integration test keeps the real application modules whose
+interaction it claims to verify.

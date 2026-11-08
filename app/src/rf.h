@@ -5,9 +5,9 @@
 #include <stdint.h>
 #include <zephyr/zbus/zbus.h>
 
-#include "zlrs/proto/frame.h"
-#include "zlrs/link/state.h"
-#include "zlrs/region/region.h"
+#include "proto/frame.h"
+#include "link/state.h"
+#include "region/region.h"
 #include "platform/lr2021.h"
 
 typedef struct {

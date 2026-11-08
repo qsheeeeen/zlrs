@@ -3,7 +3,7 @@
  */
 #pragma once
 
-#include "zlrs/link/radio.h"
+#include "link/radio.h"
 
 int zlrs_lr2021_init(void);
 

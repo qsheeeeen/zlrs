@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+source "Kconfig.zephyr"
+config ZLRS_TEST_FUZZ_ITERATIONS
+	int "Inputs per malformed-frame scenario"
+	default 20000
+	range 1 1000000

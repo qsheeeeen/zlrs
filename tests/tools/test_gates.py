@@ -17,7 +17,7 @@ class GateTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         shutil.copyfile(REPO / "README.md", self.root / "README.md")
-        for name in ("app", "boards", "core", "include", "tools", "doc", "tests"):
+        for name in ("app", "boards", "include", "tools", "doc", "tests"):
             shutil.copytree(REPO / name, self.root / name,
                             ignore=shutil.ignore_patterns("build*", "__pycache__"))
 
@@ -46,11 +46,11 @@ class GateTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("scan failed", result.stdout)
 
-    def test_quoted_zephyr_include_in_core_fails(self):
-        (self.root / "core/forbidden.h").write_text('# include "zephyr/kernel.h"\n')
+    def test_application_protocol_can_include_zephyr(self):
+        (self.root / "app/src/proto/zephyr_dependency.h").write_text(
+            '#include <zephyr/kernel.h>\n')
         result = self.run_gate()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("pulled in a Zephyr header", result.stdout)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_new_production_config_is_checked_before_git_add(self):
         (self.root / "app/production.conf").write_text("CONFIG_ZLRS_APP_DEBUG=y\n")

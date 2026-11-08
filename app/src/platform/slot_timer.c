@@ -6,7 +6,7 @@
  * command from RAM without kernel interaction, then pends an ordinary notification.
  */
 #include "platform/slot_timer.h"
-#include "zlrs/link/link.h"
+#include "link/link.h"
 
 #include <hardware/structs/timer.h>
 #include <hardware/ticks.h>

@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * SHA-256 through the Zephyr Crypto API. This file owns device access, session
- * serialization and fatal driver errors; protocol algorithms live in core/proto.
+ * serialization and fatal driver errors; protocol algorithms live in app/src/proto.
  */
 
 #include <zephyr/crypto/crypto.h>
@@ -10,7 +10,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
-#include "sha256.h"
+#include "proto/sha256.h"
 #include "trace.h"
 #include "platform/hash.h"
 

@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+source "Kconfig.zephyr"
+config ZLRS_BENCH_ITERATIONS
+	int "Iterations per benchmark sample"
+	default 20000
+	range 100 1000000

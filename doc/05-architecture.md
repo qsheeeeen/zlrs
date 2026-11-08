@@ -27,13 +27,21 @@ preserving that context's session and delivery progress.
 | Upgrade lifecycle | Confirmation, deadline and recovery entry | Report confirmation only after its flash write succeeds |
 | Log storage | Filesystem availability, file metadata and byte reads | Expose storage operations independently of management encoding |
 | Diagnostics | Formatting of public observations | Read copied observations rather than another owner's mutable context |
-| Protocol core | Wire encoding, pairing, sessions, FHSS, ARQ and replay | Pure C with explicit instances, time and transaction results |
+| Application protocol | Wire encoding, pairing, sessions, FHSS, ARQ and replay | Zephyr application modules with explicit instances, time and transaction results |
 | Hardware adaptation | SPI, FIFO, IRQ timestamps, timer, crypto, entropy and sensors | Return hardware results without owning protocol state |
 
 Board descriptions define peripheral availability, electrical assignments and RF
 coverage. Application services use those capabilities without branching on board
-names. The protocol core shall remain independent of Zephyr, flash, zbus and
-hardware drivers.
+names. All application C/C++ sources and tests use the Zephyr build. Link, frame
+codec and region sources and their private headers live under `app/src/` and
+compile directly into the application target through one unconditional source
+list shared by the application and relevant test fixtures. Mandatory protocol
+components have no feature switches. Driver availability follows devicetree and
+the enabled Zephyr subsystem. Modules may use Zephyr APIs;
+service ownership determines dependencies rather than an OS-portability layer.
+Hardware drivers and shared USB/boot subsystems retain their Zephyr module
+organization. Native Ztest fixtures and hardware images exercise the same
+application sources.
 
 ## Execution and data flow
 

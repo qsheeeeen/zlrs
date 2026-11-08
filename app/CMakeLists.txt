@@ -9,6 +9,7 @@ if("${CMAKE_CURRENT_SOURCE_DIR}" STREQUAL "${CMAKE_CURRENT_LIST_DIR}")
 endif()
 
 set(zlrs_app_dir "${CMAKE_CURRENT_LIST_DIR}")
+include("${zlrs_app_dir}/src/CMakeLists.txt")
 
 target_sources(app PRIVATE
   ${zlrs_app_dir}/src/mgmt.c
@@ -29,8 +30,12 @@ target_sources(app PRIVATE
   ${zlrs_app_dir}/src/ui.c
 )
 
-target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG_TRACE app PRIVATE ${zlrs_app_dir}/src/trace.c)
-target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG app PRIVATE ${zlrs_app_dir}/src/diagnostics.c)
+target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG_TRACE app PRIVATE
+  ${zlrs_app_dir}/src/trace.c
+)
+target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG app PRIVATE
+  ${zlrs_app_dir}/src/diagnostics.c
+)
 
 if(CONFIG_ZLRS_APP_DEBUG_TRACE)
   # Zephyr 4.5's GPIO function hooks do not consult CONFIG_TRACING_GPIO.
@@ -52,10 +57,11 @@ endif()
 
 # App-internal headers use their paths on disk, such as "platform/lr2021.h" and "serial.h"
 # (the layers are described in doc/05-architecture.md).
-# core/proto supplies the private SHA declaration used by the platform implementation.
-target_include_directories(app PRIVATE "${zlrs_app_dir}/src" "${zlrs_app_dir}/../core/proto")
+target_include_directories(app PRIVATE
+  "${zlrs_app_dir}/src"
+)
 
-if(CONFIG_ZLRS_APP_RAM_RADIO)
+if(CONFIG_CODE_DATA_RELOCATION)
   set(zlrs_ram_sources
     ${zlrs_app_dir}/src/rf.c
     ${zlrs_app_dir}/src/platform/sha256.c
@@ -63,19 +69,25 @@ if(CONFIG_ZLRS_APP_RAM_RADIO)
     ${zlrs_app_dir}/src/serial.c
     ${zlrs_app_dir}/src/power.c
     ${zlrs_app_dir}/src/band.c
-    ${zlrs_app_dir}/../core/link/link.c
-    ${zlrs_app_dir}/../core/link/pairing.c
-    ${zlrs_app_dir}/../core/link/session.c
-    ${zlrs_app_dir}/../core/link/data.c
-    ${zlrs_app_dir}/../core/link/packet.c
-    ${zlrs_app_dir}/../core/proto/crypto.c
-    ${zlrs_app_dir}/../core/proto/frame.c
-    ${zlrs_app_dir}/../core/proto/fhss.c
+    ${zlrs_app_dir}/src/link/link.c
+    ${zlrs_app_dir}/src/link/pairing.c
+    ${zlrs_app_dir}/src/link/session.c
+    ${zlrs_app_dir}/src/link/data.c
+    ${zlrs_app_dir}/src/link/packet.c
+    ${zlrs_app_dir}/src/proto/crypto.c
+    ${zlrs_app_dir}/src/proto/frame.c
+    ${zlrs_app_dir}/src/proto/fhss.c
   )
   if(CONFIG_ZLRS_RP2350_SHA256)
-    list(APPEND zlrs_ram_sources ${zlrs_app_dir}/../drivers/crypto/rp2350_sha256.c)
+    list(APPEND zlrs_ram_sources
+      ${zlrs_app_dir}/../drivers/crypto/rp2350_sha256.c
+    )
   endif()
-  zephyr_code_relocate(FILES ${zlrs_ram_sources} LOCATION RAM_TEXT)
+  zephyr_code_relocate(
+    FILES
+    ${zlrs_ram_sources}
+    LOCATION RAM_TEXT
+  )
 endif()
 
 # Make the application version depend on the git index so that APP_VERSION_STRING

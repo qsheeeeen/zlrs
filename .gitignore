@@ -58,10 +58,6 @@ dkms.conf
 build/
 compile_commands.json
 
-# Host-side tests (build = plain build, build-san = ASan/UBSan)
-tests/host/build/
-tests/host/build-san/
-
 # Python
 *.pyc
 __pycache__/

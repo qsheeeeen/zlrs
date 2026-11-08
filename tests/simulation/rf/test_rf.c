@@ -10,7 +10,7 @@
 #include "serial.h"
 #include "platform/lr2021.h"
 #include "platform/slot_timer.h"
-#include "zlrs/link/link.h"
+#include "link/link.h"
 #include "band.h"
 #include "power.h"
 

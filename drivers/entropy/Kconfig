@@ -4,8 +4,7 @@
 menu "zlrs RP2350 TRNG"
 
 config ZLRS_RP2350_TRNG
-	bool "zlrs RP2350 TRNG entropy driver"
-	default y
+	def_bool y
 	# Only built into images with the entropy subsystem (the bootloader has no ENTROPY_GENERATOR)
 	depends on DT_HAS_ZLRS_RP2350_TRNG_ENABLED && ENTROPY_GENERATOR
 	select ENTROPY_HAS_DRIVER

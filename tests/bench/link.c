@@ -1,27 +1,25 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#define _POSIX_C_SOURCE 200809L
+#include <zephyr/ztest.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
-#include "zlrs/link/link.h"
+#include <native_rtc.h>
+#include "link/link.h"
 
 #define SAMPLES 7
 static volatile uint32_t checksum;
 
 static void require(bool ok, const char *what)
 {
-	if (!ok) {
-		fprintf(stderr, "benchmark precondition failed: %s\n", what);
-		exit(1);
-	}
+	zassert_true(ok, "%s", what);
 }
 
 static uint64_t clock_ns(void)
 {
-	struct timespec now;
-	require(clock_gettime(CLOCK_MONOTONIC, &now) == 0, "monotonic clock");
-	return (uint64_t)now.tv_sec * 1000000000ULL + now.tv_nsec;
+	uint32_t nsec;
+	uint64_t sec;
+	native_rtc_gettime(RTC_CLOCK_PSEUDOHOSTREALTIME, &nsec, &sec);
+	return sec * 1000000000ULL + nsec;
 }
 
 enum phase {
@@ -138,19 +136,9 @@ static int compare(const void *a, const void *b)
 	return (x > y) - (x < y);
 }
 
-int main(int argc, char **argv)
+ZTEST(link_cost, test_measurements)
 {
-	unsigned long iterations = 20000;
-	if (argc > 2) {
-		fprintf(stderr, "usage: %s [iterations: 100..1000000]\n", argv[0]);
-		return 2;
-	}
-	if (argc == 2) {
-		char *end;
-		iterations = strtoul(argv[1], &end, 10);
-		require(*argv[1] && !*end && iterations >= 100 && iterations <= 1000000,
-			"iterations in 100..1000000");
-	}
+	const unsigned long iterations = CONFIG_ZLRS_BENCH_ITERATIONS;
 	const uint16_t payloads[] = {0, 32, 128, 499};
 	printf("{\"compiler\":\"%s\",\"iterations\":%lu,\"samples_per_case\":%d,\"results\":[\n",
 	       __VERSION__, iterations, SAMPLES);
@@ -180,5 +168,6 @@ int main(int argc, char **argv)
 		}
 	}
 	puts("\n]}");
-	return 0;
 }
+
+ZTEST_SUITE(link_cost, NULL, NULL, NULL, NULL, NULL);

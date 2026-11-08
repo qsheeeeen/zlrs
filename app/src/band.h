@@ -5,7 +5,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "zlrs/proto/mod.h"
+#include "proto/mod.h"
 
 typedef enum {
 	ZLRS_BAND_KEEP,

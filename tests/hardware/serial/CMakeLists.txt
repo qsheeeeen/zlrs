@@ -6,5 +6,8 @@ get_filename_component(zlrs_root "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE
 target_sources(app PRIVATE
   ../ztest_main.c
   test_serial.c
-  "${zlrs_root}/app/src/serial.c")
-target_include_directories(app PRIVATE "${zlrs_root}/app/src")
+  "${zlrs_root}/app/src/serial.c"
+)
+target_include_directories(app PRIVATE
+  "${zlrs_root}/app/src"
+)

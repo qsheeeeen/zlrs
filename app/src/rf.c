@@ -27,8 +27,8 @@
 #include "platform/hash.h"
 #include "platform/temperature.h"
 
-#include "zlrs/link/link.h"
-#include "zlrs/region/region.h"
+#include "link/link.h"
+#include "region/region.h"
 
 LOG_MODULE_REGISTER(zlrs_rf, CONFIG_APP_LOG_LEVEL);
 

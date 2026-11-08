@@ -2,8 +2,8 @@
 #pragma once
 
 #include "power.h"
-#include "zlrs/link/link.h"
-#include "zlrs/region/region.h"
+#include "link/link.h"
+#include "region/region.h"
 
 /* RF owner costs, including hash reservation in TX finalization. */
 typedef struct {

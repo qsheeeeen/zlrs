@@ -1,11 +1,11 @@
 /*
  * SPDX-License-Identifier: Apache-2.0
  *
- * Host-only software SHA-256. Protocol algorithms come from core/proto/crypto.c,
+ * Native simulation SHA-256 backend. Protocol algorithms come from app/src/proto/crypto.c,
  * exactly as in firmware; this file replaces only the hardware hash operation.
  */
 
-#include "sha256.h"
+#include "proto/sha256.h"
 
 #include <string.h>
 

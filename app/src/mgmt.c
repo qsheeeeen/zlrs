@@ -33,7 +33,7 @@
 #include "serial.h"
 #include "trace.h"
 #include "platform/watchdog.h"
-#include "zlrs/proto/crypto.h"
+#include "proto/crypto.h"
 #if defined(CONFIG_ZLRS_APP_DEBUG)
 #include "diagnostics.h"
 #endif

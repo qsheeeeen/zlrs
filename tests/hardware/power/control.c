@@ -7,7 +7,7 @@
 #include <mgmt/mcumgr/util/zcbor_bulk.h>
 #include <zcbor_decode.h>
 #include <zcbor_encode.h>
-#include "zlrs/link/link.h"
+#include "link/link.h"
 
 static atomic_t drop_every, rssi_override, expires_ms;
 static atomic_t dropped, received, tx_feedback, toggles, identical_toggles;

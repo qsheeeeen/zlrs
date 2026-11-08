@@ -1,7 +1,7 @@
 # Copyright (c) 2026 zlrs contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# Fast host checks and native Zephyr integration tests run on every push and PR.
+# Python tools and Zephyr native tests run on every push and PR.
 # Signed hardware images are built separately in firmware.yml.
 
 name: build
@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  host-tests:
+  tools:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -27,32 +27,10 @@ jobs:
           python-version: "3.12"
       - name: host tool dependencies
         run: python -m pip install -r tools/requirements.txt
-      - name: toolchain info
+      - name: tools and architecture
         run: |
-          cc --version | head -1
-          c++ --version | head -1
-          cmake --version | head -1
-          python3 --version
-      - name: configure checks
-        run: cmake -S tests -B build/tests -DZLRS_HOST_LEAKS=ON
-      - name: build checks
-        run: cmake --build build/tests --parallel
-      - name: host, tools and architecture (ASan + UBSan + LSan)
-        run: ctest --test-dir build/tests --parallel 4 --output-on-failure --output-junit results.xml
-      - name: release performance baseline
-        run: |
-          cmake -S tests/bench -B build/bench -DCMAKE_BUILD_TYPE=Release
-          cmake --build build/bench --parallel
-          build/bench/link_bench > build/bench/link.json
-      - name: upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: host-test-results
-          path: |
-            build/tests/results.xml
-            build/tests/Testing/Temporary/*.log
-            build/bench/link.json
+          bash tests/gates.sh
+          python tests/tools/run.py
 
   simulation:
     runs-on: ubuntu-24.04
@@ -80,6 +58,14 @@ jobs:
           python "$ZEPHYR_BASE/scripts/twister" \
             -T zlrs/tests/simulation -p native_sim/native/64 \
             --outdir build/simulation --jobs 2 --inline-logs
+      - name: native performance measurements
+        run: |
+          source zlrs/tools/zephyr-env.sh
+          export ZEPHYR_TOOLCHAIN_VARIANT=host
+          unset ZEPHYR_SDK_INSTALL_DIR
+          python "$ZEPHYR_BASE/scripts/twister" \
+            -T zlrs/tests/bench -p native_sim/native/64 \
+            --outdir build/bench --inline-logs
       - name: upload simulation results
         if: always()
         uses: actions/upload-artifact@v4
@@ -92,3 +78,5 @@ jobs:
             build/simulation/**/handler.log
             build/simulation/**/handler_stderr.log
             build/simulation/**/build.log
+            build/bench/*.xml
+            build/bench/**/*.log
