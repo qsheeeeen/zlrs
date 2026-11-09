@@ -20,6 +20,7 @@ typedef enum {
 #define ZLRS_PHY_AUTO_COUNT        5U
 #define ZLRS_LORA_FRAME_MAX_LEN    255U
 #define ZLRS_LORA_PREAMBLE_SYMBOLS 12U
+#define ZLRS_FLRC_PREAMBLE_BITS    24U
 
 /* LoRa uses BW 1 MHz, CR 4/5, explicit header and physical CRC. sf=0 is FLRC. */
 typedef struct {
@@ -33,7 +34,7 @@ typedef struct {
 extern const zlrs_phy_spec_t zlrs_phys[ZLRS_PHY_COUNT];
 zlrs_phy_t zlrs_phy_for_rate(uint32_t rate_bps);
 const char *zlrs_phy_name(zlrs_phy_t phy);
-/* Portable FLRC estimate; exact airtime for the shipped LoRa profiles. Invalid = zero. */
+/* Exact airtime for the configured wire formats; invalid PHY/LoRa length = zero. */
 uint32_t zlrs_phy_airtime_us(zlrs_phy_t phy, uint16_t frame_len);
 
 #ifdef __cplusplus

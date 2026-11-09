@@ -60,7 +60,7 @@ typedef struct {
 	uint8_t pair_salt[ZLRS_PAIR_SALT_LEN];
 } zlrs_pairing_t;
 
-/* DATA metadata and a borrowed view. The payload/tag remain in the RX buffer. */
+/* DATA metadata and a borrowed payload view. Authentication stays in packet storage. */
 typedef struct {
 	uint8_t data_seq;
 	bool ack;
@@ -72,7 +72,6 @@ typedef struct {
 typedef struct {
 	zlrs_data_header_t header;
 	const uint8_t *bytes;
-	const uint8_t *tag;
 	uint16_t len;
 } zlrs_data_view_t;
 
@@ -118,13 +117,13 @@ typedef struct {
 	} body;
 
 	uint32_t seq; /* common per-direction counter; zero is never transmitted */
-	uint8_t tag[ZLRS_TAG_LEN];
 } zlrs_frame_t;
 
 uint8_t zlrs_profile_tag_len(zlrs_profile_t profile);
 uint16_t zlrs_frame_len(uint16_t payload_len, uint8_t tag_len);
 /* len is the complete radio payload length, including common fields and tag.
- * DATA writes only its headers: payload and tag storage remain untouched.
+ * Encoding writes headers and control bodies; DATA payload and authentication
+ * storage remain untouched. The link computes/verifies tags in packet storage.
  * Fixed bodies require exact lengths.
  * Only the selected body's used bytes are encoded; unused capacity is omitted. */
 uint16_t zlrs_frame_encode(const zlrs_frame_t *frame, uint8_t *buf, uint16_t cap, uint16_t len,

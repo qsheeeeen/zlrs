@@ -46,6 +46,11 @@ the selected regional rate and power policy.
 
 These starting boundaries reserve approximately 10 dB over datasheet typical
 sensitivity and require calibration with equal-length packets on real hardware.
+FLRC uses a 24-bit preamble, a 32-bit synchronization word, a variable-length
+header, physical CRC16 and CR3/4. Firmware and native simulations use the same
+airtime calculation, including the coded header, coding tail and physical CRC.
+Hardware acceptance compares every supported FLRC rate and frame length against RAL.
+
 LoRa uses a 12-symbol preamble, explicit header, physical CRC and normal IQ. Its
 8-bit hardware sync word XORs the four pairing-derived sync bytes; software tags
 continue to authenticate every frame. Profile ID 5 denotes fixed FLRC 1.3 Mbps
@@ -85,6 +90,9 @@ transmit setpoints for both paths. The prototype range is −17 to +12 dBm on
 the board maximum and regional ceiling; the SubG region does not constrain the
 2.4 GHz setpoint. Antenna gain and measured output require qualification on the
 finished hardware. Power policy is specified in [firmware](06-firmware.md#automatic-band-operation-and-power).
+
+Receive requests use the RF executor's absolute slot deadline. The protocol
+request carries no separate relative receive timeout.
 
 ## Transfer and timing contract
 

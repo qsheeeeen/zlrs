@@ -3,7 +3,9 @@
 #include <stdbool.h>
 
 /* Simulate a failed LR2021 init while exercising the real app, USB, NVS and management code. */
-int __wrap_zlrs_lr2021_init(void)
+struct k_sem;
+
+int __wrap_zlrs_lr2021_init(struct k_sem *wake)
 {
 	return -EIO;
 }

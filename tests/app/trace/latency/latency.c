@@ -4,9 +4,9 @@
 #include "platform/slot_timer.h"
 #include "trace.h"
 #include <errno.h>
+#include <mgmt/mcumgr/util/zcbor_bulk.h>
 #include <string.h>
 #include <zcbor_decode.h>
-#include <mgmt/mcumgr/util/zcbor_bulk.h>
 #include <zcbor_encode.h>
 #include <zephyr/kernel.h>
 #include <zephyr/mgmt/mcumgr/mgmt/handlers.h>
@@ -37,7 +37,7 @@ static int command_result;
 K_SEM_DEFINE(command_done, 0, 1);
 
 uint32_t latency_trace_overwritten(void);
-uint16_t __real_zlrs_link_tx_space(const zlrs_link_t *link);
+uint8_t *__real_zlrs_link_tx_reserve(zlrs_link_t *link, uint16_t *capacity);
 uint16_t __real_zlrs_serial_read(uint8_t *buf, uint16_t len);
 bool __real_zlrs_serial_receive(const uint8_t *buf, uint16_t len);
 bool __real_zlrs_slot_timer_launch_at(uint32_t target_us, void (*fire)(uint32_t));
@@ -72,7 +72,7 @@ static void trigger(uint32_t elapsed)
 	}
 }
 
-uint16_t __wrap_zlrs_link_tx_space(const zlrs_link_t *link)
+uint8_t *__wrap_zlrs_link_tx_reserve(zlrs_link_t *link, uint16_t *capacity)
 {
 	int op = atomic_set(&command, 0);
 	if (op != 0) {
@@ -108,7 +108,7 @@ uint16_t __wrap_zlrs_link_tx_space(const zlrs_link_t *link)
 			queue(PING, ++bench.seq, 0U, 0U);
 		}
 	}
-	return __real_zlrs_link_tx_space(link);
+	return __real_zlrs_link_tx_reserve(link, capacity);
 }
 
 uint16_t __wrap_zlrs_serial_read(uint8_t *buf, uint16_t len)

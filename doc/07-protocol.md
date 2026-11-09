@@ -29,23 +29,24 @@ message-specific fields.
 
 ### Logical frame model
 
-One frame owns a type-selected union of bodies, with common sequence and tag
-outside the union. Only identical layouts share a body:
+One logical frame contains a common sequence and a type-selected union of bodies.
+Authentication remains in packet storage. Only identical layouts share a body:
 
 | Body | Fields |
 | --- | --- |
-| DATA_L2F / DATA_F2L | ACK:1, DATA sequence:7, RSSI:u8, LQ:7/update:1, owned DATA byte array |
+| DATA_L2F / DATA_F2L | ACK:1, DATA sequence:7, RSSI:u8, LQ:7/update:1, borrowed DATA span |
 | SYNC | Profile:1, version:4, hop:u8, Leader nonce:u32, TDD frame index:u32, band plan |
 | PAIR_REQ | Initiator ID:4 bytes, initiator nonce:u32 |
 | PAIR_RESP / PAIR_CFM | Initiator ID:4 bytes, responder ID:4 bytes, both nonces:u32 |
 | SESS_RESP | Leader nonce:u32, Follower nonce:u32 |
 | SESS_CFM | Follower nonce:u32, hop:u8, TDD frame index:u32, band plan |
 
-DATA and tag are owned byte arrays. DATA capacity is 503 bytes; its used length
-comes from the total radio payload length supplied outside the frame model.
-Bodies do not repeat the common sequence. Encoding selects only the active
-body's fields and used DATA bytes, independently of memory alignment or compiler
-bitfield layout.
+Packet storage owns DATA and authentication bytes. DATA capacity is 503 bytes;
+the received payload view derives its length from the complete radio payload.
+Bodies do not repeat the common sequence. The codec writes headers and fixed
+control bodies in place, independently of memory alignment or compiler bitfield
+layout. It leaves DATA and tag storage untouched; the link computes or verifies
+authentication directly in that storage.
 
 ### Wire bodies and lengths
 
@@ -357,28 +358,40 @@ value defaults to empty. Reads with an empty map return STATUS.
 
 | Operation | ID | Value / response |
 | --- | --- | --- |
-| ENTER / STATUS / PAIR / ERASE_PAIR | 0 / 1 / 2 / 3 | Empty |
+| ENTER / PAIR / ERASE_PAIR | 0 / 2 / 3 | Empty |
+| STATUS | 1 | Empty or one view byte: 0 basic, 1 link, 2 rate, 3 radio, 4 power; extended views require a debug image |
 | SET_KEY_HEX / SET_PHRASE | 4 / 5 | 64 hex bytes / 1–32 UTF-8 bytes |
 | SET_BAUD | 8 | Four little-endian bytes |
 | SET_REGION / SET_ROLE / SET_PROFILE / SET_BAND | 9 / 10 / 11 / 12 | One byte |
 | NEW_DEV_ID / EXIT / FACTORY_RESET | 13 / 14 / 15 | Empty |
 | LOG_INFO | 18 | Empty; `files` is an array of `{path, size}` |
-| DEBUG_REPORT | 20 | One report ID byte (0 link, 1 rate, 2 radio, 3 power); complete `report` text |
-| OBSERVE | 21 | Empty; same response as STATUS |
+| TRACE | 22 | Trace image only; empty for status, or an action byte plus four little-endian duration bytes in ms; returns capture fields |
 
-STATUS and OBSERVE return named CBOR `status` fields, plus `uptime_ms` and
+STATUS returns named CBOR `status` fields, plus `uptime_ms` and
 `hardware_ms` sampling timestamps. Top-level `cpu_load_permille` measures non-idle
 CPU time (0–1000; negative means unavailable) over `cpu_window_ms`: since boot
-on the first STATUS/OBSERVE, then since the previous successful status sample.
+on the first STATUS, then since the previous successful status sample.
 All clients share this window; maintenance time is included. No sampling delay
 or periodic worker is added. `uptime_ms` and `cpu_window_ms` are 64-bit;
 `hardware_ms` wraps at 32 bits. Field names and units match the application
 status encoding in `app/src/mgmt.c`. IDs are byte strings; other fields are
 integers. There is no fixed byte layout or manual chunk protocol.
 
-The RF owner executes one queued product request at a frame boundary. Online
-status never refreshes SPI/ADC measurements or disarms the watchdog. Mutations,
-reports and log inventory require maintenance. Successful ENTER follows RF pause
+Every view includes the same base facts, followed by its own counters, with
+unique field names in one `status` map. `region` is the saved region setting;
+`active_region` identifies the current air channel plan and `subg_region` the
+adopted regional limits. `data_phy` identifies the current PHY. `state` is the
+current link state; `rate_state` belongs to the closed rate-sampling window.
+`tx_power_dbm` is the power ceiling and `active_power_dbm` the actual setpoint.
+Power counters and filtered RSSI use the common `power_*` fields; pairing,
+session and fixed-power state use the common flags.
+
+The RF owner executes one queued product request at a frame boundary and copies
+the public facts into that request's reply storage. The SMP worker encodes the
+reply after the owner continues; it does not borrow mutable RF or link state.
+The request remains serialized until encoding finishes. Online
+status views never refresh SPI/ADC measurements or disarm the watchdog. Mutations
+and log inventory require maintenance. Successful ENTER follows RF pause
 and synchronous log flush; EXIT resumes RF. Idle sessions expire after 300 seconds.
 FS access is restricted to log files and committed trace artifacts, and rejects
 writes and other paths. `--refresh` enters maintenance for fresh measurements.

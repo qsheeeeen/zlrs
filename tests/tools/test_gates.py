@@ -52,6 +52,14 @@ class GateTests(unittest.TestCase):
         result = self.run_gate()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_rf_cannot_modify_private_protocol_progress(self):
+        source = self.root / "app/src/rf.c"
+        with source.open("a") as output:
+            output.write("\nvoid invalid_access(void) { link_data.tx_seq++; }\n")
+        result = self.run_gate()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("private link mechanisms", result.stdout)
+
     def test_new_production_config_is_checked_before_git_add(self):
         (self.root / "app/production.conf").write_text("CONFIG_ZLRS_APP_DEBUG=y\n")
         result = self.run_gate()

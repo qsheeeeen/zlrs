@@ -86,6 +86,11 @@ static const struct led_rgb orange = {.r = 255U, .g = 80U};
 
 static bool same_color(struct led_rgb a, struct led_rgb b)
 {
+#if IS_ENABLED(CONFIG_ZLRS_APP_DEBUG)
+	b.r = b.r * CONFIG_ZLRS_APP_DEBUG_LED_BRIGHTNESS_PERCENT / 100U;
+	b.g = b.g * CONFIG_ZLRS_APP_DEBUG_LED_BRIGHTNESS_PERCENT / 100U;
+	b.b = b.b * CONFIG_ZLRS_APP_DEBUG_LED_BRIGHTNESS_PERCENT / 100U;
+#endif
 	return a.r == b.r && a.g == b.g && a.b == b.b;
 }
 

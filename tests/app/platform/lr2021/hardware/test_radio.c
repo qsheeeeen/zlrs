@@ -15,12 +15,9 @@
 #include "platform/lr2021.h"
 #include "platform/slot_timer.h"
 #include "platform/watchdog.h"
+#include "ral_lr20xx.h"
 
 static zlrs_link_t *data_link;
-static uint16_t default_rx_ms;
-static uint16_t default_acq_ms;
-static atomic_t window_request;
-K_SEM_DEFINE(window_done, 0, 1);
 K_SEM_DEFINE(raw_start, 0, 1);
 static atomic_t raw_ready;
 static atomic_t raw_tx;
@@ -61,7 +58,6 @@ static uint32_t channel_crc_previous;
 void __real_zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
 			   bool (*random)(void *ctx, uint32_t *out), void *random_ctx,
 			   const zlrs_link_events_t *events);
-int __real_zlrs_lr2021_init(void);
 void __real_zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t rssi,
 			       int8_t snr, uint32_t now_ms);
 
@@ -69,13 +65,39 @@ void __wrap_zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
 			   bool (*random)(void *ctx, uint32_t *out), void *random_ctx,
 			   const zlrs_link_events_t *events)
 {
+	/* Compare the common model with the actual RAL implementation on the board.
+	 * Every payload length exercises CR3/4 rounding and the variable header. */
+	static const struct {
+		zlrs_phy_t phy;
+		ral_flrc_raw_bit_rate_t rate;
+	} rates[] = {
+		{ZLRS_PHY_FLRC_2600, RAL_FLRC_RAW_BIT_RATE_2_600_MBPS},
+		{ZLRS_PHY_FLRC_1300, RAL_FLRC_RAW_BIT_RATE_1_300_MBPS},
+		{ZLRS_PHY_FLRC_650, RAL_FLRC_RAW_BIT_RATE_0_650_MBPS},
+		{ZLRS_PHY_FLRC_325, RAL_FLRC_RAW_BIT_RATE_0_325_MBPS},
+	};
+
+	ral_flrc_pkt_params_t packet = {
+		.preamble_len = RAL_FLRC_PREAMBLE_LENGTH_24_BITS,
+		.sync_word_len = RAL_FLRC_SYNCWORD_LENGTH_4_BYTES,
+		.crc_type = RAL_FLRC_CRC_2_BYTES,
+	};
+	for (size_t i = 0U; i < ARRAY_SIZE(rates); i++) {
+		const ral_flrc_mod_params_t mod = {.raw_bit_rate = rates[i].rate,
+						   .cr = RAL_FLRC_CR_3_4,
+						   .pulse_shape = RAL_FLRC_PULSE_SHAPE_BT_05};
+		for (uint16_t len = 0U; len <= ZLRS_FRAME_MAX_LEN; len++) {
+			packet.pld_len_in_bytes = len;
+			__ASSERT(zlrs_phy_airtime_us(rates[i].phy, len) ==
+					 ral_lr20xx_get_flrc_time_on_air_in_us(&packet, &mod),
+				 "FLRC airtime differs from RAL: phy=%u len=%u", rates[i].phy, len);
+		}
+	}
 	__real_zlrs_link_init(link, cfg, random, random_ctx, events);
 	data_link = link;
-	default_rx_ms = cfg->rx_timeout_ms;
-	default_acq_ms = cfg->acq_timeout_ms;
 }
 
-void zlrs_test_radio_apply_window_request(zlrs_link_t *link)
+void zlrs_test_radio_apply(zlrs_link_t *link)
 {
 	/* Test-only fault injection and probes run on the real RF owner, without
 	 * changing production state or waiting on a broken source.
@@ -103,18 +125,11 @@ void zlrs_test_radio_apply_window_request(zlrs_link_t *link)
 		}
 		atomic_set(&entropy_max_us, MAX(elapsed, (uint32_t)atomic_get(&entropy_max_us)));
 	}
-	const int request = atomic_set(&window_request, 0);
-
-	if (request != 0) {
-		const uint16_t ms = (uint16_t)(request - 1);
-
-		link->status.cfg.rx_timeout_ms = ms == 0U ? default_rx_ms : ms;
-		link->status.cfg.acq_timeout_ms = ms == 0U ? default_acq_ms : ms;
-		k_sem_give(&window_done);
-	}
 }
 
 #if CONFIG_ZLRS_TEST_RAW_MS > 0
+int __real_zlrs_lr2021_init(struct k_sem *wake);
+static struct k_sem *owner_wake;
 static zlrs_link_t raw_link;
 static uint8_t raw_payload[ZLRS_FRAME_MAX_LEN];
 static uint32_t raw_last_sequence;
@@ -133,7 +148,7 @@ static void raw_run(void)
 		.tx_power_dbm = data_link->status.cfg.tx_power_dbm,
 		.size = tx ? CONFIG_ZLRS_TEST_RAW_PAYLOAD_BYTES : 0U,
 		.max_rx_size = tx ? 0U : ZLRS_FRAME_MAX_LEN,
-		.timeout_ms = tx ? 0U : 100U,
+
 		.buf = tx ? raw_payload : raw_link.rx_buf,
 	};
 	memcpy(req.sync_word, data_link->sync_word, sizeof(req.sync_word));
@@ -143,7 +158,7 @@ static void raw_run(void)
 	/* RAW runs during radio init, before RF starts its clock. Enable the normal
 	 * launch notification so the owner fills a long packet's FIFO tail at SET_TX,
 	 * rather than sleeping until TX_DONE or a FIFO underflow. */
-	zlrs_slot_timer_start(120000U, 0U, zlrs_lr2021_wake);
+	zlrs_slot_timer_start(120000U, 0U, owner_wake);
 	while (zlrs_slot_timer_now_ms() - started < CONFIG_ZLRS_TEST_RAW_MS) {
 		sys_put_le32(sequence, raw_payload);
 		for (uint16_t i = 4U; i < CONFIG_ZLRS_TEST_RAW_PAYLOAD_BYTES; i++) {
@@ -173,7 +188,7 @@ static void raw_run(void)
 				const int32_t remaining = deadline - zlrs_slot_timer_now_us();
 
 				if (raw_link.status.busy && remaining > 0) {
-					(void)zlrs_lr2021_wait_us((uint32_t)remaining);
+					(void)k_sem_take(owner_wake, K_USEC(remaining));
 				}
 			}
 		}
@@ -194,9 +209,10 @@ static void raw_run(void)
 	channel_crc_previous = diag->rx_crc_errors;
 }
 
-int __wrap_zlrs_lr2021_init(void)
+int __wrap_zlrs_lr2021_init(struct k_sem *wake)
 {
-	const int rc = __real_zlrs_lr2021_init();
+	owner_wake = wake;
+	const int rc = __real_zlrs_lr2021_init(wake);
 
 	if (rc == 0 && data_link != NULL) {
 		atomic_set(&raw_ready, 1);
@@ -334,22 +350,6 @@ int zlrs_test_radio_control(struct zlrs_test_report *report, enum zlrs_test_op o
 			return -EINVAL;
 		}
 		k_sem_give(&raw_start);
-		return 0;
-	}
-	if (op == TEST_RX_WINDOW) {
-		const unsigned long ms = arg;
-
-		if (ms > 500UL) {
-			return -EINVAL;
-		}
-		k_sem_reset(&window_done);
-		if (!atomic_cas(&window_request, 0, (int)ms + 1)) {
-			return -EBUSY;
-		}
-		if (k_sem_take(&window_done, K_SECONDS(2)) != 0) {
-			(void)atomic_cas(&window_request, (int)ms + 1, 0);
-			return -ETIMEDOUT;
-		}
 		return 0;
 	}
 	if (op != TEST_RADIO_STATUS) {

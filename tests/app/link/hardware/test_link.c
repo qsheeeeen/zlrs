@@ -3,8 +3,8 @@
 #include <string.h>
 #include <zephyr/ztest.h>
 
-#include "link/link.h"
 #include "link/handshake.h"
+#include "link/link.h"
 
 ZTEST(link, test_pair_key_rederivation)
 {
@@ -16,20 +16,23 @@ ZTEST(link, test_pair_key_rederivation)
 		.profile = ZLRS_PROFILE_P1,
 		.data_mtu = 502U,
 	};
-	const uint8_t dev_id[ZLRS_DEV_ID_LEN] = {1U, 2U, 3U, 4U};
-	const uint8_t peer_id[ZLRS_DEV_ID_LEN] = {5U, 6U, 7U, 8U};
-	const uint8_t salt[ZLRS_PAIR_SALT_LEN] = {1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U};
-	const uint8_t root[ZLRS_KEY_LEN] = {1U};
+	const zlrs_persist_state_t saved = {
+		.dev_id = {1U, 2U, 3U, 4U},
+		.root_key = {1U},
+		.pairing = {.peer_id = {5U, 6U, 7U, 8U},
+			    .pair_salt = {1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U}},
+		.configured = true,
+		.paired = true,
+	};
 	uint8_t first[ZLRS_KEY_LEN];
 
 	cfg.phy = ZLRS_PHY_FLRC_2600;
 	zlrs_link_init(&link, &cfg, NULL, NULL, NULL);
-	zlrs_link_set_dev_id(&link, dev_id);
-	zlrs_link_set_root_key(&link, root, 0U);
-	zlrs_link_set_peer(&link, peer_id, salt, 0U);
+	zlrs_link_restore(&link, &saved, 0U);
 	memcpy(first, link.pair_key, sizeof(first));
-	/* Exercise the production root-key update path rather than a rekey test hook. */
-	zlrs_link_set_root_key(&link, root, 1U);
+	/* Rebuild and restore exactly as application credential adoption does. */
+	zlrs_link_init(&link, &cfg, NULL, NULL, NULL);
+	zlrs_link_restore(&link, &saved, 1U);
 	zassert_mem_equal(first, link.pair_key, sizeof(first));
 }
 

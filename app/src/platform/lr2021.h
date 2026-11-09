@@ -6,7 +6,10 @@
 
 #include "link/radio.h"
 
-int zlrs_lr2021_init(void);
+struct k_sem;
+
+/* IRQ and timer notifications share the RF owner's semaphore. */
+int zlrs_lr2021_init(struct k_sem *wake);
 
 enum {
 	ZLRS_LR2021_STATUS_TEMP = 1U << 0,
@@ -43,7 +46,6 @@ static inline int16_t zlrs_lr2021_temperature_centi_c(uint16_t q5)
 /* RF owner only, after init and while no request/launch is active. Never clears
  * chip errors, IRQs or reset information. Failed fields have their valid bit clear. */
 void zlrs_lr2021_read_status(zlrs_lr2021_status_t *out);
-int zlrs_lr2021_wait_us(uint32_t timeout_us);
 bool zlrs_lr2021_irq_pending(void);
 
 /* One hardware completion. */
@@ -61,8 +63,6 @@ typedef struct {
  * false means idle, no IRQ, or an unfinished transaction. */
 bool zlrs_lr2021_process_irq(zlrs_lr2021_result_t *out);
 void zlrs_lr2021_abort(void);
-/* Called by the timer ISR to end waits at a slot boundary. No SPI from the ISR. */
-void zlrs_lr2021_wake(void);
 void zlrs_lr2021_slot(uint32_t tx_us, uint32_t end_us);
 /* Prepare modem and FIFO before the timer-controlled launch; no TX in prepare(). */
 int zlrs_lr2021_prepare(const zlrs_radio_req_t *req);
@@ -93,8 +93,6 @@ static inline bool zlrs_lr2021_tx_deadline(uint32_t target_us, uint32_t end_us, 
 	return true;
 }
 
-uint32_t zlrs_lr2021_airtime_us(zlrs_phy_t phy, uint16_t len);
-
 struct zlrs_lr2021_diag {
 	uint32_t transactions;
 	uint32_t stale_irq;
@@ -124,7 +122,6 @@ struct zlrs_lr2021_diag {
 	uint32_t rx_incomplete;
 	uint32_t tx_expired;
 	zlrs_timing_t irq_service_us;
-	uint32_t late_starts;
 	uint32_t prepare_late_starts;
 	uint32_t trigger_late_starts;
 	zlrs_timing_t launch_irq_late_us;

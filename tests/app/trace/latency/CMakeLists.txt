@@ -20,6 +20,6 @@ target_sources(app PRIVATE
   "${zlrs_root}/tests/app/trace/latency/latency.c"
   "${zlrs_root}/tests/app/support/rolling_trace_ram.c"
 )
-foreach(symbol zlrs_link_tx_space zlrs_serial_read zlrs_serial_receive zlrs_slot_timer_launch_at)
+foreach(symbol zlrs_link_tx_reserve zlrs_serial_read zlrs_serial_receive zlrs_slot_timer_launch_at)
  target_link_options(app PUBLIC "-Wl,--wrap=${symbol}")
 endforeach()

@@ -27,8 +27,8 @@ typedef struct {
 	int8_t tx_power_dbm;
 	uint16_t size;        /* bytes to send */
 	uint16_t max_rx_size; /* receive buffer cap */
-	uint16_t timeout_ms;  /* receive window */
-	uint8_t *buf;         /* shared TX/RX buffer, received data lands here */
+
+	uint8_t *buf; /* shared TX/RX buffer, received data lands here */
 } zlrs_radio_req_t;
 
 #ifdef __cplusplus

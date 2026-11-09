@@ -45,7 +45,7 @@ static double measure(enum phase phase, uint16_t payload, unsigned long iteratio
 	static zlrs_link_t link;
 	zlrs_link_init(&link, &cfg, NULL, NULL, NULL);
 	/* Isolate steady-state costs; handshake correctness is covered by host link tests. */
-	link.status.configured = link.status.paired = link.status.session_valid = true;
+	link.status.paired = link.status.session_valid = true;
 	link.status.state = ZLRS_STATE_CONNECTED;
 	uint8_t bytes[499];
 	memset(bytes, 0x42, sizeof(bytes));

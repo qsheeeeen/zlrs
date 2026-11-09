@@ -3,7 +3,7 @@
  * (doc/07-protocol.md).
  *
  * Each superframe: advance, plan and finalize produce a transaction; the caller runs it and
- * zlrs_link_complete() closes it; zlrs_link_tick() handles timeouts and state changes.
+ * zlrs_link_complete() closes it; slot advancement handles state deadlines.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -61,16 +61,7 @@ typedef struct {
 	zlrs_phy_t phy;
 	int8_t tx_power_dbm;
 	int8_t pair_tx_power_dbm; /* Dedicated setpoint for every pairing transmission. */
-	uint16_t rx_timeout_ms;   /* one receive window */
-	/*
-	 * Receive window while pairing or searching (0 = rx_timeout_ms). Acquisition happens before
-	 * the two ends share a slot phase, so it needs a longer window than steady state: a short
-	 * window catches the peer only by luck, and a handshake that depends on luck is what keeps
-	 * two boards that are otherwise fine from ever pairing.
-	 */
-	uint16_t acq_timeout_ms;
 	uint16_t sync_period_ms;  /* SYNC period while SEARCHING */
-	uint16_t peer_timeout_ms; /* peer-loss timeout */
 	uint16_t pair_period_ms;  /* PAIR_REQ repeat period */
 	uint16_t pair_window_ms;  /* pairing window */
 	uint16_t data_mtu;        /* data frame payload cap */
@@ -207,7 +198,6 @@ typedef struct {
 typedef struct {
 	zlrs_link_cfg_t cfg;
 	zlrs_link_stats_t stats;
-	bool configured;
 	uint8_t dev_id[ZLRS_DEV_ID_LEN];
 	bool paired;
 	zlrs_pairing_t pairing;
@@ -307,8 +297,6 @@ typedef struct {
 	 * Only the head is sealed; the successor remains appendable until selected. */
 	alignas(uint32_t) uint8_t tx_storage[ZLRS_LINK_TX_STORAGE_LEN];
 	zlrs_tx_packet_t tx_packets[ZLRS_LINK_TX_PACKETS];
-	uint16_t tx_stride;
-	uint16_t tx_packet_limit;
 	uint16_t tx_packet_count;
 	uint16_t tx_pool_mtu;
 	uint16_t tx_claim_len;
@@ -335,11 +323,6 @@ typedef struct {
 	/* transaction to submit next */
 	zlrs_radio_req_t req;
 	bool req_started;
-	/* Statistics snapshot belongs to the submitted packet, including staged DATA. */
-	bool req_is_data;
-	bool req_arq;
-	uint16_t req_data_len;
-	uint16_t req_data_mtu;
 	bool slot_idle; /* State transition consumes this slot without radio work. */
 	uint8_t slot;   /* ZLRS_SLOT_*: the slot the pending transaction serves (stats and logs) */
 	uint32_t slot_ms; /* Current slot time, used for the session-confirm slot B window. */
@@ -348,18 +331,13 @@ typedef struct {
 /* Storage layout permits static allocation; frontends consume const owner-thread views. */
 /* Read-only views are valid on the link owner thread; do not retain across async work. */
 
-const zlrs_link_status_t *zlrs_link_status(const zlrs_link_t *link);
-
 /* Only nonce generation is injected; the caller executes each returned radio request. */
 void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
 		    bool (*random)(void *ctx, uint32_t *out), void *random_ctx,
 		    const zlrs_link_events_t *events);
 
-/* Change TX power at runtime (dynamic power); effective with the next transaction */
-void zlrs_link_set_power(zlrs_link_t *link, int8_t tx_power_dbm);
-
-/* Safe between radio transactions. Retune without resetting session/ARQ/queues. */
-bool zlrs_link_reconfigure_radio(zlrs_link_t *link, const zlrs_link_cfg_t *cfg);
+/* Safe between transactions: retune and acquire at now_ms, preserving session/ARQ/queues. */
+bool zlrs_link_reconfigure_radio(zlrs_link_t *link, const zlrs_link_cfg_t *cfg, uint32_t now_ms);
 bool zlrs_link_plan_radio(zlrs_link_t *link, bool target_subg, zlrs_phy_t target_phy,
 			  uint32_t switch_frame);
 void zlrs_link_acquire_radio(zlrs_link_t *link, uint32_t now_ms);
@@ -383,20 +361,13 @@ void zlrs_link_tx_started(zlrs_link_t *link, uint32_t now_ms);
 void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t rssi, int8_t snr,
 			uint32_t now_ms);
 
-/* Timeouts and state transitions, called once per superframe */
-void zlrs_link_tick(zlrs_link_t *link, uint32_t now_ms);
-
-bool link_verify_frame(zlrs_link_t *link, const zlrs_frame_t *frame, uint16_t len);
-
 bool link_new_nonce(const zlrs_link_t *link, uint32_t previous, bool *have_previous, uint32_t *out);
 uint32_t link_sync_freq_hz(const zlrs_link_t *link);
 uint32_t link_slot_freq_hz(const zlrs_link_t *link);
 void link_set_state(zlrs_link_t *link, zlrs_link_state_t state, uint32_t now_ms);
 uint16_t link_build_frame(zlrs_link_t *link, zlrs_frame_t *frame, uint8_t *buf, uint16_t data_len);
-const uint8_t *link_tag_key_for(const zlrs_link_t *link, uint8_t type, bool outbound);
-uint16_t link_acq_timeout_ms(const zlrs_link_t *link);
-void link_plan_rx(const zlrs_link_t *link, zlrs_link_plan_t *plan, uint32_t freq, uint8_t sync_slot,
-		  uint16_t timeout_ms);
+void link_plan_rx(const zlrs_link_t *link, zlrs_link_plan_t *plan, uint32_t freq,
+		  uint8_t sync_slot);
 void link_plan_tx(const zlrs_link_t *link, zlrs_link_plan_t *plan, uint8_t type, uint16_t data_len);
 bool link_band_plan_valid(const zlrs_link_t *link, const zlrs_band_plan_t *plan,
 			  uint32_t frame_index);

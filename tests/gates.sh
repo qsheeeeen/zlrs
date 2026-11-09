@@ -51,8 +51,8 @@ reject_matches "a frontend reaches into RF or private configuration storage:" \
 	'zlrs_link_t|link/link.h|zlrs_storage_settings_' \
 	app/src/serial.c app/src/mgmt.c app/src/ui.c app/src/ui.h app/src/main.c
 
-reject_matches "RF accesses link storage directly instead of using link operations/views:" \
-	'link_data\.' app/src/rf.c
+reject_matches "RF reaches private link mechanisms instead of its public state:" \
+	--pcre2 '\blink_data\.(?!status\b)' app/src/rf.c
 
 if [ -e app/src/state/sys_bus.c ] || [ -e app/src/state/sys_bus.h ]; then
 	bad "centralized module channels returned"
@@ -72,8 +72,8 @@ reject_matches "log storage depends on the management protocol:" \
 reject_matches "LR2021 hardware depends on a protocol context:" \
 	'zlrs_link_t|zlrs_link_complete|link/link.h' app/src/platform/lr2021.c app/src/platform/lr2021.h
 
-reject_matches "RF or diagnostics depends on the management wire protocol:" \
-	'zlrs/mgmt|ZLRS_MGMT' app/src/rf.c app/src/diagnostics.c app/src/diagnostics.h
+reject_matches "RF depends on the management wire protocol:" \
+	'zlrs/mgmt|ZLRS_MGMT' app/src/rf.c
 
 # Shipped configurations: everything that produces a firmware image. A debug configuration is
 # the only place allowed to name a bench switch.

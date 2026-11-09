@@ -21,21 +21,6 @@ LOG_MODULE_REGISTER(zlrs_main, CONFIG_APP_LOG_LEVEL);
 /* A physical request must not start pairing long after the user has left. */
 #define PAIR_REQUEST_WAIT_MS 30000U
 
-static void enter_management_mode(void)
-{
-	zlrs_rf_pause();
-	LOG_WRN("entering management mode");
-	zlrs_rf_log_snapshot();
-	const int rc = zlrs_mgmt_run();
-	if (rc != 0) {
-		LOG_WRN("management mode ended without EXIT (rc %d)", rc);
-	}
-	LOG_INF("management mode done, back to normal");
-	zlrs_log_console_sync();
-	log_flush();
-	zlrs_rf_resume();
-}
-
 static void save_pairing(zlrs_pairing_save_t *state)
 {
 	const zlrs_link_status_t *link = zlrs_rf_state()->link;
@@ -84,10 +69,9 @@ int main(void)
 		zlrs_lifecycle_check_rollback(!rf_ready,
 					      CONFIG_ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS);
 		zlrs_trace_process(false);
-		if (zlrs_mgmt_process_idle()) {
+		if (zlrs_mgmt_process()) {
 			/* Explicit management commands supersede a waiting button request. */
 			pair_requested = false;
-			enter_management_mode();
 			continue;
 		}
 		struct zlrs_input asked;

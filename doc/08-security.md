@@ -91,6 +91,12 @@ with the candidate session key; Follower adopts the session only after its confi
 verifies the expected Follower nonce and receive context. Three-step confirmation is
 required even for P0's unauthenticated debug format.
 
+All received frame types share structural validation, type-selected authentication
+and receive accounting before dispatch. `rx_frames` and `rx_bytes` count frames
+that pass those checks, including authenticated frames rejected later by state,
+nonce or replay checks. Session-confirmation authentication selects the candidate
+session key before adoption; only a valid confirmation commits that session.
+
 Repeated valid responses and confirmations preserve confirmed progress. A
 response to a completed challenge cannot directly replace keys or reset ARQ.
 A rebooted peer requires a new challenge and full exchange. Session nonces, keys
@@ -143,7 +149,9 @@ when the pool reaches its
 blocks; a full pool stops the source. EHR validity is checked separately from
 the latched IRQ status, which is acknowledged before reading the last EHR word.
 A block failing health checks is discarded and collection restarts within one
-three-second deadline per block. Delayed system work handles recovery and
+three-second deadline per block. Idle, collecting and retry are mutually exclusive
+driver states; stopping a block clears its collection state in one place.
+Delayed system work handles recovery and
 timeouts without waiting on hardware. Health-check recovery cannot extend the
 deadline; continuous errors and stalled generation do not publish bytes.
 This accommodates the variable collection time documented in the

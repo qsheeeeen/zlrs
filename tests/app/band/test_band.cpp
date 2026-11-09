@@ -25,9 +25,12 @@ zlrs_band_action_t evaluate(zlrs_band_policy_t *policy, const BandSample *sample
 	return zlrs_band_policy_update(policy, &observation, &sample->power);
 }
 
+zlrs_link_cfg_t sample_cfg;
+
 void good(uint32_t now, BandSample *o)
 {
 	*o = {};
+	o->link.cfg = sample_cfg;
 	o->link.state = ZLRS_STATE_CONNECTED;
 	o->power.ceiling_dbm = 1;
 	o->now_ms = o->link.last_rx_ms = o->link.last_peer_feedback_ms = now;
@@ -41,7 +44,11 @@ zlrs_band_policy_t p{};
 void reset_BandPolicy()
 {
 	p = {};
-	zlrs_band_policy_init(&p, true, ZLRS_ROLE_LEADER, false, 0, 0);
+	sample_cfg = {};
+	sample_cfg.role = ZLRS_ROLE_LEADER;
+	sample_cfg.automatic_band = true;
+	sample_cfg.region = ZLRS_REGION_ISM2400;
+	zlrs_band_policy_init(&p, ZLRS_ROLE_LEADER, 0, 0);
 }
 
 struct PhyMargin {
@@ -78,7 +85,7 @@ ZTEST_P(BandProfiles, test_RssiAtFloorKeepsCurrentProfile)
 {
 	const auto param = ZTEST_GET_PARAM(BandProfilesParam);
 	reset_BandPolicy();
-	p.phy = param.phy;
+	sample_cfg.phy = param.phy;
 	BandSample o;
 	good(100, &o);
 	o.link.stats.last_rssi = o.link.peer_rssi_dbm = param.floor;
@@ -92,7 +99,7 @@ ZTEST_P(BandProfiles, test_DowngradeRequiresTwoSecondsAfterPowerBoost)
 {
 	const auto param = ZTEST_GET_PARAM(BandProfilesParam);
 	reset_BandPolicy();
-	p.phy = param.phy;
+	sample_cfg.phy = param.phy;
 	BandSample o;
 	good(200, &o);
 	o.link.peer_rssi_dbm = param.floor - 1;
@@ -116,7 +123,7 @@ ZTEST_P(BandProfiles, test_CachedLowQualityCannotBoostOrQualifyDowngrade)
 {
 	const auto param = ZTEST_GET_PARAM(BandProfilesParam);
 	reset_BandPolicy();
-	p.phy = param.phy;
+	sample_cfg.phy = param.phy;
 	for (uint32_t now : {100U, 2400U, 6400U}) {
 		BandSample o;
 		good(now, &o);
@@ -135,7 +142,7 @@ ZTEST_P(BandProfiles, test_ContactLossAdvancesThroughEveryProfileBeforeSubg)
 {
 	const auto param = ZTEST_GET_PARAM(BandProfilesParam);
 	reset_BandPolicy();
-	p.phy = param.phy;
+	sample_cfg.phy = param.phy;
 	BandSample o;
 	good(1000, &o);
 	o.link.last_rx_ms = 0;
@@ -177,7 +184,11 @@ ZTEST_P(BandBoost, test_WaitsForFreshFeedbackAfterMaximumPower)
 	const auto param = ZTEST_GET_PARAM(BandBoostParam);
 	const auto [role, peer_direction] = param;
 	zlrs_band_policy_t p{};
-	zlrs_band_policy_init(&p, true, role, false, 0, 0);
+	sample_cfg = {};
+	sample_cfg.role = role;
+	sample_cfg.automatic_band = true;
+	sample_cfg.region = ZLRS_REGION_ISM2400;
+	zlrs_band_policy_init(&p, role, 0, 0);
 	BandSample o;
 	good(100, &o);
 	o.link.cfg.tx_power_dbm = false;
@@ -257,7 +268,7 @@ ZTEST(BandPolicy, test_LoweringPowerInvalidatesPostMaximumQualityEvidence)
 ZTEST(BandPolicy, test_UnknownQualityCannotQualifyAnUpgrade)
 {
 	reset_BandPolicy();
-	p.phy = ZLRS_PHY_FLRC_650;
+	sample_cfg.phy = ZLRS_PHY_FLRC_650;
 	for (uint32_t now : {100U, 60100U}) {
 		BandSample o;
 		good(now, &o);
@@ -269,7 +280,7 @@ ZTEST(BandPolicy, test_UnknownQualityCannotQualifyAnUpgrade)
 ZTEST(BandPolicy, test_WeakHealthySlowLinkStaysOn24)
 {
 	reset_BandPolicy();
-	p.phy = ZLRS_PHY_FLRC_325;
+	sample_cfg.phy = ZLRS_PHY_FLRC_325;
 	for (uint32_t t = 100; t < 100000; t += 100) {
 		TC_PRINT("t=%u\n", (unsigned int)(t));
 		BandSample o;
@@ -282,7 +293,9 @@ ZTEST(BandPolicy, test_WeakHealthySlowLinkStaysOn24)
 ZTEST(BandPolicy, test_UpgradeNeedsMarginAndContinuousMinute)
 {
 	reset_BandPolicy();
-	zlrs_band_policy_changed(&p, false, ZLRS_PHY_LORA_SF7, false, 0, 0);
+	sample_cfg.region = ZLRS_REGION_ISM2400;
+	sample_cfg.phy = ZLRS_PHY_LORA_SF7;
+	zlrs_band_policy_reset(&p, false, 0, 0);
 	for (uint32_t now : {100U, 60099U}) {
 		BandSample o;
 		good(now, &o);
@@ -301,7 +314,9 @@ ZTEST(BandPolicy, test_UpgradeToleratesSmallLossButRequiresReceiveMargin)
 {
 	reset_BandPolicy();
 	for (uint8_t quality : {95, 97, 98, 99}) {
-		zlrs_band_policy_changed(&p, false, ZLRS_PHY_FLRC_650, false, 0, 0);
+		sample_cfg.region = ZLRS_REGION_ISM2400;
+		sample_cfg.phy = ZLRS_PHY_FLRC_650;
+		zlrs_band_policy_reset(&p, false, 0, 0);
 		BandSample o;
 		good(100, &o);
 		o.link.stats.lq_percent = o.link.peer_lq_percent = quality;
@@ -310,7 +325,9 @@ ZTEST(BandPolicy, test_UpgradeToleratesSmallLossButRequiresReceiveMargin)
 		zexpect_equal(evaluate(&p, &o), ZLRS_BAND_PLAN);
 		zexpect_equal(p.target_phy, ZLRS_PHY_FLRC_2600);
 	}
-	zlrs_band_policy_changed(&p, false, ZLRS_PHY_FLRC_650, false, 0, 0);
+	sample_cfg.region = ZLRS_REGION_ISM2400;
+	sample_cfg.phy = ZLRS_PHY_FLRC_650;
+	zlrs_band_policy_reset(&p, false, 0, 0);
 	for (uint32_t now : {100U, 60100U}) {
 		BandSample o;
 		good(now, &o);
@@ -322,7 +339,9 @@ ZTEST(BandPolicy, test_UpgradeToleratesSmallLossButRequiresReceiveMargin)
 ZTEST(BandPolicy, test_FreshPoorWindowRestartsUpgradeQualification)
 {
 	reset_BandPolicy();
-	zlrs_band_policy_changed(&p, false, ZLRS_PHY_FLRC_650, false, 0, 0);
+	sample_cfg.region = ZLRS_REGION_ISM2400;
+	sample_cfg.phy = ZLRS_PHY_FLRC_650;
+	zlrs_band_policy_reset(&p, false, 0, 0);
 	BandSample o;
 	good(100, &o);
 	o.link.peer_lq_percent = 98;
@@ -349,7 +368,9 @@ ZTEST(BandPolicy, test_ProbeNeedsFiveSecondsOfValidHealthyQuality)
 {
 	reset_BandPolicy();
 	for (uint8_t quality : {94, 95, 127}) {
-		zlrs_band_policy_changed(&p, false, ZLRS_PHY_FLRC_650, true, 0, 0);
+		sample_cfg.region = ZLRS_REGION_ISM2400;
+		sample_cfg.phy = ZLRS_PHY_FLRC_650;
+		zlrs_band_policy_reset(&p, true, 0, 0);
 		for (uint32_t now : {100U, 5100U}) {
 			BandSample o;
 			good(now, &o);
@@ -363,20 +384,25 @@ ZTEST(BandPolicy, test_ProbeNeedsFiveSecondsOfValidHealthyQuality)
 ZTEST(BandPolicy, test_LeaderDwellOutlastsFollowerSweep)
 {
 	reset_BandPolicy();
-	p.phy = ZLRS_PHY_LORA_SF7;
+	sample_cfg.phy = ZLRS_PHY_LORA_SF7;
 	BandSample o;
 	good(2500, &o);
 	o.link.last_rx_ms = 0;
 	zassert_equal(evaluate(&p, &o), ZLRS_BAND_SEARCH);
 	zlrs_band_policy_t follower{};
-	zlrs_band_policy_init(&follower, true, ZLRS_ROLE_FOLLOWER, false, 0, 0);
+	sample_cfg.role = ZLRS_ROLE_FOLLOWER;
+	sample_cfg.automatic_band = true;
+	sample_cfg.region = ZLRS_REGION_ISM2400;
+	zlrs_band_policy_init(&follower, ZLRS_ROLE_FOLLOWER, 0, 0);
 	zexpect_true((p.dwell_ms) > ((ZLRS_PHY_AUTO_COUNT + 1U) * follower.dwell_ms));
 }
 
 ZTEST(BandPolicy, test_HealthySubgProbesRobust24Profile)
 {
 	reset_BandPolicy();
-	zlrs_band_policy_changed(&p, true, ZLRS_PHY_FLRC_2600, false, 0, 0);
+	sample_cfg.region = ZLRS_REGION_CN433;
+	sample_cfg.phy = ZLRS_PHY_FLRC_2600;
+	zlrs_band_policy_reset(&p, false, 0, 0);
 	BandSample o;
 	good(100, &o);
 	zexpect_equal(evaluate(&p, &o), ZLRS_BAND_KEEP);
@@ -389,7 +415,9 @@ ZTEST(BandPolicy, test_HealthySubgProbesRobust24Profile)
 ZTEST(BandPolicy, test_FailedSubgCaptureResumesFullSweep)
 {
 	reset_BandPolicy();
-	zlrs_band_policy_changed(&p, true, ZLRS_PHY_FLRC_2600, false, 0, 0);
+	sample_cfg.region = ZLRS_REGION_CN433;
+	sample_cfg.phy = ZLRS_PHY_FLRC_2600;
+	zlrs_band_policy_reset(&p, false, 0, 0);
 	BandSample o;
 	good(28000, &o);
 	o.link.radio_acquiring = true;
@@ -402,8 +430,14 @@ ZTEST(BandPolicy, test_DutySilenceExtendsLossTimeoutAndFollowerDwell)
 {
 	reset_BandPolicy();
 	zlrs_band_policy_t follower{};
-	zlrs_band_policy_init(&p, true, ZLRS_ROLE_LEADER, true, 60000, 0);
-	zlrs_band_policy_init(&follower, true, ZLRS_ROLE_FOLLOWER, true, 60000, 0);
+	sample_cfg.role = ZLRS_ROLE_LEADER;
+	sample_cfg.automatic_band = true;
+	sample_cfg.region = ZLRS_REGION_CN433;
+	zlrs_band_policy_init(&p, ZLRS_ROLE_LEADER, 60000, 0);
+	sample_cfg.role = ZLRS_ROLE_FOLLOWER;
+	sample_cfg.automatic_band = true;
+	sample_cfg.region = ZLRS_REGION_CN433;
+	zlrs_band_policy_init(&follower, ZLRS_ROLE_FOLLOWER, 60000, 0);
 	zexpect_equal(p.loss_ms, 62000U);
 	zexpect_equal(follower.dwell_ms, 62000U);
 	zexpect_true((p.dwell_ms) > ((ZLRS_PHY_AUTO_COUNT + 1U) * follower.dwell_ms));
@@ -415,10 +449,28 @@ ZTEST(BandPolicy, test_DutySilenceExtendsLossTimeoutAndFollowerDwell)
 	zexpect_equal(evaluate(&p, &o), ZLRS_BAND_SEARCH);
 }
 
+ZTEST(BandPolicy, test_UsesCurrentLinkConfiguration)
+{
+	reset_BandPolicy();
+	BandSample o;
+	good(2500, &o);
+	o.link.last_rx_ms = 0;
+	o.link.cfg.automatic_band = false;
+	zexpect_equal(evaluate(&p, &o), ZLRS_BAND_KEEP);
+	o.link.cfg.automatic_band = true;
+	o.link.cfg.phy = ZLRS_PHY_LORA_SF7;
+	o.now_ms = 5000;
+	zexpect_equal(evaluate(&p, &o), ZLRS_BAND_SEARCH);
+	zexpect_true(p.target_subg);
+}
+
 ZTEST(BandPolicy, test_LossTimeoutCrossesClockWrapAndPairingSuppressesSearch)
 {
 	reset_BandPolicy();
-	zlrs_band_policy_init(&p, true, ZLRS_ROLE_LEADER, false, 0, UINT32_MAX - 1000U);
+	sample_cfg.role = ZLRS_ROLE_LEADER;
+	sample_cfg.automatic_band = true;
+	sample_cfg.region = ZLRS_REGION_ISM2400;
+	zlrs_band_policy_init(&p, ZLRS_ROLE_LEADER, 0, UINT32_MAX - 1000U);
 	BandSample o;
 	good(0, &o);
 	o.link.last_rx_ms = 0;
@@ -433,7 +485,10 @@ ZTEST(BandPolicy, test_LossTimeoutCrossesClockWrapAndPairingSuppressesSearch)
 ZTEST(BandPolicy, test_BoostQualificationCrossesClockWrap)
 {
 	reset_BandPolicy();
-	zlrs_band_policy_init(&p, true, ZLRS_ROLE_LEADER, false, 0, UINT32_MAX - 50U);
+	sample_cfg.role = ZLRS_ROLE_LEADER;
+	sample_cfg.automatic_band = true;
+	sample_cfg.region = ZLRS_REGION_ISM2400;
+	zlrs_band_policy_init(&p, ZLRS_ROLE_LEADER, 0, UINT32_MAX - 50U);
 	BandSample o;
 	good(UINT32_MAX - 49U, &o);
 	o.link.peer_rssi_dbm = -90;

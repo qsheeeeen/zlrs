@@ -149,18 +149,16 @@ int zlrs_persist_save_pairing(const zlrs_pairing_t *pairing)
 	return 0;
 }
 
-bool zlrs_mgmt_process_idle(void)
+bool zlrs_mgmt_process(void)
 {
 	idle_calls++;
-	if (pairing_scenario) {
-		return cancel_waiting_pair && frames == 2U && sessions == 0U;
+	const bool enter = pairing_scenario ? cancel_waiting_pair && frames == 2U && sessions == 0U
+					    : idle_calls == 1U ||
+						      (!rf_fault && frames == 3U && sessions == 1U);
+	if (!enter) {
+		return false;
 	}
-	return idle_calls == 1U || (!rf_fault && frames == 3U && sessions == 1U);
-}
-
-int zlrs_mgmt_run(void)
-{
-	zassert_equal(pause_depth, 1U);
+	zlrs_rf_pause();
 	sessions++;
 	if (sessions == 2U) {
 		/* ERASE_PAIR deletes the saved record and reloads RF credentials in this window. */
@@ -168,7 +166,8 @@ int zlrs_mgmt_run(void)
 		pairing_saved = false;
 		zlrs_rf_credentials();
 	}
-	return 0;
+	zlrs_rf_resume();
+	return true;
 }
 
 void zlrs_rf_log_snapshot(void)

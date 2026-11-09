@@ -31,9 +31,6 @@ target_sources(app PRIVATE
 target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG_TRACE app PRIVATE
   ${zlrs_app_dir}/src/trace.c
 )
-target_sources_ifdef(CONFIG_ZLRS_APP_DEBUG app PRIVATE
-  ${zlrs_app_dir}/src/diagnostics.c
-)
 
 if(CONFIG_ZLRS_APP_DEBUG_TRACE)
   # Zephyr 4.5's GPIO function hooks do not consult CONFIG_TRACING_GPIO.

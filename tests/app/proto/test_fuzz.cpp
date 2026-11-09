@@ -18,8 +18,8 @@
 
 #include <string.h>
 
-#include "link/link.h"
 #include "link/handshake.h"
+#include "link/link.h"
 #include "proto/crypto.h"
 #include "proto/frame.h"
 
@@ -74,7 +74,6 @@ static void fuzz_frame_decode(rng_t *rng)
 		const bool valid = zlrs_frame_decode(&frame, buf, len, tag_len);
 		if (valid && frame.type <= ZLRS_PKT_DATA_F2L &&
 		    (frame.body.data.bytes != buf + ZLRS_DATA_HEADROOM ||
-		     frame.body.data.tag != buf + len - tag_len ||
 		     frame.body.data.len != len - ZLRS_DATA_HEADROOM - tag_len)) {
 			violations++;
 		}
@@ -89,11 +88,8 @@ static void fuzz_frame_decode(rng_t *rng)
 			   len - ZLRS_FRAME_HDR_LEN - ZLRS_DATA_PREFIX_LEN - tag_len) != 0) {
 			violations++;
 		}
-		if (memcmp(frame.tag, buf + len - tag_len, tag_len) != 0) {
-			violations++;
-		}
-
-		/* Decode and encode again: byte-identical, tag included */
+		/* Re-encode the body while preserving authentication storage. */
+		memcpy(pack, buf, len);
 		if (zlrs_test_encode(&frame, pack, sizeof(pack), len, tag_len) != len) {
 			violations++;
 		} else if (memcmp(pack, buf, len) != 0) {
@@ -144,9 +140,8 @@ static void fx_link_init(zlrs_link_t *link, uint8_t arq)
 				     .profile = ZLRS_PROFILE_P1,
 				     .phy = ZLRS_PHY_FLRC_2600,
 				     .tx_power_dbm = 10,
-				     .rx_timeout_ms = 2U,
+
 				     .sync_period_ms = 2000U,
-				     .peer_timeout_ms = 0U,
 				     .pair_period_ms = 100U,
 				     .pair_window_ms = 30000U,
 				     .data_mtu = 128U,
@@ -156,9 +151,13 @@ static void fx_link_init(zlrs_link_t *link, uint8_t arq)
 		.on_data = fx_on_data, .on_state = fx_on_state, .ctx = nullptr};
 
 	zlrs_link_init(link, &cfg, fx_random, nullptr, &ev);
-	zlrs_link_set_dev_id(link, dev_id);
-	zlrs_link_set_root_key(link, root_key, 0U);
-	zlrs_link_set_peer(link, peer_id, salt, 0U);
+	zlrs_persist_state_t saved = {};
+	memcpy(saved.dev_id, dev_id, sizeof(saved.dev_id));
+	memcpy(saved.root_key, root_key, sizeof(saved.root_key));
+	memcpy(saved.pairing.peer_id, peer_id, sizeof(saved.pairing.peer_id));
+	memcpy(saved.pairing.pair_salt, salt, sizeof(saved.pairing.pair_salt));
+	saved.configured = saved.paired = true;
+	zlrs_link_restore(link, &saved, 0U);
 }
 
 /* Build an air frame with a legal shape and tag; the caller then corrupts it at random */

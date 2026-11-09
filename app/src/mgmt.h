@@ -15,12 +15,14 @@ ZBUS_CHAN_DECLARE(zlrs_mode_chan);
 
 /* Native SMP worker hands product operations to the RF owner at a frame boundary.
  * ENTER completes only after the maintenance window and log flush are ready. */
-bool zlrs_mgmt_process_idle(void);
-int zlrs_mgmt_run(void);
+/* Returns true after a complete maintenance session, including RF resume. */
+bool zlrs_mgmt_process(void);
+/* A native FS operation or an open read handle still owns the maintenance window. */
+bool zlrs_mgmt_fs_busy(void);
 
 /* host -> device */
 #define ZLRS_MGMT_CMD_ENTER         0x00U /* enter management mode (the formal entry) */
-#define ZLRS_MGMT_CMD_STATUS        0x01U /* read status */
+#define ZLRS_MGMT_CMD_STATUS        0x01U /* empty or one status view byte */
 #define ZLRS_MGMT_CMD_PAIR          0x02U /* start pairing */
 #define ZLRS_MGMT_CMD_ERASE_PAIR    0x03U /* erase the pairing record */
 #define ZLRS_MGMT_CMD_SET_KEY_HEX   0x04U /* root key as 64 hex characters */
@@ -34,5 +36,13 @@ int zlrs_mgmt_run(void);
 #define ZLRS_MGMT_CMD_EXIT          0x0EU /* leave management mode */
 #define ZLRS_MGMT_CMD_FACTORY_RESET 0x0FU /* wipe NVS */
 #define ZLRS_MGMT_CMD_LOG_INFO      0x12U /* what the log store holds */
-#define ZLRS_MGMT_CMD_DEBUG_REPORT  0x14U /* debug image only: one report id byte */
-#define ZLRS_MGMT_CMD_OBSERVE       0x15U /* timestamped status without pausing RF */
+
+#define ZLRS_MGMT_CMD_TRACE 0x16U /* empty = status; action byte + LE32 duration = control */
+
+enum zlrs_status_view {
+	ZLRS_STATUS_BASIC,
+	ZLRS_STATUS_LINK,
+	ZLRS_STATUS_RATE,
+	ZLRS_STATUS_RADIO,
+	ZLRS_STATUS_POWER,
+};

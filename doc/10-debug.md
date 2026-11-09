@@ -57,10 +57,13 @@ Management uses native MCUmgr OS/IMG/FS plus product group 66. The firmware chec
 at compile time that SMP uses the management CDC. FS download chunks are limited
 to 256 bytes because Zephyr keeps a chunk on the SMP worker stack; the 8 KiB
 transport buffer also carries complete diagnostics. File export is read-only and
-requires an explicit maintenance session. UART kernel logs use their separate CDC.
-The SMP worker submits a bounded request and waits while the application owner
-executes it and encodes the response from its read-only RF, link and persistence
-views. Live pointers and credentials do not cross the UI channels.
+requires an explicit maintenance session. Log inventory and download access use
+the same native backend filename validation. UART kernel logs use their separate CDC.
+The SMP worker holds its decoded input and response writer until the application
+owner executes the bounded request and encodes the response from its read-only RF,
+link and persistence views. Product commands and trace control share this handoff.
+Management owns native FS operation/read-handle tracking and waits for accepted
+exports and the idle closer before RF resumes. Live pointers and credentials do not cross the UI channels.
 
 ## Observing a running link
 
@@ -99,6 +102,13 @@ python3 tools/zlrs.py radio --serial <serial>
 python3 tools/zlrs.py power --serial <serial>
 python3 tools/zlrs.py logs --serial <serial>
 ```
+
+Reports carry a CBOR `report` map of named integer metrics. The host tool aligns
+these fields and renders role, state, region and PHY names. Units are explicit in
+field names (`_us`, `_ms`, `_hz`, `_dbm`); `_x10` values use one decimal place.
+Link quality 127 means unavailable, and booleans are 0/1. The radio report includes
+frame and launch timing, driver errors and maintenance totals. Power values are
+setpoints and limits; RF output is not measured.
 
 Automatic-mode 2.4 GHz profiles are shown by management `status` and the `rate`
 report. The RF hardware runner requests coordinated profile changes through its
@@ -243,9 +253,12 @@ hardware event; the enclosing CTF timestamp identifies the later emission.
 
 ### Commands and state
 
-Trace control is MCUmgr user group 64, command 0. Read returns capture status;
-write accepts `op` (0 start, 1 stop, 2 save, 3 discard) and optional `ms` (default
-50). Responses contain `result` (zero or negative errno) and the status fields.
+Trace control uses product group 66, command 0 with `op=0x16`. An empty byte
+string `value` returns capture status; control carries an action byte (0 start,
+1 stop, 2 save, 3 discard, 4 fixture-only arm) followed by a little-endian uint32
+duration in milliseconds. The CLI defaults to 50 ms. Responses contain `result`
+(zero or negative errno) and the status fields. Trace and product operations share
+the same serialized request and owner handoff.
 Zephyr owns SMP framing, CBOR handling, the serial transport and its preemptible
 worker. The host uses the standard `smpclient` transport supplied with `smpmgr`.
 
@@ -349,7 +362,7 @@ configuration and a standard compatible host client. Allow read-only downloads
 of committed trace artifacts through the filesystem access hook; file mutation
 remains owned by the saver. Select the 4 GiB file-size encoding option because a
 65536-byte snapshot exceeds the 16-bit CBOR size range. Do not add trace payloads
-to `DEBUG_REPORT`, a new ZLRS file-transfer protocol or a dedicated USB class.
+to STATUS views, a new ZLRS file-transfer protocol or a dedicated USB class.
 Filesystem downloads require an explicit maintenance session, with tracing off
 and RF paused, to isolate transfer load from RF measurements. Serialize saves
 against downloads and close active file transfers before leaving maintenance.
@@ -358,12 +371,11 @@ Unsaved RAM is volatile. Fatal handlers and watchdog-reset paths do not attempt
 Flash saves. Previously committed generations can be exported after reboot;
 survival of the current unsaved capture is not promised.
 
-### Migration and acceptance
+### Capture acceptance
 
-RF phase profiling uses named events. The application histogram engine, its
-P50/P95/P99 text reports and the radio runner's `--timing` option have been
-removed. Hardware deadlines, scheduling timestamps, driver health counters and
-maintenance totals remain available.
+RF phase profiling uses named events. Structured management reports expose
+hardware deadlines, scheduling timestamps, driver health counters and maintenance
+totals.
 
 Run the host tool to record and save, then enter the existing management session
 for file downloads. Set the slot from the JSON status, then export and decode:
@@ -444,7 +456,7 @@ outstanding 32-byte probe and MCU echo; the initiator measures from injection
 into the link queue to delivery of the matching echo using its own hardware clock.
 The host opens only management CDCs.
 
-`trace arm` (group 64 operation 4) is available only in this fixture. Its 96 KiB
+`trace arm` (product trace action 4) is available only in this fixture. Its 96 KiB
 RAM sink overwrites whole CTF records, retaining the latest history until a trigger or explicit stop.
 A threshold violation freezes the initiator and sends the probe ID and measured
 RTT to freeze the peer. Missing responses/probes also trigger after 200 ms.
@@ -762,6 +774,8 @@ python3 tests/app/rf/hardware/run.py --serial <Leader-serial> --peer <Follower-s
 Per-phase execution timing uses the [bounded CTF capture](#bounded-trace-capture)
 and standard viewer. Capture only the interval of interest. The radio fixture's
 DATA acceptance and status-polling load remain independently selectable.
+Polling cycles through basic, link, rate, radio and power STATUS views. Each
+sample must preserve the connected session, PHY and cached hardware timestamp.
 
 Maintenance pause count/duration and frame catch-up totals span RF initialization.
 "Skipped after pause" identifies catch-up immediately following maintenance;

@@ -15,7 +15,7 @@
 #include "proto/mod.h"
 #include "region/region.h"
 
-/* Independent FLRC estimates in us for 7, 31, 128 and 255 wire bytes. */
+/* Independent FLRC airtimes in us for 7, 31, 128 and 255 wire bytes. */
 ZTEST(Modulation, test_FlrcAirtimeVectors)
 {
 	static const uint16_t lengths[] = {7U, 31U, 128U, 255U};
@@ -24,10 +24,10 @@ ZTEST(Modulation, test_FlrcAirtimeVectors)
 		zlrs_phy_t phy;
 		uint32_t expected[4];
 	} vectors[] = {
-		{ZLRS_PHY_FLRC_2600, {34U, 108U, 407U, 797U}},
-		{ZLRS_PHY_FLRC_1300, {68U, 216U, 813U, 1594U}},
-		{ZLRS_PHY_FLRC_650, {136U, 431U, 1625U, 3188U}},
-		{ZLRS_PHY_FLRC_325, {271U, 862U, 3250U, 6376U}},
+		{ZLRS_PHY_FLRC_2600, {79U, 177U, 575U, 1096U}},
+		{ZLRS_PHY_FLRC_1300, {157U, 354U, 1149U, 2191U}},
+		{ZLRS_PHY_FLRC_650, {313U, 707U, 2297U, 4382U}},
+		{ZLRS_PHY_FLRC_325, {625U, 1413U, 4594U, 8764U}},
 	};
 
 	for (const auto &vector : vectors) {

@@ -35,11 +35,14 @@ struct zlrs_trace_status {
 };
 
 #if defined(CONFIG_ZLRS_APP_DEBUG_TRACE)
-#include <zephyr/tracing/tracing.h>
 #include <tracing_core.h>
+#include <zephyr/tracing/tracing.h>
 
 /* Reset on the MCUmgr worker; control/save on RF owner; stop on kernel timer. */
-int zlrs_trace_request(enum zlrs_trace_command command, uint32_t duration_ms);
+#include <zcbor_encode.h>
+int zlrs_trace_prepare(enum zlrs_trace_command command, uint32_t duration_ms);
+int zlrs_trace_control(enum zlrs_trace_command command, uint32_t duration_ms, bool maintenance);
+int zlrs_trace_response(zcbor_state_t *zs, int result);
 #if defined(CONFIG_ZLRS_APP_DEBUG_TRACE_ROLLING)
 /* RF owner only: freeze now, defer Flash until the trigger can reach the peer. */
 void zlrs_trace_trigger(uint32_t sequence, uint32_t elapsed_us);
@@ -47,21 +50,31 @@ void zlrs_trace_trigger(uint32_t sequence, uint32_t elapsed_us);
 void zlrs_trace_status(struct zlrs_trace_status *status);
 void zlrs_trace_process(bool maintenance);
 void zlrs_trace_maintenance(bool entering);
-void zlrs_trace_session(bool entering);
-/* Management exit waits until an accepted MCUmgr request and its file access finish. */
-bool zlrs_trace_export_busy(void);
+int zlrs_trace_discover(void);
+bool zlrs_trace_file_readable(const char *path);
 
 /* Avoid CTF's bounded-name copy while recording is disabled. */
-#define ZLRS_TRACE_EVENT(name, arg0, arg1) \
-	do { \
-		if (is_tracing_enabled()) { \
-			sys_trace_named_event(name, arg0, arg1); \
-		} \
+#define ZLRS_TRACE_EVENT(name, arg0, arg1)                                                         \
+	do {                                                                                       \
+		if (is_tracing_enabled()) {                                                        \
+			sys_trace_named_event(name, arg0, arg1);                                   \
+		}                                                                                  \
 	} while (false)
 #else
-static inline void zlrs_trace_process(bool maintenance) { ARG_UNUSED(maintenance); }
-static inline void zlrs_trace_maintenance(bool entering) { ARG_UNUSED(entering); }
-static inline void zlrs_trace_session(bool entering) { ARG_UNUSED(entering); }
-static inline bool zlrs_trace_export_busy(void) { return false; }
+static inline void zlrs_trace_process(bool maintenance)
+{
+	ARG_UNUSED(maintenance);
+}
+
+static inline void zlrs_trace_maintenance(bool entering)
+{
+	ARG_UNUSED(entering);
+}
+
+static inline int zlrs_trace_discover(void)
+{
+	return 0;
+}
+
 #define ZLRS_TRACE_EVENT(name, arg0, arg1) ((void)0)
 #endif

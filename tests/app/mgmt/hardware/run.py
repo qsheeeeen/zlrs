@@ -34,7 +34,7 @@ def exercise(port, export_dir=None, log_limit=None):
             print(f"SMP operation {op}: expected error {error}", flush=True)
 
         command(m.CMD_PAIR, error=-errno.EACCES)
-        before = command(m.CMD_OBSERVE)
+        before = command(m.CMD_STATUS)
         assert before['status']['frame_period_us'] > 0
         command(m.CMD_ENTER)
         command(m.CMD_ERASE_PAIR)
@@ -81,7 +81,7 @@ def exercise(port, export_dir=None, log_limit=None):
             assert 'denied' in str(exc).lower() or 'err' in str(exc).lower(), str(exc)
         else:
             raise AssertionError('FS escaped read-only export paths')
-        assert client.request(m.CMD_DEBUG_REPORT, bytes([3]))["report"]
+        assert client.request(m.CMD_STATUS, bytes([m.STATUS_VIEWS["power"]]))["status"]
         command(m.CMD_SET_KEY_HEX, b'a' * 63, -errno.EINVAL)
         command(m.CMD_SET_KEY_HEX, b'a' * 64)
         command(m.CMD_SET_PHRASE, b'mgmt-hardware')

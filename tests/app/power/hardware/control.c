@@ -2,8 +2,9 @@
 /* Test image only. Real RF/CRC/auth/ARQ stay active; faults alter accepted RX facts. */
 #include "link/link.h"
 #include <zcbor_decode.h>
-#include <mgmt/mcumgr/util/zcbor_bulk.h>
 #include <zcbor_encode.h>
+
+#include <mgmt/mcumgr/util/zcbor_bulk.h>
 #include <zephyr/kernel.h>
 #include <zephyr/mgmt/mcumgr/mgmt/handlers.h>
 #include <zephyr/mgmt/mcumgr/mgmt/mgmt.h>
@@ -20,7 +21,8 @@ void __real_zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, i
 void __wrap_zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t rssi,
 			       int8_t snr, uint32_t now_ms)
 {
-	if (link->status.busy && link->req.is_tx && status == ZLRS_RADIO_OK && link->req_is_data &&
+	if (link->status.busy && link->req.is_tx && status == ZLRS_RADIO_OK &&
+	    (link->req.buf[0] & ZLRS_FRAME_TYPE_MASK) <= ZLRS_PKT_DATA_F2L &&
 	    link->req.size >= ZLRS_FRAME_HDR_LEN + ZLRS_DATA_PREFIX_LEN) {
 		const uint8_t quality = link->req.buf[ZLRS_FRAME_HDR_LEN + 2U];
 		atomic_inc(&tx_feedback);

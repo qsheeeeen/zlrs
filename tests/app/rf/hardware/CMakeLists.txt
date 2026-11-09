@@ -25,7 +25,7 @@ target_include_directories(app PRIVATE
   "${zlrs_root}/tests/app/support"
 )
 # Replace public interfaces only in the test image; the production firmware has no hooks.
-set(zlrs_test_wrappers zlrs_link_init zlrs_link_tx_space zlrs_serial_read zlrs_serial_receive
+set(zlrs_test_wrappers zlrs_link_init zlrs_link_tx_reserve zlrs_serial_read zlrs_serial_receive
   zlrs_link_complete zlrs_persist_state zlrs_persist_save_pairing)
 if(CONFIG_ZLRS_TEST_RAW_MS GREATER 0)
   list(APPEND zlrs_test_wrappers zlrs_lr2021_init)

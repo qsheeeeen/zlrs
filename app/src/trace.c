@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
 #include "trace.h"
+#include "mgmt.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -8,18 +9,13 @@
 #include <string.h>
 #include <tracing_backend.h>
 #include <tracing_core.h>
-#include <zcbor_decode.h>
 #include <zcbor_encode.h>
-
-#include <mgmt/mcumgr/util/zcbor_bulk.h>
 
 #include <zephyr/app_version.h>
 #include <zephyr/crypto/crypto.h>
 #include <zephyr/data/json.h>
 #include <zephyr/fs/fs.h>
 #include <zephyr/fs/littlefs.h>
-#include <zephyr/mgmt/mcumgr/grp/fs_mgmt/fs_mgmt.h>
-#include <zephyr/mgmt/mcumgr/mgmt/callbacks.h>
 #include <zephyr/mgmt/mcumgr/mgmt/mgmt.h>
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/sys/atomic.h>
@@ -56,19 +52,8 @@ static uint32_t dropped_at_start;
 static int64_t save_after_ms;
 #endif
 static bool maintenance_active;
-static bool session_active;
-static bool mounted;
 static bool discovered;
 static bool committed[2];
-static atomic_t export_active;
-static atomic_t export_file_open;
-static atomic_t request_pending;
-static enum zlrs_trace_command requested_command;
-static uint32_t requested_duration;
-static int request_result;
-K_MUTEX_DEFINE(request_lock);
-K_SEM_DEFINE(request_done, 0, 1);
-
 FS_LITTLEFS_DECLARE_DEFAULT_CONFIG(trace_fs);
 static struct fs_mount_t trace_mount = {
 	.type = FS_LITTLEFS,
@@ -78,15 +63,9 @@ static struct fs_mount_t trace_mount = {
 };
 
 struct artifact {
-	uint32_t generation;
-	uint32_t capture_id;
-	uint32_t requested_ms;
-	uint32_t stop_reason;
-	uint32_t core_dropped;
+	struct zlrs_trace_status capture;
 	uint32_t capacity;
 	uint32_t event_mask;
-	uint64_t started_ns;
-	uint64_t stopped_ns;
 	const char *sha256;
 	const char *build;
 	const char *zephyr;
@@ -94,15 +73,20 @@ struct artifact {
 };
 
 static const struct json_obj_descr artifact_fields[] = {
-	JSON_OBJ_DESCR_PRIM(struct artifact, generation, JSON_TOK_NUMBER),
-	JSON_OBJ_DESCR_PRIM(struct artifact, capture_id, JSON_TOK_NUMBER),
-	JSON_OBJ_DESCR_PRIM(struct artifact, requested_ms, JSON_TOK_NUMBER),
-	JSON_OBJ_DESCR_PRIM(struct artifact, stop_reason, JSON_TOK_NUMBER),
-	JSON_OBJ_DESCR_PRIM(struct artifact, core_dropped, JSON_TOK_NUMBER),
+	JSON_OBJ_DESCR_PRIM_NAMED(struct artifact, "generation", capture.generation,
+				  JSON_TOK_NUMBER),
+	JSON_OBJ_DESCR_PRIM_NAMED(struct artifact, "capture_id", capture.id, JSON_TOK_NUMBER),
+	JSON_OBJ_DESCR_PRIM_NAMED(struct artifact, "requested_ms", capture.duration_ms,
+				  JSON_TOK_NUMBER),
+	JSON_OBJ_DESCR_PRIM_NAMED(struct artifact, "stop_reason", capture.reason, JSON_TOK_NUMBER),
+	JSON_OBJ_DESCR_PRIM_NAMED(struct artifact, "core_dropped", capture.dropped,
+				  JSON_TOK_NUMBER),
 	JSON_OBJ_DESCR_PRIM(struct artifact, capacity, JSON_TOK_NUMBER),
 	JSON_OBJ_DESCR_PRIM(struct artifact, event_mask, JSON_TOK_NUMBER),
-	JSON_OBJ_DESCR_PRIM(struct artifact, started_ns, JSON_TOK_UINT64),
-	JSON_OBJ_DESCR_PRIM(struct artifact, stopped_ns, JSON_TOK_UINT64),
+	JSON_OBJ_DESCR_PRIM_NAMED(struct artifact, "started_ns", capture.started_ns,
+				  JSON_TOK_UINT64),
+	JSON_OBJ_DESCR_PRIM_NAMED(struct artifact, "stopped_ns", capture.stopped_ns,
+				  JSON_TOK_UINT64),
 	JSON_OBJ_DESCR_PRIM(struct artifact, sha256, JSON_TOK_STRING),
 	JSON_OBJ_DESCR_PRIM(struct artifact, build, JSON_TOK_STRING),
 	JSON_OBJ_DESCR_PRIM(struct artifact, zephyr, JSON_TOK_STRING),
@@ -165,11 +149,6 @@ void zlrs_trace_maintenance(bool entering)
 
 	maintenance_active = entering;
 	irq_unlock(key);
-}
-
-bool zlrs_trace_export_busy(void)
-{
-	return atomic_get(&export_active) != 0 || atomic_get(&export_file_open) != 0;
 }
 
 /* Hash through the Zephyr crypto driver while RF is paused. This also verifies
@@ -239,18 +218,15 @@ static void artifact_path(char *out, size_t capacity, unsigned int slot, const c
 	(void)snprintf(out, capacity, "/trace/%u/%s", slot, name);
 }
 
-static int discover(void)
+int zlrs_trace_discover(void)
 {
-	if (!mounted) {
-		const int rc = fs_mount(&trace_mount);
-
-		if (rc != 0) {
-			return rc;
-		}
-		mounted = true;
-	}
+	capture.error = 0;
 	if (discovered) {
 		return 0;
+	}
+	const int rc = fs_mount(&trace_mount);
+	if (rc != 0) {
+		return capture.error = rc;
 	}
 	for (unsigned int slot = 0; slot < 2U; slot++) {
 		char path[48];
@@ -275,7 +251,7 @@ static int discover(void)
 						      ARRAY_SIZE(artifact_fields), &saved);
 
 		if (fields != BIT_MASK(ARRAY_SIZE(artifact_fields)) ||
-		    saved.capacity != sizeof(ram_tracing) || saved.generation == 0U ||
+		    saved.capacity != sizeof(ram_tracing) || saved.capture.generation == 0U ||
 		    strlen(saved.sha256) != 64U) {
 			continue;
 		}
@@ -284,49 +260,13 @@ static int discover(void)
 			continue;
 		}
 		committed[slot] = true;
-		if (saved.generation > capture.generation) {
-			capture.generation = saved.generation;
+		if (saved.capture.generation > capture.generation) {
+			capture.generation = saved.capture.generation;
 			capture.slot = (int)slot;
 		}
 	}
 	discovered = true;
 	return 0;
-}
-
-static void export_barrier(struct k_work *work)
-{
-	ARG_UNUSED(work);
-}
-
-K_WORK_DEFINE(export_close_barrier, export_barrier);
-
-void zlrs_trace_session(bool entering)
-{
-	if (entering) {
-		capture.error = discover();
-		const unsigned int key = irq_lock();
-
-		session_active = true;
-		irq_unlock(key);
-		return;
-	}
-	const unsigned int key = irq_lock();
-
-	session_active = false;
-	irq_unlock(key);
-	while (atomic_get(&export_active) != 0) {
-		k_msleep(1);
-	}
-	/* The filesystem group's idle closer uses the system workqueue. Close
-	 * abandoned read handles before RF resumes, after denying new requests. */
-	if (atomic_get(&export_file_open) != 0) {
-		struct k_work_sync sync;
-
-		k_msleep(CONFIG_MCUMGR_GRP_FS_FILE_AUTOMATIC_IDLE_CLOSE_TIME + 1);
-		(void)k_work_submit(&export_close_barrier);
-		(void)k_work_flush(&export_close_barrier, &sync);
-		atomic_set(&export_file_open, 0);
-	}
 }
 
 static int write_file(const char *path, const void *bytes, size_t size)
@@ -361,7 +301,7 @@ static int write_file(const char *path, const void *bytes, size_t size)
 
 static int save_capture(void)
 {
-	int rc = discover();
+	int rc = zlrs_trace_discover();
 
 	if (rc != 0) {
 		return rc;
@@ -411,18 +351,12 @@ static int save_capture(void)
 		return -EBADMSG;
 	}
 	struct artifact saved = {
-		.generation = capture.generation + 1U,
-		.capture_id = capture.id,
-		.requested_ms = capture.duration_ms,
-		.stop_reason = capture.reason,
-		.core_dropped = capture.dropped,
+		.capture = capture,
 		.capacity = sizeof(ram_tracing),
 		.event_mask = IS_ENABLED(CONFIG_TRACING_THREAD) |
 			      (IS_ENABLED(CONFIG_TRACING_ISR) << 1) |
 			      (IS_ENABLED(CONFIG_TRACING_SEMAPHORE) << 2) |
 			      (IS_ENABLED(CONFIG_TRACING_IDLE) << 3) | BIT(4),
-		.started_ns = capture.started_ns,
-		.stopped_ns = capture.stopped_ns,
 		.sha256 = digest,
 		.build = APP_VERSION_STRING
 		"-" STRINGIFY(APP_BUILD_VERSION),
@@ -430,6 +364,7 @@ static int save_capture(void)
 			      "-" STRINGIFY(BUILD_VERSION), .regions = zlrs_region_supported_mask(),
 			      };
 
+	saved.capture.generation++;
 	rc = json_obj_encode_buf(artifact_fields, ARRAY_SIZE(artifact_fields), &saved, json,
 				 sizeof(json));
 	if (rc == 0) {
@@ -444,17 +379,25 @@ static int save_capture(void)
 	}
 	if (rc == 0) {
 		committed[slot] = true;
-		capture.generation = saved.generation;
+		capture.generation = saved.capture.generation;
 		capture.slot = (int)slot;
 	}
 	return rc;
 }
 
-static int reset_capture(uint32_t duration_ms)
+int zlrs_trace_prepare(enum zlrs_trace_command command, uint32_t duration_ms)
 {
+	if (command == ZLRS_TRACE_ARM) {
+		if (!IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_TRACE_ROLLING)) {
+			return capture.error = -ENOTSUP;
+		}
+		duration_ms = 0U;
+	} else if (command != ZLRS_TRACE_START) {
+		return 0;
+	}
 	if ((duration_ms < 10U || duration_ms > 5000U) &&
 	    !(IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_TRACE_ROLLING) && duration_ms == 0U)) {
-		return -EINVAL;
+		return capture.error = -EINVAL;
 	}
 	const unsigned int key = irq_lock();
 	const bool unavailable = maintenance_active || (capture.state != ZLRS_TRACE_IDLE &&
@@ -462,14 +405,14 @@ static int reset_capture(uint32_t duration_ms)
 
 	irq_unlock(key);
 	if (unavailable) {
-		return -EBUSY;
+		return capture.error = -EBUSY;
 	}
 	k_timer_stop(&capture_timer);
 	tracing_set_enabled(false);
 	struct tracing_backend *backend = tracing_backend_get("tracing_backend_ram");
 
 	if (backend == NULL) {
-		return -ENODEV;
+		return capture.error = -ENODEV;
 	}
 	/* The MCUmgr worker can be preempted by RF. Clearing 64 KiB on the
 	 * cooperative RF owner would delay its next slot before recording begins.
@@ -508,36 +451,6 @@ static int start_capture(uint32_t duration_ms, bool maintenance)
 	return 0;
 }
 
-int zlrs_trace_request(enum zlrs_trace_command command, uint32_t duration_ms)
-{
-	if (command == ZLRS_TRACE_ARM) {
-		if (!IS_ENABLED(CONFIG_ZLRS_APP_DEBUG_TRACE_ROLLING)) {
-			return -ENOTSUP;
-		}
-		duration_ms = 0U;
-	}
-	int rc = k_mutex_lock(&request_lock, K_FOREVER);
-
-	if (rc != 0) {
-		return rc;
-	}
-	if (command == ZLRS_TRACE_START || command == ZLRS_TRACE_ARM) {
-		rc = reset_capture(duration_ms);
-		if (rc != 0) {
-			capture.error = rc;
-			k_mutex_unlock(&request_lock);
-			return rc;
-		}
-	}
-	requested_command = command;
-	requested_duration = duration_ms;
-	atomic_set(&request_pending, 1);
-	(void)k_sem_take(&request_done, K_FOREVER);
-	rc = request_result;
-	k_mutex_unlock(&request_lock);
-	return rc;
-}
-
 static int save_frozen_capture(bool maintenance)
 {
 	capture.state = ZLRS_TRACE_SAVING;
@@ -562,15 +475,16 @@ void zlrs_trace_process(bool maintenance)
 		}
 	}
 #endif
-	if (!atomic_cas(&request_pending, 1, 0)) {
-		return;
-	}
+}
+
+int zlrs_trace_control(enum zlrs_trace_command command, uint32_t duration_ms, bool maintenance)
+{
 	int rc = 0;
 
-	switch (requested_command) {
+	switch (command) {
 	case ZLRS_TRACE_ARM:
 	case ZLRS_TRACE_START:
-		rc = start_capture(requested_duration, maintenance);
+		rc = start_capture(command == ZLRS_TRACE_ARM ? 0U : duration_ms, maintenance);
 		break;
 	case ZLRS_TRACE_STOP:
 		if (capture.state != ZLRS_TRACE_CAPTURING && capture.state != ZLRS_TRACE_FROZEN) {
@@ -588,7 +502,7 @@ void zlrs_trace_process(bool maintenance)
 		}
 		break;
 	case ZLRS_TRACE_SAVE:
-		if (capture.state != ZLRS_TRACE_FROZEN || zlrs_trace_export_busy()) {
+		if (capture.state != ZLRS_TRACE_FROZEN || zlrs_mgmt_fs_busy()) {
 			rc = -EBUSY;
 			break;
 		}
@@ -599,103 +513,33 @@ void zlrs_trace_process(bool maintenance)
 		break;
 	}
 	capture.error = rc;
-	request_result = rc;
-	k_sem_give(&request_done);
+	return rc;
 }
 
-static enum mgmt_cb_return smp_access(uint32_t event, enum mgmt_cb_return previous, int32_t *rc,
-				      uint16_t *group, bool *abort_more, void *data, size_t size)
+bool zlrs_trace_file_readable(const char *path)
 {
-	ARG_UNUSED(group);
-	ARG_UNUSED(abort_more);
-	ARG_UNUSED(size);
-	struct mgmt_evt_op_cmd_arg *cmd = data;
-
-	if (cmd->group != MGMT_GROUP_ID_FS) {
-		return MGMT_CB_OK;
-	}
-	if (event == MGMT_EVT_OP_CMD_DONE) {
-		atomic_set(&export_active, 0);
-		if (cmd->id == FS_MGMT_ID_OPENED_FILE && cmd->err == 0) {
-			atomic_set(&export_file_open, 0);
-		}
-		return MGMT_CB_OK;
-	}
-	if (previous != MGMT_CB_OK) {
-		return previous;
-	}
-	const unsigned int key = irq_lock();
-	const bool allowed = maintenance_active && session_active && mounted &&
-			     capture.state != ZLRS_TRACE_SAVING &&
-			     capture.state != ZLRS_TRACE_CAPTURING;
-
-	if (allowed) {
-		atomic_set(&export_active, 1);
-	}
-	irq_unlock(key);
-	if (!allowed) {
-		*rc = MGMT_ERR_EBUSY;
-		return MGMT_CB_ERROR_RC;
-	}
-	return MGMT_CB_OK;
-}
-
-static enum mgmt_cb_return file_access(uint32_t event, enum mgmt_cb_return previous, int32_t *rc,
-				       uint16_t *group, bool *abort_more, void *data, size_t size)
-{
-	ARG_UNUSED(event);
-	ARG_UNUSED(group);
-	ARG_UNUSED(abort_more);
-	ARG_UNUSED(size);
-	struct fs_mgmt_file_access *access = data;
-	bool allowed = false;
-
-	if (event == MGMT_EVT_OP_FS_MGMT_FILE_ACCESS_DONE) {
-		atomic_set(&export_file_open, 0);
-		return MGMT_CB_OK;
-	}
-	if (previous != MGMT_CB_OK) {
-		return previous;
-	}
-	if (strncmp(access->filename, "/trace/", 7) != 0) {
-		return MGMT_CB_OK;
-	}
-	for (unsigned int slot = 0; slot < 2U; slot++) {
-		char path[48];
-
+	for (unsigned int slot = 0U; slot < 2U; slot++) {
+		char name[48];
 		if (!committed[slot]) {
 			continue;
 		}
-		artifact_path(path, sizeof(path), slot, "channel0_0");
-		allowed |= strcmp(access->filename, path) == 0;
-		artifact_path(path, sizeof(path), slot, "capture.json");
-		allowed |= strcmp(access->filename, path) == 0;
+		artifact_path(name, sizeof(name), slot, "channel0_0");
+		if (strcmp(path, name) == 0) {
+			return true;
+		}
+		artifact_path(name, sizeof(name), slot, "capture.json");
+		if (strcmp(path, name) == 0) {
+			return true;
+		}
 	}
-	if (!allowed || access->access == FS_MGMT_FILE_ACCESS_WRITE) {
-		*rc = MGMT_ERR_EACCESSDENIED;
-		return MGMT_CB_ERROR_RC;
-	}
-	if (access->access == FS_MGMT_FILE_ACCESS_READ) {
-		atomic_set(&export_file_open, 1);
-	}
-	return MGMT_CB_OK;
+	return false;
 }
 
-static struct mgmt_callback smp_callback = {
-	.callback = smp_access,
-	.event_id = MGMT_EVT_OP_CMD_RECV | MGMT_EVT_OP_CMD_DONE,
-};
-static struct mgmt_callback file_callback = {
-	.callback = file_access,
-	.event_id = MGMT_EVT_OP_FS_MGMT_FILE_ACCESS | MGMT_EVT_OP_FS_MGMT_FILE_ACCESS_DONE,
-};
-
-/* SMP group 64, command 0: capture control; rolling ARM is fixture-only. */
-static int trace_response(struct smp_streamer *ctxt, int result)
+/* The SMP worker encodes one locked capture snapshot. */
+int zlrs_trace_response(zcbor_state_t *zse, int result)
 {
 	struct zlrs_trace_status status;
 	zlrs_trace_status(&status);
-	zcbor_state_t *zse = ctxt->writer->zs;
 	const bool ok =
 		zcbor_tstr_put_lit(zse, "result") && zcbor_int32_put(zse, result) &&
 		zcbor_tstr_put_lit(zse, "state") && zcbor_uint32_put(zse, status.state) &&
@@ -714,44 +558,3 @@ static int trace_response(struct smp_streamer *ctxt, int result)
 
 	return ok ? MGMT_ERR_EOK : MGMT_ERR_EMSGSIZE;
 }
-
-static int trace_read(struct smp_streamer *ctxt)
-{
-	return trace_response(ctxt, 0);
-}
-
-static int trace_write(struct smp_streamer *ctxt)
-{
-	uint32_t operation = UINT32_MAX;
-	uint32_t duration_ms = 50U;
-	size_t decoded;
-	struct zcbor_map_decode_key_val fields[] = {
-		ZCBOR_MAP_DECODE_KEY_DECODER("op", zcbor_uint32_decode, &operation),
-		ZCBOR_MAP_DECODE_KEY_DECODER("ms", zcbor_uint32_decode, &duration_ms),
-	};
-
-	if (zcbor_map_decode_bulk(ctxt->reader->zs, fields, ARRAY_SIZE(fields), &decoded) != 0 ||
-	    operation > ZLRS_TRACE_ARM) {
-		return MGMT_ERR_EINVAL;
-	}
-	return trace_response(ctxt, zlrs_trace_request(operation, duration_ms));
-}
-
-static const struct mgmt_handler trace_handlers[] = {
-	{.mh_read = trace_read, .mh_write = trace_write},
-};
-static struct mgmt_group trace_group = {
-	.mg_handlers = trace_handlers,
-	.mg_handlers_count = ARRAY_SIZE(trace_handlers),
-	.mg_group_id = 64,
-};
-
-static int trace_init(void)
-{
-	mgmt_register_group(&trace_group);
-	mgmt_callback_register(&smp_callback);
-	mgmt_callback_register(&file_callback);
-	return 0;
-}
-
-SYS_INIT(trace_init, APPLICATION, 90);

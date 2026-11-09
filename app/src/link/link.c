@@ -4,6 +4,7 @@
 #include "link/handshake.h"
 #include <string.h>
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/util.h>
 
 /* Link lifecycle, slot scheduling, frame authentication and radio completion. */
 
@@ -83,6 +84,24 @@ void link_set_state(zlrs_link_t *link, zlrs_link_state_t state, uint32_t now_ms)
 	}
 }
 
+static const uint8_t *link_tag_key_for(const zlrs_link_t *link, uint8_t type, bool outbound)
+{
+	const uint8_t *link_auth = outbound ? link->link_auth_out : link->link_auth_in;
+	const uint8_t *session = outbound ? link->session_key_out : link->session_key_in;
+
+	switch (zlrs_packet_layouts[type].auth) {
+	case ZLRS_AUTH_ROOT:
+		return link->auth_key;
+	case ZLRS_AUTH_LINK:
+		return link_auth;
+	case ZLRS_AUTH_SESSION:
+		return session;
+	case ZLRS_AUTH_DATA:
+		return link->status.session_valid ? session : link_auth;
+	}
+	return NULL;
+}
+
 uint16_t link_build_frame(zlrs_link_t *link, zlrs_frame_t *frame, uint8_t *buf, uint16_t data_len)
 {
 	const uint16_t payload_len = zlrs_packet_layouts[frame->type].payload_len + data_len;
@@ -116,44 +135,6 @@ uint16_t link_build_frame(zlrs_link_t *link, zlrs_frame_t *frame, uint8_t *buf, 
 	return total;
 }
 
-const uint8_t *link_tag_key_for(const zlrs_link_t *link, uint8_t type, bool outbound)
-{
-	const uint8_t *link_auth = outbound ? link->link_auth_out : link->link_auth_in;
-	const uint8_t *session = outbound ? link->session_key_out : link->session_key_in;
-
-	switch (zlrs_packet_layouts[type].auth) {
-	case ZLRS_AUTH_ROOT:
-		return link->auth_key;
-	case ZLRS_AUTH_LINK:
-		return link_auth;
-	case ZLRS_AUTH_SESSION:
-		return session;
-	case ZLRS_AUTH_DATA:
-		return link->status.session_valid ? session : link_auth;
-	}
-	return NULL;
-}
-
-uint16_t link_acq_timeout_ms(const zlrs_link_t *link)
-{
-	return (link->status.cfg.acq_timeout_ms != 0U) ? link->status.cfg.acq_timeout_ms
-						       : link->status.cfg.rx_timeout_ms;
-}
-
-bool link_verify_frame(zlrs_link_t *link, const zlrs_frame_t *frame, uint16_t len)
-{
-	const uint8_t tag_len = zlrs_profile_tag_len(link->status.cfg.profile);
-	if (tag_len == 0U) {
-		return true;
-	}
-	uint8_t expected[ZLRS_TAG_LEN];
-	zlrs_tag(link_tag_key_for(link, frame->type, false), ZLRS_KEY_LEN, link->rx_buf,
-		 len - tag_len, expected);
-	const bool valid = zlrs_ct_equal(expected, frame->tag, ZLRS_TAG_LEN);
-	link->status.stats.rx_bad_tag += !valid;
-	return valid;
-}
-
 static bool handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 {
 	const uint8_t tag_len = zlrs_profile_tag_len(link->status.cfg.profile);
@@ -164,13 +145,15 @@ static bool handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 		return false;
 	}
 
-	/* The confirm verifies with the candidate key first, not the state-based path below */
-	if (frame.type == ZLRS_PKT_SESS_CFM) {
-		return link_handle_sess_cfm(link, &frame, len, now_ms);
-	}
-
-	if (!link_verify_frame(link, &frame, len)) {
-		return false;
+	/* Packet type selects the candidate session key even before session adoption. */
+	if (tag_len != 0U) {
+		uint8_t expected[ZLRS_TAG_LEN];
+		zlrs_tag(link_tag_key_for(link, frame.type, false), ZLRS_KEY_LEN, link->rx_buf,
+			 len - tag_len, expected);
+		if (!zlrs_ct_equal(expected, link->rx_buf + len - tag_len, tag_len)) {
+			link->status.stats.rx_bad_tag++;
+			return false;
+		}
 	}
 
 	link->status.stats.rx_frames++;
@@ -190,8 +173,8 @@ static bool handle_rx(zlrs_link_t *link, uint16_t len, uint32_t now_ms)
 		return link_handle_pair_frame(link, &frame, now_ms);
 	}
 
-	if (frame.type == ZLRS_PKT_SYNC) {
-		return link_handle_sync(link, &frame, now_ms);
+	if (frame.type == ZLRS_PKT_SYNC || frame.type == ZLRS_PKT_SESS_CFM) {
+		return link_handle_schedule(link, &frame, now_ms);
 	}
 
 	if (frame.type == ZLRS_PKT_SESS_RESP) {
@@ -233,16 +216,14 @@ static void advance_hop(zlrs_link_t *link)
 	}
 }
 
-void link_plan_rx(const zlrs_link_t *link, zlrs_link_plan_t *plan, uint32_t freq, uint8_t sync_slot,
-		  uint16_t timeout_ms)
+void link_plan_rx(const zlrs_link_t *link, zlrs_link_plan_t *plan, uint32_t freq, uint8_t sync_slot)
 {
 	plan->op = ZLRS_OP_RX;
 	plan->radio = (zlrs_radio_req_t){.freq_hz = freq,
 					 .phy = link->status.cfg.phy,
 					 .sync_slot = sync_slot,
 					 .max_rx_size = ZLRS_FRAME_MAX_LEN,
-					 .tx_power_dbm = link->status.cfg.tx_power_dbm,
-					 .timeout_ms = timeout_ms};
+					 .tx_power_dbm = link->status.cfg.tx_power_dbm};
 	memcpy(plan->radio.sync_word,
 	       sync_slot == ZLRS_SYNC_SLOT_PAIRING ? pairing_sync_word : link->sync_word,
 	       ZLRS_SYNC_WORD_LEN);
@@ -296,9 +277,7 @@ void zlrs_link_plan(const zlrs_link_t *link, zlrs_link_plan_t *plan)
 				 2U * link->status.cfg.resync_every_n);
 		link_plan_rx(link, plan,
 			     sync_channel ? link_sync_freq_hz(link) : link_slot_freq_hz(link),
-			     ZLRS_SYNC_SLOT_DATA,
-			     searching ? link_acq_timeout_ms(link)
-				       : link->status.cfg.rx_timeout_ms);
+			     ZLRS_SYNC_SLOT_DATA);
 		return;
 	}
 	const bool sync_due =
@@ -377,27 +356,9 @@ const zlrs_radio_req_t *zlrs_link_finalize(zlrs_link_t *link, const zlrs_link_pl
 		}
 	}
 	link->req = req;
-	link->req_is_data = data;
-	link->req_data_len = data_len;
-	link->req_data_mtu = link->status.cfg.data_mtu;
-	link->req_arq = link->status.cfg.arq != 0U;
 	link->req_started = false;
 	link->status.busy = true;
 	return &link->req;
-}
-
-static void limit_data_mtu(zlrs_link_t *link)
-{
-	const uint16_t max_frame =
-		link->status.cfg.automatic_band || zlrs_phys[link->status.cfg.phy].lora_sf != 0U
-			? ZLRS_LORA_FRAME_MAX_LEN
-			: ZLRS_FRAME_MAX_LEN;
-	const uint16_t mtu = max_frame - ZLRS_FRAME_HDR_LEN - ZLRS_DATA_PREFIX_LEN -
-			     zlrs_profile_tag_len(link->status.cfg.profile);
-
-	if (link->status.cfg.data_mtu > mtu) {
-		link->status.cfg.data_mtu = mtu;
-	}
 }
 
 void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
@@ -406,7 +367,11 @@ void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
 {
 	memset(link, 0, sizeof(*link));
 	link->status.cfg = *cfg;
-	limit_data_mtu(link);
+	const uint16_t max_frame = cfg->automatic_band || zlrs_phys[cfg->phy].lora_sf != 0U
+					   ? ZLRS_LORA_FRAME_MAX_LEN
+					   : ZLRS_FRAME_MAX_LEN;
+	link->status.cfg.data_mtu = MIN(cfg->data_mtu, max_frame - ZLRS_DATA_HEADROOM -
+							       zlrs_profile_tag_len(cfg->profile));
 	link->random = random;
 	link->random_ctx = random_ctx;
 	if (events != NULL) {
@@ -418,11 +383,6 @@ void zlrs_link_init(zlrs_link_t *link, const zlrs_link_cfg_t *cfg,
 	link_quality_reset(link);
 	link->status.state = ZLRS_STATE_UNCONFIGURED;
 	link->status.radio_acquiring = cfg->automatic_band;
-}
-
-void zlrs_link_set_power(zlrs_link_t *link, int8_t tx_power_dbm)
-{
-	link->status.cfg.tx_power_dbm = tx_power_dbm;
 }
 
 bool link_band_plan_valid(const zlrs_link_t *link, const zlrs_band_plan_t *plan,
@@ -502,7 +462,7 @@ bool zlrs_link_plan_radio(zlrs_link_t *link, bool target_subg, zlrs_phy_t target
 	return true;
 }
 
-bool zlrs_link_reconfigure_radio(zlrs_link_t *link, const zlrs_link_cfg_t *cfg)
+bool zlrs_link_reconfigure_radio(zlrs_link_t *link, const zlrs_link_cfg_t *cfg, uint32_t now_ms)
 {
 	if (link->status.busy || cfg->region >= ZLRS_REGION_COUNT ||
 	    cfg->role != link->status.cfg.role || cfg->profile != link->status.cfg.profile ||
@@ -514,7 +474,7 @@ bool zlrs_link_reconfigure_radio(zlrs_link_t *link, const zlrs_link_cfg_t *cfg)
 	zlrs_kdf(link->pair_key, ZLRS_KEY_LEN, "zlrs/fhss", NULL, 0U, seed, sizeof(seed));
 	link->status.cfg = *cfg;
 	zlrs_fhss_init(&link->status.fhss, cfg->region, sys_get_le32(seed));
-	zlrs_link_acquire_radio(link, link->status.last_rx_ms);
+	zlrs_link_acquire_radio(link, now_ms);
 	/* Quality/power samples belong to the old RF path; replay/ARQ state does not. */
 	link_quality_reset(link);
 	return true;
@@ -580,7 +540,8 @@ void zlrs_link_tx_started(zlrs_link_t *link, uint32_t now_ms)
 	} else if (type == ZLRS_PKT_SESS_CFM && link->status.state == ZLRS_STATE_SEARCHING) {
 		link_set_state(link, ZLRS_STATE_CONNECTED, now_ms);
 	}
-	if (link->req_is_data && link->req_arq && link->req_data_len != 0U) {
+	if (type <= ZLRS_PKT_DATA_F2L && link->status.cfg.arq &&
+	    link->req.size > ZLRS_DATA_HEADROOM + zlrs_profile_tag_len(link->status.cfg.profile)) {
 		if (!link->arq_launched) {
 			link->arq_first_sent_ms = now_ms;
 		}
@@ -642,46 +603,13 @@ void zlrs_link_complete(zlrs_link_t *link, int status, uint16_t rx_len, int16_t 
 	}
 }
 
-void zlrs_link_tick(zlrs_link_t *link, uint32_t now_ms)
+const char *zlrs_link_state_name(zlrs_link_state_t state)
 {
-
-	switch (link->status.state) {
-	case ZLRS_STATE_UNCONFIGURED:
-		if (link->status.configured) {
-			link_set_state(link, ZLRS_STATE_UNPAIRED, now_ms);
-		}
-		break;
-
-	case ZLRS_STATE_PAIRING:
-		if ((uint32_t)(now_ms - link->state_ms) > link->status.cfg.pair_window_ms) {
-			(void)zlrs_link_cancel_pair(link, now_ms);
-		}
-		break;
-
-	case ZLRS_STATE_CONNECTED:
-		/*
-		 * Grace after entering CONNECTED: the peer may still be leaving SEARCHING (it needs
-		 * to hear one of our confirms), and its first data frame cannot arrive until it
-		 * does. Running the peer-loss check inside that window would roll a new session and
-		 * restart the handshake before it ever had a chance to finish.
-		 */
-		if ((uint32_t)(now_ms - link->state_ms) <= ZLRS_SESS_CONFIRM_MS) {
-			break;
-		}
-		if (link->status.cfg.peer_timeout_ms > 0U &&
-		    (uint32_t)(now_ms - link->status.last_rx_ms) >
-			    link->status.cfg.peer_timeout_ms) {
-			link->status.session_valid = false;
-			link_set_state(link, ZLRS_STATE_SEARCHING, now_ms);
-		}
-		break;
-
-	default:
-		break;
-	}
-}
-
-const zlrs_link_status_t *zlrs_link_status(const zlrs_link_t *link)
-{
-	return &link->status;
+	static const char *const names[] = {
+		[ZLRS_STATE_UNCONFIGURED] = "unconfigured", [ZLRS_STATE_UNPAIRED] = "unpaired",
+		[ZLRS_STATE_PAIRING] = "pairing",           [ZLRS_STATE_SEARCHING] = "searching",
+		[ZLRS_STATE_CONNECTED] = "connected",
+	};
+	return (unsigned int)state < ARRAY_SIZE(names) && names[state] != NULL ? names[state]
+									       : "unknown";
 }

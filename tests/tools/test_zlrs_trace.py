@@ -4,6 +4,7 @@ import io
 import importlib.util
 import json
 from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -25,7 +26,7 @@ class TraceControlTests(unittest.TestCase):
                 patch.object(zlrs_trace.mgmt, "talk") as management:
             result, response = self.invoke("start", "50", "--port", "smp-port")
         self.assertEqual((result, response["state"]), (0, "capturing"))
-        request.assert_called_once_with("smp-port", 64, {"op": 0, "ms": 50},
+        request.assert_called_once_with("smp-port", 66, {"op": 22, "value": b"\x00\x32\x00\x00\x00"},
                                         timeout=10.0, baud=115200)
         management.assert_not_called()
 
@@ -33,13 +34,13 @@ class TraceControlTests(unittest.TestCase):
         with patch.object(zlrs_trace, "request", return_value={"result": 0, "state": 1}) as request:
             result, response = self.invoke("arm", "--port", "smp-port")
         self.assertEqual((result, response["state"]), (0, "capturing"))
-        request.assert_called_once_with("smp-port", 64, {"op": 4}, timeout=10.0, baud=115200)
+        request.assert_called_once_with("smp-port", 66, {"op": 22, "value": b"\x04\x32\x00\x00\x00"}, timeout=10.0, baud=115200)
 
     def test_status_is_read_and_uses_management_cdc(self):
         with patch.object(zlrs_trace.mgmt, "pick_targets", return_value=["/dev/usb-device-if02"]), \
                 patch.object(zlrs_trace, "request", return_value={"result": 0, "state": 2}) as request:
             self.invoke("status", "--serial", "device")
-        request.assert_called_once_with("/dev/usb-device-if02", 64, None, timeout=10.0, baud=115200)
+        request.assert_called_once_with("/dev/usb-device-if02", 66, {"op": 22, "value": b""}, timeout=10.0, baud=115200)
 
     def test_operation_failure_is_reported(self):
         with patch.object(zlrs_trace, "request", return_value={"result": -16, "state": 1}):
@@ -71,12 +72,12 @@ class TraceControlTests(unittest.TestCase):
                 pass
 
             async def request(self, request):
-                testcase.assertEqual(request.header.group_id, 64)
-                testcase.assertEqual(cbor2.loads(request.BYTES[8:]), {"op": 0, "ms": 50})
+                testcase.assertEqual(request.header.group_id, 66)
+                testcase.assertEqual(cbor2.loads(request.BYTES[8:]), {"op": 22, "value": b"\x00\x32\x00\x00\x00"})
                 return request._Response(result=0, state=1, id=3)
 
         with patch.object(smpclient, "SMPClient", Client):
-            result = zlrs_smp.request("unused", 64, {"op": 0, "ms": 50})
+            result = zlrs_smp.request("unused", 66, {"op": 22, "value": b"\x00\x32\x00\x00\x00"})
         self.assertEqual(json.loads(json.dumps(result)), {"result": 0, "state": 1, "id": 3})
 
 
@@ -91,6 +92,20 @@ class TraceRollbackTests(unittest.TestCase):
     def setUp(self):
         self.acceptance = self.runner.Acceptance.__new__(self.runner.Acceptance)
         self.acceptance.result = {}
+
+    def test_deadline_counters_use_structured_report(self):
+        report = {"prepare_late_starts": 7, "trigger_late_starts": 3, "dev_id": b"1234"}
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(self.runner, "ManagementClient") as client:
+            self.acceptance.smp_port = "board"
+            self.acceptance.output = Path(directory)
+            request = client.return_value.__enter__.return_value.request
+            request.return_value = {"status": report}
+            self.assertEqual(self.acceptance.radio_late_counts("before"), (7, 3))
+            client.assert_called_once_with("board", 115200, 5)
+            request.assert_called_once_with(self.runner.CMD_STATUS, b"\x03")
+            self.assertEqual(json.loads((Path(directory) / "before-radio.json").read_text()),
+                             {**report, "dev_id": "31323334"})
 
     def test_reset_failure_does_not_skip_peer_or_verification(self):
         with patch.object(self.runner, "image_hash", return_value="test"), \

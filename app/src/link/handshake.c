@@ -76,121 +76,97 @@ static void session_activate(zlrs_link_t *link)
 	link->status.arq_ack_pending = false;
 }
 
-bool link_handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
+bool link_handle_schedule(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms)
 {
-	const uint32_t nonce = frame->body.schedule.nonce;
-	const uint8_t hop = frame->body.schedule.hop_index;
-	if (!link->status.paired || link->status.cfg.role != ZLRS_ROLE_FOLLOWER ||
-	    frame->body.schedule.version != ZLRS_PROTO_VERSION ||
-	    frame->body.schedule.profile != link->status.cfg.profile ||
-	    hop >= link->status.fhss.sequence_count ||
-	    !link_band_plan_valid(link, &frame->body.schedule.band_plan,
-				  frame->body.schedule.frame_index)) {
+	const zlrs_schedule_frame_t *schedule = &frame->body.schedule;
+	const bool sync = frame->type == ZLRS_PKT_SYNC;
+	const bool connected = link->status.state == ZLRS_STATE_CONNECTED;
+	const bool confirmed = connected && link->status.session_valid;
+	if (link->status.cfg.role != ZLRS_ROLE_FOLLOWER ||
+	    schedule->hop_index >= link->status.fhss.sequence_count ||
+	    !link_band_plan_valid(link, &schedule->band_plan, schedule->frame_index) ||
+	    (sync && (!link->status.paired || schedule->version != ZLRS_PROTO_VERSION ||
+		      schedule->profile != link->status.cfg.profile))) {
 		return false;
 	}
-	if (link->status.state == ZLRS_STATE_CONNECTED) {
-		if (link->status.cfg.resync_every_n == 0U) {
-			return false;
-		}
-		if (link->status.session_valid && nonce == link->status.sess_nonce_leader) {
-			if (frame->seq <= link->last_rx_seq) {
-				link->status.stats.rx_dup++;
+	if (sync) {
+		if (connected) {
+			if (link->status.cfg.resync_every_n == 0U) {
 				return false;
 			}
-			link->last_rx_seq = frame->seq;
-			link_lq_account(link, frame->seq);
-			link->status.last_rx_ms = now_ms;
-			link->status.stats.rx_syncs++;
-			link->status.stats.hop_resync +=
-				link->status.cfg.hopping && link->status.fhss.index != hop;
-			zlrs_fhss_set_index(&link->status.fhss, hop);
-			link->status.frame_index = frame->body.schedule.frame_index;
-			link->status.last_rx_frame = link->status.frame_index;
-			if (link->status.cfg.automatic_band || link->status.radio_acquiring) {
-				/* The leader still waits on the capture channel for proof of return. */
-				link->sess_ack_due = !link->status.radio_acquiring;
+			if (!confirmed || schedule->nonce != link->status.sess_nonce_leader) {
+				if ((uint32_t)(now_ms - link->status.last_rx_ms) <=
+				    link->status.cfg.sync_period_ms) {
+					link->status.stats.rx_dup++;
+					return false;
+				}
+				link->status.session_valid = false;
+				link->session_pending = false;
+				link_set_state(link, ZLRS_STATE_SEARCHING, now_ms);
+				if (link->status.cfg.automatic_band) {
+					link->status.radio_acquiring = true;
+					link->status.radio_sync_seen = false;
+				}
 			}
+		}
+		if (link->status.state == ZLRS_STATE_SEARCHING) {
+			if (link->session_pending &&
+			    schedule->nonce == link->status.sess_nonce_leader) {
+				if (frame->seq <= link->sess_rx_seq) {
+					link->status.stats.rx_dup++;
+					return false;
+				}
+			} else {
+				uint32_t nonce;
+				if (!link_new_nonce(link, link->status.sess_nonce_follower,
+						    &link->sess_nonce_valid, &nonce)) {
+					return false;
+				}
+				link->status.sess_nonce_leader = schedule->nonce;
+				link->status.sess_nonce_follower = nonce;
+				link->tx_seq = 1U;
+				derive_session_keys(link);
+				link->session_pending = true;
+			}
+			link->sess_rx_seq = frame->seq;
 			link->status.radio_sync_seen = true;
-			link_adopt_band_plan(link, &frame->body.schedule.band_plan);
+			link->status.stats.rx_syncs++;
 			return true;
 		}
-		if ((uint32_t)(now_ms - link->status.last_rx_ms) <=
-		    link->status.cfg.sync_period_ms) {
-			link->status.stats.rx_dup++;
+		if (!connected) {
 			return false;
 		}
-		link->status.session_valid = false;
-		link->session_pending = false;
-		link_set_state(link, ZLRS_STATE_SEARCHING, now_ms);
-		if (link->status.cfg.automatic_band) {
-			link->status.radio_acquiring = true;
-			link->status.radio_sync_seen = false;
-		}
-	}
-	if (link->status.state != ZLRS_STATE_SEARCHING) {
+	} else if ((!confirmed &&
+		    (!link->session_pending || link->status.state != ZLRS_STATE_SEARCHING)) ||
+		   schedule->nonce != link->status.sess_nonce_follower) {
 		return false;
 	}
-	if (link->session_pending && nonce == link->status.sess_nonce_leader) {
-		if (frame->seq <= link->sess_rx_seq) {
-			link->status.stats.rx_dup++;
-			return false;
-		}
-	} else {
-		uint32_t nonce_follower;
-		if (!link_new_nonce(link, link->status.sess_nonce_follower, &link->sess_nonce_valid,
-				    &nonce_follower)) {
-			return false;
-		}
-		link->status.sess_nonce_leader = nonce;
-		link->status.sess_nonce_follower = nonce_follower;
-		link->tx_seq = 1U;
-		derive_session_keys(link);
-		link->session_pending = true;
-	}
-	link->sess_rx_seq = frame->seq;
-	link->status.radio_sync_seen = true;
-	link->status.stats.rx_syncs++;
-	return true;
-}
-
-bool link_handle_sess_cfm(zlrs_link_t *link, const zlrs_frame_t *frame, uint16_t len,
-			  uint32_t now_ms)
-{
-	const bool repeated =
-		link->status.state == ZLRS_STATE_CONNECTED && link->status.session_valid;
-	if (link->status.cfg.role != ZLRS_ROLE_FOLLOWER ||
-	    (!repeated && (!link->session_pending || link->status.state != ZLRS_STATE_SEARCHING)) ||
-	    frame->body.schedule.hop_index >= link->status.fhss.sequence_count ||
-	    !link_band_plan_valid(link, &frame->body.schedule.band_plan,
-				  frame->body.schedule.frame_index)) {
-		return false;
-	}
-	if (!link_verify_frame(link, frame, len)) {
-		return false;
-	}
-	if (frame->body.schedule.nonce != link->status.sess_nonce_follower) {
-		return false;
-	}
-	const uint32_t baseline = repeated ? link->last_rx_seq : link->sess_rx_seq;
-	if (frame->seq <= baseline) {
+	if (frame->seq <= (confirmed ? link->last_rx_seq : link->sess_rx_seq)) {
 		link->status.stats.rx_dup++;
 		return false;
 	}
-	link->status.stats.rx_frames++;
-	link->status.stats.rx_bytes += len;
-	link->status.stats.sess_cfm_rx++;
-	if (!repeated) {
-		session_activate(link);
+	if (sync) {
+		link->status.stats.rx_syncs++;
+		link->status.stats.hop_resync +=
+			link->status.cfg.hopping && link->status.fhss.index != schedule->hop_index;
+	} else {
+		link->status.stats.sess_cfm_rx++;
+		if (!confirmed) {
+			session_activate(link);
+		}
+		link->sess_sync_frame = schedule->frame_index;
 	}
-	zlrs_fhss_set_index(&link->status.fhss, frame->body.schedule.hop_index);
-	link->status.frame_index = frame->body.schedule.frame_index;
+	if (!sync || link->status.cfg.automatic_band || link->status.radio_acquiring) {
+		/* The leader waits on the capture channel for proof of return. */
+		link->sess_ack_due = !link->status.radio_acquiring;
+	}
+	zlrs_fhss_set_index(&link->status.fhss, schedule->hop_index);
+	link->status.frame_index = schedule->frame_index;
 	link->last_rx_seq = frame->seq;
 	link_lq_account(link, frame->seq);
 	link->status.last_rx_ms = now_ms;
-	link->status.last_rx_frame = link->status.frame_index;
-	link->sess_ack_due = !link->status.radio_acquiring;
-	link->sess_sync_frame = link->status.frame_index;
-	link_adopt_band_plan(link, &frame->body.schedule.band_plan);
+	link->status.last_rx_frame = schedule->frame_index;
+	link_adopt_band_plan(link, &schedule->band_plan);
 	link->status.radio_sync_seen = true;
 	link_set_state(link, ZLRS_STATE_CONNECTED, now_ms);
 	return true;
@@ -389,6 +365,11 @@ bool link_handle_pair_frame(zlrs_link_t *link, const zlrs_frame_t *frame, uint32
 
 bool link_pair_advance(zlrs_link_t *link)
 {
+	if (link->status.state == ZLRS_STATE_PAIRING &&
+	    (uint32_t)(link->slot_ms - link->state_ms) > link->status.cfg.pair_window_ms) {
+		(void)zlrs_link_cancel_pair(link, link->slot_ms);
+		return true;
+	}
 	if (link->slot != ZLRS_SLOT_DATA_A || link->status.cfg.role != ZLRS_ROLE_LEADER ||
 	    !link->status.pair_cfm_pending || link->status.pair_cfm_sent < ZLRS_PAIR_CFM_REPEATS) {
 		return false;
@@ -417,54 +398,36 @@ void link_pair_plan(const zlrs_link_t *link, zlrs_link_plan_t *plan)
 		} else if (!(role == ZLRS_ROLE_LEADER) && !a && link->pair_request_valid && due) {
 			link_plan_tx(link, plan, ZLRS_PKT_PAIR_RESP, 0U);
 		} else {
-			link_plan_rx(link, plan, link_sync_freq_hz(link), ZLRS_SYNC_SLOT_PAIRING,
-				     link_acq_timeout_ms(link));
+			link_plan_rx(link, plan, link_sync_freq_hz(link), ZLRS_SYNC_SLOT_PAIRING);
 		}
 	}
 }
 
-void zlrs_link_set_root_key(zlrs_link_t *link, const uint8_t root_key[ZLRS_KEY_LEN],
-			    uint32_t now_ms)
+void zlrs_link_restore(zlrs_link_t *link, const zlrs_persist_state_t *saved, uint32_t now_ms)
 {
-	memcpy(link->root_key, root_key, ZLRS_KEY_LEN);
-	link->status.configured = true;
-	zlrs_kdf(link->root_key, ZLRS_KEY_LEN, LABEL_AUTH, NULL, 0U, link->auth_key, ZLRS_KEY_LEN);
-
-	if (link->status.paired) {
-		derive_pair(link);
-		link_set_state(link, ZLRS_STATE_SEARCHING, now_ms);
-	} else {
-		link_set_state(link, ZLRS_STATE_UNPAIRED, now_ms);
-	}
-}
-
-void zlrs_link_set_dev_id(zlrs_link_t *link, const uint8_t dev_id[ZLRS_DEV_ID_LEN])
-{
-	memcpy(link->status.dev_id, dev_id, ZLRS_DEV_ID_LEN);
-}
-
-void zlrs_link_set_peer(zlrs_link_t *link, const uint8_t peer_id[ZLRS_DEV_ID_LEN],
-			const uint8_t pair_salt[ZLRS_PAIR_SALT_LEN], uint32_t now_ms)
-{
-	if (zlrs_ct_equal(peer_id, link->status.dev_id, ZLRS_DEV_ID_LEN)) {
+	__ASSERT_NO_MSG(link->status.state == ZLRS_STATE_UNCONFIGURED);
+	memcpy(link->status.dev_id, saved->dev_id, ZLRS_DEV_ID_LEN);
+	if (!saved->configured) {
 		return;
 	}
-	memcpy(link->status.pairing.peer_id, peer_id, ZLRS_DEV_ID_LEN);
-	memcpy(link->status.pairing.pair_salt, pair_salt, ZLRS_PAIR_SALT_LEN);
-	link->status.pair_nonce = sys_get_le32(pair_salt);
-	link->status.pair_nonce_b = sys_get_le32(pair_salt + 4U);
-	link->pair_nonce_valid = true;
-	link->status.paired = true;
-
-	if (link->status.configured) {
+	memcpy(link->root_key, saved->root_key, ZLRS_KEY_LEN);
+	zlrs_kdf(link->root_key, ZLRS_KEY_LEN, LABEL_AUTH, NULL, 0U, link->auth_key, ZLRS_KEY_LEN);
+	if (saved->paired &&
+	    !zlrs_ct_equal(saved->pairing.peer_id, saved->dev_id, ZLRS_DEV_ID_LEN)) {
+		link->status.pairing = saved->pairing;
+		link->status.pair_nonce = sys_get_le32(saved->pairing.pair_salt);
+		link->status.pair_nonce_b = sys_get_le32(saved->pairing.pair_salt + 4U);
+		link->pair_nonce_valid = true;
+		link->status.paired = true;
 		derive_pair(link);
-		link_set_state(link, ZLRS_STATE_SEARCHING, now_ms);
 	}
+	link_set_state(link, link->status.paired ? ZLRS_STATE_SEARCHING : ZLRS_STATE_UNPAIRED,
+		       now_ms);
 }
 
 bool zlrs_link_press(zlrs_link_t *link, uint32_t now_ms)
 {
-	if (!link->status.configured) {
+	if (link->status.state == ZLRS_STATE_UNCONFIGURED) {
 		return false;
 	}
 

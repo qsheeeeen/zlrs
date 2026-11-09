@@ -40,14 +40,14 @@ static struct {
 	atomic_t first_len;
 } published;
 
-uint16_t __real_zlrs_link_tx_space(const zlrs_link_t *link);
+uint8_t *__real_zlrs_link_tx_reserve(zlrs_link_t *link, uint16_t *capacity);
 uint16_t __real_zlrs_serial_read(uint8_t *buf, uint16_t len);
 bool __real_zlrs_serial_receive(const uint8_t *buf, uint16_t len);
 
-uint16_t __wrap_zlrs_link_tx_space(const zlrs_link_t *link)
+uint8_t *__wrap_zlrs_link_tx_reserve(zlrs_link_t *link, uint16_t *capacity)
 {
 	{
-		zlrs_test_radio_apply_window_request((zlrs_link_t *)link);
+		zlrs_test_radio_apply(link);
 		const int request = atomic_set(&command, 0);
 		int rc = 0;
 
@@ -89,7 +89,7 @@ uint16_t __wrap_zlrs_link_tx_space(const zlrs_link_t *link)
 			k_sem_give(&command_done);
 		}
 	}
-	return __real_zlrs_link_tx_space(link);
+	return __real_zlrs_link_tx_reserve(link, capacity);
 }
 
 uint16_t __wrap_zlrs_serial_read(uint8_t *buf, uint16_t len)

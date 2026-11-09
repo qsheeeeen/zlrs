@@ -7,10 +7,14 @@ include("${zlrs_root}/app/src/CMakeLists.txt")
 target_sources(app PRIVATE
   "${zlrs_root}/tests/app/mgmt/test_mgmt.c"
   "${zlrs_root}/app/src/mgmt.c"
+  "${zlrs_root}/app/src/log.c"
   "${zlrs_root}/app/src/persist.c"
   "${zlrs_root}/tests/app/support/sha256_soft.c"
 )
 target_include_directories(app PRIVATE
   "${zlrs_root}/app/src"
 )
-target_link_options(app PUBLIC "-Wl,--wrap=nvs_write")
+target_link_options(app PUBLIC
+  "-Wl,--wrap=nvs_write"
+  "-Wl,--wrap=z_impl_k_sem_take"
+)

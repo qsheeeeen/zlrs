@@ -6,3 +6,7 @@ common:
   timeout: 120
 tests:
   zlrs.ui.state: {}
+  zlrs.ui.debug:
+    extra_configs:
+      - CONFIG_ZLRS_APP_DEBUG=y
+      - CONFIG_ZLRS_APP_DEBUG_LED_BRIGHTNESS_PERCENT=1

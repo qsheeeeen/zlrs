@@ -5,3 +5,6 @@ common:
   platform_allow: [native_sim/native/64]
 tests:
   zlrs.mgmt.commands: {}
+  zlrs.mgmt.commands.release:
+    extra_configs:
+      - CONFIG_ZLRS_APP_DEBUG=n

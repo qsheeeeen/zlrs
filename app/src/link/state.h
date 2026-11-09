@@ -9,3 +9,11 @@ typedef enum {
 	ZLRS_STATE_SEARCHING,
 	ZLRS_STATE_CONNECTED,
 } zlrs_link_state_t;
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+const char *zlrs_link_state_name(zlrs_link_state_t state);
+#ifdef __cplusplus
+}
+#endif

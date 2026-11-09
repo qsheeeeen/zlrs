@@ -10,11 +10,10 @@
 /* One policy per DATA direction; only the caller applies the returned setpoint. */
 typedef struct {
 	int8_t floor_dbm, ceiling_dbm, current_dbm;
-	bool filtering, lq_hold;
 	zlrs_hold_t good, bad;
-	int32_t rssi_q8;
+	int32_t rssi_q8; /* Negative filtered dBm; zero means no qualified sample. */
 	uint32_t last_change_ms, last_feedback_ms, lq_generation, lq_hold_ms;
-	uint32_t lq_hold_duration_ms;
+	uint32_t lq_hold_duration_ms; /* Zero means no LQ recovery hold. */
 	uint32_t raises, lowers, fallbacks;
 } zlrs_power_t;
 

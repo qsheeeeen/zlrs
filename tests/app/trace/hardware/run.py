@@ -7,7 +7,6 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
@@ -22,7 +21,8 @@ from unit.hardware.run import image_hash
 sys.path.insert(0, str(REPO / "tools"))
 from zlrs_update import image_hash_of
 from zlrs_smp import request as smp_request
-from zlrs_trace import GROUP, OPERATIONS, STATES
+from zlrs_trace import command_fields, OPERATIONS, STATES
+from zlrs_mgmt import GROUP, ManagementClient, CMD_STATUS, STATUS_VIEWS
 
 
 def wait_hash(identity, expected, timeout=60):
@@ -53,12 +53,10 @@ class Acceptance:
         spec.loader.exec_module(self.viewer)
 
     def control(self, action, duration=None, success=True):
-        fields = None if action == "status" else {"op": OPERATIONS[action]}
-        if duration is not None:
-            fields["ms"] = duration
+        fields = command_fields(OPERATIONS.get(action), duration if duration is not None else 50)
         response = smp_request(self.smp_port, GROUP, fields)
         with self.log.open("a") as log:
-            log.write(json.dumps({"action": action, "fields": fields, "response": response}) + "\n")
+            log.write(json.dumps({"action": action, "fields": {"op": fields["op"], "value": fields["value"].hex()}, "response": response}) + "\n")
         assert (response["result"] == 0) == success, response
         response["state"] = STATES[response["state"]]
         return response
@@ -72,8 +70,8 @@ class Acceptance:
                        check=True, capture_output=True, timeout=15)
 
     def device_status(self):
-        return subprocess.run([sys.executable, str(CLI), "status", "--serial", self.args.serial],
-                              check=True, capture_output=True, text=True, timeout=15).stdout
+        with ManagementClient(self.smp_port, timeout=5) as client:
+            return client.request(CMD_STATUS)["status"]
 
     def management(self, entering):
         if entering:
@@ -184,7 +182,7 @@ class Acceptance:
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             status = self.device_status()
-            if re.search(r"State\s+: connected", status) and re.search(r"Capture\s+: ready", status):
+            if status["state"] == 4 and status["flags"] & 4 and not status["flags"] & 32:
                 break
             time.sleep(0.2)
         else:
@@ -211,13 +209,10 @@ class Acceptance:
         self.management(False)
 
     def radio_late_counts(self, name):
-        result = subprocess.run([sys.executable, str(CLI), "radio", "--serial", self.args.serial],
-                                check=True, capture_output=True, text=True, timeout=30)
-        (self.output / f"{name}-radio.txt").write_text(result.stdout)
-        match = re.search(r"Late by phase\s+: prepare (\d+)\s+trigger (\d+)", result.stdout)
-        if match is None:
-            raise RuntimeError(f"Missing radio deadline counters: {result.stdout}")
-        return tuple(map(int, match.groups()))
+        with ManagementClient(self.smp_port, 115200, 5) as client:
+            report = client.request(CMD_STATUS, bytes([STATUS_VIEWS["radio"]]))["status"]
+        (self.output / f"{name}-radio.json").write_text(json.dumps(report, indent=2, default=bytes.hex) + "\n")
+        return report["prepare_late_starts"], report["trigger_late_starts"]
 
     def restore(self, originals):
         errors = {}

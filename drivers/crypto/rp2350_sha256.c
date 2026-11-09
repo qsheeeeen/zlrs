@@ -33,9 +33,10 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1, "RP2350 has one SHA-25
 
 struct sha256_data {
 	pico_sha256_state_t state;
-	struct k_mutex mutex;
 	struct hash_ctx *owner;
 };
+
+static K_MUTEX_DEFINE(sha256_mutex);
 
 static void sha256_start_hash(struct sha256_data *data)
 {
@@ -50,7 +51,7 @@ static void sha256_start_hash(struct sha256_data *data)
 static int sha256_hash_handler(struct hash_ctx *ctx, struct hash_pkt *pkt, bool finish)
 {
 	struct sha256_data *data = ctx->device->data;
-	int rc = k_mutex_lock(&data->mutex, K_FOREVER);
+	int rc = k_mutex_lock(&sha256_mutex, K_FOREVER);
 
 	if (rc != 0) {
 		return rc;
@@ -100,7 +101,7 @@ static int sha256_hash_handler(struct hash_ctx *ctx, struct hash_pkt *pkt, bool 
 	}
 	rc = 0;
 out:
-	k_mutex_unlock(&data->mutex);
+	k_mutex_unlock(&sha256_mutex);
 	return rc;
 }
 
@@ -118,7 +119,7 @@ static int sha256_begin_session(const struct device *dev, struct hash_ctx *ctx, 
 	if (algo != CRYPTO_HASH_ALGO_SHA256 || (ctx->flags & ~SHA256_CAPS) != 0U) {
 		return -ENOTSUP;
 	}
-	rc = k_mutex_lock(&data->mutex, K_FOREVER);
+	rc = k_mutex_lock(&sha256_mutex, K_FOREVER);
 	if (rc != 0) {
 		return rc;
 	}
@@ -135,14 +136,14 @@ static int sha256_begin_session(const struct device *dev, struct hash_ctx *ctx, 
 	ctx->started = false;
 	rc = 0;
 out:
-	k_mutex_unlock(&data->mutex);
+	k_mutex_unlock(&sha256_mutex);
 	return rc;
 }
 
 static int sha256_free_session(const struct device *dev, struct hash_ctx *ctx)
 {
 	struct sha256_data *data = dev->data;
-	int rc = k_mutex_lock(&data->mutex, K_FOREVER);
+	int rc = k_mutex_lock(&sha256_mutex, K_FOREVER);
 
 	if (rc != 0) {
 		return rc;
@@ -160,16 +161,8 @@ static int sha256_free_session(const struct device *dev, struct hash_ctx *ctx)
 	bootrom_release_lock(BOOTROM_LOCK_SHA_256);
 	rc = 0;
 out:
-	k_mutex_unlock(&data->mutex);
+	k_mutex_unlock(&sha256_mutex);
 	return rc;
-}
-
-static int sha256_init(const struct device *dev)
-{
-	struct sha256_data *data = dev->data;
-
-	k_mutex_init(&data->mutex);
-	return 0;
 }
 
 static DEVICE_API(crypto, sha256_api) = {
@@ -180,5 +173,5 @@ static DEVICE_API(crypto, sha256_api) = {
 
 static struct sha256_data sha256_data;
 
-DEVICE_DT_INST_DEFINE(0, sha256_init, NULL, &sha256_data, NULL, POST_KERNEL,
-		      CONFIG_CRYPTO_INIT_PRIORITY, &sha256_api);
+DEVICE_DT_INST_DEFINE(0, NULL, NULL, &sha256_data, NULL, POST_KERNEL, CONFIG_CRYPTO_INIT_PRIORITY,
+		      &sha256_api);

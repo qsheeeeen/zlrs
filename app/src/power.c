@@ -24,7 +24,8 @@ void zlrs_power_init(zlrs_power_t *p, int8_t ceiling_dbm, int8_t floor_dbm, uint
 
 int8_t zlrs_power_recover(zlrs_power_t *p, uint32_t now_ms)
 {
-	p->good.active = p->bad.active = p->filtering = p->lq_hold = false;
+	p->good.active = p->bad.active = false;
+	p->rssi_q8 = p->lq_hold_duration_ms = 0;
 	p->last_feedback_ms = 0U;
 	p->lq_generation = 0U;
 	if (p->current_dbm != p->ceiling_dbm) {
@@ -43,7 +44,8 @@ static int8_t change(zlrs_power_t *p, int next, uint32_t now_ms)
 		p->lowers += next < p->current_dbm;
 		p->last_change_ms = now_ms;
 		p->current_dbm = (int8_t)next;
-		p->good.active = p->bad.active = p->filtering = false;
+		p->good.active = p->bad.active = false;
+		p->rssi_q8 = 0;
 	}
 	return p->current_dbm;
 }
@@ -81,7 +83,6 @@ int8_t zlrs_power_update(zlrs_power_t *p, const zlrs_link_observation_t *o)
 			(uint32_t)(link->peer_lq_generation - p->lq_generation) == 1U;
 		p->lq_generation = link->peer_lq_generation;
 		if (new_window && link->peer_lq_percent < 95U) {
-			p->lq_hold = true;
 			p->lq_hold_ms = o->now_ms;
 			p->lq_hold_duration_ms =
 				link->peer_lq_percent < 50U ? LQ_RECOVERY_MS : LOWER_HOLD_MS;
@@ -92,8 +93,8 @@ int8_t zlrs_power_update(zlrs_power_t *p, const zlrs_link_observation_t *o)
 				      o->now_ms);
 		}
 	}
-	if (p->lq_hold && (uint32_t)(o->now_ms - p->lq_hold_ms) >= p->lq_hold_duration_ms) {
-		p->lq_hold = false;
+	if ((uint32_t)(o->now_ms - p->lq_hold_ms) >= p->lq_hold_duration_ms) {
+		p->lq_hold_duration_ms = 0U;
 	}
 	/* TX can have been encoded before the preceding RX. Discard those early samples. */
 	if ((int32_t)(link->last_peer_feedback_ms - p->last_change_ms) < (int32_t)settle) {
@@ -101,16 +102,15 @@ int8_t zlrs_power_update(zlrs_power_t *p, const zlrs_link_observation_t *o)
 		return p->current_dbm;
 	}
 	const int32_t sample = (int32_t)link->peer_rssi_dbm * 256;
-	if (!p->filtering) {
+	if (p->rssi_q8 == 0) {
 		p->rssi_q8 = sample;
-		p->filtering = true;
 	} else {
 		p->rssi_q8 += (int32_t)(((int64_t)(sample - p->rssi_q8) * elapsed) /
 					(RSSI_FILTER_MS + elapsed));
 	}
 	const bool weak = p->rssi_q8 < (int32_t)rssi_floor * 256;
-	const bool strong =
-		p->rssi_q8 > ((int32_t)rssi_floor + RSSI_HYSTERESIS_DB) * 256 && !p->lq_hold;
+	const bool strong = p->rssi_q8 > ((int32_t)rssi_floor + RSSI_HYSTERESIS_DB) * 256 &&
+			    p->lq_hold_duration_ms == 0U;
 	if (zlrs_hold_reached(&p->bad, weak, o->now_ms, RAISE_HOLD_MS)) {
 		return change(p, p->current_dbm + POWER_STEP_DB, o->now_ms);
 	}

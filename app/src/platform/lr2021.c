@@ -28,7 +28,7 @@ LOG_MODULE_REGISTER(zlrs_lr2021, CONFIG_APP_LOG_LEVEL);
 static const struct device *const transceiver =
 	DEVICE_DT_GET(DT_CHOSEN(zephyr_lorawan_transceiver));
 static ralf_t radio = RALF_LR20XX_INSTANTIATE(DEVICE_DT_GET(DT_CHOSEN(zephyr_lorawan_transceiver)));
-static K_SEM_DEFINE(done_sem, 0, 1);
+static struct k_sem *owner_wake;
 static const zlrs_radio_req_t *request;
 
 enum radio_job_state {
@@ -41,7 +41,7 @@ enum radio_job_state {
 static volatile enum radio_job_state job_state;
 static volatile bool irq_pending;
 static volatile uint32_t irq_us;
-static uint32_t begin_us;
+static volatile uint32_t begin_us;
 static uint32_t slot_end_us;
 static uint32_t tx_at_us;
 
@@ -74,12 +74,7 @@ static void radio_irq(const struct device *dev)
 		irq_us = zlrs_slot_timer_now_us();
 		irq_pending = true;
 	}
-	k_sem_give(&done_sem);
-}
-
-void zlrs_lr2021_wake(void)
-{
-	k_sem_give(&done_sem);
+	k_sem_give(owner_wake);
 }
 
 void zlrs_lr2021_slot(uint32_t tx_us, uint32_t end_us)
@@ -97,10 +92,7 @@ static void make_flrc(zlrs_phy_t phy, uint16_t len, uint8_t slot, ralf_params_fl
 	cfg->mod_params.raw_bit_rate = flrc_rates[phy];
 	cfg->mod_params.cr = RAL_FLRC_CR_3_4;
 	cfg->mod_params.pulse_shape = RAL_FLRC_PULSE_SHAPE_BT_05;
-	BUILD_ASSERT(CONFIG_ZLRS_APP_FLRC_PREAMBLE_BITS >= 4 &&
-		     CONFIG_ZLRS_APP_FLRC_PREAMBLE_BITS <= 32 &&
-		     CONFIG_ZLRS_APP_FLRC_PREAMBLE_BITS % 4 == 0);
-	cfg->pkt_params.preamble_len = (CONFIG_ZLRS_APP_FLRC_PREAMBLE_BITS / 4) - 1;
+	cfg->pkt_params.preamble_len = (ZLRS_FLRC_PREAMBLE_BITS / 4U) - 1U;
 	cfg->pkt_params.tx_syncword =
 		slot == ZLRS_SYNC_SLOT_PAIRING ? RAL_FLRC_TX_SYNCWORD_2 : RAL_FLRC_TX_SYNCWORD_1;
 	cfg->pkt_params.match_sync_word = slot == ZLRS_SYNC_SLOT_PAIRING
@@ -123,19 +115,6 @@ static void make_lora(zlrs_phy_t phy, uint16_t len, ralf_params_lora_t *cfg)
 	cfg->pkt_params.header_type = RAL_LORA_PKT_EXPLICIT;
 	cfg->pkt_params.pld_len_in_bytes = MIN(len, ZLRS_LORA_FRAME_MAX_LEN);
 	cfg->pkt_params.crc_is_on = true;
-}
-
-uint32_t zlrs_lr2021_airtime_us(zlrs_phy_t phy, uint16_t len)
-{
-	if ((unsigned int)phy >= ZLRS_PHY_COUNT) {
-		return 0U;
-	}
-	if (zlrs_phys[phy].lora_sf != 0U) {
-		return zlrs_phy_airtime_us(phy, len);
-	}
-	ralf_params_flrc_t cfg;
-	make_flrc(phy, len, ZLRS_SYNC_SLOT_DATA, &cfg);
-	return ral_get_flrc_time_on_air_in_us(&radio.ral, &cfg.pkt_params, &cfg.mod_params);
 }
 
 static int setup_tx_power(const zlrs_radio_req_t *req)
@@ -222,7 +201,6 @@ static int setup_radio(const zlrs_radio_req_t *req, const struct modem_config *n
 
 static int late_tx_prepare(uint32_t target_us)
 {
-	diag.late_starts++;
 	diag.prepare_late_starts++;
 	zlrs_timing_record(&diag.launch_late_us,
 			   zlrs_slot_timer_now_us() - (target_us - ZLRS_SLOT_TIMER_LAUNCH_LEAD_US));
@@ -269,7 +247,6 @@ int zlrs_lr2021_prepare(const zlrs_radio_req_t *req)
 
 	job_state = RADIO_IDLE;
 	request = req;
-	k_sem_reset(&done_sem);
 	if ((!reuse_fs && ral_set_standby(&radio.ral, RAL_STANDBY_CFG_XOSC) != RAL_STATUS_OK) ||
 	    ral_get_and_clear_irq_status(&radio.ral, &stale) != RAL_STATUS_OK) {
 		return -EIO;
@@ -332,7 +309,7 @@ int zlrs_lr2021_prepare(const zlrs_radio_req_t *req)
 				return late_tx_prepare(tx_at_us);
 			}
 			if ((int32_t)(tx_at_us + ZLRS_LR2021_STARTUP_US +
-				      zlrs_lr2021_airtime_us(req->phy, req->size) - slot_end_us) >=
+				      zlrs_phy_airtime_us(req->phy, req->size) - slot_end_us) >=
 			    0) {
 				return -EMSGSIZE;
 			}
@@ -358,15 +335,13 @@ static spi_hw_t *const launch_spi =
 	(spi_hw_t *)DT_REG_ADDR(DT_BUS(DT_CHOSEN(zephyr_lorawan_transceiver)));
 
 /* Published only after the RAL has completed every SPI/DMA preparation operation.
- * The RF owner blocks until fired. The ISR touches only this mailbox and hardware. */
+ * The RF owner blocks while ARMED. The ISR publishes its result before leaving ARMED. */
 static volatile struct {
 	uint8_t command[5];
 	uint32_t latest_us;
 	uint32_t irq_us;
-	uint32_t begin_us;
 	uint32_t command_us;
 	int result;
-	bool fired;
 } launch_mailbox;
 
 static void __ramfunc launch_command_isr(uint32_t irq_time_us)
@@ -376,8 +351,8 @@ static void __ramfunc launch_command_isr(uint32_t irq_time_us)
 	int result = -EIO;
 
 	launch_mailbox.irq_us = irq_time_us;
-	launch_mailbox.begin_us = zlrs_slot_timer_now_us();
-	if ((int32_t)(launch_mailbox.begin_us - launch_mailbox.latest_us) > 0) {
+	begin_us = zlrs_slot_timer_now_us();
+	if ((int32_t)(begin_us - launch_mailbox.latest_us) > 0) {
 		result = -ETIME;
 		goto done;
 	}
@@ -398,14 +373,12 @@ static void __ramfunc launch_command_isr(uint32_t irq_time_us)
 			(void)launch_spi->dr;
 			received++;
 		}
-		if (zlrs_slot_timer_now_us() - launch_mailbox.begin_us >
-		    ZLRS_LR2021_TX_COMMAND_US) {
+		if (zlrs_slot_timer_now_us() - begin_us > ZLRS_LR2021_TX_COMMAND_US) {
 			goto release_cs;
 		}
 	}
 	while ((launch_spi->sr & SPI_SSPSR_BSY_BITS) != 0U) {
-		if (zlrs_slot_timer_now_us() - launch_mailbox.begin_us >
-		    ZLRS_LR2021_TX_COMMAND_US) {
+		if (zlrs_slot_timer_now_us() - begin_us > ZLRS_LR2021_TX_COMMAND_US) {
 			goto release_cs;
 		}
 	}
@@ -413,10 +386,9 @@ static void __ramfunc launch_command_isr(uint32_t irq_time_us)
 release_cs:
 	gpio_put(DT_SPI_DEV_CS_GPIOS_PIN(DT_CHOSEN(zephyr_lorawan_transceiver)), true);
 done:
-	launch_mailbox.command_us = zlrs_slot_timer_now_us() - launch_mailbox.begin_us;
-	job_state = result == 0 ? RADIO_ACTIVE : RADIO_IDLE;
+	launch_mailbox.command_us = zlrs_slot_timer_now_us() - begin_us;
 	launch_mailbox.result = result;
-	launch_mailbox.fired = true;
+	job_state = result == 0 ? RADIO_ACTIVE : RADIO_IDLE;
 }
 
 int zlrs_lr2021_launch(void)
@@ -449,7 +421,7 @@ int zlrs_lr2021_launch(void)
 		     GPIO_ACTIVE_LOW);
 	uint32_t latest_us;
 	if (!zlrs_lr2021_tx_deadline(tx_at_us, slot_end_us,
-				     zlrs_lr2021_airtime_us(request->phy, request->size),
+				     zlrs_phy_airtime_us(request->phy, request->size),
 				     &latest_us)) {
 		return -EMSGSIZE;
 	}
@@ -461,7 +433,6 @@ int zlrs_lr2021_launch(void)
 	launch_mailbox.command[3] = 0U;
 	launch_mailbox.command[4] = 0U;
 	launch_mailbox.latest_us = latest_us;
-	launch_mailbox.fired = false;
 	irq_pending = false;
 	job_state = RADIO_ARMED;
 	if (!zlrs_slot_timer_launch_at(tx_at_us, launch_command_isr)) {
@@ -469,7 +440,7 @@ int zlrs_lr2021_launch(void)
 		return late_tx_prepare(tx_at_us);
 	}
 	diag.transactions++;
-	while (!launch_mailbox.fired) {
+	while (job_state == RADIO_ARMED) {
 		const int32_t remaining = (int32_t)(slot_end_us - zlrs_slot_timer_now_us());
 
 		if (remaining <= 0) {
@@ -477,22 +448,19 @@ int zlrs_lr2021_launch(void)
 			job_state = RADIO_IDLE;
 			return -ETIMEDOUT;
 		}
-		(void)k_sem_take(&done_sem, K_USEC(remaining));
+		(void)k_sem_take(owner_wake, K_USEC(remaining));
 	}
-	begin_us = launch_mailbox.begin_us;
 	ZLRS_TRACE_EVENT("rf_launch", tx_at_us, launch_mailbox.irq_us);
 	ZLRS_TRACE_EVENT("rf_launch_result", (uint32_t)launch_mailbox.result,
 			 launch_mailbox.command_us);
 	zlrs_timing_record(&diag.launch_irq_late_us, launch_mailbox.irq_us - tx_at_us);
 	zlrs_timing_record(&diag.launch_wake_us, zlrs_slot_timer_now_us() - launch_mailbox.irq_us);
 	zlrs_timing_record(&diag.launch_cmd_us, launch_mailbox.command_us);
-	diag.launch_jitter_us.last = begin_us - tx_at_us;
+	zlrs_timing_record(&diag.launch_jitter_us, begin_us - tx_at_us);
 	zlrs_timing_record(&diag.tx_launch_cmd_us, launch_mailbox.command_us);
-	diag.launch_jitter_us.max = MAX(diag.launch_jitter_us.max, diag.launch_jitter_us.last);
 	if (launch_mailbox.result != 0) {
 		job_state = RADIO_IDLE;
 		if (launch_mailbox.result == -ETIME) {
-			diag.late_starts++;
 			diag.trigger_late_starts++;
 			diag.late_trigger_irq++;
 		}
@@ -505,8 +473,10 @@ uint32_t zlrs_lr2021_started_us(void)
 	return begin_us;
 }
 
-int zlrs_lr2021_init(void)
+int zlrs_lr2021_init(struct k_sem *wake)
 {
+	__ASSERT_NO_MSG(wake != NULL);
+	owner_wake = wake;
 	/* RAL enables 1024-byte FIFOs. Every complete zlrs frame fits; intermediate
 	 * RX threshold events must not obscure the RX_DONE edge or its timestamp. */
 	BUILD_ASSERT(ZLRS_FRAME_MAX_LEN <= RAL_LR20XX_MAX_DATA_FIFO_BYTES);
@@ -592,11 +562,6 @@ void zlrs_lr2021_read_status(zlrs_lr2021_status_t *out)
 	out->sampled_ms = k_uptime_get_32();
 }
 
-int zlrs_lr2021_wait_us(uint32_t timeout_us)
-{
-	return k_sem_take(&done_sem, K_USEC(timeout_us));
-}
-
 bool zlrs_lr2021_irq_pending(void)
 {
 	return job_state == RADIO_ACTIVE && irq_pending;
@@ -672,7 +637,7 @@ bool zlrs_lr2021_process_irq(zlrs_lr2021_result_t *out)
 		status = 0;
 		diag.tx_done++;
 		diag.tx_us_last = event_us - begin_us;
-		const uint32_t toa_us = zlrs_lr2021_airtime_us(request->phy, request->size);
+		const uint32_t toa_us = zlrs_phy_airtime_us(request->phy, request->size);
 
 		zlrs_timing_record(&diag.tx_startup_us,
 				   diag.tx_us_last > toa_us ? diag.tx_us_last - toa_us : 0U);
@@ -687,7 +652,7 @@ bool zlrs_lr2021_process_irq(zlrs_lr2021_result_t *out)
 		     ral_get_data_rx_buffer(&radio.ral, request->buf, len) == RAL_STATUS_OK)) {
 			status = 0;
 			diag.rx_packets++;
-			airtime_us = zlrs_lr2021_airtime_us(request->phy, len);
+			airtime_us = zlrs_phy_airtime_us(request->phy, len);
 			diag.rx_fifo_bytes += len;
 			zlrs_timing_record(&diag.rx_fifo_us, zlrs_slot_timer_now_us() - read_us);
 		} else {
@@ -749,7 +714,6 @@ void zlrs_lr2021_abort(void)
 				0U;
 		}
 	}
-	k_sem_reset(&done_sem);
 	slot_end_us = 0U;
 	diag.overruns++;
 }

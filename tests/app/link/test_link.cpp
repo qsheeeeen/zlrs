@@ -86,8 +86,7 @@ static void init_node(node_t *node, zlrs_role_t role, const uint8_t dev_id[4],
 			       .phy = ZLRS_PHY_FLRC_2600,
 			       .tx_power_dbm = 10,
 			       .pair_tx_power_dbm = -10,
-			       .rx_timeout_ms = 2U,
-			       .acq_timeout_ms = 8U,
+
 			       .sync_period_ms = 100U,
 			       .pair_period_ms = 100U,
 			       .pair_window_ms = 30000U,
@@ -99,8 +98,28 @@ static void init_node(node_t *node, zlrs_role_t role, const uint8_t dev_id[4],
 			       .resync_every_n = 20U};
 	zlrs_link_events_t events = {.on_data = receive_data, .ctx = node};
 	zlrs_link_init(&node->link, &cfg, random_word, node, &events);
-	zlrs_link_set_dev_id(&node->link, dev_id);
-	zlrs_link_set_root_key(&node->link, root, 0U);
+	zlrs_persist_state_t saved = {};
+	memcpy(saved.dev_id, dev_id, sizeof(saved.dev_id));
+	memcpy(saved.root_key, root, sizeof(saved.root_key));
+	saved.configured = true;
+	zlrs_link_restore(&node->link, &saved, 0U);
+}
+
+static void boot_paired_link(zlrs_link_t *link, const uint8_t *peer, const uint8_t *salt,
+			     uint32_t now_ms)
+{
+	const zlrs_link_cfg_t cfg = link->status.cfg;
+	const zlrs_link_events_t events = link->ev;
+	const auto random = link->random;
+	void *const context = link->random_ctx;
+	zlrs_persist_state_t saved = {};
+	memcpy(saved.dev_id, link->status.dev_id, sizeof(saved.dev_id));
+	memcpy(saved.root_key, link->root_key, sizeof(saved.root_key));
+	memcpy(saved.pairing.peer_id, peer, sizeof(saved.pairing.peer_id));
+	memcpy(saved.pairing.pair_salt, salt, sizeof(saved.pairing.pair_salt));
+	saved.configured = saved.paired = true;
+	zlrs_link_init(link, &cfg, random, context, &events);
+	zlrs_link_restore(link, &saved, now_ms);
 }
 
 static void sim_init(sim_t *sim)
@@ -213,15 +232,13 @@ static void sim_frame(sim_t *sim)
 		sim_slot(sim, slot);
 		sim->now_ms += 3U;
 	}
-	zlrs_link_tick(&sim->leader.link, sim->now_ms);
-	zlrs_link_tick(&sim->follower.link, sim->now_ms);
 	sim->frames++;
 }
 
 static bool both_connected(const sim_t *sim)
 {
-	return zlrs_link_status(&sim->leader.link)->state == ZLRS_STATE_CONNECTED &&
-	       zlrs_link_status(&sim->follower.link)->state == ZLRS_STATE_CONNECTED;
+	return sim->leader.link.status.state == ZLRS_STATE_CONNECTED &&
+	       sim->follower.link.status.state == ZLRS_STATE_CONNECTED;
 }
 
 static sim_t sim;
@@ -233,7 +250,7 @@ struct BandLoss {
 
 static void finish_quality_window(sim_t *sim)
 {
-	const zlrs_link_stats_t *stats = &zlrs_link_status(&sim->follower.link)->stats;
+	const zlrs_link_stats_t *stats = &sim->follower.link.status.stats;
 	uint16_t previous = stats->lq_expected;
 	for (unsigned int i = 0; i < 6000U; i++) {
 		sim_frame(sim);
@@ -254,7 +271,7 @@ ZTEST(Link, test_QualityWindowBoundary)
 		sim_frame(&sim);
 	}
 	zassert_true(both_connected(&sim));
-	const zlrs_link_stats_t *stats = &zlrs_link_status(&sim.follower.link)->stats;
+	const zlrs_link_stats_t *stats = &sim.follower.link.status.stats;
 	finish_quality_window(&sim);
 	zexpect_equal(stats->lq_percent, 100U);
 
@@ -318,7 +335,7 @@ ZTEST(Link, test_PendingOrInvalidQualityStillRefreshesRssiAndFeedback)
 	connect_saved(&sim, ZLRS_PROFILE_P1);
 	for (uint8_t quality : {127, 101, 255}) {
 		inject_quality(&sim, quality, ++sim.now_ms);
-		const zlrs_link_status_t *info = zlrs_link_status(&sim.leader.link);
+		const zlrs_link_status_t *info = &sim.leader.link.status;
 		zexpect_equal(info->peer_rssi_dbm, -60);
 		zexpect_equal(info->last_peer_feedback_ms, sim.now_ms);
 		zexpect_equal(info->peer_lq_percent, ZLRS_LQ_UNAVAILABLE);
@@ -391,11 +408,12 @@ ZTEST_P(PowerSymmetry, test_StrongDuplexLinkKeepsSavingWithOneOccasionalLostPack
 		}
 		sim_frame(&sim);
 		for (unsigned int i = 0U; i < 2U; i++) {
-			const zlrs_link_status_t *info = zlrs_link_status(nodes[i]);
+			const zlrs_link_status_t *info = &nodes[i]->status;
 			saw_99 |= info->peer_lq_percent == 99U;
 			const zlrs_link_observation_t observation = {.link = info,
 								     .now_ms = sim.now_ms};
-			zlrs_link_set_power(nodes[i], zlrs_power_update(&powers[i], &observation));
+			nodes[i]->status.cfg.tx_power_dbm =
+				zlrs_power_update(&powers[i], &observation);
 		}
 	}
 	if (param >= 0) {
@@ -483,8 +501,8 @@ static void connect_saved(sim_t *sim, zlrs_profile_t profile)
 	const uint8_t salt[ZLRS_PAIR_SALT_LEN] = {1, 2, 3, 4, 5, 6, 7, 8};
 	sim->leader.link.status.cfg.profile = profile;
 	sim->follower.link.status.cfg.profile = profile;
-	zlrs_link_set_peer(&sim->leader.link, sim->follower.link.status.dev_id, salt, sim->now_ms);
-	zlrs_link_set_peer(&sim->follower.link, sim->leader.link.status.dev_id, salt, sim->now_ms);
+	boot_paired_link(&sim->leader.link, sim->follower.link.status.dev_id, salt, sim->now_ms);
+	boot_paired_link(&sim->follower.link, sim->leader.link.status.dev_id, salt, sim->now_ms);
 	for (unsigned int i = 0U; i < 3000U && !both_connected(sim); i++) {
 		sim_frame(sim);
 	}
@@ -624,7 +642,13 @@ ZTEST(Link, test_ReplayAndCounters)
 				      .frame_index = index + 100U,
 				      .band_plan = {.region = ZLRS_REGION_ISM2400}}},
 		.seq = UINT32_MAX};
+	const uint32_t frames_before_confirm = follower->status.stats.rx_frames;
+	const uint32_t bad_tags_before_confirm = follower->status.stats.rx_bad_tag;
+	inject(&sim.follower, &frame, 15U, follower->session_key_in, sim.now_ms, true);
+	zexpect_equal(follower->status.stats.rx_frames, frames_before_confirm);
+	zexpect_equal(follower->status.stats.rx_bad_tag, bad_tags_before_confirm + 1U);
 	inject(&sim.follower, &frame, 15U, follower->session_key_in, sim.now_ms, false);
+	zexpect_equal(follower->status.stats.rx_frames, frames_before_confirm + 1U);
 	zexpect_true(follower->last_rx_seq == baseline && follower->status.last_rx_ms == last_ms);
 	zexpect_equal(zlrs_test_write(follower, &byte, 1U), 1U);
 	follower->status.arq_used = 1U;
@@ -793,8 +817,8 @@ ZTEST_P(PairingCommit, test_SavedRecordChangesOnlyAfterConfirmation)
 	zlrs_link_t *link = &node->link;
 	const uint8_t salt[ZLRS_PAIR_SALT_LEN] = {1, 2, 3, 4, 5, 6, 7, 8};
 	const uint8_t candidate[ZLRS_DEV_ID_LEN] = {9, 10, 11, 12};
-	zlrs_link_set_peer(link, old_peer->link.status.dev_id, salt, 0);
-	zlrs_link_set_peer(&old_peer->link, link->status.dev_id, salt, 0);
+	boot_paired_link(link, old_peer->link.status.dev_id, salt, 0);
+	boot_paired_link(&old_peer->link, link->status.dev_id, salt, 0);
 	uint8_t old_key[ZLRS_KEY_LEN];
 	memcpy(old_key, link->pair_key, sizeof(old_key));
 	zlrs_link_press(link, 1);
@@ -827,7 +851,8 @@ ZTEST_P(PairingCommit, test_SavedRecordChangesOnlyAfterConfirmation)
 	if (end == PairEnd::Cancel) {
 		zassert_true(zlrs_link_cancel_pair(link, 3));
 	} else if (end == PairEnd::Timeout) {
-		zlrs_link_tick(link, link->status.cfg.pair_window_ms + 2);
+		zassert_true(zlrs_link_advance_slot(link, ZLRS_SLOT_DATA_A,
+						    link->status.cfg.pair_window_ms + 2));
 	} else if (role == ZLRS_ROLE_FOLLOWER) {
 		frame = zlrs_frame_t{.type = ZLRS_PKT_PAIR_CFM, .seq = 2};
 		memcpy(frame.body.pair.dev_a, candidate, ZLRS_DEV_ID_LEN);
@@ -844,7 +869,7 @@ ZTEST_P(PairingCommit, test_SavedRecordChangesOnlyAfterConfirmation)
 			}
 		}
 	}
-	zassert_equal(zlrs_link_status(link)->state, ZLRS_STATE_SEARCHING);
+	zassert_equal(link->status.state, ZLRS_STATE_SEARCHING);
 	zassert_true(link->status.paired);
 	memcpy(saved_id, link->status.pairing.peer_id, sizeof(saved_id));
 	memcpy(saved_salt, link->status.pairing.pair_salt, sizeof(saved_salt));
@@ -985,11 +1010,11 @@ ZTEST(Link, test_EntropyFailure)
 	sim.leader.random_failed = true;
 	zexpect_false(zlrs_link_press(&sim.leader.link, 0U));
 	zexpect_equal(sim.leader.link.status.state, ZLRS_STATE_UNPAIRED);
-	zlrs_link_set_peer(&sim.leader.link, sim.follower.link.status.dev_id, salt, 0U);
+	boot_paired_link(&sim.leader.link, sim.follower.link.status.dev_id, salt, 0U);
 	zexpect_false(sim.leader.link.session_pending && !sim.leader.link.status.session_valid);
 	zexpect_equal(zlrs_test_slot(&sim.leader.link, ZLRS_SLOT_DATA_A, 1U), nullptr);
 	sim.follower.random_failed = true;
-	zlrs_link_set_peer(&sim.follower.link, sim.leader.link.status.dev_id, salt, 0U);
+	boot_paired_link(&sim.follower.link, sim.leader.link.status.dev_id, salt, 0U);
 	zlrs_frame_t frame = {.type = ZLRS_PKT_SYNC,
 			      .body = {.schedule = {.profile = 1U,
 						    .version = ZLRS_PROTO_VERSION,
@@ -1041,13 +1066,13 @@ ZTEST(Link, test_NonceReuse)
 	zassert_true(both_connected(&sim));
 }
 
-static void retune(node_t *node, bool subg, zlrs_phy_t phy)
+static void retune(node_t *node, bool subg, zlrs_phy_t phy, uint32_t now_ms)
 {
 	zlrs_link_cfg_t cfg = node->link.status.cfg;
 	cfg.region = subg ? ZLRS_REGION_CN433 : ZLRS_REGION_ISM2400;
 	cfg.phy = subg ? ZLRS_PHY_FLRC_325 : (phy);
 	cfg.sync_period_ms = subg ? 600U : 100U;
-	zexpect_true(zlrs_link_reconfigure_radio(&node->link, &cfg));
+	zexpect_true(zlrs_link_reconfigure_radio(&node->link, &cfg, now_ms));
 }
 
 static void automatic_frame(sim_t *sim, zlrs_band_policy_t policies[2])
@@ -1056,14 +1081,15 @@ static void automatic_frame(sim_t *sim, zlrs_band_policy_t policies[2])
 	node_t *nodes[2] = {&sim->leader, &sim->follower};
 	for (unsigned int i = 0; i < 2; i++) {
 		zlrs_link_t *link = &nodes[i]->link;
-		const zlrs_link_status_t *info = zlrs_link_status(link);
+		const zlrs_link_status_t *info = &link->status;
 		bool changed = false, target = false, probe = false;
 		zlrs_phy_t phy = ZLRS_PHY_FLRC_2600;
 		if (info->band_plan.switch_frame &&
 		    info->frame_index >= info->band_plan.switch_frame - 1) {
 			target = info->band_plan.target_subg;
 			phy = static_cast<zlrs_phy_t>(info->band_plan.target_phy);
-			probe = !target && (policies[i].subg || phy < policies[i].phy);
+			probe = !target &&
+				(info->cfg.region != ZLRS_REGION_ISM2400 || phy < info->cfg.phy);
 			changed = true;
 		} else {
 			const zlrs_link_observation_t observation = {.link = info,
@@ -1083,10 +1109,8 @@ static void automatic_frame(sim_t *sim, zlrs_band_policy_t policies[2])
 			}
 		}
 		if (changed) {
-			retune(nodes[i], target, phy);
-			zlrs_link_acquire_radio(link, sim->now_ms);
-			zlrs_band_policy_changed(&policies[i], target, phy, probe, sim->now_ms,
-						 info->last_rx_ms);
+			retune(nodes[i], target, phy, sim->now_ms);
+			zlrs_band_policy_reset(&policies[i], probe, sim->now_ms, info->last_rx_ms);
 		}
 	}
 }
@@ -1106,8 +1130,8 @@ ZTEST(Link, test_CaptureWaitsForPhase)
 	sim.leader.link.status.cfg.automatic_band = sim.follower.link.status.cfg.automatic_band =
 		true;
 	connect_saved(&sim, ZLRS_PROFILE_P1);
-	retune(&sim.leader, true, ZLRS_PHY_FLRC_2600);
-	retune(&sim.follower, true, ZLRS_PHY_FLRC_2600);
+	retune(&sim.leader, true, ZLRS_PHY_FLRC_2600, sim.now_ms);
+	retune(&sim.follower, true, ZLRS_PHY_FLRC_2600, sim.now_ms);
 	sim.withhold_phase = true;
 	const uint8_t payload[] = {1, 2, 3};
 	zexpect_equal(zlrs_test_write(&sim.leader.link, payload, sizeof(payload)), sizeof(payload));
@@ -1186,8 +1210,8 @@ ZTEST_P(AutomaticBandLink, test_PreservesSessionAndDataAcrossTransition)
 		sim_frame(&sim);
 	}
 	zlrs_band_policy_t policies[2];
-	zlrs_band_policy_init(&policies[0], true, ZLRS_ROLE_LEADER, false, 0, sim.now_ms);
-	zlrs_band_policy_init(&policies[1], true, ZLRS_ROLE_FOLLOWER, false, 0, sim.now_ms);
+	zlrs_band_policy_init(&policies[0], ZLRS_ROLE_LEADER, 0, sim.now_ms);
+	zlrs_band_policy_init(&policies[1], ZLRS_ROLE_FOLLOWER, 0, sim.now_ms);
 	const uint32_t nonce = sim.leader.link.status.sess_nonce_leader;
 	const uint32_t seq = sim.leader.link.tx_seq;
 	const uint8_t payload[] = {3, 1, 4, 1, 5, 9};
@@ -1327,11 +1351,11 @@ ZTEST(Link, test_BandPlanSecurity)
 	zassert_not_equal(req, nullptr);
 	zlrs_link_cfg_t cfg = follower->status.cfg;
 	cfg.region = ZLRS_REGION_CN433;
-	zexpect_false(zlrs_link_reconfigure_radio(follower, &cfg) &&
+	zexpect_false(zlrs_link_reconfigure_radio(follower, &cfg, sim.now_ms) &&
 		      follower->status.cfg.region == ZLRS_REGION_ISM2400);
 	zlrs_link_complete(follower, ZLRS_RADIO_OK, 0, 0, 0, sim.now_ms);
 	cfg.profile = ZLRS_PROFILE_P0;
-	zexpect_false(zlrs_link_reconfigure_radio(follower, &cfg));
+	zexpect_false(zlrs_link_reconfigure_radio(follower, &cfg, sim.now_ms));
 }
 
 ZTEST(Link, test_DuplexDeliveryAndWireTranscript)
@@ -1376,8 +1400,8 @@ ZTEST(Link, test_DuplexDeliveryAndWireTranscript)
 	zexpect_equal(sim.leader.received_len, sizeof(follower_data));
 	zexpect_equal(memcmp(sim.follower.received, leader_data, sizeof(leader_data)), 0);
 	zexpect_equal(memcmp(sim.leader.received, follower_data, sizeof(follower_data)), 0);
-	zexpect_true((zlrs_link_status(&sim.leader.link)->stats.tx_retries) > (0U));
-	zexpect_true((zlrs_link_status(&sim.follower.link)->stats.tx_retries) > (0U));
+	zexpect_true((sim.leader.link.status.stats.tx_retries) > (0U));
+	zexpect_true((sim.follower.link.status.stats.tx_retries) > (0U));
 	const uint32_t leader_feedback_before = (&sim.leader.link)->status.last_peer_feedback_ms;
 	const uint32_t follower_feedback_before =
 		(&sim.follower.link)->status.last_peer_feedback_ms;
@@ -1463,14 +1487,13 @@ ZTEST(Link, test_DuplexDeliveryAndWireTranscript)
 	}
 
 	/* A receiver reboot derives fresh session keys and re-establishes both directions. */
-	uint8_t root[ZLRS_KEY_LEN];
 	uint8_t old_key[ZLRS_KEY_LEN];
 	uint8_t old_capture[ZLRS_FRAME_MAX_LEN];
 	const uint16_t old_size = sim.captured_len;
 	memcpy(old_capture, sim.captured, old_size);
-	memcpy(root, sim.follower.link.root_key, sizeof(root));
 	memcpy(old_key, sim.follower.link.session_key_in, sizeof(old_key));
-	zlrs_link_set_root_key(&sim.follower.link, root, sim.now_ms);
+	boot_paired_link(&sim.follower.link, sim.follower.link.status.pairing.peer_id,
+			 sim.follower.link.status.pairing.pair_salt, sim.now_ms);
 	for (unsigned int i = 0U; i < 3000U && !both_connected(&sim); ++i) {
 		sim_frame(&sim);
 	}
@@ -1552,7 +1575,7 @@ ZTEST_P(FinalizedAck, test_LatestAckIsEncodedOnceAndFailedTxPreservesPayload)
 		uint8_t tag[ZLRS_TAG_LEN];
 		zlrs_tag(link->session_key_out, ZLRS_KEY_LEN, req->buf, req->size - ZLRS_TAG_LEN,
 			 tag);
-		zexpect_equal(memcmp(tag, sent.tag, sizeof(tag)), 0);
+		zexpect_equal(memcmp(tag, req->buf + req->size - sizeof(tag), sizeof(tag)), 0);
 	}
 	zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0, 0, 0, sim.now_ms);
 	zexpect_equal(link->status.queue_count, sizeof(bytes));
@@ -1662,8 +1685,12 @@ ZTEST_P(StreamFaults, test_DuplexStreamMatchesReferenceUnderFaultSequences)
 			const auto &receiver = *nodes[1 - side];
 			zassert_true((sender.status.queue_count) <= (ZLRS_LINK_TX_QUEUE_LEN),
 				     "seed=%u step=%u", seed, step);
-			if (sender.tx_packet_limit != 0U) {
-				zassert_true((sender.queue_head) < (sender.tx_packet_limit),
+			zassert_true(sender.queue_head < ZLRS_LINK_TX_PACKETS);
+			if (sender.tx_pool_mtu != 0U) {
+				const size_t stride = ROUND_UP(
+					ZLRS_DATA_HEADROOM + sender.tx_pool_mtu + ZLRS_TAG_LEN, 4U);
+				zassert_true((sender.queue_head + 1U) * stride <=
+						     sizeof(sender.tx_storage),
 					     "seed=%u step=%u", seed, step);
 			}
 			zassert_true((sender.status.arq_used
@@ -1856,7 +1883,10 @@ ZTEST_P(TxAccounting, test_CountsTheSubmittedPacketExactlyOnce)
 	zassert_not_equal(req, nullptr);
 	zassert_true(req->is_tx);
 	const uint16_t wire_size = req->size;
-	const auto before = zlrs_link_status(link)->stats;
+	const auto cfg = link->status.cfg;
+	zassert_false(zlrs_link_reconfigure_radio(link, &cfg, sim.now_ms),
+		      "submitted frames retain their configuration until completion");
+	const auto before = link->status.stats;
 	zlrs_link_complete(link, ZLRS_RADIO_OK, 0, 0, 0, sim.now_ms);
 	zexpect_equal(link->status.stats.tx_frames, before.tx_frames + 1);
 	zexpect_equal(link->status.stats.tx_bytes, before.tx_bytes + wire_size);
@@ -1865,7 +1895,7 @@ ZTEST_P(TxAccounting, test_CountsTheSubmittedPacketExactlyOnce)
 	zexpect_equal(link->status.stats.tx_full_data_frames, before.tx_full_data_frames + full);
 	zexpect_equal(link->status.stats.tx_data_ack_frames, before.tx_data_ack_frames + mode.arq);
 	zexpect_equal(link->status.stats.tx_ack_only_frames, before.tx_ack_only_frames);
-	const auto completed = zlrs_link_status(link)->stats;
+	const auto completed = link->status.stats;
 	zlrs_link_complete(link, ZLRS_RADIO_OK, 0, 0, 0, sim.now_ms);
 	zexpect_equal(memcmp(&link->status.stats, &completed, sizeof(completed)), 0);
 }
@@ -1885,7 +1915,7 @@ ZTEST_P(LinkProfiles, test_EmptyDataCompletionIsAckOnly)
 	const auto *req = zlrs_test_slot(link, ZLRS_SLOT_DATA_A, sim.now_ms);
 	zassert_not_equal(req, nullptr);
 	zassert_true(req->is_tx);
-	const auto before = zlrs_link_status(link)->stats;
+	const auto before = link->status.stats;
 	zlrs_link_complete(link, ZLRS_RADIO_OK, 0, 0, 0, sim.now_ms);
 	zexpect_equal(link->status.stats.tx_ack_only_frames, before.tx_ack_only_frames + 1);
 	zexpect_equal(link->status.stats.tx_data_frames, before.tx_data_frames);
@@ -1898,7 +1928,7 @@ ZTEST_INSTANTIATE_TEST_SUITE_P(cases, LinkProfiles, test_EmptyDataCompletionIsAc
 ZTEST(Link, test_UnsolicitedCompletionLeavesStateAndCountersIntact)
 {
 	sim_init(&sim);
-	const auto before = zlrs_link_status(&sim.leader.link)->stats;
+	const auto before = sim.leader.link.status.stats;
 	zlrs_link_complete(&sim.leader.link, ZLRS_RADIO_FAIL, 0, 0, 0, sim.now_ms);
 	zexpect_equal(memcmp(&sim.leader.link.status.stats, &before, sizeof(before)), 0);
 }
@@ -2229,7 +2259,7 @@ ZTEST_P(LinkProfiles, test_AckSurvivesCancelledPreparationAndCannotReleaseUnlaun
 	inject(&sim.leader, &ack, ZLRS_DATA_PREFIX_LEN, link->session_key_in, sim.now_ms, false);
 	zexpect_equal(link->status.accepted_rx_events,
 		      accepted); /* TX is immutable while pending. */
-	zexpect_true(zlrs_link_status(link)->busy);
+	zexpect_true(link->status.busy);
 	zlrs_link_complete(link, ZLRS_RADIO_FAIL, 0, 0, 0, sim.now_ms);
 	zexpect_true(link->status.arq_ack_pending);
 	inject(&sim.leader, &ack, ZLRS_DATA_PREFIX_LEN, link->session_key_in, sim.now_ms, false);

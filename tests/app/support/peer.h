@@ -19,7 +19,6 @@ static inline uint16_t zlrs_test_encode(const zlrs_frame_t *frame, uint8_t *buf,
 		if (payload != 0) {
 			memcpy(buf + ZLRS_DATA_HEADROOM, frame->body.data.bytes, payload);
 		}
-		memcpy(buf + total - tag_len, frame->tag, tag_len);
 	}
 	return total;
 }
@@ -49,8 +48,7 @@ static inline void zlrs_test_rx(zlrs_link_t *link, const uint8_t *buf, uint16_t 
 		zlrs_link_plan_t plan = {.frame_index = link->status.frame_index,
 					 .now_ms = link->slot_ms,
 					 .slot = link->slot};
-		link_plan_rx(link, &plan, link_sync_freq_hz(link), ZLRS_SYNC_SLOT_DATA,
-			     link->status.cfg.rx_timeout_ms);
+		link_plan_rx(link, &plan, link_sync_freq_hz(link), ZLRS_SYNC_SLOT_DATA);
 		(void)zlrs_link_finalize(link, &plan);
 	}
 	memcpy(link->req.buf, buf, len);

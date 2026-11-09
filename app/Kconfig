@@ -100,10 +100,6 @@ config ZLRS_APP_TX_GUARD_US
 	  The radio and FIFO are prepared ahead of the slot boundary. Only SET_TX runs at
 	  this fixed offset; receivers enter RX as soon as their preparation is complete.
 
-config ZLRS_APP_FLRC_PREAMBLE_BITS
-	int "FLRC preamble length (bits)"
-	default 24
-
 config ZLRS_APP_RESYNC_PERIOD_MS
 	int "Periodic SYNC interval while connected (ms, 0 = off)"
 	default 5000

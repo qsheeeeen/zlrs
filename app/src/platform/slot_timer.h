@@ -3,8 +3,8 @@
  */
 #pragma once
 
-#include <stdint.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 struct zlrs_slot_timer_stats {
 	uint32_t boundaries;
@@ -22,21 +22,23 @@ int zlrs_slot_timer_init(void);
 uint32_t zlrs_slot_timer_now_us(void);
 uint32_t zlrs_slot_timer_now_ms(void);
 uint32_t zlrs_slot_timer_uptime_ms(uint32_t deadline_us);
-void zlrs_slot_timer_start(uint32_t period_us, uint32_t prepare_us, void (*wake)(void));
+struct k_sem;
+void zlrs_slot_timer_start(uint32_t period_us, uint32_t prepare_us, struct k_sem *wake);
 void zlrs_slot_timer_stop(void);
 /* Preserve frame count and insert a shared guard before the next physical frame. */
 void zlrs_slot_timer_reconfigure(uint32_t period_us, uint32_t prepare_us, uint32_t guard_us);
 void zlrs_slot_timer_hold_next_frame(uint32_t guard_us);
 void zlrs_slot_timer_shift(int32_t shift_us);
 void zlrs_slot_timer_deadline(uint32_t deadline_us);
+/* Wait for a frame newer than *frame, then replace it with the observed frame. */
 void zlrs_slot_timer_wait_frame(uint32_t *start_us, uint32_t *frame);
 uint32_t zlrs_slot_timer_next_frame_us(void);
 void zlrs_slot_timer_wait_until(uint32_t deadline_us, struct zlrs_slot_timer_wait *timing);
 /* The callback runs in a RAM-resident zero-latency ISR: no kernel or driver APIs.
  * A normal alarm-2 interrupt notifies the RF owner after the callback returns. */
-#define ZLRS_SLOT_TIMER_LAUNCH_LEAD_US     25U
+#define ZLRS_SLOT_TIMER_LAUNCH_LEAD_US   25U
 /* Diagnostic jitter target; the radio separately enforces its slot deadline. */
-#define ZLRS_SLOT_TIMER_LAUNCH_JITTER_US   10U
+#define ZLRS_SLOT_TIMER_LAUNCH_JITTER_US 10U
 /* False means the deadline cannot be armed in advance; no late software trigger. */
 bool zlrs_slot_timer_launch_at(uint32_t target_us, void (*fire)(uint32_t irq_us));
 bool zlrs_slot_timer_launch_ready(uint32_t now_us, uint32_t target_us, uint32_t lead_us);

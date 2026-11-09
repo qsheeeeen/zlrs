@@ -15,18 +15,17 @@ preserving that context's session and delivery progress.
 
 | Service | Owned state and responsibility | Contract |
 | --- | --- | --- |
-| Application lifecycle | Initialization, maintenance windows, pairing save, recovery | Coordinate service operations at frame boundaries |
+| Application lifecycle | Initialization, pairing save, recovery | Call owner operations at frame boundaries |
 | Persistence | Settings, identity, root key, pairing record | Validate and save; expose a snapshot of successfully stored values |
 | Serial DATA | USB/UART endpoints, input/output queues, selection, drops | Supply bytes and accept complete received packets |
 | USB device | Device configuration and bus availability | Supply host-presence observations independently of serial input or control lines |
-| Management | Native MCUmgr groups, maintenance session and timeout | Execute commands within an application-granted maintenance window |
+| Management | Native MCUmgr groups, diagnostic schemas, maintenance session, export handles and timeout | Encode owner observations; complete cleanup before RF resumes |
 | RF | Link context, hardware schedule, active band, phase, duty and power | Own all radio transactions and publish observations |
 | Band policy | Quality history, dwell and probe decisions | Consume observations and request keep, planned transition or search |
 | Power policy | Feedback history and transmit setpoint | Consume peer quality and bounds; return a bounded setpoint |
 | User interface | Button sampling, long press, LED priority and cadence | Consume observations and publish cumulative input events |
 | Upgrade lifecycle | Confirmation, deadline and recovery entry | Report confirmation only after its flash write succeeds |
 | Log storage | Filesystem availability, file metadata and byte reads | Expose storage operations independently of management encoding |
-| Diagnostics | Formatting of public observations | Read borrowed observations synchronously in the service owner |
 | Application protocol | Wire encoding, pairing, sessions, FHSS, ARQ and replay | Zephyr application modules with explicit instances, time and transaction results |
 | Hardware adaptation | SPI, FIFO, IRQ timestamps, timer, crypto, entropy and sensors | Return hardware results without owning protocol state |
 
@@ -34,13 +33,17 @@ Application lifecycle helpers live in `app/src/lifecycle.c`: image-confirmation
 rollback and deferred pairing writes share the application-loop owner. The main
 loop and management service use that interface. DATA admission, packet storage,
 ARQ and packet retirement live together in `app/src/link/data.c`; packet bytes
-and payload length have one owner. A submitted request retains its own immutable
-metadata until completion. TX and RX submit through one internal radio-request
-implementation. Each link mechanism declares its interface in its matching
-header; sibling modules include those interfaces directly. Plans fill caller-owned
+and payload length have one owner. A submitted request retains its immutable wire
+bytes until completion. Frame type and payload length come from those bytes and
+the request size; radio reconfiguration is rejected while a transaction is active.
+TX and RX submit through one internal radio-request implementation. Each link
+mechanism declares its interface in its matching header; sibling modules include those interfaces directly. Plans fill caller-owned
 destinations. Link, RF and persistence expose canonical read-only views within
 their owning context. Cross-thread events own their values;
-management responses are encoded by the paused application owner.
+management responses are encoded by the preemptible SMP worker from an owned
+snapshot captured at an application-owner boundary. Status and
+diagnostic reports share management field encoding; host tools format the public
+metrics for display.
 Region rules and hopping channel parameters share one table and one ID set.
 DATA decoding returns a borrowed view of the RX
 buffer; the control-frame union contains no payload array. Test peers generate
@@ -51,7 +54,9 @@ RF builds the adopted link configuration once per modem change. Role, profile,
 modulation, MTU and resynchronization interval are read from that configuration;
 RF retains the slot clock and preparation deadlines it owns. Candidate modem
 configuration and timing are built locally and adopted together after validation.
-Current band mode and active band follow the adopted link configuration. SHA digest and
+Current band mode and active band follow the adopted link configuration. Band policy
+reads role, mode and PHY from the same configuration and retains only decision history.
+Pairing deadlines are checked when advancing a slot. SHA digest and
 peripheral reservation operations share `app/src/platform/sha256.h`.
 
 Board descriptions define peripheral availability, electrical assignments and the
@@ -75,7 +80,11 @@ application sources.
 The main application thread owns link state and RF preparation/completion.
 USB/UART interrupts and work queues transport bytes. Timer interrupts execute
 prepared timing actions. Protocol handling, ordinary preparation, persistence and
-UI rendering do not run in the timer interrupt.
+UI rendering do not run in the timer interrupt. Radio IRQs, slot boundaries and
+preparation deadlines notify the RF owner through one semaphore. A notification
+only ends a wait: the owner checks the hardware completion, absolute deadline or
+frame counter before progressing. Coalesced or unrelated notifications cannot
+advance a frame or open its preparation window early.
 
 ```mermaid
 flowchart LR
@@ -185,7 +194,8 @@ bounded buffer.
 
 Static packet storage provides a 4096-byte user-data budget, including bytes
 awaiting ACK, at production MTUs of at least 128 bytes. Smaller diagnostic MTUs
-may reach the descriptor bound first. The admission API reports usable space,
+may reach the descriptor bound first. Slot width and descriptor capacity are derived from the pool MTU; no independent
+layout cache is retained. The admission API reports usable space,
 including both byte and descriptor limits. No heap allocation is used.
 
 Serial output queues retain received bytes until the local host drains them.
@@ -199,7 +209,10 @@ Management, pairing persistence, image confirmation and log synchronization
 require a maintenance window at a frame boundary. The RF owner cancels pending
 launches, ends hardware references and reports operation cancellation to the link
 before storage or log work. Elapsed time advances the frame and hopping schedule
-on resume.
+on resume. Management processes a complete session through one owner entry: pause RF,
+flush logs, acknowledge entry, service commands, close exports and resume RF.
+Explicit EXIT and inactivity timeout share cleanup; EXIT is acknowledged after
+export cleanup.
 
 Maintenance and band transitions preserve accepted DATA and unacknowledged
 packets. A short management pause with no transition plan retains known radio
@@ -228,7 +241,10 @@ a transaction.
 
 Ordinary settings apply at boot. Root-key replacement, identity replacement,
 pairing deletion and factory reset invalidate running credentials within the same
-maintenance window. Persistence itself does not operate RF or implicitly reboot.
+maintenance window. RF initializes a fresh link and adopts identity, root key and
+pairing together from the saved view. Key derivation precedes the single initial
+state transition; whether the link is configured is derived from that state. Persistence
+itself does not operate RF or implicitly reboot.
 
 A pairing result is saved only when different from the stored record. Save failure
 allows retry. Deleting pairing clears the active result so it cannot be written

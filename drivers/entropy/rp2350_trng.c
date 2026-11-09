@@ -30,8 +30,8 @@
  *
  * Initialization fills the Zephyr ring buffer before the device becomes ready. The IRQ
  * publishes complete, validated blocks; later reads trigger collection at the low watermark.
- * An earlier cache returned cleared EHR data as zeros;
- * publication here happens only after EHR_VALID and the health checks, using a software copy.
+ * Publication requires EHR_VALID and successful health checks; the software copy
+ * preserves the validated block before reading the final EHR word clears it.
  * The ordinary entropy API waits with a deadline; the ISR-safe API only consumes ready bytes.
  *
  * SPDX-License-Identifier: Apache-2.0
@@ -79,9 +79,12 @@ struct trng_data {
 	struct k_work_delayable service;
 	const struct device *dev;
 	k_timepoint_t deadline;
-	bool running;
-	bool collecting;
-	bool retry;
+
+	enum {
+		TRNG_IDLE,
+		TRNG_COLLECTING,
+		TRNG_RETRY
+	} state;
 };
 
 /* Register operations below are bounded; callers hold data->lock after init. */
@@ -97,17 +100,15 @@ static void trng_reset(const struct trng_config *cfg, struct trng_data *data)
 	trng->sample_cnt1 = TRNG_SAMPLE_TICKS;
 	trng->rng_imr = TRNG_IRQ_MASK_ALL;
 	trng->rng_icr = TRNG_ISR_CLEARABLE;
-	data->running = false;
+	data->state = TRNG_IDLE;
 }
 
 static void trng_start(const struct trng_config *cfg, struct trng_data *data)
 {
-	if (!data->running) {
-		cfg->regs->rng_icr = TRNG_ISR_CLEARABLE;
-		cfg->regs->rst_bits_counter = 1U;
-		cfg->regs->rnd_source_enable = 1U;
-		data->running = true;
-	}
+	cfg->regs->rng_icr = TRNG_ISR_CLEARABLE;
+	cfg->regs->rst_bits_counter = 1U;
+	cfg->regs->rnd_source_enable = 1U;
+	data->state = TRNG_COLLECTING;
 }
 
 static void trng_stop(const struct trng_config *cfg, struct trng_data *data)
@@ -116,16 +117,14 @@ static void trng_stop(const struct trng_config *cfg, struct trng_data *data)
 	cfg->regs->rnd_source_enable = 0U;
 	cfg->regs->rst_bits_counter = 1U;
 	cfg->regs->rng_icr = TRNG_ISR_CLEARABLE;
-	data->running = false;
+	data->state = TRNG_IDLE;
 }
 
 static void trng_begin(const struct trng_config *cfg, struct trng_data *data)
 {
-	if (data->collecting) {
+	if (data->state != TRNG_IDLE) {
 		return;
 	}
-	data->collecting = true;
-	data->retry = false;
 	data->deadline = sys_timepoint_calc(K_MSEC(TRNG_BLOCK_TIMEOUT_MS));
 	trng_start(cfg, data);
 	cfg->regs->rng_imr = 0U;
@@ -142,16 +141,13 @@ static void trng_service(struct k_work *work)
 	const struct trng_config *cfg = data->dev->config;
 	bool timed_out = false;
 	k_spinlock_key_t key = k_spin_lock(&data->lock);
-	if (data->collecting) {
+	if (data->state != TRNG_IDLE) {
 		if (sys_timepoint_expired(data->deadline)) {
 			trng_stop(cfg, data);
-			data->collecting = false;
-			data->retry = false;
 			timed_out = true;
 		} else {
-			if (data->retry) {
+			if (data->state == TRNG_RETRY) {
 				trng_start(cfg, data);
-				data->retry = false;
 				cfg->regs->rng_imr = 0U;
 			}
 			k_work_reschedule(&data->service, sys_timepoint_timeout(data->deadline));
@@ -175,10 +171,8 @@ static void trng_irq(const struct device *dev)
 	const uint32_t status = trng->rng_isr;
 	const uint32_t errors = TRNG_RNG_ISR_AUTOCORR_ERR_BITS | TRNG_RNG_ISR_VN_ERR_BITS |
 				TRNG_RNG_ISR_CRNGT_ERR_BITS;
-	if (!data->collecting || sys_timepoint_expired(data->deadline)) {
+	if (data->state == TRNG_IDLE || sys_timepoint_expired(data->deadline)) {
 		trng_stop(cfg, data);
-		data->collecting = false;
-		data->retry = false;
 		(void)k_work_cancel_delayable(&data->service);
 	} else if ((status & errors) != 0U ||
 		   ((status & TRNG_RNG_ISR_EHR_VALID_BITS) != 0U &&
@@ -191,7 +185,7 @@ static void trng_irq(const struct device *dev)
 		} else {
 			trng_stop(cfg, data);
 		}
-		data->retry = true;
+		data->state = TRNG_RETRY;
 		k_work_reschedule(&data->service, K_MSEC(TRNG_RETRY_DELAY_MS));
 	} else if ((status & TRNG_RNG_ISR_EHR_VALID_BITS) != 0U) {
 		uint8_t block[TRNG_BLOCK_BYTES];
@@ -216,7 +210,6 @@ static void trng_irq(const struct device *dev)
 			trng->rng_imr = 0U;
 		} else {
 			trng_stop(cfg, data);
-			data->collecting = false;
 			(void)k_work_cancel_delayable(&data->service);
 		}
 	} else {
@@ -312,7 +305,7 @@ static int trng_prefill(const struct device *dev)
 	for (;;) {
 		key = k_spin_lock(&data->lock);
 		const bool full = ring_buf_space_get(&data->ring) == 0U;
-		const bool collecting = data->collecting;
+		const bool collecting = data->state != TRNG_IDLE;
 		k_spin_unlock(&data->lock, key);
 		if (full) {
 			return 0;
@@ -320,8 +313,6 @@ static int trng_prefill(const struct device *dev)
 		if (!collecting || k_poll(&event, 1, sys_timepoint_timeout(deadline)) != 0) {
 			key = k_spin_lock(&data->lock);
 			trng_stop(cfg, data);
-			data->collecting = false;
-			data->retry = false;
 			(void)k_work_cancel_delayable(&data->service);
 			k_spin_unlock(&data->lock, key);
 			return -ETIMEDOUT;

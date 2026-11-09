@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+common:
+  harness: ztest
+  tags: [log, storage]
+  platform_allow: [native_sim/native/64]
+tests:
+  zlrs.log.storage: {}

@@ -282,7 +282,8 @@ metadata after an erase.
 
 Logs use LittleFS with up to eight 128 KiB files and overwrite the oldest file.
 Messages remain in RAM while RF runs and flush at boot or maintenance boundaries.
-A finite RAM log buffer retains newer records on overflow. Log filesystem mount
-failure is retried before reinitialization; unrecoverable log failure must not
+A finite RAM log buffer retains newer records on overflow. The board fstab lets
+Zephyr mount the log filesystem at boot; LittleFS owns formatting and recovery.
+Log export retries an unavailable mount. Unrecoverable log failure must not
 prevent the rest of the device from operating. Fatal faults produce a crash dump
 and reboot. Runtime queues and session state are not flash-persistent.

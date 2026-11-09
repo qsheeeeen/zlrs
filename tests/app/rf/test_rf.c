@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "../support/peer.h"
 #include "band.h"
-#include "diagnostics.h"
 #include "link/handshake.h"
 #include "link/link.h"
 #include "persist.h"
@@ -116,6 +115,16 @@ static const zlrs_pairing_t saved_pairing = {
 };
 static bool identity_valid, configured = true, paired = true;
 
+static void restore_peer_credentials(uint32_t now_ms)
+{
+	zlrs_persist_state_t saved = {.configured = true, .paired = true};
+	memcpy(saved.dev_id, saved_pairing.peer_id, sizeof(saved.dev_id));
+	memcpy(saved.root_key, saved_key, sizeof(saved.root_key));
+	saved.pairing = saved_pairing;
+	memcpy(saved.pairing.peer_id, saved_id, sizeof(saved.pairing.peer_id));
+	zlrs_link_restore(&peer, &saved, now_ms);
+}
+
 const zlrs_persist_state_t *zlrs_persist_state(void)
 {
 	static zlrs_persist_state_t state;
@@ -166,7 +175,7 @@ int zlrs_slot_timer_init(void)
 	return 0;
 }
 
-void zlrs_slot_timer_start(uint32_t us, uint32_t prepare, void (*wake)(void))
+void zlrs_slot_timer_start(uint32_t us, uint32_t prepare, struct k_sem *wake)
 {
 	period_us = us;
 }
@@ -185,31 +194,31 @@ void zlrs_slot_timer_hold_next_frame(uint32_t guard)
 
 static void peer_update_band(void)
 {
-	if (!RF_TEST_BAND_AUTO || !peer.status.configured) {
+	if (!RF_TEST_BAND_AUTO || peer.status.state == ZLRS_STATE_UNCONFIGURED) {
 		return;
 	}
 	const uint32_t now = clock_us / 1000U;
-	const zlrs_link_status_t *info = zlrs_link_status(&peer);
+	const zlrs_link_status_t *info = &peer.status;
 	const zlrs_link_observation_t observation = {.link = info, .now_ms = now};
 	const int8_t next_power = info->state != ZLRS_STATE_CONNECTED || info->radio_acquiring ||
 						  peer_band_policy.power_boosted
 					  ? zlrs_power_recover(&peer_power, now)
 					  : zlrs_power_update(&peer_power, &observation);
-	zlrs_link_set_power(&peer, next_power);
+	peer.status.cfg.tx_power_dbm = next_power;
 	bool change = false, subg = false, probe = false;
 	zlrs_phy_t phy = ZLRS_PHY_FLRC_2600;
 	if (info->band_plan.switch_frame &&
 	    info->frame_index >= info->band_plan.switch_frame - 1U) {
 		subg = info->band_plan.target_subg;
 		phy = info->band_plan.target_phy;
-		probe = !subg && (peer_band_policy.subg || phy < peer_band_policy.phy);
+		probe = !subg && (info->cfg.region != ZLRS_REGION_ISM2400 || phy < info->cfg.phy);
 		change = true;
 	} else {
 
 		const zlrs_band_action_t action =
 			zlrs_band_policy_update(&peer_band_policy, &observation, &peer_power);
 		if (action == ZLRS_BAND_BOOST) {
-			zlrs_link_set_power(&peer, zlrs_power_recover(&peer_power, now));
+			peer.status.cfg.tx_power_dbm = zlrs_power_recover(&peer_power, now);
 		} else if (action == ZLRS_BAND_SEARCH) {
 			subg = peer_band_policy.target_subg;
 			phy = peer_band_policy.target_phy;
@@ -236,10 +245,8 @@ static void peer_update_band(void)
 		cfg.sync_period_ms = zlrs_phys[cfg.phy].sync_period_ms;
 		cfg.resync_every_n = MIN(CONFIG_ZLRS_APP_RESYNC_PERIOD_MS, 1000U) * 1000U / cadence;
 		cfg.arq_timeout_ms = MAX(1U, cadence / 1000U);
-		zassert_true(zlrs_link_reconfigure_radio(&peer, &cfg));
-		zlrs_link_acquire_radio(&peer, now);
-		zlrs_band_policy_changed(&peer_band_policy, subg, phy, probe, now,
-					 info->last_rx_ms);
+		zassert_true(zlrs_link_reconfigure_radio(&peer, &cfg, now));
+		zlrs_band_policy_reset(&peer_band_policy, probe, now, info->last_rx_ms);
 	}
 }
 
@@ -313,8 +320,11 @@ const zlrs_lr2021_diag_t *zlrs_lr2021_diag(void)
 	return &diag;
 }
 
-int zlrs_lr2021_init(void)
+static struct k_sem *rf_wake;
+
+int zlrs_lr2021_init(struct k_sem *wake)
 {
+	rf_wake = wake;
 	return 0;
 }
 
@@ -329,21 +339,12 @@ void zlrs_lr2021_read_status(zlrs_lr2021_status_t *out)
 	};
 }
 
-uint32_t zlrs_lr2021_airtime_us(zlrs_phy_t phy, uint16_t len)
-{
-	return zlrs_phy_airtime_us(phy, len);
-}
-
 static uint32_t radio_start_us;
 
 void zlrs_lr2021_slot(uint32_t start, uint32_t end)
 {
 	radio_close_us = end;
 	radio_start_us = start;
-}
-
-void zlrs_lr2021_wake(void)
-{
 }
 
 int zlrs_lr2021_prepare(const zlrs_radio_req_t *req)
@@ -417,9 +418,14 @@ bool zlrs_lr2021_irq_pending(void)
 	return pending && mode != NO_IRQ;
 }
 
-int zlrs_lr2021_wait_us(uint32_t us)
+int __real_z_impl_k_sem_take(struct k_sem *sem, k_timeout_t timeout);
+
+int __wrap_z_impl_k_sem_take(struct k_sem *sem, k_timeout_t timeout)
 {
-	clock_us += us;
+	if (sem != rf_wake) {
+		return __real_z_impl_k_sem_take(sem, timeout);
+	}
+	clock_us += k_ticks_to_us_ceil32(timeout.ticks);
 	return -EAGAIN;
 }
 
@@ -534,7 +540,7 @@ static void frames(unsigned int count)
 			(status->link->cfg.region == ZLRS_REGION_ISM2400 ? ZLRS_DATA_BAND_24
 									 : ZLRS_DATA_BAND_SUBG);
 		zlrs_rf_frame();
-		zassert_false(zlrs_link_status(local)->busy);
+		zassert_false(local->status.busy);
 		status = zlrs_rf_state();
 		if (RF_TEST_BAND_AUTO && (status->link->cfg.region == ZLRS_REGION_ISM2400
 						  ? ZLRS_DATA_BAND_24
@@ -563,7 +569,7 @@ static bool peer_random(void *ctx, uint32_t *out)
 
 static bool both_on_band(bool subg)
 {
-	const zlrs_link_status_t *other = zlrs_link_status(&peer);
+	const zlrs_link_status_t *other = &peer.status;
 	const zlrs_rf_state_t *status;
 	status = zlrs_rf_state();
 	return (status->link->cfg.region == ZLRS_REGION_ISM2400 ? ZLRS_DATA_BAND_24
@@ -703,16 +709,15 @@ static void start_automatic_peers(void)
 {
 	identity_valid = true;
 	zassert_ok(zlrs_rf_init());
-	zlrs_link_cfg_t cfg = zlrs_link_status(local)->cfg;
+	zlrs_link_cfg_t cfg = local->status.cfg;
 	cfg.role = RF_TEST_ROLE_FOLLOWER ? ZLRS_ROLE_LEADER : ZLRS_ROLE_FOLLOWER;
 	const zlrs_link_events_t events = {.on_data = receive_peer};
 	__real_zlrs_link_init(&peer, &cfg, peer_random, NULL, &events);
-	zlrs_link_set_dev_id(&peer, saved_pairing.peer_id);
-	zlrs_link_set_root_key(&peer, saved_key, clock_us / 1000U);
-	zlrs_link_set_peer(&peer, saved_id, saved_pairing.pair_salt, clock_us / 1000U);
-	zlrs_band_policy_init(&peer_band_policy, true, cfg.role, false, 0, clock_us / 1000U);
+	restore_peer_credentials(clock_us / 1000U);
+	zlrs_band_policy_init(&peer_band_policy, cfg.role, 0, clock_us / 1000U);
 	zlrs_power_init(&peer_power, 12, -17, clock_us / 1000U);
 	zlrs_rf_start();
+	zlrs_rf_publish_state(false);
 }
 
 static void automatic_acceptance(void)
@@ -842,13 +847,11 @@ static void start_peers(bool fail_entropy)
 	identity_valid = true;
 	entropy_failed = fail_entropy;
 	zassert_ok(zlrs_rf_init());
-	zlrs_link_cfg_t cfg = zlrs_link_status(local)->cfg;
+	zlrs_link_cfg_t cfg = local->status.cfg;
 	cfg.role = RF_TEST_ROLE_FOLLOWER ? ZLRS_ROLE_LEADER : ZLRS_ROLE_FOLLOWER;
 	const zlrs_link_events_t events = {.on_data = receive_peer};
 	__real_zlrs_link_init(&peer, &cfg, peer_random, NULL, &events);
-	zlrs_link_set_dev_id(&peer, saved_pairing.peer_id);
-	zlrs_link_set_root_key(&peer, saved_key, clock_us / 1000U);
-	zlrs_link_set_peer(&peer, saved_id, saved_pairing.pair_salt, clock_us / 1000U);
+	restore_peer_credentials(clock_us / 1000U);
 	zlrs_rf_start();
 }
 
@@ -928,8 +931,8 @@ ZTEST(rf_results, test_entropy_failure_and_recovery)
 	zassert_equal(blocking_random_requests, 0U, "RF called the blocking entropy API");
 	entropy_failed = false;
 	frames(150);
-	zassert_equal(zlrs_link_status(local)->state, ZLRS_STATE_CONNECTED);
-	zassert_equal(zlrs_link_status(&peer)->state, ZLRS_STATE_CONNECTED);
+	zassert_equal(local->status.state, ZLRS_STATE_CONNECTED);
+	zassert_equal(peer.status.state, ZLRS_STATE_CONNECTED);
 }
 
 ZTEST(rf_results, test_partial_nonce_is_not_used)
@@ -981,15 +984,15 @@ ZTEST(rf_results, test_connected_data_does_not_need_more_entropy)
 ZTEST(rf_results, test_periodic_sync_cadence)
 {
 	connected_peers();
-	zlrs_link_cfg_t cfg = zlrs_link_status(local)->cfg;
+	zlrs_link_cfg_t cfg = local->status.cfg;
 	/* A five-second SYNC cadence must remain five seconds above 255 frames. */
 	if (!RF_TEST_BAND_SUBG && CONFIG_ZLRS_APP_PACING_SCALE == 1) {
 		zassert_true(cfg.resync_every_n > UINT8_MAX);
 	}
 	zlrs_link_t *const leader = RF_TEST_ROLE_FOLLOWER ? &peer : local;
-	const uint32_t syncs = zlrs_link_status(leader)->stats.tx_syncs;
+	const uint32_t syncs = leader->status.stats.tx_syncs;
 	frames(12000000U / period_us);
-	const uint32_t periodic = zlrs_link_status(leader)->stats.tx_syncs - syncs;
+	const uint32_t periodic = leader->status.stats.tx_syncs - syncs;
 	zassert_true(periodic == 2U || periodic == 3U);
 }
 
@@ -997,7 +1000,7 @@ ZTEST(rf_results, test_rebooted_peer_clock_reacquires)
 {
 	connected_peers();
 
-	zlrs_link_cfg_t cfg = zlrs_link_status(&peer)->cfg;
+	zlrs_link_cfg_t cfg = peer.status.cfg;
 	const zlrs_link_events_t events = {.on_data = receive_peer};
 
 	if (RF_TEST_ROLE_FOLLOWER) {
@@ -1010,9 +1013,7 @@ ZTEST(rf_results, test_rebooted_peer_clock_reacquires)
 		frames(DIV_ROUND_UP((cfg.sync_period_ms + 50U) * 1000U, period_us));
 		mode = NORMAL;
 		__real_zlrs_link_init(&peer, &cfg, peer_random, NULL, &events);
-		zlrs_link_set_dev_id(&peer, saved_pairing.peer_id);
-		zlrs_link_set_root_key(&peer, saved_key, clock_us / 1000U);
-		zlrs_link_set_peer(&peer, saved_id, saved_pairing.pair_salt, clock_us / 1000U);
+		restore_peer_credentials(clock_us / 1000U);
 		peer_next_slot = 0U;
 		packet_phase_error_us = period_us / 8U;
 		const uint32_t shifts_before = phase_shift_events;
@@ -1037,11 +1038,9 @@ ZTEST(rf_results, test_duplex_delivery_and_counters)
 	frames(100);
 	zassert_equal(delivered, sizeof(incoming) - 1U);
 	zassert_equal(source_left, 0);
-	zassert_equal(zlrs_link_status(local)->stats.last_rssi, -42);
-	zassert_equal(zlrs_link_status(local)->stats.tx_frames, tx_ok);
-	zassert_equal(zlrs_link_status(local)->stats.slot_rx[0] +
-			      zlrs_link_status(local)->stats.slot_rx[1],
-		      rx_ok);
+	zassert_equal(local->status.stats.last_rssi, -42);
+	zassert_equal(local->status.stats.tx_frames, tx_ok);
+	zassert_equal(local->status.stats.slot_rx[0] + local->status.stats.slot_rx[1], rx_ok);
 }
 
 ZTEST(rf_results, test_rx_fifo_read_can_finish_after_window_close)
@@ -1177,26 +1176,13 @@ ZTEST(rf_results, test_missing_irq)
 	zassert_equal(radio_reads, 1);
 }
 
-ZTEST(rf_results, test_pair_cancel_restores_power)
-{
-	const zlrs_rf_state_t *status;
-	connected_peers();
-
-	zassert_ok(zlrs_rf_pair_start());
-	status = zlrs_rf_state();
-	zassert_equal(status->link->cfg.tx_power_dbm, -10);
-	frames(DIV_ROUND_UP(250000U, period_us));
-	zassert_ok(zlrs_rf_pair_cancel());
-	status = zlrs_rf_state();
-	zassert_equal(status->link->cfg.tx_power_dbm, RF_TEST_BAND_SUBG ? 10 : 12);
-}
-
 ZTEST(rf_results, test_pair_timeout_restores_power)
 {
 	const zlrs_rf_state_t *status;
 	connected_peers();
 
 	zassert_ok(zlrs_rf_pair_start());
+	zassert_equal(zlrs_rf_state()->link->cfg.tx_power_dbm, -10);
 	mode = RX_FAIL;
 	frames(DIV_ROUND_UP(30100000U, period_us));
 	status = zlrs_rf_state();
@@ -1226,7 +1212,7 @@ ZTEST(rf_results, test_state_publication_retries_changes)
 	publication_acceptance();
 }
 
-ZTEST(rf_results, test_diagnostics_snapshot)
+ZTEST(rf_results, test_paused_hardware_snapshot)
 {
 	connected_peers();
 	zlrs_rf_pause();
@@ -1237,14 +1223,6 @@ ZTEST(rf_results, test_diagnostics_snapshot)
 	zassert_equal(zlrs_rf_state()->radio.temperature_centi_c, 2500);
 	zassert_equal(zlrs_rf_state()->radio.valid, ZLRS_LR2021_STATUS_TEMP);
 	zassert_equal(zlrs_rf_state()->radio.sampled_ms, 2);
-	const char *text;
-	for (unsigned int report = ZLRS_DIAGNOSTIC_LINK; report <= ZLRS_DIAGNOSTIC_POWER;
-	     ++report) {
-		zassert_ok(zlrs_diagnostics_report(report, &text));
-		zassert_true(strlen(text) > 0);
-		zassert_true(strlen(text) < 4096);
-	}
-	zassert_equal(zlrs_diagnostics_report(255, &text), -EINVAL);
 	zlrs_rf_resume();
 }
 
@@ -1297,14 +1275,14 @@ ZTEST(rf_results, test_credential_removal_retires_active_session)
 	zlrs_rf_credentials();
 	zassert_false(zlrs_rf_state()->link->paired);
 	status = zlrs_rf_state();
-	zassert_true(status->link->configured);
+	zassert_not_equal(status->link->state, ZLRS_STATE_UNCONFIGURED);
 	status = zlrs_rf_state();
 	zassert_false(status->link->paired || status->link->session_valid);
 	/* Factory reset removes the key and ID until persist initializes again at boot. */
 	configured = identity_valid = false;
 	zlrs_rf_credentials();
 	status = zlrs_rf_state();
-	zassert_false(status->link->configured);
+	zassert_equal(status->link->state, ZLRS_STATE_UNCONFIGURED);
 	const uint8_t empty_id[ZLRS_DEV_ID_LEN] = {0};
 	status = zlrs_rf_state();
 	zassert_mem_equal(status->link->dev_id, empty_id, sizeof(empty_id));

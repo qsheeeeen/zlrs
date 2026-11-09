@@ -33,7 +33,7 @@ def both(identities, function):
 
 def observe(identity):
     with mgmt.ManagementClient(port(identity), timeout=5) as client:
-        return client.request(mgmt.CMD_OBSERVE)
+        return client.request(mgmt.CMD_STATUS)
 
 
 def reboot(identity):

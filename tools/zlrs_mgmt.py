@@ -20,9 +20,11 @@ STATUS_FIELDS = ('role', 'state', 'flags', 'dev_id', 'peer_id', 'lq_percent', 'r
  'radio_xosc_temperature_centi_c', 'radio_vbat_mv', 'radio_version_major',
  'radio_version_minor', 'radio_chip_mode', 'radio_command_status', 'radio_reset_status',
  'radio_valid', 'radio_errors', 'radio_irq', 'data_phy',
- 'lq_generation', 'peer_lq_generation', 'power_raises', 'power_lowers', 'power_fallbacks', 'power_changed_ms', 'peer_feedback_ms', 'power_rssi_dbm')
+ 'lq_generation', 'peer_lq_generation', 'power_raises', 'power_lowers', 'power_fallbacks', 'power_changed_ms', 'peer_feedback_ms', 'power_rssi_dbm', 'active_region',
+ 'tx_frame_builds', 'tx_auth_tags', 'tx_cancelled_frames', 'tx_failed_frames')
 Status = namedtuple("Status", STATUS_FIELDS)
 
+GROUP = 66
 CMD_ENTER = 0x00
 CMD_STATUS = 0x01
 CMD_PAIR = 0x02
@@ -42,8 +44,7 @@ CMD_FACTORY_RESET = 0x0F
 CMD_RECOVERY = 0x10
 CMD_CONFIRM = 0x11
 CMD_LOG_INFO = 0x12
-CMD_DEBUG_REPORT = 0x14
-CMD_OBSERVE = 0x15
+CMD_TRACE = 0x16
 ONLINE_COMMANDS = {CMD_STATUS, CMD_BUILD, CMD_IMAGE_HASH}
 
 # No-payload commands share registration and encoding metadata.
@@ -61,7 +62,7 @@ SIMPLE_COMMANDS = {
     "exit": (CMD_EXIT, "leave management mode and restore the radio"),
 }
 
-DEBUG_REPORTS = {"link": 0, "rate": 1, "radio": 2, "power": 3}
+STATUS_VIEWS = {"link": 1, "rate": 2, "radio": 3, "power": 4}
 
 COMMAND_MESSAGES = {
     CMD_ENTER: "Management mode entered; radio paused",
@@ -82,10 +83,10 @@ COMMAND_MESSAGES = {
 
 
 STATE_NAMES = dict(enumerate(("unconfigured", "unpaired", "pairing", "searching", "connected")))
-REGION_NAMES = dict(enumerate(("FCC915", "EU868", "CN470", "CN433")))
+REGION_NAMES = dict(enumerate(("FCC915", "EU868", "CN470", "CN433", "ISM2400")))
 
 def decode_status(values) -> Status:
-    return values if isinstance(values, Status) else Status(**values)
+    return values if isinstance(values, Status) else Status(*(values[name] for name in STATUS_FIELDS))
 
 
 def read_status(client) -> Status:
@@ -249,7 +250,7 @@ class ManagementClient:
         if command == CMD_RECOVERY:
             self._request(ResetWrite(boot_mode=1))
             return {}
-        response = self._request(request_type(66, {"op": command, "value": payload}))
+        response = self._request(request_type(GROUP, {"op": command, "value": payload}))
         if response.result != 0:
             raise ManagementError(command, response.result)
         if command == CMD_ENTER:
@@ -299,8 +300,14 @@ def talk(port, baud, operation, timeout, enter=True, quiet=False, keep=False, re
         with management_session(port, baud, timeout,
                                 **session_options(command, enter, keep, refresh)) as client:
             response = client.request(command, value)
-            if command == CMD_DEBUG_REPORT:
-                print(response["report"], end="")
+            if command == CMD_STATUS and value and value[0] != 0:
+                heading("ZLRS diagnostics")
+                names = {"state": STATE_NAMES, "role": {0: "Leader", 1: "Follower"},
+                         "region": REGION_NAMES, "active_region": REGION_NAMES,
+                         "subg_region": REGION_NAMES, "data_phy": MODULATION_NAMES,
+                         "rate_state": STATE_NAMES}
+                print(fields((name, names.get(name, {}).get(value, value))
+                             for name, value in response["status"].items()))
                 return 0
             if command == CMD_STATUS:
                 heading("ZLRS Status")
@@ -428,7 +435,7 @@ def add_commands(sub, parents=()):
         command(name, help=description, description=description)
     commands["status"].add_argument("--verbose", action="store_true",
                                    help="include device IDs and detailed chip observations")
-    for name in DEBUG_REPORTS:
+    for name in STATUS_VIEWS:
         description = ("compare per-link TX power limits and setpoints" if name == "power"
                        else f"read detailed {name} diagnostics")
         command(name, help=f"{description} (debug firmware only)")
@@ -512,8 +519,8 @@ def main(args=None, parser=None) -> int:
 
     if args.command in SIMPLE_COMMANDS:
         selected = (SIMPLE_COMMANDS[args.command][0], b'')
-    elif args.command in DEBUG_REPORTS:
-        selected = (CMD_DEBUG_REPORT, bytes([DEBUG_REPORTS[args.command]]))
+    elif args.command in STATUS_VIEWS:
+        selected = (CMD_STATUS, bytes([STATUS_VIEWS[args.command]]))
     elif args.command == "set-phrase":
         payload = args.phrase.encode()
         if not 1 <= len(payload) <= 32:

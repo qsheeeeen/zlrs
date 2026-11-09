@@ -51,6 +51,9 @@ uint32_t zlrs_phy_airtime_us(zlrs_phy_t phy, uint16_t frame_len)
 	if (mod->rate_bps == 0U) {
 		return 0U;
 	}
-	const uint64_t bits = ((uint64_t)frame_len + 4U) * 8U;
+	/* Variable header 16 bits, coding tail 6 bits and CRC16 use CR 3/4.
+	 * Preamble, 21-bit ramp and 32-bit sync word are sent uncoded. */
+	const uint64_t coded = (8ULL * frame_len + 16U + 6U + 16U) * 4U;
+	const uint64_t bits = ZLRS_FLRC_PREAMBLE_BITS + 21U + 32U + (coded + 2U) / 3U;
 	return (uint32_t)((bits * 1000000U + mod->rate_bps - 1U) / mod->rate_bps);
 }

@@ -8,9 +8,13 @@ from zlrs_cli import bounded_int, positive_seconds
 import zlrs_mgmt as mgmt
 from zlrs_smp import request
 
-GROUP = 64
 OPERATIONS = {"start": 0, "stop": 1, "save": 2, "discard": 3, "arm": 4}
 STATES = ("idle", "capturing", "frozen", "saving", "saved")
+
+
+def command_fields(operation=None, duration_ms=50):
+    return {"op": mgmt.CMD_TRACE,
+            "value": b"" if operation is None else bytes((operation,)) + duration_ms.to_bytes(4, "little")}
 
 
 def configure_parser(parser):
@@ -32,11 +36,10 @@ def main(args, parser):
     else:
         management = Path(mgmt.pick_targets(args, parser)[0])
         port = str(management)
-    fields = None if args.action == "status" else {"op": OPERATIONS[args.action]}
-    if args.duration_ms is not None:
-        fields["ms"] = args.duration_ms
+    fields = command_fields(OPERATIONS.get(args.action),
+                            args.duration_ms if args.duration_ms is not None else 50)
     try:
-        result = request(port, GROUP, fields, timeout=args.timeout, baud=args.baud)
+        result = request(port, mgmt.GROUP, fields, timeout=args.timeout, baud=args.baud)
     except ImportError as error:
         raise ValueError("smpclient with serial support is required; install smpmgr") from error
     if result["result"] != 0:

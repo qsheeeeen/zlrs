@@ -1,12 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
-source "Kconfig.zephyr"
-config ZLRS_APP_MGMT_TIMEOUT_S
- int
- default 10
-module = APP
-module-str = app
-source "subsys/logging/Kconfig.template.log_config"
+rsource "../../../app/Kconfig"
 
+# The native fixture supplies its own upgrade lifecycle without MCUboot.
 config ZLRS_APP_MCUBOOT_CONFIRM_TIMEOUT_MS
 	int
 	default 1000

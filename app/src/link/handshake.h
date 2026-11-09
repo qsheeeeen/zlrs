@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #pragma once
 #include "link/link.h"
+#include "persist.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -15,18 +16,9 @@ bool link_pair_advance(zlrs_link_t *link);
 
 void link_pair_plan(const zlrs_link_t *link, zlrs_link_plan_t *plan);
 
-/* The link only joins the air once a root key has been written */
-void zlrs_link_set_root_key(zlrs_link_t *link, const uint8_t root_key[ZLRS_KEY_LEN],
-			    uint32_t now_ms);
-
-void zlrs_link_set_dev_id(zlrs_link_t *link, const uint8_t dev_id[ZLRS_DEV_ID_LEN]);
-
-/*
- * Restore pairing from the stored record (no re-pairing after a reboot). pair_salt has to
- * match the peer's copy: the two exchanged nonces. Keys are recomputed, never stored.
- */
-void zlrs_link_set_peer(zlrs_link_t *link, const uint8_t peer_id[ZLRS_DEV_ID_LEN],
-			const uint8_t pair_salt[ZLRS_PAIR_SALT_LEN], uint32_t now_ms);
+/* Adopt the saved identity and key tree once on an initialized, unconfigured link.
+ * Credential changes rebuild the link before restoring the complete saved view. */
+void zlrs_link_restore(zlrs_link_t *link, const zlrs_persist_state_t *saved, uint32_t now_ms);
 
 /* Start pairing; false leaves the current state intact (unconfigured or entropy unavailable).
  * True accepts an attempt, not a completed pairing; the previous saved record remains visible. */
@@ -40,10 +32,7 @@ void link_roll_session(zlrs_link_t *link);
 
 uint16_t link_build_handshake(zlrs_link_t *link, uint8_t type);
 
-bool link_handle_sync(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms);
-
-bool link_handle_sess_cfm(zlrs_link_t *link, const zlrs_frame_t *frame, uint16_t len,
-			  uint32_t now_ms);
+bool link_handle_schedule(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms);
 
 bool link_handle_sess_resp(zlrs_link_t *link, const zlrs_frame_t *frame, uint32_t now_ms);
 

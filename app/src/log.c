@@ -1,28 +1,16 @@
-/*
- * Log storage: mount the LittleFS the logging subsystem's file backend writes to, and report how
- * the last boot ended. See doc/06-firmware.md.
- *
- * Nothing here implements logging: the messages themselves go through Zephyr's logging subsystem
- * and its file backend (LOG_BACKEND_FS), which also owns the file rotation that makes the store a
- * ring — when the file cap is reached the oldest log file is overwritten. LittleFS owns power-fail
- * safety and wear leveling on the partition. The only thing that has to happen in the application
- * is the mount, and it has to happen before the log core enables its backends, hence the init
- * priorities below (log core: CONFIG_LOG_CORE_INIT_PRIORITY, raised in prj.conf to run last).
- *
- * SPDX-License-Identifier: Apache-2.0
- */
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Zephyr owns the log filesystem mount and file rotation. This module inventories
+ * saved files and reports reset information after filesystem initialization. */
 
+#include <zephyr/drivers/uart.h>
 #include <zephyr/fs/fs.h>
-#include <zephyr/fs/littlefs.h>
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/logging/log_backend.h>
 #include <zephyr/logging/log_ctrl.h>
-#include <zephyr/drivers/uart.h>
-#include <zephyr/storage/flash_map.h>
 
-#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #if defined(CONFIG_HWINFO)
@@ -31,6 +19,8 @@
 
 #include "log.h"
 #include <errno.h>
+
+LOG_MODULE_REGISTER(zlrs_log, CONFIG_APP_LOG_LEVEL);
 
 #if defined(CONFIG_LOG_BACKEND_UART)
 void zlrs_log_console_sync(void)
@@ -54,12 +44,24 @@ void zlrs_log_console_sync(void)
 }
 #endif
 
+/* The native file backend numbers files with exactly four decimal digits. */
+int zlrs_log_file_id(const char *name)
+{
+	const size_t prefix = sizeof(CONFIG_LOG_BACKEND_FS_FILE_PREFIX) - 1U;
+	if (strncmp(name, CONFIG_LOG_BACKEND_FS_FILE_PREFIX, prefix) != 0) {
+		return -EINVAL;
+	}
+	const char *digits = name + prefix;
+	if (strlen(digits) != 4U || strspn(digits, "0123456789") != 4U) {
+		return -EINVAL;
+	}
+	return (int)strtoul(digits, NULL, 10);
+}
+
 /*
- * Only boards whose partition table has a log partition get this: the whole file is about that
- * partition, and one without it keeps logging to the console only.
+ * A board fstab entry owns log storage; without one, logging stays on the console.
  */
-#if !DT_NODE_EXISTS(DT_NODELABEL(log_partition))
-LOG_MODULE_REGISTER(zlrs_log, CONFIG_APP_LOG_LEVEL);
+#if !DT_NODE_HAS_STATUS_OKAY(DT_NODELABEL(zlrs_log_fs))
 
 int zlrs_log_info(zlrs_log_info_t *out)
 {
@@ -70,26 +72,11 @@ int zlrs_log_info(zlrs_log_info_t *out)
 
 #else
 
-LOG_MODULE_REGISTER(zlrs_log, CONFIG_APP_LOG_LEVEL);
+BUILD_ASSERT(IS_ENABLED(CONFIG_FS_LITTLEFS_FSTAB_AUTOMOUNT),
+	     "log storage requires the board's native filesystem automount");
+FS_FSTAB_DECLARE_ENTRY(DT_NODELABEL(zlrs_log_fs));
 
-#define LOG_MOUNT_POINT "/lfs"
-
-FS_LITTLEFS_DECLARE_DEFAULT_CONFIG(zlrs_log_fs_cfg);
-
-static struct fs_mount_t log_mnt = {
-	.type = FS_LITTLEFS,
-	.fs_data = &zlrs_log_fs_cfg,
-	.storage_dev = (void *)PARTITION_ID(log_partition),
-	.mnt_point = LOG_MOUNT_POINT,
-};
-
-static bool log_mounted;
-
-/* Retry a failed mount before reinitializing the log partition. */
-static int log_store_mount(void);
-
-/* List the store, smallest file number first: the backend names files `<prefix><0000>` upward and
- * overwrites the oldest, so numeric order is the order they were written in. */
+/* List the backend files by numeric ID. */
 int zlrs_log_info(zlrs_log_info_t *out)
 {
 	struct fs_dir_t dir;
@@ -97,17 +84,18 @@ int zlrs_log_info(zlrs_log_info_t *out)
 	zlrs_log_info_t info = {0};
 	int rc;
 
-	if (!log_mounted) {
-		rc = log_store_mount();
+	fs_dir_t_init(&dir);
+	rc = fs_opendir(&dir, CONFIG_LOG_BACKEND_FS_DIR);
+	if (rc != 0) {
+		/* Retry a failed boot mount at an explicit storage boundary. */
+		const int mount_rc = fs_mount(&FS_FSTAB_ENTRY(DT_NODELABEL(zlrs_log_fs)));
+		if (mount_rc != 0) {
+			return mount_rc == -EBUSY ? rc : mount_rc;
+		}
+		rc = fs_opendir(&dir, CONFIG_LOG_BACKEND_FS_DIR);
 		if (rc != 0) {
 			return rc;
 		}
-	}
-
-	fs_dir_t_init(&dir);
-	rc = fs_opendir(&dir, LOG_MOUNT_POINT);
-	if (rc != 0) {
-		return rc;
 	}
 
 	for (;;) {
@@ -119,26 +107,14 @@ int zlrs_log_info(zlrs_log_info_t *out)
 			continue;
 		}
 
-		/* The backend's names are the prefix plus four digits; anything else is not ours */
-		const char *digits = ent.name + strlen(CONFIG_LOG_BACKEND_FS_FILE_PREFIX);
-		uint16_t num = 0U;
-		uint8_t n = 0U;
-
-		if (strncmp(ent.name, CONFIG_LOG_BACKEND_FS_FILE_PREFIX,
-			    strlen(CONFIG_LOG_BACKEND_FS_FILE_PREFIX)) != 0) {
-			continue;
-		}
-		while (digits[n] >= '0' && digits[n] <= '9' && n < 5U) {
-			num = (uint16_t)((num * 10U) + (uint16_t)(digits[n] - '0'));
-			n++;
-		}
-		if (n == 0U) {
+		const int num = zlrs_log_file_id(ent.name);
+		if (num < 0) {
 			continue;
 		}
 
-		if (info.count < ZLRS_LOG_FILES_MAX) {
+		if (info.count < CONFIG_LOG_BACKEND_FS_FILES_LIMIT) {
 			/* Insert sorted: at most a handful of files, an insertion sort is plenty */
-			uint8_t at = info.count;
+			uint16_t at = info.count;
 
 			while (at > 0U && info.num[at - 1U] > num) {
 				info.num[at] = info.num[at - 1U];
@@ -162,82 +138,25 @@ int zlrs_log_info(zlrs_log_info_t *out)
 	 * files but cannot read them, and this is the line that tells the two apart on a serial console.
 	 */
 	if (info.count == 0U) {
-		LOG_WRN("log store: no files under %s", LOG_MOUNT_POINT);
+		LOG_WRN("log store: no files under %s", CONFIG_LOG_BACKEND_FS_DIR);
 	} else {
-		LOG_INF("log store: %u file(s), newest log.%04u", info.count, info.num[info.count - 1U]);
+		LOG_INF("log store: %u file(s), newest log.%04u", info.count,
+			info.num[info.count - 1U]);
 	}
 
 	return 0;
 }
 
-/* Retry a failed mount before reinitializing the log partition. */
-static int log_store_mount(void)
-{
-	int rc = -EIO;
-
-	for (uint8_t attempt = 0U; attempt < 3U; attempt++) {
-		rc = fs_mount(&log_mnt);
-		if (rc == 0) {
-			log_mounted = true;
-			return 0;
-		}
-
-		LOG_WRN("log filesystem mount failed (%d), attempt %u", rc, attempt + 1U);
-		k_msleep(50);
-	}
-
-	if (rc != 0) {
-		/*
-		 * Never-formatted or corrupt: erase the whole area and mount again, which is the littlefs
-		 * recipe from Zephyr's samples/subsys/fs/littlefs. Erasing rather than fs_mkfs() also means a
-		 * device whose log store got damaged recovers on its own instead of losing the feature.
-		 */
-		const struct flash_area *area;
-
-		LOG_WRN("log filesystem unreadable (%d), erasing the partition", rc);
-		if (flash_area_open(PARTITION_ID(log_partition), &area) == 0) {
-			(void)flash_area_flatten(area, 0, area->fa_size);
-			flash_area_close(area);
-			rc = fs_mount(&log_mnt);
-		} else {
-			LOG_ERR("cannot open the log partition to erase it");
-		}
-	}
-
-	if (rc != 0) {
-		LOG_ERR("log filesystem mount failed (%d), logs stay on the console only", rc);
-		return rc;
-	}
-
-	log_mounted = true;
-
-	return 0;
-}
-
-/*
- * After LittleFS registers itself (CONFIG_FILE_SYSTEM_INIT_PRIORITY, 99): mounting earlier fails
- * with "file system type not found" and the file backend then skips every record.
- */
-BUILD_ASSERT(CONFIG_FILE_SYSTEM_INIT_PRIORITY < 100,
-	     "the log store mounts at 100: raise it if the file system layer moves later");
-
-static int log_store_init(void)
-{
-	(void)log_store_mount();
-
-	/* A failed mount must not stop the boot: the rest of the device works, only logs stay local */
-	return 0;
-}
-
-SYS_INIT(log_store_init, POST_KERNEL, 100);
+BUILD_ASSERT(CONFIG_FILE_SYSTEM_INIT_PRIORITY < 101,
+	     "the log report must run after native filesystem initialization");
 
 /* Log core is up by now, so this report lands in the log and therefore in the log file as well */
 static int log_store_report(void)
 {
 	struct fs_statvfs stat = {0};
 
-	if (log_mounted && fs_statvfs(LOG_MOUNT_POINT, &stat) == 0) {
-		LOG_INF("log store: %s, %u KiB of %u KiB free", LOG_MOUNT_POINT,
+	if (fs_statvfs(CONFIG_LOG_BACKEND_FS_DIR, &stat) == 0) {
+		LOG_INF("log store: %s, %u KiB of %u KiB free", CONFIG_LOG_BACKEND_FS_DIR,
 			(unsigned int)((stat.f_bfree * stat.f_frsize) / 1024U),
 			(unsigned int)((stat.f_blocks * stat.f_frsize) / 1024U));
 	} else {
@@ -269,4 +188,4 @@ static int log_store_report(void)
 
 SYS_INIT(log_store_report, POST_KERNEL, 101);
 
-#endif /* log_partition */
+#endif /* zlrs_log_fs */

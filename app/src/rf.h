@@ -42,7 +42,6 @@ typedef struct {
 	zlrs_lr2021_status_t radio;
 	int16_t temperature_centi_c;
 	uint32_t hardware_sampled_ms;
-	zlrs_data_band_t band_mode;
 	uint32_t band_switches;
 	zlrs_rf_rate_sample_t rate;
 	const zlrs_region_t *region; /* immutable region table */
@@ -103,7 +102,6 @@ void zlrs_rf_publish_state(bool force);
 void zlrs_rf_status_refresh(void);
 /* Zero means pairing is active; -EAGAIN means retry when a full nonce is ready. */
 int zlrs_rf_pair_start(void);
-int zlrs_rf_pair_cancel(void);
 /* Reload saved credentials in a maintenance window; ordinary settings wait for reboot. */
 void zlrs_rf_credentials(void);
 /* Safe boundary: cancel radio launch and close the pending transaction. */

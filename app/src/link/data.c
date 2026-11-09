@@ -22,12 +22,12 @@ static uint16_t packet_limit(uint16_t mtu)
 
 static uint16_t packet_index(const zlrs_link_t *link, uint16_t offset)
 {
-	return (uint16_t)((link->queue_head + offset) % link->tx_packet_limit);
+	return (uint16_t)((link->queue_head + offset) % packet_limit(link->tx_pool_mtu));
 }
 
 static uint8_t *link_packet_bytes(zlrs_link_t *link, uint16_t index)
 {
-	return &link->tx_storage[index * link->tx_stride];
+	return &link->tx_storage[index * packet_stride(link->tx_pool_mtu)];
 }
 
 static void link_release_data(zlrs_link_t *link)
@@ -44,7 +44,7 @@ static void link_release_data(zlrs_link_t *link)
 uint16_t zlrs_link_tx_space(const zlrs_link_t *link)
 {
 	const uint16_t mtu = link->status.cfg.data_mtu;
-	const uint16_t limit = link->tx_packet_count ? link->tx_packet_limit : packet_limit(mtu);
+	const uint16_t limit = packet_limit(mtu);
 	if (limit == 0U || (link->tx_packet_count && link->tx_pool_mtu != mtu)) {
 		return 0U;
 	}
@@ -70,10 +70,8 @@ uint8_t *zlrs_link_tx_reserve(zlrs_link_t *link, uint16_t *capacity)
 	}
 	if (link->tx_packet_count == 0U) {
 		/* Empty pools can adopt a different MTU (diagnostics/tests). */
-		link->tx_stride = packet_stride(link->status.cfg.data_mtu);
-		link->tx_packet_limit = packet_limit(link->status.cfg.data_mtu);
 		link->tx_pool_mtu = link->status.cfg.data_mtu;
-		link->queue_head %= link->tx_packet_limit;
+		link->queue_head %= packet_limit(link->tx_pool_mtu);
 	}
 	uint16_t index = packet_index(link, link->tx_packet_count);
 	if (link->tx_packet_count != 0U) {
@@ -110,27 +108,30 @@ void zlrs_link_tx_commit(zlrs_link_t *link, uint16_t written)
 
 void link_complete_data(zlrs_link_t *link, bool success, uint32_t now_ms)
 {
+	/* TX bytes and configuration remain fixed until this completion. */
+	if ((link->req.buf[0] & ZLRS_FRAME_TYPE_MASK) > ZLRS_PKT_DATA_F2L) {
+		return;
+	}
+	const uint16_t data_len = link->req.size - ZLRS_DATA_HEADROOM -
+				  zlrs_profile_tag_len(link->status.cfg.profile);
 	if (!success) {
-		if (link->req_is_data && link->req_arq && link->req_data_len != 0U) {
+		if (link->status.cfg.arq && data_len != 0U) {
 			link->arq_local_failed = true;
 		}
 		return;
 	}
-	if (link->req_is_data) {
-		link->status.arq_ack_pending = false;
-		link->sess_ack_due = false;
-		link->last_feedback_tx_ms = now_ms;
-		const uint16_t data_len = link->req_data_len;
-		if (data_len == 0U) {
-			link->status.stats.tx_ack_only_frames++;
-		} else {
-			link->status.stats.tx_data_frames++;
-			link->status.stats.tx_data_ack_frames += link->req_arq;
-			link->status.stats.tx_data_bytes += data_len;
-			link->status.stats.tx_full_data_frames += data_len == link->req_data_mtu;
-		}
+	link->status.arq_ack_pending = false;
+	link->sess_ack_due = false;
+	link->last_feedback_tx_ms = now_ms;
+	if (data_len == 0U) {
+		link->status.stats.tx_ack_only_frames++;
+	} else {
+		link->status.stats.tx_data_frames++;
+		link->status.stats.tx_data_ack_frames += link->status.cfg.arq != 0U;
+		link->status.stats.tx_data_bytes += data_len;
+		link->status.stats.tx_full_data_frames += data_len == link->status.cfg.data_mtu;
 	}
-	if (link->req_is_data && !link->req_arq && link->req_data_len != 0U) {
+	if (!link->status.cfg.arq && data_len != 0U) {
 		link_release_data(link);
 	}
 }

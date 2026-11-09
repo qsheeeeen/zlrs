@@ -7,6 +7,8 @@
 #include "platform/sha256.h"
 #include "platform/slot_timer.h"
 
+static K_SEM_DEFINE(owner_wake, 0, 1);
+
 ZTEST(slot_timer, test_launch_deadline_guard)
 {
 	zassert_true(zlrs_slot_timer_launch_ready(1000U, 1025U, 25U));
@@ -31,12 +33,12 @@ ZTEST(slot_timer, test_scan_delay)
 ZTEST(slot_timer, test_timer_advances_and_applies_phase_shift)
 {
 	uint32_t start_us;
-	uint32_t frame;
+	uint32_t frame = 0U;
 
 	zassert_ok(zlrs_slot_timer_init());
 	const uint32_t before_us = zlrs_slot_timer_now_us();
 
-	zlrs_slot_timer_start(4000U, 0U, NULL);
+	zlrs_slot_timer_start(4000U, 0U, &owner_wake);
 	zlrs_slot_timer_shift(5000);
 	zlrs_slot_timer_wait_frame(&start_us, &frame);
 	zassert_equal(frame, 1U);
@@ -49,17 +51,44 @@ ZTEST_SUITE(slot_timer, NULL, NULL, NULL, NULL, NULL);
 
 ZTEST(slot_timer, test_band_transition_preserves_frame_and_physical_guard)
 {
-	uint32_t first_us, next_us, first, next;
+	uint32_t first_us, next_us, first = 0U, next;
 	zassert_ok(zlrs_slot_timer_init());
-	zlrs_slot_timer_start(4000U, 300U, NULL);
+	zlrs_slot_timer_start(4000U, 300U, &owner_wake);
 	zlrs_slot_timer_wait_frame(&first_us, &first);
 	zlrs_slot_timer_hold_next_frame(12000U);
 	zlrs_slot_timer_wait_until(first_us + 3000U, NULL);
 	zlrs_slot_timer_reconfigure(20000U, 6000U, 0U);
+	next = first;
 	zlrs_slot_timer_wait_frame(&next_us, &next);
 	zassert_equal(next, first + 1U);
 	zassert_equal(next_us - first_us, 16000U);
 	zassert_equal(zlrs_slot_timer_next_frame_us() - next_us, 20000U);
+	zlrs_slot_timer_stop();
+}
+
+ZTEST(slot_timer, test_shared_notifications_preserve_deadlines_and_frame_identity)
+{
+	uint32_t start_us, first = 0U;
+	zassert_ok(zlrs_slot_timer_init());
+	zlrs_slot_timer_start(40000U, 0U, &owner_wake);
+	zlrs_slot_timer_wait_frame(&start_us, &first);
+	zassert_equal(first, 1U);
+
+	/* A radio notification is only a wakeup, never proof of a new frame. */
+	k_sem_give(&owner_wake);
+	uint32_t next_us, next = first;
+	zlrs_slot_timer_wait_frame(&next_us, &next);
+	zassert_equal(next, first + 1U);
+	zassert_equal(next_us - start_us, 40000U);
+
+	/* The same notification may arrive while waiting for preparation. */
+	const uint32_t deadline = zlrs_slot_timer_now_us() + 2000U;
+	struct zlrs_slot_timer_wait timing;
+	k_sem_give(&owner_wake);
+	zlrs_slot_timer_wait_until(deadline, &timing);
+	zassert_true(timing.armed);
+	zassert_true((int32_t)(timing.irq_us - deadline) >= 0);
+	zassert_true((int32_t)(timing.wake_us - deadline) >= 0);
 	zlrs_slot_timer_stop();
 }
 

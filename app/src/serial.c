@@ -31,8 +31,7 @@ ZBUS_CHAN_DEFINE(zlrs_serial_chan, struct zlrs_serial_status, NULL, NULL, ZBUS_O
  * port in bursts, so a kilobyte per direction left both ends dropping data that had already been
  * received correctly.
  */
-#define DATA_RX_RING_LEN 4096U
-#define DATA_TX_RING_LEN 4096U
+#define DATA_RING_LEN 4096U
 
 /* One buffer set per endpoint; dev == NULL means the alias is not wired */
 struct data_ep {
@@ -40,8 +39,8 @@ struct data_ep {
 	struct ring_buf rx;
 	struct ring_buf tx;
 	struct k_work notify_work;
-	uint8_t rx_mem[DATA_RX_RING_LEN];
-	uint8_t tx_mem[DATA_TX_RING_LEN];
+	uint8_t rx_mem[DATA_RING_LEN];
+	uint8_t tx_mem[DATA_RING_LEN];
 	uint32_t rx_dropped;
 	uint32_t rx_total;
 	uint32_t tx_total;
@@ -159,13 +158,6 @@ static void data_notify(struct k_work *work)
 	}
 }
 
-static void data_ep_resume_rx(struct data_ep *ep)
-{
-	if (ep->rx_paused && ring_buf_space_get(&ep->rx) >= 64U) {
-		(void)k_work_submit(&ep->notify_work);
-	}
-}
-
 size_t zlrs_serial_state(zlrs_serial_state_t *out, size_t count)
 {
 	const struct data_ep *const active = data_active();
@@ -264,25 +256,25 @@ uint16_t zlrs_serial_read(uint8_t *buf, uint16_t len)
 	uint16_t got = 0U;
 
 	for (size_t i = 0U; i < ARRAY_SIZE(data_eps); i++) {
-		if (!data_eps[i].ready) {
+		struct data_ep *const ep = &data_eps[i];
+		if (!ep->ready) {
 			continue;
 		}
 
-		if (&data_eps[i] == active) {
-			got += (uint16_t)ring_buf_get(&data_eps[i].rx, buf + got,
-						      (uint32_t)(len - got));
-			data_ep_resume_rx(&data_eps[i]);
-			continue;
+		if (ep == active) {
+			got += (uint16_t)ring_buf_get(&ep->rx, buf + got, len - got);
+		} else {
+			/* Discard inactive input without copying it into a scratch buffer. */
+			uint8_t *ignored;
+			uint32_t n;
+			while ((n = ring_buf_get_ptr(&ep->rx, &ignored, 0U)) > 0U) {
+				ring_buf_consume(&ep->rx, n);
+				ep->rx_dropped += n;
+			}
 		}
-
-		/* Discard inactive input without copying it into a scratch buffer. */
-		uint8_t *ignored;
-		uint32_t n;
-		while ((n = ring_buf_get_ptr(&data_eps[i].rx, &ignored, 0U)) > 0U) {
-			ring_buf_consume(&data_eps[i].rx, n);
-			data_eps[i].rx_dropped += n;
+		if (ep->rx_paused && ring_buf_space_get(&ep->rx) >= 64U) {
+			(void)k_work_submit(&ep->notify_work);
 		}
-		data_ep_resume_rx(&data_eps[i]);
 	}
 
 	return got;

@@ -13,6 +13,16 @@ import zlrs_mgmt as m
 
 
 class ManagementTests(unittest.TestCase):
+    def test_common_status_decodes_extended_views(self):
+        values = dict.fromkeys(m.STATUS_FIELDS, 0)
+        values.update(state=4, data_phy=3, queue_count=128, boundaries=123)
+        status = m.decode_status(values)
+        self.assertEqual((status.state, status.data_phy), (4, 3))
+        self.assertNotIn("queue_count", status._fields)
+        del values["state"]
+        with self.assertRaises(KeyError):
+            m.decode_status(values)
+
     def test_config_uses_product_operation_and_preserves_uart_baud(self):
         with patch.object(m, "talk", return_value=0) as talk:
             rc, _ = invoke(m, "--port", "fake", "--baud", "115200", "set-baud", "230400")
@@ -123,12 +133,24 @@ class ManagementTests(unittest.TestCase):
 
     def test_report_is_one_smp_response(self):
         client = MagicMock()
-        client.request.return_value = {"report": "complete report\n"}
+        client.request.return_value = {"status": {"power_floor_dbm": -17, "tx_power_dbm": 12, "active_region": 4}}
         with patch.object(m, "management_session", return_value=contextlib.nullcontext(client)), \
                 patch("sys.stdout", new_callable=io.StringIO) as output:
-            self.assertEqual(m.talk("fake", 115200, (m.CMD_DEBUG_REPORT, b"\x03"), 1), 0)
-            self.assertEqual(output.getvalue(), "complete report\n")
-        client.request.assert_called_once_with(m.CMD_DEBUG_REPORT, b"\x03")
+            self.assertEqual(m.talk("fake", 115200, (m.CMD_STATUS, b"\x04"), 1), 0)
+            self.assertIn("power_floor_dbm", output.getvalue())
+            self.assertIn("-17", output.getvalue())
+            self.assertIn("tx_power_dbm", output.getvalue())
+            self.assertIn("ISM2400", output.getvalue())
+        client.request.assert_called_once_with(m.CMD_STATUS, b"\x04")
+
+    def test_status_views_do_not_open_maintenance_by_default(self):
+        for command, view in m.STATUS_VIEWS.items():
+            with self.subTest(command=command), patch.object(m, "ManagementClient") as factory:
+                client = factory.return_value.__enter__.return_value
+                client.entered = False
+                client.request.return_value = {"status": {"flags": 23}}
+                self.assertEqual(invoke(entry, command, "--port", "fake")[0], 0)
+                client.request.assert_called_once_with(m.CMD_STATUS, bytes([view]))
 
     def test_logs_use_standard_fs_download(self):
         client = MagicMock()

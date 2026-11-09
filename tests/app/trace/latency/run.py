@@ -18,6 +18,7 @@ REPO = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(REPO / 'tools'))
 import zlrs_mgmt as mgmt
 from zlrs_smp import request
+from zlrs_trace import command_fields
 
 
 def main():
@@ -52,7 +53,9 @@ def main():
         return result
 
     def trace(index, fields=None):
-        result = request(ports[index], 64, fields)
+        result = request(ports[index], mgmt.GROUP,
+                         command_fields(None if fields is None else fields["op"],
+                                        50 if fields is None else fields.get("ms", 50)))
         if result['result'] != 0:
             raise RuntimeError(result)
         return result

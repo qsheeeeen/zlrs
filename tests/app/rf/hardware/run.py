@@ -3,6 +3,7 @@
 """Run the actual firmware with test data endpoints, then verify MCUboot rollback."""
 
 import argparse
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from enum import IntEnum
 import contextlib
@@ -25,24 +26,25 @@ from zlrs_update import image_hash_of
 import zlrs_mgmt as mgmt
 from zlrs_smp import request as smp_request
 
+port_locks = defaultdict(threading.Lock)
+
 class Op(IntEnum):
     RADIO_STATUS = 0
     RADIO_START = 1
     CHANNELS = 2
-    RX_WINDOW = 3
-    ENTROPY_STATUS = 4
-    ENTROPY_STALL = 5
-    SAVE_STATUS = 6
-    SAVE_FAULT = 7
-    DATA_STATUS = 8
-    DATA_ARM = 9
-    DATA_START = 10
-    DATA_STOP = 11
-    PHY_STATUS = 12
-    PHY_PIN = 13
-    PHY_REQUEST = 14
-    RESTORE = 15
-    RF_STATUS = 16
+    ENTROPY_STATUS = 3
+    ENTROPY_STALL = 4
+    SAVE_STATUS = 5
+    SAVE_FAULT = 6
+    DATA_STATUS = 7
+    DATA_ARM = 8
+    DATA_START = 9
+    DATA_STOP = 10
+    PHY_STATUS = 11
+    PHY_PIN = 12
+    PHY_REQUEST = 13
+    RESTORE = 14
+    RF_STATUS = 15
 
 BENCH = re.compile(r"BENCH active=(\d+) target=(\d+) queued=(\d+) rx=(\d+) bad=(\d+) "
                    r"duration_us=(\d+) goodput_Bps=(\d+)")
@@ -74,7 +76,8 @@ def command(port, operation, argument=None):
     fields = {"op": int(operation)}
     if argument is not None:
         fields["arg"] = argument
-    response = smp_request(port, 65, fields)
+    with port_locks[port]:
+        response = smp_request(port, 65, fields)
     return response["report"] or f"result={response['result']}"
 
 
@@ -99,8 +102,8 @@ def restore_images(identities, previous):
 
 def debug_report(identity, name):
     path = f"/dev/serial/by-id/usb-zlrs_ZLRS_{identity}-if02"
-    with mgmt.management_session(path, 115200, 2) as client:
-        return client.request(mgmt.CMD_DEBUG_REPORT, bytes([mgmt.DEBUG_REPORTS[name]]))["report"]
+    with port_locks[path], mgmt.ManagementClient(path, 115200, 2) as client:
+        return client.request(mgmt.CMD_STATUS, bytes([mgmt.STATUS_VIEWS[name]]))["status"]
 
 
 class OnlineObservers:
@@ -109,7 +112,7 @@ class OnlineObservers:
     def __init__(self, identities, hz):
         self.hz = hz
         self.done = threading.Event()
-        self.records = {identity: {"latency_ms": [], "states": set(), "phys": set(),
+        self.records = {identity: {"latency_ms": [], "states": set(), "phys": set(), "views": set(),
                                    "hardware_samples": set(), "errors": []}
                         for identity in identities}
         self.threads = [threading.Thread(target=self.observe, args=(identity,))
@@ -122,10 +125,18 @@ class OnlineObservers:
         record = self.records[identity]
         try:
             path = f"/dev/serial/by-id/usb-zlrs_ZLRS_{identity}-if02"
-            with mgmt.ManagementClient(path, timeout=2) as client:
+            client = mgmt.ManagementClient(path, timeout=2)
+            with port_locks[path]:
+                client.__enter__()
+            try:
+                metrics = (None, "queue_count", "windows", "boundaries", "dynamic_power_dbm")
                 while not self.done.is_set():
                     before = time.monotonic()
-                    payload = client.request(mgmt.CMD_OBSERVE)
+                    view = len(record["latency_ms"]) % len(metrics)
+                    with port_locks[path]:
+                        payload = client.request(mgmt.CMD_STATUS, bytes([view]) if view else b"")
+                    if view and metrics[view] not in payload["status"]:
+                        raise RuntimeError(f"Status view {view} omitted {metrics[view]}")
                     status = mgmt.decode_status(payload["status"])
                     sample = {"uptime_ms": payload["uptime_ms"],
                               "tx_frames": status.tx_frames, "rx_frames": status.rx_frames,
@@ -135,12 +146,17 @@ class OnlineObservers:
                     record["latency_ms"].append((time.monotonic() - before) * 1000)
                     record["states"].add(status.state)
                     record["phys"].add(status.data_phy)
+                    record["views"].add(view)
                     record["hardware_samples"].add(payload["hardware_ms"])
                     if not status.flags & 4:
                         raise RuntimeError("Online query observed a retired DATA session")
                     self.done.wait(max(0, 1 / self.hz - (time.monotonic() - before)))
-        except (OSError, ValueError, RuntimeError, TimeoutError) as error:
-            record["errors"].append(str(error))
+            finally:
+                with port_locks[path]:
+                    client.__exit__(None, None, None)
+
+        except Exception as error:
+            record["errors"].append(f"{type(error).__name__}: {error}")
 
     def stop(self):
         if not self.stopped:
@@ -157,7 +173,7 @@ class OnlineObservers:
                                             "p99": latencies[min(len(latencies) - 1,
                                                                 len(latencies) * 99 // 100)],
                                             "max": latencies[-1]}
-                for name in ("states", "phys", "hardware_samples"):
+                for name in ("states", "phys", "views", "hardware_samples"):
                     record[name] = sorted(record[name])
             self.stopped = True
         return self.records
@@ -440,7 +456,7 @@ def main():
         try:
             record.update(restore_images(installed, previous))
         finally:
-            args.log.write_text(json.dumps(record, indent=2) + "\n")
+            args.log.write_text(json.dumps(record, indent=2, default=bytes.hex) + "\n")
     if not all(record["restored"].get(identity) for identity in identities):
         raise RuntimeError("Previous firmware was not restored on both boards")
     print(f"Radio tests passed; previous firmware restored. Log: {args.log}")
